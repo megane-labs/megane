@@ -72,14 +72,13 @@ export function executeStreaming(
     outputs.set("trajectory", trajectory);
   }
 
-  // Output cell data if box is available
+  // Output cell data if box is available (geometry only; visibility is a
+  // Viewport/appearance decision).
   if (snapshot.box) {
     const cell: CellData = {
       type: "cell",
       sourceNodeId: nodeId,
       box: snapshot.box,
-      visible: true,
-      axesVisible: true,
     };
     outputs.set("cell", cell);
   }

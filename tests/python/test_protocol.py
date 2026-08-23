@@ -194,6 +194,36 @@ def test_encode_snapshot_zero_origin_omits_flag():
     assert not (flags & HAS_BOX_ORIGIN)
 
 
+def test_encode_snapshot_symmetry_ops():
+    """Symmetry operations are flagged and appended as a length-prefixed,
+    newline-joined utf-8 blob padded to 4 bytes."""
+    from megane.protocol import HAS_SYMMETRY_OPS
+
+    s = _make_water_structure(1)
+    s.symmetry_ops = ["x, y, z", "-x+1/2,y+1/2,-z"]
+    data = encode_snapshot(s)
+
+    flags = struct.unpack("<B", data[5:6])[0]
+    assert flags & HAS_SYMMETRY_OPS
+
+    raw = "\n".join(s.symmetry_ops).encode("utf-8")
+    padding = (4 - ((4 + len(raw)) % 4)) % 4
+    tail = data[-(4 + len(raw) + padding) :]
+    assert struct.unpack("<I", tail[:4])[0] == len(raw)
+    assert tail[4 : 4 + len(raw)] == raw
+    assert len(data) % 4 == 0
+
+
+def test_encode_snapshot_no_symmetry_ops_omits_flag():
+    """Structures without symmetry ops stay byte-identical to the old layout."""
+    from megane.protocol import HAS_SYMMETRY_OPS
+
+    s = _make_water_structure(1)
+    data = encode_snapshot(s)
+    flags = struct.unpack("<B", data[5:6])[0]
+    assert not (flags & HAS_SYMMETRY_OPS)
+
+
 def test_encode_snapshot_100k_atoms():
     """Test that 100k atoms can be encoded and decoded correctly."""
     n_molecules = 33_334  # 100,002 atoms

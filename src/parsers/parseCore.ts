@@ -11,8 +11,8 @@
  * wrappers; the functions here take already-read `text` / `bytes`.
  */
 
-import type { Snapshot, Frame, TrajectoryMeta, VectorChannel } from "../types";
-import { deserializeVectorChannels } from "./vectorChannels";
+import type { Snapshot, Frame, TrajectoryMeta, VectorChannel, ScalarChannel } from "../types";
+import { deserializeScalarChannels, deserializeVectorChannels } from "./vectorChannels";
 import { perfMark, perfMeasure } from "../perf";
 
 export interface StructureParseResult {
@@ -22,6 +22,10 @@ export interface StructureParseResult {
   labels: string[] | null;
   /** Per-atom vector channels embedded in the file (e.g. GRO velocities). */
   vectorChannels: VectorChannel[];
+  /** Per-atom scalar channels embedded in the file (charges, flags, ...). */
+  scalarChannels: ScalarChannel[];
+  /** Non-fatal parse warnings surfaced by the parser (empty when clean). */
+  warnings: string[];
 }
 
 export interface XTCParseResult {
@@ -49,6 +53,9 @@ interface WasmParseResult {
   atom_labels: string;
   vector_channel_count: number;
   vector_channel_meta: string;
+  scalar_channel_count: number;
+  scalar_channel_meta: string;
+  warnings: string;
   ca_count: number;
   symmetry_op_count: number;
   symmetry_ops: string;
@@ -62,6 +69,7 @@ interface WasmParseResult {
   chain_ids(): Uint8Array;
   bfactors(): Float32Array;
   vector_channel_data(): Float32Array;
+  scalar_channel_data(): Float32Array;
   ca_indices(): Uint32Array;
   ca_chain_ids(): Uint8Array;
   ca_res_nums(): Uint32Array;
@@ -415,6 +423,17 @@ export function parseWithFn(parseFn: ParseFn, text: string): StructureParseResul
     result.vector_channel_data(),
   );
 
+  const scalarChannels = deserializeScalarChannels(result.n_atoms, result.scalar_channel_meta, () =>
+    result.scalar_channel_data(),
+  );
+
+  // Surface non-fatal parser warnings (e.g. atoms the file declares that the
+  // parser could not represent) instead of letting them vanish silently.
+  const warnings = result.warnings ? result.warnings.split("\n") : [];
+  for (const w of warnings) {
+    console.warn(`[megane parser] ${w}`);
+  }
+
   const heteroMeta = heterogeneous
     ? {
         maxAtoms: result.max_atoms,
@@ -437,7 +456,7 @@ export function parseWithFn(parseFn: ParseFn, text: string): StructureParseResul
         }
       : null;
 
-  return { snapshot, frames, meta, labels, vectorChannels };
+  return { snapshot, frames, meta, labels, vectorChannels, scalarChannels, warnings };
 }
 
 /**
@@ -595,23 +614,25 @@ export function extractFrames(
 }
 
 /**
- * Remap a heterogeneous LAMMPS-dump trajectory's per-frame element ids in place.
+ * Remap a heterogeneous LAMMPS-dump trajectory's per-frame element ids.
  *
  * A LAMMPS dump carries integer atom *types*, not elements. When the atom count
  * varies (GCMC / deposition) the trajectory lane emits those raw type ids as
- * each frame's `elements`; this rewrites them to real atomic numbers using the
+ * each frame's `elements`; this maps them to real atomic numbers using the
  * `type → element` correspondence established by frame 0 against the separately
  * loaded structure (whose `structureElements` line up 1:1 with frame-0 atoms).
  * Types absent from frame 0 fall back to element 0 (unknown / gray).
  *
- * Mutates each frame's `elements` in place (they are disjoint JS-owned views).
- * A no-op unless the frames actually carry per-frame elements.
+ * Returns NEW frames with remapped element copies — the parser's own output is
+ * never mutated (CRITICAL RULE #11: what the parser returned stays what the
+ * file asserted). Frames without per-frame elements are shared unchanged, and
+ * the whole input is returned as-is when no remapping applies.
  */
 export function remapTrajectoryTypesToElements(
   frames: Frame[],
   structureElements: Uint8Array,
-): void {
-  if (frames.length === 0 || !frames[0].elements) return;
+): Frame[] {
+  if (frames.length === 0 || !frames[0].elements) return frames;
   const typeToElement = new Map<number, number>();
   const frame0Types = frames[0].elements;
   const n = Math.min(frame0Types.length, structureElements.length);
@@ -620,13 +641,15 @@ export function remapTrajectoryTypesToElements(
       typeToElement.set(frame0Types[i], structureElements[i]);
     }
   }
-  for (const frame of frames) {
+  return frames.map((frame) => {
     const elems = frame.elements;
-    if (!elems) continue;
+    if (!elems) return frame;
+    const mapped = new Uint8Array(elems.length);
     for (let i = 0; i < elems.length; i++) {
-      elems[i] = typeToElement.get(elems[i]) ?? 0;
+      mapped[i] = typeToElement.get(elems[i]) ?? 0;
     }
-  }
+    return { ...frame, elements: mapped };
+  });
 }
 
 /** Input for the structure parse core (already read from the File). */

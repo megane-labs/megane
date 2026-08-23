@@ -152,4 +152,64 @@ describe("LoadVectorNode", () => {
     expect(updateNodeParams).not.toHaveBeenCalled();
     expect(handler).not.toHaveBeenCalled();
   });
+
+  it("offers embedded channels without activating them", () => {
+    const seeded = seedPipelineStore("load_vector", { id: "lv1" });
+    usePipelineStore.setState({
+      embeddedVectorChannels: [
+        { name: "velocity", frames: [{ frame: 0, vectors: new Float32Array(3) }] },
+      ],
+      activeEmbeddedVectorChannel: null,
+      fileVectors: null,
+    });
+    render(<LoadVectorNode {...nodeProps("lv1", seeded.data.params as LoadVectorParams)} />);
+    const select = screen.getByLabelText("Embedded vector channel") as HTMLSelectElement;
+    expect(select.value).toBe("");
+    // Nothing rendered yet: the offer alone must not feed the overlay.
+    expect(usePipelineStore.getState().fileVectors).toBeNull();
+  });
+
+  it("activates an embedded channel only when the user selects it", () => {
+    const updateNodeParams = vi.fn();
+    const seeded = seedPipelineStore("load_vector", { id: "lv1" });
+    const frames = [{ frame: 0, vectors: Float32Array.from([1, 2, 3]) }];
+    usePipelineStore.setState({
+      updateNodeParams,
+      embeddedVectorChannels: [{ name: "velocity", frames }],
+      activeEmbeddedVectorChannel: null,
+      fileVectors: null,
+    });
+    render(<LoadVectorNode {...nodeProps("lv1", seeded.data.params as LoadVectorParams)} />);
+    fireEvent.change(screen.getByLabelText("Embedded vector channel"), {
+      target: { value: "velocity" },
+    });
+    const state = usePipelineStore.getState();
+    expect(state.activeEmbeddedVectorChannel).toBe("velocity");
+    expect(state.fileVectors).toBe(frames);
+    expect(updateNodeParams).toHaveBeenCalledWith("lv1", { fileName: "[embedded] velocity" });
+  });
+
+  it("deactivates the embedded channel when 'off' is selected", () => {
+    const seeded = seedPipelineStore("load_vector", { id: "lv1" });
+    const frames = [{ frame: 0, vectors: Float32Array.from([1, 2, 3]) }];
+    usePipelineStore.setState({
+      embeddedVectorChannels: [{ name: "velocity", frames }],
+      activeEmbeddedVectorChannel: "velocity",
+      fileVectors: frames,
+    });
+    render(<LoadVectorNode {...nodeProps("lv1", seeded.data.params as LoadVectorParams)} />);
+    fireEvent.change(screen.getByLabelText("Embedded vector channel"), {
+      target: { value: "" },
+    });
+    const state = usePipelineStore.getState();
+    expect(state.activeEmbeddedVectorChannel).toBeNull();
+    expect(state.fileVectors).toBeNull();
+  });
+
+  it("hides the embedded selector when the file carries no channels", () => {
+    const seeded = seedPipelineStore("load_vector", { id: "lv1" });
+    usePipelineStore.setState({ embeddedVectorChannels: null });
+    render(<LoadVectorNode {...nodeProps("lv1", seeded.data.params as LoadVectorParams)} />);
+    expect(screen.queryByLabelText("Embedded vector channel")).toBeNull();
+  });
 });

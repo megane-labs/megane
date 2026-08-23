@@ -41,6 +41,7 @@ interface WasmSpectrumResult {
   x_units: string;
   y_units: string;
   n_points: number;
+  warnings: string;
   x(): Float64Array;
   y(): Float64Array;
 }
@@ -77,6 +78,12 @@ export async function parseSpectrum(text: string): Promise<SpectrumData> {
   }
   const wasm = await ensureWasm();
   const result = wasm.parse_jcampdx(text);
+  // Surface non-fatal parser warnings (e.g. skipped compound-file blocks).
+  if (result.warnings) {
+    for (const w of result.warnings.split("\n")) {
+      console.warn(`[megane parser] ${w}`);
+    }
+  }
   return {
     type: "spectrum",
     title: result.title,

@@ -24,6 +24,9 @@ const { calls, wasmMock } = vi.hoisted(() => {
         x_units: "1/CM",
         y_units: "TRANSMITTANCE",
         n_points: 3,
+        warnings: text.includes("BLOCKS")
+          ? "compound file contains 1 additional spectrum block(s); only the first readable spectrum is shown"
+          : "",
         x: () => new Float64Array([400, 430, 460]),
         y: () => new Float64Array([100, 80, 95]),
       };
@@ -54,6 +57,22 @@ describe("parseSpectrum", () => {
     expect(Array.from(spectrum.x)).toEqual([400, 430, 460]);
     expect(Array.from(spectrum.y)).toEqual([100, 80, 95]);
     expect(calls).toContain("parse_jcampdx");
+  });
+
+  it("surfaces parser warnings via console.warn", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    await parseSpectrum(JCAMP.replace("##JCAMP-DX=4.24", "##JCAMP-DX=4.24\n##BLOCKS=2"));
+    expect(warn).toHaveBeenCalledWith(
+      "[megane parser] compound file contains 1 additional spectrum block(s); only the first readable spectrum is shown",
+    );
+    warn.mockRestore();
+  });
+
+  it("stays silent for a clean single-spectrum parse", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    await parseSpectrum(JCAMP);
+    expect(warn).not.toHaveBeenCalled();
+    warn.mockRestore();
   });
 
   it("initialises the WASM module only once across calls", async () => {

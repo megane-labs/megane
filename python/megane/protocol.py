@@ -4,7 +4,8 @@ Protocol format:
   Header (8 bytes):
     magic:    4 bytes "MEGN"
     msg_type: u8 (0=snapshot, 1=frame, 2=metadata)
-    flags:    u8 (bit 0: HAS_BOND_ORDERS, bit 1: HAS_BOX, bit 3: HAS_BOX_ORIGIN)
+    flags:    u8 (bit 0: HAS_BOND_ORDERS, bit 1: HAS_BOX, bit 3: HAS_BOX_ORIGIN,
+                  bit 4: HAS_SYMMETRY_OPS)
     reserved: 2 bytes
 
   Snapshot payload:
@@ -16,6 +17,8 @@ Protocol format:
     bond_orders:  Uint8[n_bonds]     + pad to 4 bytes  (if HAS_BOND_ORDERS)
     box:          Float32[9]         (3x3 row-major)   (if HAS_BOX)
     box_origin:   Float32[3]         (xlo,ylo,zlo)     (if HAS_BOX_ORIGIN)
+    symmetry_ops: u32 byte length + newline-joined utf-8 `x,y,z` strings
+                  + pad to 4 bytes                     (if HAS_SYMMETRY_OPS)
 
   Frame payload:
     frame_id:   u32
@@ -55,6 +58,7 @@ HAS_BOND_ORDERS = 0x01
 HAS_BOX = 0x02
 HAS_FRAME_ELEMENTS = 0x04
 HAS_BOX_ORIGIN = 0x08
+HAS_SYMMETRY_OPS = 0x10
 
 
 @runtime_checkable
@@ -111,13 +115,34 @@ def encode_snapshot(structure: StructureLike) -> bytes:
         flags |= HAS_BOX_ORIGIN
         origin_bytes = np.asarray(box_origin, dtype=np.float32).flatten().tobytes()
 
+    # Symmetry operations (optional): u32 byte length + newline-joined utf-8
+    # `x,y,z` strings, padded to 4-byte alignment. The frontend symmetry node
+    # applies them; the snapshot itself stays the asymmetric unit as parsed.
+    symops_bytes = b""
+    symmetry_ops = getattr(structure, "symmetry_ops", None)
+    if symmetry_ops:
+        flags |= HAS_SYMMETRY_OPS
+        raw = "\n".join(symmetry_ops).encode("utf-8")
+        sym_padding = (4 - ((4 + len(raw)) % 4)) % 4
+        symops_bytes = struct.pack("<I", len(raw)) + raw + b"\x00" * sym_padding
+
     # Header: magic(4) + msg_type(1) + flags(1) + reserved(2) = 8 bytes
     header = MAGIC + struct.pack("<BBH", MSG_SNAPSHOT, flags, 0)
 
     # Snapshot header: n_atoms(4) + n_bonds(4) = 8 bytes
     snapshot_header = struct.pack("<II", n_atoms, n_bonds)
 
-    return header + snapshot_header + pos_bytes + elem_bytes + bond_bytes + bond_order_bytes + box_bytes + origin_bytes
+    return (
+        header
+        + snapshot_header
+        + pos_bytes
+        + elem_bytes
+        + bond_bytes
+        + bond_order_bytes
+        + box_bytes
+        + origin_bytes
+        + symops_bytes
+    )
 
 
 def encode_frame(

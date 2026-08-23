@@ -68,24 +68,16 @@ export function applyViewportState(
   applyParticleOverrides(renderer, primaryParticles, prevPrimaryParticles);
   applyBondSettings(renderer, primaryBonds, prevPrimaryBonds);
 
-  // Primary cell visibility
-  const hasCells = primaryCells.length > 0;
-  const hadCells =
-    (previous ? previous.cells.filter((c) => c.sourceNodeId === resolvedPrimaryId).length : 0) > 0;
-  const cellVisible = hasCells && primaryCells.some((c) => c.visible);
+  // Primary cell visibility: a cell renders whenever the pipeline produced
+  // one. Cell data carries geometry only; axes visibility is governed by the
+  // Viewport node's `cellAxesVisible` parameter (applied near the bottom of
+  // this function).
+  const cellVisible = primaryCells.length > 0;
   const prevCellVisible =
-    hadCells &&
-    (previous?.cells.filter((c) => c.sourceNodeId === resolvedPrimaryId).some((c) => c.visible) ??
-      false);
+    (previous ? previous.cells.filter((c) => c.sourceNodeId === resolvedPrimaryId).length : 0) > 0;
   if (!previous || cellVisible !== prevCellVisible) {
     renderer.setCellVisible(cellVisible);
   }
-
-  // Note: cell axes visibility is governed solely by the Viewport node's
-  // `cellAxesVisible` parameter (applied near the bottom of this function).
-  // We deliberately don't derive it from CellData.axesVisible here because
-  // the load_structure executor hardcodes that field to `true`, which would
-  // overwrite the user's saved Viewport setting on every cell-data update.
 
   // Primary bonds visibility
   const bondsVisible = primaryBonds.length > 0;
@@ -143,13 +135,9 @@ export function applyViewportState(
       layer.setBondsVisible(false);
     }
 
-    // Apply cells for this layer
+    // Apply cells for this layer: a cell renders whenever one was produced.
     const cells = layerCellsByNode.get(nodeId);
-    if (cells && cells.length > 0) {
-      layer.setCellVisible(cells.some((c) => c.visible));
-    } else {
-      layer.setCellVisible(false);
-    }
+    layer.setCellVisible((cells?.length ?? 0) > 0);
 
     layer.setAtomsVisible(true);
   }

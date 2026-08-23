@@ -3,7 +3,7 @@
  * Used by both structure.ts and xtc.ts.
  */
 
-import type { VectorChannel, VectorFrame } from "../types";
+import type { ScalarChannel, ScalarFrame, VectorChannel, VectorFrame } from "../types";
 
 /**
  * Deserialize embedded vector channels from a WASM parse result.
@@ -36,6 +36,36 @@ export function deserializeVectorChannels(
       // subarray avoids a copy — the view shares the underlying WASM buffer.
       frames.push({ frame: f, vectors: data.subarray(offset, offset + stride) });
       offset += stride;
+    }
+    channels.push({ name: ch.name, frames });
+  }
+  return channels;
+}
+
+/**
+ * Deserialize embedded per-atom scalar channels from a WASM parse result.
+ * Same layout as vector channels but with a stride of `nAtoms` (one value per
+ * atom per frame).
+ */
+export function deserializeScalarChannels(
+  nAtoms: number,
+  metaStr: string,
+  dataFn: () => Float32Array,
+): ScalarChannel[] {
+  if (!metaStr || metaStr === "[]") return [];
+  const meta = JSON.parse(metaStr) as Array<{ name: string; n_frames: number }>;
+  if (meta.length === 0) return [];
+
+  const data = dataFn();
+  const channels: ScalarChannel[] = [];
+  let offset = 0;
+
+  for (const ch of meta) {
+    const frames: ScalarFrame[] = [];
+    for (let f = 0; f < ch.n_frames; f++) {
+      // subarray avoids a copy — the view shares the underlying WASM buffer.
+      frames.push({ frame: f, values: data.subarray(offset, offset + nAtoms) });
+      offset += nAtoms;
     }
     channels.push({ name: ch.name, frames });
   }

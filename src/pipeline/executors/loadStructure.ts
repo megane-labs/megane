@@ -54,13 +54,13 @@ export function executeLoadStructure(
     outputs.set("trajectory", trajectory);
   }
 
+  // Cell data carries geometry only; whether the cell (and its axes) are
+  // drawn is a Viewport/appearance decision, not loader output.
   if (snapshot.box) {
     const cell: CellData = {
       type: "cell",
       sourceNodeId,
       box: snapshot.box,
-      visible: true,
-      axesVisible: true,
     };
     outputs.set("cell", cell);
   }

@@ -53,6 +53,15 @@ export interface PipelineStore {
   /** Pre-built lazy/streaming provider for the file trajectory (mutually exclusive with fileFrames). */
   fileProvider: FrameProvider | null;
   fileVectors: VectorFrame[] | null;
+  /**
+   * Vector channels embedded in the loaded structure/trajectory file (GRO
+   * velocities, LAMMPS dump vx/vy/vz, ...). These are OFFERED to the user —
+   * nothing renders until a load_vector node activates one; a parse must not
+   * switch a visual overlay on as a side effect.
+   */
+  embeddedVectorChannels: { name: string; frames: VectorFrame[] }[] | null;
+  /** Name of the embedded channel currently feeding `fileVectors`, if any. */
+  activeEmbeddedVectorChannel: string | null;
 
   // Per-node snapshot storage (keyed by load_structure node ID)
   nodeSnapshots: Record<string, NodeSnapshotData>;
@@ -68,6 +77,8 @@ export interface PipelineStore {
   setFileFrames: (frames: Frame[] | null, meta: TrajectoryMeta | null) => void;
   setFileProvider: (provider: FrameProvider | null) => void;
   setFileVectors: (vectors: VectorFrame[] | null) => void;
+  setEmbeddedVectorChannels: (channels: { name: string; frames: VectorFrame[] }[] | null) => void;
+  activateEmbeddedVectorChannel: (name: string | null) => void;
   setNodeSnapshot: (nodeId: string, data: NodeSnapshotData) => void;
   removeNodeSnapshot: (nodeId: string) => void;
   setNodeParseError: (nodeId: string, message: string) => void;
@@ -152,6 +163,8 @@ const CLEARED_EXECUTION_CONTEXT = {
   fileMeta: null,
   fileProvider: null,
   fileVectors: null,
+  embeddedVectorChannels: null,
+  activeEmbeddedVectorChannel: null,
   nodeSnapshots: {} as Record<string, NodeSnapshotData>,
   nodeParseErrors: {} as Record<string, string>,
   nodeStreamingData: {} as Record<string, NodeStreamingData>,
@@ -176,6 +189,8 @@ const pipelineStateCreator: StateCreator<PipelineStore> = (set, get, api) => ({
   fileMeta: null,
   fileProvider: null,
   fileVectors: null,
+  embeddedVectorChannels: null,
+  activeEmbeddedVectorChannel: null,
   nodeSnapshots: {},
   nodeParseErrors: {},
   nodeStreamingData: {},
@@ -218,6 +233,31 @@ const pipelineStateCreator: StateCreator<PipelineStore> = (set, get, api) => ({
   },
   setFileVectors: (vectors) => {
     set({ fileVectors: vectors });
+    get().execute();
+  },
+  setEmbeddedVectorChannels: (channels) => {
+    const active = get().activeEmbeddedVectorChannel;
+    if (active === null) {
+      set({ embeddedVectorChannels: channels });
+      return;
+    }
+    // An activated channel follows its source data: refresh the overlay when
+    // the channel still exists (e.g. lazy decode streamed in more frames),
+    // deactivate it when the new file no longer carries it.
+    const match = channels?.find((c) => c.name === active) ?? null;
+    set({
+      embeddedVectorChannels: channels,
+      activeEmbeddedVectorChannel: match ? active : null,
+      fileVectors: match ? match.frames : null,
+    });
+    get().execute();
+  },
+  activateEmbeddedVectorChannel: (name) => {
+    const match = name === null ? null : (get().embeddedVectorChannels?.find((c) => c.name === name) ?? null);
+    set({
+      activeEmbeddedVectorChannel: match ? name : null,
+      fileVectors: match ? match.frames : null,
+    });
     get().execute();
   },
 

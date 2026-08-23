@@ -505,8 +505,10 @@ export function useMeganeLocal(): MeganeLocalState {
       provider.setOnFrameReady((f) => usePlaybackStore.getState()._onAsyncFrame(f));
 
       // Stream embedded vector channels (LAMMPS velocity/force) as frames
-      // decode. The overlay uses the first channel (matching the eager path);
-      // updates are batched so we don't re-run the pipeline per frame.
+      // decode, OFFERING them to the load_vector node UI (the first channel,
+      // matching the eager path). The overlay renders only once the user
+      // activates the channel there; updates are batched so we don't re-run
+      // the pipeline per frame.
       const channelNames = handle.index.vectorChannelNames;
       if (channelNames.length > 0) {
         const stride = nAtoms * 3;
@@ -519,7 +521,9 @@ export function useMeganeLocal(): MeganeLocalState {
           const frames = [...accumulated.entries()]
             .sort((a, b) => a[0] - b[0])
             .map(([frame, vectors]) => ({ frame, vectors }));
-          usePipelineStore.getState().setFileVectors(frames);
+          usePipelineStore
+            .getState()
+            .setEmbeddedVectorChannels([{ name: channelNames[0], frames }]);
         };
         provider.setOnVectors((frameId, vectors) => {
           accumulated.set(frameId, vectors.slice(0, stride));
@@ -547,14 +551,6 @@ export function useMeganeLocal(): MeganeLocalState {
       const trajNode = store.nodes.find((n) => n.type === "load_trajectory");
       if (trajNode) {
         store.updateNodeParams(trajNode.id, { fileName });
-      }
-      // Surface the embedded vector channel name on load_vector nodes.
-      if (channelNames.length > 0) {
-        for (const n of store.nodes) {
-          if (n.type === "load_vector") {
-            store.updateNodeParams(n.id, { fileName: `[embedded] ${channelNames[0]}` });
-          }
-        }
       }
     },
     [resetPlayback],
@@ -586,12 +582,14 @@ export function useMeganeLocal(): MeganeLocalState {
             : isNetcdf
               ? parseNetCDFFile
               : parseXTCFile;
-        const { frames, meta: xtcMeta, vectorChannels } = await parseFn(xtc, nAtoms);
+        const { frames: parsedFrames, meta: xtcMeta, vectorChannels } = await parseFn(xtc, nAtoms);
         // A variable-atom LAMMPS dump emits raw integer type ids as each frame's
         // elements; map them to real atomic numbers via the loaded structure.
-        if (xtcMeta?.variesTopology && baseSnapshotRef.current) {
-          remapTrajectoryTypesToElements(frames, baseSnapshotRef.current.elements);
-        }
+        // The remap returns new frames — the parser output itself stays as-read.
+        const frames =
+          xtcMeta?.variesTopology && baseSnapshotRef.current
+            ? remapTrajectoryTypesToElements(parsedFrames, baseSnapshotRef.current.elements)
+            : parsedFrames;
         fileFramesRef.current = frames;
         fileTrajMetaRef.current = xtcMeta;
         xtcFileNameRef.current = xtc.name;
@@ -613,17 +611,14 @@ export function useMeganeLocal(): MeganeLocalState {
           store.updateNodeParams(trajNode.id, { fileName: xtc.name });
         }
 
-        // Auto-load first embedded vector channel (e.g. LAMMPS dump vx/vy/vz) into pipeline.
-        if (vectorChannels.length > 0) {
-          const ch = vectorChannels[0];
-          store.setFileVectors(ch.frames);
-          // Update all load_vector nodes so the UI shows the channel name.
-          for (const n of store.nodes) {
-            if (n.type === "load_vector") {
-              store.updateNodeParams(n.id, { fileName: `[embedded] ${ch.name}` });
-            }
-          }
-        }
+        // Offer embedded vector channels (e.g. LAMMPS dump vx/vy/vz) to the
+        // load_vector node UI; the user activates one there. A parse must not
+        // switch a visual overlay on as a side effect.
+        store.setEmbeddedVectorChannels(
+          vectorChannels.length > 0
+            ? vectorChannels.map((ch) => ({ name: ch.name, frames: ch.frames }))
+            : null,
+        );
       };
 
       // Lazy/streaming path (large XTC or LAMMPS dump, worker-gated). Two phases,

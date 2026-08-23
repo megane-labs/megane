@@ -385,3 +385,55 @@ describe("usePipelineStore", () => {
     });
   });
 });
+
+describe("embedded vector channels (offer / opt-in)", () => {
+  const frames = [{ frame: 0, vectors: Float32Array.from([1, 2, 3]) }];
+
+  it("offering channels does not feed the overlay", () => {
+    usePipelineStore.setState({
+      embeddedVectorChannels: null,
+      activeEmbeddedVectorChannel: null,
+      fileVectors: null,
+    });
+    usePipelineStore.getState().setEmbeddedVectorChannels([{ name: "velocity", frames }]);
+    const state = usePipelineStore.getState();
+    expect(state.embeddedVectorChannels).toHaveLength(1);
+    expect(state.fileVectors).toBeNull();
+    expect(state.activeEmbeddedVectorChannel).toBeNull();
+  });
+
+  it("activation feeds fileVectors; unknown names deactivate", () => {
+    usePipelineStore.setState({
+      embeddedVectorChannels: [{ name: "velocity", frames }],
+      activeEmbeddedVectorChannel: null,
+      fileVectors: null,
+    });
+    usePipelineStore.getState().activateEmbeddedVectorChannel("velocity");
+    expect(usePipelineStore.getState().fileVectors).toBe(frames);
+    usePipelineStore.getState().activateEmbeddedVectorChannel("nope");
+    expect(usePipelineStore.getState().fileVectors).toBeNull();
+    expect(usePipelineStore.getState().activeEmbeddedVectorChannel).toBeNull();
+  });
+
+  it("re-offering refreshes an active channel and drops a vanished one", () => {
+    usePipelineStore.setState({
+      embeddedVectorChannels: [{ name: "velocity", frames }],
+      activeEmbeddedVectorChannel: null,
+      fileVectors: null,
+    });
+    usePipelineStore.getState().activateEmbeddedVectorChannel("velocity");
+    const newFrames = [
+      { frame: 0, vectors: Float32Array.from([1, 2, 3]) },
+      { frame: 1, vectors: Float32Array.from([4, 5, 6]) },
+    ];
+    // Same channel streamed in more frames: the active overlay follows.
+    usePipelineStore.getState().setEmbeddedVectorChannels([{ name: "velocity", frames: newFrames }]);
+    expect(usePipelineStore.getState().fileVectors).toBe(newFrames);
+    // A new file without the channel deactivates it.
+    usePipelineStore.getState().setEmbeddedVectorChannels(null);
+    const state = usePipelineStore.getState();
+    expect(state.fileVectors).toBeNull();
+    expect(state.activeEmbeddedVectorChannel).toBeNull();
+    expect(state.embeddedVectorChannels).toBeNull();
+  });
+});
