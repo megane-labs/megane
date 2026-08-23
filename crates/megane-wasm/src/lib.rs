@@ -39,6 +39,45 @@ fn serialize_vector_channels(
     (meta, data)
 }
 
+/// Serialize a slice of `ScalarChannel`s the same way as vector channels:
+/// a JSON metadata string plus one flat `Vec<f32>` of per-channel, per-frame
+/// values (`n_atoms` f32 per frame). Channel names come from file content, so
+/// they are JSON-escaped.
+fn serialize_scalar_channels(
+    channels: &[megane_core::trajectory::ScalarChannel],
+) -> (String, Vec<f32>) {
+    use std::fmt::Write as FmtWrite;
+
+    let mut meta = String::from("[");
+    let mut data: Vec<f32> = Vec::new();
+
+    for (idx, ch) in channels.iter().enumerate() {
+        if idx > 0 {
+            meta.push(',');
+        }
+        let escaped: String = ch
+            .name
+            .chars()
+            .flat_map(|c| match c {
+                '"' | '\\' => vec!['\\', c],
+                _ => vec![c],
+            })
+            .collect();
+        let _ = write!(
+            meta,
+            r#"{{"name":"{}", "n_frames":{}}}"#,
+            escaped,
+            ch.frames.len()
+        );
+        for frame in &ch.frames {
+            data.extend_from_slice(&frame.values);
+        }
+    }
+    meta.push(']');
+
+    (meta, data)
+}
+
 /// Result of parsing a PDB file, exposed to JavaScript via wasm-bindgen.
 #[wasm_bindgen]
 pub struct ParseResult {
@@ -63,6 +102,11 @@ pub struct ParseResult {
     vector_channel_count: u32,
     vector_channel_meta: String,
     vector_channel_data: Vec<f32>,
+    scalar_channel_count: u32,
+    scalar_channel_meta: String,
+    scalar_channel_data: Vec<f32>,
+    // Non-fatal parse warnings, newline-delimited (empty for a clean parse).
+    warnings: String,
     // Cα backbone data for cartoon rendering
     ca_indices: Vec<u32>,
     ca_chain_ids: Vec<u8>,
@@ -151,6 +195,33 @@ impl ParseResult {
     #[wasm_bindgen(getter)]
     pub fn vector_channel_meta(&self) -> String {
         self.vector_channel_meta.clone()
+    }
+
+    /// Number of embedded per-atom scalar channels (0 when none).
+    #[wasm_bindgen(getter)]
+    pub fn scalar_channel_count(&self) -> u32 {
+        self.scalar_channel_count
+    }
+
+    /// JSON array describing each scalar channel:
+    /// `[{"name":"charge","n_frames":1}, ...]`
+    #[wasm_bindgen(getter)]
+    pub fn scalar_channel_meta(&self) -> String {
+        self.scalar_channel_meta.clone()
+    }
+
+    /// All scalar channel data concatenated as Float32Array.
+    /// Layout: channel0_frame0, channel0_frame1, …, channel1_frame0, …
+    /// Each frame is n_atoms floats.
+    pub fn scalar_channel_data(&self) -> Float32Array {
+        Float32Array::from(&self.scalar_channel_data[..])
+    }
+
+    /// Non-fatal parse warnings as a newline-delimited string.
+    /// Empty for a clean parse.
+    #[wasm_bindgen(getter)]
+    pub fn warnings(&self) -> String {
+        self.warnings.clone()
     }
 
     /// Atom positions as Float32Array [x0,y0,z0, x1,y1,z1, ...]
@@ -378,6 +449,9 @@ impl ParseResult {
         let vector_channel_count = data.vector_channels.len() as u32;
         let (vector_channel_meta, vector_channel_data) =
             serialize_vector_channels(&data.vector_channels);
+        let scalar_channel_count = data.scalar_channels.len() as u32;
+        let (scalar_channel_meta, scalar_channel_data) =
+            serialize_scalar_channels(&data.scalar_channels);
 
         Self {
             n_atoms: data.n_atoms as u32,
@@ -401,6 +475,10 @@ impl ParseResult {
             vector_channel_count,
             vector_channel_meta,
             vector_channel_data,
+            scalar_channel_count,
+            scalar_channel_meta,
+            scalar_channel_data,
+            warnings: data.warnings.join("\n"),
             ca_indices: data.ca_indices,
             ca_chain_ids: data.ca_chain_ids,
             ca_res_nums: data.ca_res_nums,
@@ -1010,6 +1088,9 @@ pub struct SpectrumResult {
     #[wasm_bindgen(getter_with_clone)]
     pub y_units: String,
     pub n_points: usize,
+    /// Non-fatal parse warnings, newline-delimited (empty for a clean parse).
+    #[wasm_bindgen(getter_with_clone)]
+    pub warnings: String,
     x: Vec<f64>,
     y: Vec<f64>,
 }
@@ -1039,6 +1120,7 @@ pub fn parse_jcampdx(text: &str) -> Result<SpectrumResult, JsError> {
         x_units: s.x_units,
         y_units: s.y_units,
         n_points: s.x.len(),
+        warnings: s.warnings.join("\n"),
         x: s.x,
         y: s.y,
     })

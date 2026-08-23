@@ -10,7 +10,7 @@
 ///   offset 12 – 15 : NSAVC (save frequency)
 ///   offset 16 – 19 : NSTEP
 ///   offset 20 – 35 : four unused int32 zeros
-///   offset 36 – 39 : NFREAT
+///   offset 36 – 39 : NAMNF (number of fixed atoms)
 ///   offset 40 – 47 : DELTA  (float32 + 4 b padding for CHARMM;
 ///                             float64 for X-PLOR)
 ///   offset 44 – 47 : HAS_CELL (CHARMM only, overlaps DELTA padding)
@@ -135,6 +135,41 @@ impl<'a> DcdReader<'a> {
     }
 }
 
+// ── cell helpers ─────────────────────────────────────────────────────────────
+
+/// Decode the three angle slots of a DCD unit-cell record into degrees.
+///
+/// NAMD writes angle **cosines** (all in [-1, 1]) while CHARMM writes angles in
+/// **degrees**; a slot value of 0.0 means 90° under either convention.
+fn dcd_cell_angles(alpha_raw: f64, beta_raw: f64, gamma_raw: f64) -> (f32, f32, f32) {
+    let is_cosine = [alpha_raw, beta_raw, gamma_raw]
+        .iter()
+        .all(|v| (-1.0..=1.0).contains(v));
+    let to_deg = |v: f64| -> f32 {
+        if !is_cosine {
+            v as f32
+        } else if v == 0.0 {
+            90.0
+        } else {
+            v.acos().to_degrees() as f32
+        }
+    };
+    (to_deg(alpha_raw), to_deg(beta_raw), to_deg(gamma_raw))
+}
+
+/// Build a 3×3 cell matrix from lengths (Å) and angles (degrees).
+///
+/// Right angles take the exact diagonal path so orthorhombic cells are free of
+/// f32 trigonometric noise.
+fn cell_matrix(a: f32, b: f32, c: f32, alpha: f32, beta: f32, gamma: f32) -> [f32; 9] {
+    let right = |ang: f32| (ang - 90.0).abs() < 1e-3;
+    if right(alpha) && right(beta) && right(gamma) {
+        [a, 0.0, 0.0, 0.0, b, 0.0, 0.0, 0.0, c]
+    } else {
+        crate::parser::cell_params_to_matrix(a, b, c, alpha, beta, gamma)
+    }
+}
+
 // ── public API ───────────────────────────────────────────────────────────────
 
 /// Parse a DCD binary trajectory and return all frames.
@@ -180,6 +215,15 @@ pub fn parse_dcd(data: &[u8]) -> Result<DcdData, String> {
 
     let nset = read_i32(4).max(0) as usize;
     let nsavc = read_i32(12).max(1) as usize;
+
+    // NAMNF (icntrl[8]): number of fixed atoms. Fixed-atom DCDs store only the
+    // free atoms after the first frame, which this parser does not decode.
+    let namnf = read_i32(36);
+    if namnf != 0 {
+        return Err(format!(
+            "fixed-atom DCD files (NAMNF={namnf}) are not supported"
+        ));
+    }
 
     // CHARMM_VERSION is the last int32 of the 84-byte block.
     let charmm_version = read_i32(80);
@@ -255,25 +299,18 @@ pub fn parse_dcd(data: &[u8]) -> Result<DcdData, String> {
             }
             match reader.read_record() {
                 Ok(cell) if cell.len() == 48 => {
-                    // CHARMM order: A, gamma, B, beta, alpha, C (Angstroms / degrees)
-                    let (a, b, c) = if le {
-                        (
-                            read_f64_le(cell, 0) as f32,
-                            read_f64_le(cell, 16) as f32,
-                            read_f64_le(cell, 40) as f32,
-                        )
-                    } else {
-                        (
-                            read_f64_be(cell, 0) as f32,
-                            read_f64_be(cell, 16) as f32,
-                            read_f64_be(cell, 40) as f32,
-                        )
+                    // CHARMM XTL order: A, gamma, B, beta, alpha, C. Lengths are
+                    // Angstroms; angle slots hold cosines (NAMD) or degrees (CHARMM).
+                    let f = |off: usize| {
+                        if le {
+                            read_f64_le(cell, off)
+                        } else {
+                            read_f64_be(cell, off)
+                        }
                     };
-                    let mut m = [0f32; 9];
-                    m[0] = a;
-                    m[4] = b;
-                    m[8] = c;
-                    cur_box = Some(m);
+                    let (a, b, c) = (f(0) as f32, f(16) as f32, f(40) as f32);
+                    let (alpha, beta, gamma) = dcd_cell_angles(f(32), f(24), f(8));
+                    cur_box = Some(cell_matrix(a, b, c, alpha, beta, gamma));
                 }
                 Ok(_) => {}
                 Err(_) => break,
@@ -507,12 +544,18 @@ mod tests {
         write_record(out, &buf, le);
     }
 
-    fn write_cell(out: &mut Vec<u8>, a: f64, b: f64, c: f64, le: bool) {
+    /// Write a unit-cell record in raw CHARMM XTL slot order
+    /// `[A, gamma, B, beta, alpha, C]`.
+    fn write_cell_raw(out: &mut Vec<u8>, slots: [f64; 6], le: bool) {
         let mut buf = Vec::with_capacity(48);
-        for v in &[a, 90.0_f64, b, 90.0_f64, 90.0_f64, c] {
+        for v in &slots {
             buf.extend_from_slice(&if le { v.to_le_bytes() } else { v.to_be_bytes() });
         }
         write_record(out, &buf, le);
+    }
+
+    fn write_cell(out: &mut Vec<u8>, a: f64, b: f64, c: f64, le: bool) {
+        write_cell_raw(out, [a, 90.0, b, 90.0, 90.0, c], le);
     }
 
     /// Produce a single-frame DCD blob.
@@ -724,5 +767,130 @@ mod tests {
         let r = parse_dcd(&out).expect("VELD magic");
         assert_eq!(r.n_atoms, 2);
         assert_eq!(r.n_frames, 1);
+    }
+
+    /// Produce a single-frame CHARMM DCD whose cell record carries the given
+    /// raw slots `[A, gamma, B, beta, alpha, C]`.
+    fn build_single_frame_raw_cell(le: bool, slots: [f64; 6]) -> Vec<u8> {
+        let mut out = Vec::new();
+        write_record(&mut out, &build_header(le, 24, true, 1), le);
+        let mut title = vec![0u8; 84];
+        title[0..4].copy_from_slice(&if le {
+            1i32.to_le_bytes()
+        } else {
+            1i32.to_be_bytes()
+        });
+        write_record(&mut out, &title, le);
+        write_natom(&mut out, 2, le);
+        write_cell_raw(&mut out, slots, le);
+        write_coord(&mut out, &[0.0, 1.0], le);
+        write_coord(&mut out, &[2.0, 3.0], le);
+        write_coord(&mut out, &[4.0, 5.0], le);
+        out
+    }
+
+    #[test]
+    fn test_triclinic_cosine_convention_cell() {
+        // NAMD writes angle cosines: gamma = 120° → cos = -0.5, alpha = beta = 90° → 0.0.
+        let blob = build_single_frame_raw_cell(true, [10.0, -0.5, 11.0, 0.0, 0.0, 12.0]);
+        let r = parse_dcd(&blob).expect("cosine-convention DCD");
+        let bx = r.box_matrix.expect("cell present");
+        let expect = crate::parser::cell_params_to_matrix(10.0, 11.0, 12.0, 90.0, 90.0, 120.0);
+        for i in 0..9 {
+            assert!(
+                (bx[i] - expect[i]).abs() < 1e-3,
+                "m[{i}] = {} expected {}",
+                bx[i],
+                expect[i]
+            );
+        }
+        // b-vector tilts by cos(120°) = -0.5 along x.
+        assert!((bx[3] + 5.5).abs() < 1e-3, "b·x = {}", bx[3]);
+        assert!(
+            (bx[4] - 11.0 * 0.75f32.sqrt()).abs() < 1e-3,
+            "b·y = {}",
+            bx[4]
+        );
+    }
+
+    #[test]
+    fn test_triclinic_degree_convention_cell() {
+        // CHARMM writes angles in degrees directly.
+        let blob = build_single_frame_raw_cell(true, [10.0, 120.0, 11.0, 90.0, 90.0, 12.0]);
+        let r = parse_dcd(&blob).expect("degree-convention DCD");
+        let bx = r.box_matrix.expect("cell present");
+        let expect = crate::parser::cell_params_to_matrix(10.0, 11.0, 12.0, 90.0, 90.0, 120.0);
+        for i in 0..9 {
+            assert!(
+                (bx[i] - expect[i]).abs() < 1e-3,
+                "m[{i}] = {} expected {}",
+                bx[i],
+                expect[i]
+            );
+        }
+    }
+
+    #[test]
+    fn test_orthorhombic_cell_stays_exact_diagonal() {
+        // 90° angles (degree convention) must yield the exact diagonal matrix
+        // the old lengths-only path produced.
+        let blob = build_single_frame_raw_cell(true, [12.0, 90.0, 13.0, 90.0, 90.0, 14.0]);
+        let r = parse_dcd(&blob).expect("orthorhombic degree DCD");
+        let bx = r.box_matrix.expect("cell present");
+        assert_eq!(bx, [12.0, 0.0, 0.0, 0.0, 13.0, 0.0, 0.0, 0.0, 14.0]);
+
+        // Cosine convention: 0.0 slots mean 90° and must give the same matrix.
+        let blob = build_single_frame_raw_cell(true, [12.0, 0.0, 13.0, 0.0, 0.0, 14.0]);
+        let r = parse_dcd(&blob).expect("orthorhombic cosine DCD");
+        assert_eq!(
+            r.box_matrix.unwrap(),
+            [12.0, 0.0, 0.0, 0.0, 13.0, 0.0, 0.0, 0.0, 14.0]
+        );
+    }
+
+    #[test]
+    fn test_per_frame_triclinic_cells_in_side_table() {
+        // Frame 0 orthorhombic, frame 1 triclinic → hetero side table carries
+        // the full (angled) matrix for each frame.
+        let mut out = Vec::new();
+        write_record(&mut out, &build_header(true, 24, true, 2), true);
+        let mut title = vec![0u8; 84];
+        title[0..4].copy_from_slice(&1i32.to_le_bytes());
+        write_record(&mut out, &title, true);
+        write_natom(&mut out, 2, true);
+        write_cell_raw(&mut out, [10.0, 90.0, 10.0, 90.0, 90.0, 10.0], true);
+        write_coord(&mut out, &[0.0, 1.0], true);
+        write_coord(&mut out, &[2.0, 3.0], true);
+        write_coord(&mut out, &[4.0, 5.0], true);
+        write_cell_raw(&mut out, [10.0, 120.0, 10.0, 90.0, 90.0, 10.0], true);
+        write_coord(&mut out, &[0.5, 1.5], true);
+        write_coord(&mut out, &[2.5, 3.5], true);
+        write_coord(&mut out, &[4.5, 5.5], true);
+
+        let r = parse_dcd(&out).expect("mixed-cell DCD");
+        assert_eq!(r.n_frames, 2);
+        let h = r.hetero.as_ref().expect("cell side table");
+        assert!(h.varies_cell);
+        let f1 = r.frame_cell(1).expect("frame 1 cell");
+        assert!((f1[3] + 5.0).abs() < 1e-3, "frame1 b·x = {}", f1[3]);
+    }
+
+    #[test]
+    fn test_fixed_atom_dcd_rejected() {
+        let mut hdr = build_header(true, 24, false, 1);
+        // NAMNF (icntrl[8]) lives at offset 36 of the header block.
+        hdr[36..40].copy_from_slice(&2i32.to_le_bytes());
+        let mut out = Vec::new();
+        write_record(&mut out, &hdr, true);
+        let mut title = vec![0u8; 84];
+        title[0..4].copy_from_slice(&1i32.to_le_bytes());
+        write_record(&mut out, &title, true);
+        write_natom(&mut out, 2, true);
+        write_coord(&mut out, &[0.0, 1.0], true);
+        write_coord(&mut out, &[2.0, 3.0], true);
+        write_coord(&mut out, &[4.0, 5.0], true);
+        let err = parse_dcd(&out).err().expect("expected error");
+        assert!(err.contains("NAMNF=2"), "got: {err}");
+        assert!(err.contains("not supported"), "got: {err}");
     }
 }

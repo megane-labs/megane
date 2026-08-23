@@ -6,7 +6,6 @@ use std::collections::HashSet;
 
 use crate::atomic::{capitalize, symbol_to_atomic_num};
 use crate::bonds;
-use crate::crystal;
 use crate::parser::{cell_params_to_matrix, ParsedStructure};
 
 /// Strip trailing parenthesized uncertainty from a CIF numeric value.
@@ -473,24 +472,12 @@ pub fn parse(text: &str) -> Result<ParsedStructure, String> {
         None
     };
 
-    // Apply space-group symmetry to fill the unit cell (VESTA-style packing).
-    // A CIF lists only the asymmetric unit; expansion is the standard way to
-    // recover the full cell. No-op for CIFs without (non-identity) operations.
+    // A CIF lists only the asymmetric unit. The space-group operations are
+    // captured verbatim and returned in `symmetry_ops`; filling the unit cell
+    // (VESTA-style packing) is the `symmetry` pipeline node's job, so the user
+    // can see and toggle the expansion instead of it being baked in at parse
+    // time.
     let symmetry_ops = extract_symmetry_ops(text);
-    let (positions, elements, bonds, labels) = match box_matrix.as_ref().and_then(|bm| {
-        crystal::expand_symmetry(
-            &positions,
-            &elements,
-            &bonds,
-            labels.as_deref(),
-            bm,
-            &symmetry_ops,
-        )
-    }) {
-        Some((p, e, b, l)) => (p, e, b, l),
-        None => (positions, elements, bonds, labels),
-    };
-    let n_atoms = elements.len();
 
     Ok(ParsedStructure {
         n_atoms,
@@ -511,6 +498,8 @@ pub fn parse(text: &str) -> Result<ParsedStructure, String> {
         ca_res_nums: vec![],
         ca_ss_type: vec![],
         symmetry_ops,
+        scalar_channels: Vec::new(),
+        warnings: Vec::new(),
         hetero: None,
     })
 }
@@ -711,10 +700,11 @@ _atom_site_fract_z
 O1 O 0.7229 0.8423 0.8321
 "#;
         let result = parse(cif).expect("parse failed");
-        // The single asymmetric-unit atom is expanded by the 4 P2_1/a
-        // operations into 4 symmetry-equivalent atoms filling the cell.
-        assert_eq!(result.n_atoms, 4);
+        // The parser returns the asymmetric unit as-is; the 4 P2_1/a
+        // operations are surfaced for the `symmetry` pipeline node to apply.
+        assert_eq!(result.n_atoms, 1);
         assert_eq!(result.symmetry_ops.len(), 4);
+        assert_eq!(result.symmetry_ops[0], "x,y,z");
         assert_eq!(result.symmetry_ops[2], "-x+1/2,y+1/2,-z");
     }
 
@@ -911,9 +901,11 @@ Cl1 Cl 0.5 0.5 0.5
         ))
         .expect("read fixture");
         let result = parse(&text).expect("parse failed");
-        // The 10-atom asymmetric unit is symmetry-expanded by the 4 space-group
-        // operations into a full unit cell of 4 glycine molecules (40 atoms).
-        assert_eq!(result.n_atoms, 40);
+        // The parser returns the 10-atom asymmetric unit untouched; the 4
+        // space-group operations that fill the unit cell (4 glycine molecules,
+        // 40 atoms) are surfaced for the `symmetry` pipeline node to apply.
+        assert_eq!(result.n_atoms, 10);
+        assert_eq!(result.symmetry_ops.len(), 4);
         assert!(result.elements.contains(&1)); // H
         assert!(result.elements.contains(&6)); // C
         assert!(result.elements.contains(&7)); // N
@@ -924,14 +916,13 @@ Cl1 Cl 0.5 0.5 0.5
         let n_c = result.elements.iter().filter(|&&e| e == 6).count();
         let n_n = result.elements.iter().filter(|&&e| e == 7).count();
         let n_h = result.elements.iter().filter(|&&e| e == 1).count();
-        assert_eq!(n_o, 8);
-        assert_eq!(n_c, 8);
-        assert_eq!(n_n, 4);
-        assert_eq!(n_h, 20);
+        assert_eq!(n_o, 2);
+        assert_eq!(n_c, 2);
+        assert_eq!(n_n, 1);
+        assert_eq!(n_h, 5);
         // First atom O1 fract=(0.30478, 0.09443, 0.23515) → Cartesian non-zero
         assert!(result.positions[0].abs() > 0.1);
-        // Labels are tiled across symmetry images; the first image preserves the
-        // original asymmetric-unit labels.
+        // The asymmetric-unit labels come back exactly as the file lists them.
         let labels = result.atom_labels.as_ref().expect("labels");
         assert_eq!(labels[0], "O1");
         assert_eq!(labels[9], "H10");

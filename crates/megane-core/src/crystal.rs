@@ -12,6 +12,12 @@
 //! This is symmetry expansion only (asymmetric unit → full cell). Translational
 //! `na × nb × nc` replication (a true supercell) is a separate, downstream
 //! operation handled by the Supercell pipeline node.
+//!
+//! NOTE: the browser-side `symmetry` pipeline node executor
+//! (`src/pipeline/executors/symmetry.ts`) is a TypeScript port of this
+//! algorithm — parsing, identity detection, centroid wrapping, image
+//! deduplication (`image_key`), and bond replication must stay in sync between
+//! the two implementations.
 
 use std::collections::HashSet;
 

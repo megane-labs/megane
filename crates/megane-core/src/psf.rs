@@ -7,7 +7,7 @@
 /// Supported variants: standard PSF, extended PSF (PSF EXT), XPLOR PSF.
 /// Unsupported sections (NTHETA, NPHI, NIMPHI, NDON, NACC, NNB, NGRP, NCRTERM)
 /// are silently skipped.
-use crate::atomic::symbol_to_atomic_num;
+use crate::atomic::{mass_to_atomic_num, symbol_to_atomic_num};
 use crate::parser::ParsedStructure;
 use std::collections::HashSet;
 
@@ -40,7 +40,18 @@ fn parse_atom_line(line: &str) -> Option<PsfAtom> {
     let res_id: u32 = parts.next()?.parse().ok()?;
     let res_name = parts.next()?.to_string();
     let atom_name = parts.next()?.to_string();
-    let element = element_from_atom_name(&atom_name);
+    let _atom_type = parts.next();
+    let _charge = parts.next();
+    let mass: Option<f32> = parts.next().and_then(|s| s.parse().ok());
+    // The mass column is the most authoritative element field a PSF carries
+    // (atom names like "CL"/"FE"/"ZN" are ambiguous under first-letter
+    // guessing). Fall back to the atom-name guess only when the mass is
+    // missing, non-positive, or matches no known element.
+    let element = mass
+        .filter(|&m| m > 0.0)
+        .map(mass_to_atomic_num)
+        .filter(|&z| z != 0)
+        .unwrap_or_else(|| element_from_atom_name(&atom_name));
     Some(PsfAtom {
         segment,
         res_id,
@@ -207,6 +218,8 @@ pub fn parse_psf(text: &str) -> Result<ParsedStructure, String> {
         ca_res_nums: Vec::new(),
         ca_ss_type: Vec::new(),
         symmetry_ops: Vec::new(),
+        scalar_channels: Vec::new(),
+        warnings: Vec::new(),
         hetero: None,
     })
 }
@@ -482,6 +495,70 @@ PSF
         assert_eq!(element_from_atom_name("OH2"), 8);
         assert_eq!(element_from_atom_name("S"), 16);
         assert_eq!(element_from_atom_name("P"), 15);
+    }
+
+    #[test]
+    fn test_element_from_mass_overrides_name_guess() {
+        // CL/FE/ZN atom names would be mis-guessed as C/F/N by the first-letter
+        // rule; the mass column the file carries must win (Cl=17, Fe=26, Zn=30).
+        let text = "\
+PSF
+
+       1 !NTITLE
+ REMARKS ions
+
+       3 !NATOM
+         1 ION      1 CLA  CL   CLA   -1.000000       35.4530           0
+         2 ION      2 FE2  FE   FE2    2.000000       55.8450           0
+         3 ION      3 ZN2  ZN   ZN2    2.000000       65.3800           0
+
+       0 !NBOND: bonds
+";
+        let data = parse_psf(text).expect("parse failed");
+        assert_eq!(data.elements[0], 17); // Cl, not C
+        assert_eq!(data.elements[1], 26); // Fe, not F
+        assert_eq!(data.elements[2], 30); // Zn, not N
+    }
+
+    #[test]
+    fn test_element_falls_back_to_name_when_mass_missing() {
+        // No charge/mass columns at all: resolve from the atom name.
+        let text = "\
+PSF
+
+       1 !NTITLE
+ REMARKS truncated atom lines
+
+       2 !NATOM
+         1 WAT      1 TIP3 OH2  OT
+         2 WAT      1 TIP3 H1   HT
+
+       0 !NBOND: bonds
+";
+        let data = parse_psf(text).expect("parse failed");
+        assert_eq!(data.elements[0], 8); // O from "OH2"
+        assert_eq!(data.elements[1], 1); // H from "H1"
+    }
+
+    #[test]
+    fn test_element_falls_back_to_name_when_mass_zero_or_unknown() {
+        // Zero mass (e.g. a massless site) and a mass matching no element
+        // must both fall back to the atom-name guess.
+        let text = "\
+PSF
+
+       1 !NTITLE
+ REMARKS zero and bogus masses
+
+       2 !NATOM
+         1 WAT      1 TIP3 OH2  OT    -0.834000        0.0000           0
+         2 WAT      1 TIP3 H1   HT     0.417000      999.0000           0
+
+       0 !NBOND: bonds
+";
+        let data = parse_psf(text).expect("parse failed");
+        assert_eq!(data.elements[0], 8); // O from "OH2" (mass 0.0 rejected)
+        assert_eq!(data.elements[1], 1); // H from "H1" (mass 999.0 unmatched)
     }
 
     #[test]

@@ -59,6 +59,9 @@ pub struct Spectrum {
     pub y_units: String,
     pub x: Vec<f64>,
     pub y: Vec<f64>,
+    /// Non-fatal parse warnings (e.g. compound-file blocks the single-spectrum
+    /// plot surface cannot show). Empty for a clean parse.
+    pub warnings: Vec<String>,
 }
 
 /// Split a `##KEY= value` header line. Keys are compared with JCAMP's rule:
@@ -328,12 +331,27 @@ pub fn parse(text: &str) -> Result<Spectrum, String> {
             .any(|l| matches!(header(l), Some((k, _)) if k == "BLOCKS"));
 
     if is_compound {
+        // The plot surface shows one spectrum, so all blocks beyond the
+        // winning one are skipped — surfaced as one aggregated warning
+        // rather than silently discarded.
+        let n_blocks = title_idx.len() - 1;
+        let skipped_warning = |spec: &mut Spectrum| {
+            if n_blocks > 1 {
+                spec.warnings.push(format!(
+                    "compound file contains {} additional spectrum block(s); only the first readable spectrum is shown",
+                    n_blocks - 1
+                ));
+            }
+        };
         let mut first_peaks: Option<Spectrum> = None;
         let mut first_err: Option<String> = None;
         for (k, &start) in title_idx.iter().enumerate().skip(1) {
             let end = title_idx.get(k + 1).copied().unwrap_or(lines.len());
             match parse_block(&lines[start..end]) {
-                Ok((spec, TableKind::Spectrum)) => return Ok(spec),
+                Ok((mut spec, TableKind::Spectrum)) => {
+                    skipped_warning(&mut spec);
+                    return Ok(spec);
+                }
                 Ok((spec, TableKind::Peaks)) => {
                     if first_peaks.is_none() {
                         first_peaks = Some(spec);
@@ -346,7 +364,8 @@ pub fn parse(text: &str) -> Result<Spectrum, String> {
                 }
             }
         }
-        if let Some(spec) = first_peaks {
+        if let Some(mut spec) = first_peaks {
+            skipped_warning(&mut spec);
             return Ok(spec);
         }
         return Err(first_err
@@ -805,6 +824,30 @@ mod tests {
         // Block 1's YFACTOR, not the link block's or block 2's.
         assert_eq!(s.y, vec![2.0, 4.0, 6.0]);
         assert_eq!(s.x, vec![0.0, 1.0, 2.0]);
+        // The skipped second block is surfaced, not silently discarded.
+        assert_eq!(
+            s.warnings,
+            vec![
+                "compound file contains 1 additional spectrum block(s); only the first readable spectrum is shown"
+                    .to_string()
+            ]
+        );
+    }
+
+    #[test]
+    fn a_single_spectrum_file_has_no_block_warning() {
+        let text = "\
+##TITLE=Lone spectrum
+##JCAMP-DX=4.24
+##XFACTOR=1.0
+##YFACTOR=1.0
+##DELTAX=1.0
+##XYDATA=(X++(Y..Y))
+0 1 2 3
+##END=
+";
+        let s = parse(text).unwrap();
+        assert!(s.warnings.is_empty());
     }
 
     /// Blocks with no data table (structure/assignment blocks in Bruker

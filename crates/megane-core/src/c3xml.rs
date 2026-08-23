@@ -89,6 +89,8 @@ pub fn parse(text: &str) -> Result<ParsedStructure, String> {
     let mut raw_bonds: Vec<(String, String, u8)> = Vec::new();
     let mut any_3d = false;
     let mut saw_root = false;
+    let mut warnings: Vec<String> = Vec::new();
+    let mut nodes_without_coords = 0usize;
 
     loop {
         let ev = reader.read_event().map_err(|e| {
@@ -114,6 +116,7 @@ pub fn parse(text: &str) -> Result<ParsedStructure, String> {
                             } else if v.len() == 2 {
                                 ([v[0], v[1], 0.0], false)
                             } else {
+                                nodes_without_coords += 1;
                                 continue;
                             }
                         } else if let Some(p) = map.get("p") {
@@ -122,10 +125,13 @@ pub fn parse(text: &str) -> Result<ParsedStructure, String> {
                             if v.len() >= 2 {
                                 ([v[0], v[1], 0.0], false)
                             } else {
+                                nodes_without_coords += 1;
                                 continue;
                             }
                         } else {
-                            continue; // no coordinates — not a renderable node
+                            // No coordinates — not a renderable node.
+                            nodes_without_coords += 1;
+                            continue;
                         };
                         any_3d |= is_3d;
 
@@ -183,6 +189,12 @@ pub fn parse(text: &str) -> Result<ParsedStructure, String> {
         );
     }
 
+    if nodes_without_coords > 0 {
+        warnings.push(format!(
+            "{nodes_without_coords} atoms without coordinates were dropped"
+        ));
+    }
+
     let n_atoms = elements.len();
     let mut id_to_index: HashMap<&str, u32> = HashMap::with_capacity(n_atoms);
     for (i, id) in ids.iter().enumerate() {
@@ -194,10 +206,12 @@ pub fn parse(text: &str) -> Result<ParsedStructure, String> {
     let mut bond_pairs: Vec<(u32, u32)> = Vec::new();
     let mut bond_orders: Vec<u8> = Vec::new();
     let mut seen: HashSet<(u32, u32)> = HashSet::new();
+    let mut dangling = 0usize;
     for (b, e, order) in &raw_bonds {
         let (Some(&a), Some(&z)) = (id_to_index.get(b.as_str()), id_to_index.get(e.as_str()))
         else {
-            continue; // dangling endpoint — drop the bond, keep the molecule
+            dangling += 1; // dangling endpoint — drop the bond, keep the molecule
+            continue;
         };
         if a == z {
             continue;
@@ -207,6 +221,11 @@ pub fn parse(text: &str) -> Result<ParsedStructure, String> {
             bond_pairs.push(pair);
             bond_orders.push(*order);
         }
+    }
+    if dangling > 0 {
+        warnings.push(format!(
+            "{dangling} bonds referencing unknown atoms were dropped"
+        ));
     }
 
     let n_file_bonds = bond_pairs.len();
@@ -245,6 +264,8 @@ pub fn parse(text: &str) -> Result<ParsedStructure, String> {
         ca_res_nums: vec![],
         ca_ss_type: vec![],
         symmetry_ops: Vec::new(),
+        scalar_channels: Vec::new(),
+        warnings,
         hetero: None,
     })
 }
@@ -361,6 +382,30 @@ mod tests {
 </fragment></CDXML>"#;
         let s = parse(text).unwrap();
         assert_eq!(s.n_file_bonds, 1);
+        assert_eq!(
+            s.warnings,
+            vec!["1 bonds referencing unknown atoms were dropped".to_string()]
+        );
+    }
+
+    #[test]
+    fn warns_about_a_node_dropped_for_missing_coordinates() {
+        let text = r#"<CDXML><fragment>
+  <n id="1" Element="6" Position="0 0 0"/>
+  <n id="2" Element="6"/>
+  <b B="1" E="2" Order="1"/>
+</fragment></CDXML>"#;
+        let s = parse(text).unwrap();
+        assert_eq!(s.n_atoms, 1);
+        // The bond references the dropped node, so it is dropped and warned too.
+        assert_eq!(s.n_file_bonds, 0);
+        assert_eq!(
+            s.warnings,
+            vec![
+                "1 atoms without coordinates were dropped".to_string(),
+                "1 bonds referencing unknown atoms were dropped".to_string()
+            ]
+        );
     }
 
     /// Chem3D's native dialect: `<C3XML>` root, `<atom symbol cartCoords>`

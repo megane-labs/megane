@@ -165,6 +165,8 @@ pub fn parse(text: &str) -> Result<ParsedStructure, String> {
         ca_res_nums: vec![],
         ca_ss_type: vec![],
         symmetry_ops: Vec::new(),
+        scalar_channels: Vec::new(),
+        warnings: Vec::new(),
         hetero: None,
     })
 }

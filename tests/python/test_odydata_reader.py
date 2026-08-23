@@ -51,15 +51,18 @@ def test_letter_bond_orders_are_decoded():
 
 
 def test_a_boundary_box_becomes_a_periodic_cell():
-    """Odyssey centres coordinates on the box centre; atoms shift by +L/2."""
+    """Odyssey coordinates are box-centred; the file's values come back
+    verbatim and the cell is anchored via box_origin instead of shifting
+    atoms."""
     result = megane_parser.parse_odydata(
         "<odyssey_simulation>"
         '<structure><atom id="1" element="Ar" xyz="0 0 0"/></structure>'
         '<boundary box="20.0 20.0 20.0"/>'
         "</odyssey_simulation>"
     )
-    assert result.positions[0] == pytest.approx([10.0, 10.0, 10.0], abs=1e-4)
+    assert result.positions[0] == pytest.approx([0.0, 0.0, 0.0], abs=1e-4)
     assert np.asarray(result.box_matrix).reshape(3, 3)[0][0] == pytest.approx(20.0, abs=1e-4)
+    assert np.asarray(result.box_origin) == pytest.approx([-10.0, -10.0, -10.0], abs=1e-4)
 
 
 def test_bonds_are_inferred_when_the_file_declares_none():

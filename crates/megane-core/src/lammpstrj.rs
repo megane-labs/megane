@@ -12,12 +12,16 @@
 /// (the same convention as the trajectory lane's `TrajHetero::elements_flat`);
 /// bonds are inferred by distance from frame 0.
 ///
-/// Supports coordinate columns: x/y/z (unscaled), xs/ys/zs (scaled),
-/// xu/yu/zu (unwrapped). Atoms are sorted by id within each frame.
-/// Also detects and extracts named vector column groups (vx/vy/vz, fx/fy/fz).
+/// Supports coordinate columns: xu/yu/zu (unwrapped), x/y/z (unscaled),
+/// xs/ys/zs (scaled). ix/iy/iz image flags, when present, are folded into
+/// wrapped/scaled coordinates so positions are the absolute ones the file
+/// encodes. Atoms are sorted by id within each frame. Also detects and
+/// extracts named vector column groups (vx/vy/vz, fx/fy/fz); the structure
+/// lane additionally surfaces every remaining numeric per-atom column
+/// (q, mol, c_*/f_*/v_* computes, …) as a scalar channel.
 use crate::bonds;
 use crate::parser::{HeteroFrames, ParsedStructure};
-use crate::trajectory::{TrajectoryData, VectorChannel, VectorFrame};
+use crate::trajectory::{ScalarChannel, ScalarFrame, TrajectoryData, VectorChannel, VectorFrame};
 use std::collections::HashSet;
 
 /// Type alias kept for backwards compatibility.
@@ -43,6 +47,13 @@ struct VectorColumnGroup {
     z_col: usize,
 }
 
+/// Column index + header name of a captured per-atom scalar column.
+#[derive(Clone)]
+struct ScalarColumn {
+    name: String,
+    col: usize,
+}
+
 /// Column indices for atom data.
 struct ColumnLayout {
     id_col: usize,
@@ -54,8 +65,15 @@ struct ColumnLayout {
     y_col: usize,
     z_col: usize,
     coord_type: CoordType,
+    /// `ix`/`iy`/`iz` periodic image flag columns, when the dump carries them.
+    /// Folded into wrapped (`x y z`) or scaled (`xs ys zs`) coordinates to
+    /// decode the file's absolute-position encoding; unused with `xu yu zu`.
+    image_cols: Option<[usize; 3]>,
     /// Optional extra per-atom vector column groups (velocity, force, …).
     vector_groups: Vec<VectorColumnGroup>,
+    /// Remaining numeric per-atom columns (q, mol, mass, c_*/f_*/v_* computes,
+    /// …), captured by header name so file data is never silently dropped.
+    scalar_cols: Vec<ScalarColumn>,
 }
 
 fn parse_column_layout(header: &str) -> Result<ColumnLayout, String> {
@@ -73,17 +91,31 @@ fn parse_column_layout(header: &str) -> Result<ColumnLayout, String> {
     let id_col = find("id").ok_or("Missing 'id' column in ATOMS header")?;
     let type_col = find("type");
 
-    // Try unscaled first, then scaled, then unwrapped
+    // Coordinate column preference — pick the encoding that yields absolute
+    // positions without inventing anything:
+    //   1. xu/yu/zu — already unwrapped/absolute in the file
+    //   2. x/y/z    — wrapped Cartesian, decoded with ix/iy/iz image flags
+    //                 when present
+    //   3. xs/ys/zs — scaled/fractional, cell-converted (+ image flags when
+    //                 present)
+    // Decoding image flags is reading the file's own absolute-position
+    // encoding, not a transformation — the wrap pipeline node re-wraps on
+    // demand.
     let (x_col, y_col, z_col, coord_type) = if let (Some(x), Some(y), Some(z)) =
-        (find("x"), find("y"), find("z"))
+        (find("xu"), find("yu"), find("zu"))
     {
+        (x, y, z, CoordType::Unwrapped)
+    } else if let (Some(x), Some(y), Some(z)) = (find("x"), find("y"), find("z")) {
         (x, y, z, CoordType::Unscaled)
     } else if let (Some(x), Some(y), Some(z)) = (find("xs"), find("ys"), find("zs")) {
         (x, y, z, CoordType::Scaled)
-    } else if let (Some(x), Some(y), Some(z)) = (find("xu"), find("yu"), find("zu")) {
-        (x, y, z, CoordType::Unwrapped)
     } else {
         return Err("Cannot find x/y/z, xs/ys/zs, or xu/yu/zu columns in ATOMS header".to_string());
+    };
+
+    let image_cols = match (find("ix"), find("iy"), find("iz")) {
+        (Some(ix), Some(iy), Some(iz)) => Some([ix, iy, iz]),
+        _ => None,
     };
 
     // Detect optional vector column groups.
@@ -105,6 +137,23 @@ fn parse_column_layout(header: &str) -> Result<ColumnLayout, String> {
         });
     }
 
+    // Every remaining column is a per-atom scalar quantity the file asserts;
+    // capture it by header name. `element` (a symbol string) and the id/type/
+    // coordinate/image-flag/vector names are structural, not scalar data.
+    const STRUCTURAL_COLS: &[&str] = &[
+        "id", "type", "element", "x", "y", "z", "xs", "ys", "zs", "xu", "yu", "zu", "ix", "iy",
+        "iz", "vx", "vy", "vz", "fx", "fy", "fz",
+    ];
+    let scalar_cols: Vec<ScalarColumn> = col_names
+        .iter()
+        .enumerate()
+        .filter(|(_, name)| !STRUCTURAL_COLS.contains(name))
+        .map(|(col, name)| ScalarColumn {
+            name: name.to_string(),
+            col,
+        })
+        .collect();
+
     Ok(ColumnLayout {
         id_col,
         type_col,
@@ -112,8 +161,22 @@ fn parse_column_layout(header: &str) -> Result<ColumnLayout, String> {
         y_col,
         z_col,
         coord_type,
+        image_cols,
         vector_groups,
+        scalar_cols,
     })
+}
+
+/// Cartesian shift encoded by periodic image flags for a given frame cell:
+/// `r_abs = r_wrapped + ix·a + iy·b + iz·c`. The rows of `box_matrix` are the
+/// cell vectors, so this is triclinic-correct.
+#[inline]
+fn image_shift(img: [f32; 3], bm: &[f32; 9]) -> [f32; 3] {
+    [
+        img[0] * bm[0] + img[1] * bm[3] + img[2] * bm[6],
+        img[0] * bm[1] + img[1] * bm[4] + img[2] * bm[7],
+        img[0] * bm[2] + img[1] * bm[5] + img[2] * bm[8],
+    ]
 }
 
 /// Parsed header of one LAMMPS dump frame (everything up to the first atom line).
@@ -261,31 +324,41 @@ fn read_frame_header(lines: &[&str], i: usize) -> Result<FrameHeader, String> {
 
 /// One decoded atom block: flat positions, per-atom type ids (empty when the
 /// dump has no `type` column or the caller does not need them), per-group
-/// vectors (in `header.layout.vector_groups` order), and the index of the line
-/// after it.
-type AtomBlock = (Vec<f32>, Vec<u8>, Vec<Vec<f32>>, usize);
+/// vectors (in `header.layout.vector_groups` order), per-column scalars (in
+/// `header.layout.scalar_cols` order; a column that failed to parse for any
+/// atom yields an empty entry), and the index of the line after it.
+type AtomBlock = (Vec<f32>, Vec<u8>, Vec<Vec<f32>>, Vec<Vec<f32>>, usize);
 
-/// Read one frame's atom block into flat positions and per-group vectors (in
-/// `header.layout.vector_groups` order). Returns `(positions, types,
-/// group_vectors, next_line_index)`. Shared by the eager parser and the
-/// single-frame decoder.
+/// Read one frame's atom block into flat positions, per-group vectors (in
+/// `header.layout.vector_groups` order), and per-column scalars. Returns
+/// `(positions, types, group_vectors, scalars, next_line_index)`. Shared by
+/// the eager parser and the single-frame decoder.
 ///
 /// `expected_n_atoms` is a hint for capacity only; the frame's own
 /// `header.n_atoms` governs how many lines are read, so a dump whose atom count
 /// changes between frames (GCMC / deposition) is parsed instead of rejected.
 /// `want_types` captures the `type` column into the returned type vector (used
-/// only for heterogeneous dumps).
+/// only for heterogeneous dumps); `want_scalars` captures the extra numeric
+/// columns (used by the structure lane).
 fn read_atom_block(
     lines: &[&str],
     header: &FrameHeader,
     expected_n_atoms: usize,
     want_types: bool,
+    want_scalars: bool,
 ) -> Result<AtomBlock, String> {
     let layout = &header.layout;
     let n_atoms = header.n_atoms;
     let _ = expected_n_atoms; // capacity hint only; frames may differ in count.
     let n_lines = lines.len();
     let capture_types = want_types && layout.type_col.is_some();
+    let capture_scalars = want_scalars && !layout.scalar_cols.is_empty();
+    // Image flags only apply to wrapped/scaled coordinates; xu/yu/zu is
+    // already absolute.
+    let image_cols = match layout.coord_type {
+        CoordType::Unwrapped => None,
+        _ => layout.image_cols,
+    };
     let mut max_col = [layout.id_col, layout.x_col, layout.y_col, layout.z_col]
         .iter()
         .copied()
@@ -293,6 +366,9 @@ fn read_atom_block(
         .unwrap();
     if capture_types {
         max_col = max_col.max(layout.type_col.unwrap());
+    }
+    if let Some(ic) = &image_cols {
+        max_col = max_col.max(ic[0]).max(ic[1]).max(ic[2]);
     }
 
     // (id, x, y, z, type) — type is 0 when not captured.
@@ -304,6 +380,16 @@ fn read_atom_block(
         .iter()
         .map(|_| Vec::with_capacity(n_atoms))
         .collect();
+    // Per-column unsorted scalar buffer (empty when scalars aren't wanted).
+    let mut frame_scalar_atoms: Vec<Vec<(usize, f32)>> = if capture_scalars {
+        layout
+            .scalar_cols
+            .iter()
+            .map(|_| Vec::with_capacity(n_atoms))
+            .collect()
+    } else {
+        Vec::new()
+    };
 
     let mut parts: Vec<&str> = Vec::new();
     let mut i = header.atoms_start;
@@ -341,6 +427,24 @@ fn read_atom_block(
             z = z * header.lz + header.zlo;
         }
 
+        // Decode the absolute position the file encodes as wrapped coordinate
+        // + image flags, using this frame's cell.
+        if let Some(ic) = &image_cols {
+            let img_x: f32 = parts[ic[0]]
+                .parse()
+                .map_err(|_| format!("Cannot parse image flag at line {}", i + 1))?;
+            let img_y: f32 = parts[ic[1]]
+                .parse()
+                .map_err(|_| format!("Cannot parse image flag at line {}", i + 1))?;
+            let img_z: f32 = parts[ic[2]]
+                .parse()
+                .map_err(|_| format!("Cannot parse image flag at line {}", i + 1))?;
+            let shift = image_shift([img_x, img_y, img_z], &header.box_matrix);
+            x += shift[0];
+            y += shift[1];
+            z += shift[2];
+        }
+
         // LAMMPS type ids are small positive integers; clamp to the u8 element
         // proxy (systems with >255 types are unheard of for visualization).
         let type_id: u8 = if capture_types {
@@ -374,6 +478,16 @@ fn read_atom_block(
                     Err(_) => continue,
                 };
                 frame_vec_atoms[gi].push((id, vx, vy, vz));
+            }
+        }
+
+        if capture_scalars {
+            for (si, sc) in layout.scalar_cols.iter().enumerate() {
+                if parts.len() > sc.col {
+                    if let Ok(v) = parts[sc.col].parse::<f32>() {
+                        frame_scalar_atoms[si].push((id, v));
+                    }
+                }
             }
         }
         i += 1;
@@ -416,7 +530,21 @@ fn read_atom_block(
         }
     }
 
-    Ok((positions, types, group_vectors, i))
+    // Only a column that parsed for every atom becomes a full value list;
+    // otherwise an empty entry so the caller can skip (and warn about) it.
+    let mut scalars: Vec<Vec<f32>> = Vec::with_capacity(frame_scalar_atoms.len());
+    for mut satoms in frame_scalar_atoms.into_iter() {
+        if satoms.len() == n_atoms {
+            if !atoms_sorted {
+                satoms.sort_by_key(|a| a.0);
+            }
+            scalars.push(satoms.into_iter().map(|(_, v)| v).collect());
+        } else {
+            scalars.push(Vec::new());
+        }
+    }
+
+    Ok((positions, types, group_vectors, scalars, i))
 }
 
 /// Byte offset of each line, so the index scan can record where each frame
@@ -550,8 +678,8 @@ pub fn decode_frame_at(
         return Err("frame offset is not at an ITEM: TIMESTEP boundary".to_string());
     }
     let header = read_frame_header(&lines, 0)?;
-    let (positions, _types, vectors, _next) =
-        read_atom_block(&lines, &header, expected_n_atoms, false)?;
+    let (positions, _types, vectors, _scalars, _next) =
+        read_atom_block(&lines, &header, expected_n_atoms, false, false)?;
     Ok(DecodedLammpstrjFrame { positions, vectors })
 }
 
@@ -751,6 +879,13 @@ pub fn parse_lammpstrj(text: &str) -> Result<LammpstrjData, String> {
         let capture_types =
             layout.type_col.is_some() && (n_frames == 0 || varies_atoms || varies_topology);
 
+        // Image flags only apply to wrapped/scaled coordinates; xu/yu/zu is
+        // already absolute.
+        let image_cols = match layout.coord_type {
+            CoordType::Unwrapped => None,
+            _ => layout.image_cols,
+        };
+
         // Minimum column count for the mandatory id/x/y/z fields — constant for the
         // whole frame, so compute it once instead of per atom line.
         let mut max_col = [layout.id_col, layout.x_col, layout.y_col, layout.z_col]
@@ -760,6 +895,9 @@ pub fn parse_lammpstrj(text: &str) -> Result<LammpstrjData, String> {
             .unwrap();
         if capture_types {
             max_col = max_col.max(layout.type_col.unwrap());
+        }
+        if let Some(ic) = &image_cols {
+            max_col = max_col.max(ic[0]).max(ic[1]).max(ic[2]);
         }
 
         // Resolve each layout vector group to its accumulation slot once per frame
@@ -817,6 +955,24 @@ pub fn parse_lammpstrj(text: &str) -> Result<LammpstrjData, String> {
                 x = x * lx + xlo_f;
                 y = y * ly + ylo_f;
                 z = z * lz + zlo_f;
+            }
+
+            // Decode the absolute position the file encodes as wrapped
+            // coordinate + image flags, using this frame's cell.
+            if let Some(ic) = &image_cols {
+                let img_x: f32 = parts[ic[0]]
+                    .parse()
+                    .map_err(|_| format!("Cannot parse image flag at line {}", i + 1))?;
+                let img_y: f32 = parts[ic[1]]
+                    .parse()
+                    .map_err(|_| format!("Cannot parse image flag at line {}", i + 1))?;
+                let img_z: f32 = parts[ic[2]]
+                    .parse()
+                    .map_err(|_| format!("Cannot parse image flag at line {}", i + 1))?;
+                let shift = image_shift([img_x, img_y, img_z], &frame_box);
+                x += shift[0];
+                y += shift[1];
+                z += shift[2];
             }
 
             let type_id: u8 = if capture_types {
@@ -1007,7 +1163,8 @@ pub fn parse_lammpstrj(text: &str) -> Result<LammpstrjData, String> {
 /// dump has no `type` column, atoms fall back to element 0. Bonds are inferred
 /// by distance from frame 0. Variable atom count / cell / type dumps populate a
 /// [`HeteroFrames`] side table exactly as the other multi-frame structure
-/// parsers do; a uniform dump keeps `hetero: None`.
+/// parsers do; a uniform dump keeps `hetero: None`. Extra numeric per-atom dump
+/// columns (q, mol, computes, …) surface as frame-synced `scalar_channels`.
 pub fn parse_lammpstrj_structure(text: &str) -> Result<ParsedStructure, String> {
     let lines: Vec<&str> = text.lines().collect();
     let n_lines = lines.len();
@@ -1039,6 +1196,11 @@ pub fn parse_lammpstrj_structure(text: &str) -> Result<ParsedStructure, String> 
     let mut recording_cell = false;
     let mut max_atoms = 0usize;
     let mut frame_idx = 0usize;
+    // Scalar channel accumulation, keyed by column name from the first frame's
+    // layout (mirrors the trajectory lane's vector channel handling). Outer Vec
+    // = one entry per column; inner Vec<ScalarFrame> = one entry per frame.
+    let mut scalar_names: Vec<String> = Vec::new();
+    let mut scalar_frames: Vec<Vec<ScalarFrame>> = Vec::new();
 
     let mut i = 0usize;
     while i < n_lines {
@@ -1050,10 +1212,11 @@ pub fn parse_lammpstrj_structure(text: &str) -> Result<ParsedStructure, String> 
         let frame_atoms = header.n_atoms;
         let frame_box = header.box_matrix;
         // want_types=true so the `type` column (when present) becomes the
-        // per-atom element proxy; read_atom_block already applies scaled-coord
-        // conversion and id-sorting.
-        let (frame_positions, frame_types, _vectors, next) =
-            read_atom_block(&lines, &header, frame_atoms, true)?;
+        // per-atom element proxy; want_scalars=true so extra numeric columns
+        // become scalar channels. read_atom_block already applies scaled-coord
+        // conversion, image-flag decoding, and id-sorting.
+        let (frame_positions, frame_types, _vectors, frame_scalars, next) =
+            read_atom_block(&lines, &header, frame_atoms, true, true)?;
         // A dump without a `type` column yields empty types → all element 0.
         let frame_elements: Vec<u8> = if frame_types.len() == frame_atoms {
             frame_types
@@ -1112,6 +1275,30 @@ pub fn parse_lammpstrj_structure(text: &str) -> Result<ParsedStructure, String> 
             }
         }
 
+        // Frame 0's layout defines the scalar channel set; later frames map
+        // their columns to it by name (guards against column reordering).
+        if frame_idx == 0 {
+            scalar_names = header
+                .layout
+                .scalar_cols
+                .iter()
+                .map(|sc| sc.name.clone())
+                .collect();
+            scalar_frames = scalar_names.iter().map(|_| Vec::new()).collect();
+        }
+        for (si, values) in frame_scalars.into_iter().enumerate() {
+            if values.len() != frame_atoms {
+                continue; // column failed to parse for some atom this frame
+            }
+            let name = &header.layout.scalar_cols[si].name;
+            if let Some(slot) = scalar_names.iter().position(|n| n == name) {
+                scalar_frames[slot].push(ScalarFrame {
+                    frame: frame_idx,
+                    values,
+                });
+            }
+        }
+
         frame_idx += 1;
         i = next;
     }
@@ -1127,6 +1314,36 @@ pub fn parse_lammpstrj_structure(text: &str) -> Result<ParsedStructure, String> 
     // Infer frame-0 bonds by distance (a dump embeds no connectivity).
     let empty_bonds: HashSet<(u32, u32)> = HashSet::new();
     let bonds = bonds::infer_bonds(&positions, &elements, n_atoms, &empty_bonds);
+
+    // Emit a scalar channel only when the atom count is fixed and the column
+    // parsed in every frame — jagged per-frame values have no fixed-stride
+    // representation, and a partially-present column would desync from
+    // playback. Skipped columns are reported once, aggregated.
+    let mut scalar_channels: Vec<ScalarChannel> = Vec::new();
+    let mut warnings: Vec<String> = Vec::new();
+    if !scalar_names.is_empty() {
+        if varies_atoms {
+            warnings.push(format!(
+                "Skipped per-atom dump columns (atom count varies between frames): {}",
+                scalar_names.join(", ")
+            ));
+        } else {
+            let mut skipped: Vec<String> = Vec::new();
+            for (name, frames) in scalar_names.into_iter().zip(scalar_frames) {
+                if frames.len() == frame_idx {
+                    scalar_channels.push(ScalarChannel { name, frames });
+                } else {
+                    skipped.push(name);
+                }
+            }
+            if !skipped.is_empty() {
+                warnings.push(format!(
+                    "Skipped per-atom dump columns (missing or non-numeric in some frames): {}",
+                    skipped.join(", ")
+                ));
+            }
+        }
+    }
 
     // Assemble the side table only when a channel varies (uniform → None).
     let hetero = if varies_atoms || varies_cell || varies_topology {
@@ -1190,6 +1407,8 @@ pub fn parse_lammpstrj_structure(text: &str) -> Result<ParsedStructure, String> 
         ca_res_nums: vec![],
         ca_ss_type: vec![],
         symmetry_ops: Vec::new(),
+        scalar_channels,
+        warnings,
         hetero,
     })
 }
@@ -1685,5 +1904,216 @@ mod tests {
     #[test]
     fn structure_empty_file_errors() {
         assert!(parse_lammpstrj_structure("").is_err());
+    }
+
+    #[test]
+    fn image_flags_decode_absolute_coords_orthorhombic() {
+        // Wrapped x/y/z + ix/iy/iz: absolute = wrapped + i·L per axis.
+        let text = "ITEM: TIMESTEP\n0\n\
+                    ITEM: NUMBER OF ATOMS\n2\n\
+                    ITEM: BOX BOUNDS pp pp pp\n0.0 10.0\n0.0 20.0\n0.0 30.0\n\
+                    ITEM: ATOMS id type x y z ix iy iz\n\
+                    1 1 1.0 2.0 3.0 1 0 -1\n\
+                    2 1 4.0 5.0 6.0 0 2 0\n";
+        let data = parse_lammpstrj(text).unwrap();
+        let f0 = data.frame(0);
+        assert!((f0[0] - 11.0).abs() < 1e-4); // 1.0 + 1*10
+        assert!((f0[1] - 2.0).abs() < 1e-4);
+        assert!((f0[2] - (-27.0)).abs() < 1e-4); // 3.0 - 1*30
+        assert!((f0[3] - 4.0).abs() < 1e-4);
+        assert!((f0[4] - 45.0).abs() < 1e-4); // 5.0 + 2*20
+        assert!((f0[5] - 6.0).abs() < 1e-4);
+        // Structure lane decodes identically, and the flag columns themselves
+        // are structural — they must not surface as scalar channels.
+        let s = parse_lammpstrj_structure(text).unwrap();
+        assert!((s.positions[0] - 11.0).abs() < 1e-4);
+        assert!((s.positions[4] - 45.0).abs() < 1e-4);
+        assert!(s.scalar_channels.is_empty());
+        assert!(s.warnings.is_empty());
+    }
+
+    #[test]
+    fn image_flags_decode_triclinic_cell() {
+        // Tilted cell a=(7,0,0), b=(2,10,0), c=(1,0.5,10): the shift is
+        // ix·a + iy·b + iz·c, not a per-axis multiple.
+        let text = "ITEM: TIMESTEP\n0\n\
+                    ITEM: NUMBER OF ATOMS\n2\n\
+                    ITEM: BOX BOUNDS xy xz yz pp pp pp\n\
+                    0.0 13.0 2.0\n\
+                    0.0 10.5 1.0\n\
+                    0.0 10.0 0.5\n\
+                    ITEM: ATOMS id type x y z ix iy iz\n\
+                    1 1 1.0 1.0 1.0 1 1 1\n\
+                    2 1 2.0 2.0 2.0 0 0 -1\n";
+        let data = parse_lammpstrj(text).unwrap();
+        let bm = data.box_matrix.unwrap();
+        assert!((bm[0] - 7.0).abs() < 1e-5); // lx after tilt recovery
+        let f0 = data.frame(0);
+        // atom 1: (1,1,1) + a + b + c = (11, 11.5, 11)
+        assert!((f0[0] - 11.0).abs() < 1e-4);
+        assert!((f0[1] - 11.5).abs() < 1e-4);
+        assert!((f0[2] - 11.0).abs() < 1e-4);
+        // atom 2: (2,2,2) - c = (1, 1.5, -8)
+        assert!((f0[3] - 1.0).abs() < 1e-4);
+        assert!((f0[4] - 1.5).abs() < 1e-4);
+        assert!((f0[5] - (-8.0)).abs() < 1e-4);
+        // Structure lane matches.
+        let s = parse_lammpstrj_structure(text).unwrap();
+        assert_eq!(s.positions, f0.to_vec());
+    }
+
+    #[test]
+    fn unwrapped_columns_win_over_wrapped() {
+        // Both x/y/z and xu/yu/zu present: xu (already absolute) is
+        // authoritative, and the image flags are ignored alongside it.
+        let text = "ITEM: TIMESTEP\n0\n\
+                    ITEM: NUMBER OF ATOMS\n1\n\
+                    ITEM: BOX BOUNDS pp pp pp\n0.0 10.0\n0.0 10.0\n0.0 10.0\n\
+                    ITEM: ATOMS id type x y z xu yu zu ix iy iz\n\
+                    1 1 1.0 2.0 3.0 11.0 22.0 33.0 1 1 1\n";
+        let data = parse_lammpstrj(text).unwrap();
+        let f0 = data.frame(0);
+        assert_eq!(f0, &[11.0, 22.0, 33.0]);
+        let s = parse_lammpstrj_structure(text).unwrap();
+        assert_eq!(s.positions, vec![11.0, 22.0, 33.0]);
+        // The alternate coordinate encodings are not scalar data.
+        assert!(s.scalar_channels.is_empty());
+    }
+
+    #[test]
+    fn scaled_coords_with_image_flags() {
+        let text = "ITEM: TIMESTEP\n0\n\
+                    ITEM: NUMBER OF ATOMS\n1\n\
+                    ITEM: BOX BOUNDS pp pp pp\n0.0 10.0\n0.0 10.0\n0.0 10.0\n\
+                    ITEM: ATOMS id type xs ys zs ix iy iz\n\
+                    1 1 0.5 0.25 0.75 1 0 2\n";
+        let data = parse_lammpstrj(text).unwrap();
+        let f0 = data.frame(0);
+        // scaled→Cartesian first, then the image shift: 0.5*10 + 1*10 = 15, …
+        assert!((f0[0] - 15.0).abs() < 1e-4);
+        assert!((f0[1] - 2.5).abs() < 1e-4);
+        assert!((f0[2] - 27.5).abs() < 1e-4);
+    }
+
+    #[test]
+    fn decode_frame_at_matches_eager_for_image_flag_dump() {
+        // Two frames with different cells: the lazy decoder must apply each
+        // frame's own cell to its image flags, exactly like the eager parse.
+        let text = "ITEM: TIMESTEP\n0\n\
+                    ITEM: NUMBER OF ATOMS\n2\n\
+                    ITEM: BOX BOUNDS pp pp pp\n0.0 10.0\n0.0 10.0\n0.0 10.0\n\
+                    ITEM: ATOMS id type x y z ix iy iz\n\
+                    1 1 1.0 2.0 3.0 1 0 0\n\
+                    2 1 4.0 5.0 6.0 0 -1 0\n\
+                    ITEM: TIMESTEP\n100\n\
+                    ITEM: NUMBER OF ATOMS\n2\n\
+                    ITEM: BOX BOUNDS pp pp pp\n0.0 12.0\n0.0 12.0\n0.0 12.0\n\
+                    ITEM: ATOMS id type x y z ix iy iz\n\
+                    1 1 1.5 2.5 3.5 1 0 0\n\
+                    2 1 4.5 5.5 6.5 0 -1 0\n";
+        let eager = parse_lammpstrj(text).unwrap();
+        assert!((eager.frame(0)[0] - 11.0).abs() < 1e-4); // 1.0 + 10
+        assert!((eager.frame(1)[0] - 13.5).abs() < 1e-4); // 1.5 + 12
+        let idx = build_index(text).unwrap();
+        for i in 0..idx.n_frames {
+            let f = decode_frame_at(text, idx.offsets[i], idx.n_atoms).unwrap();
+            assert_eq!(f.positions, eager.frame(i).to_vec(), "frame {i}");
+        }
+    }
+
+    #[test]
+    fn structure_extra_columns_become_scalar_channels() {
+        // q / mol / c_pe columns: one frame-synced ScalarChannel each, values
+        // id-sorted like positions.
+        let text = "ITEM: TIMESTEP\n0\n\
+                    ITEM: NUMBER OF ATOMS\n2\n\
+                    ITEM: BOX BOUNDS pp pp pp\n0.0 10.0\n0.0 10.0\n0.0 10.0\n\
+                    ITEM: ATOMS id type x y z q mol c_pe\n\
+                    2 1 4.0 5.0 6.0 -0.5 1 2.0\n\
+                    1 1 1.0 2.0 3.0 0.5 1 1.0\n\
+                    ITEM: TIMESTEP\n100\n\
+                    ITEM: NUMBER OF ATOMS\n2\n\
+                    ITEM: BOX BOUNDS pp pp pp\n0.0 10.0\n0.0 10.0\n0.0 10.0\n\
+                    ITEM: ATOMS id type x y z q mol c_pe\n\
+                    1 1 1.1 2.1 3.1 0.6 1 1.5\n\
+                    2 1 4.1 5.1 6.1 -0.6 1 2.5\n";
+        let s = parse_lammpstrj_structure(text).unwrap();
+        assert!(s.warnings.is_empty());
+        assert_eq!(s.scalar_channels.len(), 3);
+        let names: Vec<&str> = s.scalar_channels.iter().map(|c| c.name.as_str()).collect();
+        assert_eq!(names, vec!["q", "mol", "c_pe"]);
+        let q = &s.scalar_channels[0];
+        assert_eq!(q.frames.len(), 2);
+        assert_eq!(q.frames[0].frame, 0);
+        assert_eq!(q.frames[0].values, vec![0.5, -0.5]); // id-sorted
+        assert_eq!(q.frames[1].frame, 1);
+        assert_eq!(q.frames[1].values, vec![0.6, -0.6]);
+        let mol = &s.scalar_channels[1];
+        assert_eq!(mol.frames[0].values, vec![1.0, 1.0]);
+        let pe = &s.scalar_channels[2];
+        assert_eq!(pe.frames[1].values, vec![1.5, 2.5]);
+    }
+
+    #[test]
+    fn structure_variable_atoms_skips_scalar_channels_with_warning() {
+        // Jagged atom counts have no fixed-stride scalar representation: the
+        // columns are skipped and reported once, aggregated.
+        let text = "ITEM: TIMESTEP\n0\n\
+                    ITEM: NUMBER OF ATOMS\n2\n\
+                    ITEM: BOX BOUNDS pp pp pp\n0.0 10.0\n0.0 10.0\n0.0 10.0\n\
+                    ITEM: ATOMS id type x y z q mol\n\
+                    1 1 1.0 0.0 0.0 0.5 1\n\
+                    2 1 2.0 0.0 0.0 -0.5 1\n\
+                    ITEM: TIMESTEP\n100\n\
+                    ITEM: NUMBER OF ATOMS\n3\n\
+                    ITEM: BOX BOUNDS pp pp pp\n0.0 10.0\n0.0 10.0\n0.0 10.0\n\
+                    ITEM: ATOMS id type x y z q mol\n\
+                    1 1 1.1 0.0 0.0 0.5 1\n\
+                    2 1 2.1 0.0 0.0 -0.5 1\n\
+                    3 2 3.0 0.0 0.0 0.0 2\n";
+        let s = parse_lammpstrj_structure(text).unwrap();
+        assert!(s.hetero.is_some());
+        assert!(s.scalar_channels.is_empty());
+        assert_eq!(s.warnings.len(), 1);
+        assert!(s.warnings[0].contains("q"));
+        assert!(s.warnings[0].contains("mol"));
+    }
+
+    #[test]
+    fn structure_disappearing_column_skipped_with_warning() {
+        // Frame 1 drops the q column: the channel would desync from playback,
+        // so it is skipped and reported.
+        let text = "ITEM: TIMESTEP\n0\n\
+                    ITEM: NUMBER OF ATOMS\n1\n\
+                    ITEM: BOX BOUNDS pp pp pp\n0.0 10.0\n0.0 10.0\n0.0 10.0\n\
+                    ITEM: ATOMS id type x y z q\n\
+                    1 1 1.0 0.0 0.0 0.5\n\
+                    ITEM: TIMESTEP\n100\n\
+                    ITEM: NUMBER OF ATOMS\n1\n\
+                    ITEM: BOX BOUNDS pp pp pp\n0.0 10.0\n0.0 10.0\n0.0 10.0\n\
+                    ITEM: ATOMS id type x y z\n\
+                    1 1 1.1 0.0 0.0\n";
+        let s = parse_lammpstrj_structure(text).unwrap();
+        assert!(s.scalar_channels.is_empty());
+        assert_eq!(s.warnings.len(), 1);
+        assert!(s.warnings[0].contains("q"));
+    }
+
+    #[test]
+    fn plain_wrapped_dump_unchanged() {
+        // A dump with neither image flags nor unwrapped columns keeps its
+        // coordinates exactly as written (and no scalar channels/warnings).
+        let data = parse_lammpstrj(sample_dump()).unwrap();
+        assert_eq!(
+            data.frame(0),
+            &[1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0]
+        );
+        let s = parse_lammpstrj_structure(sample_dump()).unwrap();
+        assert_eq!(
+            s.positions,
+            vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0]
+        );
+        assert!(s.scalar_channels.is_empty());
+        assert!(s.warnings.is_empty());
     }
 }

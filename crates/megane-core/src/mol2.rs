@@ -6,7 +6,8 @@
 ///   @<TRIPOS>BOND       — per-bond: id atom1 atom2 type
 ///   @<TRIPOS>SUBSTRUCTURE — optional, parsed for residue labels only
 ///
-/// Multi-molecule streams are supported; only the first molecule is returned.
+/// Multi-molecule streams are supported; only the first molecule is returned,
+/// with a warning counting the records that were skipped.
 /// Atom types use Tripos notation (e.g. "C.3", "C.ar", "N.am") — the element
 /// is derived from the prefix before the first dot.
 use crate::atomic::symbol_to_atomic_num;
@@ -19,9 +20,13 @@ fn element_from_mol2_type(atom_type: &str) -> String {
 }
 
 /// Convert a MOL2 bond type token to a numeric bond order.
-/// Aromatic ("ar") and amide ("am") bonds are encoded as 1 for display.
+/// Aromatic ("ar") maps to 4, MDL's aromatic encoding (`mol.rs`), so the same
+/// chemistry carries the same order across formats. Amide ("am") is a single
+/// bond in MDL terms; dummy ("du"), unknown ("un") and not-connected ("nc")
+/// carry no order information and fall back to 1.
 fn bond_order_from_mol2_type(bond_type: &str) -> u8 {
     match bond_type {
+        "ar" | "a" => 4,
         "2" => 2,
         "3" => 3,
         _ => bond_type.parse::<u8>().unwrap_or(1),
@@ -71,10 +76,6 @@ fn parse_first_molecule(text: &str) -> Result<crate::parser::ParsedStructure, St
         if let Some(name) = trimmed.strip_prefix("@<TRIPOS>") {
             if name == "MOLECULE" {
                 molecule_count += 1;
-                if molecule_count > 1 {
-                    // Second molecule — stop; we only return the first.
-                    break;
-                }
                 section = Section::Molecule;
                 mol_line = 0;
             } else if name == "ATOM" {
@@ -84,6 +85,12 @@ fn parse_first_molecule(text: &str) -> Result<crate::parser::ParsedStructure, St
             } else {
                 section = Section::Other;
             }
+            continue;
+        }
+
+        // Records after the first molecule are only counted for the warning
+        // below, never parsed.
+        if molecule_count > 1 {
             continue;
         }
 
@@ -205,6 +212,16 @@ fn parse_first_molecule(text: &str) -> Result<crate::parser::ParsedStructure, St
 
     let n_file_bonds = bonds.len();
 
+    let mut warnings = Vec::new();
+    if molecule_count > 1 {
+        let extra = molecule_count - 1;
+        warnings.push(format!(
+            "file contains {} additional MOLECULE record{}; only the first is shown",
+            extra,
+            if extra == 1 { "" } else { "s" }
+        ));
+    }
+
     Ok(crate::parser::ParsedStructure {
         n_atoms,
         positions,
@@ -224,6 +241,8 @@ fn parse_first_molecule(text: &str) -> Result<crate::parser::ParsedStructure, St
         ca_res_nums: vec![],
         ca_ss_type: vec![],
         symmetry_ops: Vec::new(),
+        scalar_channels: Vec::new(),
+        warnings,
         hetero: None,
     })
 }
@@ -346,10 +365,14 @@ GASTEIGER
         }
         // All bonds sorted
         assert!(result.bonds.iter().all(|(a, b)| a <= b));
-        // Aromatic bonds encoded as 1
+        // Aromatic bonds carry MDL order 4
         let orders = result.bond_orders.unwrap();
         for &o in &orders[0..6] {
-            assert_eq!(o, 1, "aromatic bond order should be 1");
+            assert_eq!(o, 4, "aromatic bond order should be 4");
+        }
+        // Ring-to-hydrogen bonds stay single
+        for &o in &orders[6..12] {
+            assert_eq!(o, 1, "C-H bond order should be 1");
         }
     }
 
@@ -381,11 +404,55 @@ SMALL
     }
 
     #[test]
+    fn parse_amide_bond_is_single() {
+        let mol2 = "\
+@<TRIPOS>MOLECULE
+formamide-fragment
+ 3 2 0 0 0
+SMALL
+
+@<TRIPOS>ATOM
+      1 C1          0.0000    0.0000    0.0000 C.2     1  LIG         0.0000
+      2 O1          0.6100    1.0600    0.0000 O.2     1  LIG         0.0000
+      3 N1          0.6100   -1.1900    0.0000 N.am    1  LIG         0.0000
+@<TRIPOS>BOND
+     1     1     2    2
+     2     1     3   am
+";
+        let result = parse(mol2).unwrap();
+        let orders = result.bond_orders.unwrap();
+        assert_eq!(orders, vec![2, 1]);
+    }
+
+    #[test]
     fn parse_multi_molecule_returns_first() {
         let mol2 = format!("{}\n{}", METHANOL_MOL2, BENZENE_MOL2);
         let result = parse(&mol2).unwrap();
         // Should return methanol (6 atoms), not benzene (12 atoms)
         assert_eq!(result.n_atoms, 6);
+        assert_eq!(
+            result.warnings,
+            vec!["file contains 1 additional MOLECULE record; only the first is shown".to_string()]
+        );
+    }
+
+    #[test]
+    fn a_three_molecule_stream_counts_both_extra_records() {
+        let mol2 = format!("{}\n{}\n{}", METHANOL_MOL2, BENZENE_MOL2, BENZENE_MOL2);
+        let result = parse(&mol2).unwrap();
+        assert_eq!(result.n_atoms, 6);
+        assert_eq!(
+            result.warnings,
+            vec![
+                "file contains 2 additional MOLECULE records; only the first is shown".to_string()
+            ]
+        );
+    }
+
+    #[test]
+    fn a_single_molecule_file_has_no_warning() {
+        let result = parse(METHANOL_MOL2).unwrap();
+        assert!(result.warnings.is_empty());
     }
 
     #[test]
@@ -456,9 +523,11 @@ SMALL
         assert_eq!(bond_order_from_mol2_type("1"), 1);
         assert_eq!(bond_order_from_mol2_type("2"), 2);
         assert_eq!(bond_order_from_mol2_type("3"), 3);
-        assert_eq!(bond_order_from_mol2_type("ar"), 1);
+        assert_eq!(bond_order_from_mol2_type("ar"), 4);
+        assert_eq!(bond_order_from_mol2_type("a"), 4);
         assert_eq!(bond_order_from_mol2_type("am"), 1);
         assert_eq!(bond_order_from_mol2_type("du"), 1);
+        assert_eq!(bond_order_from_mol2_type("un"), 1);
         assert_eq!(bond_order_from_mol2_type("nc"), 1);
     }
 

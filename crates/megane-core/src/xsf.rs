@@ -23,6 +23,8 @@
 //! per-frame cell support.
 //!
 //! Handled but not rendered:
+//! - Ghost/dummy atoms (negative Z) — kept in place as element 0 (unknown),
+//!   with an aggregated warning, since the file asserts they are not atoms.
 //! - `CONVVEC` — read and discarded; `PRIMVEC` is the cell megane draws.
 //! - `BEGIN_BLOCK_DATAGRID_*` … `END_BLOCK_DATAGRID_*` volumetric grids are
 //!   skipped wholesale. Mapping them onto the isosurface pipeline is a
@@ -66,16 +68,19 @@ fn keyword(line: &str) -> String {
 }
 
 /// Parse an atom line: `Z x y z [fx fy fz]`, where the first column is either
-/// an atomic number or an element symbol.
-fn parse_atom_line(line: &str) -> Option<(u8, [f32; 3], Option<[f32; 3]>)> {
+/// an atomic number or an element symbol. The boolean flags a ghost atom.
+fn parse_atom_line(line: &str) -> Option<(u8, bool, [f32; 3], Option<[f32; 3]>)> {
     let toks: Vec<&str> = clean(line).split_whitespace().collect();
     if toks.len() < 4 {
         return None;
     }
-    let z = match toks[0].parse::<i32>() {
-        // XCrySDen writes ghost/dummy atoms as a negative Z; take the magnitude.
-        Ok(n) => n.unsigned_abs().min(u8::MAX as u32) as u8,
-        Err(_) => symbol_to_atomic_num(&capitalize(toks[0])),
+    let (z, ghost) = match toks[0].parse::<i32>() {
+        // XCrySDen marks ghost/dummy atoms with a negative Z: the file asserts
+        // they are NOT real atoms, so they become element 0 (unknown) rather
+        // than the magnitude's element.
+        Ok(n) if n < 0 => (0u8, true),
+        Ok(n) => ((n as u32).min(u8::MAX as u32) as u8, false),
+        Err(_) => (symbol_to_atomic_num(&capitalize(toks[0])), false),
     };
     let x = toks[1].parse().ok()?;
     let y = toks[2].parse().ok()?;
@@ -92,7 +97,7 @@ fn parse_atom_line(line: &str) -> Option<(u8, [f32; 3], Option<[f32; 3]>)> {
     } else {
         None
     };
-    Some((z, [x, y, zc], force))
+    Some((z, ghost, [x, y, zc], force))
 }
 
 /// Read three lattice-vector lines starting at `i`, returning the row-major cell.
@@ -131,6 +136,8 @@ pub fn parse(text: &str) -> Result<ParsedStructure, String> {
     // before the first PRIMCOORD, so later steps inherit it.
     let mut current_cell: Option<[f32; 9]> = None;
     let mut saw_keyword = false;
+    // Ghost/dummy atoms (negative Z) across every block, for one aggregated warning.
+    let mut ghost_count = 0usize;
 
     let mut i = 0usize;
     while i < lines.len() {
@@ -201,9 +208,12 @@ pub fn parse(text: &str) -> Result<ParsedStructure, String> {
                     if declared.is_none() && parse_atom_line(lines[i]).is_none() {
                         break;
                     }
-                    let (z, pos, force) = parse_atom_line(lines[i])
+                    let (z, ghost, pos, force) = parse_atom_line(lines[i])
                         .ok_or_else(|| format!("XSF: bad atom line: {t}"))?;
                     i += 1;
+                    if ghost {
+                        ghost_count += 1;
+                    }
                     elements.push(z);
                     positions.extend_from_slice(&pos);
                     match force {
@@ -355,6 +365,13 @@ pub fn parse(text: &str) -> Result<ParsedStructure, String> {
         None
     };
 
+    let mut warnings = Vec::new();
+    if ghost_count > 0 {
+        warnings.push(format!(
+            "{ghost_count} ghost/dummy atoms (negative atomic numbers) kept as element 0"
+        ));
+    }
+
     let vector_channels = if force_frames.is_empty() {
         vec![]
     } else {
@@ -383,6 +400,8 @@ pub fn parse(text: &str) -> Result<ParsedStructure, String> {
         ca_res_nums: vec![],
         ca_ss_type: vec![],
         symmetry_ops: Vec::new(),
+        scalar_channels: Vec::new(),
+        warnings,
         hetero,
     })
 }
@@ -599,10 +618,48 @@ ATOMS
     }
 
     #[test]
-    fn negative_atomic_number_is_read_as_its_magnitude() {
-        // XCrySDen writes ghost atoms with a negative Z.
-        let s = parse("ATOMS\n -6  0.0 0.0 0.0\n").unwrap();
-        assert_eq!(s.elements, vec![6]);
+    fn ghost_atom_becomes_element_zero_with_a_warning() {
+        // XCrySDen writes ghost atoms with a negative Z: not silicon, not
+        // carbon — a placeholder, kept as the "unknown" element.
+        let s = parse("ATOMS\n -6  1.0 2.0 3.0\n  8  0.0 0.0 0.0\n").unwrap();
+        assert_eq!(s.elements, vec![0, 8]);
+        assert_eq!(s.n_atoms, 2);
+        assert!((s.positions[0] - 1.0).abs() < 1e-6);
+        assert!((s.positions[2] - 3.0).abs() < 1e-6);
+        assert_eq!(s.warnings.len(), 1);
+        assert!(
+            s.warnings[0].contains("1 ghost/dummy atoms"),
+            "unexpected warning: {}",
+            s.warnings[0]
+        );
+    }
+
+    #[test]
+    fn all_positive_atomic_numbers_produce_no_warnings() {
+        let s = parse(CRYSTAL_XSF).unwrap();
+        assert_eq!(s.elements, vec![14, 14]);
+        assert!(s.warnings.is_empty());
+    }
+
+    #[test]
+    fn ghost_atoms_across_animation_frames_share_one_aggregated_warning() {
+        let text = "\
+ANIMSTEPS 2
+ATOMS 1
+ -14  0.0 0.0 0.0
+  14  1.0 0.0 0.0
+ATOMS 2
+ -14  0.1 0.0 0.0
+  14  1.1 0.0 0.0
+";
+        let s = parse(text).unwrap();
+        assert_eq!(s.elements, vec![0, 14]);
+        assert_eq!(s.warnings.len(), 1);
+        assert!(
+            s.warnings[0].contains("2 ghost/dummy atoms"),
+            "unexpected warning: {}",
+            s.warnings[0]
+        );
     }
 
     #[test]

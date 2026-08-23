@@ -7,6 +7,7 @@ use std::collections::{HashMap, HashSet};
 use crate::atomic::mass_to_atomic_num;
 use crate::bonds;
 use crate::parser::ParsedStructure;
+use crate::trajectory::{ScalarChannel, ScalarFrame};
 
 // ── Atom style ────────────────────────────────────────────────────────────
 
@@ -232,6 +233,10 @@ struct AtomsData {
     /// Maps LAMMPS 1-based atom IDs to 0-based indices.
     id_to_index: IdToIndex,
     count: usize,
+    /// Per-atom charge, present for atom_style charge/full.
+    charges: Option<Vec<f32>>,
+    /// Per-atom molecule ID, present for atom_style full.
+    mol_ids: Option<Vec<f32>>,
 }
 
 /// Parse the Atoms section.
@@ -267,6 +272,15 @@ fn parse_atoms_section(
     let mut id_to_index = IdToIndex::with_capacity(n_atoms);
     let mut count = 0usize;
     let mut tokens: Vec<&str> = Vec::new();
+    // Per-atom columns the style carries beyond position/type.
+    let mut charges: Option<Vec<f32>> = match style {
+        AtomStyle::Charge | AtomStyle::Full => Some(Vec::with_capacity(n_atoms)),
+        AtomStyle::Atomic => None,
+    };
+    let mut mol_ids: Option<Vec<f32>> = match style {
+        AtomStyle::Full => Some(Vec::with_capacity(n_atoms)),
+        _ => None,
+    };
 
     for line in lines.iter().skip(data_start) {
         let trimmed = line.trim();
@@ -303,10 +317,13 @@ fn parse_atoms_section(
                 }
                 let aid: u32 = tokens[0].parse().map_err(|_| "bad atom_id")?;
                 let tid: u32 = tokens[1].parse().map_err(|_| "bad type")?;
-                // tokens[2] = charge (ignored)
+                let q: f32 = tokens[2].parse().map_err(|_| "bad charge")?;
                 let x: f32 = tokens[3].parse().map_err(|_| "bad x")?;
                 let y: f32 = tokens[4].parse().map_err(|_| "bad y")?;
                 let z: f32 = tokens[5].parse().map_err(|_| "bad z")?;
+                if let Some(qs) = charges.as_mut() {
+                    qs.push(q);
+                }
                 (aid, tid, x, y, z)
             }
             AtomStyle::Full => {
@@ -315,12 +332,18 @@ fn parse_atoms_section(
                     continue;
                 }
                 let aid: u32 = tokens[0].parse().map_err(|_| "bad atom_id")?;
-                // tokens[1] = mol_id (ignored)
+                let mid: f32 = tokens[1].parse().map_err(|_| "bad mol_id")?;
                 let tid: u32 = tokens[2].parse().map_err(|_| "bad type")?;
-                // tokens[3] = charge (ignored)
+                let q: f32 = tokens[3].parse().map_err(|_| "bad charge")?;
                 let x: f32 = tokens[4].parse().map_err(|_| "bad x")?;
                 let y: f32 = tokens[5].parse().map_err(|_| "bad y")?;
                 let z: f32 = tokens[6].parse().map_err(|_| "bad z")?;
+                if let Some(ms) = mol_ids.as_mut() {
+                    ms.push(mid);
+                }
+                if let Some(qs) = charges.as_mut() {
+                    qs.push(q);
+                }
                 (aid, tid, x, y, z)
             }
         };
@@ -346,6 +369,8 @@ fn parse_atoms_section(
         labels,
         id_to_index,
         count,
+        charges,
+        mol_ids,
     })
 }
 
@@ -449,7 +474,23 @@ pub fn parse(text: &str) -> Result<ParsedStructure, String> {
 
     let n_file_bonds = file_bonds.len();
     let inferred = bonds::infer_bonds(&atoms.positions, &atoms.elements, atoms.count, &bond_set);
-    file_bonds.extend(inferred);
+    if n_file_bonds > 0 {
+        // The file declares its own topology, so distance inference may only
+        // connect atoms the file left unbonded (e.g. free ions in a solvated
+        // system) — never add guessed bonds onto file-bonded atoms.
+        let mut has_file_bond = vec![false; atoms.count];
+        for &(a, b) in &file_bonds {
+            has_file_bond[a as usize] = true;
+            has_file_bond[b as usize] = true;
+        }
+        file_bonds.extend(
+            inferred
+                .into_iter()
+                .filter(|&(a, b)| !has_file_bond[a as usize] && !has_file_bond[b as usize]),
+        );
+    } else {
+        file_bonds.extend(inferred);
+    }
 
     let box_matrix = if hd.has_box {
         let lx = hd.xhi - hd.xlo;
@@ -479,6 +520,22 @@ pub fn parse(text: &str) -> Result<ParsedStructure, String> {
         None
     };
 
+    // Per-atom columns the style carries beyond geometry are kept as static
+    // scalar channels so the data is not silently discarded.
+    let mut scalar_channels = Vec::new();
+    if let Some(values) = atoms.charges {
+        scalar_channels.push(ScalarChannel {
+            name: "charge".into(),
+            frames: vec![ScalarFrame { frame: 0, values }],
+        });
+    }
+    if let Some(values) = atoms.mol_ids {
+        scalar_channels.push(ScalarChannel {
+            name: "mol_id".into(),
+            frames: vec![ScalarFrame { frame: 0, values }],
+        });
+    }
+
     Ok(ParsedStructure {
         n_atoms: atoms.count,
         positions: atoms.positions,
@@ -498,6 +555,8 @@ pub fn parse(text: &str) -> Result<ParsedStructure, String> {
         ca_res_nums: vec![],
         ca_ss_type: vec![],
         symmetry_ops: Vec::new(),
+        scalar_channels,
+        warnings: Vec::new(),
         hetero: None,
     })
 }
@@ -773,6 +832,195 @@ LAMMPS data file
         }
         let result = parse(&text.unwrap()).expect("parse failed");
         assert!(result.n_atoms > 0);
+    }
+
+    #[test]
+    fn test_inference_restricted_to_unbonded_atoms() {
+        // A water molecule with file bonds O-H1/O-H2 whose hydrogens sit at
+        // bonding distance from each other, plus a free Na/Cl ion pair at
+        // bonding distance. Inference must connect the ions (the file leaves
+        // them unbonded) but must NOT add the H-H bond on top of the file
+        // topology.
+        let data = "\
+LAMMPS data file
+
+5 atoms
+4 atom types
+2 bonds
+1 bond types
+
+0.0 20.0 xlo xhi
+0.0 20.0 ylo yhi
+0.0 20.0 zlo zhi
+
+Masses
+
+1 15.999
+2 1.008
+3 22.990
+4 35.453
+
+Atoms # full
+
+1 1 1 -0.8476 5.0 5.0 5.0
+2 1 2 0.4238 5.6 5.35 5.0
+3 1 2 0.4238 5.6 4.65 5.0
+4 2 3 1.0 12.0 12.0 12.0
+5 2 4 -1.0 12.0 12.0 14.4
+
+Bonds
+
+1 1 1 2
+2 1 1 3
+";
+        let result = parse(data).expect("parse failed");
+        assert_eq!(result.n_file_bonds, 2);
+        // Na-Cl inferred among atoms with zero file bonds.
+        assert!(result.bonds.contains(&(3, 4)));
+        // H-H (0.7 Å apart, within threshold) must not be inferred on top of
+        // the file-declared topology.
+        assert!(!result.bonds.contains(&(1, 2)));
+        assert_eq!(result.bonds.len(), 3);
+    }
+
+    #[test]
+    fn test_inference_unrestricted_without_bonds_section() {
+        // Without a Bonds section, distance inference covers all atoms.
+        let data = "\
+LAMMPS data file
+
+2 atoms
+2 atom types
+
+0.0 5.0 xlo xhi
+0.0 5.0 ylo yhi
+0.0 5.0 zlo zhi
+
+Masses
+
+1 15.999
+2 1.008
+
+Atoms # charge
+
+1 1 -0.8476 2.5 2.5 2.5
+2 2 0.4238 3.0 2.5 2.5
+";
+        let result = parse(data).expect("parse failed");
+        assert_eq!(result.n_file_bonds, 0);
+        assert_eq!(result.bonds, vec![(0, 1)]);
+    }
+
+    #[test]
+    fn test_charge_style_scalar_channel() {
+        let data = "\
+LAMMPS data file
+
+2 atoms
+2 atom types
+
+0.0 5.0 xlo xhi
+0.0 5.0 ylo yhi
+0.0 5.0 zlo zhi
+
+Masses
+
+1 15.999
+2 1.008
+
+Atoms # charge
+
+1 1 -0.8476 2.5 2.5 2.5
+2 2 0.4238 3.0 2.5 2.5
+";
+        let result = parse(data).expect("parse failed");
+        assert_eq!(result.scalar_channels.len(), 1);
+        let charge = &result.scalar_channels[0];
+        assert_eq!(charge.name, "charge");
+        assert_eq!(charge.frames.len(), 1);
+        assert_eq!(charge.frames[0].frame, 0);
+        assert!((charge.frames[0].values[0] - (-0.8476)).abs() < 1e-5);
+        assert!((charge.frames[0].values[1] - 0.4238).abs() < 1e-5);
+    }
+
+    #[test]
+    fn test_full_style_scalar_channels() {
+        let data = "\
+LAMMPS data file
+
+2 atoms
+2 atom types
+
+0.0 20.0 xlo xhi
+0.0 20.0 ylo yhi
+0.0 20.0 zlo zhi
+
+Masses
+
+1 15.999
+2 1.008
+
+Atoms # full
+
+1 3 1 -0.8476 10.0 10.0 10.0
+2 7 2 0.4238 10.757 10.587 10.0
+";
+        let result = parse(data).expect("parse failed");
+        assert_eq!(result.scalar_channels.len(), 2);
+        let charge = &result.scalar_channels[0];
+        assert_eq!(charge.name, "charge");
+        assert!((charge.frames[0].values[0] - (-0.8476)).abs() < 1e-5);
+        let mol_id = &result.scalar_channels[1];
+        assert_eq!(mol_id.name, "mol_id");
+        assert_eq!(mol_id.frames[0].values, vec![3.0, 7.0]);
+    }
+
+    #[test]
+    fn test_atomic_style_has_no_scalar_channels() {
+        let data = "\
+LAMMPS data file
+
+1 atoms
+1 atom types
+
+Masses
+
+1 12.011
+
+Atoms # atomic
+
+1 1 1.0 2.0 3.0
+";
+        let result = parse(data).expect("parse failed");
+        assert!(result.scalar_channels.is_empty());
+    }
+
+    #[test]
+    fn test_fixture_bond_counts() {
+        // water.lammps: 2 file bonds, no extra inferred bonds (its H atoms sit
+        // 1.514 Å apart, beyond the H-H threshold). confined_offset.data: no
+        // Bonds section and grid spacing far beyond any C-C threshold.
+        let water = std::fs::read_to_string(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../tests/fixtures/water.lammps"
+        ));
+        if let Ok(text) = water {
+            let result = parse(&text).expect("parse failed");
+            assert_eq!(result.n_file_bonds, 2);
+            assert_eq!(result.bonds.len(), 2);
+            // atom_style full carries charge and mol_id.
+            assert_eq!(result.scalar_channels.len(), 2);
+        }
+        let confined = std::fs::read_to_string(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../tests/fixtures/confined_offset.data"
+        ));
+        if let Ok(text) = confined {
+            let result = parse(&text).expect("parse failed");
+            assert_eq!(result.n_atoms, 64);
+            assert_eq!(result.n_file_bonds, 0);
+            assert_eq!(result.bonds.len(), 0);
+        }
     }
 
     #[test]

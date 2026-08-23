@@ -64,6 +64,15 @@ struct PyStructure {
     /// constant.
     #[pyo3(get)]
     frame_bonds: Py<PyArray1<u32>>,
+    /// Embedded per-atom scalar channels the file carries (charges,
+    /// selective-dynamics flags, dump computes, …) as
+    /// `[(name, [frame0_values, …]), …]`. A single-frame channel is static.
+    #[pyo3(get)]
+    scalar_channels: Vec<(String, Vec<Py<PyArray1<f32>>>)>,
+    /// Non-fatal parse warnings (e.g. atoms the file declares but the parser
+    /// could not represent). Empty for a clean parse.
+    #[pyo3(get)]
+    warnings: Vec<String>,
 }
 
 impl PyStructure {
@@ -152,6 +161,19 @@ impl PyStructure {
                 ),
             };
 
+        let scalar_channels: Vec<(String, Vec<Py<PyArray1<f32>>>)> = data
+            .scalar_channels
+            .into_iter()
+            .map(|ch| {
+                let frames: Vec<Py<PyArray1<f32>>> = ch
+                    .frames
+                    .into_iter()
+                    .map(|f| Array1::from_vec(f.values).into_pyarray(py).into())
+                    .collect();
+                (ch.name, frames)
+            })
+            .collect();
+
         Ok(Self {
             n_atoms: n,
             n_frames,
@@ -171,6 +193,8 @@ impl PyStructure {
             frame_cells: frame_cells.into_pyarray(py).into(),
             frame_bond_offsets: frame_bond_offsets.into_pyarray(py).into(),
             frame_bonds: frame_bonds.into_pyarray(py).into(),
+            scalar_channels,
+            warnings: data.warnings,
         })
     }
 }
@@ -235,6 +259,9 @@ struct PySpectrum {
     x: Py<PyArray1<f64>>,
     #[pyo3(get)]
     y: Py<PyArray1<f64>>,
+    /// Non-fatal parse warnings (empty for a clean parse).
+    #[pyo3(get)]
+    warnings: Vec<String>,
 }
 
 /// Parse a JCAMP-DX spectrum (`.jdx` / `.jcamp`) into its decoded
@@ -249,6 +276,7 @@ fn parse_jcampdx(py: Python<'_>, text: &str) -> PyResult<PySpectrum> {
         y_units: s.y_units,
         x: Array1::from(s.x).into_pyarray(py).unbind(),
         y: Array1::from(s.y).into_pyarray(py).unbind(),
+        warnings: s.warnings,
     })
 }
 

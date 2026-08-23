@@ -1,11 +1,17 @@
 use crate::bonds;
 use crate::parser::symbol_to_atomic_num;
+use crate::trajectory::{ScalarChannel, ScalarFrame, VectorChannel, VectorFrame};
 /// XYZ text format parser.
 ///
 /// Format (repeating blocks for multi-frame):
 ///   Line 1: number of atoms
 ///   Line 2: comment
 ///   Lines 3..n+2: element x y z [extra_fields...] (Angstrom)
+///
+/// Extended-XYZ `Properties=` declarations turn declared per-atom columns into
+/// channels: 3-column reals (velocities, forces, ...) become vector channels
+/// and 1-column numbers (charges, ids, ...) become scalar channels, instead of
+/// being flattened into the atom label.
 use std::collections::HashSet;
 
 /// Parse `Lattice="ax ay az bx by bz cx cy cz"` from an extended XYZ comment line.
@@ -29,6 +35,156 @@ fn parse_lattice(comment: &str) -> Option<[f32; 9]> {
         Some(m)
     } else {
         None
+    }
+}
+
+/// Parse the extXYZ `Properties=name:type:cols:...` declaration into
+/// (name, type char, column count) triples. `None` when absent or malformed.
+fn parse_properties(comment: &str) -> Option<Vec<(String, char, usize)>> {
+    let idx = comment.find("Properties=")?;
+    let rest = &comment[idx + 11..];
+    // The value may be quoted; unquoted it runs to the next whitespace.
+    let value = match rest.chars().next()? {
+        q @ ('"' | '\'') => {
+            let inner = &rest[1..];
+            &inner[..inner.find(q)?]
+        }
+        _ => rest.split_whitespace().next()?,
+    };
+    let fields: Vec<&str> = value.split(':').collect();
+    if fields.is_empty() || !fields.len().is_multiple_of(3) {
+        return None;
+    }
+    let mut props = Vec::with_capacity(fields.len() / 3);
+    for triple in fields.chunks(3) {
+        let name = triple[0];
+        let mut kind_chars = triple[1].chars();
+        let kind = kind_chars.next()?;
+        let cols: usize = triple[2].parse().ok()?;
+        if name.is_empty() || kind_chars.next().is_some() || cols == 0 {
+            return None;
+        }
+        props.push((name.to_string(), kind, cols));
+    }
+    Some(props)
+}
+
+/// Map common extXYZ property names onto megane's conventional channel names
+/// (matching the GRO/lammpstrj "velocity" and lammpstrj/XSF "force" channels).
+fn canonical_channel_name(name: &str) -> &str {
+    match name {
+        "vel" | "velo" | "velocities" => "velocity",
+        "forces" => "force",
+        _ => name,
+    }
+}
+
+/// One extractable per-atom column group from an extXYZ `Properties=`
+/// declaration: 3-column reals become vector channels, 1-column numbers
+/// become scalar channels.
+struct PropPlan {
+    name: String,
+    /// First whitespace-split column of the group on each atom line.
+    start: usize,
+    /// Column count: 3 (vector) or 1 (scalar).
+    cols: usize,
+}
+
+/// Build the channel-extraction plan for a comment line. Empty when there is
+/// no `Properties=` declaration, it is malformed, or its leading columns don't
+/// match the fixed species + pos layout this parser reads (column 0 = symbol,
+/// columns 1-3 = coordinates).
+fn channel_plan(comment: &str) -> Vec<PropPlan> {
+    let Some(props) = parse_properties(comment) else {
+        return Vec::new();
+    };
+    if props.len() < 2
+        || props[0].1 != 'S'
+        || props[0].2 != 1
+        || props[1].0 != "pos"
+        || props[1].1 != 'R'
+        || props[1].2 != 3
+    {
+        return Vec::new();
+    }
+    let mut plan: Vec<PropPlan> = Vec::new();
+    let mut start = 0usize;
+    for (name, kind, cols) in &props {
+        // Only columns past x/y/z are candidates; anything that is not a
+        // 3-column real or 1-column number stays in the atom label.
+        let extract = start >= 4 && matches!((kind, cols), ('R', 3) | ('R', 1) | ('I', 1));
+        if extract {
+            let name = canonical_channel_name(name).to_string();
+            if !plan.iter().any(|p| p.name == name) {
+                plan.push(PropPlan {
+                    name,
+                    start,
+                    cols: *cols,
+                });
+            }
+        }
+        start += cols;
+    }
+    plan
+}
+
+/// Parse one atom line's planned numeric columns into the channel buffers.
+/// Returns false when a declared column is missing or non-numeric (the caller
+/// then abandons extraction for the whole frame).
+fn extract_atom_props(parts: &[&str], plan: &[PropPlan], data: &mut [Vec<f32>]) -> bool {
+    for (p, buf) in plan.iter().zip(data.iter_mut()) {
+        if parts.len() < p.start + p.cols {
+            return false;
+        }
+        for c in 0..p.cols {
+            match parts[p.start + c].parse::<f32>() {
+                Ok(v) => buf.push(v),
+                Err(_) => return false,
+            }
+        }
+    }
+    true
+}
+
+/// Label columns left after channel extraction: everything past x/y/z that no
+/// extracted property covers (string properties, undeclared trailing columns).
+fn reduced_label(parts: &[&str], plan: &[PropPlan]) -> String {
+    let covered = |j: usize| plan.iter().any(|p| j >= p.start && j < p.start + p.cols);
+    (4..parts.len())
+        .filter(|&j| !covered(j))
+        .map(|j| parts[j])
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+/// Per-property accumulator over the frames that carried it.
+struct ChannelAccum {
+    name: String,
+    is_vector: bool,
+    /// (overall frame index, flat per-atom data) in frame order.
+    frames: Vec<(usize, Vec<f32>)>,
+}
+
+fn record_channels(
+    accums: &mut Vec<ChannelAccum>,
+    plan: &[PropPlan],
+    frame: usize,
+    data: Vec<Vec<f32>>,
+) {
+    for (p, buf) in plan.iter().zip(data) {
+        let is_vector = p.cols == 3;
+        if let Some(acc) = accums.iter_mut().find(|a| a.name == p.name) {
+            // A shape mismatch across frames counts as a missing frame.
+            if acc.is_vector == is_vector {
+                acc.frames.push((frame, buf));
+            }
+        } else {
+            accums.push(ChannelAccum {
+                name: p.name.clone(),
+                is_vector,
+                frames: vec![(frame, buf)],
+            });
+        }
     }
 }
 
@@ -62,6 +218,8 @@ pub fn parse(text: &str) -> Result<crate::parser::ParsedStructure, String> {
     let mut recording_topo = false;
     let mut recording_cell = false;
     let mut extra_idx = 0usize;
+    // Per-atom channels declared by extXYZ Properties, accumulated per frame.
+    let mut channel_accums: Vec<ChannelAccum> = Vec::new();
     // Reused across every atom line so each line's split does not allocate a Vec.
     let mut parts: Vec<&str> = Vec::new();
 
@@ -80,13 +238,23 @@ pub fn parse(text: &str) -> Result<crate::parser::ParsedStructure, String> {
             break; // incomplete frame, skip
         }
 
-        // Line 2: comment — parse this frame's lattice if present.
+        // Line 2: comment — parse this frame's lattice and channel plan.
         let frame_lattice = parse_lattice(lines[offset + 1]);
+        let plan = channel_plan(lines[offset + 1]);
         offset += 2;
 
+        let is_first = first_positions.is_none();
         let mut positions = Vec::with_capacity(n_atoms * 3);
         let mut elements = Vec::with_capacity(n_atoms);
         let mut labels = Vec::with_capacity(n_atoms);
+        // Channel buffers for this frame; extraction is abandoned wholesale
+        // (falling back to the joined-label behavior) on any bad column.
+        let mut ext_ok = !plan.is_empty();
+        let mut ext_data: Vec<Vec<f32>> = plan
+            .iter()
+            .map(|p| Vec::with_capacity(n_atoms * p.cols))
+            .collect();
+        let mut ext_labels: Vec<String> = Vec::new();
 
         for i in 0..n_atoms {
             let line = lines[offset + i];
@@ -108,6 +276,18 @@ pub fn parse(text: &str) -> Result<crate::parser::ParsedStructure, String> {
             };
             labels.push(label);
 
+            if ext_ok {
+                if extract_atom_props(&parts, &plan, &mut ext_data) {
+                    if is_first {
+                        ext_labels.push(reduced_label(&parts, &plan));
+                    }
+                } else {
+                    ext_ok = false;
+                    ext_data.clear();
+                    ext_labels.clear();
+                }
+            }
+
             // Coordinates (already in Angstrom)
             let x: f32 = parts[1]
                 .parse()
@@ -126,7 +306,16 @@ pub fn parse(text: &str) -> Result<crate::parser::ParsedStructure, String> {
 
         offset += n_atoms;
 
-        if first_positions.is_none() {
+        if ext_ok {
+            // Extracted columns leave the label; only string/undeclared ones stay.
+            if is_first {
+                labels = ext_labels;
+            }
+            let frame_no = if is_first { 0 } else { extra_idx + 1 };
+            record_channels(&mut channel_accums, &plan, frame_no, ext_data);
+        }
+
+        if is_first {
             first_n_atoms = n_atoms;
             max_atoms = n_atoms;
             box_matrix = frame_lattice;
@@ -246,6 +435,50 @@ pub fn parse(text: &str) -> Result<crate::parser::ParsedStructure, String> {
         None
     };
 
+    // Emit extXYZ channels: frame-synced when every frame (with a fixed atom
+    // count — channels assume a fixed per-atom stride) carried the property,
+    // otherwise a static frame-0 channel plus one aggregated warning.
+    let total_frames = 1 + extra_idx;
+    let mut vector_channels: Vec<VectorChannel> = Vec::new();
+    let mut scalar_channels: Vec<ScalarChannel> = Vec::new();
+    let mut warnings: Vec<String> = Vec::new();
+    let mut partial: Vec<String> = Vec::new();
+    for acc in channel_accums {
+        let complete = !varies_atoms && acc.frames.len() == total_frames;
+        let frames = if complete {
+            acc.frames
+        } else {
+            partial.push(acc.name.clone());
+            match acc.frames.into_iter().next() {
+                Some((0, data)) => vec![(0, data)],
+                _ => continue, // no frame-0 data to keep
+            }
+        };
+        if acc.is_vector {
+            vector_channels.push(VectorChannel {
+                name: acc.name,
+                frames: frames
+                    .into_iter()
+                    .map(|(frame, vectors)| VectorFrame { frame, vectors })
+                    .collect(),
+            });
+        } else {
+            scalar_channels.push(ScalarChannel {
+                name: acc.name,
+                frames: frames
+                    .into_iter()
+                    .map(|(frame, values)| ScalarFrame { frame, values })
+                    .collect(),
+            });
+        }
+    }
+    if !partial.is_empty() {
+        warnings.push(format!(
+            "extXYZ per-atom properties not captured for every frame: {}; only frame-0 values were kept",
+            partial.join(", ")
+        ));
+    }
+
     Ok(crate::parser::ParsedStructure {
         n_atoms: first_n_atoms,
         positions,
@@ -259,12 +492,14 @@ pub fn parse(text: &str) -> Result<crate::parser::ParsedStructure, String> {
         atom_labels,
         chain_ids: None,
         bfactors: None,
-        vector_channels: vec![],
+        vector_channels,
         ca_indices: vec![],
         ca_chain_ids: vec![],
         ca_res_nums: vec![],
         ca_ss_type: vec![],
         symmetry_ops: Vec::new(),
+        scalar_channels,
+        warnings,
         hetero,
     })
 }
@@ -294,10 +529,12 @@ pub struct XyzIndex {
     /// Byte offset of each extra frame's count line.
     pub offsets: Vec<usize>,
     /// True when the file is *heterogeneous* — some frame's atom count or
-    /// per-frame `Lattice=` differs from frame 0. The lazy positions-only decode
-    /// path cannot represent such frames, so the host falls back to an eager
-    /// parse (which builds the full `HeteroFrames` side table). Detected cheaply
-    /// from the count and comment lines without decoding any atom coordinates.
+    /// per-frame `Lattice=` differs from frame 0, or an extra frame declares
+    /// extractable per-atom `Properties=` channels. The lazy positions-only
+    /// decode path cannot represent such frames, so the host falls back to an
+    /// eager parse (which builds the full `HeteroFrames` side table and the
+    /// frame-synced channels). Detected cheaply from the count and comment
+    /// lines without decoding any atom coordinates.
     /// (A same-atom-count frame that varies only in element identity is not
     /// detectable here without parsing atoms and is left to the eager path.)
     pub heterogeneous: bool,
@@ -329,11 +566,18 @@ pub fn parse_frame0(text: &str) -> Result<crate::parser::ParsedStructure, String
     }
 
     let box_matrix = parse_lattice(lines[offset + 1]);
+    let plan = channel_plan(lines[offset + 1]);
     offset += 2;
 
     let mut positions = Vec::with_capacity(n_atoms * 3);
     let mut elements = Vec::with_capacity(n_atoms);
     let mut labels = Vec::with_capacity(n_atoms);
+    let mut ext_ok = !plan.is_empty();
+    let mut ext_data: Vec<Vec<f32>> = plan
+        .iter()
+        .map(|p| Vec::with_capacity(n_atoms * p.cols))
+        .collect();
+    let mut ext_labels: Vec<String> = Vec::new();
     let mut parts: Vec<&str> = Vec::new();
     for i in 0..n_atoms {
         let line = lines[offset + i];
@@ -350,6 +594,15 @@ pub fn parse_frame0(text: &str) -> Result<crate::parser::ParsedStructure, String
             String::new()
         };
         labels.push(label);
+        if ext_ok {
+            if extract_atom_props(&parts, &plan, &mut ext_data) {
+                ext_labels.push(reduced_label(&parts, &plan));
+            } else {
+                ext_ok = false;
+                ext_data.clear();
+                ext_labels.clear();
+            }
+        }
         let x: f32 = parts[1]
             .parse()
             .map_err(|_| format!("bad x coord at line {}", offset + i + 1))?;
@@ -362,6 +615,34 @@ pub fn parse_frame0(text: &str) -> Result<crate::parser::ParsedStructure, String
         positions.push(x);
         positions.push(y);
         positions.push(z);
+    }
+
+    // Frame-0 snapshot: extracted properties become static channels here; any
+    // later-frame values are picked up by the eager fallback (`build_index`
+    // marks files whose extra frames declare channels as heterogeneous).
+    let mut vector_channels: Vec<VectorChannel> = Vec::new();
+    let mut scalar_channels: Vec<ScalarChannel> = Vec::new();
+    if ext_ok {
+        labels = ext_labels;
+        for (p, data) in plan.iter().zip(ext_data) {
+            if p.cols == 3 {
+                vector_channels.push(VectorChannel {
+                    name: p.name.clone(),
+                    frames: vec![VectorFrame {
+                        frame: 0,
+                        vectors: data,
+                    }],
+                });
+            } else {
+                scalar_channels.push(ScalarChannel {
+                    name: p.name.clone(),
+                    frames: vec![ScalarFrame {
+                        frame: 0,
+                        values: data,
+                    }],
+                });
+            }
+        }
     }
 
     let empty_bonds = HashSet::new();
@@ -385,12 +666,14 @@ pub fn parse_frame0(text: &str) -> Result<crate::parser::ParsedStructure, String
         atom_labels,
         chain_ids: None,
         bfactors: None,
-        vector_channels: vec![],
+        vector_channels,
         ca_indices: vec![],
         ca_chain_ids: vec![],
         ca_res_nums: vec![],
         ca_ss_type: vec![],
         symmetry_ops: Vec::new(),
+        scalar_channels,
+        warnings: Vec::new(),
         hetero: None,
     })
 }
@@ -436,6 +719,12 @@ pub fn build_index(text: &str) -> Result<XyzIndex, String> {
                     if Some(fl) != first_lattice {
                         heterogeneous = true;
                     }
+                }
+                // An extra frame that declares extractable per-atom properties
+                // needs the eager parser (which turns them into channels); the
+                // positions-only lazy decode would silently drop them.
+                if !heterogeneous && !channel_plan(lines[offset + 1]).is_empty() {
+                    heterogeneous = true;
                 }
                 offsets.push(starts[offset]);
             }
@@ -519,6 +808,9 @@ H   0.000000  -0.757200  -0.469200  H2   0.417
         assert_eq!(labels[2], "H2 0.417");
         // Extra columns must not disturb bond inference.
         assert_eq!(s.bonds.len(), 2);
+        // No Properties declaration → no channels, label join only.
+        assert!(s.vector_channels.is_empty());
+        assert!(s.scalar_channels.is_empty());
     }
 
     #[test]
@@ -666,6 +958,190 @@ O 1.0 0.0 0.0
         assert!((bm[0] - 5.44).abs() < 1e-5);
         assert!((bm[4] - 5.44).abs() < 1e-5);
         assert!((bm[8] - 5.44).abs() < 1e-5);
+    }
+
+    #[test]
+    fn extxyz_properties_become_channels() {
+        let text = "\
+2
+Lattice=\"10 0 0 0 10 0 0 0 10\" Properties=species:S:1:pos:R:3:vel:R:3:forces:R:3:charge:R:1
+O 0.0 0.0 0.0 0.1 0.2 0.3 1.0 2.0 3.0 -0.8
+H 1.0 0.0 0.0 0.4 0.5 0.6 4.0 5.0 6.0 0.4
+";
+        let s = parse(text).unwrap();
+        assert_eq!(s.n_atoms, 2);
+        assert_eq!(s.vector_channels.len(), 2);
+        // Property names map to megane's conventional channel names.
+        let vel = &s.vector_channels[0];
+        assert_eq!(vel.name, "velocity");
+        assert_eq!(vel.frames.len(), 1);
+        assert_eq!(vel.frames[0].frame, 0);
+        assert_eq!(vel.frames[0].vectors, vec![0.1, 0.2, 0.3, 0.4, 0.5, 0.6]);
+        let force = &s.vector_channels[1];
+        assert_eq!(force.name, "force");
+        assert_eq!(force.frames[0].vectors, vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0]);
+        assert_eq!(s.scalar_channels.len(), 1);
+        let charge = &s.scalar_channels[0];
+        assert_eq!(charge.name, "charge");
+        assert_eq!(charge.frames[0].values, vec![-0.8, 0.4]);
+        // All extra columns were consumed by channels — no residual labels.
+        assert!(s.atom_labels.is_none());
+        assert!(s.warnings.is_empty());
+        // Coordinates and cell are untouched by the extra columns.
+        assert!((s.positions[3] - 1.0).abs() < 1e-5);
+        assert!((s.box_matrix.unwrap()[0] - 10.0).abs() < 1e-5);
+    }
+
+    #[test]
+    fn extxyz_integer_property_becomes_scalar_channel() {
+        let text = "\
+2
+Properties=species:S:1:pos:R:3:mol_id:I:1
+H 0.0 0.0 0.0 1
+H 0.8 0.0 0.0 2
+";
+        let s = parse(text).unwrap();
+        assert!(s.vector_channels.is_empty());
+        assert_eq!(s.scalar_channels.len(), 1);
+        assert_eq!(s.scalar_channels[0].name, "mol_id");
+        assert_eq!(s.scalar_channels[0].frames[0].values, vec![1.0, 2.0]);
+        assert!(s.atom_labels.is_none());
+    }
+
+    #[test]
+    fn extxyz_string_property_stays_in_label() {
+        // A string column between pos and charge keeps the label path while
+        // the numeric column still becomes a channel.
+        let text = "\
+2
+Properties=species:S:1:pos:R:3:tag:S:1:charge:R:1
+O 0.0 0.0 0.0 core -0.8
+H 1.0 0.0 0.0 shell 0.4
+";
+        let s = parse(text).unwrap();
+        assert_eq!(s.scalar_channels.len(), 1);
+        assert_eq!(s.scalar_channels[0].name, "charge");
+        assert_eq!(s.scalar_channels[0].frames[0].values, vec![-0.8, 0.4]);
+        let labels = s.atom_labels.expect("string column stays in the label");
+        assert_eq!(labels, vec!["core", "shell"]);
+    }
+
+    #[test]
+    fn extxyz_multiframe_forces_one_channel() {
+        // Both frames declare forces → one channel with 2 frames, indices
+        // following the overall frame numbering (0 = base structure).
+        let text = "\
+2
+Properties=species:S:1:pos:R:3:forces:R:3
+H 0.0 0.0 0.0 1.0 0.0 0.0
+H 1.0 0.0 0.0 -1.0 0.0 0.0
+2
+Properties=species:S:1:pos:R:3:forces:R:3
+H 0.0 0.0 0.0 2.0 0.0 0.0
+H 2.0 0.0 0.0 -2.0 0.0 0.0
+";
+        let s = parse(text).unwrap();
+        assert_eq!(s.extra_frame_count(), 1);
+        assert_eq!(s.vector_channels.len(), 1);
+        let ch = &s.vector_channels[0];
+        assert_eq!(ch.name, "force");
+        assert_eq!(ch.frames.len(), 2);
+        assert_eq!(ch.frames[0].frame, 0);
+        assert_eq!(ch.frames[1].frame, 1);
+        assert!((ch.frames[0].vectors[0] - 1.0).abs() < 1e-5);
+        assert!((ch.frames[1].vectors[3] + 2.0).abs() < 1e-5);
+        assert!(s.warnings.is_empty());
+    }
+
+    #[test]
+    fn extxyz_partial_property_falls_back_to_static_with_warning() {
+        // Only frame 0 carries forces → static frame-0 channel + one warning.
+        let text = "\
+2
+Properties=species:S:1:pos:R:3:forces:R:3
+H 0.0 0.0 0.0 1.0 0.0 0.0
+H 1.0 0.0 0.0 -1.0 0.0 0.0
+2
+frame 1 without forces
+H 0.0 0.0 0.0
+H 2.0 0.0 0.0
+";
+        let s = parse(text).unwrap();
+        assert_eq!(s.vector_channels.len(), 1);
+        let ch = &s.vector_channels[0];
+        assert_eq!(ch.name, "force");
+        assert_eq!(ch.frames.len(), 1);
+        assert_eq!(ch.frames[0].frame, 0);
+        assert_eq!(s.warnings.len(), 1);
+        assert!(s.warnings[0].contains("force"));
+    }
+
+    #[test]
+    fn malformed_properties_keeps_label_join() {
+        // Truncated triple → declaration ignored, extra columns stay a label.
+        let text = "\
+1
+Properties=species:S:1:pos:R:3:vel:R
+H 0.0 0.0 0.0 0.1 0.2 0.3
+";
+        let s = parse(text).unwrap();
+        assert!(s.vector_channels.is_empty());
+        assert!(s.scalar_channels.is_empty());
+        let labels = s.atom_labels.expect("extra columns become the atom label");
+        assert_eq!(labels[0], "0.1 0.2 0.3");
+    }
+
+    #[test]
+    fn declared_columns_missing_from_line_keep_label_join() {
+        // Declaration promises vel but the atom lines don't carry the columns
+        // → extraction is abandoned and the current label behavior is kept.
+        let text = "\
+2
+Properties=species:S:1:pos:R:3:vel:R:3
+H 0.0 0.0 0.0 word
+H 1.0 0.0 0.0 word
+";
+        let s = parse(text).unwrap();
+        assert!(s.vector_channels.is_empty());
+        let labels = s.atom_labels.expect("fallback label");
+        assert_eq!(labels[0], "word");
+    }
+
+    #[test]
+    fn plain_xyz_has_no_channels() {
+        let text = "2\nwater molecule\nH 0.0 0.0 0.0\nO 1.0 0.0 0.0\n";
+        let s = parse(text).unwrap();
+        assert!(s.vector_channels.is_empty());
+        assert!(s.scalar_channels.is_empty());
+        assert!(s.warnings.is_empty());
+    }
+
+    #[test]
+    fn parse_frame0_extracts_static_channels() {
+        let text = "\
+2
+Properties=species:S:1:pos:R:3:vel:R:3
+H 0.0 0.0 0.0 0.1 0.2 0.3
+H 1.0 0.0 0.0 0.4 0.5 0.6
+2
+Properties=species:S:1:pos:R:3:vel:R:3
+H 0.0 0.0 0.0 0.7 0.8 0.9
+H 2.0 0.0 0.0 1.0 1.1 1.2
+";
+        let f0 = parse_frame0(text).unwrap();
+        assert_eq!(f0.vector_channels.len(), 1);
+        assert_eq!(f0.vector_channels[0].name, "velocity");
+        assert_eq!(
+            f0.vector_channels[0].frames[0].vectors,
+            vec![0.1, 0.2, 0.3, 0.4, 0.5, 0.6]
+        );
+        // The index flags the file so the host reparses eagerly and gets the
+        // frame-synced channel instead of the lazy positions-only path.
+        let idx = build_index(text).unwrap();
+        assert!(idx.heterogeneous);
+        // Eager parse of the same file yields the full 2-frame channel.
+        let eager = parse(text).unwrap();
+        assert_eq!(eager.vector_channels[0].frames.len(), 2);
     }
 
     #[test]
