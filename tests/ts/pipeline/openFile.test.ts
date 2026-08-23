@@ -16,7 +16,7 @@ vi.mock("@/parsers/xtc", () => ({
 }));
 
 import { parseStructureFile, parseTopBonds, parsePsfBonds } from "@/parsers/structure";
-import { applyTopologyFile } from "@/pipeline/openFile";
+import { applyTopologyFile, defaultBondSourceForFile } from "@/pipeline/openFile";
 import { parseXTCFile, parseLammpstrjFile, parseDCDFile, parseNetCDFFile } from "@/parsers/xtc";
 import { usePipelineStore } from "@/pipeline/store";
 import type { Snapshot, Frame, TrajectoryMeta } from "@/types";
@@ -733,5 +733,37 @@ describe("usePipelineStore — cross-document state isolation", () => {
     expect(loader).toBeDefined();
     expect((loader!.data.params as { fileName: string }).fileName).toBe("rescue.pdb");
     expect(state.nodeSnapshots[loader!.id]?.snapshot.nAtoms).toBe(5);
+  });
+});
+
+describe("defaultBondSourceForFile — canonical policy mirror", () => {
+  // Pins the TS mirror of the shared bond-source policy to the canonical
+  // Rust list (megane_core::bonds::FILE_BOND_EXTS). If this test moves,
+  // change the Rust list (and its own pin test) in the same commit.
+  const STRUCTURE_EXTS = [
+    ".pdb",
+    ".ent",
+    ".pdbx",
+    ".mol",
+    ".sdf",
+    ".data",
+    ".lammps",
+    ".cml",
+    ".c3xml",
+    ".xodydata",
+    ".odydata",
+  ];
+
+  it("uses file bonds for every bond-embedding format", () => {
+    for (const ext of STRUCTURE_EXTS) {
+      expect(defaultBondSourceForFile(`sample${ext}`), ext).toBe("structure");
+      expect(defaultBondSourceForFile(`SAMPLE${ext.toUpperCase()}`), ext).toBe("structure");
+    }
+  });
+
+  it("falls back to distance inference for everything else", () => {
+    for (const f of ["a.xyz", "b.gro", "c.cif", "d.traj", "POSCAR", "e.lammpstrj", "f.mol2"]) {
+      expect(defaultBondSourceForFile(f), f).toBe("distance");
+    }
   });
 });

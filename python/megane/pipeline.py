@@ -1273,10 +1273,27 @@ class Pipeline:
 # ─── Convenience wrappers ────────────────────────────────────────────
 
 
+def _resolve_bond_source(
+    path: str,
+    bonds: Literal["auto", "distance", "structure", "file"] | None,
+) -> Literal["distance", "structure", "file"] | None:
+    """Resolve the ``"auto"`` bond source to the shared per-format default.
+
+    The policy lives in the Rust core (``megane_core::bonds::default_bond_source``)
+    and is the same table the webapp's load path uses, so the same file opens
+    with the same bonds on every host.
+    """
+    if bonds != "auto":
+        return bonds
+    from megane import megane_parser
+
+    return megane_parser.default_bond_source(path)
+
+
 def view(
     path: str,
     *,
-    bonds: Literal["distance", "structure", "file"] | None = "distance",
+    bonds: Literal["auto", "distance", "structure", "file"] | None = "auto",
     perspective: bool = False,
     cell_axes_visible: bool = True,
 ) -> "MolecularViewer":
@@ -1290,7 +1307,10 @@ def view(
     Args:
         path: Path to a structure file (PDB, GRO, XYZ, MOL, SDF, MOL2, CIF,
             LAMMPS data, ASE .traj).
-        bonds: Bond detection method. ``"distance"`` (default) uses VDW radii,
+        bonds: Bond detection method. ``"auto"`` (default) picks per format —
+            ``"structure"`` for formats that embed bonds (PDB, MOL/SDF, LAMMPS
+            data, CML, ...), ``"distance"`` otherwise — matching the webapp's
+            load path. ``"distance"`` forces VDW-radius inference,
             ``"structure"`` (alias ``"file"``) reads bonds from the loaded
             structure file, ``None`` disables bonds.
         perspective: Use perspective projection instead of orthographic.
@@ -1307,6 +1327,7 @@ def view(
     """
     from megane.widget import MolecularViewer
 
+    bonds = _resolve_bond_source(path, bonds)
     pipe = Pipeline()
     s = pipe.add_node(LoadStructure(path))
     # Space-group expansion for CIF asymmetric units, matching the default
@@ -1334,7 +1355,7 @@ def view_traj(
     traj: str | None = None,
     xyz: str | None = None,
     lammpstrj: str | None = None,
-    bonds: Literal["distance", "structure", "file"] | None = "distance",
+    bonds: Literal["auto", "distance", "structure", "file"] | None = "auto",
     perspective: bool = False,
     cell_axes_visible: bool = True,
 ) -> "MolecularViewer":
@@ -1354,10 +1375,13 @@ def view_traj(
         xtc: Path to an XTC trajectory file.
         traj: Path to an ASE ``.traj`` file.
         xyz: Path to a multi-frame XYZ trajectory file.
-        bonds: Bond detection method. ``"distance"`` (default) uses VDW radii
-            and is recomputed per frame during trajectory playback,
-            ``"structure"`` (alias ``"file"``) reads bonds once from the
-            loaded structure file, ``None`` disables bonds.
+        bonds: Bond detection method. ``"auto"`` (default) picks per format —
+            ``"structure"`` for formats that embed bonds (PDB, MOL/SDF, LAMMPS
+            data, CML, ...), ``"distance"`` otherwise — matching the webapp's
+            load path. ``"distance"`` forces VDW-radius inference and is
+            recomputed per frame during trajectory playback, ``"structure"``
+            (alias ``"file"``) reads bonds once from the loaded structure
+            file, ``None`` disables bonds.
         perspective: Use perspective projection instead of orthographic.
         cell_axes_visible: Show unit cell axes.
 
@@ -1378,6 +1402,8 @@ def view_traj(
         viewer.frame_index = 50
     """
     import pathlib
+
+    bonds = _resolve_bond_source(path, bonds)
 
     if sum(x is not None for x in (xtc, traj, xyz, lammpstrj)) > 1:
         raise ValueError("Only one of 'xtc', 'traj', 'xyz', or 'lammpstrj' can be provided, not multiple.")
@@ -1427,7 +1453,7 @@ def build_pipeline(
     xtc: str | None = None,
     traj: str | None = None,
     xyz: str | None = None,
-    bonds: Literal["distance", "structure", "file"] | None = "distance",
+    bonds: Literal["auto", "distance", "structure", "file"] | None = "auto",
     top: str | None = None,
     perspective: bool = False,
     cell_axes_visible: bool = True,
@@ -1451,7 +1477,10 @@ def build_pipeline(
         xtc: Path to an XTC trajectory file.
         traj: Path to an ASE ``.traj`` file.
         xyz: Path to a multi-frame XYZ trajectory file.
-        bonds: Bond detection method. ``"distance"`` (default) uses VDW radii,
+        bonds: Bond detection method. ``"auto"`` (default) picks per format —
+            ``"structure"`` for formats that embed bonds (PDB, MOL/SDF, LAMMPS
+            data, CML, ...), ``"distance"`` otherwise — matching the webapp's
+            load path. ``"distance"`` forces VDW-radius inference,
             ``"structure"`` (alias ``"file"``) reads bonds from the loaded
             structure file, ``None`` disables bonds. Ignored when *top* is
             provided.
@@ -1484,6 +1513,7 @@ def build_pipeline(
         pipe = megane.build_pipeline("protein.pdb", top="topology.top")
         print(pipe.to_json())
     """
+    bonds = _resolve_bond_source(path, bonds)
     if sum(x is not None for x in (xtc, traj, xyz)) > 1:
         raise ValueError("Only one of 'xtc', 'traj', or 'xyz' can be provided, not multiple.")
 

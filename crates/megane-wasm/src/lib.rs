@@ -1229,6 +1229,14 @@ pub fn infer_bonds_vdw(positions: &[f32], elements: &[u8], n_atoms: u32) -> Uint
 
 /// Parse GROMACS .top file and extract bond pairs.
 /// Returns flat Uint32Array [a0, b0, a1, b1, ...].
+/// The default AddBond source for a structure filename: `"structure"` for
+/// formats that embed bonds, `"distance"` (VDW inference) otherwise.
+/// Shared policy with the Python host (`megane_core::bonds::default_bond_source`).
+#[wasm_bindgen]
+pub fn default_bond_source(filename: &str) -> String {
+    bonds::default_bond_source(filename).to_string()
+}
+
 #[wasm_bindgen]
 pub fn parse_top_bonds(text: &str, n_atoms: u32) -> Uint32Array {
     let result = top::parse_top_bonds(text, n_atoms as usize);

@@ -1,62 +1,62 @@
-"""Tests for the GROMACS .top topology parser."""
+"""Tests for the GROMACS .top topology parser.
+
+The parser is a thin wrapper over the Rust core, so everything is tested
+through the public :func:`parse_top_bonds` path-based API.
+"""
 
 from pathlib import Path
 
 import numpy as np
 import pytest
 
-from megane.parsers.top import (
-    _expand_includes,
-    _extract_bonds,
-    _parse_include_directive,
-    parse_top_bonds,
-)
+from megane.parsers.top import parse_top_bonds
 
 FIXTURES = Path(__file__).parent.parent / "fixtures"
 
 
-class TestParseIncludeDirective:
-    def test_double_quote(self):
-        assert _parse_include_directive('#include "molecule.itp"') == "molecule.itp"
-
-    def test_angle_bracket(self):
-        assert _parse_include_directive("#include <forcefield.itp>") == "forcefield.itp"
-
-    def test_leading_whitespace(self):
-        assert _parse_include_directive('  #include "ions.itp"') == "ions.itp"
-
-    def test_normal_line_returns_none(self):
-        assert _parse_include_directive("[ bonds ]") is None
-        assert _parse_include_directive("; comment") is None
-        assert _parse_include_directive("1 2 1") is None
-
-    def test_no_closing_quote_returns_none(self):
-        assert _parse_include_directive('#include "unclosed') is None
+def _parse_text(tmp_path, text: str) -> np.ndarray:
+    f = tmp_path / "case.top"
+    f.write_text(text)
+    return parse_top_bonds(str(f))
 
 
-class TestExtractBonds:
-    def test_basic(self):
-        text = "[ bonds ]\n1 2 1\n2 3 1\n"
-        bonds = _extract_bonds(text)
-        assert bonds == [(0, 1), (1, 2)]
+class TestIncludeDirectiveForms:
+    def test_double_quote(self, tmp_path):
+        (tmp_path / "molecule.itp").write_text("[ bonds ]\n1 2 1\n")
+        assert _parse_text(tmp_path, '#include "molecule.itp"\n').shape == (1, 2)
 
-    def test_inline_comment_stripped(self):
-        bonds = _extract_bonds("[ bonds ]\n1 2 1 ; comment\n")
-        assert bonds == [(0, 1)]
+    def test_angle_bracket(self, tmp_path):
+        (tmp_path / "forcefield.itp").write_text("[ bonds ]\n1 2 1\n")
+        assert _parse_text(tmp_path, "#include <forcefield.itp>\n").shape == (1, 2)
 
-    def test_stops_at_next_section(self):
-        bonds = _extract_bonds("[ bonds ]\n1 2 1\n[ angles ]\n1 2 3 1\n")
-        assert bonds == [(0, 1)]
+    def test_leading_whitespace(self, tmp_path):
+        (tmp_path / "ions.itp").write_text("[ bonds ]\n1 2 1\n")
+        assert _parse_text(tmp_path, '  #include "ions.itp"\n').shape == (1, 2)
 
-    def test_skips_preprocessor_lines(self):
-        bonds = _extract_bonds("[ bonds ]\n#include \"x.itp\"\n1 2 1\n")
-        assert bonds == [(0, 1)]
+    def test_unclosed_quote_is_not_an_include(self, tmp_path):
+        # A malformed include line is treated as plain text, not a directive.
+        bonds = _parse_text(tmp_path, '#include "unclosed\n[ bonds ]\n1 2 1\n')
+        assert bonds.shape == (1, 2)
+
+
+class TestBondSectionParsing:
+    def test_basic(self, tmp_path):
+        bonds = _parse_text(tmp_path, "[ bonds ]\n1 2 1\n2 3 1\n")
+        np.testing.assert_array_equal(bonds, [[0, 1], [1, 2]])
+
+    def test_inline_comment_stripped(self, tmp_path):
+        bonds = _parse_text(tmp_path, "[ bonds ]\n1 2 1 ; comment\n")
+        np.testing.assert_array_equal(bonds, [[0, 1]])
+
+    def test_stops_at_next_section(self, tmp_path):
+        bonds = _parse_text(tmp_path, "[ bonds ]\n1 2 1\n[ angles ]\n1 2 3 1\n")
+        np.testing.assert_array_equal(bonds, [[0, 1]])
 
 
 class TestMoleculeReplication:
     """Bonds inside [ moleculetype ] blocks must be replicated per [ molecules ]."""
 
-    def test_multiple_copies_of_one_molecule(self):
+    def test_multiple_copies_of_one_molecule(self, tmp_path):
         text = """
 [ moleculetype ]
 SOL  2
@@ -73,18 +73,13 @@ SOL  2
 [ molecules ]
 SOL  4
 """
-        assert _extract_bonds(text) == [
-            (0, 1),
-            (0, 2),
-            (3, 4),
-            (3, 5),
-            (6, 7),
-            (6, 8),
-            (9, 10),
-            (9, 11),
-        ]
+        bonds = _parse_text(tmp_path, text)
+        np.testing.assert_array_equal(
+            bonds,
+            [[0, 1], [0, 2], [3, 4], [3, 5], [6, 7], [6, 8], [9, 10], [9, 11]],
+        )
 
-    def test_multiple_molecule_types_offset_correctly(self):
+    def test_multiple_molecule_types_offset_correctly(self, tmp_path):
         text = """
 [ moleculetype ]
 protein  3
@@ -118,18 +113,13 @@ SOL  2
 protein  1
 SOL      2
 """
-        assert _extract_bonds(text) == [
-            (0, 1),
-            (1, 2),
-            (2, 3),
-            (1, 4),
-            (5, 6),
-            (5, 7),
-            (8, 9),
-            (8, 10),
-        ]
+        bonds = _parse_text(tmp_path, text)
+        np.testing.assert_array_equal(
+            bonds,
+            [[0, 1], [1, 2], [2, 3], [1, 4], [5, 6], [5, 7], [8, 9], [8, 10]],
+        )
 
-    def test_default_order_without_molecules_section(self):
+    def test_default_order_without_molecules_section(self, tmp_path):
         text = """
 [ moleculetype ]
 protein  3
@@ -141,9 +131,9 @@ protein  3
 [ bonds ]
      1     2     1
 """
-        assert _extract_bonds(text) == [(0, 1)]
+        np.testing.assert_array_equal(_parse_text(tmp_path, text), [[0, 1]])
 
-    def test_unresolved_molecule_type_stops_replication(self):
+    def test_unresolved_molecule_type_stops_replication(self, tmp_path):
         text = """
 [ moleculetype ]
 protein  3
@@ -159,9 +149,9 @@ protein  3
 protein  1
 SOL      10
 """
-        assert _extract_bonds(text) == [(0, 1)]
+        np.testing.assert_array_equal(_parse_text(tmp_path, text), [[0, 1]])
 
-    def test_n_atoms_inferred_without_atoms_section(self):
+    def test_n_atoms_inferred_without_atoms_section(self, tmp_path):
         text = """
 [ moleculetype ]
 SOL  2
@@ -173,40 +163,9 @@ SOL  2
 [ molecules ]
 SOL  2
 """
-        assert _extract_bonds(text) == [(0, 1), (0, 2), (3, 4), (3, 5)]
-
-
-class TestExpandIncludes:
-    def test_resolves_itp(self, tmp_path):
-        (tmp_path / "mol.itp").write_text("[ bonds ]\n1 2 1\n")
-        expanded = _expand_includes('#include "mol.itp"', tmp_path, [])
-        assert "[ bonds ]" in expanded
-
-    def test_skips_missing_system_include(self, tmp_path):
-        text = "#include <forcefield.itp>\n[ bonds ]\n1 2 1\n"
-        expanded = _expand_includes(text, tmp_path, [])
-        assert "[ bonds ]" in expanded
-
-    def test_nested_includes(self, tmp_path):
-        (tmp_path / "atoms.itp").write_text("[ bonds ]\n1 2 1\n")
-        (tmp_path / "mol.itp").write_text('#include "atoms.itp"')
-        expanded = _expand_includes('#include "mol.itp"', tmp_path, [])
-        assert "[ bonds ]" in expanded
-
-    def test_circular_include_raises(self, tmp_path):
-        (tmp_path / "a.itp").write_text('#include "b.itp"')
-        (tmp_path / "b.itp").write_text('#include "a.itp"')
-        with pytest.raises(RecursionError, match="Circular include"):
-            _expand_includes('#include "a.itp"', tmp_path, [])
-
-    def test_diamond_include_allowed(self, tmp_path):
-        (tmp_path / "d.itp").write_text("[ bonds ]\n1 2 1\n")
-        (tmp_path / "b.itp").write_text('#include "d.itp"')
-        (tmp_path / "c.itp").write_text('#include "d.itp"')
-        text = '#include "b.itp"\n#include "c.itp"\n'
-        # Should not raise — diamond includes are legal.
-        expanded = _expand_includes(text, tmp_path, [])
-        assert expanded.count("[ bonds ]") == 2
+        np.testing.assert_array_equal(
+            _parse_text(tmp_path, text), [[0, 1], [0, 2], [3, 4], [3, 5]]
+        )
 
 
 class TestParseTopBonds:
@@ -246,6 +205,10 @@ class TestParseTopBonds:
         bonds = parse_top_bonds(str(f))
         assert len(bonds) == 1
 
+    def test_missing_file_raises(self, tmp_path):
+        with pytest.raises(ValueError, match="Cannot read"):
+            parse_top_bonds(str(tmp_path / "does_not_exist.top"))
+
     # ── include resolution ────────────────────────────────────────────────────
 
     def test_resolves_itp_include(self, tmp_path):
@@ -277,3 +240,14 @@ class TestParseTopBonds:
         top.write_text('#include "a.itp"')
         with pytest.raises(RecursionError, match="Circular include"):
             parse_top_bonds(str(top))
+
+    def test_diamond_include_allowed(self, tmp_path):
+        (tmp_path / "d.itp").write_text("[ bonds ]\n1 2 1\n")
+        (tmp_path / "b.itp").write_text('#include "d.itp"')
+        (tmp_path / "c.itp").write_text('#include "d.itp"')
+        top = tmp_path / "system.top"
+        top.write_text('#include "b.itp"\n#include "c.itp"\n')
+        # Diamond includes are legal (no circular-include error); the identical
+        # bond contributed by both branches is deduplicated.
+        bonds = parse_top_bonds(str(top))
+        np.testing.assert_array_equal(bonds, [[0, 1]])

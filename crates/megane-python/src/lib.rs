@@ -541,6 +541,39 @@ fn parse_netcdf(py: Python<'_>, data: &[u8]) -> PyResult<PyTrajectoryData> {
     py_trajectory_from_data(py, traj)
 }
 
+/// Parse a GROMACS `.top` topology file at `path` and return bond pairs,
+/// resolving `#include` directives from the filesystem (relative to the
+/// file's directory, then as absolute paths). Missing includes are skipped;
+/// a circular include chain raises `ValueError` naming the chain.
+///
+/// Returns an (n_bonds, 2) uint32 array of 0-indexed atom index pairs.
+#[pyfunction]
+fn parse_top_bonds_from_path(py: Python<'_>, path: &str) -> PyResult<Py<PyArray2<u32>>> {
+    let bonds =
+        megane_core::top::parse_top_bonds_from_path(path, usize::MAX).map_err(PyValueError::new_err)?;
+    let n = bonds.len();
+    let flat: Vec<u32> = bonds.iter().flat_map(|(a, b)| [*a, *b]).collect();
+    let arr = if n > 0 {
+        Array2::from_shape_vec((n, 2), flat).map_err(|e| {
+            PyValueError::new_err(format!("failed to reshape bonds into ({n}, 2): {e}"))
+        })?
+    } else {
+        Array2::from_shape_vec((0, 2), vec![]).map_err(|e| {
+            PyValueError::new_err(format!("failed to create empty bonds array: {e}"))
+        })?
+    };
+    Ok(arr.into_pyarray(py).unbind())
+}
+
+/// The default AddBond source for a structure filename: `"structure"` for
+/// formats that embed bonds, `"distance"` (VDW inference) otherwise.
+/// Shared with the webapp so every host opens the same file with the same
+/// bonds (see `megane_core::bonds::default_bond_source`).
+#[pyfunction]
+fn default_bond_source(filename: &str) -> &'static str {
+    megane_core::bonds::default_bond_source(filename)
+}
+
 /// Parse a CHARMM/NAMD PSF topology file and return bond pairs.
 ///
 /// Returns an (n_bonds, 2) uint32 array of 0-indexed atom index pairs.
@@ -630,6 +663,8 @@ fn megane_parser(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(parse_lammpstrj_structure, m)?)?;
     m.add_function(wrap_pyfunction!(parse_netcdf, m)?)?;
     m.add_function(wrap_pyfunction!(parse_psf_bonds, m)?)?;
+    m.add_function(wrap_pyfunction!(parse_top_bonds_from_path, m)?)?;
+    m.add_function(wrap_pyfunction!(default_bond_source, m)?)?;
     m.add_function(wrap_pyfunction!(infer_bonds_vdw, m)?)?;
     Ok(())
 }

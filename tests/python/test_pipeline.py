@@ -1276,10 +1276,29 @@ class TestViewTrajWrapper:
         node_types = [cfg["type"] for _, cfg in pipe._nodes.values()]
         assert "add_bond" not in node_types
 
-    def test_bonds_distance_default(self):
+    def test_bonds_auto_default_uses_format_policy(self):
+        # "auto" resolves through the shared per-format table (the same one
+        # the webapp's load path uses): PDB embeds bonds -> "structure".
         viewer = view_traj(
             str(FIXTURES / "caffeine_water.pdb"),
             xtc=str(FIXTURES / "caffeine_water_vibration.xtc"),
+        )
+        pipe = viewer._pipeline_ref
+        bond_cfg = next(cfg for _, cfg in pipe._nodes.values() if cfg["type"] == "add_bond")
+        assert bond_cfg["bondSource"] == "structure"
+
+    def test_bonds_auto_default_distance_for_bondless_formats(self):
+        # Multi-frame XYZ carries no bond information -> distance inference.
+        viewer = view_traj(str(FIXTURES / "water_multiframe.xyz"))
+        pipe = viewer._pipeline_ref
+        bond_cfg = next(cfg for _, cfg in pipe._nodes.values() if cfg["type"] == "add_bond")
+        assert bond_cfg["bondSource"] == "distance"
+
+    def test_bonds_explicit_distance_overrides_auto(self):
+        viewer = view_traj(
+            str(FIXTURES / "caffeine_water.pdb"),
+            xtc=str(FIXTURES / "caffeine_water_vibration.xtc"),
+            bonds="distance",
         )
         pipe = viewer._pipeline_ref
         bond_cfg = next(cfg for _, cfg in pipe._nodes.values() if cfg["type"] == "add_bond")

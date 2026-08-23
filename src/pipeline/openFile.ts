@@ -98,6 +98,13 @@ const PIPELINE_SUFFIX = ".megane.json";
 // (PDB CONECT records, MOL/SDF bond block, LAMMPS data Bonds section).
 // Other supported structure formats (xyz, gro, cif, traj) carry no bond
 // information, so VDW distance inference is the more useful default.
+//
+// This list mirrors the canonical policy in the Rust core
+// (`megane_core::bonds::FILE_BOND_EXTS` / `default_bond_source`), which the
+// Python host consumes via PyO3 so every host opens the same file with the
+// same bonds. It is duplicated here only because this synchronous load path
+// runs before the WASM module is guaranteed to be initialised — change both
+// lists together (a test on each side pins the contents).
 const FILE_BOND_EXTS = [
   ".pdb",
   ".ent",
