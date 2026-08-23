@@ -415,7 +415,16 @@ pub fn infer_bonds_vdw(positions: &[f32], elements: &[u8], n_atoms: usize) -> Ve
 /// for the synchronous TS load path and pins the mirror with a unit test —
 /// change both together.
 pub const FILE_BOND_EXTS: [&str; 11] = [
-    ".pdb", ".ent", ".pdbx", ".mol", ".sdf", ".data", ".lammps", ".cml", ".c3xml", ".xodydata",
+    ".pdb",
+    ".ent",
+    ".pdbx",
+    ".mol",
+    ".sdf",
+    ".data",
+    ".lammps",
+    ".cml",
+    ".c3xml",
+    ".xodydata",
     ".odydata",
 ];
 
@@ -438,8 +447,17 @@ mod tests {
     #[test]
     fn default_bond_source_uses_file_bonds_for_embedding_formats() {
         for f in [
-            "a.pdb", "b.ENT", "c.pdbx", "d.mol", "e.sdf", "f.data", "g.lammps", "h.cml",
-            "i.c3xml", "j.xodydata", "k.odydata",
+            "a.pdb",
+            "b.ENT",
+            "c.pdbx",
+            "d.mol",
+            "e.sdf",
+            "f.data",
+            "g.lammps",
+            "h.cml",
+            "i.c3xml",
+            "j.xodydata",
+            "k.odydata",
         ] {
             assert_eq!(super::default_bond_source(f), "structure", "{f}");
         }
@@ -447,7 +465,15 @@ mod tests {
 
     #[test]
     fn default_bond_source_falls_back_to_distance_inference() {
-        for f in ["a.xyz", "b.gro", "c.cif", "d.traj", "POSCAR", "e.lammpstrj", "f.mol2"] {
+        for f in [
+            "a.xyz",
+            "b.gro",
+            "c.cif",
+            "d.traj",
+            "POSCAR",
+            "e.lammpstrj",
+            "f.mol2",
+        ] {
             assert_eq!(super::default_bond_source(f), "distance", "{f}");
         }
     }

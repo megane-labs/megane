@@ -549,8 +549,8 @@ fn parse_netcdf(py: Python<'_>, data: &[u8]) -> PyResult<PyTrajectoryData> {
 /// Returns an (n_bonds, 2) uint32 array of 0-indexed atom index pairs.
 #[pyfunction]
 fn parse_top_bonds_from_path(py: Python<'_>, path: &str) -> PyResult<Py<PyArray2<u32>>> {
-    let bonds =
-        megane_core::top::parse_top_bonds_from_path(path, usize::MAX).map_err(PyValueError::new_err)?;
+    let bonds = megane_core::top::parse_top_bonds_from_path(path, usize::MAX)
+        .map_err(PyValueError::new_err)?;
     let n = bonds.len();
     let flat: Vec<u32> = bonds.iter().flat_map(|(a, b)| [*a, *b]).collect();
     let arr = if n > 0 {
