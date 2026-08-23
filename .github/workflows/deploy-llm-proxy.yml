@@ -21,9 +21,13 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # wrangler v4 (workers/llm-proxy devDependency) requires Node 22+. On
+      # Node 20 the wrangler-action rejects the local install and falls back
+      # to wrangler@3.90.0, which ERESOLVEs against @cloudflare/workers-types
+      # v5 — the reason every deploy after PR #666 still failed.
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
           cache: npm
           cache-dependency-path: workers/llm-proxy/package-lock.json
 
