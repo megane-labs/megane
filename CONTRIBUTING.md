@@ -110,10 +110,10 @@ front saves a round trip:
   user can see and disable it in the editor. The only transformations allowed
   inside a parser are lossless canonicalizations (unit conversion declared by
   the file/format, element resolution, bond inference *only* when the format
-  carries no connectivity, identity-preserving reindexing). Known existing
-  violations are catalogued in
-  [`docs/docs/dev/parser-purity-audit.md`](docs/docs/dev/parser-purity-audit.md)
-  — please do not add new ones.
+  carries no connectivity, identity-preserving reindexing). Per-atom data
+  megane doesn't render yet belongs in `ParsedStructure::scalar_channels`,
+  and anything a parser must skip surfaces through
+  `ParsedStructure::warnings` — please do not introduce new violations.
 - **New file formats and pipeline nodes must work on every host.** megane
   ships as a webapp, Jupyter widget, JupyterLab extension, VSCode extension,
   and Python API. When you add a format or node, register it on all of them

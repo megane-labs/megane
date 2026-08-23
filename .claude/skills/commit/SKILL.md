@@ -35,7 +35,7 @@ Keep the first line under 72 characters. Add details in the body if needed.
    - Sweep the rest of the matrix for **side effects**: treat unexpected pixel diffs, timeouts, or runtime errors in *other* projects as regressions and fix the root cause — do not silently re-baseline through them.
    - Commit any intentional baseline updates under `tests/e2e/baselines/<project>/` in the same PR.
    - In the PR description, list which Playwright projects you ran and which baselines you updated.
-4. If the diff touches a parser or load-path file, grep `docs/docs/dev/parser-purity-audit.md` for the files you changed: if your change fixes a listed violation, delete that row in the same commit (CRITICAL RULE #11 says the audit shrinks with the fix — stale rows have slipped through before).
+4. If the diff touches a parser or load-path file, hold it to CRITICAL RULE #11 (parsers read files as-is): no transformation beyond the documented lossless canonicalizations, per-atom data megane doesn't render goes into `ParsedStructure::scalar_channels`, and anything the parser must skip pushes a `ParsedStructure::warnings` entry instead of disappearing silently. The 2026-08 purity audit fixed every known violation — do not introduce new ones.
 5. Do NOT commit generated files: `crates/megane-wasm/pkg/`, `dist/`, `target/`, `node_modules/`, `dev-preview/`
    Do NOT commit plan files: any file named `plan.md` or matching `*.plan.md` (these are local planning artifacts, not part of the codebase)
 6. Check if your changes require documentation updates:

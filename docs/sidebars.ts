@@ -68,7 +68,6 @@ const sidebars: SidebarsConfig = {
   developSidebar: [
     { type: "doc", id: "dev/architecture", label: "Architecture" },
     { type: "doc", id: "dev/custom-nodes", label: "Custom Nodes" },
-    { type: "doc", id: "dev/parser-purity-audit", label: "Parser Purity Audit" },
   ],
 
   referenceSidebar: [
