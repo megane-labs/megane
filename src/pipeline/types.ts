@@ -145,8 +145,6 @@ export interface CellData {
   type: "cell";
   sourceNodeId: string; // load_structure node that produced this
   box: Float32Array; // 3x3 row-major
-  visible: boolean;
-  axesVisible: boolean;
 }
 
 /** Text labels positioned at atom locations. */
@@ -304,6 +302,7 @@ export type PipelineNodeType =
   | "viewport"
   | "filter"
   | "modify"
+  | "symmetry"
   | "wrap"
   | "replicate"
   | "drawing_boundary"
@@ -330,6 +329,7 @@ export const NODE_TYPE_LABELS: Record<PipelineNodeType, string> = {
   viewport: "Viewport",
   filter: "Filter",
   modify: "Modify",
+  symmetry: "Symmetry",
   wrap: "Wrap / Unwrap",
   replicate: "Replicate",
   drawing_boundary: "Drawing Boundary",
@@ -360,6 +360,7 @@ export const NODE_CATEGORY: Record<PipelineNodeType, NodeCategory> = {
   coordination_generator: "bond",
   filter: "filter",
   modify: "modify",
+  symmetry: "modify",
   wrap: "modify",
   replicate: "modify",
   drawing_boundary: "modify",
@@ -450,6 +451,16 @@ export const NODE_PORTS: Record<PipelineNodeType, NodePortConfig> = {
   modify: {
     inputs: [{ name: "in", dataType: "particle", label: "In" }],
     outputs: [{ name: "out", dataType: "particle", label: "Out" }],
+  },
+  symmetry: {
+    inputs: [
+      { name: "particle", dataType: "particle", label: "Particle" },
+      { name: "trajectory", dataType: "trajectory", label: "Trajectory" },
+    ],
+    outputs: [
+      { name: "particle", dataType: "particle", label: "Particle" },
+      { name: "trajectory", dataType: "trajectory", label: "Trajectory" },
+    ],
   },
   wrap: {
     inputs: [
@@ -557,6 +568,16 @@ export interface LoadStructureParams {
 export interface LoadTrajectoryParams {
   type: "load_trajectory";
   fileName: string | null;
+  /**
+   * Where this node's frames come from. `"file"` (the default) plays a
+   * separately loaded trajectory file (XTC/DCD/dump/...). `"structure"`
+   * forwards the frames embedded in the structure file itself (multi-frame
+   * XYZ/PDB/.traj) — set by the load path when such a file is opened, shown
+   * on the node so the decision stays visible and editable instead of the
+   * node being silently removed. Absent on pipelines saved before this
+   * option existed, which means `"file"`.
+   */
+  source?: "file" | "structure";
 }
 
 export interface StreamingParams {
@@ -611,6 +632,24 @@ export interface ModifyParams {
   type: "modify";
   scale: number;
   opacity: number;
+}
+
+/** Modes of the Symmetry node. */
+export type SymmetryMode = "expand" | "none";
+
+/**
+ * Symmetry node parameters — space-group expansion of a crystallographic
+ * asymmetric unit. "expand" (the default) applies the symmetry operations the
+ * parser captured on the snapshot (`symmetryOps`, e.g. a CIF
+ * `_symmetry_equiv_pos_as_xyz` loop) to fill one unit cell with the
+ * symmetry-equivalent images; "none" passes the asymmetric unit through
+ * untouched. Structures without symmetry operations (every non-CIF format) or
+ * without a unit cell pass through unchanged in either mode, which makes the
+ * node safe to keep wired into default pipelines.
+ */
+export interface SymmetryParams {
+  type: "symmetry";
+  mode: SymmetryMode;
 }
 
 /** Coordinate-mapping modes of the Wrap / Unwrap node. */
@@ -777,6 +816,7 @@ export type PipelineNodeParams =
   | ViewportParams
   | FilterParams
   | ModifyParams
+  | SymmetryParams
   | WrapParams
   | ReplicateParams
   | DrawingBoundaryParams
@@ -798,7 +838,7 @@ export function defaultParams(type: PipelineNodeType): PipelineNodeParams {
     case "load_structure":
       return { type, fileName: null, hasTrajectory: false, hasCell: false };
     case "load_trajectory":
-      return { type, fileName: null };
+      return { type, fileName: null, source: "file" };
     case "streaming":
       return { type, connected: false };
     case "load_vector":
@@ -828,6 +868,8 @@ export function defaultParams(type: PipelineNodeType): PipelineNodeParams {
         scale: 1.0,
         opacity: 1.0,
       };
+    case "symmetry":
+      return { type, mode: "expand" };
     case "wrap":
       return { type, mode: "none" };
     case "replicate":

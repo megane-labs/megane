@@ -135,10 +135,11 @@ export function syncAddBondSourceForLoader(
   const desired = defaultBondSourceForFile(filename);
   const targets = new Set<string>();
   // Walk forward along particle-carrying edges. AddBond may sit downstream of
-  // particle pass-through nodes (wrap / replicate / filter / modify / color /
-  // representation), so we traverse through those to find it rather than only
+  // particle pass-through nodes (symmetry / wrap / replicate / filter / modify /
+  // color / representation), so we traverse through those to find it rather than only
   // looking at the loader's direct neighbours.
   const PASS_THROUGH = new Set([
+    "symmetry",
     "wrap",
     "replicate",
     "filter",
@@ -269,18 +270,28 @@ async function openStructure(
 
   syncAddBondSourceForLoader(api.getState(), loaderId, file.name);
 
-  if (result.vectorChannels && result.vectorChannels.length > 0) {
-    state.setFileVectors(result.vectorChannels[0].frames);
-  }
+  // Offer embedded vector channels to the load_vector node UI; nothing
+  // renders until the user activates one (a parse must not switch a visual
+  // overlay on as a side effect).
+  state.setEmbeddedVectorChannels(
+    result.vectorChannels && result.vectorChannels.length > 0
+      ? result.vectorChannels.map((ch) => ({ name: ch.name, frames: ch.frames }))
+      : null,
+  );
 
   // When opening a multi-frame structure file (e.g. .traj, multi-MODEL .pdb,
-  // multi-frame .xyz), the embedded frames flow through the LoadStructure
-  // node's `trajectory` port, so any LoadTrajectory node from the seed
-  // template is redundant. Drop it and rewire its downstream consumers
-  // directly to LoadStructure.trajectory.
+  // multi-frame .xyz), the frames live in the structure file itself. Switch
+  // any LoadTrajectory node to its visible "structure" source instead of
+  // silently removing it from the graph; a single-frame file resets it to
+  // "file" so a later XTC/DCD open plays normally.
+  const trajNodeId = findNodeId(api, "load_trajectory");
   if (result.frames.length > 0) {
     state.setFileFrames(null, null);
-    api.getState().removeLoadTrajectoryAndRewire();
+    if (trajNodeId) {
+      state.updateNodeParams(trajNodeId, { source: "structure", fileName: "" });
+    }
+  } else if (trajNodeId) {
+    state.updateNodeParams(trajNodeId, { source: "file" });
   }
 }
 
@@ -316,7 +327,7 @@ async function openTrajectory(
 
   const trajId = opts.targetNodeId ?? findNodeId(api, "load_trajectory");
   if (trajId) {
-    state.updateNodeParams(trajId, { fileName: file.name });
+    state.updateNodeParams(trajId, { fileName: file.name, source: "file" });
   }
 }
 
@@ -415,6 +426,7 @@ export async function applyTopologyFile(
     : await parseTopBonds(text, 0xffffffff);
 
   const PASS_THROUGH = new Set([
+    "symmetry",
     "wrap",
     "replicate",
     "filter",

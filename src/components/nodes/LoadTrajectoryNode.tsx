@@ -35,7 +35,7 @@ export function LoadTrajectoryNode({ id, data }: NodeProps<Node<PipelineNodeData
     (file: File) => {
       const lower = file.name.toLowerCase();
       if (!TRAJECTORY_EXTS.some((ext) => lower.endsWith(ext))) return;
-      updateNodeParams(id, { fileName: file.name });
+      updateNodeParams(id, { fileName: file.name, source: "file" });
       _onTrajectoryLoad?.(file);
     },
     [id, updateNodeParams],
@@ -62,7 +62,15 @@ export function LoadTrajectoryNode({ id, data }: NodeProps<Node<PipelineNodeData
   return (
     <NodeShell id={id} nodeType="load_trajectory" enabled={data.enabled}>
       <div onDrop={handleDrop} onDragOver={handleDragOver}>
-        {params.fileName ? (
+        {params.source === "structure" ? (
+          // The frames come from the structure file itself (multi-frame
+          // XYZ/PDB/.traj). Shown here — instead of removing the node — so
+          // the routing decision stays visible; loading a trajectory file
+          // switches back to it.
+          <div data-testid="load-trajectory-filename" style={fileNameStyle}>
+            Frames from structure file
+          </div>
+        ) : params.fileName ? (
           <div data-testid="load-trajectory-filename" style={fileNameStyle}>
             {params.fileName}
           </div>

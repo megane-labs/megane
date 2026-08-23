@@ -84,7 +84,7 @@ describe("LoadTrajectoryNode", () => {
       .parentElement!.querySelector('input[type="file"]') as HTMLInputElement;
     fireFileInputChange(input, [file]);
 
-    expect(updateNodeParams).toHaveBeenCalledWith("lt1", { fileName: "traj.xtc" });
+    expect(updateNodeParams).toHaveBeenCalledWith("lt1", { fileName: "traj.xtc", source: "file" });
     expect(handler).toHaveBeenCalledTimes(1);
     expect(handler).toHaveBeenCalledWith(file);
   });
@@ -106,7 +106,7 @@ describe("LoadTrajectoryNode", () => {
       .parentElement!.querySelector('input[type="file"]') as HTMLInputElement;
     fireFileInputChange(input, [file]);
 
-    expect(updateNodeParams).toHaveBeenCalledWith("lt1", { fileName: "run.lammpstrj" });
+    expect(updateNodeParams).toHaveBeenCalledWith("lt1", { fileName: "run.lammpstrj", source: "file" });
     expect(handler).toHaveBeenCalledWith(file);
   });
 
@@ -127,7 +127,7 @@ describe("LoadTrajectoryNode", () => {
       .parentElement!.querySelector('input[type="file"]') as HTMLInputElement;
     fireFileInputChange(input, [file]);
 
-    expect(updateNodeParams).toHaveBeenCalledWith("lt1", { fileName: "trajectory.dcd" });
+    expect(updateNodeParams).toHaveBeenCalledWith("lt1", { fileName: "trajectory.dcd", source: "file" });
     expect(handler).toHaveBeenCalledWith(file);
   });
 
@@ -171,7 +171,7 @@ describe("LoadTrajectoryNode", () => {
       .parentElement!.querySelector('input[type="file"]') as HTMLInputElement;
     fireFileInputChange(input, [file]);
 
-    expect(updateNodeParams).toHaveBeenCalledWith("lt1", { fileName: "traj.xtc" });
+    expect(updateNodeParams).toHaveBeenCalledWith("lt1", { fileName: "traj.xtc", source: "file" });
     expect(handler).not.toHaveBeenCalled();
   });
 
@@ -190,7 +190,7 @@ describe("LoadTrajectoryNode", () => {
     const dropZone = screen.getByTestId("load-trajectory-filename").parentElement!;
     fireEvent.drop(dropZone, { dataTransfer: { files: [file] } });
 
-    expect(updateNodeParams).toHaveBeenCalledWith("lt1", { fileName: "run.dump" });
+    expect(updateNodeParams).toHaveBeenCalledWith("lt1", { fileName: "run.dump", source: "file" });
     expect(handler).toHaveBeenCalledWith(file);
   });
 
@@ -229,7 +229,7 @@ describe("LoadTrajectoryNode", () => {
     const dropZone = screen.getByTestId("load-trajectory-filename").parentElement!;
     fireEvent.drop(dropZone, { dataTransfer: { files: [junk, traj] } });
 
-    expect(updateNodeParams).toHaveBeenCalledWith("lt1", { fileName: "good.xtc" });
+    expect(updateNodeParams).toHaveBeenCalledWith("lt1", { fileName: "good.xtc", source: "file" });
     expect(handler).toHaveBeenCalledWith(traj);
   });
 });

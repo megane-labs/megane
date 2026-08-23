@@ -206,7 +206,7 @@ export function useMeganeLocal(): MeganeLocalState {
       if (lazy) {
         // Extra frames stream through the structure-trajectory channel. Clear
         // (and dispose) any prior file trajectory so only this provider is live;
-        // removeLoadTrajectoryAndRewire below makes LoadStructure the live source.
+        // the LoadTrajectory node below switches to its "structure" source.
         pipeStore.setFileFrames(null, null);
         pipeStore.setStructureProvider(lazy.provider);
       } else if (result.frames.length > 0) {
@@ -273,17 +273,18 @@ export function useMeganeLocal(): MeganeLocalState {
           // start with a sensible default for formats that lack bond info.
           syncAddBondSourceForLoader(usePipelineStore.getState(), loaderNode.id, filename);
         }
-        if (hasFrames) {
-          // Multi-frame structure files (.traj, multi-MODEL PDB,
-          // multi-frame XYZ) carry their trajectory in the structure file
-          // itself, so a separate LoadTrajectory node is redundant.
-          pipeStore.removeLoadTrajectoryAndRewire();
-        } else {
-          const trajNode = pipeStore.nodes.find((n) => n.type === "load_trajectory");
-          if (trajNode) {
+        const trajNode = pipeStore.nodes.find((n) => n.type === "load_trajectory");
+        if (trajNode) {
+          if (hasFrames) {
+            // Multi-frame structure files (.traj, multi-MODEL PDB,
+            // multi-frame XYZ) carry their trajectory in the structure file
+            // itself. Flip the node to its visible "structure" source rather
+            // than silently removing it from the graph.
+            pipeStore.updateNodeParams(trajNode.id, { source: "structure", fileName: "" });
+          } else {
             // Clear any previously-loaded XTC name so it doesn't linger
-            // across structure swaps.
-            pipeStore.updateNodeParams(trajNode.id, { fileName: "" });
+            // across structure swaps, and reset to the file source.
+            pipeStore.updateNodeParams(trajNode.id, { source: "file", fileName: "" });
           }
         }
       }
@@ -357,7 +358,10 @@ export function useMeganeLocal(): MeganeLocalState {
       store.setStructureProvider(provider);
       const loaderNode = store.nodes.find((n) => n.type === "load_structure");
       if (loaderNode) store.updateNodeParams(loaderNode.id, { hasTrajectory: true });
-      store.removeLoadTrajectoryAndRewire();
+      const trajNode = store.nodes.find((n) => n.type === "load_trajectory");
+      if (trajNode) {
+        store.updateNodeParams(trajNode.id, { source: "structure", fileName: "" });
+      }
       setHasStructureFrames(true);
       setMeta(meta);
       currentTrajSourceRef.current = "structure";

@@ -211,6 +211,28 @@ Molecule 0 (the component containing atom 0) stays fully opaque, while every
 other molecule's atoms and bonds fade together — both Filter nodes derive
 `molecule_id` from the same underlying bond connectivity.
 
+### Expand a Crystal's Asymmetric Unit
+
+A CIF lists only the crystallographic asymmetric unit plus the space-group
+operations, and megane's parser returns exactly that. The **Symmetry** node
+applies those operations to fill one unit cell with the symmetry-equivalent
+molecules, VESTA-style. Every default pipeline and structure template already
+carries one directly after `LoadStructure` in its `expand` mode, so a loaded
+CIF shows the full unit cell out of the box:
+
+1. Load a CIF (other formats carry no space-group operations, so the node is
+   a transparent pass-through for them)
+2. Select the `Symmetry` node in the graph
+3. Pick a mode:
+   - **Expand** applies the space-group operations (the default) — bonds are
+     replicated per symmetry image, and images that coincide on special
+     positions are dropped
+   - **None** shows the raw asymmetric unit exactly as the file lists it
+
+Pipelines saved before the node existed have no Symmetry node, so a CIF
+loaded through them shows the asymmetric unit; add the node after
+`LoadStructure` to recover the packed cell.
+
 ### Wrap / Unwrap a Periodic Structure
 
 The **Wrap / Unwrap** node toggles periodic-image coordinate mapping without

@@ -8,7 +8,7 @@ Loads a molecular structure file. This is the primary data source.
 
 ### load_trajectory
 Loads trajectory data from an external file (e.g. XTC).
-- Parameters: `{ type: "load_trajectory", fileName: string | null }`
+- Parameters: `{ type: "load_trajectory", fileName: string | null, source: "file" | "structure" }`
 - Inputs: `particle` (particle data type)
 - Outputs: `trajectory` (trajectory data type)
 
@@ -75,6 +75,18 @@ Modifies visual properties (scale, opacity).
   - opacity: transparency 0-1 (default 1.0)
 - Inputs: `in` (accepts particle or bond data type)
 - Outputs: `out` (same type as input)
+
+### symmetry
+Expands a crystallographic asymmetric unit into the full unit cell by
+applying the space-group symmetry operations the parser captured on the
+structure (a CIF `_symmetry_equiv_pos_as_xyz` loop). Bonds are replicated
+per image and coinciding images (special positions) are dropped. Structures
+without symmetry operations or without a unit cell pass through unchanged.
+- Parameters: `{ type: "symmetry", mode: "expand" | "none" }`
+  - "expand": apply the space-group operations to fill the unit cell (default)
+  - "none": pass the raw asymmetric unit through unchanged
+- Inputs: `particle`, `trajectory`
+- Outputs: `particle` (expanded), `trajectory` (passed through)
 
 ### wrap
 Toggles periodic-image coordinate mapping for the particle stream (and its

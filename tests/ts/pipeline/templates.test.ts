@@ -126,21 +126,31 @@ describe("PIPELINE_TEMPLATES surface mesh", () => {
     expect(params.opacity).toBe(0.5);
   });
 
-  it("wires loader→wrap→surface_mesh on particle and surface_mesh→viewport on mesh", () => {
+  it("wires loader→symmetry→wrap→surface_mesh on particle and surface_mesh→viewport on mesh", () => {
     const { nodes, edges } = surface!.create();
     const loader = nodes.find((n) => n.type === "load_structure")!;
+    const symmetry = nodes.find((n) => n.type === "symmetry")!;
     const wrap = nodes.find((n) => n.type === "wrap")!;
     const mesh = nodes.find((n) => n.type === "surface_mesh")!;
     const viewport = nodes.find((n) => n.type === "viewport")!;
 
-    const loaderToWrap = edges.find(
+    const loaderToSymmetry = edges.find(
       (e) =>
         e.source === loader.id &&
+        e.target === symmetry.id &&
+        e.sourceHandle === "particle" &&
+        e.targetHandle === "particle",
+    );
+    expect(loaderToSymmetry).toBeDefined();
+
+    const symmetryToWrap = edges.find(
+      (e) =>
+        e.source === symmetry.id &&
         e.target === wrap.id &&
         e.sourceHandle === "particle" &&
         e.targetHandle === "particle",
     );
-    expect(loaderToWrap).toBeDefined();
+    expect(symmetryToWrap).toBeDefined();
 
     const wrapToMesh = edges.find(
       (e) =>
@@ -231,6 +241,7 @@ describe("PIPELINE_TEMPLATES solid", () => {
     const solid = PIPELINE_TEMPLATES.find((t) => t.id === "solid")!;
     const { nodes, edges } = solid.create();
     const loader = nodes.find((n) => n.type === "load_structure")!;
+    const symmetry = nodes.find((n) => n.type === "symmetry")!;
     const wrap = nodes.find((n) => n.type === "wrap")!;
     const drawingBoundary = nodes.find((n) => n.type === "drawing_boundary")!;
     const coordination = nodes.find((n) => n.type === "coordination_generator")!;
@@ -239,7 +250,8 @@ describe("PIPELINE_TEMPLATES solid", () => {
     expect((wrap.data.params as WrapParams).mode).toBe("none");
     expect(edges).toEqual(
       expect.arrayContaining([
-        expect.objectContaining({ source: loader.id, target: wrap.id }),
+        expect.objectContaining({ source: loader.id, target: symmetry.id }),
+        expect.objectContaining({ source: symmetry.id, target: wrap.id }),
         expect.objectContaining({ source: wrap.id, target: drawingBoundary.id }),
         expect.objectContaining({ source: drawingBoundary.id, target: coordination.id }),
         expect.objectContaining({
@@ -261,6 +273,40 @@ describe("PIPELINE_TEMPLATES wrap toggle", () => {
       const wrap = nodes.find((n) => n.type === "wrap");
       expect(wrap, `template "${id}" missing wrap node`).toBeDefined();
       expect(wrap!.data.params).toEqual({ type: "wrap", mode: "none" });
+    }
+  });
+});
+
+describe("PIPELINE_TEMPLATES symmetry expansion", () => {
+  it("every structure template carries an expand-mode symmetry node feeding wrap", () => {
+    for (const id of ["molecule", "molecular_crystal", "solid", "surface_mesh", "protein"]) {
+      const template = PIPELINE_TEMPLATES.find((t) => t.id === id)!;
+      const { nodes, edges } = template.create();
+      const symmetry = nodes.find((n) => n.type === "symmetry");
+      expect(symmetry, `template "${id}" missing symmetry node`).toBeDefined();
+      expect(symmetry!.data.params).toEqual({ type: "symmetry", mode: "expand" });
+      const loader = nodes.find((n) => n.type === "load_structure")!;
+      const wrap = nodes.find((n) => n.type === "wrap")!;
+      expect(
+        edges.some(
+          (e) =>
+            e.source === loader.id &&
+            e.target === symmetry!.id &&
+            e.sourceHandle === "particle" &&
+            e.targetHandle === "particle",
+        ),
+        `template "${id}" must wire loader→symmetry`,
+      ).toBe(true);
+      expect(
+        edges.some(
+          (e) =>
+            e.source === symmetry!.id &&
+            e.target === wrap.id &&
+            e.sourceHandle === "particle" &&
+            e.targetHandle === "particle",
+        ),
+        `template "${id}" must wire symmetry→wrap`,
+      ).toBe(true);
     }
   });
 });

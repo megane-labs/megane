@@ -10,6 +10,7 @@ import {
   Modify,
   DrawingBoundary,
   BoundaryCompletion,
+  Symmetry,
   Wrap,
   AddBonds,
   AddCoordination,
@@ -177,6 +178,44 @@ describe("Modify", () => {
   it("accepts custom values", () => {
     const node = new Modify({ scale: 1.5, opacity: 0.3 });
     expect(node._toSerializedParams()).toMatchObject({ scale: 1.5, opacity: 0.3 });
+  });
+});
+
+describe("Symmetry", () => {
+  it("uses default mode 'expand'", () => {
+    const node = new Symmetry();
+    expect(node._toSerializedParams()).toMatchObject({ type: "symmetry", mode: "expand" });
+  });
+
+  it("accepts custom mode", () => {
+    const node = new Symmetry({ mode: "none" });
+    expect(node._toSerializedParams()).toMatchObject({ mode: "none" });
+  });
+
+  it("maps inp/out particle and traj aliases to static handles", () => {
+    const node = new Symmetry();
+    expect(node.inp.particle.handle).toBe("particle");
+    expect(node.inp.traj.handle).toBe("trajectory");
+    expect(node.out.particle.handle).toBe("particle");
+    expect(node.out.traj.handle).toBe("trajectory");
+  });
+
+  it("round-trips through Pipeline serialization", () => {
+    const pipe = new Pipeline();
+    const s = pipe.addNode(new LoadStructure("glycine.cif"));
+    const sym = pipe.addNode(new Symmetry({ mode: "expand" }));
+    const v = pipe.addNode(new Viewport());
+    pipe.addEdge(s.out.particle, sym.inp.particle);
+    pipe.addEdge(sym.out.particle, v.inp.particle);
+    const obj = pipe.toObject();
+    const symmetryNode = obj.nodes.find((n) => n.type === "symmetry")!;
+    expect(symmetryNode).toMatchObject({ type: "symmetry", mode: "expand" });
+    expect(obj.edges).toContainEqual({
+      source: s._id,
+      target: sym._id,
+      sourceHandle: "particle",
+      targetHandle: "particle",
+    });
   });
 });
 

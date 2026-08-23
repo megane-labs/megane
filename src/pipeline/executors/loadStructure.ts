@@ -9,6 +9,40 @@ import type {
 } from "../types";
 import { MemoryFrameProvider } from "../types";
 
+/**
+ * Trajectory carried by the structure file itself (multi-frame XYZ/PDB/.traj).
+ * A pre-built provider (lazy/streaming) takes precedence over eager frames;
+ * its frame 0 is the eager snapshot (basePositions baked into the provider),
+ * matching the MemoryFrameProvider convention. Shared with the
+ * `load_trajectory` executor's `source: "structure"` mode so both nodes
+ * forward identical frames.
+ */
+export function buildStructureTrajectory(
+  snapshot: Snapshot,
+  structureFrames: Frame[] | null,
+  structureMeta: TrajectoryMeta | null,
+  structureProvider: FrameProvider | null,
+): TrajectoryData | null {
+  if (structureProvider) {
+    return {
+      type: "trajectory",
+      provider: structureProvider,
+      meta: structureProvider.meta,
+      source: "structure",
+    };
+  }
+  if (structureFrames && structureFrames.length > 0 && structureMeta) {
+    const provider = new MemoryFrameProvider(structureFrames, structureMeta, snapshot.positions);
+    return {
+      type: "trajectory",
+      provider,
+      meta: structureMeta,
+      source: "structure",
+    };
+  }
+  return null;
+}
+
 export function executeLoadStructure(
   params: LoadStructureParams,
   snapshot: Snapshot | null,
@@ -32,25 +66,13 @@ export function executeLoadStructure(
   };
   outputs.set("particle", particle);
 
-  // A pre-built provider (lazy/streaming multi-frame XYZ/PDB) takes precedence
-  // over eager frames. Its frame 0 is the eager snapshot (basePositions baked
-  // into the provider), matching the MemoryFrameProvider convention below.
-  if (structureProvider) {
-    const trajectory: TrajectoryData = {
-      type: "trajectory",
-      provider: structureProvider,
-      meta: structureProvider.meta,
-      source: "structure",
-    };
-    outputs.set("trajectory", trajectory);
-  } else if (structureFrames && structureFrames.length > 0 && structureMeta) {
-    const provider = new MemoryFrameProvider(structureFrames, structureMeta, snapshot.positions);
-    const trajectory: TrajectoryData = {
-      type: "trajectory",
-      provider,
-      meta: structureMeta,
-      source: "structure",
-    };
+  const trajectory = buildStructureTrajectory(
+    snapshot,
+    structureFrames,
+    structureMeta,
+    structureProvider,
+  );
+  if (trajectory) {
     outputs.set("trajectory", trajectory);
   }
 

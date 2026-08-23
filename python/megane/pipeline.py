@@ -255,6 +255,36 @@ class Modify(PipelineNode):
         self.opacity = opacity
 
 
+class Symmetry(PipelineNode):
+    """Expand a crystallographic asymmetric unit into the full unit cell.
+
+    Applies the space-group symmetry operations the parser captured on the
+    structure (a CIF ``_symmetry_equiv_pos_as_xyz`` loop) to fill one unit
+    cell with the symmetry-equivalent images, replicating bonds per image and
+    dropping images that coincide (special positions). ``"expand"`` (the
+    default) performs the expansion; ``"none"`` passes the raw asymmetric unit
+    through. Structures without symmetry operations or without a unit cell
+    pass through unchanged in either mode.
+
+    Args:
+        mode: One of ``"expand"``, ``"none"``.
+
+    Ports:
+        inp.particle — atom data in
+        inp.traj     — trajectory in
+        out.particle — expanded atom data
+        out.traj     — trajectory (passed through)
+    """
+
+    _node_type = "symmetry"
+    _out_ports = {"particle": "particle", "traj": "trajectory"}
+    _inp_ports = {"particle": "particle", "traj": "trajectory"}
+
+    def __init__(self, *, mode: Literal["expand", "none"] = "expand") -> None:
+        super().__init__()
+        self.mode = mode
+
+
 class Wrap(PipelineNode):
     """Toggle periodic-image coordinate mapping for the particle stream.
 
@@ -753,6 +783,9 @@ def _load_structure_file(path: str):
         bond_orders=np.asarray(result.bond_orders, dtype=np.uint8),
         box=np.asarray(result.box_matrix, dtype=np.float32),
         box_origin=np.asarray(result.box_origin, dtype=np.float32),
+        # Carried into the binary snapshot so the frontend symmetry node can
+        # expand a CIF's asymmetric unit exactly like the other hosts.
+        symmetry_ops=list(result.symmetry_ops),
     )
 
 
@@ -901,6 +934,8 @@ class Pipeline:
             )
         elif ntype == "representation":
             return Representation(mode=nd.get("mode", "atoms"))
+        elif ntype == "symmetry":
+            return Symmetry(mode=nd.get("mode", "expand"))
         elif ntype == "wrap":
             return Wrap(mode=nd.get("mode", "none"))
         elif ntype == "replicate":
@@ -1097,6 +1132,8 @@ class Pipeline:
                 base["range"] = list(node.range)
         elif isinstance(node, Representation):
             base["mode"] = node.mode
+        elif isinstance(node, Symmetry):
+            base["mode"] = node.mode
         elif isinstance(node, Wrap):
             base["mode"] = node.mode
         elif isinstance(node, Replicate):
@@ -1272,13 +1309,17 @@ def view(
 
     pipe = Pipeline()
     s = pipe.add_node(LoadStructure(path))
+    # Space-group expansion for CIF asymmetric units, matching the default
+    # pipelines of the other hosts. A no-op for structures without ops.
+    sym = pipe.add_node(Symmetry())
     v = pipe.add_node(Viewport(perspective=perspective, cell_axes_visible=cell_axes_visible))
-    pipe.add_edge(s.out.particle, v.inp.particle)
+    pipe.add_edge(s.out.particle, sym.inp.particle)
+    pipe.add_edge(sym.out.particle, v.inp.particle)
     pipe.add_edge(s.out.cell, v.inp.cell)
 
     if bonds is not None:
         b = pipe.add_node(AddBonds(source=bonds))
-        pipe.add_edge(s.out.particle, b.inp.particle)
+        pipe.add_edge(sym.out.particle, b.inp.particle)
         pipe.add_edge(b.out.bond, v.inp.bond)
 
     viewer = MolecularViewer()

@@ -113,7 +113,7 @@ describe("usePipelineStore.openFile — single structure file", () => {
     },
   );
 
-  it("drops the redundant load_trajectory node and rewires for multi-frame .traj", async () => {
+  it("switches the load_trajectory node to its structure source for multi-frame .traj", async () => {
     mockParseStructureFile.mockResolvedValueOnce({
       snapshot: makeSnapshot(8),
       frames: [makeFrame(1), makeFrame(2), makeFrame(3)],
@@ -131,40 +131,54 @@ describe("usePipelineStore.openFile — single structure file", () => {
     expect((loader.data.params as { hasTrajectory: boolean }).hasTrajectory).toBe(true);
     expect(state.nodeSnapshots[loader.id]?.frames?.length).toBe(3);
     // Multi-frame structure files carry their trajectory in the structure
-    // node itself, so the seed LoadTrajectory node should be removed and
-    // its downstream consumers rewired to LoadStructure.trajectory.
-    expect(state.nodes.find((n) => n.type === "load_trajectory")).toBeUndefined();
-    // The trajectory routes through the wrap and replicate nodes so remapped
-    // and replicated copies animate:
-    // LoadStructure.trajectory → Wrap.trajectory → Replicate.trajectory → Viewport.
-    const wrap = state.nodes.find((n) => n.type === "wrap")!;
-    const replicate = state.nodes.find((n) => n.type === "replicate")!;
-    const viewport = state.nodes.find((n) => n.type === "viewport")!;
-    const rewiredEdge = state.edges.find(
-      (e) =>
-        e.source === loader.id &&
-        e.sourceHandle === "trajectory" &&
-        e.target === wrap.id &&
-        e.targetHandle === "trajectory",
-    );
-    expect(rewiredEdge).toBeDefined();
-    const wrapEdge = state.edges.find(
-      (e) =>
-        e.source === wrap.id &&
-        e.sourceHandle === "trajectory" &&
-        e.target === replicate.id &&
-        e.targetHandle === "trajectory",
-    );
-    expect(wrapEdge).toBeDefined();
-    const trajEdge = state.edges.find(
-      (e) =>
-        e.source === replicate.id &&
-        e.sourceHandle === "trajectory" &&
-        e.target === viewport.id &&
-        e.targetHandle === "trajectory",
-    );
-    expect(trajEdge).toBeDefined();
+    // file itself. The seed LoadTrajectory node is kept — the routing
+    // decision stays visible on the node — and flipped to forward the
+    // structure file's own frames.
+    const traj = state.nodes.find((n) => n.type === "load_trajectory")!;
+    expect(traj).toBeDefined();
+    expect((traj.data.params as { source?: string }).source).toBe("structure");
+    expect((traj.data.params as { fileName: string | null }).fileName).toBe("");
     expect(state.fileFrames).toBeNull();
+  });
+
+  it("resets the load_trajectory node to its file source for a single-frame structure", async () => {
+    mockParseStructureFile.mockResolvedValueOnce({
+      snapshot: makeSnapshot(8),
+      frames: [makeFrame(1)],
+      meta: makeMeta(2),
+      labels: null,
+      vectorChannels: [],
+    });
+    await usePipelineStore
+      .getState()
+      .openFile(new File([new Uint8Array([0])], "a.traj"), { mode: "replace" });
+    expect(
+      (
+        usePipelineStore.getState().nodes.find((n) => n.type === "load_trajectory")!.data
+          .params as {
+          source?: string;
+        }
+      ).source,
+    ).toBe("structure");
+
+    mockParseStructureFile.mockResolvedValueOnce({
+      snapshot: makeSnapshot(8),
+      frames: [],
+      meta: null,
+      labels: null,
+      vectorChannels: [],
+    });
+    await usePipelineStore
+      .getState()
+      .openFile(new File(["ATOM"], "single.pdb"), { mode: "replace" });
+    expect(
+      (
+        usePipelineStore.getState().nodes.find((n) => n.type === "load_trajectory")!.data
+          .params as {
+          source?: string;
+        }
+      ).source,
+    ).toBe("file");
   });
 
   it.each([["dump.lammpstrj"], ["run.dump"], ["md.trj"]])(
@@ -222,7 +236,15 @@ describe("usePipelineStore.openFile — AddBond default by file format", () => {
     const state = usePipelineStore.getState();
     // The default pipeline routes loader.particle through a replicate node
     // before reaching AddBond, so follow particle-carrying edges forward.
-    const passThrough = new Set(["wrap", "replicate", "filter", "modify", "color", "representation"]);
+    const passThrough = new Set([
+      "symmetry",
+      "wrap",
+      "replicate",
+      "filter",
+      "modify",
+      "color",
+      "representation",
+    ]);
     const visited = new Set<string>([loaderId]);
     const stack: string[] = [loaderId];
     while (stack.length > 0) {
@@ -529,7 +551,15 @@ describe("usePipelineStore.openFile — error cases", () => {
 describe("applyTopologyFile", () => {
   function findAddBondParams(loaderId: string): Record<string, unknown> | undefined {
     const state = usePipelineStore.getState();
-    const passThrough = new Set(["wrap", "replicate", "filter", "modify", "color", "representation"]);
+    const passThrough = new Set([
+      "symmetry",
+      "wrap",
+      "replicate",
+      "filter",
+      "modify",
+      "color",
+      "representation",
+    ]);
     const visited = new Set<string>([loaderId]);
     const stack: string[] = [loaderId];
     while (stack.length > 0) {

@@ -97,13 +97,6 @@ export interface PipelineStore {
   updateNodeParams: (id: string, params: Record<string, unknown>) => void;
   toggleNode: (id: string) => void;
 
-  // Drop any LoadTrajectory nodes and rewire their downstream `trajectory`
-  // consumers to read directly from the LoadStructure node's `trajectory`
-  // output. Used after loading a multi-frame structure file (.traj,
-  // multi-frame .xyz, multi-MODEL .pdb, etc.) where the embedded frames flow
-  // through the LoadStructure node, leaving LoadTrajectory redundant.
-  removeLoadTrajectoryAndRewire: () => void;
-
   // Pipeline execution
   execute: () => void;
 
@@ -253,7 +246,8 @@ const pipelineStateCreator: StateCreator<PipelineStore> = (set, get, api) => ({
     get().execute();
   },
   activateEmbeddedVectorChannel: (name) => {
-    const match = name === null ? null : (get().embeddedVectorChannels?.find((c) => c.name === name) ?? null);
+    const match =
+      name === null ? null : (get().embeddedVectorChannels?.find((c) => c.name === name) ?? null);
     set({
       activeEmbeddedVectorChannel: match ? name : null,
       fileVectors: match ? match.frames : null,
@@ -431,68 +425,6 @@ const pipelineStateCreator: StateCreator<PipelineStore> = (set, get, api) => ({
       }),
     }));
     get().execute();
-  },
-
-  removeLoadTrajectoryAndRewire: () => {
-    let mutated = false;
-    set((state) => {
-      const trajNodes = state.nodes.filter((n) => n.type === "load_trajectory");
-      if (trajNodes.length === 0) return state;
-      const loader = state.nodes.find((n) => n.type === "load_structure");
-      if (!loader) return state;
-      const trajIds = new Set(trajNodes.map((n) => n.id));
-
-      const replacements: Edge[] = [];
-      const hasEdge = (
-        list: Edge[],
-        target: string,
-        targetHandle: string | null | undefined,
-      ): boolean =>
-        list.some(
-          (x) =>
-            x.source === loader.id &&
-            x.sourceHandle === "trajectory" &&
-            x.target === target &&
-            (x.targetHandle ?? null) === (targetHandle ?? null),
-        );
-
-      for (const e of state.edges) {
-        if (!trajIds.has(e.source)) continue;
-        if (e.sourceHandle !== "trajectory" && e.sourceHandle != null) continue;
-        if (hasEdge(state.edges, e.target, e.targetHandle)) continue;
-        if (hasEdge(replacements, e.target, e.targetHandle)) continue;
-        replacements.push({
-          ...e,
-          id: `e-${loader.id}-trajectory-${e.target}-${e.targetHandle ?? "trajectory"}`,
-          source: loader.id,
-          sourceHandle: "trajectory",
-        });
-      }
-
-      const remainingNodes = state.nodes.filter((n) => !trajIds.has(n.id));
-      const remainingEdges = state.edges.filter(
-        (e) => !trajIds.has(e.source) && !trajIds.has(e.target),
-      );
-
-      const nextSnapshots = { ...state.nodeSnapshots };
-      const nextParseErrors = { ...state.nodeParseErrors };
-      const nextStreamingData = { ...state.nodeStreamingData };
-      for (const id of trajIds) {
-        delete nextSnapshots[id];
-        delete nextParseErrors[id];
-        delete nextStreamingData[id];
-      }
-
-      mutated = true;
-      return {
-        nodes: remainingNodes,
-        edges: [...remainingEdges, ...replacements],
-        nodeSnapshots: nextSnapshots,
-        nodeParseErrors: nextParseErrors,
-        nodeStreamingData: nextStreamingData,
-      };
-    });
-    if (mutated) get().execute();
   },
 
   execute: () => {

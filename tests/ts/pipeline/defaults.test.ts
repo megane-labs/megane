@@ -41,23 +41,65 @@ describe("createDefaultPipeline", () => {
     const ids = nodes.map((n) => n.id);
     expect(new Set(ids).size).toBe(ids.length);
   });
+
+  it("carries a symmetry node in expand mode between loader and wrap", () => {
+    const { nodes, edges } = createDefaultPipeline();
+    const symmetry = nodes.find((n) => n.type === "symmetry")!;
+    expect(symmetry).toBeDefined();
+    expect(symmetry.data.params).toEqual({ type: "symmetry", mode: "expand" });
+    const loader = nodes.find((n) => n.type === "load_structure")!;
+    const wrap = nodes.find((n) => n.type === "wrap")!;
+    expect(
+      edges.some(
+        (e) => e.source === loader.id && e.target === symmetry.id && e.sourceHandle === "particle",
+      ),
+    ).toBe(true);
+    expect(edges.some((e) => e.source === symmetry.id && e.target === wrap.id)).toBe(true);
+  });
 });
 
 describe("createEmptyPipeline", () => {
-  it("returns 5 nodes: LoadStructure, Wrap, Replicate, AddBond, Viewport", () => {
+  it("returns 6 nodes: LoadStructure, Symmetry, Wrap, Replicate, AddBond, Viewport", () => {
     const { nodes } = createEmptyPipeline();
-    expect(nodes.length).toBe(5);
+    expect(nodes.length).toBe(6);
     expect(nodes[0].type).toBe("load_structure");
-    expect(nodes[1].type).toBe("wrap");
-    expect(nodes[2].type).toBe("replicate");
-    expect(nodes[3].type).toBe("add_bond");
-    expect(nodes[4].type).toBe("viewport");
+    expect(nodes[1].type).toBe("symmetry");
+    expect(nodes[2].type).toBe("wrap");
+    expect(nodes[3].type).toBe("replicate");
+    expect(nodes[4].type).toBe("add_bond");
+    expect(nodes[5].type).toBe("viewport");
   });
 
   it("keeps the wrap node in pass-through mode by default", () => {
     const { nodes } = createEmptyPipeline();
     const wrap = nodes.find((n) => n.type === "wrap")!;
     expect(wrap.data.params).toEqual({ type: "wrap", mode: "none" });
+  });
+
+  it("seeds the symmetry node in expand mode between loader and wrap", () => {
+    const { nodes, edges } = createEmptyPipeline();
+    const symmetry = nodes.find((n) => n.type === "symmetry")!;
+    expect(symmetry.data.params).toEqual({ type: "symmetry", mode: "expand" });
+    const loader = nodes.find((n) => n.type === "load_structure")!;
+    const wrap = nodes.find((n) => n.type === "wrap")!;
+    expect(
+      edges.some(
+        (e) =>
+          e.source === loader.id &&
+          e.target === symmetry.id &&
+          e.sourceHandle === "particle" &&
+          e.targetHandle === "particle",
+      ),
+    ).toBe(true);
+    expect(
+      edges.some(
+        (e) =>
+          e.source === symmetry.id &&
+          e.target === wrap.id &&
+          e.sourceHandle === "particle" &&
+          e.targetHandle === "particle",
+      ),
+    ).toBe(true);
   });
 
   it("all edges reference valid node IDs", () => {
