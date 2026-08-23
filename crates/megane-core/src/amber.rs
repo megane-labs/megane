@@ -532,7 +532,7 @@ water trunc oct
         let result = parse(WATER_PRMTOP, WATER_INPCRD_TRICLINIC).expect("triclinic parse failed");
         let bm = result.box_matrix.expect("box should be present");
         let expect = crate::parser::cell_params_to_matrix(
-            20.0, 20.0, 20.0, 109.471219, 109.471219, 109.471219,
+            20.0, 20.0, 20.0, 109.471_22, 109.471_22, 109.471_22,
         );
         for i in 0..9 {
             assert!(
@@ -558,7 +558,7 @@ water trunc oct
         let result = parse_prmtop(&prmtop).expect("parse_prmtop failed");
         let bm = result.box_matrix.expect("box should be present");
         let expect = crate::parser::cell_params_to_matrix(
-            20.0, 21.0, 22.0, 109.471219, 109.471219, 109.471219,
+            20.0, 21.0, 22.0, 109.471_22, 109.471_22, 109.471_22,
         );
         for i in 0..9 {
             assert!(

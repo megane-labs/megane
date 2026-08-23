@@ -117,7 +117,7 @@ fn attr_f32(map: &HashMap<String, String>, key: &str) -> Option<f32> {
 }
 
 /// Bohr radius in Å (CODATA), for `units:bohr` / `units:au` conversion.
-const BOHR_TO_ANGSTROM: f32 = 0.529177211;
+const BOHR_TO_ANGSTROM: f32 = 0.529_177_2;
 
 /// Å-per-unit factor for a CML `units` attribute value (`units:bohr`,
 /// `cml:angstrom`, plain `pm`, …). `None` means the unit is not a recognised
@@ -498,7 +498,7 @@ mod tests {
   </atomArray>
 </molecule>"#;
         let s = parse(text).unwrap();
-        assert!((s.positions[3] - 1.058354422).abs() < 1e-5);
+        assert!((s.positions[3] - 1.058_354_4).abs() < 1e-5);
         assert!(s.warnings.is_empty());
     }
 
@@ -561,9 +561,9 @@ mod tests {
 </molecule>"#;
         let s = parse(text).unwrap();
         let cell = s.box_matrix.expect("crystal cell");
-        assert!((cell[0] - 5.29177211).abs() < 1e-4);
+        assert!((cell[0] - 5.291_772).abs() < 1e-4);
         // Fractions are unitless: 0.5 of the Å cell edge, not 0.5 bohr.
-        assert!((s.positions[3] - 2.645886055).abs() < 1e-4);
+        assert!((s.positions[3] - 2.645_886).abs() < 1e-4);
         assert!(s.warnings.is_empty());
     }
 

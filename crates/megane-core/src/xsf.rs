@@ -67,9 +67,12 @@ fn keyword(line: &str) -> String {
         .to_ascii_uppercase()
 }
 
+/// Decoded atom line: element, ghost flag, position, optional force vector.
+type AtomLine = (u8, bool, [f32; 3], Option<[f32; 3]>);
+
 /// Parse an atom line: `Z x y z [fx fy fz]`, where the first column is either
 /// an atomic number or an element symbol. The boolean flags a ghost atom.
-fn parse_atom_line(line: &str) -> Option<(u8, bool, [f32; 3], Option<[f32; 3]>)> {
+fn parse_atom_line(line: &str) -> Option<AtomLine> {
     let toks: Vec<&str> = clean(line).split_whitespace().collect();
     if toks.len() < 4 {
         return None;

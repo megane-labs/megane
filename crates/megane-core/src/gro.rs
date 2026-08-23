@@ -195,7 +195,7 @@ pub fn parse(text: &str) -> Result<crate::parser::ParsedStructure, String> {
             && lines[cursor + 1]
                 .trim()
                 .parse::<usize>()
-                .map_or(false, |n| lines.len() >= cursor + n + 3);
+                .is_ok_and(|n| lines.len() >= cursor + n + 3);
         if !complete {
             return Err(format!(
                 "GRO file has a trailing partial frame block starting at line {}",

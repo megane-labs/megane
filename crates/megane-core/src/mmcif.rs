@@ -250,7 +250,7 @@ fn col(tags: &[String], tag: &str) -> Option<usize> {
 
 /// Fetch a row field by optional column index, treating absent columns as the
 /// mmCIF missing token.
-fn field<'a>(row: &'a [String], idx: Option<usize>) -> &'a str {
+fn field(row: &[String], idx: Option<usize>) -> &str {
     idx.and_then(|i| row.get(i))
         .map(String::as_str)
         .unwrap_or("?")
