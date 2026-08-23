@@ -1,4 +1,8 @@
 /// Distance-based bond inference using cell-list spatial search.
+///
+/// `src/parsers/inferBondsJS.ts` is a deliberate JS port of this module for
+/// the browser's synchronous executor path — keep the two in sync (any
+/// cutoff/tolerance or algorithm change lands in both in the same commit).
 use std::collections::HashSet;
 
 use crate::atomic::covalent_radius;
@@ -398,9 +402,81 @@ pub fn infer_bonds_vdw(positions: &[f32], elements: &[u8], n_atoms: usize) -> Ve
     })
 }
 
+// ── Default bond-source policy ─────────────────────────────────────────────────
+
+/// Structure formats that embed bond information directly in the file
+/// (PDB CONECT records, MOL/SDF bond block, LAMMPS data Bonds section,
+/// CML/Chem3D/Odyssey connectivity). Other supported structure formats
+/// (xyz, gro, cif, traj, ...) carry no bond information, so VDW distance
+/// inference is the more useful default.
+///
+/// This list is the single source of truth for every host's default
+/// AddBond source. `src/pipeline/openFile.ts` (`FILE_BOND_EXTS`) mirrors it
+/// for the synchronous TS load path and pins the mirror with a unit test —
+/// change both together.
+pub const FILE_BOND_EXTS: [&str; 11] = [
+    ".pdb",
+    ".ent",
+    ".pdbx",
+    ".mol",
+    ".sdf",
+    ".data",
+    ".lammps",
+    ".cml",
+    ".c3xml",
+    ".xodydata",
+    ".odydata",
+];
+
+/// The default AddBond source for a structure file: `"structure"` for
+/// formats that embed bonds, `"distance"` (VDW inference) otherwise.
+/// Matching is by case-insensitive filename suffix.
+pub fn default_bond_source(filename: &str) -> &'static str {
+    let lower = filename.to_ascii_lowercase();
+    if FILE_BOND_EXTS.iter().any(|ext| lower.ends_with(ext)) {
+        "structure"
+    } else {
+        "distance"
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn default_bond_source_uses_file_bonds_for_embedding_formats() {
+        for f in [
+            "a.pdb",
+            "b.ENT",
+            "c.pdbx",
+            "d.mol",
+            "e.sdf",
+            "f.data",
+            "g.lammps",
+            "h.cml",
+            "i.c3xml",
+            "j.xodydata",
+            "k.odydata",
+        ] {
+            assert_eq!(super::default_bond_source(f), "structure", "{f}");
+        }
+    }
+
+    #[test]
+    fn default_bond_source_falls_back_to_distance_inference() {
+        for f in [
+            "a.xyz",
+            "b.gro",
+            "c.cif",
+            "d.traj",
+            "POSCAR",
+            "e.lammpstrj",
+            "f.mol2",
+        ] {
+            assert_eq!(super::default_bond_source(f), "distance", "{f}");
+        }
+    }
     use std::collections::HashSet;
 
     /// Build a water molecule: O at origin, H1 and H2 at ~0.96 Å.

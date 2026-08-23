@@ -242,6 +242,8 @@ pub fn parse_with_modes(text: &str) -> Result<(ParsedStructure, PhononModes), St
         ca_res_nums: vec![],
         ca_ss_type: vec![],
         symmetry_ops: Vec::new(),
+        scalar_channels: Vec::new(),
+        warnings: Vec::new(),
         hetero: None,
     };
     Ok((structure, modes))

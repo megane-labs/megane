@@ -40,6 +40,7 @@ import { AddBondNode } from "./nodes/AddBondNode";
 import { ViewportNode } from "./nodes/ViewportNode";
 import { FilterNode } from "./nodes/FilterNode";
 import { ModifyNode } from "./nodes/ModifyNode";
+import { SymmetryNode } from "./nodes/SymmetryNode";
 import { WrapNode } from "./nodes/WrapNode";
 import { ReplicateNode } from "./nodes/ReplicateNode";
 import { DrawingBoundaryNode } from "./nodes/DrawingBoundaryNode";
@@ -74,6 +75,7 @@ const nodeTypes = {
   viewport: ViewportNode,
   filter: FilterNode,
   modify: ModifyNode,
+  symmetry: SymmetryNode,
   wrap: WrapNode,
   replicate: ReplicateNode,
   drawing_boundary: DrawingBoundaryNode,
@@ -115,6 +117,7 @@ const ADD_NODE_GROUPS: { category: NodeCategory; label: string; types: PipelineN
       "modify",
       "color",
       "representation",
+      "symmetry",
       "wrap",
       "replicate",
       "drawing_boundary",

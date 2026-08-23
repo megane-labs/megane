@@ -81,18 +81,16 @@ export function useNodeLoadHandlers({
             hasTrajectory: result.frames.length > 0,
             hasCell: !!result.snapshot.box,
           });
-          // Auto-load first embedded vector channel (e.g. GRO velocities) into pipeline.
-          if (result.vectorChannels.length > 0) {
-            const ch = result.vectorChannels[0];
-            setFileVectors(ch.frames);
-            // Update all load_vector nodes so executeLoadVector shows the channel name.
-            const nodes = usePipelineStore.getState().nodes;
-            for (const n of nodes) {
-              if (n.type === "load_vector") {
-                updateNodeParams(n.id, { fileName: `[embedded] ${ch.name}` });
-              }
-            }
-          }
+          // Offer embedded vector channels (e.g. GRO velocities) to the
+          // load_vector node UI. Nothing is rendered until the user activates
+          // one — a parse must not switch a visual overlay on as a side effect.
+          usePipelineStore
+            .getState()
+            .setEmbeddedVectorChannels(
+              result.vectorChannels.length > 0
+                ? result.vectorChannels.map((ch) => ({ name: ch.name, frames: ch.frames }))
+                : null,
+            );
           // For the primary node, also drive the legacy load path for
           // trajectory/label/bond source management. Pass the ALREADY-parsed
           // result so it reuses this parse instead of reading + WASM-parsing the

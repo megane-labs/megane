@@ -27,9 +27,9 @@ export interface Snapshot {
   /**
    * Crystallographic symmetry operations as raw `x,y,z`-style strings, captured
    * from a CIF `_symmetry_equiv_pos_as_xyz` loop. Undefined for formats without
-   * space-group information. Informational only: the CIF parser already applies
-   * these to expand the asymmetric unit into the full unit cell, so `positions`
-   * holds the expanded structure (not the raw asymmetric unit).
+   * space-group information. The parser does NOT apply these: `positions` holds
+   * the file's asymmetric unit as-is, and the `symmetry` pipeline node performs
+   * the expansion into the full unit cell (its default "expand" mode).
    */
   symmetryOps?: string[];
 }
@@ -63,6 +63,23 @@ export interface VectorFrame {
 export interface VectorChannel {
   name: string; // e.g. "velocity", "force"
   frames: VectorFrame[];
+}
+
+/** Per-frame per-atom scalar data. */
+export interface ScalarFrame {
+  frame: number;
+  values: Float32Array; // length = nAtoms
+}
+
+/**
+ * A named channel of per-atom scalar data embedded in a structure file
+ * (charges, selective-dynamics flags, LAMMPS dump computes, ...). Parsed so
+ * file information is never silently discarded; not rendered yet.
+ * One frame = static; N frames advance in sync with the trajectory.
+ */
+export interface ScalarChannel {
+  name: string; // e.g. "charge", "mol_id", "c_pe"
+  frames: ScalarFrame[];
 }
 
 /** Decoded trajectory frame.

@@ -65,6 +65,23 @@ pub fn parse_prmtop(text: &str) -> Result<ParsedStructure, String> {
     )?;
     let n_file_bonds = bonds.len();
 
+    // Optional BOX_DIMENSIONS section: [OLDBETA, A, B, C]. OLDBETA is the box
+    // angle applied to alpha, beta, and gamma alike (90° rectangular or
+    // 109.47° truncated octahedron). An inpcrd box, when present, overrides
+    // this in `parse()`.
+    let box_matrix = sections.get("BOX_DIMENSIONS").and_then(|sec| {
+        let vals: Vec<f32> = sec
+            .split_whitespace()
+            .filter_map(|t| t.parse().ok())
+            .collect();
+        match vals[..] {
+            [beta, a, b, c] if a > 0.0 && b > 0.0 && c > 0.0 => {
+                Some(cell_matrix(a, b, c, beta, beta, beta))
+            }
+            _ => None,
+        }
+    });
+
     Ok(ParsedStructure {
         n_atoms,
         positions: vec![0.0f32; n_atoms * 3],
@@ -72,7 +89,7 @@ pub fn parse_prmtop(text: &str) -> Result<ParsedStructure, String> {
         bonds,
         n_file_bonds,
         bond_orders: None,
-        box_matrix: None,
+        box_matrix,
         box_origin: None,
         frame_positions_flat: Vec::new(),
         atom_labels: Some(atom_labels),
@@ -84,6 +101,8 @@ pub fn parse_prmtop(text: &str) -> Result<ParsedStructure, String> {
         ca_res_nums: vec![],
         ca_ss_type: vec![],
         symmetry_ops: Vec::new(),
+        scalar_channels: Vec::new(),
+        warnings: Vec::new(),
         hetero: None,
     })
 }
@@ -93,7 +112,11 @@ pub fn parse(prmtop: &str, inpcrd: &str) -> Result<ParsedStructure, String> {
     let mut structure = parse_prmtop(prmtop)?;
     let (coords, box_mat) = parse_inpcrd(inpcrd, structure.n_atoms)?;
     structure.positions = coords;
-    structure.box_matrix = box_mat;
+    // The inpcrd box takes precedence; a prmtop BOX_DIMENSIONS box (if any)
+    // stands when the inpcrd carries none.
+    if box_mat.is_some() {
+        structure.box_matrix = box_mat;
+    }
     Ok(structure)
 }
 
@@ -135,7 +158,14 @@ pub fn parse_inpcrd(text: &str, n_atoms: usize) -> Result<(Vec<f32>, Option<[f32
     // Optional box: last 6 values are (a, b, c, alpha, beta, gamma) in Å / degrees
     let box_mat = if all_vals.len() == n_atoms * 3 + 6 {
         let box_vals: Vec<f32> = all_vals.drain(n_atoms * 3..).collect();
-        Some(orthorhombic_box(box_vals[0], box_vals[1], box_vals[2]))
+        Some(cell_matrix(
+            box_vals[0],
+            box_vals[1],
+            box_vals[2],
+            box_vals[3],
+            box_vals[4],
+            box_vals[5],
+        ))
     } else {
         None
     };
@@ -161,6 +191,20 @@ fn orthorhombic_box(a: f32, b: f32, c: f32) -> [f32; 9] {
     m[4] = b;
     m[8] = c;
     m
+}
+
+/// Build a 3×3 box matrix from lengths (Å) and angles (degrees).
+///
+/// Right angles take the exact diagonal path so orthorhombic boxes are free of
+/// f32 trigonometric noise; anything else (e.g. the 109.47° truncated
+/// octahedron) goes through the general triclinic conversion.
+fn cell_matrix(a: f32, b: f32, c: f32, alpha: f32, beta: f32, gamma: f32) -> [f32; 9] {
+    let right = |ang: f32| (ang - 90.0).abs() < 1e-3;
+    if right(alpha) && right(beta) && right(gamma) {
+        orthorhombic_box(a, b, c)
+    } else {
+        crate::parser::cell_params_to_matrix(a, b, c, alpha, beta, gamma)
+    }
 }
 
 /// Split a prmtop into a map of FLAG name → data text.
@@ -455,6 +499,15 @@ water box
         assert!(result.is_err());
     }
 
+    // Inpcrd with a truncated-octahedron (triclinic) box
+    const WATER_INPCRD_TRICLINIC: &str = "\
+water trunc oct
+       3
+   0.0000000   0.0000000   0.0000000   0.9572000   0.0000000   0.0000000
+  -0.2399500   0.9266900   0.0000000
+  20.0000000  20.0000000  20.0000000 109.4712190 109.4712190 109.4712190
+";
+
     #[test]
     fn test_orthorhombic_box() {
         let m = orthorhombic_box(10.0, 20.0, 30.0);
@@ -463,6 +516,67 @@ water box
         assert_eq!(m[8], 30.0);
         assert_eq!(m[1], 0.0);
         assert_eq!(m[2], 0.0);
+    }
+
+    #[test]
+    fn test_cell_matrix_right_angles_match_orthorhombic_box() {
+        // 90° angles must produce the exact diagonal the old path built.
+        assert_eq!(
+            cell_matrix(10.0, 20.0, 30.0, 90.0, 90.0, 90.0),
+            orthorhombic_box(10.0, 20.0, 30.0)
+        );
+    }
+
+    #[test]
+    fn test_parse_inpcrd_triclinic_box() {
+        let result = parse(WATER_PRMTOP, WATER_INPCRD_TRICLINIC).expect("triclinic parse failed");
+        let bm = result.box_matrix.expect("box should be present");
+        let expect = crate::parser::cell_params_to_matrix(
+            20.0, 20.0, 20.0, 109.471_22, 109.471_22, 109.471_22,
+        );
+        for i in 0..9 {
+            assert!(
+                (bm[i] - expect[i]).abs() < 1e-3,
+                "m[{i}] = {} expected {}",
+                bm[i],
+                expect[i]
+            );
+        }
+        // The b vector must tilt: b·x = 20·cos(109.47°) ≈ -20/3.
+        assert!((bm[3] + 20.0 / 3.0).abs() < 1e-2, "b·x = {}", bm[3]);
+    }
+
+    #[test]
+    fn test_prmtop_box_dimensions() {
+        // prmtop with the deprecated BOX_DIMENSIONS section [OLDBETA, A, B, C].
+        let prmtop = format!(
+            "{WATER_PRMTOP}%FLAG BOX_DIMENSIONS
+%FORMAT(5E16.8)
+  1.09471219E+02  2.00000000E+01  2.10000000E+01  2.20000000E+01
+"
+        );
+        let result = parse_prmtop(&prmtop).expect("parse_prmtop failed");
+        let bm = result.box_matrix.expect("box should be present");
+        let expect = crate::parser::cell_params_to_matrix(
+            20.0, 21.0, 22.0, 109.471_22, 109.471_22, 109.471_22,
+        );
+        for i in 0..9 {
+            assert!(
+                (bm[i] - expect[i]).abs() < 1e-3,
+                "m[{i}] = {} expected {}",
+                bm[i],
+                expect[i]
+            );
+        }
+
+        // Without an inpcrd box, the prmtop box stands...
+        let combined = parse(&prmtop, WATER_INPCRD).expect("combined parse failed");
+        assert_eq!(combined.box_matrix, Some(bm));
+
+        // ...but an inpcrd box takes precedence.
+        let combined = parse(&prmtop, WATER_INPCRD_BOX).expect("combined parse failed");
+        let bm = combined.box_matrix.expect("box should be present");
+        assert_eq!(bm, [20.0, 0.0, 0.0, 0.0, 20.0, 0.0, 0.0, 0.0, 20.0]);
     }
 
     #[test]

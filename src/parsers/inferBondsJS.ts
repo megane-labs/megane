@@ -1,7 +1,11 @@
 /**
  * Pure JavaScript VDW bond inference.
- * Mirrors the Rust implementation in crates/megane-core/src/bonds.rs
- * but runs entirely in JS — no WASM dependency.
+ * A deliberate port of the Rust implementation in
+ * crates/megane-core/src/bonds.rs that runs entirely in JS — executors are
+ * synchronous, so they cannot depend on the async-initialised WASM module.
+ * The two implementations MUST stay in sync: any cutoff/tolerance or
+ * algorithm change lands in both files in the same commit (bonds.rs carries
+ * the matching note).
  *
  * Uses a cell-list spatial data structure for O(N) performance.
  * Supports periodic boundary conditions (PBC) via minimum-image convention.

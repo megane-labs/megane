@@ -55,13 +55,17 @@ describe("decodeSnapshot", () => {
     bondOrders?: number[];
     box?: number[];
     boxOrigin?: number[];
+    symmetryOps?: string[];
   }): ArrayBuffer {
-    const { nAtoms, nBonds, positions, elements, bonds, bondOrders, box, boxOrigin } = opts;
+    const { nAtoms, nBonds, positions, elements, bonds, bondOrders, box, boxOrigin, symmetryOps } =
+      opts;
 
     let flags = 0;
     if (bondOrders) flags |= 0x01; // HAS_BOND_ORDERS
     if (box) flags |= 0x02; // HAS_BOX
     if (boxOrigin) flags |= 0x08; // HAS_BOX_ORIGIN
+    if (symmetryOps) flags |= 0x10; // HAS_SYMMETRY_OPS
+    const symRaw = symmetryOps ? new TextEncoder().encode(symmetryOps.join("\n")) : null;
 
     // Calculate total size
     const elemPadding = (4 - ((8 + 4 + 4 + nAtoms * 12 + nAtoms) % 4)) % 4;
@@ -72,6 +76,7 @@ describe("decodeSnapshot", () => {
     }
     if (box) size += 36;
     if (boxOrigin) size += 12;
+    if (symRaw) size += 4 + symRaw.length + ((4 - ((4 + symRaw.length) % 4)) % 4);
 
     const buf = new ArrayBuffer(size);
     const view = new DataView(buf);
@@ -137,8 +142,41 @@ describe("decodeSnapshot", () => {
       }
     }
 
+    // Symmetry ops (length-prefixed utf-8 blob, padded to 4 bytes)
+    if (symRaw) {
+      view.setUint32(offset, symRaw.length, true);
+      offset += 4;
+      new Uint8Array(buf, offset, symRaw.length).set(symRaw);
+      offset += symRaw.length;
+      offset += (4 - (offset % 4)) % 4;
+    }
+
     return buf;
   }
+
+  it("decodes symmetry ops when the flag is set", () => {
+    const buf = makeSnapshotBuffer({
+      nAtoms: 1,
+      nBonds: 0,
+      positions: [0, 0, 0],
+      elements: [6],
+      bonds: [],
+      symmetryOps: ["x, y, z", "-x+1/2,y+1/2,-z"],
+    });
+    const snap = decodeSnapshot(buf);
+    expect(snap.symmetryOps).toEqual(["x, y, z", "-x+1/2,y+1/2,-z"]);
+  });
+
+  it("leaves symmetryOps unset without the flag", () => {
+    const buf = makeSnapshotBuffer({
+      nAtoms: 1,
+      nBonds: 0,
+      positions: [0, 0, 0],
+      elements: [6],
+      bonds: [],
+    });
+    expect(decodeSnapshot(buf).symmetryOps).toBeUndefined();
+  });
 
   it("decodes atom and bond counts", () => {
     const buf = makeSnapshotBuffer({

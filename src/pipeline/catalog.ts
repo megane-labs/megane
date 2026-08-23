@@ -102,6 +102,15 @@ export const NODE_CATALOG: Record<PipelineNodeType, NodeCatalogEntry> = {
         default: "null",
         doc: "Path/name of the trajectory file (XTC, DCD, NetCDF, LAMMPS dump).",
       },
+      {
+        jsonKey: "source",
+        tsType: '"file" | "structure"',
+        default: '"file"',
+        doc:
+          '"file" plays a separately loaded trajectory file; "structure" forwards the frames ' +
+          "embedded in the structure file itself (multi-frame XYZ/PDB/.traj), set by the load " +
+          "path when such a file is opened.",
+      },
     ],
     promptInputs: "`particle` (particle data type)",
     promptOutputs: "`trajectory` (trajectory data type)",
@@ -269,6 +278,26 @@ export const NODE_CATALOG: Record<PipelineNodeType, NodeCatalogEntry> = {
     promptOutputs: "`out` (same type as input)",
     inPrompt: true,
     pythonClass: "Modify",
+  },
+  symmetry: {
+    description:
+      "Expands a crystallographic asymmetric unit into the full unit cell by\napplying the space-group symmetry operations the parser captured on the\nstructure (a CIF `_symmetry_equiv_pos_as_xyz` loop). Bonds are replicated\nper image and coinciding images (special positions) are dropped. Structures\nwithout symmetry operations or without a unit cell pass through unchanged.",
+    params: [
+      {
+        jsonKey: "mode",
+        tsType: '"expand" | "none"',
+        default: '"expand"',
+        doc: "Apply the space-group operations, or pass the asymmetric unit through.",
+      },
+    ],
+    promptNotes: [
+      '"expand": apply the space-group operations to fill the unit cell (default)',
+      '"none": pass the raw asymmetric unit through unchanged',
+    ],
+    promptInputs: "`particle`, `trajectory`",
+    promptOutputs: "`particle` (expanded), `trajectory` (passed through)",
+    inPrompt: true,
+    pythonClass: "Symmetry",
   },
   wrap: {
     description:

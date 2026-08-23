@@ -22,8 +22,9 @@
 //! principle the species — may change between frames; both shapes are handled.
 //!
 //! Notes:
-//! - `Selective dynamics` flags are parsed away and ignored (rendering does not
-//!   use them), never a parse failure.
+//! - `Selective dynamics` flags are not rendered, but they are kept as a
+//!   static `selective_dynamics` scalar channel (see [`selective_flags`]) so
+//!   the information the file carries is not discarded.
 //! - A VASP 4 file has no species line. Rather than erroring, the species index
 //!   (1, 2, 3, …) is used as an atomic-number *proxy* — exactly the convention
 //!   the LAMMPS dump reader uses for its integer `type` ids — and every atom is
@@ -33,6 +34,7 @@
 use crate::atomic::{capitalize, symbol_to_atomic_num};
 use crate::bonds;
 use crate::parser::{HeteroFrames, ParsedStructure};
+use crate::trajectory::{ScalarChannel, ScalarFrame};
 use std::collections::HashSet;
 
 /// The fixed header of a POSCAR / XDATCAR block.
@@ -230,8 +232,8 @@ fn loose_mode(line: &str) -> Option<bool> {
 
 /// Consume the optional `Selective dynamics` flag line plus the mandatory
 /// `Direct` / `Cartesian` mode line, starting at `i`.
-/// Returns `(direct, index of the first coordinate line)`.
-fn read_mode(lines: &[&str], mut i: usize) -> Option<(bool, usize)> {
+/// Returns `(direct, index of the first coordinate line, selective dynamics)`.
+fn read_mode(lines: &[&str], mut i: usize) -> Option<(bool, usize, bool)> {
     let skip_blank = |lines: &[&str], mut k: usize| {
         while k < lines.len() && lines[k].trim().is_empty() {
             k += 1;
@@ -243,7 +245,7 @@ fn read_mode(lines: &[&str], mut i: usize) -> Option<(bool, usize)> {
         return None;
     }
     if let Some(d) = strict_mode(lines[i]).or_else(|| loose_mode(lines[i])) {
-        return Some((d, i + 1));
+        return Some((d, i + 1, false));
     }
     // Not a mode line — in this position that can only be the optional
     // `Selective dynamics` flag, so skip it and require a mode line next.
@@ -252,7 +254,26 @@ fn read_mode(lines: &[&str], mut i: usize) -> Option<(bool, usize)> {
         return None;
     }
     let d = strict_mode(lines[i]).or_else(|| loose_mode(lines[i]))?;
-    Some((d, i + 1))
+    Some((d, i + 1, true))
+}
+
+/// Decode the selective-dynamics `T`/`F` flags on one coordinate line into a
+/// bitmask stored as a float: x = 1, y = 2, z = 4, with a set bit meaning `T`
+/// (the atom may move along that axis). `7.0` is fully movable, `0.0` fully
+/// frozen. A missing flag defaults to movable, matching VASP.
+fn selective_flags(line: &str) -> f32 {
+    let toks: Vec<&str> = line.split_whitespace().collect();
+    let mut mask = 0u8;
+    for (k, bit) in [(3usize, 1u8), (4, 2), (5, 4)] {
+        let movable = toks
+            .get(k)
+            .map(|t| t.starts_with('T') || t.starts_with('t'))
+            .unwrap_or(true);
+        if movable {
+            mask |= bit;
+        }
+    }
+    mask as f32
 }
 
 /// Read `n` coordinate lines starting at `start`, converting to Cartesian Å.
@@ -309,11 +330,23 @@ pub fn parse(text: &str) -> Result<ParsedStructure, String> {
     let mut varies_cell = false;
     let base_cell = cell;
 
-    let (mut direct, mut ci) =
+    let (mut direct, mut ci, selective) =
         read_mode(&lines, i).ok_or("VASP: missing Direct/Cartesian coordinate-mode line")?;
+
+    // Selective-dynamics flags from the first coordinate block, kept as a
+    // static bitmask channel (see `selective_flags` for the encoding).
+    let mut sd_flags: Option<Vec<f32>> = None;
 
     loop {
         let positions = read_positions(&lines, ci, n_atoms, direct, &cell, scale)?;
+
+        if first_positions.is_none() && selective {
+            sd_flags = Some(
+                (0..n_atoms)
+                    .map(|k| selective_flags(lines[ci + k]))
+                    .collect(),
+            );
+        }
         ci += n_atoms;
 
         if first_positions.is_none() {
@@ -338,7 +371,7 @@ pub fn parse(text: &str) -> Result<ParsedStructure, String> {
             break;
         }
         if strict_mode(lines[peek]).is_some() {
-            let Some((d, next)) = read_mode(&lines, peek) else {
+            let Some((d, next, _)) = read_mode(&lines, peek) else {
                 break;
             };
             direct = d;
@@ -360,7 +393,7 @@ pub fn parse(text: &str) -> Result<ParsedStructure, String> {
         cell = h.cell;
         scale = h.scale;
         elements = h.elements;
-        let Some((d, next)) = read_mode(&lines, h.next) else {
+        let Some((d, next, _)) = read_mode(&lines, h.next) else {
             break;
         };
         direct = d;
@@ -396,6 +429,14 @@ pub fn parse(text: &str) -> Result<ParsedStructure, String> {
         None
     };
 
+    let scalar_channels = match sd_flags {
+        Some(values) => vec![ScalarChannel {
+            name: "selective_dynamics".into(),
+            frames: vec![ScalarFrame { frame: 0, values }],
+        }],
+        None => Vec::new(),
+    };
+
     Ok(ParsedStructure {
         n_atoms,
         positions,
@@ -415,6 +456,8 @@ pub fn parse(text: &str) -> Result<ParsedStructure, String> {
         ca_res_nums: vec![],
         ca_ss_type: vec![],
         symmetry_ops: Vec::new(),
+        scalar_channels,
+        warnings: Vec::new(),
         hetero,
     })
 }
@@ -457,6 +500,8 @@ Direct
         assert!((s.positions[4] - 1.3575).abs() < 1e-3);
         assert!((s.positions[5] - 1.3575).abs() < 1e-3);
         assert!(s.atom_labels.is_none());
+        // No Selective dynamics section ⇒ no channel.
+        assert!(s.scalar_channels.is_empty());
     }
 
     #[test]
@@ -528,6 +573,36 @@ Cartesian
         assert_eq!(s.elements, vec![11, 17]);
         assert!((s.positions[3] - 2.82).abs() < 1e-4);
         assert!((s.positions[4]).abs() < 1e-6);
+        // Flags kept as a static bitmask channel: T T T = 7, F F F = 0.
+        assert_eq!(s.scalar_channels.len(), 1);
+        let ch = &s.scalar_channels[0];
+        assert_eq!(ch.name, "selective_dynamics");
+        assert_eq!(ch.frames.len(), 1);
+        assert_eq!(ch.frames[0].frame, 0);
+        assert_eq!(ch.frames[0].values, vec![7.0, 0.0]);
+    }
+
+    #[test]
+    fn selective_dynamics_mixed_flags_bitmask() {
+        let text = "\
+slab
+   1.0
+     4.0 0.0 0.0
+     0.0 4.0 0.0
+     0.0 0.0 4.0
+   Si
+   3
+Selective dynamics
+Direct
+  0.0 0.0 0.0  T F T
+  0.5 0.0 0.0  F T F
+  0.0 0.5 0.0  F F T
+";
+        let s = parse(text).unwrap();
+        let ch = &s.scalar_channels[0];
+        assert_eq!(ch.name, "selective_dynamics");
+        // x=1, y=2, z=4; T sets the bit.
+        assert_eq!(ch.frames[0].values, vec![5.0, 2.0, 4.0]);
     }
 
     #[test]

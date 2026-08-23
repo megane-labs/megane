@@ -25,9 +25,14 @@
 //! 4. `x2`/`y2` — a 2D depiction, projected to `z = 0` so the file still opens
 //!    (flat, but visibly flat) rather than being rejected.
 //!
+//! A `units` attribute (`units:bohr`, `units:pm`, `units:nm`, …) on an `<atom>`
+//! rescales its Cartesian coordinates to Å; the same applies to the `<crystal>`
+//! length scalars. Fractional coordinates are unitless and never rescaled. An
+//! unrecognised unit keeps the raw value and produces a warning.
+//!
 //! A file may hold several `<molecule>` elements under `<cml>` / `<list>`; the
-//! first one carrying atoms is loaded. Treating the rest as frames is a
-//! follow-up.
+//! first one carrying atoms is loaded, with a warning counting the sibling
+//! documents that were skipped. Treating the rest as frames is a follow-up.
 //!
 //! ## Untrusted input
 //!
@@ -111,6 +116,27 @@ fn attr_f32(map: &HashMap<String, String>, key: &str) -> Option<f32> {
     map.get(key)?.trim().parse().ok()
 }
 
+/// Bohr radius in Å (CODATA), for `units:bohr` / `units:au` conversion.
+const BOHR_TO_ANGSTROM: f32 = 0.529_177_2;
+
+/// Å-per-unit factor for a CML `units` attribute value (`units:bohr`,
+/// `cml:angstrom`, plain `pm`, …). `None` means the unit is not a recognised
+/// length unit and the value must be kept as-is.
+fn length_unit_factor(unit: &str) -> Option<f32> {
+    // The namespace prefix (`units:`, `cmlUnits:`, …) carries no meaning here.
+    let local = match unit.trim().rsplit_once(':') {
+        Some((_, l)) => l,
+        None => unit.trim(),
+    };
+    match local.to_ascii_lowercase().as_str() {
+        "angstrom" | "ang" | "a" => Some(1.0),
+        "bohr" | "au" => Some(BOHR_TO_ANGSTROM),
+        "pm" => Some(0.01),
+        "nm" => Some(10.0),
+        _ => None,
+    }
+}
+
 /// CML writes bond orders as `1`/`2`/`3` or the letters `S`/`D`/`T`/`A`.
 /// Aromatic collapses to 1, matching the MOL2 reader.
 fn bond_order(raw: Option<&String>) -> u8 {
@@ -166,9 +192,13 @@ pub fn parse(text: &str) -> Result<ParsedStructure, String> {
     let mut atoms: Vec<Atom> = Vec::new();
     let mut file_bonds: Vec<(String, String, u8)> = Vec::new();
     let mut cell = Cell::default();
-    // `<scalar title="a">5.43</scalar>` — the title arrives on the start tag and
-    // the number as the following text node, so the title is held across events.
-    let mut scalar_title: Option<String> = None;
+    // `<scalar title="a" units="…">5.43</scalar>` — title and units arrive on
+    // the start tag and the number as the following text node, so both are held
+    // across events.
+    let mut scalar_title: Option<(String, Option<String>)> = None;
+    // Unit strings that are not recognised length units, for one aggregated
+    // warning; values carrying them stay unscaled.
+    let mut unknown_units: HashSet<String> = HashSet::new();
     // Depth of `<molecule>` nesting, so a nested molecule's atoms do not leak
     // into the one we are reading.
     let mut molecule_depth = 0usize;
@@ -176,6 +206,9 @@ pub fn parse(text: &str) -> Result<ParsedStructure, String> {
     // sibling molecule we deliberately ignore.
     let mut done = false;
     let mut saw_molecule = false;
+    // Top-level <molecule> siblings skipped after the loaded one, for the
+    // aggregated warning.
+    let mut extra_molecules = 0usize;
 
     loop {
         let ev = reader.read_event().map_err(|e| {
@@ -192,17 +225,30 @@ pub fn parse(text: &str) -> Result<ParsedStructure, String> {
                 match name.as_str() {
                     "molecule" => {
                         saw_molecule = true;
+                        if done && molecule_depth == 0 {
+                            extra_molecules += 1;
+                        }
                         if !empty {
                             molecule_depth += 1;
                         }
                     }
                     "atom" if !done => {
                         let map = attrs(e);
-                        let Some(coord) = atom_coord(&map) else {
+                        let Some(mut coord) = atom_coord(&map) else {
                             // No usable coordinates on this atom — skip it
                             // rather than failing the whole document.
                             continue;
                         };
+                        // A `units` attribute rescales Cartesian coordinates to
+                        // Å; fractional coordinates are unitless.
+                        if let (Coord::Cartesian(p), Some(unit)) = (&mut coord, map.get("units")) {
+                            match length_unit_factor(unit) {
+                                Some(f) => p.iter_mut().for_each(|v| *v *= f),
+                                None => {
+                                    unknown_units.insert(unit.trim().to_string());
+                                }
+                            }
+                        }
                         let symbol = map
                             .get("elementType")
                             .map(|s| capitalize(s.trim()))
@@ -230,7 +276,10 @@ pub fn parse(text: &str) -> Result<ParsedStructure, String> {
                         }
                     }
                     "scalar" if !done => {
-                        scalar_title = attrs(e).get("title").map(|t| t.trim().to_lowercase());
+                        let map = attrs(e);
+                        scalar_title = map
+                            .get("title")
+                            .map(|t| (t.trim().to_lowercase(), map.get("units").cloned()));
                     }
                     _ => {}
                 }
@@ -240,13 +289,26 @@ pub fn parse(text: &str) -> Result<ParsedStructure, String> {
                 // quick-xml 0.38 moved unescaping out of `BytesText`.
                 let raw = t.decode().unwrap_or_default();
                 if let Ok(v) = raw.trim().parse::<f32>() {
-                    match scalar_title.as_deref() {
-                        Some("a") => cell.a = Some(v),
-                        Some("b") => cell.b = Some(v),
-                        Some("c") => cell.c = Some(v),
-                        Some("alpha") => cell.alpha = Some(v),
-                        Some("beta") => cell.beta = Some(v),
-                        Some("gamma") => cell.gamma = Some(v),
+                    let (title, units) = scalar_title.as_ref().unwrap();
+                    // Cell edges are lengths, so the units attribute applies;
+                    // the angles stay in degrees.
+                    let scaled = match (title.as_str(), units.as_deref()) {
+                        ("a" | "b" | "c", Some(u)) => match length_unit_factor(u) {
+                            Some(f) => v * f,
+                            None => {
+                                unknown_units.insert(u.trim().to_string());
+                                v
+                            }
+                        },
+                        _ => v,
+                    };
+                    match title.as_str() {
+                        "a" => cell.a = Some(scaled),
+                        "b" => cell.b = Some(scaled),
+                        "c" => cell.c = Some(scaled),
+                        "alpha" => cell.alpha = Some(scaled),
+                        "beta" => cell.beta = Some(scaled),
+                        "gamma" => cell.gamma = Some(scaled),
                         _ => {}
                     }
                 }
@@ -316,10 +378,13 @@ pub fn parse(text: &str) -> Result<ParsedStructure, String> {
     let mut bond_pairs: Vec<(u32, u32)> = Vec::new();
     let mut bond_orders: Vec<u8> = Vec::new();
     let mut seen: HashSet<(u32, u32)> = HashSet::new();
+    let mut dangling_bonds = 0usize;
     for (from, to, order) in &file_bonds {
         let (Some(&a), Some(&b)) = (id_to_index.get(from.as_str()), id_to_index.get(to.as_str()))
         else {
-            continue; // dangling atomRefs2 — drop the bond, keep the molecule
+            // Dangling atomRefs2 — drop the bond, keep the molecule.
+            dangling_bonds += 1;
+            continue;
         };
         if a == b {
             continue;
@@ -329,6 +394,28 @@ pub fn parse(text: &str) -> Result<ParsedStructure, String> {
             bond_pairs.push(pair);
             bond_orders.push(*order);
         }
+    }
+
+    let mut warnings = Vec::new();
+    if !unknown_units.is_empty() {
+        let mut list: Vec<String> = unknown_units.into_iter().collect();
+        list.sort();
+        warnings.push(format!(
+            "unrecognized units attribute {} — values kept unscaled",
+            list.join(", ")
+        ));
+    }
+    if dangling_bonds > 0 {
+        warnings.push(format!(
+            "{dangling_bonds} bonds referencing unknown atom ids were dropped"
+        ));
+    }
+    if extra_molecules > 0 {
+        warnings.push(format!(
+            "file contains {} additional <molecule> document{}; only the first is shown",
+            extra_molecules,
+            if extra_molecules == 1 { "" } else { "s" }
+        ));
     }
 
     let n_file_bonds = bond_pairs.len();
@@ -361,6 +448,8 @@ pub fn parse(text: &str) -> Result<ParsedStructure, String> {
         ca_res_nums: vec![],
         ca_ss_type: vec![],
         symmetry_ops: Vec::new(),
+        scalar_channels: Vec::new(),
+        warnings,
         hetero: None,
     })
 }
@@ -397,6 +486,85 @@ mod tests {
         assert_eq!(s.bond_orders.unwrap(), vec![1, 1, 1, 1]);
         assert!((s.positions[3] - 0.6291).abs() < 1e-4);
         assert!(s.box_matrix.is_none());
+        assert!(s.warnings.is_empty());
+    }
+
+    #[test]
+    fn converts_bohr_coordinates_to_angstrom() {
+        let text = r#"<molecule>
+  <atomArray>
+    <atom id="a1" elementType="C" x3="0" y3="0" z3="0" units="units:bohr"/>
+    <atom id="a2" elementType="C" x3="2.0" y3="0" z3="0" units="units:bohr"/>
+  </atomArray>
+</molecule>"#;
+        let s = parse(text).unwrap();
+        assert!((s.positions[3] - 1.058_354_4).abs() < 1e-5);
+        assert!(s.warnings.is_empty());
+    }
+
+    #[test]
+    fn converts_picometer_coordinates_to_angstrom() {
+        let text = r#"<molecule>
+  <atomArray>
+    <atom id="a1" elementType="O" x3="100" y3="0" z3="0" units="units:pm"/>
+  </atomArray>
+</molecule>"#;
+        let s = parse(text).unwrap();
+        assert!((s.positions[0] - 1.0).abs() < 1e-5);
+    }
+
+    #[test]
+    fn converts_nanometer_coordinates_to_angstrom() {
+        let text = r#"<molecule>
+  <atomArray>
+    <atom id="a1" elementType="O" x3="0.15" y3="0" z3="0" units="units:nm"/>
+  </atomArray>
+</molecule>"#;
+        let s = parse(text).unwrap();
+        assert!((s.positions[0] - 1.5).abs() < 1e-5);
+    }
+
+    #[test]
+    fn an_unknown_unit_keeps_values_unscaled_and_warns_once() {
+        let text = r#"<molecule>
+  <atomArray>
+    <atom id="a1" elementType="C" x3="1.5" y3="0" z3="0" units="units:parsec"/>
+    <atom id="a2" elementType="C" x3="3.0" y3="0" z3="0" units="units:parsec"/>
+  </atomArray>
+</molecule>"#;
+        let s = parse(text).unwrap();
+        assert!((s.positions[0] - 1.5).abs() < 1e-6);
+        assert!((s.positions[3] - 3.0).abs() < 1e-6);
+        assert_eq!(s.warnings.len(), 1);
+        assert!(
+            s.warnings[0].contains("units:parsec"),
+            "unexpected warning: {}",
+            s.warnings[0]
+        );
+    }
+
+    #[test]
+    fn converts_bohr_cell_lengths_but_not_fractional_coordinates() {
+        let text = r#"<molecule>
+  <crystal>
+    <scalar title="a" units="units:bohr">10.0</scalar>
+    <scalar title="b" units="units:bohr">10.0</scalar>
+    <scalar title="c" units="units:bohr">10.0</scalar>
+    <scalar title="alpha" units="units:degree">90</scalar>
+    <scalar title="beta" units="units:degree">90</scalar>
+    <scalar title="gamma" units="units:degree">90</scalar>
+  </crystal>
+  <atomArray>
+    <atom id="a1" elementType="Si" xFract="0.0" yFract="0.0" zFract="0.0"/>
+    <atom id="a2" elementType="Si" xFract="0.5" yFract="0.5" zFract="0.5"/>
+  </atomArray>
+</molecule>"#;
+        let s = parse(text).unwrap();
+        let cell = s.box_matrix.expect("crystal cell");
+        assert!((cell[0] - 5.291_772).abs() < 1e-4);
+        // Fractions are unitless: 0.5 of the Å cell edge, not 0.5 bohr.
+        assert!((s.positions[3] - 2.645_886).abs() < 1e-4);
+        assert!(s.warnings.is_empty());
     }
 
     #[test]
@@ -523,6 +691,37 @@ mod tests {
         let s = parse(text).unwrap();
         assert_eq!(s.n_atoms, 1);
         assert_eq!(s.elements, vec![2]); // He, not Ne
+        assert_eq!(
+            s.warnings,
+            vec![
+                "file contains 1 additional <molecule> document; only the first is shown"
+                    .to_string()
+            ]
+        );
+    }
+
+    #[test]
+    fn counts_every_skipped_sibling_molecule() {
+        let text = r#"<cml>
+  <molecule id="first">
+    <atomArray><atom id="a1" elementType="He" x3="0" y3="0" z3="0"/></atomArray>
+  </molecule>
+  <molecule id="second">
+    <atomArray><atom id="b1" elementType="Ne" x3="0" y3="0" z3="0"/></atomArray>
+  </molecule>
+  <molecule id="third">
+    <atomArray><atom id="c1" elementType="Ar" x3="0" y3="0" z3="0"/></atomArray>
+  </molecule>
+</cml>"#;
+        let s = parse(text).unwrap();
+        assert_eq!(s.elements, vec![2]);
+        assert_eq!(
+            s.warnings,
+            vec![
+                "file contains 2 additional <molecule> documents; only the first is shown"
+                    .to_string()
+            ]
+        );
     }
 
     #[test]
@@ -535,10 +734,17 @@ mod tests {
   <bondArray>
     <bond atomRefs2="a1 a2" order="1"/>
     <bond atomRefs2="a1 nope" order="1"/>
+    <bond atomRefs2="nope a2" order="1"/>
   </bondArray>
 </molecule>"#;
         let s = parse(text).unwrap();
         assert_eq!(s.n_file_bonds, 1);
+        assert_eq!(s.warnings.len(), 1);
+        assert!(
+            s.warnings[0].contains("2 bonds"),
+            "unexpected warning: {}",
+            s.warnings[0]
+        );
     }
 
     #[test]

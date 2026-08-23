@@ -14,11 +14,11 @@ import { getCameraState } from "./lib/render-utils";
 
 const ATOM_COUNT_CAFFEINE = 3024;
 
-// The 11 node kinds the editor surfaces; presence in the default seed
+// The node kinds the editor surfaces; presence in the default seed
 // graph is not guaranteed for every kind, so the spec only asserts the
 // ones the seed graph mounts. Stub kinds are checked as `>= 0` to allow
 // future seed changes without churning the spec.
-const SEEDED_KINDS = ["load_structure", "wrap", "viewport"] as const;
+const SEEDED_KINDS = ["load_structure", "symmetry", "wrap", "viewport"] as const;
 
 test.describe("pipeline-editor: webapp default graph", () => {
   test.beforeEach(async ({ page }) => {
@@ -128,6 +128,32 @@ test.describe("pipeline-editor: webapp default graph", () => {
     await waitForReady(page, { untilEpoch: epoch + 2, timeout: 10_000 });
     const restored = await getCameraState(page);
     expect(restored!.zoom).toBeCloseTo(before!.zoom, 5);
+  });
+
+  test("seeded Symmetry node exposes its mode toggle and accepts a change", async ({ page }) => {
+    await page.locator('[data-testid="pipeline-editor-tab-editor"]').click();
+
+    // The default seed graph carries a Symmetry node in expand mode.
+    const node = page.locator('[data-testid="pipeline-node-symmetry"]').first();
+    await expect(node).toBeVisible();
+    const mode = page.locator('[data-testid="symmetry-node-mode"]').first();
+    await expect(mode).toBeVisible();
+    await expect(mode).toHaveValue("expand");
+
+    // The expand ↔ none toggle is accepted.
+    await mode.selectOption("none");
+    await expect(mode).toHaveValue("none");
+    await mode.selectOption("expand");
+    await expect(mode).toHaveValue("expand");
+  });
+
+  test("Add Node menu adds a Symmetry node with its mode selector", async ({ page }) => {
+    await page.locator('[data-testid="pipeline-editor-tab-editor"]').click();
+    await page.getByTitle("Add Node").click();
+    await page.getByRole("button", { name: "Symmetry", exact: true }).click();
+
+    // The seed graph already carries one symmetry node; adding makes it two.
+    await expect(page.locator('[data-testid="pipeline-node-symmetry"]')).toHaveCount(2);
   });
 
   test("Add Node menu adds a Wrap / Unwrap node with its mode selector", async ({ page }) => {

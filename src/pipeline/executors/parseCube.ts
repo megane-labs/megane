@@ -48,6 +48,9 @@ export function parseCube(text: string): CubeParseResult {
   if (parts.length < 4) throw new Error("CUBE: missing atom count / origin line");
   const nAtomsSigned = parseInt(parts[0], 10);
   if (isNaN(nAtomsSigned)) throw new Error("CUBE: invalid atom count");
+  // A negative atom count is the format's flag that a DSET_IDS record follows
+  // the atom block (cubegen MO cubes) — the count itself is |NAtoms|.
+  const hasDsetIds = nAtomsSigned < 0;
   const nAtoms = Math.abs(nAtomsSigned);
   const ox = parseFloat(parts[1]) * BOHR_TO_ANGSTROM;
   const oy = parseFloat(parts[2]) * BOHR_TO_ANGSTROM;
@@ -76,35 +79,57 @@ export function parseCube(text: string): CubeParseResult {
   for (let a = 0; a < nAtoms; a++) {
     parts = next().split(/\s+/);
     if (parts.length < 5) throw new Error(`CUBE: malformed atom line ${a}`);
-    elements[a] = Math.abs(parseInt(parts[0], 10));
+    // A negative atomic number marks a ghost/dummy site — keep the atom but
+    // as element 0 (unknown) rather than pretending it is a real element.
+    const z = parseInt(parts[0], 10);
+    elements[a] = z < 0 ? 0 : z;
     // parts[1] is the charge (ignored)
     positions[a * 3 + 0] = parseFloat(parts[2]) * BOHR_TO_ANGSTROM;
     positions[a * 3 + 1] = parseFloat(parts[3]) * BOHR_TO_ANGSTROM;
     positions[a * 3 + 2] = parseFloat(parts[4]) * BOHR_TO_ANGSTROM;
   }
 
-  // Volumetric data: nx*ny*nz floats, 6 per line in the file.
+  // DSET_IDS record (present iff NAtoms was negative): `m id1 … idm`, wrapping
+  // across lines. With m > 1 every grid point carries m values (innermost
+  // index over the data sets); we surface the first set.
+  let nSets = 1;
+  if (hasDsetIds) {
+    parts = next().split(/\s+/);
+    nSets = parseInt(parts[0], 10);
+    if (isNaN(nSets) || nSets <= 0) throw new Error("CUBE: invalid DSET_IDS count");
+    let idsRead = parts.length - 1;
+    while (idsRead < nSets) {
+      idsRead += next().split(/\s+/).length;
+    }
+  }
+
+  // Volumetric data: nx*ny*nz grid points (× nSets values each), 6 per line.
   const totalVoxels = nx * ny * nz;
+  const totalValues = totalVoxels * nSets;
   const data = new Float32Array(totalVoxels);
-  let dataIdx = 0;
+  let valueIdx = 0;
   let dataMin = Infinity;
   let dataMax = -Infinity;
 
-  while (dataIdx < totalVoxels && li < lines.length) {
+  while (valueIdx < totalValues && li < lines.length) {
     const line = lines[li++].trim();
     if (line === "") continue;
     const tokens = line.split(/\s+/);
     for (const tok of tokens) {
-      if (dataIdx >= totalVoxels) break;
+      if (valueIdx >= totalValues) break;
       const v = parseFloat(tok);
-      data[dataIdx++] = v;
-      if (v < dataMin) dataMin = v;
-      if (v > dataMax) dataMax = v;
+      if (valueIdx % nSets === 0) {
+        const gridIdx = valueIdx / nSets;
+        data[gridIdx] = v;
+        if (v < dataMin) dataMin = v;
+        if (v > dataMax) dataMax = v;
+      }
+      valueIdx++;
     }
   }
 
-  if (dataIdx < totalVoxels) {
-    throw new Error(`CUBE: expected ${totalVoxels} data values, got ${dataIdx}`);
+  if (valueIdx < totalValues) {
+    throw new Error(`CUBE: expected ${totalValues} data values, got ${valueIdx}`);
   }
 
   if (!isFinite(dataMin)) {

@@ -18,6 +18,27 @@ pub struct VectorChannel {
     pub frames: Vec<VectorFrame>,
 }
 
+/// A single frame of per-atom scalar data (e.g. charge or a dump column).
+pub struct ScalarFrame {
+    /// Index of the trajectory frame this data corresponds to.
+    pub frame: usize,
+    /// Per-atom values: [s0, s1, ...] (one value per atom).
+    pub values: Vec<f32>,
+}
+
+/// A named channel of per-atom scalar data across one or more frames.
+///
+/// Carries file information megane does not render yet (per-atom charges,
+/// isotopes, selective-dynamics flags, LAMMPS dump computes, ...) so parsers
+/// never silently discard it. Length-1 channels are static; length-N channels
+/// advance in sync with the trajectory.
+pub struct ScalarChannel {
+    /// Name taken from the file, e.g. "charge", "mol_id", "c_pe".
+    pub name: String,
+    /// Per-frame values. Length 1 = static; length N = frame-synced.
+    pub frames: Vec<ScalarFrame>,
+}
+
 /// Per-frame side table for a *heterogeneous* trajectory — one whose frames
 /// vary in unit cell (all trajectory formats) or atom count / element type
 /// (LAMMPS dump only). `None` on [`TrajectoryData`] means uniform (the common

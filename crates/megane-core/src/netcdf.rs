@@ -190,6 +190,19 @@ fn parse_var_list(r: &mut Reader) -> Result<Vec<VarDesc>, String> {
     Ok(vars)
 }
 
+/// Build a 3×3 cell matrix from lengths (Å) and angles (degrees).
+///
+/// Right angles take the exact diagonal path so orthorhombic cells are free of
+/// f32 trigonometric noise.
+fn cell_matrix(a: f32, b: f32, c: f32, alpha: f32, beta: f32, gamma: f32) -> [f32; 9] {
+    let right = |ang: f32| (ang - 90.0).abs() < 1e-3;
+    if right(alpha) && right(beta) && right(gamma) {
+        [a, 0.0, 0.0, 0.0, b, 0.0, 0.0, 0.0, c]
+    } else {
+        crate::parser::cell_params_to_matrix(a, b, c, alpha, beta, gamma)
+    }
+}
+
 // ─── public API ────────────────────────────────────────────────────────────
 
 /// Parse an AMBER NetCDF trajectory file (`.nc`).
@@ -239,6 +252,7 @@ pub fn parse_netcdf(data: &[u8]) -> Result<TrajectoryData, String> {
         .ok_or("missing 'coordinates' variable (not an AMBER NCTRAJ file?)")?;
     let time_var = vars.iter().find(|v| v.name == "time");
     let cell_len_var = vars.iter().find(|v| v.name == "cell_lengths");
+    let cell_ang_var = vars.iter().find(|v| v.name == "cell_angles");
 
     // validate coordinates type
     if coord_var.nc_type != NC_FLOAT {
@@ -319,16 +333,21 @@ pub fn parse_netcdf(data: &[u8]) -> Result<TrajectoryData, String> {
         1.0
     };
 
-    // Read per-frame cell_lengths (orthorhombic diagonal). `cell_lengths` is a
-    // record variable, so frame `i`'s value lives at `cl.begin + i*recsize`.
-    // Frame 0 is the representative `box_matrix`; a per-frame side table is built
-    // only when the cell actually changes (variable-cell / NPT runs).
+    // Read per-frame cell_lengths and cell_angles. Both are record variables,
+    // so frame `i`'s value lives at `var.begin + i*recsize`. Per the AMBER
+    // convention `cell_angles` holds alpha/beta/gamma in degrees; when absent
+    // the cell is orthorhombic. Frame 0 is the representative `box_matrix`; a
+    // per-frame side table is built only when the cell actually changes
+    // (variable-cell / NPT runs).
     let mut box_matrix: Option<[f32; 9]> = None;
     let mut per_frame_cells: Vec<[f32; 9]> = Vec::new();
     let mut varies_cell = false;
     if let Some(cl) = cell_len_var {
         if cl.nc_type == NC_DOUBLE && cl.vsize >= 24 {
             let cl_begin = cl.begin as usize;
+            let ca_begin = cell_ang_var
+                .filter(|ca| ca.nc_type == NC_DOUBLE && ca.vsize >= 24)
+                .map(|ca| ca.begin as usize);
             for i in 0..n_frames {
                 let base = cl_begin.saturating_add(i.saturating_mul(recsize));
                 if base + 24 > data.len() {
@@ -337,7 +356,22 @@ pub fn parse_netcdf(data: &[u8]) -> Result<TrajectoryData, String> {
                 let a = r.read_f64_at(base)? as f32;
                 let b = r.read_f64_at(base + 8)? as f32;
                 let c = r.read_f64_at(base + 16)? as f32;
-                let m = [a, 0.0, 0.0, 0.0, b, 0.0, 0.0, 0.0, c];
+                let (alpha, beta, gamma) = match ca_begin {
+                    Some(cab) => {
+                        let ab = cab.saturating_add(i.saturating_mul(recsize));
+                        if ab + 24 > data.len() {
+                            (90.0, 90.0, 90.0)
+                        } else {
+                            (
+                                r.read_f64_at(ab)? as f32,
+                                r.read_f64_at(ab + 8)? as f32,
+                                r.read_f64_at(ab + 16)? as f32,
+                            )
+                        }
+                    }
+                    None => (90.0, 90.0, 90.0),
+                };
+                let m = cell_matrix(a, b, c, alpha, beta, gamma);
                 if i == 0 {
                     box_matrix = Some(m);
                 }
@@ -379,12 +413,14 @@ mod tests {
     ///   vars: coordinates(frame,atom,spatial) FLOAT,
     ///         time(frame) FLOAT,
     ///         cell_lengths(frame,cell_spatial) DOUBLE  [optional]
+    ///         cell_angles(frame,cell_angular) DOUBLE   [optional]
     ///   data interleaved per record
     fn build_netcdf(
         n_atoms: usize,
         frames: &[Vec<f32>],
         times: &[f32],
         cell_lengths: Option<&[[f64; 3]]>,
+        cell_angles: Option<&[[f64; 3]]>,
     ) -> Vec<u8> {
         fn u32be(v: u32) -> [u8; 4] {
             v.to_be_bytes()
@@ -414,9 +450,14 @@ mod tests {
 
         let n_frames = frames.len();
         let has_cell = cell_lengths.is_some();
+        let has_angles = cell_angles.is_some();
+        assert!(
+            !has_angles || has_cell,
+            "cell_angles requires cell_lengths in the test builder"
+        );
 
         // ── dim_list ───────────────────────────────────────────────────────
-        let n_dims: u32 = if has_cell { 4 } else { 3 };
+        let n_dims: u32 = 3 + has_cell as u32 + has_angles as u32;
         let mut dim_bytes = Vec::new();
         dim_bytes.extend_from_slice(&u32be(TAG_DIM));
         dim_bytes.extend_from_slice(&u32be(n_dims));
@@ -434,9 +475,14 @@ mod tests {
             dim_bytes.extend(pad_string("cell_spatial"));
             dim_bytes.extend_from_slice(&u32be(3));
         }
+        // dim 4: cell_angular (only if angles present)
+        if has_angles {
+            dim_bytes.extend(pad_string("cell_angular"));
+            dim_bytes.extend_from_slice(&u32be(3));
+        }
 
         // ── var_list ───────────────────────────────────────────────────────
-        let n_vars: u32 = if has_cell { 3 } else { 2 };
+        let n_vars: u32 = 2 + has_cell as u32 + has_angles as u32;
 
         // vsize per variable
         let coord_vsize: u32 = (n_atoms * 3 * 4) as u32;
@@ -491,6 +537,10 @@ mod tests {
             // cell_lengths(frame=0, cell_spatial=3)
             var_bytes.extend(build_var("cell_lengths", &[0, 3], NC_DOUBLE, cell_vsize, 0));
         }
+        if has_angles {
+            // cell_angles(frame=0, cell_angular=4)
+            var_bytes.extend(build_var("cell_angles", &[0, 4], NC_DOUBLE, cell_vsize, 0));
+        }
 
         // ── assemble header so far to compute its length ───────────────────
         let mut header = Vec::new();
@@ -510,6 +560,7 @@ mod tests {
         let coord_begin = header_size;
         let time_begin = coord_begin + ((coord_vsize as usize + 3) & !3);
         let cell_begin = time_begin + ((time_vsize as usize + 3) & !3);
+        let angle_begin = cell_begin + ((cell_vsize as usize + 3) & !3);
 
         // Patch `begin` (u32) for each var: find its location in `header`.
         // Each var header ends with: nc_type[4] vsize[4] begin[4].
@@ -546,6 +597,15 @@ mod tests {
                 cell_begin as u32,
             ));
         }
+        if has_angles {
+            var_bytes2.extend(rebuild_var(
+                "cell_angles",
+                &[0, 4],
+                NC_DOUBLE,
+                cell_vsize,
+                angle_begin as u32,
+            ));
+        }
 
         // Rebuild final header with correct var section
         let mut out = Vec::new();
@@ -564,6 +624,10 @@ mod tests {
         dim_bytes2.extend_from_slice(&u32be(3));
         if has_cell {
             dim_bytes2.extend(pad_string("cell_spatial"));
+            dim_bytes2.extend_from_slice(&u32be(3));
+        }
+        if has_angles {
+            dim_bytes2.extend(pad_string("cell_angular"));
             dim_bytes2.extend_from_slice(&u32be(3));
         }
         out.extend(dim_bytes2);
@@ -588,6 +652,13 @@ mod tests {
                 out.extend_from_slice(&f64be(cl[0]));
                 out.extend_from_slice(&f64be(cl[1]));
                 out.extend_from_slice(&f64be(cl[2]));
+            }
+            // cell_angles (optional)
+            if let Some(angles) = cell_angles {
+                let ca = &angles[i];
+                out.extend_from_slice(&f64be(ca[0]));
+                out.extend_from_slice(&f64be(ca[1]));
+                out.extend_from_slice(&f64be(ca[2]));
             }
         }
 
@@ -625,7 +696,7 @@ mod tests {
             times.push(fi * 1.0);
         }
 
-        let data = build_netcdf(n_atoms, &frames, &times, None);
+        let data = build_netcdf(n_atoms, &frames, &times, None, None);
         let result = parse_netcdf(&data).expect("parse NetCDF");
 
         assert_eq!(result.n_atoms, n_atoms);
@@ -657,7 +728,7 @@ mod tests {
         let times = vec![0.0f32, 2.0f32];
         let cells: Vec<[f64; 3]> = vec![[10.0, 10.0, 10.0], [10.0, 10.0, 10.0]];
 
-        let data = build_netcdf(n_atoms, &frames, &times, Some(&cells));
+        let data = build_netcdf(n_atoms, &frames, &times, Some(&cells), None);
         let result = parse_netcdf(&data).expect("parse NetCDF with cell");
 
         assert_eq!(result.n_atoms, n_atoms);
@@ -686,7 +757,7 @@ mod tests {
         // The cell shrinks between frames (NPT-style).
         let cells: Vec<[f64; 3]> = vec![[10.0, 10.0, 10.0], [9.0, 9.0, 9.0]];
 
-        let data = build_netcdf(n_atoms, &frames, &times, Some(&cells));
+        let data = build_netcdf(n_atoms, &frames, &times, Some(&cells), None);
         let result = parse_netcdf(&data).expect("parse variable-cell NetCDF");
 
         // box_matrix is frame 0; the side table carries both per-frame cells.
@@ -696,6 +767,88 @@ mod tests {
         assert!(!h.varies_atoms);
         assert!((result.frame_cell(0).unwrap()[0] - 10.0).abs() < 1e-3);
         assert!((result.frame_cell(1).unwrap()[0] - 9.0).abs() < 1e-3);
+    }
+
+    #[test]
+    fn test_parse_netcdf_cell_angles_triclinic() {
+        let n_atoms = 2usize;
+        let frames = vec![
+            vec![0.0, 0.0, 0.0, 1.5, 0.0, 0.0],
+            vec![0.1, 0.0, 0.0, 1.6, 0.0, 0.0],
+        ];
+        let times = vec![0.0f32, 1.0f32];
+        let cells: Vec<[f64; 3]> = vec![[10.0, 10.0, 10.0], [10.0, 10.0, 10.0]];
+        // Truncated-octahedron angles per the AMBER convention (degrees).
+        let angles: Vec<[f64; 3]> = vec![[109.471, 109.471, 109.471], [109.471, 109.471, 109.471]];
+
+        let data = build_netcdf(n_atoms, &frames, &times, Some(&cells), Some(&angles));
+        let result = parse_netcdf(&data).expect("parse triclinic NetCDF");
+
+        let bm = result.box_matrix.expect("box_matrix should be present");
+        let expect =
+            crate::parser::cell_params_to_matrix(10.0, 10.0, 10.0, 109.471, 109.471, 109.471);
+        for i in 0..9 {
+            assert!(
+                (bm[i] - expect[i]).abs() < 1e-3,
+                "m[{i}] = {} expected {}",
+                bm[i],
+                expect[i]
+            );
+        }
+        // The b vector must actually tilt: b·x = 10·cos(109.471°) ≈ -3.333.
+        assert!((bm[3] + 10.0 / 3.0).abs() < 1e-2, "b·x = {}", bm[3]);
+        // Constant cell across frames → no side table.
+        assert!(result.hetero.is_none());
+    }
+
+    #[test]
+    fn test_parse_netcdf_right_angles_match_lengths_only_path() {
+        let n_atoms = 2usize;
+        let frames = vec![vec![0.0, 0.0, 0.0, 1.5, 0.0, 0.0]];
+        let times = vec![0.0f32];
+        let cells: Vec<[f64; 3]> = vec![[10.0, 11.0, 12.0]];
+        let angles: Vec<[f64; 3]> = vec![[90.0, 90.0, 90.0]];
+
+        // With explicit 90° angles the matrix must be byte-identical to the
+        // one produced when `cell_angles` is absent (exact diagonal).
+        let with_angles = parse_netcdf(&build_netcdf(
+            n_atoms,
+            &frames,
+            &times,
+            Some(&cells),
+            Some(&angles),
+        ))
+        .expect("parse 90-degree NetCDF");
+        let without_angles =
+            parse_netcdf(&build_netcdf(n_atoms, &frames, &times, Some(&cells), None))
+                .expect("parse angle-free NetCDF");
+        assert_eq!(with_angles.box_matrix, without_angles.box_matrix);
+        assert_eq!(
+            with_angles.box_matrix.unwrap(),
+            [10.0, 0.0, 0.0, 0.0, 11.0, 0.0, 0.0, 0.0, 12.0]
+        );
+    }
+
+    #[test]
+    fn test_parse_netcdf_variable_angles_build_side_table() {
+        let n_atoms = 2usize;
+        let frames = vec![
+            vec![0.0, 0.0, 0.0, 1.5, 0.0, 0.0],
+            vec![0.1, 0.0, 0.0, 1.6, 0.0, 0.0],
+        ];
+        let times = vec![0.0f32, 1.0f32];
+        // Same lengths, but the angles change between frames.
+        let cells: Vec<[f64; 3]> = vec![[10.0, 10.0, 10.0], [10.0, 10.0, 10.0]];
+        let angles: Vec<[f64; 3]> = vec![[90.0, 90.0, 90.0], [90.0, 90.0, 120.0]];
+
+        let data = build_netcdf(n_atoms, &frames, &times, Some(&cells), Some(&angles));
+        let result = parse_netcdf(&data).expect("parse variable-angle NetCDF");
+
+        let h = result.hetero.as_ref().expect("cell side table");
+        assert!(h.varies_cell);
+        // Frame 0 orthorhombic, frame 1 tilted (b·x = 10·cos 120° = -5).
+        assert!((result.frame_cell(0).unwrap()[3]).abs() < 1e-4);
+        assert!((result.frame_cell(1).unwrap()[3] + 5.0).abs() < 1e-3);
     }
 
     #[test]

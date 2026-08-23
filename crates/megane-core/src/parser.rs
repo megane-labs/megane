@@ -105,6 +105,14 @@ pub struct ParsedStructure {
     /// case) means uniform: fixed atom count/topology/cell across all frames,
     /// and every consumer takes the fast fixed-stride path.
     pub hetero: Option<HeteroFrames>,
+    /// Embedded per-atom scalar channels (charges, selective-dynamics flags,
+    /// LAMMPS dump computes, ...) the file carries but megane does not render
+    /// yet. Parsed rather than silently discarded (CRITICAL RULE #11).
+    pub scalar_channels: Vec<crate::trajectory::ScalarChannel>,
+    /// Non-fatal parse warnings (e.g. atoms the file declares but the parser
+    /// could not represent). Surfaced to the host so nothing is dropped
+    /// silently; empty for a clean parse.
+    pub warnings: Vec<String>,
 }
 
 impl ParsedStructure {
@@ -705,6 +713,8 @@ fn parse_impl(text: &str, frame0_only: bool) -> Result<ParsedStructure, String> 
         ca_res_nums,
         ca_ss_type,
         symmetry_ops: Vec::new(),
+        scalar_channels: Vec::new(),
+        warnings: Vec::new(),
         hetero,
     })
 }

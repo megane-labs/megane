@@ -33,18 +33,18 @@
 //!
 //! Because the format is reconstructed rather than specified, the reader is
 //! written to fail loudly (a clear `Err`) rather than to guess: an atom with no
-//! element or no coordinates is dropped, and a document with no atoms at all is
-//! an error instead of an empty structure.
+//! coordinates is dropped (with a warning — coordinates cannot be invented), an
+//! atom with coordinates but no resolvable element is kept as element 0, and a
+//! document with no atoms at all is an error instead of an empty structure.
 //!
 //! ## Format notes
 //!
 //! * Bond orders are spelled `s`/`d`/`t`/`a` (single, double, triple,
-//!   aromatic) or as a plain integer. Aromatic collapses to 1 for display, the
-//!   same choice `mol2.rs` makes for Sybyl `ar`.
+//!   aromatic) or as a plain integer. Aromatic maps to 4, MDL's aromatic
+//!   encoding, the same choice `mol2.rs` makes for Sybyl `ar`.
 //! * `<boundary box="x y z"/>` is an orthorhombic periodic cell. Odyssey
-//!   centres its coordinates on the box centre, so atoms are shifted by
-//!   `+(x/2, y/2, z/2)` to put them inside a cell drawn at the world origin —
-//!   megane has no box origin for this format, so the atoms move instead.
+//!   centres its coordinates on the box centre, so the coordinates are kept
+//!   as written and `box_origin` anchors the cell at `(-x/2, -y/2, -z/2)`.
 //! * `<group charge="…">` / `<member entity="…">` carry formal charges.
 //!   [`ParsedStructure`] has no formal-charge channel, so they are skipped.
 //! * `.odydata` bond data lives in the `HESSIAN` block behind a preamble of one
@@ -96,19 +96,19 @@ fn floats(raw: &str) -> Vec<f32> {
         .collect()
 }
 
-/// `s`/`d`/`t`/`a` or a plain integer. Aromatic renders as a single bond, the
-/// same encoding `mol2.rs` uses for Sybyl `ar`.
+/// `s`/`d`/`t`/`a` or a plain integer. Aromatic maps to 4, MDL's aromatic
+/// encoding, the same one `mol2.rs` uses for Sybyl `ar`.
 fn bond_order(raw: &str) -> u8 {
     let t = raw.trim();
     match t.chars().next().map(|c| c.to_ascii_lowercase()) {
         Some('s') => 1,
         Some('d') => 2,
         Some('t') => 3,
-        Some('a') => 1,
+        Some('a') => 4,
         _ => match t.parse::<i32>() {
             // Spartan spells aromatic 5; anything else out of range is a
             // display single bond rather than a hard failure.
-            Ok(5) => 1,
+            Ok(5) => 4,
             Ok(n) if (1..=4).contains(&n) => n as u8,
             _ => 1,
         },
@@ -138,6 +138,9 @@ struct Raw {
     bonds: Vec<(String, String, u8)>,
     /// Orthorhombic cell edge lengths from `<boundary box="…"/>`.
     box_lengths: Option<[f32; 3]>,
+    /// Non-fatal notes about records the file declares but the structure
+    /// cannot carry, aggregated per category.
+    warnings: Vec<String>,
 }
 
 /// Parse an Odyssey file, auto-detecting the XML and text flavours.
@@ -171,6 +174,12 @@ fn parse_xml(text: &str) -> Result<Raw, String> {
     // atoms is loaded, matching how `cml.rs` picks the first <molecule>.
     let mut structures_with_atoms = 0usize;
     let mut skipping = false;
+    // Skipped <structure> elements that carry atoms, for the aggregated
+    // warning; an empty later structure is not a lost record.
+    let mut skipped_structures = 0usize;
+    let mut counted_current_skip = false;
+    let mut atoms_without_coords = 0usize;
+    let mut atoms_without_element = 0usize;
 
     loop {
         let ev = reader.read_event().map_err(|e| {
@@ -189,31 +198,45 @@ fn parse_xml(text: &str) -> Result<Raw, String> {
                         saw_root = true;
                         if structures_with_atoms > 0 {
                             skipping = true;
+                            counted_current_skip = false;
                         }
                     }
                     "atom" if !skipping => {
                         let map = attrs(e);
-                        // Jmol drops an atom that lacks either an element or a
-                        // full coordinate triple; a partially-specified atom
-                        // would otherwise render at the origin.
-                        let Some(sym) = map.get("element") else {
-                            continue;
-                        };
+                        // An atom without a full coordinate triple cannot be
+                        // placed (it would otherwise render at the origin), so
+                        // it is dropped and counted. A missing or unresolvable
+                        // element is representable as element 0 (unknown), so
+                        // the atom is kept and the gap is only warned about.
                         let xyz = match map.get("xyz") {
                             Some(v) => floats(v),
-                            None => continue,
+                            None => {
+                                atoms_without_coords += 1;
+                                continue;
+                            }
                         };
                         if xyz.len() < 3 {
+                            atoms_without_coords += 1;
                             continue;
+                        }
+                        let z = map.get("element").map(|s| element_number(s)).unwrap_or(0);
+                        if z == 0 {
+                            atoms_without_element += 1;
                         }
                         let id = map.get("id").cloned().unwrap_or_default();
                         let label = map.get("label").cloned().unwrap_or_else(|| id.clone());
                         raw.ids.push(id);
                         raw.labels.push(label);
-                        raw.elements.push(element_number(sym));
+                        raw.elements.push(z);
                         raw.positions.extend_from_slice(&xyz[..3]);
                         if raw.elements.len() == 1 {
                             structures_with_atoms += 1;
+                        }
+                    }
+                    "atom" if skipping => {
+                        if !counted_current_skip {
+                            skipped_structures += 1;
+                            counted_current_skip = true;
                         }
                     }
                     "bond" if !skipping => {
@@ -245,7 +268,24 @@ fn parse_xml(text: &str) -> Result<Raw, String> {
         );
     }
     if raw.elements.is_empty() {
-        return Err("odydata: document contains no <atom> elements with an element and xyz".into());
+        return Err("odydata: document contains no <atom> elements with an xyz coordinate".into());
+    }
+    if atoms_without_coords > 0 {
+        raw.warnings.push(format!(
+            "{atoms_without_coords} atoms without coordinates were dropped"
+        ));
+    }
+    if atoms_without_element > 0 {
+        raw.warnings.push(format!(
+            "{atoms_without_element} atoms without a resolvable element were kept as unknown (element 0)"
+        ));
+    }
+    if skipped_structures > 0 {
+        raw.warnings.push(format!(
+            "file contains {} additional structure{}; only the first is shown",
+            skipped_structures,
+            if skipped_structures == 1 { "" } else { "s" }
+        ));
     }
     Ok(raw)
 }
@@ -361,6 +401,7 @@ fn parse_text(text: &str) -> Result<Raw, String> {
                 tokens.extend(line.split_whitespace());
             }
             if tokens.len() > n_atoms {
+                let mut out_of_range = 0usize;
                 for tri in tokens[n_atoms..].as_chunks::<3>().0 {
                     let (Ok(a), Ok(b), Ok(order)) = (
                         tri[0].parse::<usize>(),
@@ -370,11 +411,20 @@ fn parse_text(text: &str) -> Result<Raw, String> {
                         continue;
                     };
                     // Order 0 marks a non-bonded pair in the Spartan block.
-                    if order <= 0 || a == 0 || b == 0 || a > n_atoms || b > n_atoms {
+                    if order <= 0 {
+                        continue;
+                    }
+                    if a == 0 || b == 0 || a > n_atoms || b > n_atoms {
+                        out_of_range += 1;
                         continue;
                     }
                     raw.bonds
                         .push((a.to_string(), b.to_string(), bond_order(tri[2])));
+                }
+                if out_of_range > 0 {
+                    raw.warnings.push(format!(
+                        "{out_of_range} bonds referencing unknown atoms were dropped"
+                    ));
                 }
             }
         }
@@ -383,16 +433,17 @@ fn parse_text(text: &str) -> Result<Raw, String> {
     Ok(raw)
 }
 
-/// Resolve bond endpoints, apply the periodic box, and infer bonds when the
+/// Resolve bond endpoints, anchor the periodic box, and infer bonds when the
 /// file carried none.
 fn finish(raw: Raw) -> Result<ParsedStructure, String> {
     let Raw {
         ids,
         labels,
         elements,
-        mut positions,
+        positions,
         bonds: raw_bonds,
         box_lengths,
+        mut warnings,
     } = raw;
     let n_atoms = elements.len();
 
@@ -413,9 +464,11 @@ fn finish(raw: Raw) -> Result<ParsedStructure, String> {
     let mut bond_pairs: Vec<(u32, u32)> = Vec::new();
     let mut bond_orders: Vec<u8> = Vec::new();
     let mut seen: HashSet<(u32, u32)> = HashSet::new();
+    let mut dangling = 0usize;
     for (a, b, order) in &raw_bonds {
         let (Some(&i), Some(&j)) = (by_name.get(a.as_str()), by_name.get(b.as_str())) else {
-            continue; // dangling endpoint — drop the bond, keep the molecule
+            dangling += 1; // dangling endpoint — drop the bond, keep the molecule
+            continue;
         };
         if i == j {
             continue;
@@ -426,15 +479,17 @@ fn finish(raw: Raw) -> Result<ParsedStructure, String> {
             bond_orders.push(*order);
         }
     }
+    if dangling > 0 {
+        warnings.push(format!(
+            "{dangling} bonds referencing unknown atoms were dropped"
+        ));
+    }
 
-    // Odyssey centres a periodic sample on the box centre. megane draws the
-    // cell from the world origin, so shift the atoms into it.
-    let box_matrix = box_lengths.map(|[x, y, z]| {
-        for (k, p) in positions.iter_mut().enumerate() {
-            *p += [x, y, z][k % 3] / 2.0;
-        }
-        cell_params_to_matrix(x, y, z, 90.0, 90.0, 90.0)
-    });
+    // Odyssey centres a periodic sample on the box centre. Coordinates stay
+    // exactly as written; box_origin anchors the cell's lower corner at
+    // -L/2 so the rendered cell encloses the atoms.
+    let box_matrix = box_lengths.map(|[x, y, z]| cell_params_to_matrix(x, y, z, 90.0, 90.0, 90.0));
+    let box_origin = box_lengths.map(|[x, y, z]| [-x / 2.0, -y / 2.0, -z / 2.0]);
 
     let n_file_bonds = bond_pairs.len();
     let (bonds, bond_orders) = if bond_pairs.is_empty() {
@@ -461,7 +516,7 @@ fn finish(raw: Raw) -> Result<ParsedStructure, String> {
         n_file_bonds,
         bond_orders,
         box_matrix,
-        box_origin: None,
+        box_origin,
         frame_positions_flat: Vec::new(),
         atom_labels,
         chain_ids: None,
@@ -472,6 +527,8 @@ fn finish(raw: Raw) -> Result<ParsedStructure, String> {
         ca_res_nums: vec![],
         ca_ss_type: vec![],
         symmetry_ops: Vec::new(),
+        scalar_channels: Vec::new(),
+        warnings,
         hetero: None,
     })
 }
@@ -529,8 +586,8 @@ mod tests {
   <bond a="3" b="4" order="a"/>
 </structure></odyssey_simulation>"#;
         let s = parse(text).unwrap();
-        // Aromatic collapses to 1 for display, as in mol2.
-        assert_eq!(s.bond_orders.unwrap(), vec![2, 3, 1]);
+        // Aromatic maps to MDL order 4, as in mol2.
+        assert_eq!(s.bond_orders.unwrap(), vec![2, 3, 4]);
     }
 
     #[test]
@@ -543,7 +600,8 @@ mod tests {
   <bond a="2" b="3" order="5"/>
 </structure></odyssey_simulation>"#;
         let s = parse(text).unwrap();
-        assert_eq!(s.bond_orders.unwrap(), vec![2, 1]);
+        // Spartan's numeric 5 is aromatic, so it maps to MDL order 4.
+        assert_eq!(s.bond_orders.unwrap(), vec![2, 4]);
     }
 
     #[test]
@@ -604,20 +662,23 @@ mod tests {
         assert!((cell[0] - 20.0).abs() < 1e-4);
         assert!((cell[4] - 20.0).abs() < 1e-4);
         assert!((cell[8] - 20.0).abs() < 1e-4);
-        // Coordinates are centred on the box centre, so every atom shifts +L/2.
-        assert!((s.positions[0] - 10.0).abs() < 1e-4);
-        assert!((s.positions[3] - 6.0).abs() < 1e-4);
-        assert!((s.positions[4] - 12.0).abs() < 1e-4);
+        // Coordinates stay exactly as written in the file.
+        assert!((s.positions[0] - 0.0).abs() < 1e-4);
+        assert!((s.positions[3] - (-4.0)).abs() < 1e-4);
+        assert!((s.positions[4] - 2.0).abs() < 1e-4);
+        // The cell is anchored so the box centre sits at the origin.
+        assert_eq!(s.box_origin, Some([-10.0, -10.0, -10.0]));
     }
 
     #[test]
-    fn a_boundary_declared_before_the_atoms_still_shifts_them() {
+    fn a_boundary_declared_before_the_atoms_still_anchors_the_cell() {
         let text = r#"<odyssey_simulation>
   <boundary box="10.0 10.0 10.0"/>
   <structure><atom id="1" element="Ar" xyz="0.0 0.0 0.0"/></structure>
 </odyssey_simulation>"#;
         let s = parse(text).unwrap();
-        assert!((s.positions[0] - 5.0).abs() < 1e-4);
+        assert!((s.positions[0] - 0.0).abs() < 1e-4);
+        assert_eq!(s.box_origin, Some([-5.0, -5.0, -5.0]));
     }
 
     #[test]
@@ -628,6 +689,7 @@ mod tests {
 </odyssey_simulation>"#;
         let s = parse(text).unwrap();
         assert!(s.box_matrix.is_none());
+        assert!(s.box_origin.is_none());
         assert_eq!(s.positions[0], 0.0);
     }
 
@@ -645,15 +707,37 @@ mod tests {
     }
 
     #[test]
-    fn skips_atoms_missing_an_element_or_coordinates() {
+    fn skips_atoms_missing_coordinates_and_warns() {
         let text = r#"<odyssey_simulation><structure>
   <atom id="1" element="C" xyz="0 0 0"/>
-  <atom id="2" xyz="1.5 0 0"/>
-  <atom id="3" element="C"/>
-  <atom id="4" element="C" xyz="1.5 0"/>
+  <atom id="2" element="C"/>
+  <atom id="3" element="C" xyz="1.5 0"/>
 </structure></odyssey_simulation>"#;
         let s = parse(text).unwrap();
         assert_eq!(s.n_atoms, 1);
+        assert_eq!(
+            s.warnings,
+            vec!["2 atoms without coordinates were dropped".to_string()]
+        );
+    }
+
+    #[test]
+    fn keeps_an_atom_with_coordinates_but_no_element_and_warns() {
+        let text = r#"<odyssey_simulation><structure>
+  <atom id="1" element="C" xyz="0 0 0"/>
+  <atom id="2" xyz="1.5 0 0"/>
+  <atom id="3" element="Xx" xyz="3.0 0 0"/>
+</structure></odyssey_simulation>"#;
+        let s = parse(text).unwrap();
+        assert_eq!(s.n_atoms, 3);
+        assert_eq!(s.elements, vec![6, 0, 0]);
+        assert!((s.positions[3] - 1.5).abs() < 1e-4);
+        assert_eq!(
+            s.warnings,
+            vec![
+                "2 atoms without a resolvable element were kept as unknown (element 0)".to_string()
+            ]
+        );
     }
 
     #[test]
@@ -667,6 +751,10 @@ mod tests {
 </structure></odyssey_simulation>"#;
         let s = parse(text).unwrap();
         assert_eq!(s.n_file_bonds, 1);
+        assert_eq!(
+            s.warnings,
+            vec!["1 bonds referencing unknown atoms were dropped".to_string()]
+        );
     }
 
     #[test]
@@ -678,6 +766,42 @@ mod tests {
         let s = parse(text).unwrap();
         assert_eq!(s.n_atoms, 1);
         assert_eq!(s.elements, vec![6]);
+        assert_eq!(
+            s.warnings,
+            vec!["file contains 1 additional structure; only the first is shown".to_string()]
+        );
+    }
+
+    #[test]
+    fn counts_every_skipped_structure_with_atoms() {
+        let text = r#"<odyssey_simulation>
+  <structure><atom id="1" element="C" xyz="0 0 0"/></structure>
+  <structure><atom id="2" element="O" xyz="5 0 0"/></structure>
+  <structure><atom id="3" element="N" xyz="9 0 0"/></structure>
+</odyssey_simulation>"#;
+        let s = parse(text).unwrap();
+        assert_eq!(s.elements, vec![6]);
+        assert_eq!(
+            s.warnings,
+            vec!["file contains 2 additional structures; only the first is shown".to_string()]
+        );
+    }
+
+    #[test]
+    fn an_empty_later_structure_is_not_a_lost_record() {
+        let text = r#"<odyssey_simulation>
+  <structure><atom id="1" element="C" xyz="0 0 0"/></structure>
+  <structure/>
+</odyssey_simulation>"#;
+        let s = parse(text).unwrap();
+        assert_eq!(s.n_atoms, 1);
+        assert!(s.warnings.is_empty());
+    }
+
+    #[test]
+    fn a_single_structure_file_has_no_multi_record_warning() {
+        let s = parse(WATER_XML).unwrap();
+        assert!(s.warnings.is_empty());
     }
 
     #[test]
@@ -823,6 +947,10 @@ ENDHESS
 ";
         let s = parse(text).unwrap();
         assert_eq!(s.n_file_bonds, 1);
+        assert_eq!(
+            s.warnings,
+            vec!["2 bonds referencing unknown atoms were dropped".to_string()]
+        );
     }
 
     #[test]

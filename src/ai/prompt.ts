@@ -522,6 +522,11 @@ Fades the water to fully transparent and shows the rest of the structure at its 
   across a periodic face whole again ("unwrap"): add a \`wrap\` node between
   load_structure and viewport (before \`replicate\`, if present), forwarding its
   \`particle\`/\`trajectory\` outputs downstream and setting \`mode\` accordingly.
+- CIF structures load as the crystallographic asymmetric unit with their
+  space-group operations attached; keep a \`symmetry\` node (mode "expand")
+  directly after load_structure (before \`wrap\`/\`replicate\`, if present) so the
+  full unit cell renders. Set \`mode\` to "none" only when the user asks for the
+  raw asymmetric unit.
 - For recoloring or changing display style ("cartoon", "surface", etc.): add
   \`color\` and/or \`representation\` nodes between load_structure (or add_bond)
   and viewport; both only accept \`particle\`.

@@ -156,6 +156,147 @@ describe("executePipeline", () => {
       expect(nodeErrors.get("rep")?.[0].message).toContain("unit cell");
     });
 
+    it("expands the asymmetric unit through a symmetry node", () => {
+      const cifSnapshot: Snapshot = {
+        ...makeSnapshot({
+          nAtoms: 1,
+          positions: [3, 3, 3],
+          elements: [8],
+          box: [10, 0, 0, 0, 10, 0, 0, 0, 10],
+        }),
+        symmetryOps: ["x,y,z", "-x,-y,-z"],
+      };
+      const nodes = [
+        makeNode("ls", "load_structure", { fileName: null, hasTrajectory: false, hasCell: true }),
+        makeNode("sym", "symmetry", { mode: "expand" }),
+        makeNode("vp", "viewport", { perspective: false, cellAxesVisible: true }),
+      ];
+      const edges = [
+        makeEdge("ls", "particle", "sym", "particle"),
+        makeEdge("sym", "particle", "vp", "particle"),
+      ];
+
+      const { viewportState: result, nodeErrors } = executePipeline(nodes, edges, {
+        snapshot: cifSnapshot,
+      });
+      expect(result.particles[0].source.nAtoms).toBe(2);
+      expect(nodeErrors.get("sym")).toBeUndefined();
+    });
+
+    it("symmetry mode none passes the asymmetric unit through", () => {
+      const cifSnapshot: Snapshot = {
+        ...makeSnapshot({
+          nAtoms: 1,
+          positions: [3, 3, 3],
+          elements: [8],
+          box: [10, 0, 0, 0, 10, 0, 0, 0, 10],
+        }),
+        symmetryOps: ["x,y,z", "-x,-y,-z"],
+      };
+      const nodes = [
+        makeNode("ls", "load_structure", { fileName: null, hasTrajectory: false, hasCell: true }),
+        makeNode("sym", "symmetry", { mode: "none" }),
+        makeNode("vp", "viewport", { perspective: false, cellAxesVisible: true }),
+      ];
+      const edges = [
+        makeEdge("ls", "particle", "sym", "particle"),
+        makeEdge("sym", "particle", "vp", "particle"),
+      ];
+
+      const { viewportState: result, nodeErrors } = executePipeline(nodes, edges, {
+        snapshot: cifSnapshot,
+      });
+      expect(result.particles[0].source.nAtoms).toBe(1);
+      expect(nodeErrors.get("sym")).toBeUndefined();
+    });
+
+    it("warns when a symmetry node has operations but no unit cell", () => {
+      const cifSnapshot: Snapshot = {
+        ...makeSnapshot({ nAtoms: 1, positions: [3, 3, 3], elements: [8] }),
+        symmetryOps: ["x,y,z", "-x,-y,-z"],
+      };
+      const nodes = [
+        makeNode("ls", "load_structure", { fileName: null, hasTrajectory: false, hasCell: false }),
+        makeNode("sym", "symmetry", { mode: "expand" }),
+        makeNode("vp", "viewport", { perspective: false, cellAxesVisible: true }),
+      ];
+      const edges = [
+        makeEdge("ls", "particle", "sym", "particle"),
+        makeEdge("sym", "particle", "vp", "particle"),
+      ];
+
+      const { viewportState: result, nodeErrors } = executePipeline(nodes, edges, {
+        snapshot: cifSnapshot,
+      });
+      expect(nodeErrors.get("sym")?.[0].message).toContain("unit cell");
+      // Pass-through: the particles still reach the viewport unchanged.
+      expect(result.particles).toHaveLength(1);
+      expect(result.particles[0].source.nAtoms).toBe(1);
+    });
+
+    it("stays silent for a structure without symmetry operations", () => {
+      const nodes = [
+        makeNode("ls", "load_structure", { fileName: null, hasTrajectory: false, hasCell: false }),
+        makeNode("sym", "symmetry", { mode: "expand" }),
+        makeNode("vp", "viewport", { perspective: false, cellAxesVisible: true }),
+      ];
+      const edges = [
+        makeEdge("ls", "particle", "sym", "particle"),
+        makeEdge("sym", "particle", "vp", "particle"),
+      ];
+
+      const { viewportState: result, nodeErrors } = executePipeline(nodes, edges, {
+        snapshot: waterSnapshot,
+      });
+      expect(nodeErrors.get("sym")).toBeUndefined();
+      expect(result.particles[0].source.nAtoms).toBe(3);
+    });
+
+    it("warns and passes through when a symmetry node also receives a trajectory", () => {
+      const frames: Frame[] = [{ frameId: 0, nAtoms: 1, positions: new Float32Array(3) }];
+      const meta: TrajectoryMeta = { nFrames: 1, timestepPs: 1.0, nAtoms: 1 };
+      const cifSnapshot: Snapshot = {
+        ...makeSnapshot({
+          nAtoms: 1,
+          positions: [3, 3, 3],
+          elements: [8],
+          box: [10, 0, 0, 0, 10, 0, 0, 0, 10],
+        }),
+        symmetryOps: ["x,y,z", "-x,-y,-z"],
+      };
+      const nodes = [
+        makeNode("ls", "load_structure", { fileName: null, hasTrajectory: true, hasCell: true }),
+        makeNode("sym", "symmetry", { mode: "expand" }),
+        makeNode("vp", "viewport", { perspective: false, cellAxesVisible: true }),
+      ];
+      const edges = [
+        makeEdge("ls", "particle", "sym", "particle"),
+        makeEdge("ls", "trajectory", "sym", "trajectory"),
+        makeEdge("sym", "particle", "vp", "particle"),
+        makeEdge("sym", "trajectory", "vp", "trajectory"),
+      ];
+
+      const { viewportState: result, nodeErrors } = executePipeline(nodes, edges, {
+        snapshot: cifSnapshot,
+        structureFrames: frames,
+        structureMeta: meta,
+      });
+      expect(nodeErrors.get("sym")?.[0].message).toContain("trajectory");
+      expect(result.particles[0].source.nAtoms).toBe(1);
+      expect(result.trajectories).toHaveLength(1);
+    });
+
+    it("warns when a symmetry node has no input", () => {
+      const nodes = [
+        makeNode("sym", "symmetry", { mode: "expand" }),
+        makeNode("vp", "viewport", { perspective: false, cellAxesVisible: true }),
+      ];
+      const edges = [makeEdge("sym", "particle", "vp", "particle")];
+
+      const { nodeErrors } = executePipeline(nodes, edges, {});
+      expect(nodeErrors.get("sym")?.[0].message).toContain("No input data");
+    });
+
     it("wraps particles into the cell through a wrap node", () => {
       const boxSnapshot = makeSnapshot({
         nAtoms: 1,

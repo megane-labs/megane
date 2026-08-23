@@ -229,8 +229,6 @@ export function executeReplicate(
     type: "cell",
     sourceNodeId: cellIn?.sourceNodeId ?? particle.sourceNodeId,
     box: newBox,
-    visible: cellIn?.visible ?? true,
-    axesVisible: cellIn?.axesVisible ?? true,
   };
   outputs.set("cell", newCell);
 

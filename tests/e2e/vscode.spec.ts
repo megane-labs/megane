@@ -64,6 +64,10 @@ const FORMATS: FormatFixture[] = [
   { id: "mol-methane", file: "methane.mol" },
   { id: "sdf-ethanol", file: "ethanol.sdf" },
   { id: "cif-nacl", file: "nacl.cif" },
+  // Symmetry-op-carrying CIF: 10-atom asymmetric unit × 4 general positions.
+  // The seed pipeline's symmetry node (expand mode) must fill the unit cell
+  // automatically when the custom editor opens the file.
+  { id: "cif-glycine-csd", file: "glycine_csd.cif", expectedAtoms: 40 },
   { id: "lammps-water", file: "water.lammps" },
   { id: "xyz-water-multiframe", file: "water_multiframe.xyz", expectTrajectory: true },
   { id: "traj-water", file: "water.traj", expectTrajectory: true },

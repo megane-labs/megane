@@ -16,10 +16,11 @@ export interface PipelineTemplate {
 
 /**
  * Molecule template: simplified caffeine visualization.
- * LoadStructure → Wrap → AddBond → Viewport
- *              → LoadTrajectory → Wrap → Viewport
- * The Wrap node defaults to mode "none" (pass-through) so wrap/unwrap is a
- * one-click toggle.
+ * LoadStructure → Symmetry → Wrap → AddBond → Viewport
+ *              → LoadTrajectory → Symmetry → Wrap → Viewport
+ * The Symmetry node defaults to mode "expand" (a no-op without space-group
+ * operations); the Wrap node defaults to mode "none" (pass-through) so
+ * wrap/unwrap is a one-click toggle.
  */
 function createMoleculeTemplate(): {
   nodes: Node<PipelineNodeData>[];
@@ -54,9 +55,21 @@ function createMoleculeTemplate(): {
         },
       },
       {
+        id: "symmetry-1",
+        type: "symmetry",
+        position: { x: 425, y: 155 },
+        data: {
+          params: {
+            type: "symmetry",
+            mode: "expand",
+          },
+          enabled: true,
+        },
+      },
+      {
         id: "wrap-1",
         type: "wrap",
-        position: { x: 425, y: 155 },
+        position: { x: 425, y: 360 },
         data: {
           params: {
             type: "wrap",
@@ -68,7 +81,7 @@ function createMoleculeTemplate(): {
       {
         id: "addbond-1",
         type: "add_bond",
-        position: { x: 425, y: 410 },
+        position: { x: 425, y: 615 },
         data: {
           params: {
             type: "add_bond",
@@ -80,7 +93,7 @@ function createMoleculeTemplate(): {
       {
         id: "viewport-1",
         type: "viewport",
-        position: { x: 425, y: 715 },
+        position: { x: 425, y: 920 },
         data: {
           params: {
             type: "viewport",
@@ -96,7 +109,7 @@ function createMoleculeTemplate(): {
       {
         id: "e1",
         source: "loader-1",
-        target: "wrap-1",
+        target: "symmetry-1",
         sourceHandle: "particle",
         targetHandle: "particle",
       },
@@ -110,40 +123,54 @@ function createMoleculeTemplate(): {
       {
         id: "e3",
         source: "traj-1",
-        target: "wrap-1",
+        target: "symmetry-1",
         sourceHandle: "trajectory",
         targetHandle: "trajectory",
       },
       {
         id: "e4",
+        source: "symmetry-1",
+        target: "wrap-1",
+        sourceHandle: "particle",
+        targetHandle: "particle",
+      },
+      {
+        id: "e5",
+        source: "symmetry-1",
+        target: "wrap-1",
+        sourceHandle: "trajectory",
+        targetHandle: "trajectory",
+      },
+      {
+        id: "e6",
         source: "wrap-1",
         target: "addbond-1",
         sourceHandle: "particle",
         targetHandle: "particle",
       },
       {
-        id: "e5",
+        id: "e7",
         source: "wrap-1",
         target: "viewport-1",
         sourceHandle: "particle",
         targetHandle: "particle",
       },
       {
-        id: "e6",
+        id: "e8",
         source: "loader-1",
         target: "viewport-1",
         sourceHandle: "cell",
         targetHandle: "cell",
       },
       {
-        id: "e7",
+        id: "e9",
         source: "addbond-1",
         target: "viewport-1",
         sourceHandle: "bond",
         targetHandle: "bond",
       },
       {
-        id: "e8",
+        id: "e10",
         source: "wrap-1",
         target: "viewport-1",
         sourceHandle: "trajectory",
@@ -157,13 +184,14 @@ function createMoleculeTemplate(): {
  * Molecular crystal template: glycine molecules completed across periodic
  * boundaries.
  *
- *                         ┌→ AddBond ───────────────┐
- * LoadStructure → Wrap ───┤                         ├→ BoundaryCompletion → Viewport
- *                         └→ DrawingBoundary ──────┘
+ *                                    ┌→ AddBond ───────────────┐
+ * LoadStructure → Symmetry → Wrap ───┤                         ├→ BoundaryCompletion → Viewport
+ *                                    └→ DrawingBoundary ──────┘
  *
- * Wrapping first gives Drawing Boundary a normalized home-cell structure.
- * Boundary Completion then follows the periodic bond topology and adds whole
- * finite molecules that intersect the selected drawing range.
+ * Symmetry expansion first fills the unit cell from the CIF's asymmetric
+ * unit; wrapping then gives Drawing Boundary a normalized home-cell
+ * structure. Boundary Completion follows the periodic bond topology and adds
+ * whole finite molecules that intersect the selected drawing range.
  */
 function createMolecularCrystalTemplate(): {
   nodes: Node<PipelineNodeData>[];
@@ -186,9 +214,21 @@ function createMolecularCrystalTemplate(): {
         },
       },
       {
+        id: "symmetry-1",
+        type: "symmetry",
+        position: { x: 425, y: 155 },
+        data: {
+          params: {
+            type: "symmetry",
+            mode: "expand",
+          },
+          enabled: true,
+        },
+      },
+      {
         id: "wrap-1",
         type: "wrap",
-        position: { x: 425, y: 155 },
+        position: { x: 425, y: 340 },
         data: {
           params: {
             type: "wrap",
@@ -200,7 +240,7 @@ function createMolecularCrystalTemplate(): {
       {
         id: "addbond-1",
         type: "add_bond",
-        position: { x: 170, y: 340 },
+        position: { x: 170, y: 525 },
         data: {
           params: {
             type: "add_bond",
@@ -212,7 +252,7 @@ function createMolecularCrystalTemplate(): {
       {
         id: "drawing-boundary-1",
         type: "drawing_boundary",
-        position: { x: 680, y: 340 },
+        position: { x: 680, y: 525 },
         data: {
           params: {
             type: "drawing_boundary",
@@ -229,7 +269,7 @@ function createMolecularCrystalTemplate(): {
       {
         id: "boundary-completion-1",
         type: "boundary_completion",
-        position: { x: 425, y: 550 },
+        position: { x: 425, y: 735 },
         data: {
           params: {
             type: "boundary_completion",
@@ -241,7 +281,7 @@ function createMolecularCrystalTemplate(): {
       {
         id: "viewport-1",
         type: "viewport",
-        position: { x: 425, y: 795 },
+        position: { x: 425, y: 980 },
         data: {
           params: {
             type: "viewport",
@@ -257,54 +297,61 @@ function createMolecularCrystalTemplate(): {
       {
         id: "e1",
         source: "loader-1",
-        target: "wrap-1",
+        target: "symmetry-1",
         sourceHandle: "particle",
         targetHandle: "particle",
       },
       {
         id: "e2",
-        source: "wrap-1",
-        target: "addbond-1",
+        source: "symmetry-1",
+        target: "wrap-1",
         sourceHandle: "particle",
         targetHandle: "particle",
       },
       {
         id: "e3",
         source: "wrap-1",
-        target: "drawing-boundary-1",
+        target: "addbond-1",
         sourceHandle: "particle",
         targetHandle: "particle",
       },
       {
         id: "e4",
+        source: "wrap-1",
+        target: "drawing-boundary-1",
+        sourceHandle: "particle",
+        targetHandle: "particle",
+      },
+      {
+        id: "e5",
         source: "drawing-boundary-1",
         target: "boundary-completion-1",
         sourceHandle: "particle",
         targetHandle: "particle",
       },
       {
-        id: "e5",
+        id: "e6",
         source: "addbond-1",
         target: "boundary-completion-1",
         sourceHandle: "bond",
         targetHandle: "bond",
       },
       {
-        id: "e6",
+        id: "e7",
         source: "boundary-completion-1",
         target: "viewport-1",
         sourceHandle: "particle",
         targetHandle: "particle",
       },
       {
-        id: "e7",
+        id: "e8",
         source: "boundary-completion-1",
         target: "viewport-1",
         sourceHandle: "bond",
         targetHandle: "bond",
       },
       {
-        id: "e8",
+        id: "e9",
         source: "loader-1",
         target: "viewport-1",
         sourceHandle: "cell",
@@ -316,8 +363,8 @@ function createMolecularCrystalTemplate(): {
 
 /**
  * Solid template: perovskite SrTiO3 with coordination polyhedra.
- * LoadStructure → Wrap → DrawingBoundary → Coordination → Polyhedra → Viewport
- *                                             └──────────→ Viewport (bond)
+ * LoadStructure → Symmetry → Wrap → DrawingBoundary → Coordination → Polyhedra → Viewport
+ *                                                        └──────────→ Viewport (bond)
  */
 function createSolidTemplate(): {
   nodes: Node<PipelineNodeData>[];
@@ -340,9 +387,21 @@ function createSolidTemplate(): {
         },
       },
       {
+        id: "symmetry-1",
+        type: "symmetry",
+        position: { x: 425, y: 155 },
+        data: {
+          params: {
+            type: "symmetry",
+            mode: "expand",
+          },
+          enabled: true,
+        },
+      },
+      {
         id: "wrap-1",
         type: "wrap",
-        position: { x: 425, y: 155 },
+        position: { x: 425, y: 330 },
         data: {
           params: {
             type: "wrap",
@@ -354,7 +413,7 @@ function createSolidTemplate(): {
       {
         id: "drawing-boundary-1",
         type: "drawing_boundary",
-        position: { x: 425, y: 330 },
+        position: { x: 425, y: 505 },
         data: {
           params: {
             type: "drawing_boundary",
@@ -371,7 +430,7 @@ function createSolidTemplate(): {
       {
         id: "coordination-1",
         type: "coordination_generator",
-        position: { x: 425, y: 510 },
+        position: { x: 425, y: 685 },
         data: {
           params: {
             type: "coordination_generator",
@@ -386,7 +445,7 @@ function createSolidTemplate(): {
       {
         id: "polyhedron-1",
         type: "polyhedron_generator",
-        position: { x: 680, y: 685 },
+        position: { x: 680, y: 860 },
         data: {
           params: {
             type: "polyhedron_generator",
@@ -401,7 +460,7 @@ function createSolidTemplate(): {
       {
         id: "viewport-1",
         type: "viewport",
-        position: { x: 425, y: 900 },
+        position: { x: 425, y: 1075 },
         data: {
           params: {
             type: "viewport",
@@ -417,54 +476,61 @@ function createSolidTemplate(): {
       {
         id: "e1",
         source: "loader-1",
-        target: "wrap-1",
+        target: "symmetry-1",
         sourceHandle: "particle",
         targetHandle: "particle",
       },
       {
         id: "e2",
+        source: "symmetry-1",
+        target: "wrap-1",
+        sourceHandle: "particle",
+        targetHandle: "particle",
+      },
+      {
+        id: "e3",
         source: "wrap-1",
         target: "drawing-boundary-1",
         sourceHandle: "particle",
         targetHandle: "particle",
       },
       {
-        id: "e3",
+        id: "e4",
         source: "drawing-boundary-1",
         target: "coordination-1",
         sourceHandle: "particle",
         targetHandle: "particle",
       },
       {
-        id: "e4",
+        id: "e5",
         source: "drawing-boundary-1",
         target: "viewport-1",
         sourceHandle: "particle",
         targetHandle: "particle",
       },
       {
-        id: "e5",
+        id: "e6",
         source: "loader-1",
         target: "viewport-1",
         sourceHandle: "cell",
         targetHandle: "cell",
       },
       {
-        id: "e6",
+        id: "e7",
         source: "coordination-1",
         target: "viewport-1",
         sourceHandle: "bond",
         targetHandle: "bond",
       },
       {
-        id: "e7",
+        id: "e8",
         source: "coordination-1",
         target: "polyhedron-1",
         sourceHandle: "coordination",
         targetHandle: "coordination",
       },
       {
-        id: "e8",
+        id: "e9",
         source: "polyhedron-1",
         target: "viewport-1",
         sourceHandle: "mesh",
@@ -477,10 +543,11 @@ function createSolidTemplate(): {
 /**
  * Surface mesh template: quartz SiO2 wrapped in an OVITO-style alpha-shape
  * surface mesh.
- * LoadStructure → Wrap → SurfaceMesh → Viewport (mesh)
- *                     → Viewport (particle)
+ * LoadStructure → Symmetry → Wrap → SurfaceMesh → Viewport (mesh)
+ *                                → Viewport (particle)
  *              → Viewport (cell)
- * The Wrap node defaults to mode "none" (pass-through).
+ * The Symmetry node defaults to mode "expand" (a no-op without space-group
+ * operations); the Wrap node defaults to mode "none" (pass-through).
  */
 function createSurfaceMeshTemplate(): {
   nodes: Node<PipelineNodeData>[];
@@ -503,9 +570,21 @@ function createSurfaceMeshTemplate(): {
         },
       },
       {
+        id: "symmetry-1",
+        type: "symmetry",
+        position: { x: 425, y: 155 },
+        data: {
+          params: {
+            type: "symmetry",
+            mode: "expand",
+          },
+          enabled: true,
+        },
+      },
+      {
         id: "wrap-1",
         type: "wrap",
-        position: { x: 425, y: 155 },
+        position: { x: 425, y: 360 },
         data: {
           params: {
             type: "wrap",
@@ -517,7 +596,7 @@ function createSurfaceMeshTemplate(): {
       {
         id: "surface-1",
         type: "surface_mesh",
-        position: { x: 680, y: 410 },
+        position: { x: 680, y: 615 },
         data: {
           params: {
             type: "surface_mesh",
@@ -531,7 +610,7 @@ function createSurfaceMeshTemplate(): {
       {
         id: "viewport-1",
         type: "viewport",
-        position: { x: 425, y: 715 },
+        position: { x: 425, y: 920 },
         data: {
           params: {
             type: "viewport",
@@ -547,33 +626,40 @@ function createSurfaceMeshTemplate(): {
       {
         id: "e1",
         source: "loader-1",
-        target: "wrap-1",
+        target: "symmetry-1",
         sourceHandle: "particle",
         targetHandle: "particle",
       },
       {
         id: "e2",
-        source: "wrap-1",
-        target: "surface-1",
+        source: "symmetry-1",
+        target: "wrap-1",
         sourceHandle: "particle",
         targetHandle: "particle",
       },
       {
         id: "e3",
         source: "wrap-1",
-        target: "viewport-1",
+        target: "surface-1",
         sourceHandle: "particle",
         targetHandle: "particle",
       },
       {
         id: "e4",
+        source: "wrap-1",
+        target: "viewport-1",
+        sourceHandle: "particle",
+        targetHandle: "particle",
+      },
+      {
+        id: "e5",
         source: "loader-1",
         target: "viewport-1",
         sourceHandle: "cell",
         targetHandle: "cell",
       },
       {
-        id: "e5",
+        id: "e6",
         source: "surface-1",
         target: "viewport-1",
         sourceHandle: "mesh",
@@ -657,11 +743,12 @@ function createStreamingTemplate(): {
  * Protein template: ubiquitin (1UBQ) as a ribbon with semi-transparent
  * all-atom water.
  *
- *   LoadStructure → Wrap ─┬─ Filter(resname != "HOH") → Modify(opacity 0)   → Representation(both) ─┐
- *                         ├─ Filter(resname == "HOH") → Modify(opacity 0.5) ───────────────────────┤
- *                 └────────────────────────── cell ────────────────────────────────────────────────┴─→ Viewport
+ *   LoadStructure → Symmetry → Wrap ─┬─ Filter(resname != "HOH") → Modify(opacity 0)   → Representation(both) ─┐
+ *                                    ├─ Filter(resname == "HOH") → Modify(opacity 0.5) ───────────────────────┤
+ *                 └────────────────────────── cell ───────────────────────────────────────────────────────────┴─→ Viewport
  *
- * The Wrap node defaults to mode "none" (pass-through).
+ * The Symmetry node defaults to mode "expand" (a no-op without space-group
+ * operations); the Wrap node defaults to mode "none" (pass-through).
  *
  * Protein atoms are hidden (opacity 0) so only the cartoon ribbon shows;
  * water atoms render as translucent spheres because they have no Cα and
@@ -689,9 +776,21 @@ function createProteinTemplate(): {
         },
       },
       {
+        id: "symmetry-1",
+        type: "symmetry",
+        position: { x: 425, y: 130 },
+        data: {
+          params: {
+            type: "symmetry",
+            mode: "expand",
+          },
+          enabled: true,
+        },
+      },
+      {
         id: "wrap-1",
         type: "wrap",
-        position: { x: 425, y: 130 },
+        position: { x: 425, y: 305 },
         data: {
           params: {
             type: "wrap",
@@ -703,7 +802,7 @@ function createProteinTemplate(): {
       {
         id: "protein-filter",
         type: "filter",
-        position: { x: 170, y: 330 },
+        position: { x: 170, y: 505 },
         data: {
           params: {
             type: "filter",
@@ -715,7 +814,7 @@ function createProteinTemplate(): {
       {
         id: "protein-modify",
         type: "modify",
-        position: { x: 170, y: 490 },
+        position: { x: 170, y: 665 },
         data: {
           params: {
             type: "modify",
@@ -728,7 +827,7 @@ function createProteinTemplate(): {
       {
         id: "protein-rep",
         type: "representation",
-        position: { x: 170, y: 650 },
+        position: { x: 170, y: 825 },
         data: {
           params: {
             type: "representation",
@@ -740,7 +839,7 @@ function createProteinTemplate(): {
       {
         id: "water-filter",
         type: "filter",
-        position: { x: 680, y: 330 },
+        position: { x: 680, y: 505 },
         data: {
           params: {
             type: "filter",
@@ -752,7 +851,7 @@ function createProteinTemplate(): {
       {
         id: "water-modify",
         type: "modify",
-        position: { x: 680, y: 490 },
+        position: { x: 680, y: 665 },
         data: {
           params: {
             type: "modify",
@@ -765,7 +864,7 @@ function createProteinTemplate(): {
       {
         id: "viewport-1",
         type: "viewport",
-        position: { x: 425, y: 830 },
+        position: { x: 425, y: 1005 },
         data: {
           params: {
             type: "viewport",
@@ -781,61 +880,68 @@ function createProteinTemplate(): {
       {
         id: "e1",
         source: "loader-1",
-        target: "wrap-1",
+        target: "symmetry-1",
         sourceHandle: "particle",
         targetHandle: "particle",
       },
       {
         id: "e2",
+        source: "symmetry-1",
+        target: "wrap-1",
+        sourceHandle: "particle",
+        targetHandle: "particle",
+      },
+      {
+        id: "e3",
         source: "wrap-1",
         target: "protein-filter",
         sourceHandle: "particle",
         targetHandle: "in",
       },
       {
-        id: "e3",
+        id: "e4",
         source: "protein-filter",
         target: "protein-modify",
         sourceHandle: "out",
         targetHandle: "in",
       },
       {
-        id: "e4",
+        id: "e5",
         source: "protein-modify",
         target: "protein-rep",
         sourceHandle: "out",
         targetHandle: "in",
       },
       {
-        id: "e5",
+        id: "e6",
         source: "protein-rep",
         target: "viewport-1",
         sourceHandle: "out",
         targetHandle: "particle",
       },
       {
-        id: "e6",
+        id: "e7",
         source: "wrap-1",
         target: "water-filter",
         sourceHandle: "particle",
         targetHandle: "in",
       },
       {
-        id: "e7",
+        id: "e8",
         source: "water-filter",
         target: "water-modify",
         sourceHandle: "out",
         targetHandle: "in",
       },
       {
-        id: "e8",
+        id: "e9",
         source: "water-modify",
         target: "viewport-1",
         sourceHandle: "out",
         targetHandle: "particle",
       },
       {
-        id: "e9",
+        id: "e10",
         source: "loader-1",
         target: "viewport-1",
         sourceHandle: "cell",

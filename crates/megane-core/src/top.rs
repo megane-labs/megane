@@ -1,8 +1,11 @@
 /// GROMACS .top / .itp topology file parser.
 ///
-/// Parses bond pairs from the [ bonds ] section and resolves
-/// `#include` directives so that real-world multi-file topologies work.
-use std::collections::HashMap;
+/// Parses bond pairs from the [ bonds ], [ constraints ] and [ settles ]
+/// sections and resolves `#include` directives so that real-world multi-file
+/// topologies work. Constraints and settles are file-declared connectivity
+/// (rigid TIP3P/SPC water carries no [ bonds ] entries at all), so they are
+/// emitted as regular bonds alongside the explicit ones.
+use std::collections::{HashMap, HashSet};
 
 // ── Virtual filesystem abstraction ────────────────────────────────────────────
 
@@ -156,6 +159,10 @@ fn finalize_moltype(
     } else {
         max_atom_index as usize
     };
+    // Deduplicate within the molecule: the same pair may be listed both as an
+    // explicit [ bonds ] entry and as a [ constraints ] / [ settles ] one.
+    let mut seen: HashSet<(u32, u32)> = HashSet::new();
+    let bonds: Vec<(u32, u32)> = bonds.into_iter().filter(|b| seen.insert(*b)).collect();
     if !moltypes.contains_key(&name) {
         order.push(name.clone());
     }
@@ -183,6 +190,8 @@ fn parse_top_bonds_grouped(text: &str, n_atoms: usize) -> Option<Vec<(u32, u32)>
         None,
         Atoms,
         Bonds,
+        Constraints,
+        Settles,
         Molecules,
     }
 
@@ -243,6 +252,8 @@ fn parse_top_bonds_grouped(text: &str, n_atoms: usize) -> Option<Vec<(u32, u32)>
                 }
                 "atoms" => section = Section::Atoms,
                 "bonds" => section = Section::Bonds,
+                "constraints" => section = Section::Constraints,
+                "settles" => section = Section::Settles,
                 _ => section = Section::None,
             }
             continue;
@@ -267,7 +278,9 @@ fn parse_top_bonds_grouped(text: &str, n_atoms: usize) -> Option<Vec<(u32, u32)>
                     current_max_atom_index = current_max_atom_index.max(idx);
                 }
             }
-            Section::Bonds => {
+            // Constraints (funct 1 and 2) are file-declared connectivity with
+            // the same `ai aj funct b0` shape as [ bonds ].
+            Section::Bonds | Section::Constraints => {
                 let mut parts = data.split_whitespace();
                 let ai: u32 = match parts.next().and_then(|s| s.parse().ok()) {
                     Some(v) => v,
@@ -282,6 +295,21 @@ fn parse_top_bonds_grouped(text: &str, n_atoms: usize) -> Option<Vec<(u32, u32)>
                 }
                 current_max_atom_index = current_max_atom_index.max(ai).max(aj);
                 current_bonds.push(((ai - 1).min(aj - 1), (ai - 1).max(aj - 1)));
+            }
+            // A settle (`ow funct doh dhh`) rigidifies a 3-site water whose
+            // hydrogens are by convention the two atoms following OW, so it
+            // implies bonds OW-(OW+1) and OW-(OW+2).
+            Section::Settles => {
+                let ow: u32 = match data.split_whitespace().next().and_then(|s| s.parse().ok()) {
+                    Some(v) => v,
+                    None => continue,
+                };
+                if ow == 0 {
+                    continue;
+                }
+                current_max_atom_index = current_max_atom_index.max(ow + 2);
+                current_bonds.push((ow - 1, ow));
+                current_bonds.push((ow - 1, ow + 1));
             }
             Section::Molecules => {
                 let mut parts = data.split_whitespace();
@@ -343,15 +371,24 @@ fn parse_top_bonds_grouped(text: &str, n_atoms: usize) -> Option<Vec<(u32, u32)>
     Some(bonds)
 }
 
-/// Flat fallback: scan every `[ bonds ]` section in `text` and treat the
-/// listed atom indices as global (system-wide) 1-based indices.
+/// Flat fallback: scan every `[ bonds ]`, `[ constraints ]` and `[ settles ]`
+/// section in `text` and treat the listed atom indices as global
+/// (system-wide) 1-based indices.
 ///
 /// This matches the historical behaviour and is used for inputs that contain
 /// no `[ moleculetype ]` block (e.g. bare `.itp` bond fragments), where there
 /// is no molecule structure to replicate against.
 fn parse_top_bonds_flat(text: &str, n_atoms: usize) -> Vec<(u32, u32)> {
     let mut bonds = Vec::new();
-    let mut in_bonds_section = false;
+    let mut seen: HashSet<(u32, u32)> = HashSet::new();
+    let mut section = "";
+
+    let mut push = |a: u32, b: u32, bonds: &mut Vec<(u32, u32)>| {
+        let pair = (a.min(b), a.max(b));
+        if (pair.1 as usize) < n_atoms && seen.insert(pair) {
+            bonds.push(pair);
+        }
+    };
 
     for line in text.lines() {
         let trimmed = line.trim();
@@ -366,11 +403,16 @@ fn parse_top_bonds_flat(text: &str, n_atoms: usize) -> Vec<(u32, u32)> {
                 .trim_end_matches(']')
                 .trim()
                 .to_lowercase();
-            in_bonds_section = section_name == "bonds";
+            section = match section_name.as_str() {
+                "bonds" => "bonds",
+                "constraints" => "constraints",
+                "settles" => "settles",
+                _ => "",
+            };
             continue;
         }
 
-        if !in_bonds_section {
+        if section.is_empty() {
             continue;
         }
 
@@ -379,6 +421,21 @@ fn parse_top_bonds_flat(text: &str, n_atoms: usize) -> Vec<(u32, u32)> {
         };
 
         let mut parts = data.split_whitespace();
+        if section == "settles" {
+            // `ow funct doh dhh` — implies bonds OW-(OW+1) and OW-(OW+2).
+            let ow: u32 = match parts.next().and_then(|s| s.parse().ok()) {
+                Some(v) => v,
+                None => continue,
+            };
+            if ow == 0 {
+                continue;
+            }
+            push(ow - 1, ow, &mut bonds);
+            push(ow - 1, ow + 1, &mut bonds);
+            continue;
+        }
+
+        // [ bonds ] and [ constraints ] share the `ai aj funct …` shape.
         let ai: u32 = match parts.next().and_then(|s| s.parse().ok()) {
             Some(v) => v,
             None => continue,
@@ -391,12 +448,7 @@ fn parse_top_bonds_flat(text: &str, n_atoms: usize) -> Vec<(u32, u32)> {
         if ai == 0 || aj == 0 {
             continue;
         }
-        let a = (ai - 1).min(aj - 1);
-        let b = (ai - 1).max(aj - 1);
-
-        if (b as usize) < n_atoms {
-            bonds.push((a, b));
-        }
+        push(ai - 1, aj - 1, &mut bonds);
     }
 
     bonds
@@ -405,6 +457,11 @@ fn parse_top_bonds_flat(text: &str, n_atoms: usize) -> Vec<(u32, u32)> {
 // ── Public API ────────────────────────────────────────────────────────────────
 
 /// Parse a GROMACS `.top` / `.itp` text and extract bond pairs.
+///
+/// Connectivity is read from `[ bonds ]`, `[ constraints ]` (funct 1 and 2)
+/// and `[ settles ]` sections; a settle on atom OW implies the two OW-H bonds
+/// of a rigid 3-site water. Pairs listed in more than one of these sections
+/// are emitted once.
 ///
 /// Honors `[ moleculetype ]` / `[ molecules ]` semantics: atom indices inside
 /// a `[ moleculetype ]` block's `[ bonds ]` section are LOCAL to that molecule,
@@ -655,6 +712,134 @@ SOL  2
 "#;
         let bonds = parse_top_bonds(text, 6);
         assert_eq!(bonds, vec![(0, 1), (0, 2), (3, 4), (3, 5)]);
+    }
+
+    // ── [ settles ] and [ constraints ] ───────────────────────────────────────
+
+    #[test]
+    fn test_settles_imply_water_bonds_replicated() {
+        // Rigid TIP3P water: no [ bonds ] section at all, one settle on OW.
+        // Each of the 3 copies must get its two OW-H bonds.
+        let text = r#"
+[ moleculetype ]
+SOL  2
+
+[ atoms ]
+     1  OW   1  SOL  OW   1  -0.834  16.00
+     2  HW1  1  SOL  HW1  2   0.417   1.01
+     3  HW2  1  SOL  HW2  3   0.417   1.01
+
+[ settles ]
+; OW  funct  doh      dhh
+   1   1     0.09572  0.15139
+
+[ molecules ]
+SOL  3
+"#;
+        let bonds = parse_top_bonds(text, 9);
+        assert_eq!(bonds, vec![(0, 1), (0, 2), (3, 4), (3, 5), (6, 7), (6, 8)]);
+    }
+
+    #[test]
+    fn test_constraints_parsed_as_bonds() {
+        // Both funct 1 (bond-replacing) and funct 2 (exclusion-free) count.
+        let text = r#"
+[ moleculetype ]
+MOL  2
+
+[ atoms ]
+     1  C1   1  MOL  C1   1   0.0  12.01
+     2  C2   1  MOL  C2   2   0.0  12.01
+     3  C3   1  MOL  C3   3   0.0  12.01
+
+[ constraints ]
+     1     2     1   0.100
+     2     3     2   0.100
+"#;
+        let bonds = parse_top_bonds(text, 3);
+        assert_eq!(bonds, vec![(0, 1), (1, 2)]);
+    }
+
+    #[test]
+    fn test_constraints_deduplicated_against_bonds() {
+        // The same pair in [ bonds ] and [ constraints ] must appear once,
+        // and the dedup must hold across every replicated copy.
+        let text = r#"
+[ moleculetype ]
+MOL  2
+
+[ atoms ]
+     1  C1   1  MOL  C1   1   0.0  12.01
+     2  C2   1  MOL  C2   2   0.0  12.01
+
+[ bonds ]
+     1     2     1
+
+[ constraints ]
+     1     2     1   0.100
+
+[ molecules ]
+MOL  2
+"#;
+        let bonds = parse_top_bonds(text, 4);
+        assert_eq!(bonds, vec![(0, 1), (2, 3)]);
+    }
+
+    #[test]
+    fn test_settles_deduplicated_against_bonds() {
+        // Some topologies carry both flexible [ bonds ] and a [ settles ]
+        // entry for the same water; the OW-H pairs must not be doubled.
+        let text = r#"
+[ moleculetype ]
+SOL  2
+
+[ atoms ]
+     1  OW   1  SOL  OW   1  -0.834  16.00
+     2  HW1  1  SOL  HW1  2   0.417   1.01
+     3  HW2  1  SOL  HW2  3   0.417   1.01
+
+[ bonds ]
+     1     2     1
+     1     3     1
+
+[ settles ]
+   1   1     0.09572  0.15139
+"#;
+        let bonds = parse_top_bonds(text, 3);
+        assert_eq!(bonds, vec![(0, 1), (0, 2)]);
+    }
+
+    #[test]
+    fn test_settles_infer_molecule_size_without_atoms_section() {
+        // No [ atoms ] section: the settle's implied H indices (OW+1, OW+2)
+        // must feed the molecule atom count so replication offsets are right.
+        let text = r#"
+[ moleculetype ]
+SOL  2
+
+[ settles ]
+   1   1     0.09572  0.15139
+
+[ molecules ]
+SOL  2
+"#;
+        let bonds = parse_top_bonds(text, 6);
+        assert_eq!(bonds, vec![(0, 1), (0, 2), (3, 4), (3, 5)]);
+    }
+
+    #[test]
+    fn test_flat_fallback_reads_settles_and_constraints() {
+        // Bare fragment without [ moleculetype ]: indices are global 1-based.
+        let text = "[ settles ]\n1 1 0.09572 0.15139\n[ constraints ]\n4 5 1 0.1\n";
+        let bonds = parse_top_bonds(text, 5);
+        assert_eq!(bonds, vec![(0, 1), (0, 2), (3, 4)]);
+    }
+
+    #[test]
+    fn test_flat_fallback_dedups_bonds_and_constraints() {
+        let text = "[ bonds ]\n1 2 1\n[ constraints ]\n1 2 1 0.1\n2 1 2 0.1\n";
+        let bonds = parse_top_bonds(text, 5);
+        assert_eq!(bonds, vec![(0, 1)]);
     }
 
     // ── parse_include_directive ───────────────────────────────────────────────

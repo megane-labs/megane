@@ -325,6 +325,38 @@ export class BoundaryCompletion extends PipelineNode {
 }
 
 /**
+ * Expand a crystallographic asymmetric unit into the full unit cell by
+ * applying the space-group operations the parser captured on the structure
+ * (a CIF `_symmetry_equiv_pos_as_xyz` loop). "expand" (the default) fills the
+ * cell; "none" passes the raw asymmetric unit through. Structures without
+ * symmetry operations or without a unit cell pass through unchanged.
+ *
+ * Ports:
+ *   inp.particle — atom data in
+ *   inp.traj     — trajectory in
+ *   out.particle — expanded atom data
+ *   out.traj     — trajectory (passed through)
+ */
+export type SymmetryMode = "expand" | "none";
+
+export class Symmetry extends PipelineNode {
+  readonly nodeType = "symmetry";
+  protected readonly _outPorts = { particle: "particle", traj: "trajectory" };
+  protected readonly _inpPorts = { particle: "particle", traj: "trajectory" };
+
+  public mode: SymmetryMode;
+
+  constructor({ mode = "expand" }: { mode?: SymmetryMode } = {}) {
+    super();
+    this.mode = mode;
+  }
+
+  _toSerializedParams() {
+    return { type: this.nodeType, mode: this.mode };
+  }
+}
+
+/**
  * Toggle periodic-image coordinate mapping: fold atoms into the home unit
  * cell ("wrap") or make molecules split across a periodic face whole again
  * ("unwrap"). "none" (the default) passes coordinates through untouched.

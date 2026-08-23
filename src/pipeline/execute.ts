@@ -17,6 +17,7 @@ import type {
   AddBondParams,
   FilterParams,
   ModifyParams,
+  SymmetryParams,
   WrapParams,
   ReplicateParams,
   DrawingBoundaryParams,
@@ -45,6 +46,7 @@ import { executeLoadTrajectory } from "./executors/loadTrajectory";
 import { executeAddBond } from "./executors/addBond";
 import { executeFilter } from "./executors/filter";
 import { executeModify } from "./executors/modify";
+import { executeSymmetry } from "./executors/symmetry";
 import { executeWrap } from "./executors/wrap";
 import { executeReplicate } from "./executors/replicate";
 import { executeDrawingBoundary } from "./executors/drawingBoundary";
@@ -209,12 +211,28 @@ export function executePipeline(
         break;
       }
       case "load_trajectory": {
+        // "structure" mode forwards the structure file's own frames; resolve
+        // them exactly like the load_structure case above (first loader node's
+        // per-node snapshot, global channels as fallback).
+        const trajParams = data.params as LoadTrajectoryParams;
+        let structureSource = null;
+        if (trajParams.source === "structure") {
+          const loader = nodes.find((n) => n.data.params.type === "load_structure");
+          const nodeData = loader ? ctx.nodeSnapshots?.[loader.id] : undefined;
+          structureSource = {
+            snapshot: nodeData?.snapshot ?? ctx.snapshot ?? null,
+            frames: nodeData?.frames ?? ctx.structureFrames ?? null,
+            meta: nodeData?.meta ?? ctx.structureMeta ?? null,
+            provider: nodeData?.frames ? null : (ctx.structureProvider ?? null),
+          };
+        }
         const outputs = executeLoadTrajectory(
-          data.params as LoadTrajectoryParams,
+          trajParams,
           inputs,
           ctx.fileFrames ?? null,
           ctx.fileMeta ?? null,
           ctx.fileProvider ?? null,
+          structureSource,
         );
         edgeOutputs.set(id, outputs);
         break;
@@ -282,6 +300,24 @@ export function executePipeline(
         edgeOutputs.set(id, outputs);
         if (!inputs.get("in")?.length) {
           addError(id, { message: "No input data (check upstream nodes)", severity: "warning" });
+        }
+        break;
+      }
+      case "symmetry": {
+        const symmetryParams = data.params as SymmetryParams;
+        const outputs = executeSymmetry(symmetryParams, inputs);
+        edgeOutputs.set(id, outputs);
+        const particleIn = inputs.get("particle")?.[0] as ParticleData | undefined;
+        const hasOps = (particleIn?.source.symmetryOps?.length ?? 0) > 0;
+        if (!particleIn) {
+          addError(id, { message: "No input data (check upstream nodes)", severity: "warning" });
+        } else if (symmetryParams.mode === "expand" && hasOps && !particleIn.source.box) {
+          addError(id, { message: "Symmetry expansion requires a unit cell", severity: "warning" });
+        } else if (symmetryParams.mode === "expand" && hasOps && inputs.get("trajectory")?.length) {
+          addError(id, {
+            message: "Symmetry expansion skipped: trajectory input present",
+            severity: "warning",
+          });
         }
         break;
       }

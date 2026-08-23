@@ -25,6 +25,9 @@ interface MockStructureOpts {
   hasChainIds?: boolean;
   caCount?: number;
   labels?: string | null;
+  scalarChannelMeta?: string;
+  scalarChannelData?: Float32Array;
+  warnings?: string;
 }
 
 function makeStructureResult(opts: MockStructureOpts) {
@@ -46,6 +49,9 @@ function makeStructureResult(opts: MockStructureOpts) {
       atom_labels: opts.labels ?? "",
       vector_channel_count: 0,
       vector_channel_meta: "[]",
+      scalar_channel_count: opts.scalarChannelMeta ? 1 : 0,
+      scalar_channel_meta: opts.scalarChannelMeta ?? "[]",
+      warnings: opts.warnings ?? "",
       ca_count: caCount,
       symmetry_op_count: 0,
       symmetry_ops: "",
@@ -59,6 +65,7 @@ function makeStructureResult(opts: MockStructureOpts) {
       chain_ids: () => Uint8Array.from({ length: nAtoms }, () => 65),
       bfactors: () => Float32Array.from({ length: nAtoms }, () => 1.5),
       vector_channel_data: () => new Float32Array(),
+      scalar_channel_data: () => opts.scalarChannelData ?? new Float32Array(),
       ca_indices: () => Uint32Array.from({ length: caCount }, (_, i) => i),
       ca_chain_ids: () => Uint8Array.from({ length: caCount }, () => 65),
       ca_res_nums: () => Uint32Array.from({ length: caCount }, (_, i) => i + 1),
@@ -117,6 +124,40 @@ describe("parseWithFn", () => {
     const { result } = makeStructureResult({ nAtoms: 2, labels: "A\nB" });
     const out = parseWithFn(() => result as never, "");
     expect(out.labels).toEqual(["A", "B"]);
+  });
+
+  it("deserializes per-atom scalar channels (charge etc.)", () => {
+    const { result } = makeStructureResult({
+      nAtoms: 2,
+      scalarChannelMeta: '[{"name":"charge", "n_frames":2}]',
+      scalarChannelData: Float32Array.from([0.5, -0.5, 0.25, -0.25]),
+    });
+    const out = parseWithFn(() => result as never, "");
+    expect(out.scalarChannels).toHaveLength(1);
+    expect(out.scalarChannels[0].name).toBe("charge");
+    expect(out.scalarChannels[0].frames).toHaveLength(2);
+    expect(Array.from(out.scalarChannels[0].frames[0].values)).toEqual([0.5, -0.5]);
+    expect(Array.from(out.scalarChannels[0].frames[1].values)).toEqual([0.25, -0.25]);
+  });
+
+  it("returns empty scalar channels for a channel-free file", () => {
+    const { result } = makeStructureResult({ nAtoms: 2 });
+    const out = parseWithFn(() => result as never, "");
+    expect(out.scalarChannels).toEqual([]);
+    expect(out.warnings).toEqual([]);
+  });
+
+  it("surfaces parser warnings via console.warn and the result", () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const { result } = makeStructureResult({
+      nAtoms: 2,
+      warnings: "2 atoms without coordinates were dropped\n1 bond skipped",
+    });
+    const out = parseWithFn(() => result as never, "");
+    expect(out.warnings).toEqual(["2 atoms without coordinates were dropped", "1 bond skipped"]);
+    expect(warn).toHaveBeenCalledTimes(2);
+    expect(warn).toHaveBeenCalledWith("[megane parser] 1 bond skipped");
+    warn.mockRestore();
   });
 });
 
@@ -334,9 +375,12 @@ describe("remapTrajectoryTypesToElements", () => {
         elements: Uint8Array.from([1, 2, 1]),
       },
     ];
-    remapTrajectoryTypesToElements(frames, Uint8Array.from([6, 8]));
-    expect(Array.from(frames[0].elements!)).toEqual([6, 8]);
-    expect(Array.from(frames[1].elements!)).toEqual([6, 8, 6]);
+    const mapped = remapTrajectoryTypesToElements(frames, Uint8Array.from([6, 8]));
+    expect(Array.from(mapped[0].elements!)).toEqual([6, 8]);
+    expect(Array.from(mapped[1].elements!)).toEqual([6, 8, 6]);
+    // The parser's own frames are never mutated — the raw type ids survive.
+    expect(Array.from(frames[0].elements!)).toEqual([1, 2]);
+    expect(Array.from(frames[1].elements!)).toEqual([1, 2, 1]);
   });
 
   it("falls back to element 0 for a type absent from frame 0", async () => {
@@ -345,14 +389,14 @@ describe("remapTrajectoryTypesToElements", () => {
       { frameId: 0, nAtoms: 1, positions: new Float32Array(3), elements: Uint8Array.from([1]) },
       { frameId: 1, nAtoms: 2, positions: new Float32Array(6), elements: Uint8Array.from([1, 9]) },
     ];
-    remapTrajectoryTypesToElements(frames, Uint8Array.from([7]));
-    expect(Array.from(frames[1].elements!)).toEqual([7, 0]); // type 9 unknown → 0
+    const mapped = remapTrajectoryTypesToElements(frames, Uint8Array.from([7]));
+    expect(Array.from(mapped[1].elements!)).toEqual([7, 0]); // type 9 unknown → 0
   });
 
-  it("is a no-op when frames carry no per-frame elements", async () => {
+  it("returns the input untouched when frames carry no per-frame elements", async () => {
     const { remapTrajectoryTypesToElements } = await import("@/parsers/parseCore");
     const frames = [{ frameId: 0, nAtoms: 1, positions: new Float32Array(3) }];
-    expect(() => remapTrajectoryTypesToElements(frames, Uint8Array.from([6]))).not.toThrow();
+    expect(remapTrajectoryTypesToElements(frames, Uint8Array.from([6]))).toBe(frames);
   });
 });
 

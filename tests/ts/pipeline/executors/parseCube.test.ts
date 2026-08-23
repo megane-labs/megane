@@ -27,6 +27,28 @@ function makeCube(nx = 2, ny = 2, nz = 2, nAtoms = 1, dataValues?: number[]): st
   return lines.join("\n") + "\n";
 }
 
+/**
+ * MO-style CUBE: negative NAtoms + DSET_IDS record, `nSets` values per grid
+ * point (innermost index over data sets).
+ */
+function makeMoCube(nSets: number, ids: number[], perPointValues: number[][]): string {
+  const lines: string[] = [
+    "Comment line 1",
+    "Comment line 2",
+    `-1  0.000000  0.000000  0.000000`,
+    `2  1.000000  0.000000  0.000000`,
+    `2  0.000000  1.000000  0.000000`,
+    `2  0.000000  0.000000  1.000000`,
+    `6  0.000000  1.000000  1.000000  1.000000`,
+    `${nSets}  ${ids.join("  ")}`,
+  ];
+  const flat = perPointValues.flat();
+  for (let i = 0; i < flat.length; i += 6) {
+    lines.push(flat.slice(i, i + 6).join("  "));
+  }
+  return lines.join("\n") + "\n";
+}
+
 describe("parseCube", () => {
   it("parses a minimal 2×2×2 CUBE file", () => {
     const result = parseCube(makeCube());
@@ -43,6 +65,40 @@ describe("parseCube", () => {
     expect(result.origin[0]).toBeCloseTo(0);
     expect(result.origin[1]).toBeCloseTo(0);
     expect(result.origin[2]).toBeCloseTo(0);
+  });
+
+  it("keeps ghost atoms (negative Z) as element 0 instead of a real element", () => {
+    const text = makeCube().replace(
+      "6  0.000000  1.000000  1.000000  1.000000",
+      "-6  0.000000  1.000000  1.000000  1.000000",
+    );
+    const result = parseCube(text);
+    expect(result.nAtoms).toBe(1);
+    expect(result.elements[0]).toBe(0);
+    // Coordinates of the ghost site are still read.
+    expect(result.positions[0]).toBeCloseTo(BOHR_TO_ANGSTROM);
+  });
+
+  it("reads the DSET_IDS record of a negative-NAtoms cube and keeps the first data set", () => {
+    // 8 grid points x 2 sets; per point the first set is i, the second 100+i.
+    const perPoint = Array.from({ length: 8 }, (_, i) => [i, 100 + i]);
+    const result = parseCube(makeMoCube(2, [1, 2], perPoint));
+    expect(result.nAtoms).toBe(1);
+    expect(Array.from(result.data)).toEqual([0, 1, 2, 3, 4, 5, 6, 7]);
+    expect(result.dataMax).toBe(7);
+  });
+
+  it("handles a DSET_IDS id list wrapping onto following lines", () => {
+    const perPoint = Array.from({ length: 8 }, (_, i) => [i * 0.5]);
+    const text = makeMoCube(2, [7], perPoint.map((v) => [...v, ...v])).replace("2  7", "2\n7  8");
+    const result = parseCube(text);
+    expect(result.data[2]).toBeCloseTo(1.0);
+  });
+
+  it("rejects a DSET_IDS record with an invalid set count", () => {
+    const perPoint = Array.from({ length: 8 }, (_, i) => [i]);
+    const text = makeMoCube(1, [7], perPoint).replace("1  7", "0  7");
+    expect(() => parseCube(text)).toThrow(/invalid DSET_IDS count/);
   });
 
   it("converts step vectors from Bohr to Angstroms", () => {
@@ -91,7 +147,8 @@ describe("parseCube", () => {
   });
 
   it("handles a negative atom count (MO cube files)", () => {
-    // Negative natoms = MO data; abs value is the atom count.
+    // Negative natoms = MO data; abs value is the atom count, and a DSET_IDS
+    // record follows the atom block.
     const lines = [
       "Comment 1",
       "Comment 2",
@@ -100,11 +157,13 @@ describe("parseCube", () => {
       "2  0.0  1.0  0.0",
       "2  0.0  0.0  1.0",
       "6  0.0  1.0  1.0  1.0",
+      "1  2",
       "0.1  0.2  0.3  0.4  0.5  0.6  0.7  0.8",
     ];
     const result = parseCube(lines.join("\n"));
     expect(result.nAtoms).toBe(1);
     expect(result.nx).toBe(2);
+    expect(result.data[7]).toBeCloseTo(0.8);
   });
 
   it("throws on insufficient data values", () => {

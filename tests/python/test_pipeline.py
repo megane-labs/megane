@@ -26,6 +26,7 @@ from megane.pipeline import (
     Replicate,
     Representation,
     SpectrumPlot,
+    Symmetry,
     VectorOverlay,
     Viewport,
     Wrap,
@@ -86,6 +87,15 @@ class TestNodeClasses:
         assert n.nx == 2
         assert n.ny == 3
         assert n.nz == 4
+
+    def test_symmetry_defaults(self):
+        n = Symmetry()
+        assert n.mode == "expand"
+        assert n._node_type == "symmetry"
+
+    def test_symmetry_custom(self):
+        n = Symmetry(mode="none")
+        assert n.mode == "none"
 
     def test_wrap_defaults(self):
         n = Wrap()
@@ -579,6 +589,27 @@ class TestPipelineSerialization:
         rebuilt = pipe2._nodes[r._id][0]
         assert isinstance(rebuilt, Replicate)
         assert (rebuilt.nx, rebuilt.ny, rebuilt.nz) == (2, 1, 3)
+
+    def test_symmetry_serialization(self):
+        pipe = Pipeline()
+        s = pipe.add_node(LoadStructure(str(FIXTURES / "1crn.pdb")))
+        sym = pipe.add_node(Symmetry(mode="expand"))
+        pipe.add_edge(s.out.particle, sym.inp.particle)
+        result = pipe.to_dict()
+
+        symmetry_node = next(n for n in result["nodes"] if n["type"] == "symmetry")
+        assert symmetry_node["mode"] == "expand"
+
+    def test_symmetry_round_trip(self):
+        pipe = Pipeline()
+        s = pipe.add_node(LoadStructure(str(FIXTURES / "1crn.pdb")))
+        sym = pipe.add_node(Symmetry(mode="none"))
+        pipe.add_edge(s.out.particle, sym.inp.particle)
+
+        pipe2 = Pipeline.from_dict(pipe.to_dict())
+        rebuilt = pipe2._nodes[sym._id][0]
+        assert isinstance(rebuilt, Symmetry)
+        assert rebuilt.mode == "none"
 
     def test_wrap_serialization(self):
         pipe = Pipeline()
@@ -1245,10 +1276,29 @@ class TestViewTrajWrapper:
         node_types = [cfg["type"] for _, cfg in pipe._nodes.values()]
         assert "add_bond" not in node_types
 
-    def test_bonds_distance_default(self):
+    def test_bonds_auto_default_uses_format_policy(self):
+        # "auto" resolves through the shared per-format table (the same one
+        # the webapp's load path uses): PDB embeds bonds -> "structure".
         viewer = view_traj(
             str(FIXTURES / "caffeine_water.pdb"),
             xtc=str(FIXTURES / "caffeine_water_vibration.xtc"),
+        )
+        pipe = viewer._pipeline_ref
+        bond_cfg = next(cfg for _, cfg in pipe._nodes.values() if cfg["type"] == "add_bond")
+        assert bond_cfg["bondSource"] == "structure"
+
+    def test_bonds_auto_default_distance_for_bondless_formats(self):
+        # Multi-frame XYZ carries no bond information -> distance inference.
+        viewer = view_traj(str(FIXTURES / "water_multiframe.xyz"))
+        pipe = viewer._pipeline_ref
+        bond_cfg = next(cfg for _, cfg in pipe._nodes.values() if cfg["type"] == "add_bond")
+        assert bond_cfg["bondSource"] == "distance"
+
+    def test_bonds_explicit_distance_overrides_auto(self):
+        viewer = view_traj(
+            str(FIXTURES / "caffeine_water.pdb"),
+            xtc=str(FIXTURES / "caffeine_water_vibration.xtc"),
+            bonds="distance",
         )
         pipe = viewer._pipeline_ref
         bond_cfg = next(cfg for _, cfg in pipe._nodes.values() if cfg["type"] == "add_bond")

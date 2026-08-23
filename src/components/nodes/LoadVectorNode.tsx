@@ -27,8 +27,26 @@ export function setVectorLoadHandler(handler: VectorLoadHandler | null) {
 
 export function LoadVectorNode({ id, data }: NodeProps<Node<PipelineNodeData>>) {
   const updateNodeParams = usePipelineStore((s) => s.updateNodeParams);
+  const embeddedChannels = usePipelineStore((s) => s.embeddedVectorChannels);
+  const activeEmbedded = usePipelineStore((s) => s.activeEmbeddedVectorChannel);
+  const activateEmbeddedVectorChannel = usePipelineStore((s) => s.activateEmbeddedVectorChannel);
   const params = data.params as LoadVectorParams;
   const inputRef = useRef<HTMLInputElement>(null);
+
+  // Embedded channels are offered by the loaded structure/trajectory file;
+  // nothing renders until the user picks one here.
+  const handleEmbeddedSelect = useCallback(
+    (name: string) => {
+      if (name === "") {
+        activateEmbeddedVectorChannel(null);
+        updateNodeParams(id, { fileName: "" });
+        return;
+      }
+      activateEmbeddedVectorChannel(name);
+      updateNodeParams(id, { fileName: `[embedded] ${name}` });
+    },
+    [id, activateEmbeddedVectorChannel, updateNodeParams],
+  );
 
   const handleFile = useCallback(
     (file: File) => {
@@ -74,6 +92,21 @@ export function LoadVectorNode({ id, data }: NodeProps<Node<PipelineNodeData>>) 
         >
           Load vectors...
         </button>
+        {embeddedChannels && embeddedChannels.length > 0 && (
+          <select
+            aria-label="Embedded vector channel"
+            value={activeEmbedded ?? ""}
+            onChange={(e) => handleEmbeddedSelect(e.target.value)}
+            style={{ marginTop: 6, width: "100%", fontSize: 18 }}
+          >
+            <option value="">Embedded channel: off</option>
+            {embeddedChannels.map((ch) => (
+              <option key={ch.name} value={ch.name}>
+                {ch.name} ({ch.frames.length} frame{ch.frames.length === 1 ? "" : "s"})
+              </option>
+            ))}
+          </select>
+        )}
         <input
           ref={inputRef}
           type="file"

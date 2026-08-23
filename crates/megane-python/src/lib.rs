@@ -64,6 +64,15 @@ struct PyStructure {
     /// constant.
     #[pyo3(get)]
     frame_bonds: Py<PyArray1<u32>>,
+    /// Embedded per-atom scalar channels the file carries (charges,
+    /// selective-dynamics flags, dump computes, …) as
+    /// `[(name, [frame0_values, …]), …]`. A single-frame channel is static.
+    #[pyo3(get)]
+    scalar_channels: Vec<(String, Vec<Py<PyArray1<f32>>>)>,
+    /// Non-fatal parse warnings (e.g. atoms the file declares but the parser
+    /// could not represent). Empty for a clean parse.
+    #[pyo3(get)]
+    warnings: Vec<String>,
 }
 
 impl PyStructure {
@@ -152,6 +161,19 @@ impl PyStructure {
                 ),
             };
 
+        let scalar_channels: Vec<(String, Vec<Py<PyArray1<f32>>>)> = data
+            .scalar_channels
+            .into_iter()
+            .map(|ch| {
+                let frames: Vec<Py<PyArray1<f32>>> = ch
+                    .frames
+                    .into_iter()
+                    .map(|f| Array1::from_vec(f.values).into_pyarray(py).into())
+                    .collect();
+                (ch.name, frames)
+            })
+            .collect();
+
         Ok(Self {
             n_atoms: n,
             n_frames,
@@ -171,6 +193,8 @@ impl PyStructure {
             frame_cells: frame_cells.into_pyarray(py).into(),
             frame_bond_offsets: frame_bond_offsets.into_pyarray(py).into(),
             frame_bonds: frame_bonds.into_pyarray(py).into(),
+            scalar_channels,
+            warnings: data.warnings,
         })
     }
 }
@@ -235,6 +259,9 @@ struct PySpectrum {
     x: Py<PyArray1<f64>>,
     #[pyo3(get)]
     y: Py<PyArray1<f64>>,
+    /// Non-fatal parse warnings (empty for a clean parse).
+    #[pyo3(get)]
+    warnings: Vec<String>,
 }
 
 /// Parse a JCAMP-DX spectrum (`.jdx` / `.jcamp`) into its decoded
@@ -249,6 +276,7 @@ fn parse_jcampdx(py: Python<'_>, text: &str) -> PyResult<PySpectrum> {
         y_units: s.y_units,
         x: Array1::from(s.x).into_pyarray(py).unbind(),
         y: Array1::from(s.y).into_pyarray(py).unbind(),
+        warnings: s.warnings,
     })
 }
 
@@ -513,6 +541,39 @@ fn parse_netcdf(py: Python<'_>, data: &[u8]) -> PyResult<PyTrajectoryData> {
     py_trajectory_from_data(py, traj)
 }
 
+/// Parse a GROMACS `.top` topology file at `path` and return bond pairs,
+/// resolving `#include` directives from the filesystem (relative to the
+/// file's directory, then as absolute paths). Missing includes are skipped;
+/// a circular include chain raises `ValueError` naming the chain.
+///
+/// Returns an (n_bonds, 2) uint32 array of 0-indexed atom index pairs.
+#[pyfunction]
+fn parse_top_bonds_from_path(py: Python<'_>, path: &str) -> PyResult<Py<PyArray2<u32>>> {
+    let bonds = megane_core::top::parse_top_bonds_from_path(path, usize::MAX)
+        .map_err(PyValueError::new_err)?;
+    let n = bonds.len();
+    let flat: Vec<u32> = bonds.iter().flat_map(|(a, b)| [*a, *b]).collect();
+    let arr = if n > 0 {
+        Array2::from_shape_vec((n, 2), flat).map_err(|e| {
+            PyValueError::new_err(format!("failed to reshape bonds into ({n}, 2): {e}"))
+        })?
+    } else {
+        Array2::from_shape_vec((0, 2), vec![]).map_err(|e| {
+            PyValueError::new_err(format!("failed to create empty bonds array: {e}"))
+        })?
+    };
+    Ok(arr.into_pyarray(py).unbind())
+}
+
+/// The default AddBond source for a structure filename: `"structure"` for
+/// formats that embed bonds, `"distance"` (VDW inference) otherwise.
+/// Shared with the webapp so every host opens the same file with the same
+/// bonds (see `megane_core::bonds::default_bond_source`).
+#[pyfunction]
+fn default_bond_source(filename: &str) -> &'static str {
+    megane_core::bonds::default_bond_source(filename)
+}
+
 /// Parse a CHARMM/NAMD PSF topology file and return bond pairs.
 ///
 /// Returns an (n_bonds, 2) uint32 array of 0-indexed atom index pairs.
@@ -602,6 +663,8 @@ fn megane_parser(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(parse_lammpstrj_structure, m)?)?;
     m.add_function(wrap_pyfunction!(parse_netcdf, m)?)?;
     m.add_function(wrap_pyfunction!(parse_psf_bonds, m)?)?;
+    m.add_function(wrap_pyfunction!(parse_top_bonds_from_path, m)?)?;
+    m.add_function(wrap_pyfunction!(default_bond_source, m)?)?;
     m.add_function(wrap_pyfunction!(infer_bonds_vdw, m)?)?;
     Ok(())
 }

@@ -17,6 +17,7 @@ const HAS_BOND_ORDERS = 0x01;
 const HAS_BOX = 0x02;
 const HAS_FRAME_ELEMENTS = 0x04;
 const HAS_BOX_ORIGIN = 0x08;
+const HAS_SYMMETRY_OPS = 0x10;
 
 export function decodeHeader(buffer: ArrayBuffer): {
   msgType: number;
@@ -78,6 +79,19 @@ export function decodeSnapshot(buffer: ArrayBuffer): Snapshot {
     offset += 3 * 4;
   }
 
+  // Symmetry operations (optional, if HAS_SYMMETRY_OPS flag): u32 byte length
+  // + newline-joined utf-8 `x,y,z` strings. The snapshot stays the asymmetric
+  // unit; the pipeline's symmetry node applies these downstream.
+  let symmetryOps: string[] | undefined;
+  if (flags & HAS_SYMMETRY_OPS) {
+    const byteLen = view.getUint32(offset, true);
+    offset += 4;
+    const raw = new Uint8Array(buffer, offset, byteLen);
+    symmetryOps = new TextDecoder().decode(raw).split("\n");
+    offset += byteLen;
+    offset += (4 - (offset % 4)) % 4; // alignment padding
+  }
+
   return {
     nAtoms,
     nBonds,
@@ -90,6 +104,7 @@ export function decodeSnapshot(buffer: ArrayBuffer): Snapshot {
     boxOrigin,
     atomChainIds: null,
     atomBFactors: null,
+    ...(symmetryOps && { symmetryOps }),
   };
 }
 

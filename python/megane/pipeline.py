@@ -255,6 +255,36 @@ class Modify(PipelineNode):
         self.opacity = opacity
 
 
+class Symmetry(PipelineNode):
+    """Expand a crystallographic asymmetric unit into the full unit cell.
+
+    Applies the space-group symmetry operations the parser captured on the
+    structure (a CIF ``_symmetry_equiv_pos_as_xyz`` loop) to fill one unit
+    cell with the symmetry-equivalent images, replicating bonds per image and
+    dropping images that coincide (special positions). ``"expand"`` (the
+    default) performs the expansion; ``"none"`` passes the raw asymmetric unit
+    through. Structures without symmetry operations or without a unit cell
+    pass through unchanged in either mode.
+
+    Args:
+        mode: One of ``"expand"``, ``"none"``.
+
+    Ports:
+        inp.particle — atom data in
+        inp.traj     — trajectory in
+        out.particle — expanded atom data
+        out.traj     — trajectory (passed through)
+    """
+
+    _node_type = "symmetry"
+    _out_ports = {"particle": "particle", "traj": "trajectory"}
+    _inp_ports = {"particle": "particle", "traj": "trajectory"}
+
+    def __init__(self, *, mode: Literal["expand", "none"] = "expand") -> None:
+        super().__init__()
+        self.mode = mode
+
+
 class Wrap(PipelineNode):
     """Toggle periodic-image coordinate mapping for the particle stream.
 
@@ -753,6 +783,9 @@ def _load_structure_file(path: str):
         bond_orders=np.asarray(result.bond_orders, dtype=np.uint8),
         box=np.asarray(result.box_matrix, dtype=np.float32),
         box_origin=np.asarray(result.box_origin, dtype=np.float32),
+        # Carried into the binary snapshot so the frontend symmetry node can
+        # expand a CIF's asymmetric unit exactly like the other hosts.
+        symmetry_ops=list(result.symmetry_ops),
     )
 
 
@@ -901,6 +934,8 @@ class Pipeline:
             )
         elif ntype == "representation":
             return Representation(mode=nd.get("mode", "atoms"))
+        elif ntype == "symmetry":
+            return Symmetry(mode=nd.get("mode", "expand"))
         elif ntype == "wrap":
             return Wrap(mode=nd.get("mode", "none"))
         elif ntype == "replicate":
@@ -1097,6 +1132,8 @@ class Pipeline:
                 base["range"] = list(node.range)
         elif isinstance(node, Representation):
             base["mode"] = node.mode
+        elif isinstance(node, Symmetry):
+            base["mode"] = node.mode
         elif isinstance(node, Wrap):
             base["mode"] = node.mode
         elif isinstance(node, Replicate):
@@ -1236,10 +1273,27 @@ class Pipeline:
 # ─── Convenience wrappers ────────────────────────────────────────────
 
 
+def _resolve_bond_source(
+    path: str,
+    bonds: Literal["auto", "distance", "structure", "file"] | None,
+) -> Literal["distance", "structure", "file"] | None:
+    """Resolve the ``"auto"`` bond source to the shared per-format default.
+
+    The policy lives in the Rust core (``megane_core::bonds::default_bond_source``)
+    and is the same table the webapp's load path uses, so the same file opens
+    with the same bonds on every host.
+    """
+    if bonds != "auto":
+        return bonds
+    from megane import megane_parser
+
+    return megane_parser.default_bond_source(path)
+
+
 def view(
     path: str,
     *,
-    bonds: Literal["distance", "structure", "file"] | None = "distance",
+    bonds: Literal["auto", "distance", "structure", "file"] | None = "auto",
     perspective: bool = False,
     cell_axes_visible: bool = True,
 ) -> "MolecularViewer":
@@ -1253,7 +1307,10 @@ def view(
     Args:
         path: Path to a structure file (PDB, GRO, XYZ, MOL, SDF, MOL2, CIF,
             LAMMPS data, ASE .traj).
-        bonds: Bond detection method. ``"distance"`` (default) uses VDW radii,
+        bonds: Bond detection method. ``"auto"`` (default) picks per format —
+            ``"structure"`` for formats that embed bonds (PDB, MOL/SDF, LAMMPS
+            data, CML, ...), ``"distance"`` otherwise — matching the webapp's
+            load path. ``"distance"`` forces VDW-radius inference,
             ``"structure"`` (alias ``"file"``) reads bonds from the loaded
             structure file, ``None`` disables bonds.
         perspective: Use perspective projection instead of orthographic.
@@ -1270,15 +1327,20 @@ def view(
     """
     from megane.widget import MolecularViewer
 
+    bonds = _resolve_bond_source(path, bonds)
     pipe = Pipeline()
     s = pipe.add_node(LoadStructure(path))
+    # Space-group expansion for CIF asymmetric units, matching the default
+    # pipelines of the other hosts. A no-op for structures without ops.
+    sym = pipe.add_node(Symmetry())
     v = pipe.add_node(Viewport(perspective=perspective, cell_axes_visible=cell_axes_visible))
-    pipe.add_edge(s.out.particle, v.inp.particle)
+    pipe.add_edge(s.out.particle, sym.inp.particle)
+    pipe.add_edge(sym.out.particle, v.inp.particle)
     pipe.add_edge(s.out.cell, v.inp.cell)
 
     if bonds is not None:
         b = pipe.add_node(AddBonds(source=bonds))
-        pipe.add_edge(s.out.particle, b.inp.particle)
+        pipe.add_edge(sym.out.particle, b.inp.particle)
         pipe.add_edge(b.out.bond, v.inp.bond)
 
     viewer = MolecularViewer()
@@ -1293,7 +1355,7 @@ def view_traj(
     traj: str | None = None,
     xyz: str | None = None,
     lammpstrj: str | None = None,
-    bonds: Literal["distance", "structure", "file"] | None = "distance",
+    bonds: Literal["auto", "distance", "structure", "file"] | None = "auto",
     perspective: bool = False,
     cell_axes_visible: bool = True,
 ) -> "MolecularViewer":
@@ -1313,10 +1375,13 @@ def view_traj(
         xtc: Path to an XTC trajectory file.
         traj: Path to an ASE ``.traj`` file.
         xyz: Path to a multi-frame XYZ trajectory file.
-        bonds: Bond detection method. ``"distance"`` (default) uses VDW radii
-            and is recomputed per frame during trajectory playback,
-            ``"structure"`` (alias ``"file"``) reads bonds once from the
-            loaded structure file, ``None`` disables bonds.
+        bonds: Bond detection method. ``"auto"`` (default) picks per format —
+            ``"structure"`` for formats that embed bonds (PDB, MOL/SDF, LAMMPS
+            data, CML, ...), ``"distance"`` otherwise — matching the webapp's
+            load path. ``"distance"`` forces VDW-radius inference and is
+            recomputed per frame during trajectory playback, ``"structure"``
+            (alias ``"file"``) reads bonds once from the loaded structure
+            file, ``None`` disables bonds.
         perspective: Use perspective projection instead of orthographic.
         cell_axes_visible: Show unit cell axes.
 
@@ -1337,6 +1402,8 @@ def view_traj(
         viewer.frame_index = 50
     """
     import pathlib
+
+    bonds = _resolve_bond_source(path, bonds)
 
     if sum(x is not None for x in (xtc, traj, xyz, lammpstrj)) > 1:
         raise ValueError("Only one of 'xtc', 'traj', 'xyz', or 'lammpstrj' can be provided, not multiple.")
@@ -1386,7 +1453,7 @@ def build_pipeline(
     xtc: str | None = None,
     traj: str | None = None,
     xyz: str | None = None,
-    bonds: Literal["distance", "structure", "file"] | None = "distance",
+    bonds: Literal["auto", "distance", "structure", "file"] | None = "auto",
     top: str | None = None,
     perspective: bool = False,
     cell_axes_visible: bool = True,
@@ -1410,7 +1477,10 @@ def build_pipeline(
         xtc: Path to an XTC trajectory file.
         traj: Path to an ASE ``.traj`` file.
         xyz: Path to a multi-frame XYZ trajectory file.
-        bonds: Bond detection method. ``"distance"`` (default) uses VDW radii,
+        bonds: Bond detection method. ``"auto"`` (default) picks per format —
+            ``"structure"`` for formats that embed bonds (PDB, MOL/SDF, LAMMPS
+            data, CML, ...), ``"distance"`` otherwise — matching the webapp's
+            load path. ``"distance"`` forces VDW-radius inference,
             ``"structure"`` (alias ``"file"``) reads bonds from the loaded
             structure file, ``None`` disables bonds. Ignored when *top* is
             provided.
@@ -1443,6 +1513,7 @@ def build_pipeline(
         pipe = megane.build_pipeline("protein.pdb", top="topology.top")
         print(pipe.to_json())
     """
+    bonds = _resolve_bond_source(path, bonds)
     if sum(x is not None for x in (xtc, traj, xyz)) > 1:
         raise ValueError("Only one of 'xtc', 'traj', or 'xyz' can be provided, not multiple.")
 
