@@ -52,6 +52,7 @@ docs/docs/api/typescript/
 docs/docs/reference/node-reference.md
 docs/notebooks/
 docs/public/notebooks/
+docs/public/app/
 dev-preview/
 demo/
 coverage/

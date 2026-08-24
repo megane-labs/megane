@@ -1,6 +1,6 @@
 [package]
 name = "megane-wasm"
-version = "0.13.1"
+version = "0.14.0"
 edition = "2021"
 description = "WASM bindings for megane molecular viewer"
 authors = ["hodakamori"]

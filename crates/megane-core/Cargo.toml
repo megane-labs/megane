@@ -1,6 +1,6 @@
 [package]
 name = "megane-core"
-version = "0.13.1"
+version = "0.14.0"
 edition = "2021"
 description = "Core molecular structure parsers (PDB, GRO, XYZ, MOL, CIF, LAMMPS, XTC, .traj)"
 authors = ["hodakamori"]
