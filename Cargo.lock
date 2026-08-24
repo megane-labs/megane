@@ -164,7 +164,7 @@ dependencies = [
 
 [[package]]
 name = "megane-core"
-version = "0.13.1"
+version = "0.14.0"
 dependencies = [
  "quick-xml",
  "serde_json",
@@ -173,7 +173,7 @@ dependencies = [
 
 [[package]]
 name = "megane-python"
-version = "0.13.1"
+version = "0.14.0"
 dependencies = [
  "megane-core",
  "numpy",
@@ -182,7 +182,7 @@ dependencies = [
 
 [[package]]
 name = "megane-wasm"
-version = "0.13.1"
+version = "0.14.0"
 dependencies = [
  "js-sys",
  "megane-core",

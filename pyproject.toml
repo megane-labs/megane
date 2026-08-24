@@ -4,7 +4,7 @@ build-backend = "maturin"
 
 [project]
 name = "megane"
-version = "0.13.1"
+version = "0.14.0"
 description = "A fast, beautiful molecular viewer"
 requires-python = ">=3.10"
 license = "MIT"
@@ -95,7 +95,7 @@ show_missing = true
 skip_empty = true
 
 [tool.bumpversion]
-current_version = "0.13.1"
+current_version = "0.14.0"
 commit = false
 tag = false
 allow_dirty = true
