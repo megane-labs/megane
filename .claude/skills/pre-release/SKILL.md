@@ -250,7 +250,7 @@ dispatch.
 **Step 1**: Confirm the latest deploy succeeded and retrieve the URL:
 ```bash
 ORIG_REMOTE=$(git remote get-url origin)
-git remote set-url origin https://github.com/hodakamori/megane.git
+git remote set-url origin https://github.com/megane-labs/megane.git
 RUN_ID=$(gh run list --workflow=deploy.yml --limit 1 --json databaseId -q '.[0].databaseId')
 gh run view "$RUN_ID" --log | grep -E "URL:|cloudfront\.net|distribution_domain"
 git remote set-url origin "$ORIG_REMOTE"

@@ -7,7 +7,7 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/hodakamori/megane.git"
+    "url": "https://github.com/megane-labs/megane.git"
   },
   "engines": {
     "vscode": "^1.80.0"
