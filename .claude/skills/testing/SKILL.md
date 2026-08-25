@@ -299,7 +299,7 @@ After pushing changes and before reporting test results to the user, verify that
 
 ```bash
 ORIG_REMOTE=$(git remote get-url origin)
-git remote set-url origin https://github.com/hodakamori/megane.git
+git remote set-url origin https://github.com/megane-labs/megane.git
 gh run list --branch "$(git branch --show-current)" --limit 1
 git remote set-url origin "$ORIG_REMOTE"
 ```

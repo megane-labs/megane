@@ -17,7 +17,7 @@ head_sampling_rate = 1
 # entry is the GitHub Pages docs demo; the second is the custom-domain S3
 # demo site.
 [vars]
-ALLOWED_ORIGIN = "https://hodakamori.github.io,https://megane.tech-office-mori.com"
+ALLOWED_ORIGIN = "https://megane-labs.github.io,https://megane.tech-office-mori.com"
 
 # Upstream provider order (comma-separated). Both PLaMo and OpenRouter are
 # supported; providers after the first are cross-provider fallbacks, only

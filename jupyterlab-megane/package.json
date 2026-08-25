@@ -6,7 +6,7 @@
   "author": "hodakamori",
   "repository": {
     "type": "git",
-    "url": "https://github.com/hodakamori/megane.git"
+    "url": "https://github.com/megane-labs/megane.git"
   },
   "main": "lib/index.js",
   "types": "lib/index.d.ts",

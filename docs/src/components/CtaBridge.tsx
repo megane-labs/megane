@@ -12,8 +12,8 @@ import styles from "./CtaBridge.module.css";
  * without importing it. Colors are literal (not --ifm-* tokens) so the band
  * stays dark in both docs color modes.
  */
-const DEMO_URL = "https://hodakamori.github.io/megane/app/";
-const GITHUB_URL = "https://github.com/hodakamori/megane";
+const DEMO_URL = "https://megane-labs.github.io/megane/app/";
+const GITHUB_URL = "https://github.com/megane-labs/megane";
 
 export default function CtaBridge({
   title = "Ready to see it move?",

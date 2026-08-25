@@ -37,8 +37,8 @@ import packageJson from "../../package.json";
 
 const APP_VERSION = (packageJson as { version: string }).version;
 
-const REPO_URL = "https://github.com/hodakamori/megane";
-const DOCS_URL = "https://hodakamori.github.io/megane/";
+const REPO_URL = "https://github.com/megane-labs/megane";
+const DOCS_URL = "https://megane-labs.github.io/megane/";
 const AUTHOR_GITHUB_URL = "https://github.com/hodakamori";
 const AUTHOR_LINKEDIN_URL = "https://www.linkedin.com/in/hodaka-mori-146b61ba/";
 

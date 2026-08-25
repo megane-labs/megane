@@ -40,9 +40,9 @@ dependencies = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/hodakamori/megane"
-Repository = "https://github.com/hodakamori/megane"
-Issues = "https://github.com/hodakamori/megane/issues"
+Homepage = "https://github.com/megane-labs/megane"
+Repository = "https://github.com/megane-labs/megane"
+Issues = "https://github.com/megane-labs/megane/issues"
 
 [project.optional-dependencies]
 traj = ["ase>=3.22"]

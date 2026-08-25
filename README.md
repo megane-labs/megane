@@ -7,18 +7,18 @@
 <p align="center"><em>1M+ atoms at 60fps. Visual pipelines. Jupyter widget, standalone web app, React component, VS Code extension.</em></p>
 
 <p align="center">
-  <a href="https://github.com/hodakamori/megane/actions/workflows/ci.yml"><img src="https://github.com/hodakamori/megane/actions/workflows/ci.yml/badge.svg" alt="CI" /></a>
+  <a href="https://github.com/megane-labs/megane/actions/workflows/ci.yml"><img src="https://github.com/megane-labs/megane/actions/workflows/ci.yml/badge.svg" alt="CI" /></a>
   <a href="https://pypi.org/project/megane/"><img src="https://img.shields.io/pypi/v/megane" alt="PyPI" /></a>
   <a href="https://www.npmjs.com/package/megane-viewer"><img src="https://img.shields.io/npm/v/megane-viewer" alt="npm" /></a>
-  <a href="https://github.com/hodakamori/megane/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="License" /></a>
+  <a href="https://github.com/megane-labs/megane/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="License" /></a>
   <a href="https://pypi.org/project/megane/"><img src="https://img.shields.io/pypi/pyversions/megane" alt="Python" /></a>
-  <a href="https://hodakamori.github.io/megane/"><img src="https://img.shields.io/badge/docs-online-blue" alt="Docs" /></a>
-  <a href="https://codecov.io/gh/hodakamori/megane"><img src="https://codecov.io/gh/hodakamori/megane/graph/badge.svg" alt="codecov" /></a>
+  <a href="https://megane-labs.github.io/megane/"><img src="https://img.shields.io/badge/docs-online-blue" alt="Docs" /></a>
+  <a href="https://codecov.io/gh/megane-labs/megane"><img src="https://codecov.io/gh/megane-labs/megane/graph/badge.svg" alt="codecov" /></a>
 </p>
 
 <p align="center">
-  <a href="https://hodakamori.github.io/megane/">Docs</a> &middot;
-  <a href="https://hodakamori.github.io/megane/getting-started">Getting Started</a> &middot;
+  <a href="https://megane-labs.github.io/megane/">Docs</a> &middot;
+  <a href="https://megane-labs.github.io/megane/getting-started">Getting Started</a> &middot;
   <a href="https://pypi.org/project/megane/">PyPI</a> &middot;
   <a href="https://www.npmjs.com/package/megane-viewer">npm</a>
 </p>
@@ -54,7 +54,7 @@ One codebase, every environment.
 | **React component (npm)** | `<MeganeViewer />` component | `npm install megane-viewer` |
 | **VS Code extension** | Custom editor for the same file types, registered by extension and by VASP basename (`POSCAR`/`CONTCAR`/`XDATCAR`) | Extension |
 
-For a per-platform breakdown of supported formats and UI features (including known gaps), see [Platform Support](https://hodakamori.github.io/megane/platform-support).
+For a per-platform breakdown of supported formats and UI features (including known gaps), see [Platform Support](https://megane-labs.github.io/megane/platform-support).
 
 The secret: parsers for 26 formats (PDB, GRO, XYZ, MOL/SDF, MOL2, CIF, mmCIF, CML, LAMMPS data, AMBER topology, GROMACS topology, CHARMM/NAMD PSF, XTC, DCD, ASE .traj, LAMMPS dump, AMBER NetCDF, VASP, Molden, XCrySDen XSF, JCAMP-DX, Chem3D XML, Odyssey, CASTEP magres, GAMESS output, CASTEP phonon) are written in **Rust** and compiled to both **PyO3** (Python) and **WASM** (browser). Parse once, run anywhere. The volumetric readers (Gaussian CUBE, OpenDX) are TypeScript-side.
 
@@ -114,7 +114,7 @@ viewer = megane.view_traj("protein.pdb", xtc="trajectory.xtc")
 viewer.frame_index = 50  # jump to frame 50
 ```
 
-For advanced usage (filtering, multi-layer rendering, custom pipelines), see the [Pipeline API](https://hodakamori.github.io/megane/guide/pipeline#python-pipeline-api).
+For advanced usage (filtering, multi-layer rendering, custom pipelines), see the [Pipeline API](https://megane-labs.github.io/megane/guide/pipeline#python-pipeline-api).
 
 ### Standalone web app (`megane serve`)
 
@@ -221,7 +221,7 @@ the terminal `SpectrumPlot` node instead of reaching the 3D renderer.
 ### Setup
 
 ```bash
-git clone https://github.com/hodakamori/megane.git
+git clone https://github.com/megane-labs/megane.git
 cd megane
 
 # Install wasm-pack (if not already installed)

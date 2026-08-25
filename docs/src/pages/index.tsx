@@ -6,8 +6,8 @@ import Layout from "@theme/Layout";
 import type { HeroMode } from "../components/HeroViewer";
 import styles from "./index.module.css";
 
-const DEMO_URL = "https://hodakamori.github.io/megane/app/";
-const GITHUB_URL = "https://github.com/hodakamori/megane";
+const DEMO_URL = "https://megane-labs.github.io/megane/app/";
+const GITHUB_URL = "https://github.com/megane-labs/megane";
 
 const MODES: { id: HeroMode; label: string }[] = [
   { id: "molecular", label: "Caffeine · water" },

@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+### Changed
+
+- **The project moved from `hodakamori/megane` to `megane-labs/megane`, and the docs site moved with it.** The GitHub Pages site is now served at <https://megane-labs.github.io/megane/>; the old <https://hodakamori.github.io/megane/> URL returns 404. Every repository and docs link in the README, docs site, package manifests (npm, PyPI, Cargo, JupyterLab, VS Code) and the in-app tour was repointed. Two of these were functional rather than cosmetic: `package.json`'s `repository.url` gates `npm publish --provenance`, and the LLM proxy's `ALLOWED_ORIGIN` gates CORS for the docs demo's AI chat. The VS Code Marketplace publisher (`hodakamori.vscode-megane`) and all authorship fields are unchanged — they identify a person and a Marketplace account, not the repository.
+
 ## [0.14.0] - 2026-08-23
 
 ### Changed

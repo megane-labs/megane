@@ -6,10 +6,10 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/hodakamori/megane.git"
+    "url": "https://github.com/megane-labs/megane.git"
   },
   "author": "hodakamori",
-  "homepage": "https://github.com/hodakamori/megane",
+  "homepage": "https://github.com/megane-labs/megane",
   "keywords": [
     "molecular",
     "viewer",

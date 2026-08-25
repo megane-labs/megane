@@ -12,7 +12,7 @@ you are running the most recent release of the `megane` package (PyPI),
 issues.**
 
 Instead, use GitHub's private vulnerability reporting: go to the
-[Security tab](https://github.com/hodakamori/megane/security) of this
+[Security tab](https://github.com/megane-labs/megane/security) of this
 repository and click **"Report a vulnerability"**. This opens a private
 advisory that only the maintainer can see.
 

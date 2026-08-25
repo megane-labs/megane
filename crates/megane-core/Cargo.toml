@@ -5,7 +5,7 @@ edition = "2021"
 description = "Core molecular structure parsers (PDB, GRO, XYZ, MOL, CIF, LAMMPS, XTC, .traj)"
 authors = ["hodakamori"]
 license = "MIT"
-repository = "https://github.com/hodakamori/megane"
+repository = "https://github.com/megane-labs/megane"
 
 [dependencies]
 serde_json = "1"
