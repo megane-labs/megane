@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+### Added
+
+- **Color-by-volume mapping for the Isosurface node — ESP-mapped charge densities.** The node gains a second volumetric input, `colorVolumetric`, and a `colorMode` parameter: with `colorMode: "volume"` the surface's vertex colors are produced by trilinearly sampling the connected color volume (e.g. an electrostatic-potential cube) at each vertex of the isosurface (e.g. an electron-density contour) and mapping the values through a `colormap` — `"rwb"` (red→white→blue, the chemistry ESP convention, the default), `"bwr"`, or `"rainbow"` — with an optional explicit `colorRange` (`[min, max]`; omitted = auto, symmetric around 0 for the diverging maps). Sampling handles non-orthogonal CUBE step lattices and clamps outside the grid; without a connected color volume the node warns and falls back to its solid colors. Wired through every surface: node UI (color-by selector, colormap picker, min/max range inputs), execution engine, serialization, AI prompt/node reference catalog, and the Python API (`Isosurface(color_mode=..., colormap=..., color_range=...)` with the new `inp.color_volumetric` port).
+
 ### Changed
 
 - **The project moved from `hodakamori/megane` to `megane-labs/megane`, and the docs site moved with it.** The GitHub Pages site is now served at <https://megane-labs.github.io/megane/>; the old <https://hodakamori.github.io/megane/> URL returns 404. Every repository and docs link in the README, docs site, package manifests (npm, PyPI, Cargo, JupyterLab, VS Code) and the in-app tour was repointed. Two of these were functional rather than cosmetic: `package.json`'s `repository.url` gates `npm publish --provenance`, and the LLM proxy's `ALLOWED_ORIGIN` gates CORS for the docs demo's AI chat. The VS Code Marketplace publisher (`hodakamori.vscode-megane`) and all authorship fields are unchanged — they identify a person and a Marketplace account, not the repository.
