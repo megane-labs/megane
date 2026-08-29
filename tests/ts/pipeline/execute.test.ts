@@ -960,3 +960,100 @@ describe("executePipeline", () => {
     });
   });
 });
+
+describe("executePipeline isosurface color-by-volume", () => {
+  function makeVolParams(gradientAxis: "x" | "y") {
+    const nx = 3,
+      ny = 2,
+      nz = 2;
+    const data = new Float32Array(nx * ny * nz);
+    for (let ix = 0; ix < nx; ix++) {
+      for (let iy = 0; iy < ny; iy++) {
+        for (let iz = 0; iz < nz; iz++) {
+          data[ix * ny * nz + iy * nz + iz] = gradientAxis === "x" ? ix : iy;
+        }
+      }
+    }
+    return {
+      fileName: "field.cube",
+      volumetricData: {
+        type: "volumetric",
+        nx,
+        ny,
+        nz,
+        origin: new Float32Array([0, 0, 0]),
+        step: new Float32Array([1, 0, 0, 0, 1, 0, 0, 0, 1]),
+        data,
+        dataMin: 0,
+        dataMax: gradientAxis === "x" ? nx - 1 : ny - 1,
+      },
+    };
+  }
+
+  it("warns when colorMode is 'volume' but no color volume is connected", () => {
+    const nodes = [
+      makeNode("lv", "load_volumetric", makeVolParams("x")),
+      makeNode("iso", "isosurface", {
+        isoLevel: 1.5,
+        color: "#4488ff",
+        opacity: 0.7,
+        showNegative: false,
+        negativeColor: "#ff4444",
+        colorMode: "volume",
+        colormap: "rwb",
+      }),
+      makeNode("vp", "viewport", { perspective: false, cellAxesVisible: true }),
+    ];
+    const edges = [
+      makeEdge("lv", "volumetric", "iso", "volumetric"),
+      makeEdge("iso", "mesh", "vp", "mesh"),
+    ];
+
+    const { viewportState, nodeErrors } = executePipeline(nodes, edges, {});
+    expect(viewportState.meshes).toHaveLength(1);
+    expect(nodeErrors.get("iso")?.some((e) => e.message.includes("Color Volume"))).toBe(true);
+  });
+
+  it("colors the mesh from a second volume connected to colorVolumetric", () => {
+    const nodes = [
+      makeNode("lv", "load_volumetric", makeVolParams("x")),
+      makeNode("cv", "load_volumetric", makeVolParams("y")),
+      makeNode("iso", "isosurface", {
+        isoLevel: 1.5,
+        color: "#4488ff",
+        opacity: 0.7,
+        showNegative: false,
+        negativeColor: "#ff4444",
+        colorMode: "volume",
+        colormap: "rainbow",
+      }),
+      makeNode("vp", "viewport", { perspective: false, cellAxesVisible: true }),
+    ];
+    const edges = [
+      makeEdge("lv", "volumetric", "iso", "volumetric"),
+      makeEdge("cv", "volumetric", "iso", "colorVolumetric"),
+      makeEdge("iso", "mesh", "vp", "mesh"),
+    ];
+
+    const { viewportState, nodeErrors } = executePipeline(nodes, edges, {});
+    expect(nodeErrors.get("iso")).toBeUndefined();
+    expect(viewportState.meshes).toHaveLength(1);
+    const mesh = viewportState.meshes[0];
+    expect(mesh.positions.length).toBeGreaterThan(0);
+    // The y-gradient color volume must produce non-uniform vertex colors on
+    // the x = 1.5 isosurface plane.
+    const first = [mesh.colors[0], mesh.colors[1], mesh.colors[2]];
+    let varies = false;
+    for (let i = 1; i < mesh.colors.length / 4; i++) {
+      if (
+        Math.abs(mesh.colors[i * 4] - first[0]) > 1e-3 ||
+        Math.abs(mesh.colors[i * 4 + 1] - first[1]) > 1e-3 ||
+        Math.abs(mesh.colors[i * 4 + 2] - first[2]) > 1e-3
+      ) {
+        varies = true;
+        break;
+      }
+    }
+    expect(varies).toBe(true);
+  });
+});

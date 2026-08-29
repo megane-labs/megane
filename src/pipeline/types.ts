@@ -527,7 +527,10 @@ export const NODE_PORTS: Record<PipelineNodeType, NodePortConfig> = {
     outputs: [{ name: "volumetric", dataType: "volumetric", label: "Volumetric" }],
   },
   isosurface: {
-    inputs: [{ name: "volumetric", dataType: "volumetric", label: "Volumetric" }],
+    inputs: [
+      { name: "volumetric", dataType: "volumetric", label: "Volumetric" },
+      { name: "colorVolumetric", dataType: "volumetric", label: "Color Volume" },
+    ],
     outputs: [{ name: "mesh", dataType: "mesh", label: "Mesh" }],
   },
   load_spectrum: {
@@ -791,6 +794,17 @@ export interface SpectrumPlotParams {
   color: string;
 }
 
+/** How the isosurface is colored. */
+export type IsosurfaceColorMode = "solid" | "volume";
+
+/**
+ * Colormaps for volume-mapped isosurface coloring.
+ * "rwb" (red→white→blue) is the chemistry ESP convention (negative red,
+ * positive blue); "bwr" is its reverse; "rainbow" is the same blue→red scale
+ * used for B-factor coloring.
+ */
+export type VolumeColormap = "rwb" | "bwr" | "rainbow";
+
 export interface IsosurfaceParams {
   type: "isosurface";
   /** Iso level for the positive contour. */
@@ -803,6 +817,21 @@ export interface IsosurfaceParams {
   showNegative: boolean;
   /** Hex color for the negative isosurface. */
   negativeColor: string;
+  /**
+   * "solid" paints the surface with `color` / `negativeColor`; "volume" maps
+   * each vertex through `colormap` by sampling the volume connected to the
+   * `colorVolumetric` input (e.g. ESP on a charge-density isosurface). Falls
+   * back to solid when no color volume is connected.
+   */
+  colorMode: IsosurfaceColorMode;
+  /** Colormap used when colorMode === "volume". */
+  colormap: VolumeColormap;
+  /**
+   * Explicit [min, max] value range for the colormap. Undefined = auto:
+   * symmetric around 0 for the diverging maps (rwb/bwr), sampled min/max for
+   * rainbow.
+   */
+  colorRange?: [number, number];
 }
 
 /** Discriminated union of all node parameter types. */
@@ -932,6 +961,8 @@ export function defaultParams(type: PipelineNodeType): PipelineNodeParams {
         opacity: 0.7,
         showNegative: false,
         negativeColor: "#ff4444",
+        colorMode: "solid",
+        colormap: "rwb",
       };
   }
 }
