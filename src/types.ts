@@ -141,6 +141,14 @@ export interface AtomRenderer {
    * scale overrides without clobbering them.
    */
   setHiddenMask?(mask: Uint8Array | null): void;
+  /**
+   * Subscribe to ball-size changes: the per-atom radii (base radius × per-atom
+   * override, 0 for atoms that draw nothing) and the global multiplier on top.
+   * `radii` is null when only the multiplier moved, so O(1) scale / opacity
+   * updates stay O(1). The bond renderer uses both to trim each stick at the
+   * ball's surface. Fires immediately on subscribe; `null` unsubscribes.
+   */
+  setRadiusSink?(sink: ((radii: Float32Array | null, scale: number) => void) | null): void;
   dispose(): void;
 }
 
@@ -160,6 +168,13 @@ export interface BondRenderer {
    * per-atom representation draws as lines instead.
    */
   setHiddenMask?(mask: Uint8Array | null): void;
+  /**
+   * Mirror the atom renderer's per-atom radii, and the global multiplier on
+   * top, so bonds can be trimmed where they enter a ball. Fed by
+   * `AtomRenderer.setRadiusSink`.
+   */
+  setAtomRadii?(radii: Float32Array): void;
+  setAtomRadiusScale?(scale: number): void;
   dispose(): void;
 }
 
