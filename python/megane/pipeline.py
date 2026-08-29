@@ -475,9 +475,7 @@ class Representation(PipelineNode):
     def __init__(
         self,
         *,
-        mode: Literal[
-            "atoms", "licorice", "cartoon", "both", "surface", "line", "illustrative"
-        ] = "atoms",
+        mode: Literal["atoms", "licorice", "cartoon", "both", "surface", "line", "illustrative"] = "atoms",
     ) -> None:
         super().__init__()
         self.mode = mode

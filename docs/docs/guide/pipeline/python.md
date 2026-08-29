@@ -249,9 +249,7 @@ the Viewport falls back to `"atoms"`.
 ```python
 Representation(
     *,
-    mode: Literal[
-        "atoms", "licorice", "cartoon", "both", "surface", "line", "illustrative"
-    ] = "atoms",
+    mode: Literal["atoms", "licorice", "cartoon", "both", "surface", "line", "illustrative"] = "atoms",
 )
 ```
 
