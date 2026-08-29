@@ -10,6 +10,7 @@
 import type { SerializedPipeline } from "../pipeline/types";
 import { validateQuery, validateBondQuery } from "../pipeline/selection";
 import { collectSchemaErrors } from "./pipelineSchema";
+import { collectSelfCheckErrors, type SelfCheckContext } from "./selfCheck";
 
 /**
  * Validate every `filter` node's `query` / `bond_query` against the selection
@@ -44,43 +45,57 @@ export function collectQueryErrors(pipeline: SerializedPipeline): string[] {
 /**
  * Collect every correctness problem with a generated pipeline: structural
  * schema errors (unknown node types, malformed positions, missing/duplicate
- * viewport, dangling edges) plus invalid selection queries. This is the single
- * gate the repair round trip checks — a non-empty result means the model should
+ * viewport, dangling edges), invalid selection queries, and — via
+ * {@link collectSelfCheckErrors} — the semantic failures that survive both
+ * (mistyped edges, overlapping viewport branches, and whatever the executor
+ * reports when the pipeline is actually run against `ctx`). This is the single
+ * gate the repair round trip checks: a non-empty result means the model should
  * be asked to fix the pipeline.
+ *
+ * `ctx` carries the structure the user currently has loaded. Omit it (or pass
+ * one without a `snapshot`) to run the static checks only — that is the right
+ * behaviour when nothing is loaded, and the mode the prompt benchmark uses.
  */
-export function collectPipelineErrors(pipeline: SerializedPipeline): string[] {
-  return [...collectSchemaErrors(pipeline), ...collectQueryErrors(pipeline)];
+export function collectPipelineErrors(
+  pipeline: SerializedPipeline,
+  ctx: SelfCheckContext = {},
+): string[] {
+  const errors = [...collectSchemaErrors(pipeline), ...collectQueryErrors(pipeline)];
+  // The self-check deserializes and runs the graph, which is only meaningful
+  // once the graph is structurally sound — running it on a pipeline with an
+  // unknown node type would just report the same problem in worse words.
+  if (errors.length > 0) return errors;
+  return collectSelfCheckErrors(pipeline, ctx);
 }
 
+/** Cap on how many findings one repair message carries (keeps the turn small). */
+export const MAX_REPORTED_ERRORS = 12;
+
 /**
- * Build a follow-up user message asking the model to fix the problems found in
- * the pipeline it just produced (invalid selection queries and/or structural
- * schema errors). Includes the original request, the broken pipeline, and the
- * specific errors so the model can correct only what's wrong.
+ * Build the follow-up user message asking the model to fix the problems found
+ * in the pipeline it just produced.
+ *
+ * This is sent inside the *same* conversation as the generation, so the
+ * original request and the broken pipeline are already in the history and are
+ * deliberately not repeated — the model sees its own JSON one turn above, and
+ * restating it invites a wholesale rewrite instead of a targeted correction.
  */
-export function buildRepairPrompt(
-  originalRequest: string,
-  brokenPipeline: SerializedPipeline,
-  errors: string[],
-): string {
+export function buildRepairPrompt(errors: string[]): string {
+  const shown = errors.slice(0, MAX_REPORTED_ERRORS);
+  const omitted = errors.length - shown.length;
+
   return [
-    "The pipeline you generated is invalid. Fix the problems listed below.",
-    "Follow the schema and the selection DSL documented in the system prompt",
-    "(filter queries may only use fields element/index/x/y/z/resname/mass with",
-    "quoted string values and and/or/not; every pipeline needs exactly one",
-    "viewport and edges must reference existing nodes).",
+    "The pipeline you just produced has the problems listed below. They were",
+    "found by validating it and running it against the loaded structure, so",
+    "each one is real — fix them all and return the corrected pipeline.",
     "",
-    "Errors:",
-    ...errors.map((e) => `- ${e}`),
+    "Problems:",
+    ...shown.map((e) => `- ${e}`),
+    ...(omitted > 0 ? [`- … and ${omitted} more of the same kind`] : []),
     "",
-    `Original request: ${originalRequest}`,
-    "",
-    "Here is the pipeline you produced:",
-    "```json",
-    JSON.stringify(brokenPipeline),
-    "```",
-    "",
-    "Return the corrected pipeline as a single JSON code block first, then one",
-    "short sentence describing what it does.",
+    "Change only what is needed to resolve them; keep everything that already",
+    "matches the request. Follow the schema and the selection DSL from the",
+    "system prompt exactly. Return the corrected pipeline as a single JSON code",
+    "block first, then one short sentence describing what it does.",
   ].join("\n");
 }

@@ -17,7 +17,7 @@ describe("useAIConfigStore", () => {
     const { useAIConfigStore } = await import("@/ai/config");
     const state = useAIConfigStore.getState();
     expect(state.provider).toBe("anthropic");
-    expect(state.model).toBe("claude-sonnet-4-20250514");
+    expect(state.model).toBe("claude-opus-5");
     expect(state.apiKey).toBe("");
     expect(state.useOwnKey).toBe(true);
   });
@@ -54,7 +54,7 @@ describe("useAIConfigStore", () => {
     const { useAIConfigStore } = await import("@/ai/config");
     const state = useAIConfigStore.getState();
     expect(state.provider).toBe("anthropic");
-    expect(state.model).toBe("claude-sonnet-4-20250514");
+    expect(state.model).toBe("claude-opus-5");
     expect(state.useOwnKey).toBe(true);
   });
 
@@ -93,11 +93,11 @@ describe("useAIConfigStore", () => {
 
   it("setModel updates and persists the new model", async () => {
     const { useAIConfigStore } = await import("@/ai/config");
-    useAIConfigStore.getState().setModel("claude-haiku-4-20250514");
+    useAIConfigStore.getState().setModel("claude-haiku-4-5");
 
-    expect(useAIConfigStore.getState().model).toBe("claude-haiku-4-20250514");
+    expect(useAIConfigStore.getState().model).toBe("claude-haiku-4-5");
     const persisted = JSON.parse(localStorage.getItem(STORAGE_KEY) as string);
-    expect(persisted.model).toBe("claude-haiku-4-20250514");
+    expect(persisted.model).toBe("claude-haiku-4-5");
   });
 
   it("setApiKey updates state but does NOT persist the apiKey", async () => {

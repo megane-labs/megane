@@ -21,10 +21,20 @@ export interface AIPreferences extends AIConfig {
   useOwnKey: boolean;
 }
 
+/**
+ * Selectable models per provider. The first entry is that provider's default.
+ *
+ * Anthropic leads with Opus because pipeline generation is a correctness task
+ * with a self-check loop behind it (see `client.ts`): a stronger model both
+ * produces fewer problems to repair and repairs them in fewer rounds, which
+ * costs less overall than re-running a weaker one. Sonnet and Haiku stay
+ * available for anyone who would rather trade accuracy for price.
+ */
 export const PROVIDER_MODELS: Record<AIProvider, { value: string; label: string }[]> = {
   anthropic: [
-    { value: "claude-sonnet-4-20250514", label: "Claude Sonnet 4" },
-    { value: "claude-haiku-4-20250514", label: "Claude Haiku 4" },
+    { value: "claude-opus-5", label: "Claude Opus 5" },
+    { value: "claude-sonnet-5", label: "Claude Sonnet 5" },
+    { value: "claude-haiku-4-5", label: "Claude Haiku 4.5" },
   ],
   openai: [
     { value: "gpt-4o", label: "GPT-4o" },
@@ -32,6 +42,11 @@ export const PROVIDER_MODELS: Record<AIProvider, { value: string; label: string 
   ],
   demo: [{ value: "demo", label: "Free Demo (no API key needed)" }],
 };
+
+/** True when `model` is one of `provider`'s selectable models. */
+export function isKnownModel(provider: AIProvider, model: string): boolean {
+  return PROVIDER_MODELS[provider].some((m) => m.value === model);
+}
 
 /**
  * The "demo" provider proxies through a Cloudflare Worker that holds its
@@ -70,9 +85,18 @@ function loadConfig(): AIPreferences {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (raw) {
       const parsed = JSON.parse(raw);
+      const provider: AIProvider = parsed.provider ?? fallback.provider;
+      const known = PROVIDER_MODELS[provider] ? provider : fallback.provider;
+      // A model saved by an older build may no longer be offered (retired
+      // model ids). Fall back to the provider's default rather than leaving the
+      // dropdown blank and sending a dead id to the API.
+      const model =
+        typeof parsed.model === "string" && isKnownModel(known, parsed.model)
+          ? parsed.model
+          : PROVIDER_MODELS[known][0].value;
       return {
-        provider: parsed.provider ?? fallback.provider,
-        model: parsed.model ?? fallback.model,
+        provider: known,
+        model,
         apiKey: "",
         useOwnKey: parsed.useOwnKey ?? fallbackUseOwnKey,
       };

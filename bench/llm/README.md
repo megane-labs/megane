@@ -66,9 +66,21 @@ and printed to stdout. The results directory is git-ignored.
   `import.meta.glob`).
 - The **JSON extraction** mirrors `src/ai/client.ts` (prefers the last valid
   fenced pipeline), pinned by unit tests.
+- The **self-check repair loop** is the production one: after each generation
+  the response is checked with `collectPipelineErrors()` and, if anything is
+  wrong, the findings are fed back into the same conversation and the model is
+  asked to fix them (up to 2 rounds, matching `MAX_REPAIR_ROUNDS`). What is
+  scored is therefore the pipeline a user would actually get, not the raw
+  first attempt.
 
 The providers use non-streaming requests (the benchmark only needs the final
 text) but otherwise replicate the production tool round-trip behaviour.
+
+No structure is loaded during the benchmark, so the self-check runs its static
+half only — schema, selection-query syntax, edge typing, overlapping viewport
+branches and graph wiring. The runtime half (executing the graph against the
+loaded structure to catch a filter that matches zero atoms) needs data and only
+fires in the app.
 
 ## Extending it
 
@@ -91,8 +103,9 @@ For PRs that change the system prompt, skills, or dataset/rubrics, add the
    and per-case score deltas, plus any cases that regressed by >= 5
    percentage points.
 
-It makes real, paid API calls (32 generations per run: 16 cases x
-before/after), so it is opt-in via the label rather than running on every PR.
+It makes real, paid API calls — at least 48 generations per run (24 cases x
+before/after), plus one more per repair round the self-check triggers — so it is
+opt-in via the label rather than running on every PR.
 The provider comes from the `MEGANE_LLM_BENCH_PROVIDER` repository variable —
 `plamo` (the default; requires the `PLAMO_API_KEY` repository secret) or
 `openrouter` (requires `OPENROUTER_API_KEY`). The model defaults per provider

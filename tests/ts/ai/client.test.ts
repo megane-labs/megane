@@ -17,6 +17,7 @@ import {
   stripPipelineJSON,
   extractTrailingExplanation,
   RateLimitError,
+  MAX_REPAIR_ROUNDS,
 } from "@/ai/client";
 import type { AIConfig } from "@/ai/config";
 
@@ -566,29 +567,45 @@ describe("generatePipeline — structure summary + query repair", () => {
     vi.unstubAllGlobals();
   });
 
-  // Schema-valid pipelines (one viewport, edges reference real nodes) so the
-  // filter query is the only variable the repair check reacts to.
-  const VALID_FILTER_PIPELINE = JSON.stringify({
-    version: 3,
-    nodes: [
-      { id: "f1", type: "filter", position: { x: 0, y: 0 }, query: 'element == "C"' },
-      { id: "v1", type: "viewport", position: { x: 0, y: 310 } },
-    ],
-    edges: [{ source: "f1", target: "v1", sourceHandle: "out", targetHandle: "particle" }],
-  });
-  const INVALID_FILTER_PIPELINE = JSON.stringify({
-    version: 3,
-    nodes: [
-      { id: "f1", type: "filter", position: { x: 0, y: 0 }, query: "chain A" },
-      { id: "v1", type: "viewport", position: { x: 0, y: 310 } },
-    ],
-    edges: [{ source: "f1", target: "v1", sourceHandle: "out", targetHandle: "particle" }],
-  });
+  // Fully wired pipelines (loader -> filter -> viewport) so the filter query is
+  // the only variable the self-check reacts to. A bare filter with no upstream
+  // would trip the "No input connected" check instead.
+  function filterPipeline(query: string): string {
+    return JSON.stringify({
+      version: 3,
+      nodes: [
+        { id: "l1", type: "load_structure", position: { x: 0, y: 0 } },
+        { id: "f1", type: "filter", position: { x: 0, y: 155 }, query },
+        { id: "v1", type: "viewport", position: { x: 0, y: 310 } },
+      ],
+      edges: [
+        { source: "l1", target: "f1", sourceHandle: "particle", targetHandle: "in" },
+        { source: "f1", target: "v1", sourceHandle: "out", targetHandle: "particle" },
+      ],
+    });
+  }
+  const VALID_FILTER_PIPELINE = filterPipeline('element == "C"');
+  const INVALID_FILTER_PIPELINE = filterPipeline("chain A");
   // Structurally invalid: references an unknown node type and has no viewport.
   const INVALID_SCHEMA_PIPELINE = JSON.stringify({
     version: 3,
     nodes: [{ id: "x1", type: "not_a_real_node", position: { x: 0, y: 0 } }],
     edges: [],
+  });
+  // Schema-clean but semantically wrong: the loader feeds the viewport directly
+  // *and* through a filter, so the filtered atoms are drawn twice.
+  const OVERLAPPING_PIPELINE = JSON.stringify({
+    version: 3,
+    nodes: [
+      { id: "l1", type: "load_structure", position: { x: 0, y: 0 } },
+      { id: "f1", type: "filter", position: { x: 0, y: 155 }, query: 'element == "C"' },
+      { id: "v1", type: "viewport", position: { x: 0, y: 310 } },
+    ],
+    edges: [
+      { source: "l1", target: "f1", sourceHandle: "particle", targetHandle: "in" },
+      { source: "f1", target: "v1", sourceHandle: "out", targetHandle: "particle" },
+      { source: "l1", target: "v1", sourceHandle: "particle", targetHandle: "particle" },
+    ],
   });
 
   function anthropicTextResponse(text: string): Response {
@@ -635,9 +652,27 @@ describe("generatePipeline — structure summary + query repair", () => {
     const repairBody = JSON.parse((fetchMock.mock.calls[1][1] as RequestInit).body as string);
     const userMsg = repairBody.messages[repairBody.messages.length - 1];
     expect(userMsg.role).toBe("user");
-    expect(userMsg.content).toContain("The pipeline you generated is invalid");
+    expect(userMsg.content).toContain("has the problems listed below");
     expect(userMsg.content).toContain("chain A");
     expect(result).toContain("Fixed.");
+  });
+
+  it("repairs inside the same conversation instead of restarting it", async () => {
+    fetchMock.mockResolvedValueOnce(
+      anthropicTextResponse("```json\n" + INVALID_FILTER_PIPELINE + "\n```\nHere."),
+    );
+    fetchMock.mockResolvedValueOnce(
+      anthropicTextResponse("```json\n" + VALID_FILTER_PIPELINE + "\n```\nFixed."),
+    );
+
+    await generatePipeline(ANTHROPIC_CONFIG, "show chain A", () => {});
+    const repairBody = JSON.parse((fetchMock.mock.calls[1][1] as RequestInit).body as string);
+    // original request, the assistant's broken answer, then the repair prompt.
+    expect(repairBody.messages).toHaveLength(3);
+    expect(repairBody.messages[0]).toEqual({ role: "user", content: "show chain A" });
+    expect(repairBody.messages[1].role).toBe("assistant");
+    expect(repairBody.messages[1].content).toContain("chain A");
+    expect(repairBody.messages[2].role).toBe("user");
   });
 
   it("runs one repair round trip when the pipeline structure is invalid", async () => {
@@ -657,15 +692,73 @@ describe("generatePipeline — structure summary + query repair", () => {
     expect(result).toContain("Fixed.");
   });
 
-  it("repairs at most once even if the repair is still invalid", async () => {
+  it("repairs a schema-clean pipeline that draws the same atoms twice", async () => {
+    fetchMock.mockResolvedValueOnce(
+      anthropicTextResponse("```json\n" + OVERLAPPING_PIPELINE + "\n```\nHere."),
+    );
+    fetchMock.mockResolvedValueOnce(
+      anthropicTextResponse("```json\n" + VALID_FILTER_PIPELINE + "\n```\nFixed."),
+    );
+
+    const result = await generatePipeline(ANTHROPIC_CONFIG, "show carbons", () => {});
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    const repairBody = JSON.parse((fetchMock.mock.calls[1][1] as RequestInit).body as string);
+    const userMsg = repairBody.messages[repairBody.messages.length - 1];
+    expect(userMsg.content).toContain("drawn twice");
+    expect(result).toContain("Fixed.");
+  });
+
+  it("stops after MAX_REPAIR_ROUNDS even if the repairs stay invalid", async () => {
     // Build a fresh Response each call — a stream body can only be read once.
     fetchMock.mockImplementation(async () =>
       anthropicTextResponse("```json\n" + INVALID_FILTER_PIPELINE + "\n```\nStill bad."),
     );
-    const result = await generatePipeline(ANTHROPIC_CONFIG, "show chain A", () => {});
-    // One initial + one repair = 2; no further attempts.
-    expect(fetchMock).toHaveBeenCalledTimes(2);
+    const onRepairRound = vi.fn();
+    const result = await generatePipeline(
+      ANTHROPIC_CONFIG,
+      "show chain A",
+      () => {},
+      undefined,
+      null,
+      {},
+      onRepairRound,
+    );
+    // One initial generation plus MAX_REPAIR_ROUNDS repairs; no further attempts.
+    expect(fetchMock).toHaveBeenCalledTimes(1 + MAX_REPAIR_ROUNDS);
+    expect(onRepairRound).toHaveBeenCalledTimes(MAX_REPAIR_ROUNDS);
     expect(result).toContain("Still bad.");
+  });
+
+  it("does not repair a response that carries no pipeline", async () => {
+    fetchMock.mockResolvedValueOnce(anthropicTextResponse("I need a structure first."));
+    const result = await generatePipeline(ANTHROPIC_CONFIG, "hi", () => {});
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(result).toContain("I need a structure first.");
+  });
+
+  it("stops repairing on the demo proxy before the message budget runs out", async () => {
+    fetchMock.mockImplementation(async () =>
+      makeJSONResponse(
+        "data: " +
+          JSON.stringify({
+            choices: [
+              {
+                delta: { content: "```json\n" + INVALID_FILTER_PIPELINE + "\n```\nBad." },
+                finish_reason: "stop",
+              },
+            ],
+          }) +
+          "\n\n",
+      ),
+    );
+    vi.stubEnv("VITE_LLM_PROXY_URL", "https://proxy.example/chat");
+    await generatePipeline(DEMO_CONFIG, "show chain A", () => {});
+    // The demo session's history stays inside the proxy's 12-message cap.
+    for (const call of fetchMock.mock.calls) {
+      const body = JSON.parse((call[1] as RequestInit).body as string);
+      expect(body.messages.length).toBeLessThanOrEqual(12);
+    }
+    vi.unstubAllEnvs();
   });
 });
 

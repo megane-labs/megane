@@ -16,6 +16,8 @@
  */
 
 import { buildSystemPrompt } from "@/ai/prompt";
+import { tryExtractPipeline } from "@/ai/client";
+import { buildRepairPrompt, collectPipelineErrors } from "@/ai/validatePipeline";
 import {
   buildOpenAITools,
   buildToolDefinitions,
@@ -56,6 +58,14 @@ export interface ProviderConfig {
 export type FetchLike = typeof fetch;
 
 const MAX_TOOL_ROUNDS = 4;
+
+/**
+ * Repair rounds the benchmark allows, matching `MAX_REPAIR_ROUNDS` in
+ * `src/ai/client.ts`. Kept as its own constant rather than imported so a
+ * deliberate change to production behaviour shows up as a benchmark diff to
+ * review, not a silent shift in what the scores mean.
+ */
+const MAX_REPAIR_ROUNDS = 2;
 
 /** Resolve a provider config from environment variables. */
 export function configFromEnv(
@@ -123,10 +133,33 @@ export async function generatePipelineLive(
 ): Promise<string> {
   const system = buildSystemPrompt();
   const skills = loadSkills();
-  if (config.provider === "anthropic") {
-    return runAnthropic(config, system, userMessage, skills, fetchImpl);
+
+  // One live conversation, driven the same way production drives it: generate,
+  // check the result, and feed any findings back into the *same* history so the
+  // model repairs its own pipeline. Without this the benchmark would score the
+  // raw first attempt and miss what users actually get.
+  const anthropicMessages: Array<{ role: string; content: unknown }> = [];
+  const openAIMessages: OpenAIMessage[] = [{ role: "system", content: system }];
+  const send = (message: string): Promise<string> => {
+    if (config.provider === "anthropic") {
+      anthropicMessages.push({ role: "user", content: message });
+      return runAnthropic(config, system, anthropicMessages, skills, fetchImpl);
+    }
+    openAIMessages.push({ role: "user", content: message });
+    return runOpenAICompat(config, openAIMessages, skills, fetchImpl);
+  };
+
+  let text = await send(userMessage);
+  for (let round = 0; round < MAX_REPAIR_ROUNDS; round++) {
+    const pipeline = tryExtractPipeline(text);
+    if (!pipeline) break;
+    // No structure is loaded in the benchmark, so this runs the static checks
+    // (schema, query syntax, edge typing, overlapping branches, graph wiring).
+    const errors = collectPipelineErrors(pipeline);
+    if (errors.length === 0) break;
+    text = await send(buildRepairPrompt(errors));
   }
-  return runOpenAICompat(config, system, userMessage, skills, fetchImpl);
+  return text;
 }
 
 // ─── Anthropic ────────────────────────────────────────────────────────
@@ -142,14 +175,11 @@ interface AnthropicContentBlock {
 async function runAnthropic(
   config: ProviderConfig,
   system: string,
-  userMessage: string,
+  messages: Array<{ role: string; content: unknown }>,
   skills: BenchSkill[],
   fetchImpl: FetchLike,
 ): Promise<string> {
   const tools = buildToolDefinitions(skills);
-  const messages: Array<{ role: string; content: unknown }> = [
-    { role: "user", content: userMessage },
-  ];
 
   for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
     const body: Record<string, unknown> = {
@@ -182,7 +212,10 @@ async function runAnthropic(
       .map((b) => b.text ?? "")
       .join("");
 
-    if (data.stop_reason !== "tool_use") return text;
+    if (data.stop_reason !== "tool_use") {
+      messages.push({ role: "assistant", content: text });
+      return text;
+    }
 
     // Echo assistant content, answer each tool_use with the skill body.
     messages.push({ role: "assistant", content: data.content });
@@ -215,16 +248,11 @@ interface OpenAIMessage {
 
 async function runOpenAICompat(
   config: ProviderConfig,
-  system: string,
-  userMessage: string,
+  messages: OpenAIMessage[],
   skills: BenchSkill[],
   fetchImpl: FetchLike,
 ): Promise<string> {
   const tools = buildOpenAITools(skills);
-  const messages: OpenAIMessage[] = [
-    { role: "system", content: system },
-    { role: "user", content: userMessage },
-  ];
   const isDemo = config.provider === "demo";
   const url = isDemo
     ? config.proxyUrl!
@@ -254,7 +282,9 @@ async function runOpenAICompat(
     const msg = choice.message;
 
     if (choice.finish_reason !== "tool_calls" || !msg.tool_calls?.length) {
-      return msg.content ?? "";
+      const text = msg.content ?? "";
+      messages.push({ role: "assistant", content: text });
+      return text;
     }
 
     messages.push({ role: "assistant", content: msg.content ?? null, tool_calls: msg.tool_calls });

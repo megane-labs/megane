@@ -3,6 +3,7 @@ import {
   collectQueryErrors,
   collectPipelineErrors,
   buildRepairPrompt,
+  MAX_REPORTED_ERRORS,
 } from "@/ai/validatePipeline";
 import type { SerializedPipeline } from "@/pipeline/types";
 
@@ -71,13 +72,27 @@ describe("collectQueryErrors", () => {
 });
 
 describe("collectPipelineErrors", () => {
-  it("returns no errors for a structurally valid pipeline with valid queries", () => {
+  it("returns no errors for a fully wired pipeline with valid queries", () => {
+    const p = pipeline([
+      { id: "l1", type: "load_structure", position: { x: 0, y: 0 } },
+      { id: "f1", type: "filter", position: { x: 0, y: 155 }, query: 'element == "C"' },
+      { id: "v1", type: "viewport", position: { x: 0, y: 310 } },
+    ] as SerializedPipeline["nodes"]);
+    p.edges = [
+      { source: "l1", target: "f1", sourceHandle: "particle", targetHandle: "in" },
+      { source: "f1", target: "v1", sourceHandle: "out", targetHandle: "particle" },
+    ];
+    expect(collectPipelineErrors(p)).toEqual([]);
+  });
+
+  it("reports the self-check findings that survive the schema and query gates", () => {
+    // Schema-clean, queries valid — but the filter has nothing upstream.
     const p = pipeline([
       { id: "f1", type: "filter", position: { x: 0, y: 0 }, query: 'element == "C"' },
       { id: "v1", type: "viewport", position: { x: 0, y: 310 } },
     ] as SerializedPipeline["nodes"]);
     p.edges = [{ source: "f1", target: "v1", sourceHandle: "out", targetHandle: "particle" }];
-    expect(collectPipelineErrors(p)).toEqual([]);
+    expect(collectPipelineErrors(p)).toEqual(['node "f1": No input connected']);
   });
 
   it("combines schema errors and query errors", () => {
@@ -92,15 +107,25 @@ describe("collectPipelineErrors", () => {
 });
 
 describe("buildRepairPrompt", () => {
-  const broken = pipeline([
-    { id: "f1", type: "filter", position: { x: 0, y: 0 }, query: "protein" },
-  ] as SerializedPipeline["nodes"]);
-
-  it("includes the original request, errors, and the broken pipeline JSON", () => {
-    const msg = buildRepairPrompt("show the protein", broken, ['node "f1": bad']);
-    expect(msg).toContain("show the protein");
+  it("lists every finding and asks for a corrected pipeline", () => {
+    const msg = buildRepairPrompt(['node "f1": bad', 'node "f2": worse']);
     expect(msg).toContain('node "f1": bad');
-    expect(msg).toContain(JSON.stringify(broken));
-    expect(msg).toContain("```json");
+    expect(msg).toContain('node "f2": worse');
+    expect(msg).toContain("has the problems listed below");
+    expect(msg).toContain("single JSON code");
+  });
+
+  it("does not restate the pipeline — it is already in the conversation", () => {
+    const msg = buildRepairPrompt(['node "f1": bad']);
+    expect(msg).not.toContain("```json");
+    expect(msg).not.toContain('"version"');
+  });
+
+  it("caps the finding list and says how many were omitted", () => {
+    const errors = Array.from({ length: MAX_REPORTED_ERRORS + 3 }, (_, i) => `problem ${i}`);
+    const msg = buildRepairPrompt(errors);
+    expect(msg).toContain(`problem ${MAX_REPORTED_ERRORS - 1}`);
+    expect(msg).not.toContain(`problem ${MAX_REPORTED_ERRORS}`);
+    expect(msg).toContain("and 3 more");
   });
 });

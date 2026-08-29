@@ -56,6 +56,7 @@ vi.mock("@/stores/usePipelineUIStore", () => ({
 import {
   PipelineChatBox,
   captureLoadedStructure,
+  resolveStructureContext,
   replaceTrailingAssistant,
 } from "@/components/PipelineChatBox";
 import { useAIConfigStore } from "@/ai/config";
@@ -207,7 +208,56 @@ describe("PipelineChatBox — submission", () => {
       expect.anything(),
       // structureSummary — null here since no structure is loaded in this test.
       null,
+      // self-check context, empty for the same reason.
+      { snapshot: null, atomLabels: null, structureFrames: null, structureMeta: null },
+      expect.any(Function),
     );
+  });
+});
+
+describe("resolveStructureContext", () => {
+  const emptyGlobals = {
+    snapshot: null,
+    atomLabels: null,
+    structureFrames: null,
+    structureMeta: null,
+  };
+
+  it("returns empty fields when nothing is loaded", () => {
+    expect(resolveStructureContext({ nodes: [], nodeSnapshots: {}, ...emptyGlobals })).toEqual(
+      emptyGlobals,
+    );
+  });
+
+  it("prefers the store's global structure fields", () => {
+    const globalSnapshot = { nAtoms: 1 } as never;
+    const ctx = resolveStructureContext({
+      nodes: [{ id: "l1", type: "load_structure", data: { params: {} } }],
+      nodeSnapshots: {
+        l1: { snapshot: { nAtoms: 2 }, frames: null, meta: null, labels: ["HOH"] } as never,
+      },
+      ...emptyGlobals,
+      snapshot: globalSnapshot,
+    });
+    expect(ctx.snapshot).toBe(globalSnapshot);
+    // labels still come from the node — the global field is null.
+    expect(ctx.atomLabels).toEqual(["HOH"]);
+  });
+
+  it("falls back to the load_structure node's snapshot once the globals are cleared", () => {
+    // deserialize() wipes the global fields, so a second chat turn would
+    // otherwise see no structure at all even though one is on screen.
+    const nodeSnapshot = { nAtoms: 3 } as never;
+    const ctx = resolveStructureContext({
+      nodes: [{ id: "l1", type: "load_structure", data: { params: {} } }],
+      nodeSnapshots: {
+        l1: { snapshot: nodeSnapshot, frames: [], meta: null, labels: ["ALA"] } as never,
+      },
+      ...emptyGlobals,
+    });
+    expect(ctx.snapshot).toBe(nodeSnapshot);
+    expect(ctx.atomLabels).toEqual(["ALA"]);
+    expect(ctx.structureFrames).toEqual([]);
   });
 });
 
