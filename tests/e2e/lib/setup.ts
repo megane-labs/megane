@@ -525,6 +525,59 @@ export async function pinFrame(scope: Page | Frame, frame = 0): Promise<void> {
       { timeout: 15_000 },
     )
     .catch(() => {});
+
+  // `framesApplied >= 1` still leaves one race open: the boot-time pipeline
+  // executes more than once, and a late execution's loadSnapshot() (the
+  // structure-file positions) can land AFTER the single frame application,
+  // silently replacing the trajectory-frame geometry while every counter
+  // still reads "frame 0" — the structure and trajectory frame 0 are
+  // different coordinate sets (e.g. caffeine_water.pdb vs its XTC), so the
+  // capture is bimodal. Force one more frame application now, via the
+  // test-mode playback store, so the last geometry write before the capture
+  // is deterministically the trajectory frame. Seek away and back in two
+  // separate tasks — a same-task round trip can leave the store state
+  // identical and never re-render.
+  const framesAppliedBefore = await scope
+    .evaluate((target: number) => {
+      const w = window as unknown as {
+        __megane_test_ready?: { framesApplied?: number };
+        __megane_test_playback_store?: {
+          getState: () => { totalFrames: number; seekFrame: (i: number) => void };
+        };
+      };
+      const st = w.__megane_test_playback_store?.getState();
+      if (!st || st.totalFrames <= 1) return null;
+      const before = w.__megane_test_ready?.framesApplied ?? 0;
+      st.seekFrame(target === 0 ? Math.min(1, st.totalFrames - 1) : 0);
+      return before;
+    }, frame)
+    .catch(() => null);
+  if (framesAppliedBefore !== null) {
+    await scope
+      .evaluate((target: number) => {
+        const w = window as unknown as {
+          __megane_test_playback_store?: {
+            getState: () => { seekFrame: (i: number) => void };
+          };
+        };
+        w.__megane_test_playback_store?.getState().seekFrame(target);
+      }, frame)
+      .catch(() => {});
+    await scope
+      .waitForFunction(
+        (arg: { before: number; target: string }) => {
+          const w = window as unknown as { __megane_test_ready?: { framesApplied?: number } };
+          const atTarget =
+            document
+              .querySelector('[data-testid="megane-viewer"]')
+              ?.getAttribute("data-current-frame") === arg.target;
+          return atTarget && (w.__megane_test_ready?.framesApplied ?? 0) > arg.before;
+        },
+        { before: framesAppliedBefore, target: String(frame) },
+        { timeout: 15_000 },
+      )
+      .catch(() => {});
+  }
 }
 
 /* ─── Cross-platform Parity ─────────────────────────────────────── */

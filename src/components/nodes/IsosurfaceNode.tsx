@@ -3,9 +3,11 @@
  * Controls iso level, color, opacity, and optional dual-contour (negative lobe).
  */
 
+import { useState } from "react";
 import type { NodeProps, Node } from "@xyflow/react";
 import type { PipelineNodeData } from "../../pipeline/execute";
-import type { IsosurfaceParams } from "../../pipeline/types";
+import type { IsosurfaceParams, IsosurfaceColorMode, VolumeColormap } from "../../pipeline/types";
+import { VOLUME_COLORMAP_LABELS } from "../../pipeline/executors/volumeColor";
 import { useScopedPipelineStore } from "../../stores/MeganeProvider";
 import { NodeShell } from "./NodeShell";
 
@@ -64,9 +66,43 @@ const checkboxRowStyle: React.CSSProperties = {
   marginBottom: 8,
 };
 
+const selectStyle: React.CSSProperties = {
+  fontSize: 14,
+  color: "#334155",
+  background: "#f1f5f9",
+  border: "1px solid #cbd5e1",
+  borderRadius: 6,
+  padding: "3px 6px",
+};
+
+const rangeInputStyle: React.CSSProperties = {
+  ...inputStyle,
+  width: 64,
+};
+
 export function IsosurfaceNode({ id, data }: NodeProps<Node<PipelineNodeData>>) {
   const updateNodeParams = useScopedPipelineStore((s) => s.updateNodeParams);
   const params = data.params as IsosurfaceParams;
+  const colorMode = params.colorMode ?? "solid";
+
+  // Draft text for the range inputs so a half-typed pair isn't clobbered by
+  // the params round trip; only a complete, ordered pair overrides auto.
+  const [rangeMinText, setRangeMinText] = useState(
+    params.colorRange ? String(params.colorRange[0]) : "",
+  );
+  const [rangeMaxText, setRangeMaxText] = useState(
+    params.colorRange ? String(params.colorRange[1]) : "",
+  );
+
+  const commitRange = (minText: string, maxText: string) => {
+    const min = parseFloat(minText);
+    const max = parseFloat(maxText);
+    if (isFinite(min) && isFinite(max) && max > min) {
+      updateNodeParams(id, { colorRange: [min, max] });
+    } else {
+      updateNodeParams(id, { colorRange: undefined });
+    }
+  };
 
   return (
     <NodeShell id={id} nodeType="isosurface" enabled={data.enabled}>
@@ -87,18 +123,90 @@ export function IsosurfaceNode({ id, data }: NodeProps<Node<PipelineNodeData>>) 
         />
       </div>
 
-      {/* Positive color */}
+      {/* Color mode: solid color vs. sampling the Color Volume input */}
       <div style={rowStyle}>
-        <span style={labelStyle}>Color (+)</span>
-        <input
-          type="color"
+        <span style={labelStyle}>Color by</span>
+        <select
           className="nodrag"
-          data-testid="isosurface-color"
-          value={params.color}
-          style={colorStyle}
-          onChange={(e) => updateNodeParams(id, { color: e.target.value })}
-        />
+          data-testid="isosurface-color-mode"
+          value={colorMode}
+          style={selectStyle}
+          onChange={(e) =>
+            updateNodeParams(id, { colorMode: e.target.value as IsosurfaceColorMode })
+          }
+        >
+          <option value="solid">Solid color</option>
+          <option value="volume">Color volume</option>
+        </select>
       </div>
+
+      {/* Positive color (solid mode) */}
+      {colorMode === "solid" && (
+        <div style={rowStyle}>
+          <span style={labelStyle}>Color (+)</span>
+          <input
+            type="color"
+            className="nodrag"
+            data-testid="isosurface-color"
+            value={params.color}
+            style={colorStyle}
+            onChange={(e) => updateNodeParams(id, { color: e.target.value })}
+          />
+        </div>
+      )}
+
+      {/* Colormap + range (volume mode) */}
+      {colorMode === "volume" && (
+        <>
+          <div style={rowStyle}>
+            <span style={labelStyle}>Colormap</span>
+            <select
+              className="nodrag"
+              data-testid="isosurface-colormap"
+              value={params.colormap ?? "rwb"}
+              style={selectStyle}
+              onChange={(e) => updateNodeParams(id, { colormap: e.target.value as VolumeColormap })}
+            >
+              {(Object.entries(VOLUME_COLORMAP_LABELS) as [VolumeColormap, string][]).map(
+                ([value, label]) => (
+                  <option key={value} value={value}>
+                    {label}
+                  </option>
+                ),
+              )}
+            </select>
+          </div>
+          <div style={rowStyle}>
+            <span style={labelStyle}>Range</span>
+            <input
+              type="number"
+              className="nodrag"
+              data-testid="isosurface-range-min"
+              placeholder="auto"
+              value={rangeMinText}
+              step={0.001}
+              style={rangeInputStyle}
+              onChange={(e) => {
+                setRangeMinText(e.target.value);
+                commitRange(e.target.value, rangeMaxText);
+              }}
+            />
+            <input
+              type="number"
+              className="nodrag"
+              data-testid="isosurface-range-max"
+              placeholder="auto"
+              value={rangeMaxText}
+              step={0.001}
+              style={rangeInputStyle}
+              onChange={(e) => {
+                setRangeMaxText(e.target.value);
+                commitRange(rangeMinText, e.target.value);
+              }}
+            />
+          </div>
+        </>
+      )}
 
       {/* Opacity */}
       <div style={rowStyle}>
@@ -132,8 +240,8 @@ export function IsosurfaceNode({ id, data }: NodeProps<Node<PipelineNodeData>>) 
         </label>
       </div>
 
-      {/* Negative color (shown only when toggle is on) */}
-      {params.showNegative && (
+      {/* Negative color (shown only when toggle is on and coloring is solid) */}
+      {params.showNegative && colorMode === "solid" && (
         <div style={rowStyle}>
           <span style={labelStyle}>Color (−)</span>
           <input
