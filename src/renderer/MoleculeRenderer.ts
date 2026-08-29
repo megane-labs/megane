@@ -1434,6 +1434,15 @@ export class MoleculeRenderer {
     this.scene.add(this.atomRenderer.mesh);
     this.scene.add(this.bondRenderer.mesh);
 
+    // Keep the bond shader's copy of the ball sizes current so each stick is
+    // trimmed where it enters a ball (see the CSG union note in shaders.ts).
+    // The sink fires on every atom restyle, so no individual call site has to
+    // remember to push.
+    atoms.setRadiusSink((radii, scale) => {
+      if (radii) bonds.setAtomRadii(radii);
+      bonds.setAtomRadiusScale(scale);
+    });
+
     // Re-apply stored appearance settings
     if (this.atomOpacity !== 1.0) {
       this.atomRenderer.setOpacity?.(this.atomOpacity);

@@ -16,6 +16,8 @@ import type { Snapshot } from "../types";
 import { type ColorContext, getAtomColorForScheme } from "../colorSchemes";
 import {
   getColor,
+  getRadius,
+  BALL_STICK_ATOM_SCALE,
   BOND_RADIUS,
   BOND_SINGLE,
   BOND_DOUBLE,
@@ -82,6 +84,15 @@ export class ImpostorBondMesh {
   private positionTexWidth: number = 1;
   private positionTexHeight: number = 1;
   private nAtoms: number = 0;
+  /**
+   * Per-atom sphere radius the atom impostor is currently drawing, mirrored so
+   * it survives a topology rebuild. Rides in the alpha channel of the position
+   * texture (RGB = position) so the bond shader can trim each stick at the
+   * ball's surface without a second texture fetch. Zero means "no ball here",
+   * which disables the trim for that endpoint.
+   */
+  private atomRadii: Float32Array = new Float32Array(0);
+  private nAtomRadii: number = 0;
 
   private capacity: number;
 
@@ -135,6 +146,9 @@ export class ImpostorBondMesh {
       uniforms: {
         uOpacity: { value: 1.0 },
         uBondScaleMultiplier: { value: 1.0 },
+        // Global multiplier on the per-atom trim radii in the position
+        // texture's alpha channel; 0 disables the junction trim entirely.
+        uAtomRadiusScale: { value: 1.0 },
         uPositionTex: { value: this.positionTex },
         uPositionTexWidth: { value: 1 },
         uUsePerBondOverrides: { value: 0 },
@@ -156,6 +170,7 @@ export class ImpostorBondMesh {
     this.positionTexHeight = Math.max(1, Math.ceil(nAtoms / this.positionTexWidth));
     this.positionTexData = new Float32Array(this.positionTexWidth * this.positionTexHeight * 4);
     this.copyPositionsToTexData(positions);
+    this.seedAtomRadiiFromElements(elements);
 
     this.positionTex.dispose();
     this.positionTex = new THREE.DataTexture(
@@ -415,8 +430,63 @@ export class ImpostorBondMesh {
       data[i4] = positions[i3];
       data[i4 + 1] = positions[i3 + 1];
       data[i4 + 2] = positions[i3 + 2];
-      // data[i4 + 3] unused (alpha channel)
+      // data[i4 + 3] is the atom's sphere radius, written by
+      // seedAtomRadiiFromElements / setAtomRadii — never clobber it here, this
+      // runs every frame while radii only change when the atoms are restyled.
     }
+  }
+
+  /**
+   * Fill the radius channel with each atom's default ball-and-stick radius.
+   * Runs on every topology rebuild so PBC ghost atoms — which live past the
+   * real-atom range and are drawn by a separate boundary renderer — get a
+   * sensible trim radius; setAtomRadii then overwrites the real atoms with
+   * whatever the atom impostor actually has on screen.
+   */
+  private seedAtomRadiiFromElements(elements: Uint8Array): void {
+    const data = this.positionTexData;
+    for (let i = 0; i < this.nAtoms; i++) {
+      data[i * 4 + 3] = getRadius(elements[i]) * BALL_STICK_ATOM_SCALE;
+    }
+    this.writeAtomRadiiToTexData();
+  }
+
+  /**
+   * Mirror the atom impostor's per-atom radii (base radius × per-atom scale
+   * override, zeroed for invisible atoms) so the bond shader can trim each
+   * stick where it enters a ball. Called by the owning layer whenever the atom
+   * renderer restyles; the values are cached and re-applied after every
+   * topology rebuild.
+   */
+  setAtomRadii(radii: Float32Array): void {
+    const n = radii.length;
+    if (this.atomRadii.length < n) this.atomRadii = new Float32Array(n);
+    this.atomRadii.set(radii);
+    this.nAtomRadii = n;
+    if (this.writeAtomRadiiToTexData()) {
+      this.positionTex.needsUpdate = true;
+    }
+  }
+
+  /**
+   * Global multiplier the shader applies to those radii, matching the atom
+   * impostor's own scale uniform. 0 means the atoms draw nothing, which turns
+   * the trim off so sticks stay whole. O(1), so the atom mesh's O(1) scale /
+   * opacity updates stay O(1) here too.
+   */
+  setAtomRadiusScale(scale: number): void {
+    this.bondMaterial.uniforms.uAtomRadiusScale.value = scale;
+  }
+
+  /** Copy the mirrored radii into the texture's alpha channel. */
+  private writeAtomRadiiToTexData(): boolean {
+    const limit = Math.min(this.nAtoms, this.nAtomRadii);
+    if (limit === 0) return false;
+    const data = this.positionTexData;
+    for (let i = 0; i < limit; i++) {
+      data[i * 4 + 3] = this.atomRadii[i];
+    }
+    return true;
   }
 
   /**
