@@ -123,6 +123,27 @@ describe("MoleculeRenderer — illustrative representation", () => {
     expect(r[1]).toBeCloseTo(LICORICE_RADIUS, 6);
   });
 
+  it("sizes the drawn selection highlight spheres to the active representation", () => {
+    // toggleAtomSelection redraws the measurement selection group; the spheres
+    // it puts there must grow with the atoms or they end up invisible inside
+    // the spacefill surface.
+    const { renderer } = makeRendererWithMeshes();
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const internals = renderer as any;
+
+    renderer.setRepresentationType("atoms");
+    renderer.toggleAtomSelection(0);
+    const ballAndStickR = internals.selectionGroup.children[0].geometry.parameters.radius;
+
+    renderer.setRepresentationType("illustrative");
+    renderer.toggleAtomSelection(0); // deselect
+    renderer.toggleAtomSelection(0); // reselect, now redrawn spacefill
+    const spacefillR = internals.selectionGroup.children[0].geometry.parameters.radius;
+
+    expect(internals.selectionGroup.children.length).toBe(1);
+    expect(spacefillR / ballAndStickR).toBeCloseTo(SPACEFILL_ATOM_SCALE / BALL_STICK_ATOM_SCALE, 4);
+  });
+
   it("scales picking and selection highlights with the spacefill radius", () => {
     // Picking and the highlight spheres both size themselves off this: a
     // ball-and-stick radius would leave most of a spacefill sphere unclickable
