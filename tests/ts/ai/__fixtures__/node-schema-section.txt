@@ -179,11 +179,15 @@ Visualizes per-atom vectors (forces, velocities) as arrows.
 
 ### isosurface
 Renders an isosurface (contour) of volumetric scalar-field data.
-- Parameters: `{ type: "isosurface", isoLevel: number, color: string, opacity: number, showNegative: boolean, negativeColor: string }`
+- Parameters: `{ type: "isosurface", isoLevel: number, color: string, opacity: number, showNegative: boolean, negativeColor: string, colorMode: "solid" | "volume", colormap: "rwb" | "bwr" | "rainbow", colorRange?: [number, number] }`
   - isoLevel: contour level for the positive surface (default 0.05)
   - showNegative: also draw a second surface at -isoLevel (e.g. for
     electrostatic potential maps), colored with `negativeColor`
-- Inputs: `volumetric` (volumetric data type)
+  - colorMode "volume": paint the surface by sampling a second volume
+    connected to the `colorVolumetric` input (e.g. ESP mapped onto a
+    charge-density isosurface) through `colormap`; the optional `colorRange`
+    fixes the [min, max] mapping (omit for auto)
+- Inputs: `volumetric` (volumetric data type), `colorVolumetric` (optional volumetric used for coloring when colorMode is "volume")
 - Outputs: `mesh` (mesh data type)
 
 ### viewport
