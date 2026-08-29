@@ -90,16 +90,21 @@ jobs:
       - name: Sync static site to S3
         run: |
           set -euo pipefail
-          # Long cache for hashed Vite assets, short cache for index.html so
-          # users always pick up the latest entrypoint after deploy.
+          # Long cache for hashed Vite assets, short cache for every HTML
+          # entrypoint so users always pick up the latest one after deploy.
+          # Matched by extension rather than by name: the app has more than one
+          # entry, and an immutable HTML file would pin users to asset hashes
+          # the next --delete sync removes.
           aws s3 sync python/megane/static/app/ "s3://${{ steps.tf.outputs.bucket_name }}/" \
             --delete \
-            --exclude "index.html" \
+            --exclude "*.html" \
             --cache-control "public,max-age=31536000,immutable"
-          aws s3 cp python/megane/static/app/index.html \
-            "s3://${{ steps.tf.outputs.bucket_name }}/index.html" \
-            --cache-control "public,max-age=0,must-revalidate" \
-            --content-type "text/html; charset=utf-8"
+          for html in python/megane/static/app/*.html; do
+            aws s3 cp "$html" \
+              "s3://${{ steps.tf.outputs.bucket_name }}/$(basename "$html")" \
+              --cache-control "public,max-age=0,must-revalidate" \
+              --content-type "text/html; charset=utf-8"
+          done
 
       - name: Invalidate CloudFront cache
         run: |
