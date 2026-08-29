@@ -74,4 +74,11 @@ describe("executeRepresentation", () => {
     const result = out.get("out") as ParticleData;
     expect(result.representationOverride).toBe("line");
   });
+
+  it("tags the outgoing particle with the illustrative mode", () => {
+    const params: RepresentationParams = { type: "representation", mode: "illustrative" };
+    const out = executeRepresentation(params, inputs(makeParticle()));
+    const result = out.get("out") as ParticleData;
+    expect(result.representationOverride).toBe("illustrative");
+  });
 });

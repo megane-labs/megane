@@ -7,7 +7,7 @@ import {
   type ColorScheme,
 } from "@/colorSchemes";
 import type { Snapshot } from "@/types";
-import { getColor } from "@/constants";
+import { getColor, ILLUSTRATIVE_CARBON_LIGHTNESS } from "@/constants";
 
 function makeSnapshot(over: Partial<Snapshot> = {}): Snapshot {
   return {
@@ -26,7 +26,14 @@ function makeSnapshot(over: Partial<Snapshot> = {}): Snapshot {
 
 describe("COLOR_SCHEME_LABELS", () => {
   it("provides a label for every scheme", () => {
-    const schemes: ColorScheme[] = ["byElement", "byResidue", "byChain", "byBFactor", "byProperty"];
+    const schemes: ColorScheme[] = [
+      "byElement",
+      "byResidue",
+      "byChain",
+      "byBFactor",
+      "byProperty",
+      "illustrative",
+    ];
     for (const s of schemes) {
       expect(COLOR_SCHEME_LABELS[s]).toBeTypeOf("string");
       expect(COLOR_SCHEME_LABELS[s].length).toBeGreaterThan(0);
@@ -227,6 +234,58 @@ describe("getAtomColorForScheme — byProperty", () => {
     };
     // value=0, default range=[0,1] → blue end
     expect(getAtomColorForScheme(0, snap, ctx)).toEqual([0.07, 0.11, 0.58]);
+  });
+});
+
+describe("getAtomColorForScheme — illustrative", () => {
+  it("gives carbon a lightened chain color and leaves other elements CPK", () => {
+    // Two chains ('A', 'B') of C/N so the carbon tint differs per chain while
+    // the nitrogen keeps its CPK blue, as in Mol*'s illustrative color theme.
+    const snap = makeSnapshot({
+      elements: new Uint8Array([6, 7, 6, 7]),
+      atomChainIds: new Uint8Array([65, 65, 66, 66]),
+    });
+    const ctx: ColorContext = { scheme: "illustrative", atomLabels: null };
+    const chainCtx: ColorContext = { scheme: "byChain", atomLabels: null };
+
+    const carbonA = getAtomColorForScheme(0, snap, ctx);
+    const carbonB = getAtomColorForScheme(2, snap, ctx);
+    expect(carbonA).not.toEqual(carbonB);
+
+    // Non-carbon keeps the plain CPK color.
+    expect(getAtomColorForScheme(1, snap, ctx)).toEqual(getColor(7));
+    expect(getAtomColorForScheme(3, snap, ctx)).toEqual(getColor(7));
+
+    // Carbon is the chain color blended toward white, so each channel sits
+    // between the raw chain color and 1.
+    const rawA = getAtomColorForScheme(0, snap, chainCtx);
+    for (let c = 0; c < 3; c++) {
+      expect(carbonA[c]).toBeGreaterThan(rawA[c] - 1e-6);
+      expect(carbonA[c]).toBeLessThanOrEqual(1);
+    }
+    expect(carbonA).not.toEqual(rawA);
+  });
+
+  it("lightens carbon by exactly ILLUSTRATIVE_CARBON_LIGHTNESS", () => {
+    const snap = makeSnapshot({
+      elements: new Uint8Array([6]),
+      atomChainIds: new Uint8Array([65]),
+    });
+    const raw = getAtomColorForScheme(0, snap, { scheme: "byChain", atomLabels: null });
+    const lit = getAtomColorForScheme(0, snap, { scheme: "illustrative", atomLabels: null });
+    for (let c = 0; c < 3; c++) {
+      expect(lit[c]).toBeCloseTo(raw[c] + (1 - raw[c]) * ILLUSTRATIVE_CARBON_LIGHTNESS, 6);
+    }
+  });
+
+  it("falls back to chain 'A' when the structure carries no chain IDs", () => {
+    const withIds = makeSnapshot({
+      elements: new Uint8Array([6]),
+      atomChainIds: new Uint8Array([65]),
+    });
+    const without = makeSnapshot({ elements: new Uint8Array([6]), atomChainIds: null });
+    const ctx: ColorContext = { scheme: "illustrative", atomLabels: null };
+    expect(getAtomColorForScheme(0, without, ctx)).toEqual(getAtomColorForScheme(0, withIds, ctx));
   });
 });
 

@@ -41,8 +41,9 @@ The selection language supports the fields `element`, `index`, `x`/`y`/`z`,
 ## Appearance
 
 For the active layer you can set the **color** (uniform or by
-element/residue/chain/B-factor), the **representation** (ball, licorice,
-cartoon, surface, line…), the atom **size** and **opacity**, and toggle
+element/residue/chain/B-factor/illustrative), the **representation** (ball,
+licorice, cartoon, surface, line, illustrative…), the atom **size** and
+**opacity**, and toggle
 **visibility**. Changes apply immediately and are reflected in the Editor tab.
 
 ## Availability

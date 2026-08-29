@@ -604,7 +604,14 @@ export interface AddBondParams {
  * Visual representation mode applied per-stream by the Representation node and
  * read by the Viewport when collecting incoming particle data.
  */
-export type RepresentationMode = "atoms" | "licorice" | "cartoon" | "both" | "surface" | "line";
+export type RepresentationMode =
+  | "atoms"
+  | "licorice"
+  | "cartoon"
+  | "both"
+  | "surface"
+  | "line"
+  | "illustrative";
 
 export interface ViewportParams {
   type: "viewport";
@@ -626,7 +633,8 @@ export type ColorMode =
   | "byResidue"
   | "byChain"
   | "byBFactor"
-  | "byProperty";
+  | "byProperty"
+  | "illustrative";
 
 export interface ModifyParams {
   type: "modify";

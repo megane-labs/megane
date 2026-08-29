@@ -124,6 +124,16 @@ class TestNodeClasses:
         assert n.mode == "licorice"
         assert n._node_type == "representation"
 
+    def test_representation_illustrative(self):
+        n = Representation(mode="illustrative")
+        assert n.mode == "illustrative"
+        assert n._node_type == "representation"
+
+    def test_color_illustrative(self):
+        n = Color(mode="illustrative")
+        assert n.mode == "illustrative"
+        assert n._node_type == "color"
+
     def test_add_bonds_default(self):
         n = AddBonds()
         assert n.source == "distance"
@@ -700,6 +710,21 @@ class TestPipelineSerialization:
 
         rep_node = next(n for n in result["nodes"] if n["type"] == "representation")
         assert rep_node["mode"] == "surface"
+
+    def test_illustrative_serialization(self):
+        """Mol*-style illustrative: the color and representation nodes pair up."""
+        pipe = Pipeline()
+        s = pipe.add_node(LoadStructure(str(FIXTURES / "1crn.pdb")))
+        c = pipe.add_node(Color(mode="illustrative"))
+        r = pipe.add_node(Representation(mode="illustrative"))
+        pipe.add_edge(s.out.particle, c.inp.particle)
+        pipe.add_edge(c.out.particle, r.inp.particle)
+        result = pipe.to_dict()
+
+        color_node = next(n for n in result["nodes"] if n["type"] == "color")
+        rep_node = next(n for n in result["nodes"] if n["type"] == "representation")
+        assert color_node["mode"] == "illustrative"
+        assert rep_node["mode"] == "illustrative"
 
     def test_color_representation_round_trip(self):
         pipe = Pipeline()

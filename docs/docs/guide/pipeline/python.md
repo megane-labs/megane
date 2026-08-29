@@ -222,7 +222,9 @@ modifier stack).
 ```python
 Color(
     *,
-    mode: Literal["uniform", "byElement", "byResidue", "byChain", "byBFactor", "byProperty"] = "uniform",
+    mode: Literal[
+        "uniform", "byElement", "byResidue", "byChain", "byBFactor", "byProperty", "illustrative"
+    ] = "uniform",
     uniform_color: str = "#ff8800",
     range: tuple[float, float] | None = None,
 )
@@ -230,7 +232,7 @@ Color(
 
 | Parameter       | Type                          | Default     | Description                                            |
 | --------------- | ----------------------------- | ----------- | ------------------------------------------------------ |
-| `mode`          | `str`                         | `"uniform"` | Coloring scheme                                        |
+| `mode`          | `str`                         | `"uniform"` | Coloring scheme. `"illustrative"` is Mol*-style: carbon takes a lightened chain color while every other element keeps its CPK color |
 | `uniform_color` | `str`                         | `"#ff8800"` | Hex color used when `mode == "uniform"`                |
 | `range`         | `tuple[float, float] \| None` | `None`      | Optional explicit range for `byBFactor` / `byProperty` |
 
@@ -245,12 +247,17 @@ wins over an upstream one on the same chain. When no chain has an override,
 the Viewport falls back to `"atoms"`.
 
 ```python
-Representation(*, mode: Literal["atoms", "licorice", "cartoon", "both", "surface", "line"] = "atoms")
+Representation(
+    *,
+    mode: Literal[
+        "atoms", "licorice", "cartoon", "both", "surface", "line", "illustrative"
+    ] = "atoms",
+)
 ```
 
 | Parameter | Type  | Default   | Description                                                                                                                                                        |
 | --------- | ----- | --------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `mode`    | `str` | `"atoms"` | Visual representation: `"atoms"` (ball-and-stick), `"licorice"` (equal-radius continuous sticks), `"cartoon"`, `"both"`, `"surface"`, or `"line"` (thin wireframe) |
+| `mode`    | `str` | `"atoms"` | Visual representation: `"atoms"` (ball-and-stick), `"licorice"` (equal-radius continuous sticks), `"cartoon"`, `"both"`, `"surface"`, `"line"` (thin wireframe), or `"illustrative"` (Mol*-style spacefill spheres, flat unlit shading with a dark silhouette outline, bonds hidden) |
 
 **Ports:** `inp.particle`, `out.particle`
 

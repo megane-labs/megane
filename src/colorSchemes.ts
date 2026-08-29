@@ -7,12 +7,20 @@
  *   byChain    – Categorical palette cycling over chain ID
  *   byBFactor  – Continuous cool→hot viridis-like scale keyed on B-factor
  *   byProperty – Arbitrary per-atom numeric array with user-supplied range
+ *   illustrative – Mol*-style: carbon takes a lightened chain color, every
+ *                  other element keeps its CPK color
  */
 
 import type { Snapshot } from "./types";
-import { getColor } from "./constants";
+import { getColor, ILLUSTRATIVE_CARBON_LIGHTNESS } from "./constants";
 
-export type ColorScheme = "byElement" | "byResidue" | "byChain" | "byBFactor" | "byProperty";
+export type ColorScheme =
+  | "byElement"
+  | "byResidue"
+  | "byChain"
+  | "byBFactor"
+  | "byProperty"
+  | "illustrative";
 
 export const COLOR_SCHEME_LABELS: Record<ColorScheme, string> = {
   byElement: "Element",
@@ -20,6 +28,7 @@ export const COLOR_SCHEME_LABELS: Record<ColorScheme, string> = {
   byChain: "Chain",
   byBFactor: "B-Factor",
   byProperty: "Property",
+  illustrative: "Illustrative",
 };
 
 // ─── Residue colors (Shapely palette) ────────────────────────────────────────
@@ -114,6 +123,14 @@ function parseResidueName(label: string): string {
 
 // ─── Chain ID → palette index ─────────────────────────────────────────────────
 
+/** Blend a color toward white by `t` (0 = unchanged, 1 = white). */
+function lighten(rgb: [number, number, number], t: number): [number, number, number] {
+  return [rgb[0] + (1 - rgb[0]) * t, rgb[1] + (1 - rgb[1]) * t, rgb[2] + (1 - rgb[2]) * t];
+}
+
+/** Atomic number of carbon — the element the illustrative scheme recolors. */
+const CARBON_Z = 6;
+
 function chainIdToIndex(chainByte: number): number {
   // Map ASCII 'A'-'Z' → 0-25, 'a'-'z' → 26-51, '0'-'9' → 52-61, else 0
   if (chainByte >= 65 && chainByte <= 90) return chainByte - 65;
@@ -170,6 +187,21 @@ export function getAtomColorForScheme(
       const val = ctx.propertyValues?.[atomIdx] ?? 0;
       const [minV, maxV] = ctx.propertyRange ?? [0, 1];
       return bfactorToColor(val, minV, maxV);
+    }
+
+    case "illustrative": {
+      // Mol*'s illustrative color theme: carbon carries the chain (entity)
+      // color so each chain reads as one body, while every other element keeps
+      // its CPK color so heteroatoms still stand out. The chain color is
+      // lightened for carbon, otherwise the CPK reds/blues disappear into it.
+      // Structures without chain IDs fall back to chain 'A' — every carbon then
+      // shares one tint, which is still the intended Goodsell-style look.
+      if (snapshot.elements[atomIdx] !== CARBON_Z) {
+        return getColor(snapshot.elements[atomIdx]);
+      }
+      const chainByte = snapshot.atomChainIds?.[atomIdx] ?? 65; // default 'A'
+      const idx = chainIdToIndex(chainByte) % CHAIN_COLORS.length;
+      return lighten(CHAIN_COLORS[idx], ILLUSTRATIVE_CARBON_LIGHTNESS);
     }
   }
 }

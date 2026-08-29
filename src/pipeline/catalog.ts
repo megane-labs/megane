@@ -389,7 +389,8 @@ export const NODE_CATALOG: Record<PipelineNodeType, NodeCatalogEntry> = {
     params: [
       {
         jsonKey: "mode",
-        tsType: '"uniform" | "byElement" | "byResidue" | "byChain" | "byBFactor" | "byProperty"',
+        tsType:
+          '"uniform" | "byElement" | "byResidue" | "byChain" | "byBFactor" | "byProperty" | "illustrative"',
         default: '"uniform"',
         doc: "Coloring scheme.",
       },
@@ -410,6 +411,7 @@ export const NODE_CATALOG: Record<PipelineNodeType, NodeCatalogEntry> = {
       '"uniform": every atom gets `uniformColor` (hex string, e.g. "#ff8800")',
       '"byElement" / "byResidue" / "byChain": categorical palette by that property',
       '"byBFactor" / "byProperty": continuous palette over `range` (auto-computed if omitted)',
+      '"illustrative": Mol*-style — carbon takes a lightened chain color, every other element keeps its CPK color; pair it with the "illustrative" representation for a Goodsell-style figure',
     ],
     promptInputs: "`in` (particle only — NOT bond)",
     promptOutputs: "`out` (particle)",
@@ -421,7 +423,7 @@ export const NODE_CATALOG: Record<PipelineNodeType, NodeCatalogEntry> = {
     params: [
       {
         jsonKey: "mode",
-        tsType: '"atoms" | "licorice" | "cartoon" | "both" | "surface" | "line"',
+        tsType: '"atoms" | "licorice" | "cartoon" | "both" | "surface" | "line" | "illustrative"',
         default: '"atoms"',
         doc: "Rendering style for the particle stream.",
       },
@@ -433,6 +435,7 @@ export const NODE_CATALOG: Record<PipelineNodeType, NodeCatalogEntry> = {
       '"both": atoms and cartoon overlaid',
       '"surface": molecular surface',
       '"line": thin wireframe lines (VMD/PyMOL "lines" style)',
+      '"illustrative": Mol*-style spacefill spheres at full van der Waals radius with flat, unlit shading and a dark silhouette outline; bonds are hidden. Best paired with a `color` node in "illustrative" mode',
     ],
     promptInputs: "`in` (particle only — NOT bond)",
     promptOutputs: "`out` (particle)",

@@ -452,6 +452,33 @@ export const BOND_RADIUS = 0.15;
  */
 export const LICORICE_RADIUS = 0.3;
 
+/**
+ * Spacefill atom radius scale factor: atoms are drawn at their full van der
+ * Waals radius, as in Mol*'s `spacefill` representation. Used by the
+ * `illustrative` representation.
+ */
+export const SPACEFILL_ATOM_SCALE = 1.0;
+
+/**
+ * Silhouette outline width, in device pixels, drawn around every sphere in the
+ * `illustrative` representation. Mol* draws its outline as a screen-space
+ * post-process over the depth buffer; megane instead darkens a constant-width
+ * band at each impostor's silhouette, which needs no extra render target and so
+ * behaves identically in the offscreen render/capture path and on every host.
+ */
+export const ILLUSTRATIVE_OUTLINE_WIDTH = 2.0;
+
+/** Silhouette outline color for the `illustrative` representation. */
+export const ILLUSTRATIVE_OUTLINE_COLOR: [number, number, number] = [0.0, 0.0, 0.0];
+
+/**
+ * How far carbon is blended toward white in the `illustrative` color scheme
+ * (0 = the raw chain color, 1 = white). Mirrors Mol*'s `carbonLightness`
+ * parameter on its illustrative color theme, which lightens the carbon of each
+ * chain so non-carbon CPK colors stay readable against it.
+ */
+export const ILLUSTRATIVE_CARBON_LIGHTNESS = 0.35;
+
 /** Bond order constants (matches Python encoding). */
 export const BOND_SINGLE = 1;
 export const BOND_DOUBLE = 2;

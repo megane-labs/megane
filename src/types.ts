@@ -131,6 +131,10 @@ export interface AtomRenderer {
   updatePositions(positions: Float32Array): void;
   setScale?(scale: number, snapshot: Snapshot): void;
   setUniformRadius?(radius: number | null, snapshot: Snapshot): void;
+  /** Fraction of the vdW radius atoms are drawn at (ball-and-stick vs spacefill). */
+  setRadiusScale?(scale: number, snapshot: Snapshot): void;
+  /** Toggle flat, unlit shading with a silhouette outline (illustrative mode). */
+  setIllustrative?(enabled: boolean): void;
   setOpacity?(opacity: number): void;
   setScaleOverrides?(overrides: Float32Array): void;
   setOpacityOverrides?(overrides: Float32Array): void;

@@ -155,6 +155,11 @@ export default defineConfig({
       use: { baseURL: `http://127.0.0.1:${PORT_WEBAPP}` },
     },
     {
+      name: "illustrative",
+      testMatch: /illustrative\.spec\.ts$/,
+      use: { baseURL: `http://127.0.0.1:${PORT_WEBAPP}` },
+    },
+    {
       name: "water-line",
       testMatch: /water-line\.spec\.ts$/,
       timeout: 120_000,

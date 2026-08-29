@@ -6,6 +6,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+### Added
+
+- **`illustrative` representation and color mode — Mol*'s illustrative style (Goodsell-like figures).** The Representation node gains `"illustrative"`: spacefill spheres at the full van der Waals radius, flat unlit shading, and a constant-width dark silhouette outline, with bonds hidden (the touching spheres already swallow them). The Color node gains a matching `"illustrative"` mode: carbon takes a lightened per-chain color while every other element keeps its CPK color, so each chain reads as one body and the heteroatoms still stand out. Pair the two for the full Mol* preset (`Color(mode="illustrative") → Representation(mode="illustrative")`); either works on its own. Available in the visual editor, the Inspector's appearance panel, the pipeline JSON, and the Python/TypeScript builders. Unlike Mol*, the outline is drawn inside the impostor's own fragment shader rather than as a screen-space post-process, so it needs no extra render target and behaves identically in the offscreen render/capture path and on every host.
+
+- The TypeScript pipeline builder's `RepresentationMode` was missing `"licorice"`, which the Python builder, the JSON schema and the renderer have all accepted for some time; it is now in the union alongside the new `"illustrative"`.
+
 ### Changed
 
 - **The project moved from `hodakamori/megane` to `megane-labs/megane`, and the docs site moved with it.** The GitHub Pages site is now served at <https://megane-labs.github.io/megane/>; the old <https://hodakamori.github.io/megane/> URL returns 404. Every repository and docs link in the README, docs site, package manifests (npm, PyPI, Cargo, JupyterLab, VS Code) and the in-app tour was repointed. Two of these were functional rather than cosmetic: `package.json`'s `repository.url` gates `npm publish --provenance`, and the LLM proxy's `ALLOWED_ORIGIN` gates CORS for the docs demo's AI chat. The VS Code Marketplace publisher (`hodakamori.vscode-megane`) and all authorship fields are unchanged — they identify a person and a Marketplace account, not the repository.

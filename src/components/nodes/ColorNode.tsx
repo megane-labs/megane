@@ -45,6 +45,7 @@ const COLOR_MODE_LABELS: Record<ColorMode, string> = {
   byChain: "Chain",
   byBFactor: "B-Factor",
   byProperty: "Property",
+  illustrative: "Illustrative",
 };
 
 export function ColorNode({ id, data }: NodeProps<Node<PipelineNodeData>>) {
