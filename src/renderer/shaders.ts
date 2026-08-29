@@ -123,6 +123,7 @@ export const bondVertexShader = /* glsl */ `precision highp float;
   uniform mat4 modelViewMatrix;
   uniform mat4 projectionMatrix;
   uniform float uBondScaleMultiplier;
+  uniform float uAtomRadiusScale;
   uniform sampler2D uPositionTex;
   uniform int uPositionTexWidth;
 
@@ -152,11 +153,19 @@ export const bondVertexShader = /* glsl */ `precision highp float;
   out float vRadius;
   out float vHalfLen;
   out vec3 vViewRayPos;
+  // Endpoint spheres in view space, used by the fragment shader to trim the
+  // stick where it is buried inside a ball (see the CSG union note there).
+  // The radii ride in the alpha channel of the position texture, scaled by
+  // uAtomRadiusScale — together they mirror whatever the atom impostor draws.
+  out vec3 vViewCenterA;
+  out vec3 vViewCenterB;
+  out float vAtomRadiusA;
+  out float vAtomRadiusB;
 
-  vec3 getAtomPos(int idx) {
+  vec4 getAtomTexel(int idx) {
     int tx = idx % uPositionTexWidth;
     int ty = idx / uPositionTexWidth;
-    return texelFetch(uPositionTex, ivec2(tx, ty), 0).rgb;
+    return texelFetch(uPositionTex, ivec2(tx, ty), 0);
   }
 
   void main() {
@@ -167,8 +176,18 @@ export const bondVertexShader = /* glsl */ `precision highp float;
 
     int atomA = int(instanceAtomA + 0.5);
     int atomB = int(instanceAtomB + 0.5);
-    vec3 posA = getAtomPos(atomA);
-    vec3 posB = getAtomPos(atomB);
+    vec4 texelA = getAtomTexel(atomA);
+    vec4 texelB = getAtomTexel(atomB);
+    vec3 posA = texelA.rgb;
+    vec3 posB = texelB.rgb;
+
+    // Sphere centres stay on the atoms even when the cylinder is pushed aside
+    // for a double / triple / aromatic bond, so the trim below cuts against
+    // the ball that is actually drawn.
+    vViewCenterA = (modelViewMatrix * vec4(posA, 1.0)).xyz;
+    vViewCenterB = (modelViewMatrix * vec4(posB, 1.0)).xyz;
+    vAtomRadiusA = texelA.a * uAtomRadiusScale;
+    vAtomRadiusB = texelB.a * uAtomRadiusScale;
 
     vec3 start = posA;
     vec3 end = posB;
@@ -228,6 +247,10 @@ export const bondFragmentShader = /* glsl */ `precision highp float;
   in float vRadius;
   in float vHalfLen;
   in vec3 vViewRayPos;
+  in vec3 vViewCenterA;
+  in vec3 vViewCenterB;
+  in float vAtomRadiusA;
+  in float vAtomRadiusB;
 
   uniform mat4 projectionMatrix;
   uniform float uOpacity;
@@ -264,6 +287,20 @@ export const bondFragmentShader = /* glsl */ `precision highp float;
     vec3 hit = ro + t * rd;
     float axial = dot(hit - vViewMid, d);
     if (abs(axial) > vHalfLen) discard; // beyond the stick ends; the spheres cap it
+
+    // CSG union trim. The cylinder runs centre-to-centre, so its ends are
+    // buried inside the endpoint spheres. An opaque atom hides that via the
+    // depth test — an interior point is always behind the sphere's front face
+    // along the same ray — but a transparent one stops writing depth and the
+    // buried stick blends through, so the ball reads as a bead threaded onto a
+    // rod. Discarding the fragments inside either sphere leaves exactly the
+    // union's outer surface: one covering surface per pixel, and the stick ends
+    // on the ball's skin at any viewing angle. Radius 0 (atom hidden or faded
+    // out entirely) disables the trim, so a stick with no ball stays whole.
+    vec3 toA = hit - vViewCenterA;
+    if (dot(toA, toA) < vAtomRadiusA * vAtomRadiusA) discard;
+    vec3 toB = hit - vViewCenterB;
+    if (dot(toB, toB) < vAtomRadiusB * vAtomRadiusB) discard;
 
     vec3 normal = normalize((hit - vViewMid) - axial * d);
     if (dot(normal, rd) > 0.0) normal = -normal; // face the camera

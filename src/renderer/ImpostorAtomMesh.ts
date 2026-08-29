@@ -41,6 +41,14 @@ export class ImpostorAtomMesh {
   // When non-null, every atom renders at this fixed radius (licorice mode);
   // when null, radii fall back to per-element vdW * BALL_STICK_ATOM_SCALE.
   private uniformRadius: number | null = null;
+  /**
+   * Notified whenever the balls change size. The bond impostor subscribes so it
+   * can trim each stick at the ball's surface; see `getBaseRadii` /
+   * `getRadiusScale`. `radii` is null when only the global scalars moved, which
+   * keeps the O(1) uniform updates O(1) on the bond side too.
+   */
+  private radiusSink: ((radii: Float32Array | null, scale: number) => void) | null = null;
+  private baseRadiusBuf: Float32Array = new Float32Array(0);
 
   constructor(maxAtoms: number = 1_000_000) {
     this.capacity = maxAtoms;
@@ -136,6 +144,7 @@ export class ImpostorAtomMesh {
     this.scaleOverrideAttr.needsUpdate = true;
     this.opacityOverrideAttr.needsUpdate = true;
     this.geo.instanceCount = nAtoms;
+    this.publishRadii(true);
   }
 
   updatePositions(positions: Float32Array): void {
@@ -147,6 +156,7 @@ export class ImpostorAtomMesh {
   /** Update atom radius scale (O(1) via shader uniform). */
   setScale(_scale: number, _snapshot: Snapshot): void {
     this.material.uniforms.uScaleMultiplier.value = _scale;
+    this.publishRadii(false);
   }
 
   /**
@@ -161,6 +171,7 @@ export class ImpostorAtomMesh {
       this.radiusBuf[i] = radius ?? getRadius(elements[i]) * BALL_STICK_ATOM_SCALE;
     }
     this.radiusAttr.needsUpdate = true;
+    this.publishRadii(true);
   }
 
   /** Set global atom opacity. */
@@ -169,6 +180,7 @@ export class ImpostorAtomMesh {
     this.material.transparent = opacity < 1;
     this.material.depthWrite = opacity >= 1;
     this.material.needsUpdate = true;
+    this.publishRadii(false);
   }
 
   /** Set per-atom scale overrides. */
@@ -203,6 +215,7 @@ export class ImpostorAtomMesh {
     }
     this.scaleOverrideAttr.needsUpdate = true;
     if (usePerAtom) this.material.uniforms.uUsePerAtomOverrides.value = 1;
+    this.publishRadii(true);
   }
 
   /** Set per-atom opacity overrides. */
@@ -223,6 +236,7 @@ export class ImpostorAtomMesh {
       this.material.depthWrite = false;
       this.material.needsUpdate = true;
     }
+    this.publishRadii(true);
   }
 
   /**
@@ -265,6 +279,53 @@ export class ImpostorAtomMesh {
       this.colorBuf[i3 + 2] = overrides[i3 + 2];
     }
     this.colorAttr.needsUpdate = true;
+  }
+
+  /**
+   * Subscribe to ball-size changes. The callback fires immediately with the
+   * current state and again after every restyle, so a subscriber never has to
+   * hook the individual mutators. Pass `null` to unsubscribe.
+   */
+  setRadiusSink(sink: ((radii: Float32Array | null, scale: number) => void) | null): void {
+    this.radiusSink = sink;
+    this.publishRadii(true);
+  }
+
+  /**
+   * Per-atom radius before the global multiplier: the base radius (per-element
+   * vdW or the licorice uniform radius) × the per-atom scale override. Atoms
+   * that render nothing — hidden by a representation, or faded out by a
+   * per-atom opacity override — report 0, which tells the bond shader not to
+   * trim its sticks against a ball that isn't there.
+   */
+  getBaseRadii(): Float32Array {
+    const n = this.nAtoms;
+    if (this.baseRadiusBuf.length < n) this.baseRadiusBuf = new Float32Array(n);
+    const usePerAtom = this.material.uniforms.uUsePerAtomOverrides.value === 1;
+    for (let i = 0; i < n; i++) {
+      const visible = !usePerAtom || this.opacityOverrideBuf[i] > 0;
+      const scaleOverride = usePerAtom ? this.scaleOverrideBuf[i] : 1;
+      this.baseRadiusBuf[i] = visible ? this.radiusBuf[i] * scaleOverride : 0;
+    }
+    return this.baseRadiusBuf.subarray(0, n);
+  }
+
+  /**
+   * Global multiplier on top of `getBaseRadii`, or 0 when the atoms are faded
+   * out entirely — both are plain uniform reads, so pushing them stays O(1).
+   */
+  getRadiusScale(): number {
+    const opacity = this.material.uniforms.uOpacity.value as number;
+    return opacity > 0 ? (this.material.uniforms.uScaleMultiplier.value as number) : 0;
+  }
+
+  /**
+   * Notify the sink. `perAtomChanged` is false for the global scale / opacity
+   * uniforms, which must stay O(1) — they are advertised as such and run on
+   * every pipeline apply.
+   */
+  private publishRadii(perAtomChanged: boolean): void {
+    this.radiusSink?.(perAtomChanged ? this.getBaseRadii() : null, this.getRadiusScale());
   }
 
   /**
@@ -335,6 +396,7 @@ export class ImpostorAtomMesh {
   }
 
   dispose(): void {
+    this.radiusSink = null;
     this.geo.dispose();
     this.material.dispose();
   }
