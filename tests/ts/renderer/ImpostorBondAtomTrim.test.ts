@@ -17,6 +17,7 @@
  */
 
 import { describe, it, expect } from "vitest";
+import { MoleculeRenderer } from "@/renderer/MoleculeRenderer";
 import { ImpostorAtomMesh } from "@/renderer/ImpostorAtomMesh";
 import { ImpostorBondMesh } from "@/renderer/ImpostorBondMesh";
 import { bondVertexShader, bondFragmentShader } from "@/renderer/shaders";
@@ -54,6 +55,11 @@ function makeGhostSnapshot(): Snapshot {
 function texRadii(mesh: ImpostorBondMesh, n: number): number[] {
   const data = (mesh as unknown as { positionTexData: Float32Array }).positionTexData;
   return Array.from({ length: n }, (_, i) => data[i * 4 + 3]);
+}
+
+function atomRadiusScale(mesh: ImpostorBondMesh): number {
+  return (mesh as unknown as { bondMaterial: { uniforms: Record<string, { value: number }> } })
+    .bondMaterial.uniforms.uAtomRadiusScale.value;
 }
 
 function texPositions(mesh: ImpostorBondMesh, n: number): number[] {
@@ -345,5 +351,55 @@ describe("atom/bond junction shader", () => {
     const lighting = bondFragmentShader.indexOf("Hemisphere ambient");
     expect(trim).toBeGreaterThan(0);
     expect(trim).toBeLessThan(lighting);
+  });
+});
+
+describe("MoleculeRenderer sink wiring", () => {
+  /**
+   * The renderer normally builds its atom/bond pair during canvas init. Stub
+   * the scene so swapRenderers can run without a WebGL context — this is the
+   * one place the sink is connected, so a refactor that dropped it would
+   * silently switch the junction trim off everywhere.
+   */
+  function swappedRenderer() {
+    const renderer = new MoleculeRenderer();
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const internals = renderer as any;
+    internals.scene = { add: () => {}, remove: () => {} };
+    internals.swapRenderers(true);
+    return {
+      atom: internals.atomRenderer as ImpostorAtomMesh,
+      bond: internals.bondRenderer as ImpostorBondMesh,
+    };
+  }
+
+  it("feeds the atom renderer's ball sizes into the bond renderer", () => {
+    const { atom, bond } = swappedRenderer();
+    const snap = makeSnapshot();
+
+    // Same order MoleculeRenderer.loadSnapshot uses: atoms first, bonds after.
+    atom.loadSnapshot(snap);
+    bond.loadSnapshot(snap);
+
+    const r = texRadii(bond, 2);
+    expect(r[0]).toBeCloseTo(C_RADIUS, 6);
+    expect(r[1]).toBeCloseTo(O_RADIUS, 6);
+    expect(atomRadiusScale(bond)).toBe(1);
+  });
+
+  it("forwards the global scale as a uniform after the pair is wired", () => {
+    const { atom, bond } = swappedRenderer();
+    const snap = makeSnapshot();
+    atom.loadSnapshot(snap);
+    bond.loadSnapshot(snap);
+
+    atom.setScale(2, snap);
+    expect(atomRadiusScale(bond)).toBe(2);
+
+    // Fading the atoms out entirely switches the trim off without touching the
+    // per-atom radii.
+    atom.setOpacity(0);
+    expect(atomRadiusScale(bond)).toBe(0);
+    expect(texRadii(bond, 2)[0]).toBeCloseTo(C_RADIUS, 6);
   });
 });
