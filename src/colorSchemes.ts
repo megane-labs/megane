@@ -123,13 +123,147 @@ function parseResidueName(label: string): string {
 
 // ─── Chain ID → palette index ─────────────────────────────────────────────────
 
-/** Blend a color toward white by `t` (0 = unchanged, 1 = white). */
-function lighten(rgb: [number, number, number], t: number): [number, number, number] {
-  return [rgb[0] + (1 - rgb[0]) * t, rgb[1] + (1 - rgb[1]) * t, rgb[2] + (1 - rgb[2]) * t];
+/** Atomic number of carbon — the element the illustrative scheme lightens. */
+const CARBON_Z = 6;
+
+// ─── Mol* illustrative palette and lightening (verified against molstar 5.11.0) ──
+
+/**
+ * Mol*'s `many-distinct` qualitative color list, verbatim
+ * (`mol-util/color/lists.ts`): Dark2 + Set1 + Set2 concatenated. It is the
+ * default palette of the `chain-id` and `entity-id` themes the illustrative
+ * theme builds on, and is indexed by a serial, cycling with `i % length`.
+ */
+const MANY_DISTINCT: readonly number[] = [
+  // dark-2
+  0x1b9e77, 0xd95f02, 0x7570b3, 0xe7298a, 0x66a61e, 0xe6ab02, 0xa6761d, 0x666666,
+  // set-1
+  0xe41a1c, 0x377eb8, 0x4daf4a, 0x984ea3, 0xff7f00, 0xffff33, 0xa65628, 0xf781bf, 0x999999,
+  // set-2
+  0x66c2a5, 0xfc8d62, 0x8da0cb, 0xe78ac3, 0xa6d854, 0xffd92f, 0xe5c494, 0xb3b3b3,
+];
+
+/** Mol* `EntityIdColorTheme` fallback for an atom with no resolvable entity. */
+const ILLUSTRATIVE_DEFAULT_COLOR = 0xfafafa;
+
+/** Mol* `EntityIdColorTheme.waterColor`, applied because the preset sets `overrideWater`. */
+const ILLUSTRATIVE_WATER_COLOR = 0xff0d0d;
+
+/** Residue names megane treats as water for the illustrative water override. */
+const WATER_RESIDUES: ReadonlySet<string> = new Set([
+  "HOH",
+  "WAT",
+  "SOL",
+  "TIP",
+  "TIP3",
+  "TIP4",
+  "H2O",
+  "DOD",
+  "D2O",
+]);
+
+function hexToRgbTriplet(hex: number): [number, number, number] {
+  return [((hex >> 16) & 255) / 255, ((hex >> 8) & 255) / 255, (hex & 255) / 255];
 }
 
-/** Atomic number of carbon — the element the illustrative scheme recolors. */
-const CARBON_Z = 6;
+// CIE Lab conversion constants, matching Mol*'s `mol-util/color/spaces/lab.ts`
+// (itself adapted from chroma.js): D65 white point and the 6/29 breakpoints.
+const LAB_XN = 0.95047;
+const LAB_YN = 1;
+const LAB_ZN = 1.08883;
+const LAB_T0 = 0.137931034; // 4 / 29
+const LAB_T1 = 0.206896552; // 6 / 29
+const LAB_T2 = 0.12841855; // 3 * t1^2
+const LAB_T3 = 0.008856452; // t1^3
+/** Mol*'s `Lab.darken` step per unit amount; `lighten` is `darken(-amount)`. */
+const LAB_KN = 18;
+
+function srgbToLinear(c: number): number {
+  return c <= 0.04045 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4);
+}
+
+function linearToSrgb(c: number): number {
+  return c <= 0.00304 ? 12.92 * c : 1.055 * Math.pow(c, 1 / 2.4) - 0.055;
+}
+
+function xyzToLabComponent(t: number): number {
+  return t > LAB_T3 ? Math.cbrt(t) : t / LAB_T2 + LAB_T0;
+}
+
+function labToXyzComponent(t: number): number {
+  return t > LAB_T1 ? t * t * t : LAB_T2 * (t - LAB_T0);
+}
+
+/**
+ * Mol*'s `Color.lighten`: convert to CIE Lab, add `LAB_KN * amount` to L*, and
+ * convert back. Chroma (a*, b*) is untouched, so the hue and saturation survive
+ * — unlike a blend toward white, which washes the color out. The illustrative
+ * theme uses this to lighten carbon relative to the rest of its entity.
+ */
+function lightenLab(rgb: [number, number, number], amount: number): [number, number, number] {
+  const r = srgbToLinear(rgb[0]);
+  const g = srgbToLinear(rgb[1]);
+  const b = srgbToLinear(rgb[2]);
+  const x = xyzToLabComponent((0.4124564 * r + 0.3575761 * g + 0.1804375 * b) / LAB_XN);
+  const y = xyzToLabComponent((0.2126729 * r + 0.7151522 * g + 0.072175 * b) / LAB_YN);
+  const z = xyzToLabComponent((0.0193339 * r + 0.119192 * g + 0.9503041 * b) / LAB_ZN);
+
+  const l0 = 116 * y - 16;
+  const l = Math.max(0, l0) + LAB_KN * amount;
+  const aStar = 500 * (x - y);
+  const bStar = 200 * (y - z);
+
+  const yy = (l + 16) / 116;
+  const xx = yy + aStar / 500;
+  const zz = yy - bStar / 200;
+  const xr = LAB_XN * labToXyzComponent(xx);
+  const yr = LAB_YN * labToXyzComponent(yy);
+  const zr = LAB_ZN * labToXyzComponent(zz);
+
+  const clamp01 = (v: number) => (v < 0 ? 0 : v > 1 ? 1 : v);
+  // Mol* rounds to 8-bit channels on the way back; match it so a megane color
+  // is bit-identical to the one Mol* would produce for the same input.
+  const quantize = (v: number) => Math.round(clamp01(linearToSrgb(v)) * 255) / 255;
+  return [
+    quantize(3.2404542 * xr - 1.5371385 * yr - 0.4985314 * zr),
+    quantize(-0.969266 * xr + 1.8760108 * yr + 0.041556 * zr),
+    quantize(0.0556434 * xr - 0.2040259 * yr + 1.0572252 * zr),
+  ];
+}
+
+/**
+ * Serial number per chain, assigned in order of first appearance — the way Mol*
+ * numbers entities before indexing its palette. Indexed by the raw chain byte;
+ * 0xffff marks a byte the structure never uses.
+ */
+/**
+ * The illustrative theme's per-entity base color: Mol*'s palette cycled by the
+ * chain serial. Structures with no chain information have no entity to key on,
+ * so they take Mol*'s `DefaultColor` for an unresolvable entity.
+ */
+function illustrativeEntityColor(
+  atomIdx: number,
+  snapshot: Snapshot,
+  ctx: ColorContext,
+): [number, number, number] {
+  const ids = snapshot.atomChainIds;
+  if (!ids) return hexToRgbTriplet(ILLUSTRATIVE_DEFAULT_COLOR);
+  const serial = ctx.chainSerials?.[ids[atomIdx]] ?? 0;
+  const idx = (serial === 0xffff ? 0 : serial) % MANY_DISTINCT.length;
+  return hexToRgbTriplet(MANY_DISTINCT[idx]);
+}
+
+export function computeChainSerials(snapshot: Snapshot): Uint16Array {
+  const serials = new Uint16Array(256).fill(0xffff);
+  const ids = snapshot.atomChainIds;
+  if (!ids) return serials;
+  let next = 0;
+  for (let i = 0; i < snapshot.nAtoms && i < ids.length; i++) {
+    const byte = ids[i];
+    if (serials[byte] === 0xffff) serials[byte] = next++;
+  }
+  return serials;
+}
 
 function chainIdToIndex(chainByte: number): number {
   // Map ASCII 'A'-'Z' → 0-25, 'a'-'z' → 26-51, '0'-'9' → 52-61, else 0
@@ -150,6 +284,11 @@ export interface ColorContext {
   propertyValues?: Float32Array | null;
   /** Pre-computed property range for byProperty scheme. */
   propertyRange?: [number, number];
+  /**
+   * Pre-computed chain serials for the illustrative scheme (see
+   * `computeChainSerials`). Omitted = fall back to the first palette entry.
+   */
+  chainSerials?: Uint16Array;
 }
 
 /**
@@ -190,18 +329,27 @@ export function getAtomColorForScheme(
     }
 
     case "illustrative": {
-      // Mol*'s illustrative color theme: carbon carries the chain (entity)
-      // color so each chain reads as one body, while every other element keeps
-      // its CPK color so heteroatoms still stand out. The chain color is
-      // lightened for carbon, otherwise the CPK reds/blues disappear into it.
-      // Structures without chain IDs fall back to chain 'A' — every carbon then
-      // shares one tint, which is still the intended Goodsell-style look.
-      if (snapshot.elements[atomIdx] !== CARBON_Z) {
-        return getColor(snapshot.elements[atomIdx]);
+      // Mol*'s illustrative theme (`mol-theme/color/illustrative.ts`):
+      //
+      //     const baseColor = styleColor(location, false);
+      //     return typeSymbol === 'C' ? Color.lighten(baseColor, carbonLightness) : baseColor;
+      //
+      // EVERY atom takes the entity color; carbon is only a lightened shade of
+      // that same color. Non-carbon atoms do NOT get CPK colors — that is the
+      // separate `element-symbol` theme. Each entity therefore reads as one
+      // flat body, which is the whole point of the Goodsell-style look.
+      //
+      // megane has no entity concept, so chain ID stands in for `label_entity_id`
+      // (the closest analogue megane parses). The preset also turns on
+      // `overrideWater`, so waters take the theme's water color.
+      const label = ctx.atomLabels?.[atomIdx];
+      if (label !== undefined && WATER_RESIDUES.has(parseResidueName(label))) {
+        return hexToRgbTriplet(ILLUSTRATIVE_WATER_COLOR);
       }
-      const chainByte = snapshot.atomChainIds?.[atomIdx] ?? 65; // default 'A'
-      const idx = chainIdToIndex(chainByte) % CHAIN_COLORS.length;
-      return lighten(CHAIN_COLORS[idx], ILLUSTRATIVE_CARBON_LIGHTNESS);
+      const base = illustrativeEntityColor(atomIdx, snapshot, ctx);
+      return snapshot.elements[atomIdx] === CARBON_Z
+        ? lightenLab(base, ILLUSTRATIVE_CARBON_LIGHTNESS)
+        : base;
     }
   }
 }

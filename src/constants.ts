@@ -486,12 +486,11 @@ export const ILLUSTRATIVE_AMBIENT_DARKENING = 0.45;
 export const ILLUSTRATIVE_OUTLINE_COLOR: [number, number, number] = [0.0, 0.0, 0.0];
 
 /**
- * How far carbon is blended toward white in the `illustrative` color scheme
- * (0 = the raw chain color, 1 = white). Mirrors Mol*'s `carbonLightness`
- * parameter on its illustrative color theme, which lightens the carbon of each
- * chain so non-carbon CPK colors stay readable against it.
+ * Mol*'s `carbonLightness` on its illustrative color theme, in that theme's own
+ * units: the carbon color is the entity color with `18 * amount` added to its
+ * CIE Lab L*. 0.8 is Mol*'s default (L* + 14.4).
  */
-export const ILLUSTRATIVE_CARBON_LIGHTNESS = 0.6;
+export const ILLUSTRATIVE_CARBON_LIGHTNESS = 0.8;
 
 /** Bond order constants (matches Python encoding). */
 export const BOND_SINGLE = 1;

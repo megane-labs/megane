@@ -2,12 +2,13 @@ import { describe, it, expect } from "vitest";
 import {
   COLOR_SCHEME_LABELS,
   computeBfactorRange,
+  computeChainSerials,
   getAtomColorForScheme,
   type ColorContext,
   type ColorScheme,
 } from "@/colorSchemes";
 import type { Snapshot } from "@/types";
-import { getColor, ILLUSTRATIVE_CARBON_LIGHTNESS } from "@/constants";
+import { getColor } from "@/constants";
 
 function makeSnapshot(over: Partial<Snapshot> = {}): Snapshot {
   return {
@@ -238,54 +239,102 @@ describe("getAtomColorForScheme — byProperty", () => {
 });
 
 describe("getAtomColorForScheme — illustrative", () => {
-  it("gives carbon a lightened chain color and leaves other elements CPK", () => {
-    // Two chains ('A', 'B') of C/N so the carbon tint differs per chain while
-    // the nitrogen keeps its CPK blue, as in Mol*'s illustrative color theme.
-    const snap = makeSnapshot({
-      elements: new Uint8Array([6, 7, 6, 7]),
-      atomChainIds: new Uint8Array([65, 65, 66, 66]),
+  // Ground truth produced by running molstar 5.11.0's own mol-util/color code:
+  // Color.lighten(ColorLists['many-distinct'][i], 0.8) for each palette entry.
+  // Mol*'s rule (mol-theme/color/illustrative.ts) is that EVERY atom takes the
+  // entity color and only carbon is lightened — non-carbon atoms keep it as-is.
+  const MOLSTAR_CARBON = [
+    "#4fc69c", "#ff8532", "#9c95db", "#ff5cb0", "#8ece48", "#ffd23f", "#d09b43",
+    "#8a8a8a", "#ff513e", "#64a3e0", "#76d76f", "#c073cb", "#ffa639", "#ffff63",
+    "#d17a4a", "#ffa9e7", "#c0c0c0", "#8eebcc", "#ffb487", "#b4c7f4", "#ffb1eb",
+    "#cfff7b", "#ffff5d", "#ffecbb", "#dbdbdb",
+  ];
+  const MOLSTAR_BASE = [
+    "#1b9e77", "#d95f02", "#7570b3", "#e7298a", "#66a61e", "#e6ab02", "#a6761d",
+    "#666666", "#e41a1c", "#377eb8", "#4daf4a", "#984ea3", "#ff7f00", "#ffff33",
+    "#a65628", "#f781bf", "#999999", "#66c2a5", "#fc8d62", "#8da0cb", "#e78ac3",
+    "#a6d854", "#ffd92f", "#e5c494", "#b3b3b3",
+  ];
+
+  const hex = (c: [number, number, number]) =>
+    "#" +
+    c
+      .map((v) =>
+        Math.round(v * 255)
+          .toString(16)
+          .padStart(2, "0"),
+      )
+      .join("");
+
+  function chainSnapshot(element: number, nChains = MOLSTAR_BASE.length): Snapshot {
+    return makeSnapshot({
+      elements: new Uint8Array(nChains).fill(element),
+      atomChainIds: new Uint8Array(Array.from({ length: nChains }, (_, i) => 65 + i)),
     });
-    const ctx: ColorContext = { scheme: "illustrative", atomLabels: null };
-    const chainCtx: ColorContext = { scheme: "byChain", atomLabels: null };
+  }
 
-    const carbonA = getAtomColorForScheme(0, snap, ctx);
-    const carbonB = getAtomColorForScheme(2, snap, ctx);
-    expect(carbonA).not.toEqual(carbonB);
+  function ctxFor(snap: Snapshot): ColorContext {
+    return { scheme: "illustrative", atomLabels: null, chainSerials: computeChainSerials(snap) };
+  }
 
-    // Non-carbon keeps the plain CPK color.
-    expect(getAtomColorForScheme(1, snap, ctx)).toEqual(getColor(7));
-    expect(getAtomColorForScheme(3, snap, ctx)).toEqual(getColor(7));
-
-    // Carbon is the chain color blended toward white, so each channel sits
-    // between the raw chain color and 1.
-    const rawA = getAtomColorForScheme(0, snap, chainCtx);
-    for (let c = 0; c < 3; c++) {
-      expect(carbonA[c]).toBeGreaterThan(rawA[c] - 1e-6);
-      expect(carbonA[c]).toBeLessThanOrEqual(1);
+  it("matches Mol* bit-for-bit on carbon across the whole many-distinct palette", () => {
+    const snap = chainSnapshot(6);
+    const ctx = ctxFor(snap);
+    for (let i = 0; i < MOLSTAR_CARBON.length; i++) {
+      expect(hex(getAtomColorForScheme(i, snap, ctx))).toBe(MOLSTAR_CARBON[i]);
     }
-    expect(carbonA).not.toEqual(rawA);
   });
 
-  it("lightens carbon by exactly ILLUSTRATIVE_CARBON_LIGHTNESS", () => {
-    const snap = makeSnapshot({
-      elements: new Uint8Array([6]),
-      atomChainIds: new Uint8Array([65]),
-    });
-    const raw = getAtomColorForScheme(0, snap, { scheme: "byChain", atomLabels: null });
-    const lit = getAtomColorForScheme(0, snap, { scheme: "illustrative", atomLabels: null });
-    for (let c = 0; c < 3; c++) {
-      expect(lit[c]).toBeCloseTo(raw[c] + (1 - raw[c]) * ILLUSTRATIVE_CARBON_LIGHTNESS, 6);
+  it("gives non-carbon the unlightened entity color, not a CPK color", () => {
+    // The regression this locks down: an earlier implementation used CPK for
+    // non-carbon, which is Mol*'s separate element-symbol theme and makes a
+    // protein read as red/blue confetti instead of one body per chain.
+    const snap = chainSnapshot(8); // oxygen
+    const ctx = ctxFor(snap);
+    for (let i = 0; i < MOLSTAR_BASE.length; i++) {
+      expect(hex(getAtomColorForScheme(i, snap, ctx))).toBe(MOLSTAR_BASE[i]);
+    }
+    expect(hex(getAtomColorForScheme(0, snap, ctx))).not.toBe(hex(getColor(8)));
+  });
+
+  it("cycles the palette once the chain count passes its length", () => {
+    const n = MOLSTAR_BASE.length + 3;
+    const snap = chainSnapshot(8, n);
+    const ctx = ctxFor(snap);
+    for (let i = 0; i < 3; i++) {
+      expect(hex(getAtomColorForScheme(MOLSTAR_BASE.length + i, snap, ctx))).toBe(MOLSTAR_BASE[i]);
     }
   });
 
-  it("falls back to chain 'A' when the structure carries no chain IDs", () => {
-    const withIds = makeSnapshot({
-      elements: new Uint8Array([6]),
-      atomChainIds: new Uint8Array([65]),
+  it("numbers chains by first appearance, not by their letter", () => {
+    // Mol* assigns entity serials in order of appearance; keying on the ASCII
+    // letter would give an antibody's H/L chains palette slots 7 and 11.
+    const snap = makeSnapshot({
+      elements: new Uint8Array([8, 8]),
+      atomChainIds: new Uint8Array([72, 76]), // 'H', 'L'
     });
-    const without = makeSnapshot({ elements: new Uint8Array([6]), atomChainIds: null });
-    const ctx: ColorContext = { scheme: "illustrative", atomLabels: null };
-    expect(getAtomColorForScheme(0, without, ctx)).toEqual(getAtomColorForScheme(0, withIds, ctx));
+    const ctx = ctxFor(snap);
+    expect(hex(getAtomColorForScheme(0, snap, ctx))).toBe(MOLSTAR_BASE[0]);
+    expect(hex(getAtomColorForScheme(1, snap, ctx))).toBe(MOLSTAR_BASE[1]);
+  });
+
+  it("applies Mol*'s water override to solvent residues", () => {
+    // The illustrative preset passes overrideWater: true.
+    const snap = makeSnapshot({
+      elements: new Uint8Array([8, 6]),
+      atomChainIds: new Uint8Array([65, 65]),
+    });
+    const ctx: ColorContext = {
+      ...ctxFor(snap),
+      atomLabels: ["HOH1", "ALA2"],
+    };
+    expect(hex(getAtomColorForScheme(0, snap, ctx))).toBe("#ff0d0d");
+    expect(hex(getAtomColorForScheme(1, snap, ctx))).not.toBe("#ff0d0d");
+  });
+
+  it("falls back to Mol*'s unresolved-entity color without chain data", () => {
+    const snap = makeSnapshot({ elements: new Uint8Array([8]), atomChainIds: null });
+    expect(hex(getAtomColorForScheme(0, snap, ctxFor(snap)))).toBe("#fafafa");
   });
 });
 
