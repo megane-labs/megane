@@ -20,7 +20,7 @@
  * (hash restore, drag-drop, template loading).
  */
 
-import { createContext, useContext, useEffect, useRef, useState } from "react";
+import { createContext, useContext, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useStore } from "zustand";
 import type { StoreApi } from "zustand";
 import {
@@ -73,7 +73,11 @@ export function MeganeProvider({ stores, options, children }: MeganeProviderProp
   // resolves to a store something actually renders. Registering at mount
   // rather than module scope is what stops Playwright helpers from silently
   // driving an unrendered store — see ./testRegistry.ts.
-  useEffect(
+  //
+  // Layout effect, not a passive one: this must land before first paint, and
+  // so before MoleculeRenderer flips `__megane_test_ready.firstFrame`, or a
+  // waitForReady-gated helper can read the hook before the takeover.
+  useLayoutEffect(
     () =>
       registerTestStores(active.id, {
         pipeline: active.pipeline,

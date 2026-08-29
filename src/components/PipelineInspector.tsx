@@ -169,7 +169,7 @@ export function PipelineInspector() {
       setLayersState(existing);
       setActiveId(existing[0].id);
     }
-  }, []);
+  }, [pipelineApi]);
 
   useEffect(() => {
     // Reset the chip composer when switching layers.

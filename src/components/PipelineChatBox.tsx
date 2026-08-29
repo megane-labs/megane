@@ -422,6 +422,8 @@ export function PipelineChatBox({ onPipelineApplied }: { onPipelineApplied?: () 
     deserialize,
     autoLayout,
     onPipelineApplied,
+    pipelineApi,
+    pipelineUIApi,
   ]);
 
   const handleCancel = useCallback(() => {

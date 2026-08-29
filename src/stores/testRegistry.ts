@@ -81,14 +81,32 @@ function testWindow(): TestWindow | null {
   return window as unknown as TestWindow;
 }
 
+/**
+ * Resolve one store for the legacy hooks: the primary scoped bundle's, or the
+ * module-global one when the primary does not carry that key.
+ *
+ * Resolved per key rather than per bundle on purpose. A bundle that registered
+ * only `pipeline` would otherwise leave `__megane_test_playback_store` pointing
+ * at whatever was there before — exactly the dead-store hazard this registry
+ * exists to close.
+ */
+function resolveStore(key: keyof TestStoreBundle): unknown {
+  const primaryId = scopedOrder[0];
+  if (primaryId !== undefined) {
+    const scoped = bundles.get(primaryId);
+    if (scoped?.[key]) return scoped[key];
+  }
+  return bundles.get(GLOBAL_BUNDLE_ID)?.[key];
+}
+
 /** Re-point the legacy single-store hooks at the current primary bundle. */
 function syncPrimary(): void {
   const w = testWindow();
   if (!w) return;
-  const primaryId = scopedOrder[0] ?? GLOBAL_BUNDLE_ID;
-  const primary = bundles.get(primaryId) ?? bundles.get(GLOBAL_BUNDLE_ID);
-  if (primary?.pipeline) w.__megane_test_pipeline_store = primary.pipeline;
-  if (primary?.playback) w.__megane_test_playback_store = primary.playback;
+  // Assigned unconditionally: leaving a stale pointer in place is the failure
+  // mode, not a missing one.
+  w.__megane_test_pipeline_store = resolveStore("pipeline");
+  w.__megane_test_playback_store = resolveStore("playback");
 }
 
 /**

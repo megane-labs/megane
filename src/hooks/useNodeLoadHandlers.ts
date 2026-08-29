@@ -15,6 +15,11 @@ import { parseStructureFile, shouldUseLazyStructure } from "../parsers/structure
 import type { StructureParseResult, LazyStructureKind } from "../parsers/structure";
 import type { NodeSnapshotData } from "../pipeline/execute";
 import type { Snapshot } from "../types";
+import type {
+  StructureLoadHandler,
+  TrajectoryLoadHandler,
+  VectorLoadHandler,
+} from "../stores/loadHandlers";
 
 interface UseNodeLoadHandlersOptions {
   snapshot: Snapshot | null;
@@ -51,7 +56,7 @@ export function useNodeLoadHandlers({
 
   // Wire up structure load handler
   useEffect(() => {
-    loadHandlers.setStructure((nodeId, file) => {
+    const handler: StructureLoadHandler = (nodeId, file) => {
       const isPrimary = nodeId === primaryNodeIdRef.current;
 
       // Large multi-frame structure files (XYZ / multi-MODEL PDB), primary node
@@ -109,9 +114,12 @@ export function useNodeLoadHandlers({
           const message = err instanceof Error ? err.message : String(err);
           setNodeParseError(nodeId, `Failed to parse file: ${message}`);
         });
-    });
+    };
+    loadHandlers.setStructure(handler);
     return () => {
-      loadHandlers.setStructure(null);
+      // Only release the slot if it is still ours — StrictMode's double-effect
+      // otherwise has the first cleanup clear the second registration.
+      if (loadHandlers.structure === handler) loadHandlers.setStructure(null);
     };
   }, [
     onUploadStructure,
@@ -126,17 +134,17 @@ export function useNodeLoadHandlers({
 
   // Wire up trajectory load handler
   useEffect(() => {
-    if (onUploadTrajectory) {
-      loadHandlers.setTrajectory((file) => onUploadTrajectory(file));
-    }
+    if (!onUploadTrajectory) return;
+    const handler: TrajectoryLoadHandler = (file) => onUploadTrajectory(file);
+    loadHandlers.setTrajectory(handler);
     return () => {
-      loadHandlers.setTrajectory(null);
+      if (loadHandlers.trajectory === handler) loadHandlers.setTrajectory(null);
     };
   }, [onUploadTrajectory, loadHandlers]);
 
   // Wire up vector load handler
   useEffect(() => {
-    loadHandlers.setVector((file) => {
+    const handler: VectorLoadHandler = (file) => {
       const nAtoms = snapshot?.nAtoms ?? 0;
       if (nAtoms === 0) return;
       loadVectorFileData(file, nAtoms)
@@ -146,9 +154,10 @@ export function useNodeLoadHandlers({
         .catch((err: unknown) => {
           console.error("Failed to load vector file:", err);
         });
-    });
+    };
+    loadHandlers.setVector(handler);
     return () => {
-      loadHandlers.setVector(null);
+      if (loadHandlers.vector === handler) loadHandlers.setVector(null);
     };
   }, [snapshot, setFileVectors, loadHandlers]);
 

@@ -742,7 +742,7 @@ function PipelineEditorInner({
     const serialized = pipelineApi.getState().serialize();
     const blob = new Blob([JSON.stringify(serialized, null, 2)], { type: "application/json" });
     downloadBlob(blob, "pipeline.megane.json");
-  }, []);
+  }, [pipelineApi]);
 
   const handleImportClick = useCallback(() => {
     importInputRef.current?.click();
@@ -786,7 +786,7 @@ function PipelineEditorInner({
       console.error("Share failed:", err);
       window.alert("Share failed: " + (err as Error).message);
     }
-  }, []);
+  }, [pipelineApi]);
 
   const memoizedNodeTypes = useMemo(() => nodeTypes, []);
 

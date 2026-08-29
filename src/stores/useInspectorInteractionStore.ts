@@ -27,9 +27,7 @@ export interface InspectorInteractionStore {
   publishPickedAtom: (atom: ClickedAtom) => void;
 }
 
-export const inspectorInteractionStateCreator: StateCreator<InspectorInteractionStore> = (
-  set,
-) => ({
+export const inspectorInteractionStateCreator: StateCreator<InspectorInteractionStore> = (set) => ({
   previewIndices: null,
   boxSelectActive: false,
   boxResult: null,
