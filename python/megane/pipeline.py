@@ -459,9 +459,9 @@ class Representation(PipelineNode):
               ``"licorice"`` draws atoms and bonds at one equal radius as a
               continuous stick/tube (PyMOL licorice). ``"line"`` draws thin
               wireframe lines (VMD/PyMOL "lines"). ``"illustrative"`` draws
-              Mol*-style spacefill spheres at the full van der Waals radius
-              with flat, unlit shading and a dark silhouette outline (bonds
-              hidden); pair it with ``Color(mode="illustrative")``.
+              Mol*-style spacefill spheres at the full van der Waals radius,
+              shaded toward each sphere's rim with a dark silhouette outline
+              (bonds hidden); pair it with ``Color(mode="illustrative")``.
 
     Ports:
         inp.particle — atom data in

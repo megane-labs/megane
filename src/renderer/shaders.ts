@@ -72,6 +72,7 @@ export const atomFragmentShader = /* glsl */ `precision highp float;
   uniform int uIllustrative;
   uniform float uOutlineWidth;
   uniform vec3 uOutlineColor;
+  uniform float uAmbientDarkening;
 
   out vec4 fragColor;
 
@@ -105,8 +106,14 @@ export const atomFragmentShader = /* glsl */ `precision highp float;
       // the shape is carried entirely by the outline. rimWidth comes from the
       // screen-space derivative, so the band stays uOutlineWidth device pixels
       // wide no matter how large the sphere is on screen.
+      // Stand-in for the ambient occlusion Mol* gets from its SSAO pass: in a
+      // spacefill field the dominant occlusion is contact with neighbouring
+      // spheres, which always sits near a sphere's rim, so a radial ramp
+      // recovers most of the sculpted look with no depth prepass. z is the
+      // sphere normal's view-space Z: 1 facing the camera, 0 at the silhouette.
+      vec3 shaded = vColor * mix(1.0 - uAmbientDarkening, 1.0, z);
       float edge = smoothstep(1.0 - rimWidth, 1.0 - rimWidth * 0.5, rim);
-      fragColor = vec4(mix(vColor, uOutlineColor, edge), finalOpacity);
+      fragColor = vec4(mix(shaded, uOutlineColor, edge), finalOpacity);
       return;
     }
 

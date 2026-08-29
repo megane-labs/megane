@@ -273,7 +273,7 @@ Representation(
 
 | Parameter | Type  | Default   | Description                                                                                                                                                        |
 | --------- | ----- | --------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `mode`    | `str` | `"atoms"` | Visual representation: `"atoms"` (ball-and-stick), `"licorice"` (equal-radius continuous sticks), `"cartoon"`, `"both"`, `"surface"`, `"line"` (thin wireframe), or `"illustrative"` (Mol*-style spacefill spheres, flat unlit shading with a dark silhouette outline, bonds hidden) |
+| `mode`    | `str` | `"atoms"` | Visual representation: `"atoms"` (ball-and-stick), `"licorice"` (equal-radius continuous sticks), `"cartoon"`, `"both"`, `"surface"`, `"line"` (thin wireframe), or `"illustrative"` (Mol*-style spacefill spheres shaded toward each sphere's rim, with a dark silhouette outline, bonds hidden) |
 
 **Ports:** `inp.particle`, `out.particle`
 

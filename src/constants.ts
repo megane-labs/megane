@@ -466,7 +466,21 @@ export const SPACEFILL_ATOM_SCALE = 1.0;
  * band at each impostor's silhouette, which needs no extra render target and so
  * behaves identically in the offscreen render/capture path and on every host.
  */
-export const ILLUSTRATIVE_OUTLINE_WIDTH = 2.0;
+export const ILLUSTRATIVE_OUTLINE_WIDTH = 1.6;
+
+/**
+ * How far each sphere is darkened toward its own silhouette in the
+ * `illustrative` representation (0 = perfectly flat, as Mol*'s `ignoreLight`
+ * leaves it; 1 = black at the rim).
+ *
+ * Mol* gets its sculpted look from an SSAO pass, which megane has no
+ * post-processing stack for. In a spacefill field the dominant occlusion term
+ * is the contact with neighbouring spheres, which always sits near a sphere's
+ * rim — so a radial ramp recovers most of that look per-fragment, with no
+ * depth prepass, no render target, and no neighbour lookup. It cannot darken a
+ * large pocket the way true AO does; that needs the real pass.
+ */
+export const ILLUSTRATIVE_AMBIENT_DARKENING = 0.45;
 
 /** Silhouette outline color for the `illustrative` representation. */
 export const ILLUSTRATIVE_OUTLINE_COLOR: [number, number, number] = [0.0, 0.0, 0.0];
@@ -477,7 +491,7 @@ export const ILLUSTRATIVE_OUTLINE_COLOR: [number, number, number] = [0.0, 0.0, 0
  * parameter on its illustrative color theme, which lightens the carbon of each
  * chain so non-carbon CPK colors stay readable against it.
  */
-export const ILLUSTRATIVE_CARBON_LIGHTNESS = 0.35;
+export const ILLUSTRATIVE_CARBON_LIGHTNESS = 0.6;
 
 /** Bond order constants (matches Python encoding). */
 export const BOND_SINGLE = 1;

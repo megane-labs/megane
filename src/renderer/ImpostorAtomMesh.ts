@@ -16,6 +16,7 @@ import {
   getColor,
   getRadius,
   BALL_STICK_ATOM_SCALE,
+  ILLUSTRATIVE_AMBIENT_DARKENING,
   ILLUSTRATIVE_OUTLINE_COLOR,
   ILLUSTRATIVE_OUTLINE_WIDTH,
 } from "../constants";
@@ -102,6 +103,7 @@ export class ImpostorAtomMesh {
         uIllustrative: { value: 0 },
         uOutlineWidth: { value: ILLUSTRATIVE_OUTLINE_WIDTH },
         uOutlineColor: { value: new THREE.Vector3(...ILLUSTRATIVE_OUTLINE_COLOR) },
+        uAmbientDarkening: { value: ILLUSTRATIVE_AMBIENT_DARKENING },
       },
       depthWrite: true,
       depthTest: true,

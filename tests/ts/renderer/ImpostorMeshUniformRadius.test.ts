@@ -8,6 +8,8 @@ import {
   DOUBLE_BOND_RADIUS,
   LICORICE_RADIUS,
   SPACEFILL_ATOM_SCALE,
+  ILLUSTRATIVE_AMBIENT_DARKENING,
+  ILLUSTRATIVE_OUTLINE_WIDTH,
   getRadius,
   BALL_STICK_ATOM_SCALE,
 } from "@/constants";
@@ -90,6 +92,22 @@ describe("ImpostorAtomMesh.setIllustrative", () => {
     expect(uniforms.uIllustrative.value).toBe(1);
     mesh.setIllustrative(false);
     expect(uniforms.uIllustrative.value).toBe(0);
+  });
+
+  it("seeds the illustrative shading uniforms from the constants", () => {
+    // The rim ramp stands in for Mol*'s SSAO pass, so a zero here would
+    // silently return the mode to the flat look it is meant to replace.
+    const mesh = new ImpostorAtomMesh(8);
+    const uniforms = (
+      mesh as unknown as {
+        material: {
+          uniforms: { uAmbientDarkening: { value: number }; uOutlineWidth: { value: number } };
+        };
+      }
+    ).material.uniforms;
+    expect(uniforms.uAmbientDarkening.value).toBeCloseTo(ILLUSTRATIVE_AMBIENT_DARKENING, 6);
+    expect(uniforms.uAmbientDarkening.value).toBeGreaterThan(0);
+    expect(uniforms.uOutlineWidth.value).toBeCloseTo(ILLUSTRATIVE_OUTLINE_WIDTH, 6);
   });
 });
 

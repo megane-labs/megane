@@ -435,7 +435,7 @@ export const NODE_CATALOG: Record<PipelineNodeType, NodeCatalogEntry> = {
       '"both": atoms and cartoon overlaid',
       '"surface": molecular surface',
       '"line": thin wireframe lines (VMD/PyMOL "lines" style)',
-      '"illustrative": Mol*-style spacefill spheres at full van der Waals radius with flat, unlit shading and a dark silhouette outline; bonds are hidden. Best paired with a `color` node in "illustrative" mode',
+      '"illustrative": Mol*-style spacefill spheres at full van der Waals radius, softly shaded toward the rim of each sphere with a dark silhouette outline; bonds are hidden. Best paired with a `color` node in "illustrative" mode',
     ],
     promptInputs: "`in` (particle only — NOT bond)",
     promptOutputs: "`out` (particle)",
