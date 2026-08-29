@@ -170,18 +170,36 @@ Isosurface(
     opacity: float = 0.7,
     show_negative: bool = False,
     negative_color: str = "#ff4444",
+    color_mode: str = "solid",
+    colormap: str = "rwb",
+    color_range: tuple[float, float] | None = None,
 )
 ```
 
-| Parameter        | Type    | Default     | Description                                                        |
-| ---------------- | ------- | ----------- | ------------------------------------------------------------------ |
-| `iso_level`      | `float` | `0.05`      | Contour value for the positive isosurface                          |
-| `color`          | `str`   | `"#4488ff"` | Hex color for the positive isosurface                              |
-| `opacity`        | `float` | `0.7`       | Surface transparency (0–1)                                         |
-| `show_negative`  | `bool`  | `False`     | Show a second isosurface at −iso_level (dual-contour for ESP maps) |
-| `negative_color` | `str`   | `"#ff4444"` | Hex color for the negative isosurface                              |
+| Parameter        | Type                             | Default     | Description                                                                                     |
+| ---------------- | -------------------------------- | ----------- | ----------------------------------------------------------------------------------------------- |
+| `iso_level`      | `float`                          | `0.05`      | Contour value for the positive isosurface                                                       |
+| `color`          | `str`                            | `"#4488ff"` | Hex color for the positive isosurface                                                           |
+| `opacity`        | `float`                          | `0.7`       | Surface transparency (0–1)                                                                      |
+| `show_negative`  | `bool`                           | `False`     | Show a second isosurface at −iso_level (dual-contour for ESP maps)                              |
+| `negative_color` | `str`                            | `"#ff4444"` | Hex color for the negative isosurface                                                           |
+| `color_mode`     | `str`                            | `"solid"`   | `"volume"` paints the surface by sampling the volume connected to `inp.color_volumetric`        |
+| `colormap`       | `str`                            | `"rwb"`     | `"rwb"` (red→white→blue, chemistry ESP convention), `"bwr"`, or `"rainbow"`                     |
+| `color_range`    | `tuple[float, float] \| None`    | `None`      | Explicit colormap range; `None` = auto (symmetric around 0 for the diverging maps)              |
 
-**Ports:** `inp.volumetric`, `out.mesh`
+**Ports:** `inp.volumetric`, `inp.color_volumetric`, `out.mesh`
+
+To render an ESP-mapped charge density, load both cubes and connect the ESP
+volume to the coloring input:
+
+```python
+density = LoadVolumetric("density.cube")
+esp = LoadVolumetric("esp.cube")
+iso = Isosurface(iso_level=0.02, color_mode="volume", colormap="rwb")
+pipe.add_edge(density.out.volumetric, iso.inp.volumetric)
+pipe.add_edge(esp.out.volumetric, iso.inp.color_volumetric)
+pipe.add_edge(iso.out.mesh, viewport.inp.mesh)
+```
 
 ### Filter
 

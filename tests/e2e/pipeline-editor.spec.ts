@@ -204,6 +204,45 @@ test.describe("pipeline-editor: webapp default graph", () => {
     );
   });
 
+  test("Add Node menu adds an Isosurface node with color-by-volume controls", async ({ page }) => {
+    await page.locator('[data-testid="pipeline-editor-tab-editor"]').click();
+    await page.getByTitle("Add Node").click();
+    await page.getByRole("button", { name: "Isosurface", exact: true }).click();
+
+    const node = page.locator('[data-testid="pipeline-node-isosurface"]').first();
+    await expect(node).toBeVisible();
+
+    // Solid coloring is the default: the color picker is shown, the
+    // volume-coloring controls are not.
+    const colorMode = page.locator('[data-testid="isosurface-color-mode"]').first();
+    await expect(colorMode).toBeVisible();
+    await expect(colorMode).toHaveValue("solid");
+    await expect(page.locator('[data-testid="isosurface-color"]').first()).toBeVisible();
+    await expect(page.locator('[data-testid="isosurface-colormap"]')).toHaveCount(0);
+
+    // Switching to volume coloring swaps in the colormap + range controls.
+    await colorMode.selectOption("volume");
+    await expect(colorMode).toHaveValue("volume");
+    const colormap = page.locator('[data-testid="isosurface-colormap"]').first();
+    await expect(colormap).toBeVisible();
+    await expect(colormap).toHaveValue("rwb");
+    await expect(page.locator('[data-testid="isosurface-range-min"]').first()).toBeVisible();
+    await expect(page.locator('[data-testid="isosurface-range-max"]').first()).toBeVisible();
+    await expect(page.locator('[data-testid="isosurface-color"]')).toHaveCount(0);
+
+    // Colormap changes and explicit range edits are accepted.
+    await colormap.selectOption("rainbow");
+    await expect(colormap).toHaveValue("rainbow");
+    await page.locator('[data-testid="isosurface-range-min"]').first().fill("-0.05");
+    await page.locator('[data-testid="isosurface-range-max"]').first().fill("0.05");
+    await expect(page.locator('[data-testid="isosurface-range-min"]').first()).toHaveValue("-0.05");
+    await expect(page.locator('[data-testid="isosurface-range-max"]').first()).toHaveValue("0.05");
+
+    // And back to solid: the color picker returns.
+    await colorMode.selectOption("solid");
+    await expect(page.locator('[data-testid="isosurface-color"]').first()).toBeVisible();
+  });
+
   test("tab selector switches between editor and chat panes", async ({ page }) => {
     const editorTab = page.locator('[data-testid="pipeline-editor-tab-editor"]');
     const chatTab = page.locator('[data-testid="pipeline-editor-tab-chat"]');

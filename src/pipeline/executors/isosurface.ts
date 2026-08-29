@@ -1,5 +1,6 @@
 import type { PipelineData, VolumetricData, MeshData, IsosurfaceParams } from "../types";
 import { marchingCubes } from "./marchingCubes";
+import { colorVerticesByVolume } from "./volumeColor";
 import { hexColorToRgb } from "../../renderer/alphaSurface";
 
 /**
@@ -11,6 +12,12 @@ import { hexColorToRgb } from "../../renderer/alphaSurface";
  * When showNegative is true a second isosurface at −isoLevel is computed and
  * merged into the same MeshData with a different color (dual contour for ESP
  * maps or molecular orbitals).
+ *
+ * When colorMode is "volume" and a second volumetric stream is connected to
+ * the `colorVolumetric` input, vertex colors are instead produced by sampling
+ * that volume at each vertex and mapping the values through the configured
+ * colormap (e.g. ESP painted onto a charge-density isosurface). Without a
+ * connected color volume the node falls back to the solid colors.
  */
 export function executeIsosurface(
   params: IsosurfaceParams,
@@ -20,6 +27,9 @@ export function executeIsosurface(
 
   const volInput = inputs.get("volumetric")?.[0] as VolumetricData | undefined;
   if (!volInput || volInput.type !== "volumetric") return outputs;
+
+  const rawColorVol = inputs.get("colorVolumetric")?.[0] as VolumetricData | undefined;
+  const colorVol = rawColorVol?.type === "volumetric" ? rawColorVol : undefined;
 
   const { nx, ny, nz, origin, step, data } = volInput;
   const { isoLevel, color, opacity, showNegative, negativeColor } = params;
@@ -72,21 +82,37 @@ export function executeIsosurface(
 
   for (let i = 0; i < totalVerts; i++) indices[i] = i;
 
-  // Fill vertex colors.
-  const [pr, pg, pb] = hexColorToRgb(color);
-  for (let i = 0; i < nVertsPos; i++) {
-    colors[i * 4] = pr;
-    colors[i * 4 + 1] = pg;
-    colors[i * 4 + 2] = pb;
-    colors[i * 4 + 3] = opacity;
-  }
-  if (nVertsNeg > 0) {
-    const [nr, ng, nb] = hexColorToRgb(negativeColor);
-    for (let i = nVertsPos; i < totalVerts; i++) {
-      colors[i * 4] = nr;
-      colors[i * 4 + 1] = ng;
-      colors[i * 4 + 2] = nb;
+  // Fill vertex colors: volume-mapped when requested and possible, solid
+  // otherwise. colorVerticesByVolume returns null when the color volume is
+  // unusable (degenerate grid), in which case the solid path takes over.
+  const volumeColored =
+    params.colorMode === "volume" && colorVol
+      ? colorVerticesByVolume(
+          positions,
+          colors,
+          opacity,
+          colorVol,
+          params.colormap,
+          params.colorRange,
+        ) !== null
+      : false;
+
+  if (!volumeColored) {
+    const [pr, pg, pb] = hexColorToRgb(color);
+    for (let i = 0; i < nVertsPos; i++) {
+      colors[i * 4] = pr;
+      colors[i * 4 + 1] = pg;
+      colors[i * 4 + 2] = pb;
       colors[i * 4 + 3] = opacity;
+    }
+    if (nVertsNeg > 0) {
+      const [nr, ng, nb] = hexColorToRgb(negativeColor);
+      for (let i = nVertsPos; i < totalVerts; i++) {
+        colors[i * 4] = nr;
+        colors[i * 4 + 1] = ng;
+        colors[i * 4 + 2] = nb;
+        colors[i * 4 + 3] = opacity;
+      }
     }
   }
 

@@ -445,10 +445,17 @@ export function executePipeline(
         break;
       }
       case "isosurface": {
-        const outputs = executeIsosurface(data.params as IsosurfaceParams, inputs);
+        const isoParams = data.params as IsosurfaceParams;
+        const outputs = executeIsosurface(isoParams, inputs);
         edgeOutputs.set(id, outputs);
         if (!inputs.get("volumetric")?.length) {
           addError(id, { message: "No volumetric input", severity: "warning" });
+        }
+        if (isoParams.colorMode === "volume" && !inputs.get("colorVolumetric")?.length) {
+          addError(id, {
+            message: "Color by volume needs a volume connected to the Color Volume input",
+            severity: "warning",
+          });
         }
         break;
       }

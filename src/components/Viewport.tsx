@@ -263,6 +263,11 @@ export function Viewport({
   // The previously loaded snapshot, used to detect position-only re-mappings.
   const loadedSnapshotRef = useRef<Snapshot | null>(null);
 
+  // Latest frame prop, readable from the snapshot effect without adding it to
+  // that effect's deps (a frame change alone must not re-run loadSnapshot).
+  const frameRef = useRef<Frame | null>(null);
+  frameRef.current = frame;
+
   useEffect(() => {
     if (snapshot && rendererRef.current) {
       // A snapshot that shares its topology arrays with the previous one and
@@ -280,6 +285,20 @@ export function Viewport({
         prev.box === snapshot.box;
       rendererRef.current.loadSnapshot(snapshot, { fit: !positionsOnly });
       loadedSnapshotRef.current = snapshot;
+      // Re-apply the current trajectory frame after the snapshot geometry.
+      // Snapshot and frame updates can land in separate commits in either
+      // order (the pipeline re-executes several times while a trajectory
+      // streams in), and a snapshot landing last used to silently replace the
+      // frame's positions with the structure file's — the two are different
+      // coordinate sets (e.g. a minimized PDB vs its XTC frame), so what the
+      // viewer showed at "frame 1/N" was nondeterministic. Applying the frame
+      // here pins the ordering: frame data always wins while a trajectory is
+      // loaded. Guarded on matching atom counts so a stale frame from a
+      // superseded provider can't be applied to a brand-new structure.
+      if (frameRef.current && frameRef.current.nAtoms === snapshot.nAtoms) {
+        rendererRef.current.updateFrame(frameRef.current);
+        onFrameUpdatedRef.current?.();
+      }
     }
   }, [snapshot]);
 

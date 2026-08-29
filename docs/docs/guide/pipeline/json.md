@@ -212,13 +212,21 @@ outside the drawing range are handled upstream.
 
 #### `isosurface`
 
-| Field           | Type      | Description                                                       |
-| --------------- | --------- | ----------------------------------------------------------------- |
-| `isoLevel`      | `number`  | Contour value for the positive isosurface                         |
-| `color`         | `string`  | Hex color for the positive isosurface                             |
-| `opacity`       | `number`  | Surface transparency (0–1)                                        |
-| `showNegative`  | `boolean` | Show a second isosurface at −isoLevel (dual-contour for ESP maps) |
-| `negativeColor` | `string`  | Hex color for the negative isosurface                             |
+| Field           | Type                          | Description                                                                                                            |
+| --------------- | ----------------------------- | ---------------------------------------------------------------------------------------------------------------------- |
+| `isoLevel`      | `number`                      | Contour value for the positive isosurface                                                                              |
+| `color`         | `string`                      | Hex color for the positive isosurface                                                                                  |
+| `opacity`       | `number`                      | Surface transparency (0–1)                                                                                             |
+| `showNegative`  | `boolean`                     | Show a second isosurface at −isoLevel (dual-contour for ESP maps)                                                      |
+| `negativeColor` | `string`                      | Hex color for the negative isosurface                                                                                  |
+| `colorMode`     | `"solid" \| "volume"`         | `"volume"` paints the surface by sampling the volume connected to the `colorVolumetric` input (e.g. ESP on a density)  |
+| `colormap`      | `"rwb" \| "bwr" \| "rainbow"` | Colormap for `colorMode: "volume"` (`rwb` = red→white→blue, the chemistry ESP convention)                              |
+| `colorRange`    | `[number, number]` (optional) | Explicit colormap range; omit for auto (symmetric around 0 for the diverging maps)                                     |
+
+To color a charge-density isosurface by electrostatic potential, add a second
+`load_volumetric` node for the ESP cube and connect its `volumetric` output to
+the isosurface node's `colorVolumetric` input, then set `colorMode` to
+`"volume"`.
 
 #### `vector_overlay`
 

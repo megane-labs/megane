@@ -256,8 +256,27 @@ class TestNodeClasses:
         assert n.opacity == 0.7
         assert n.show_negative is False
         assert n.negative_color == "#ff4444"
-        assert set(n._inp_ports) == {"volumetric"}
+        assert n.color_mode == "solid"
+        assert n.colormap == "rwb"
+        assert n.color_range is None
+        assert set(n._inp_ports) == {"volumetric", "color_volumetric"}
         assert set(n._out_ports) == {"mesh"}
+
+    def test_isosurface_color_by_volume(self):
+        n = Isosurface(color_mode="volume", colormap="bwr", color_range=(-0.1, 0.1))
+        assert n.color_mode == "volume"
+        assert n.colormap == "bwr"
+        assert n.color_range == (-0.1, 0.1)
+        # The coloring input maps to the JSON handle used by the TS editor.
+        assert n.inp.color_volumetric.handle == "colorVolumetric"
+
+    def test_isosurface_rejects_bad_color_mode(self):
+        with pytest.raises(ValueError):
+            Isosurface(color_mode="banana")
+
+    def test_isosurface_rejects_bad_colormap(self):
+        with pytest.raises(ValueError):
+            Isosurface(colormap="viridis")
 
     def test_load_trajectory(self):
         n = LoadTrajectory(xtc="traj.xtc")
@@ -785,6 +804,42 @@ class TestPipelineSerialization:
         poly_node = next(n for n in result["nodes"] if n["type"] == "polyhedron_generator")
         assert poly_node["opacity"] == 0.7
         assert "excludedCenters" not in poly_node
+
+    def test_isosurface_color_by_volume_round_trip(self):
+        pipe = Pipeline()
+        node = pipe.add_node(
+            Isosurface(color_mode="volume", colormap="rainbow", color_range=(-0.2, 0.3))
+        )
+        result = pipe.to_dict()
+        serialized = next(n for n in result["nodes"] if n["id"] == node._id)
+        assert serialized["colorMode"] == "volume"
+        assert serialized["colormap"] == "rainbow"
+        assert serialized["colorRange"] == [-0.2, 0.3]
+
+        rebuilt = Pipeline.from_dict(result)
+        rebuilt_node = next(
+            value for value, config in rebuilt._nodes.values()
+            if config["type"] == "isosurface"
+        )
+        assert isinstance(rebuilt_node, Isosurface)
+        assert rebuilt_node.color_mode == "volume"
+        assert rebuilt_node.colormap == "rainbow"
+        assert rebuilt_node.color_range == (-0.2, 0.3)
+
+    def test_isosurface_default_serialization_omits_color_range(self):
+        pipe = Pipeline()
+        node = pipe.add_node(Isosurface())
+        serialized = next(n for n in pipe.to_dict()["nodes"] if n["id"] == node._id)
+        assert serialized["colorMode"] == "solid"
+        assert serialized["colormap"] == "rwb"
+        assert "colorRange" not in serialized
+
+        rebuilt = Pipeline.from_dict(pipe.to_dict())
+        rebuilt_node = next(
+            value for value, config in rebuilt._nodes.values()
+            if config["type"] == "isosurface"
+        )
+        assert rebuilt_node.color_range is None
 
     def test_boundary_completion_round_trip(self):
         pipe = Pipeline()

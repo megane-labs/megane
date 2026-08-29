@@ -536,12 +536,32 @@ export const NODE_CATALOG: Record<PipelineNodeType, NodeCatalogEntry> = {
         default: '"#ff4444"',
         doc: "Hex color for the negative surface.",
       },
+      {
+        jsonKey: "colorMode",
+        tsType: '"solid" | "volume"',
+        default: '"solid"',
+        doc: '"solid" uses color/negativeColor; "volume" maps vertex colors from the volume connected to the colorVolumetric input.',
+      },
+      {
+        jsonKey: "colormap",
+        tsType: '"rwb" | "bwr" | "rainbow"',
+        default: '"rwb"',
+        doc: 'Colormap for colorMode "volume" (rwb = red-white-blue, the chemistry ESP convention).',
+      },
+      {
+        jsonKey: "colorRange",
+        optional: true,
+        tsType: "[number, number]",
+        doc: "Explicit [min, max] colormap range; omit for auto (symmetric around 0 for rwb/bwr).",
+      },
     ],
     promptNotes: [
       "isoLevel: contour level for the positive surface (default 0.05)",
       "showNegative: also draw a second surface at -isoLevel (e.g. for\n    electrostatic potential maps), colored with `negativeColor`",
+      'colorMode "volume": paint the surface by sampling a second volume\n    connected to the `colorVolumetric` input (e.g. ESP mapped onto a\n    charge-density isosurface) through `colormap`; the optional `colorRange`\n    fixes the [min, max] mapping (omit for auto)',
     ],
-    promptInputs: "`volumetric` (volumetric data type)",
+    promptInputs:
+      '`volumetric` (volumetric data type), `colorVolumetric` (optional volumetric used for coloring when colorMode is "volume")',
     promptOutputs: "`mesh` (mesh data type)",
     inPrompt: true,
     pythonClass: "Isosurface",

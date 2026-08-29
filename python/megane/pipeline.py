@@ -634,14 +634,19 @@ class LoadVolumetric(PipelineNode):
 class Isosurface(PipelineNode):
     """Extract an isosurface from volumetric data using marching cubes.
 
+    With ``color_mode="volume"`` the surface is painted by sampling a second
+    volume connected to ``inp.color_volumetric`` (e.g. an ESP cube mapped onto
+    a charge-density isosurface) through ``colormap``.
+
     Ports:
-        inp.volumetric — volumetric data (from :class:`LoadVolumetric`)
-        out.mesh       — isosurface mesh
+        inp.volumetric       — volumetric data (from :class:`LoadVolumetric`)
+        inp.color_volumetric — optional volume sampled for coloring
+        out.mesh             — isosurface mesh
     """
 
     _node_type = "isosurface"
     _out_ports = {"mesh": "mesh"}
-    _inp_ports = {"volumetric": "volumetric"}
+    _inp_ports = {"volumetric": "volumetric", "color_volumetric": "colorVolumetric"}
 
     def __init__(
         self,
@@ -651,6 +656,9 @@ class Isosurface(PipelineNode):
         opacity: float = 0.7,
         show_negative: bool = False,
         negative_color: str = "#ff4444",
+        color_mode: str = "solid",
+        colormap: str = "rwb",
+        color_range: tuple[float, float] | None = None,
     ) -> None:
         super().__init__()
         self.iso_level = iso_level
@@ -658,6 +666,13 @@ class Isosurface(PipelineNode):
         self.opacity = opacity
         self.show_negative = show_negative
         self.negative_color = negative_color
+        if color_mode not in ("solid", "volume"):
+            raise ValueError(f"color_mode must be 'solid' or 'volume', got {color_mode!r}")
+        if colormap not in ("rwb", "bwr", "rainbow"):
+            raise ValueError(f"colormap must be 'rwb', 'bwr' or 'rainbow', got {colormap!r}")
+        self.color_mode = color_mode
+        self.colormap = colormap
+        self.color_range = tuple(color_range) if color_range is not None else None
 
 
 class LoadSpectrum(PipelineNode):
@@ -1001,12 +1016,16 @@ class Pipeline:
         elif ntype == "load_volumetric":
             return LoadVolumetric(nd.get("fileName") or "")
         elif ntype == "isosurface":
+            color_range = nd.get("colorRange")
             return Isosurface(
                 iso_level=nd.get("isoLevel", 0.05),
                 color=nd.get("color", "#4488ff"),
                 opacity=nd.get("opacity", 0.7),
                 show_negative=nd.get("showNegative", False),
                 negative_color=nd.get("negativeColor", "#ff4444"),
+                color_mode=nd.get("colorMode", "solid"),
+                colormap=nd.get("colormap", "rwb"),
+                color_range=tuple(color_range) if color_range else None,
             )
         elif ntype == "load_spectrum":
             return LoadSpectrum(nd.get("fileName") or "")
@@ -1194,6 +1213,10 @@ class Pipeline:
             base["opacity"] = node.opacity
             base["showNegative"] = node.show_negative
             base["negativeColor"] = node.negative_color
+            base["colorMode"] = node.color_mode
+            base["colormap"] = node.colormap
+            if node.color_range is not None:
+                base["colorRange"] = list(node.color_range)
         elif isinstance(node, LoadSpectrum):
             base["fileName"] = node.path
         elif isinstance(node, SpectrumPlot):
