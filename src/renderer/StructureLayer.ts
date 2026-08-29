@@ -87,6 +87,12 @@ export class StructureLayer {
       const bonds = new ImpostorBondMesh();
       this.bondRenderer = bonds;
       this.scene.add(bonds.mesh);
+      // Mirror the ball sizes into the bond shader so sticks are trimmed at the
+      // ball surface; the sink fires immediately and on every later restyle.
+      this.atomRenderer?.setRadiusSink?.((radii, scale) => {
+        if (radii) bonds.setAtomRadii(radii);
+        bonds.setAtomRadiusScale(scale);
+      });
     }
 
     // Cell

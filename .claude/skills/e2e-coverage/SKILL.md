@@ -130,6 +130,7 @@ npm run test:e2e:widget-api          # programmatic frame_index / selected_atoms
 npm run test:e2e:pipeline-editor     # seeded node kinds + Render button mounts modal (webapp / labext / vscode only — widget hosts intentionally do not mount the editor)
 npm run test:e2e:pipeline-file       # drag-drop .megane.json on webapp
 npm run test:e2e:render-modal        # snapshot mode (GIF/MP4 gated by MEGANE_E2E_FFMPEG=1)
+npm run test:e2e:atom-bond-junction  # transparent ball-and-stick junction (stick trimmed at the ball surface)
 ```
 
 The 5-host feature matrices (`modify-node`, `camera`, `measurement`,

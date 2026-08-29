@@ -199,6 +199,11 @@ export default defineConfig({
       testMatch: /resname-filter-opacity\.spec\.ts$/,
       use: { baseURL: `http://127.0.0.1:${PORT_WEBAPP}` },
     },
+    {
+      name: "atom-bond-junction",
+      testMatch: /atom-bond-junction\.spec\.ts$/,
+      use: { baseURL: `http://127.0.0.1:${PORT_WEBAPP}` },
+    },
 
     // ── Phase 2 cross-host matrix ────────────────────────────────────
     // Each Phase 2 spec runs against all 5 hosts via metadata.meganeHost.
