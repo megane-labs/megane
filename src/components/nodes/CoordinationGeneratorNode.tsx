@@ -2,7 +2,7 @@ import { useCallback, useMemo } from "react";
 import type { Node, NodeProps } from "@xyflow/react";
 import type { PipelineNodeData } from "../../pipeline/execute";
 import type { CoordinationGeneratorParams } from "../../pipeline/types";
-import { usePipelineStore } from "../../pipeline/store";
+import { useScopedPipelineStore } from "../../stores/MeganeProvider";
 import { getElementsPresentInUpstream } from "../../pipeline/upstream";
 import { ELEMENT_SYMBOLS, isDefaultLigand, isMetalLike } from "../../constants";
 import { NodeShell } from "./NodeShell";
@@ -33,10 +33,10 @@ function ElementChoices({
 }
 
 export function CoordinationGeneratorNode({ id, data }: NodeProps<Node<PipelineNodeData>>) {
-  const updateNodeParams = usePipelineStore((state) => state.updateNodeParams);
-  const nodes = usePipelineStore((state) => state.nodes);
-  const edges = usePipelineStore((state) => state.edges);
-  const snapshots = usePipelineStore((state) => state.nodeSnapshots);
+  const updateNodeParams = useScopedPipelineStore((state) => state.updateNodeParams);
+  const nodes = useScopedPipelineStore((state) => state.nodes);
+  const edges = useScopedPipelineStore((state) => state.edges);
+  const snapshots = useScopedPipelineStore((state) => state.nodeSnapshots);
   const params = data.params as CoordinationGeneratorParams;
   const present = useMemo(
     () => getElementsPresentInUpstream(id, nodes, edges, snapshots),

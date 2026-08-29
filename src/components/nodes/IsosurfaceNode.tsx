@@ -6,7 +6,7 @@
 import type { NodeProps, Node } from "@xyflow/react";
 import type { PipelineNodeData } from "../../pipeline/execute";
 import type { IsosurfaceParams } from "../../pipeline/types";
-import { usePipelineStore } from "../../pipeline/store";
+import { useScopedPipelineStore } from "../../stores/MeganeProvider";
 import { NodeShell } from "./NodeShell";
 
 const rowStyle: React.CSSProperties = {
@@ -65,7 +65,7 @@ const checkboxRowStyle: React.CSSProperties = {
 };
 
 export function IsosurfaceNode({ id, data }: NodeProps<Node<PipelineNodeData>>) {
-  const updateNodeParams = usePipelineStore((s) => s.updateNodeParams);
+  const updateNodeParams = useScopedPipelineStore((s) => s.updateNodeParams);
   const params = data.params as IsosurfaceParams;
 
   return (

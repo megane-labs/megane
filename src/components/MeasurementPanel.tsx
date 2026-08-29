@@ -4,7 +4,7 @@
 
 import type { SelectionState, Measurement } from "../types";
 import { getElementSymbol } from "../constants";
-import { useMeasurementStore } from "../stores/useMeasurementStore";
+import { useScopedMeasurementStore } from "../stores/MeganeProvider";
 import { MEASUREMENT_BOTTOM_DEFAULT } from "./overlayLayout";
 
 interface MeasurementPanelProps {
@@ -33,7 +33,7 @@ export function MeasurementPanel({
   onClear,
   bottom = MEASUREMENT_BOTTOM_DEFAULT,
 }: MeasurementPanelProps) {
-  const addMeasurement = useMeasurementStore((s) => s.addMeasurement);
+  const addMeasurement = useScopedMeasurementStore((s) => s.addMeasurement);
 
   if (selection.atoms.length === 0) return null;
 

@@ -15,12 +15,15 @@ import {
 } from "@xyflow/react";
 import { useThemeStore } from "../stores/useThemeStore";
 import type { Theme } from "../stores/useThemeStore";
-import { usePipelineUIStore } from "../stores/usePipelineUIStore";
+import {
+  useScopedPipelineStore,
+  useScopedPipelineUIStore,
+  usePipelineStoreApi,
+} from "../stores/MeganeProvider";
 import type { PipelinePanelMode } from "../stores/usePipelineUIStore";
 import { TabSelector } from "./ui";
 import type { Connection } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
-import { usePipelineStore } from "../pipeline/store";
 import { downloadBlob } from "../renderer/RenderCapture";
 import { shareCurrentPipeline } from "../pipeline/shareLink";
 import type { PipelineNodeType } from "../pipeline/types";
@@ -560,15 +563,16 @@ function PipelineEditorInner({
   currentFrame: number;
   onSeek: (frame: number) => void;
 }) {
-  const nodes = usePipelineStore((s) => s.nodes);
-  const edges = usePipelineStore((s) => s.edges);
-  const onNodesChange = usePipelineStore((s) => s.onNodesChange);
-  const onEdgesChange = usePipelineStore((s) => s.onEdgesChange);
-  const onConnect = usePipelineStore((s) => s.onConnect);
-  const addNode = usePipelineStore((s) => s.addNode);
-  const applyTemplate = usePipelineStore((s) => s.applyTemplate);
-  const autoLayout = usePipelineStore((s) => s.autoLayout);
-  const deserialize = usePipelineStore((s) => s.deserialize);
+  const pipelineApi = usePipelineStoreApi();
+  const nodes = useScopedPipelineStore((s) => s.nodes);
+  const edges = useScopedPipelineStore((s) => s.edges);
+  const onNodesChange = useScopedPipelineStore((s) => s.onNodesChange);
+  const onEdgesChange = useScopedPipelineStore((s) => s.onEdgesChange);
+  const onConnect = useScopedPipelineStore((s) => s.onConnect);
+  const addNode = useScopedPipelineStore((s) => s.addNode);
+  const applyTemplate = useScopedPipelineStore((s) => s.applyTemplate);
+  const autoLayout = useScopedPipelineStore((s) => s.autoLayout);
+  const deserialize = useScopedPipelineStore((s) => s.deserialize);
   const { fitView } = useReactFlow();
 
   const { screenToFlowPosition } = useReactFlow();
@@ -600,10 +604,10 @@ function PipelineEditorInner({
     setTheme(next);
   }, [theme, setTheme]);
 
-  const mode = usePipelineUIStore((s) => s.mode);
-  const setMode = usePipelineUIStore((s) => s.setMode);
-  const pendingNotice = usePipelineUIStore((s) => s.pendingNotice);
-  const dismissNotice = usePipelineUIStore((s) => s.dismissNotice);
+  const mode = useScopedPipelineUIStore((s) => s.mode);
+  const setMode = useScopedPipelineUIStore((s) => s.setMode);
+  const pendingNotice = useScopedPipelineUIStore((s) => s.pendingNotice);
+  const dismissNotice = useScopedPipelineUIStore((s) => s.dismissNotice);
 
   // When the panel switches back to the editor (e.g. after the chat assistant
   // applies a generated pipeline) the ReactFlow viewport may have just been
@@ -735,7 +739,7 @@ function PipelineEditorInner({
   }, [autoLayout, fitView]);
 
   const handleExport = useCallback(() => {
-    const serialized = usePipelineStore.getState().serialize();
+    const serialized = pipelineApi.getState().serialize();
     const blob = new Blob([JSON.stringify(serialized, null, 2)], { type: "application/json" });
     downloadBlob(blob, "pipeline.megane.json");
   }, []);
@@ -775,7 +779,7 @@ function PipelineEditorInner({
 
   const handleShare = useCallback(async () => {
     try {
-      const serialized = usePipelineStore.getState().serialize();
+      const serialized = pipelineApi.getState().serialize();
       const { url, tooLong } = await shareCurrentPipeline(serialized);
       setShareDialog({ url, tooLong });
     } catch (err) {

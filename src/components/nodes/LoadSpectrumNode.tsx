@@ -7,13 +7,13 @@ import { useCallback, useRef } from "react";
 import type { NodeProps, Node } from "@xyflow/react";
 import type { PipelineNodeData } from "../../pipeline/execute";
 import type { LoadSpectrumParams } from "../../pipeline/types";
-import { usePipelineStore } from "../../pipeline/store";
+import { useScopedPipelineStore } from "../../stores/MeganeProvider";
 import { NodeShell } from "./NodeShell";
 import { smallBtnStyle, fileNameStyle } from "../ui";
 import { SPECTRUM_ACCEPT, isSpectrumFileName, parseSpectrum } from "../../parsers/spectrum";
 
 export function LoadSpectrumNode({ id, data }: NodeProps<Node<PipelineNodeData>>) {
-  const updateNodeParams = usePipelineStore((s) => s.updateNodeParams);
+  const updateNodeParams = useScopedPipelineStore((s) => s.updateNodeParams);
   const params = data.params as LoadSpectrumParams;
   const inputRef = useRef<HTMLInputElement>(null);
 

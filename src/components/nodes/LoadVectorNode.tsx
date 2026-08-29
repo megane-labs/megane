@@ -7,7 +7,8 @@
 import type { NodeProps, Node } from "@xyflow/react";
 import type { PipelineNodeData } from "../../pipeline/execute";
 import type { LoadVectorParams } from "../../pipeline/types";
-import { usePipelineStore } from "../../pipeline/store";
+import { useScopedPipelineStore, useLoadHandlers } from "../../stores/MeganeProvider";
+import { globalLoadHandlers, type VectorLoadHandler } from "../../stores/loadHandlers";
 import { NodeShell } from "./NodeShell";
 import { smallBtnStyle, fileNameStyle } from "../ui";
 import { useRef, useCallback } from "react";
@@ -19,17 +20,25 @@ const VECTOR_EXTS = [".vec"];
  * Event bus for vector loading.
  * MeganeViewer listens for these events to trigger actual file parsing.
  */
-export type VectorLoadHandler = (file: File) => void;
-let _onVectorLoad: VectorLoadHandler | null = null;
+export type { VectorLoadHandler };
+
+/**
+ * Legacy module-global registration, kept so provider-less hosts and any
+ * existing embedder keep working. It writes the process-global slots; a
+ * viewer inside a <MeganeProvider> uses that provider's own slots instead.
+ */
 export function setVectorLoadHandler(handler: VectorLoadHandler | null) {
-  _onVectorLoad = handler;
+  globalLoadHandlers.setVector(handler);
 }
 
 export function LoadVectorNode({ id, data }: NodeProps<Node<PipelineNodeData>>) {
-  const updateNodeParams = usePipelineStore((s) => s.updateNodeParams);
-  const embeddedChannels = usePipelineStore((s) => s.embeddedVectorChannels);
-  const activeEmbedded = usePipelineStore((s) => s.activeEmbeddedVectorChannel);
-  const activateEmbeddedVectorChannel = usePipelineStore((s) => s.activateEmbeddedVectorChannel);
+  const updateNodeParams = useScopedPipelineStore((s) => s.updateNodeParams);
+  const loadHandlers = useLoadHandlers();
+  const embeddedChannels = useScopedPipelineStore((s) => s.embeddedVectorChannels);
+  const activeEmbedded = useScopedPipelineStore((s) => s.activeEmbeddedVectorChannel);
+  const activateEmbeddedVectorChannel = useScopedPipelineStore(
+    (s) => s.activateEmbeddedVectorChannel,
+  );
   const params = data.params as LoadVectorParams;
   const inputRef = useRef<HTMLInputElement>(null);
 
@@ -53,9 +62,9 @@ export function LoadVectorNode({ id, data }: NodeProps<Node<PipelineNodeData>>) 
       const lower = file.name.toLowerCase();
       if (!VECTOR_EXTS.some((ext) => lower.endsWith(ext))) return;
       updateNodeParams(id, { fileName: file.name });
-      _onVectorLoad?.(file);
+      loadHandlers.vector?.(file);
     },
-    [id, updateNodeParams],
+    [id, updateNodeParams, loadHandlers],
   );
 
   const handleDrop = useCallback(

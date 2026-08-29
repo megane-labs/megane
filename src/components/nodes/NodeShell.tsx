@@ -14,7 +14,7 @@ import {
   NODE_CATEGORY,
   NODE_CATEGORY_COLORS,
 } from "../../pipeline/types";
-import { usePipelineStore } from "../../pipeline/store";
+import { useScopedPipelineStore } from "../../stores/MeganeProvider";
 
 interface NodeShellProps {
   id: string;
@@ -182,9 +182,9 @@ function getHandlePosition(index: number, total: number): string {
 }
 
 export function NodeShell({ id, nodeType, enabled, children, disabledPorts }: NodeShellProps) {
-  const toggleNode = usePipelineStore((s) => s.toggleNode);
-  const removeNode = usePipelineStore((s) => s.removeNode);
-  const errors = usePipelineStore((s) => s.nodeErrors[id] ?? EMPTY_ERRORS);
+  const toggleNode = useScopedPipelineStore((s) => s.toggleNode);
+  const removeNode = useScopedPipelineStore((s) => s.removeNode);
+  const errors = useScopedPipelineStore((s) => s.nodeErrors[id] ?? EMPTY_ERRORS);
   const ports = NODE_PORTS[nodeType];
   const categoryColor = NODE_CATEGORY_COLORS[NODE_CATEGORY[nodeType]];
 

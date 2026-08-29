@@ -9,7 +9,7 @@
 import type { NodeProps, Node } from "@xyflow/react";
 import type { PipelineNodeData } from "../../pipeline/execute";
 import type { ViewportParams } from "../../pipeline/types";
-import { usePipelineStore } from "../../pipeline/store";
+import { useScopedPipelineStore } from "../../stores/MeganeProvider";
 import { NodeShell } from "./NodeShell";
 
 const toggleRowStyle: React.CSSProperties = {
@@ -27,7 +27,7 @@ const toggleStyle: React.CSSProperties = {
 };
 
 export function ViewportNode({ id, data }: NodeProps<Node<PipelineNodeData>>) {
-  const updateNodeParams = usePipelineStore((s) => s.updateNodeParams);
+  const updateNodeParams = useScopedPipelineStore((s) => s.updateNodeParams);
   const params = data.params as ViewportParams;
 
   return (

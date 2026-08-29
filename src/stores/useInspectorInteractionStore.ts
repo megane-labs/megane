@@ -5,12 +5,13 @@
  * box-select results the other way.
  */
 
-import { create } from "zustand";
+import { create, type StateCreator, type StoreApi } from "zustand";
+import { createStore } from "zustand/vanilla";
 import type { ClickedAtom } from "../pipeline/inspectorQuery";
 
 let nextToken = 1;
 
-interface InspectorInteractionStore {
+export interface InspectorInteractionStore {
   /** Atom indices the Inspector wants highlighted live in the 3D view. */
   previewIndices: number[] | null;
   /** True while the Inspector has "box select" armed (suspends camera rotate). */
@@ -26,7 +27,9 @@ interface InspectorInteractionStore {
   publishPickedAtom: (atom: ClickedAtom) => void;
 }
 
-export const useInspectorInteractionStore = create<InspectorInteractionStore>((set) => ({
+export const inspectorInteractionStateCreator: StateCreator<InspectorInteractionStore> = (
+  set,
+) => ({
   previewIndices: null,
   boxSelectActive: false,
   boxResult: null,
@@ -36,4 +39,17 @@ export const useInspectorInteractionStore = create<InspectorInteractionStore>((s
   setBoxSelectActive: (active) => set({ boxSelectActive: active }),
   publishBoxResult: (indices) => set({ boxResult: { indices, token: nextToken++ } }),
   publishPickedAtom: (atom) => set({ pickedAtom: { ...atom, token: nextToken++ } }),
-}));
+});
+
+/** App-wide singleton — used when no <MeganeProvider> is mounted. */
+export const useInspectorInteractionStore = create<InspectorInteractionStore>(
+  inspectorInteractionStateCreator,
+);
+
+/**
+ * Private Inspector bridge for one viewer. Without this a pick in viewer A
+ * publishes into viewer B's Inspector panel.
+ */
+export function createInspectorInteractionStore(): StoreApi<InspectorInteractionStore> {
+  return createStore<InspectorInteractionStore>(inspectorInteractionStateCreator);
+}

@@ -7,7 +7,7 @@
 import type { NodeProps, Node } from "@xyflow/react";
 import type { PipelineNodeData } from "../../pipeline/execute";
 import type { ColorMode, ColorParams } from "../../pipeline/types";
-import { usePipelineStore } from "../../pipeline/store";
+import { useScopedPipelineStore } from "../../stores/MeganeProvider";
 import { NodeShell } from "./NodeShell";
 
 const labelStyle: React.CSSProperties = {
@@ -48,7 +48,7 @@ const COLOR_MODE_LABELS: Record<ColorMode, string> = {
 };
 
 export function ColorNode({ id, data }: NodeProps<Node<PipelineNodeData>>) {
-  const updateNodeParams = usePipelineStore((s) => s.updateNodeParams);
+  const updateNodeParams = useScopedPipelineStore((s) => s.updateNodeParams);
   const params = data.params as ColorParams;
 
   return (

@@ -4,9 +4,11 @@
  * Replaces the scattered playback state previously in index.tsx and useMeganeLocal.
  */
 
-import { create } from "zustand";
+import { create, type StateCreator, type StoreApi } from "zustand";
+import { createStore } from "zustand/vanilla";
 import type { Frame } from "../types";
 import type { FrameProvider } from "../pipeline/types";
+import { registerTestStores, GLOBAL_BUNDLE_ID } from "./testRegistry";
 
 export interface PlaybackStore {
   // State
@@ -46,7 +48,7 @@ export interface PlaybackStore {
   _stopInterval: () => void;
 }
 
-export const usePlaybackStore = create<PlaybackStore>((set, get) => ({
+export const playbackStateCreator: StateCreator<PlaybackStore> = (set, get) => ({
   playing: false,
   fps: 30,
   speedMultiplier: 1,
@@ -201,29 +203,26 @@ export const usePlaybackStore = create<PlaybackStore>((set, get) => ({
       set({ _intervalId: null });
     }
   },
-}));
+});
+
+/**
+ * App-wide singleton. Used by any host that mounts a single viewer and by
+ * every consumer that is not wrapped in a <MeganeProvider>.
+ */
+export const usePlaybackStore = create<PlaybackStore>(playbackStateCreator);
+
+/**
+ * Private playback store for one viewer. Each instance owns its own playhead
+ * and `setInterval`, so two viewers on a page can play different trajectories
+ * at different speeds.
+ */
+export function createPlaybackStore(): StoreApi<PlaybackStore> {
+  return createStore<PlaybackStore>(playbackStateCreator);
+}
 
 // Expose the playback store for E2E tests that need to drive playback
 // without a Timeline UI (e.g., the JupyterLab DocWidget host does not
-// mount Timeline). Mirrors the pipeline store hook in src/pipeline/store.ts.
-(() => {
-  if (typeof window === "undefined") return;
-  try {
-    const g = globalThis as { __MEGANE_TEST__?: boolean };
-    let testMode = g.__MEGANE_TEST__ === true;
-    if (!testMode) {
-      const params = new URLSearchParams(window.location?.search ?? "");
-      if (params.get("test") === "1") testMode = true;
-    }
-    if (!testMode && window.parent && window.parent !== window) {
-      const pg = (window.parent as Window & { __MEGANE_TEST__?: boolean }).__MEGANE_TEST__;
-      if (pg) testMode = true;
-    }
-    if (!testMode) return;
-    (
-      window as Window & { __megane_test_playback_store?: typeof usePlaybackStore }
-    ).__megane_test_playback_store = usePlaybackStore;
-  } catch {
-    /* noop — same-origin checks may throw inside cross-origin frames */
-  }
-})();
+// mount Timeline). Registered through the shared registry so a mounted
+// <MeganeProvider> can take the hook over with the store it actually
+// renders — see ./testRegistry.ts. No-op outside testMode.
+registerTestStores(GLOBAL_BUNDLE_ID, { playback: usePlaybackStore });
