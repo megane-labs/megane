@@ -7,8 +7,8 @@
  *   byChain    – Categorical palette cycling over chain ID
  *   byBFactor  – Continuous cool→hot viridis-like scale keyed on B-factor
  *   byProperty – Arbitrary per-atom numeric array with user-supplied range
- *   illustrative – Mol*-style: carbon takes a lightened chain color, every
- *                  other element keeps its CPK color
+ *   illustrative – Goodsell-style: every atom takes a soft pastel color for its
+ *                  chain, with carbon a lighter shade of that same color
  */
 
 import type { Snapshot } from "./types";
@@ -129,24 +129,56 @@ const CARBON_Z = 6;
 // ─── Mol* illustrative palette and lightening (verified against molstar 5.11.0) ──
 
 /**
- * Mol*'s `many-distinct` qualitative color list, verbatim
- * (`mol-util/color/lists.ts`): Dark2 + Set1 + Set2 concatenated. It is the
- * default palette of the `chain-id` and `entity-id` themes the illustrative
- * theme builds on, and is indexed by a serial, cycling with `i % length`.
+ * Pastel palette for the illustrative scheme, derived from megane's own
+ * `CHAIN_COLORS` rather than from Mol*'s `many-distinct` list.
+ *
+ * Mol* keys its illustrative theme off a fully saturated qualitative palette;
+ * megane deliberately softens its own chain colors instead, which reads closer
+ * to the Goodsell illustrations the mode is named for and keeps megane's chain
+ * identity consistent with the `byChain` color mode. The transform is done in
+ * CIE LCh so hue is preserved exactly: lightness is pulled toward
+ * `PASTEL_TARGET_L` and chroma is scaled down.
  */
-const MANY_DISTINCT: readonly number[] = [
-  // dark-2
-  0x1b9e77, 0xd95f02, 0x7570b3, 0xe7298a, 0x66a61e, 0xe6ab02, 0xa6761d, 0x666666,
-  // set-1
-  0xe41a1c, 0x377eb8, 0x4daf4a, 0x984ea3, 0xff7f00, 0xffff33, 0xa65628, 0xf781bf, 0x999999,
-  // set-2
-  0x66c2a5, 0xfc8d62, 0x8da0cb, 0xe78ac3, 0xa6d854, 0xffd92f, 0xe5c494, 0xb3b3b3,
-];
+const PASTEL_TARGET_L = 92;
+const PASTEL_LIGHTNESS_MIX = 0.55;
+const PASTEL_CHROMA_SCALE = 0.5;
+
+function toPastel(rgb: [number, number, number]): [number, number, number] {
+  const [l, a, b] = rgbToLab(rgb);
+  const chroma = Math.hypot(a, b);
+  const hue = Math.atan2(b, a);
+  const l2 = l + (PASTEL_TARGET_L - l) * PASTEL_LIGHTNESS_MIX;
+  const c2 = chroma * PASTEL_CHROMA_SCALE;
+  return labToRgb([l2, c2 * Math.cos(hue), c2 * Math.sin(hue)]);
+}
+
+let pastelWater: [number, number, number] | null = null;
+
+/** Mol*'s water color, softened to sit in the same family as the palette. */
+function illustrativeWaterColor(): [number, number, number] {
+  return (pastelWater ??= toPastel(hexToRgbTriplet(ILLUSTRATIVE_WATER_COLOR)));
+}
+
+/**
+ * megane's chain palette, softened on first use. Derived lazily rather than at
+ * module load: the transform reads the Lab constants declared further down, and
+ * a module-level initializer would hit their temporal dead zone.
+ */
+let pastelPalette: readonly [number, number, number][] | null = null;
+
+function illustrativePalette(): readonly [number, number, number][] {
+  return (pastelPalette ??= CHAIN_COLORS.map(toPastel));
+}
 
 /** Mol* `EntityIdColorTheme` fallback for an atom with no resolvable entity. */
 const ILLUSTRATIVE_DEFAULT_COLOR = 0xfafafa;
 
-/** Mol* `EntityIdColorTheme.waterColor`, applied because the preset sets `overrideWater`. */
+/**
+ * Mol* `EntityIdColorTheme.waterColor`, applied because the preset sets
+ * `overrideWater`. Softened through the same transform as the palette: Mol*'s
+ * raw `#ff0d0d` is fully saturated, and against megane's pastel chains it reads
+ * as a wall of red that swallows the solute in a solvated system.
+ */
 const ILLUSTRATIVE_WATER_COLOR = 0xff0d0d;
 
 /** Residue names megane treats as water for the illustrative water override. */
@@ -194,36 +226,29 @@ function labToXyzComponent(t: number): number {
   return t > LAB_T1 ? t * t * t : LAB_T2 * (t - LAB_T0);
 }
 
-/**
- * Mol*'s `Color.lighten`: convert to CIE Lab, add `LAB_KN * amount` to L*, and
- * convert back. Chroma (a*, b*) is untouched, so the hue and saturation survive
- * — unlike a blend toward white, which washes the color out. The illustrative
- * theme uses this to lighten carbon relative to the rest of its entity.
- */
-function lightenLab(rgb: [number, number, number], amount: number): [number, number, number] {
+/** sRGB (0..1 per channel) to CIE Lab, matching Mol*'s `Lab.fromColor`. */
+export function rgbToLab(rgb: [number, number, number]): [number, number, number] {
   const r = srgbToLinear(rgb[0]);
   const g = srgbToLinear(rgb[1]);
   const b = srgbToLinear(rgb[2]);
   const x = xyzToLabComponent((0.4124564 * r + 0.3575761 * g + 0.1804375 * b) / LAB_XN);
   const y = xyzToLabComponent((0.2126729 * r + 0.7151522 * g + 0.072175 * b) / LAB_YN);
   const z = xyzToLabComponent((0.0193339 * r + 0.119192 * g + 0.9503041 * b) / LAB_ZN);
+  return [Math.max(0, 116 * y - 16), 500 * (x - y), 200 * (y - z)];
+}
 
-  const l0 = 116 * y - 16;
-  const l = Math.max(0, l0) + LAB_KN * amount;
-  const aStar = 500 * (x - y);
-  const bStar = 200 * (y - z);
-
-  const yy = (l + 16) / 116;
-  const xx = yy + aStar / 500;
-  const zz = yy - bStar / 200;
+/** CIE Lab back to sRGB, matching Mol*'s `Lab.toColor` including 8-bit rounding. */
+function labToRgb(lab: [number, number, number]): [number, number, number] {
+  const yy = (lab[0] + 16) / 116;
+  const xx = yy + lab[1] / 500;
+  const zz = yy - lab[2] / 200;
   const xr = LAB_XN * labToXyzComponent(xx);
   const yr = LAB_YN * labToXyzComponent(yy);
   const zr = LAB_ZN * labToXyzComponent(zz);
-
-  const clamp01 = (v: number) => (v < 0 ? 0 : v > 1 ? 1 : v);
-  // Mol* rounds to 8-bit channels on the way back; match it so a megane color
-  // is bit-identical to the one Mol* would produce for the same input.
-  const quantize = (v: number) => Math.round(clamp01(linearToSrgb(v)) * 255) / 255;
+  const quantize = (v: number) => {
+    const s = linearToSrgb(v);
+    return Math.round((s < 0 ? 0 : s > 1 ? 1 : s) * 255) / 255;
+  };
   return [
     quantize(3.2404542 * xr - 1.5371385 * yr - 0.4985314 * zr),
     quantize(-0.969266 * xr + 1.8760108 * yr + 0.041556 * zr),
@@ -232,10 +257,19 @@ function lightenLab(rgb: [number, number, number], amount: number): [number, num
 }
 
 /**
- * Serial number per chain, assigned in order of first appearance — the way Mol*
- * numbers entities before indexing its palette. Indexed by the raw chain byte;
- * 0xffff marks a byte the structure never uses.
+ * Mol*'s `Color.lighten`: add `LAB_KN * amount` to L*, leaving chroma alone, so
+ * the hue and saturation survive — unlike a blend toward white, which washes
+ * the color out. The illustrative theme uses this to lighten carbon relative to
+ * the rest of its entity.
  */
+export function lightenLab(
+  rgb: [number, number, number],
+  amount: number,
+): [number, number, number] {
+  const lab = rgbToLab(rgb);
+  return labToRgb([lab[0] + LAB_KN * amount, lab[1], lab[2]]);
+}
+
 /**
  * The illustrative theme's per-entity base color: Mol*'s palette cycled by the
  * chain serial. Structures with no chain information have no entity to key on,
@@ -249,8 +283,9 @@ function illustrativeEntityColor(
   const ids = snapshot.atomChainIds;
   if (!ids) return hexToRgbTriplet(ILLUSTRATIVE_DEFAULT_COLOR);
   const serial = ctx.chainSerials?.[ids[atomIdx]] ?? 0;
-  const idx = (serial === 0xffff ? 0 : serial) % MANY_DISTINCT.length;
-  return hexToRgbTriplet(MANY_DISTINCT[idx]);
+  const palette = illustrativePalette();
+  const idx = (serial === 0xffff ? 0 : serial) % palette.length;
+  return palette[idx];
 }
 
 export function computeChainSerials(snapshot: Snapshot): Uint16Array {
@@ -344,7 +379,7 @@ export function getAtomColorForScheme(
       // `overrideWater`, so waters take the theme's water color.
       const label = ctx.atomLabels?.[atomIdx];
       if (label !== undefined && WATER_RESIDUES.has(parseResidueName(label))) {
-        return hexToRgbTriplet(ILLUSTRATIVE_WATER_COLOR);
+        return illustrativeWaterColor();
       }
       const base = illustrativeEntityColor(atomIdx, snapshot, ctx);
       return snapshot.elements[atomIdx] === CARBON_Z

@@ -411,7 +411,7 @@ export const NODE_CATALOG: Record<PipelineNodeType, NodeCatalogEntry> = {
       '"uniform": every atom gets `uniformColor` (hex string, e.g. "#ff8800")',
       '"byElement" / "byResidue" / "byChain": categorical palette by that property',
       '"byBFactor" / "byProperty": continuous palette over `range` (auto-computed if omitted)',
-      '"illustrative": Mol*-style — carbon takes a lightened chain color, every other element keeps its CPK color; pair it with the "illustrative" representation for a Goodsell-style figure',
+      '"illustrative": Goodsell-style — every atom takes a soft pastel color for its chain and carbon a lighter shade of the same color (no CPK coloring); pair it with the "illustrative" representation',
     ],
     promptInputs: "`in` (particle only — NOT bond)",
     promptOutputs: "`out` (particle)",

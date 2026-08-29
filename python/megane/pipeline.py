@@ -409,9 +409,9 @@ class Color(PipelineNode):
     Args:
         mode: One of ``"uniform"``, ``"byElement"``, ``"byResidue"``,
               ``"byChain"``, ``"byBFactor"``, ``"byProperty"``,
-              ``"illustrative"``. ``"illustrative"`` is Mol*-style: carbon
-              takes a lightened chain color while every other element keeps
-              its CPK color.
+              ``"illustrative"``. ``"illustrative"`` is Goodsell-style: every
+              atom takes a soft pastel color for its chain, with carbon a
+              lighter shade of that same color (no CPK coloring).
         uniform_color: Hex color used when ``mode == "uniform"``
                        (e.g. ``"#ff8800"``).
         range: Optional ``(min, max)`` for ``byBFactor`` / ``byProperty``.
