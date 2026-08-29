@@ -24,13 +24,6 @@
  * Everything here is inert outside test mode.
  */
 
-/** Minimal structural shape shared by React and vanilla Zustand stores. */
-export interface TestStoreLike {
-  getState: () => unknown;
-  setState: (...args: never[]) => void;
-  subscribe: (...args: never[]) => () => void;
-}
-
 export interface TestStoreBundle {
   pipeline?: unknown;
   playback?: unknown;
