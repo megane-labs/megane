@@ -68,6 +68,27 @@ export function collectPipelineErrors(
   return collectSelfCheckErrors(pipeline, ctx);
 }
 
+/**
+ * The output contract, restated for a follow-up turn.
+ *
+ * Saying "return a JSON code block first, then one sentence" in prose is not
+ * enough: measured against the prompt benchmark, repair rounds came back as
+ * bare JSON with no fence often enough to cost more format score than the
+ * repairs won back elsewhere. A literal skeleton gives the model something to
+ * pattern-match instead of paraphrase. (The skeleton is deliberately not valid
+ * pipeline JSON, so if the model echoes it verbatim the extractor skips it
+ * rather than applying it.)
+ */
+const OUTPUT_SHAPE_REMINDER = [
+  "Reply in exactly this shape — the fenced JSON block first, then one short",
+  "sentence, and nothing else:",
+  "",
+  "```json",
+  '{ "version": 3, "nodes": [...], "edges": [...] }',
+  "```",
+  "Shows the structure in the viewport.",
+].join("\n");
+
 /** Cap on how many findings one repair message carries (keeps the turn small). */
 export const MAX_REPORTED_ERRORS = 12;
 
@@ -87,10 +108,10 @@ export function buildUnparsablePipelinePrompt(): string {
     "not valid JSON, or it is missing the required `version: 3` / `nodes` /",
     "`edges` fields. Nothing could be applied.",
     "",
-    "Send the pipeline again as a single, complete, valid JSON code block —",
-    "check that every brace and bracket is closed and that no comments or",
-    "trailing commas are present — then one short sentence describing what it",
-    "does.",
+    "Send the pipeline again, checking that every brace and bracket is closed",
+    "and that no comments or trailing commas are present.",
+    "",
+    OUTPUT_SHAPE_REMINDER,
   ].join("\n");
 }
 
@@ -117,8 +138,9 @@ export function buildRepairPrompt(errors: string[]): string {
     ...(omitted > 0 ? [`- … and ${omitted} more of the same kind`] : []),
     "",
     "Change only what is needed to resolve them; keep everything that already",
-    "matches the request. Follow the schema and the selection DSL from the",
-    "system prompt exactly. Return the corrected pipeline as a single JSON code",
-    "block first, then one short sentence describing what it does.",
+    "matches the request, and follow the schema and the selection DSL from the",
+    "system prompt exactly.",
+    "",
+    OUTPUT_SHAPE_REMINDER,
   ].join("\n");
 }

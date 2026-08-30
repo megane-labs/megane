@@ -66,15 +66,19 @@ export function buildComparisonMarkdown(before, after) {
 
   lines.push("### Per case");
   lines.push("");
-  lines.push("| case | before | after | Δ |");
-  lines.push("|---|---|---|---|");
+  // "repairs" is how many self-check repair rounds the *after* run spent on
+  // this case; it is what tells a real regression apart from an unlucky first
+  // sample, since only repaired cases can be blamed on the loop.
+  lines.push("| case | before | after | Δ | repairs (after) |");
+  lines.push("|---|---|---|---|---|");
   const beforeById = new Map(before.cases.map((c) => [c.id, c]));
   const regressions = [];
   for (const afterCase of after.cases) {
     const beforeCase = beforeById.get(afterCase.id);
     const b = beforeCase ? beforeCase.total : null;
     const a = afterCase.total;
-    lines.push(`| ${afterCase.id} | ${pct(b)} | ${pct(a)} | ${delta(b, a)} |`);
+    const repairs = afterCase.repairRounds ?? "—";
+    lines.push(`| ${afterCase.id} | ${pct(b)} | ${pct(a)} | ${delta(b, a)} | ${repairs} |`);
     if (b !== null && b - a >= REGRESSION_THRESHOLD) {
       regressions.push(afterCase);
     }

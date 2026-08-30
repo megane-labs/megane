@@ -3,6 +3,7 @@ import {
   collectQueryErrors,
   collectPipelineErrors,
   buildRepairPrompt,
+  buildUnparsablePipelinePrompt,
   MAX_REPORTED_ERRORS,
 } from "@/ai/validatePipeline";
 import type { SerializedPipeline } from "@/pipeline/types";
@@ -112,13 +113,31 @@ describe("buildRepairPrompt", () => {
     expect(msg).toContain('node "f1": bad');
     expect(msg).toContain('node "f2": worse');
     expect(msg).toContain("has the problems listed below");
-    expect(msg).toContain("single JSON code");
+    expect(msg).toContain("fix them all");
   });
 
-  it("does not restate the pipeline — it is already in the conversation", () => {
+  it("does not restate the broken pipeline — it is already in the conversation", () => {
     const msg = buildRepairPrompt(['node "f1": bad']);
-    expect(msg).not.toContain("```json");
-    expect(msg).not.toContain('"version"');
+    // The skeleton below is the only JSON in the message; the actual nodes and
+    // edges the model produced are never pasted back in.
+    expect(msg).not.toContain('"position"');
+    expect(msg).not.toContain('"load_structure"');
+  });
+
+  it("pins the output shape with a literal skeleton", () => {
+    // Prose alone let repair rounds come back as bare JSON, which cost format
+    // score in the prompt benchmark.
+    const msg = buildRepairPrompt(['node "f1": bad']);
+    expect(msg).toContain("```json");
+    expect(msg).toContain('{ "version": 3, "nodes": [...], "edges": [...] }');
+    expect(msg).toContain("then one short");
+  });
+
+  it("uses the same skeleton when the JSON could not be parsed", () => {
+    const msg = buildUnparsablePipelinePrompt();
+    expect(msg).toContain("not a usable pipeline");
+    expect(msg).toContain("```json");
+    expect(msg).toContain('{ "version": 3, "nodes": [...], "edges": [...] }');
   });
 
   it("caps the finding list and says how many were omitted", () => {

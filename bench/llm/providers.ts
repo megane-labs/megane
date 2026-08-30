@@ -122,6 +122,16 @@ export function assertConfig(config: ProviderConfig): void {
 }
 
 /**
+ * Counters a caller can pass in to observe how a generation went. Recorded per
+ * case in the JSON report so a score change can be attributed to the repair
+ * loop instead of guessed at — without it, a regression and an unlucky first
+ * sample look identical.
+ */
+export interface GenerationStats {
+  repairRounds: number;
+}
+
+/**
  * Generate a pipeline response for one prompt. Returns the full model text
  * (JSON code block + trailing explanation), ready to hand to the scorer.
  */
@@ -129,6 +139,7 @@ export async function generatePipelineLive(
   config: ProviderConfig,
   userMessage: string,
   fetchImpl: FetchLike = fetch,
+  stats?: GenerationStats,
 ): Promise<string> {
   const system = buildSystemPrompt();
   const skills = loadSkills();
@@ -155,6 +166,7 @@ export async function generatePipelineLive(
     // graph wiring) plus the unparsable-JSON retry.
     const findings = diagnoseResponse(text, {});
     if (!findings) break;
+    if (stats) stats.repairRounds += 1;
     text = await send(findings.prompt);
   }
   return text;
