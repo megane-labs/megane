@@ -389,7 +389,8 @@ export const NODE_CATALOG: Record<PipelineNodeType, NodeCatalogEntry> = {
     params: [
       {
         jsonKey: "mode",
-        tsType: '"uniform" | "byElement" | "byResidue" | "byChain" | "byBFactor" | "byProperty"',
+        tsType:
+          '"uniform" | "byElement" | "byResidue" | "byChain" | "byBFactor" | "byProperty" | "illustrative"',
         default: '"uniform"',
         doc: "Coloring scheme.",
       },
@@ -410,6 +411,7 @@ export const NODE_CATALOG: Record<PipelineNodeType, NodeCatalogEntry> = {
       '"uniform": every atom gets `uniformColor` (hex string, e.g. "#ff8800")',
       '"byElement" / "byResidue" / "byChain": categorical palette by that property',
       '"byBFactor" / "byProperty": continuous palette over `range` (auto-computed if omitted)',
+      '"illustrative": Goodsell-style — every atom takes a soft pastel color for its chain and carbon a lighter shade of the same color (no CPK coloring); pair it with the "illustrative" representation',
     ],
     promptInputs: "`in` (particle only — NOT bond)",
     promptOutputs: "`out` (particle)",
@@ -421,7 +423,7 @@ export const NODE_CATALOG: Record<PipelineNodeType, NodeCatalogEntry> = {
     params: [
       {
         jsonKey: "mode",
-        tsType: '"atoms" | "licorice" | "cartoon" | "both" | "surface" | "line"',
+        tsType: '"atoms" | "licorice" | "cartoon" | "both" | "surface" | "line" | "illustrative"',
         default: '"atoms"',
         doc: "Rendering style for the particle stream.",
       },
@@ -433,6 +435,7 @@ export const NODE_CATALOG: Record<PipelineNodeType, NodeCatalogEntry> = {
       '"both": atoms and cartoon overlaid',
       '"surface": molecular surface',
       '"line": thin wireframe lines (VMD/PyMOL "lines" style)',
+      '"illustrative": Mol*-style spacefill spheres at full van der Waals radius, softly shaded toward the rim of each sphere with a dark silhouette outline; bonds are hidden. Best paired with a `color` node in "illustrative" mode',
     ],
     promptInputs: "`in` (particle only — NOT bond)",
     promptOutputs: "`out` (particle)",
@@ -533,12 +536,32 @@ export const NODE_CATALOG: Record<PipelineNodeType, NodeCatalogEntry> = {
         default: '"#ff4444"',
         doc: "Hex color for the negative surface.",
       },
+      {
+        jsonKey: "colorMode",
+        tsType: '"solid" | "volume"',
+        default: '"solid"',
+        doc: '"solid" uses color/negativeColor; "volume" maps vertex colors from the volume connected to the colorVolumetric input.',
+      },
+      {
+        jsonKey: "colormap",
+        tsType: '"rwb" | "bwr" | "rainbow"',
+        default: '"rwb"',
+        doc: 'Colormap for colorMode "volume" (rwb = red-white-blue, the chemistry ESP convention).',
+      },
+      {
+        jsonKey: "colorRange",
+        optional: true,
+        tsType: "[number, number]",
+        doc: "Explicit [min, max] colormap range; omit for auto (symmetric around 0 for rwb/bwr).",
+      },
     ],
     promptNotes: [
       "isoLevel: contour level for the positive surface (default 0.05)",
       "showNegative: also draw a second surface at -isoLevel (e.g. for\n    electrostatic potential maps), colored with `negativeColor`",
+      'colorMode "volume": paint the surface by sampling a second volume\n    connected to the `colorVolumetric` input (e.g. ESP mapped onto a\n    charge-density isosurface) through `colormap`; the optional `colorRange`\n    fixes the [min, max] mapping (omit for auto)',
     ],
-    promptInputs: "`volumetric` (volumetric data type)",
+    promptInputs:
+      '`volumetric` (volumetric data type), `colorVolumetric` (optional volumetric used for coloring when colorMode is "volume")',
     promptOutputs: "`mesh` (mesh data type)",
     inPrompt: true,
     pythonClass: "Isosurface",

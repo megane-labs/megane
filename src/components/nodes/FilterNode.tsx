@@ -9,7 +9,7 @@ import { useState, useCallback, useEffect } from "react";
 import type { NodeProps, Node } from "@xyflow/react";
 import type { PipelineNodeData } from "../../pipeline/execute";
 import type { FilterParams } from "../../pipeline/types";
-import { usePipelineStore } from "../../pipeline/store";
+import { useScopedPipelineStore } from "../../stores/MeganeProvider";
 import { validateQuery, validateBondQuery } from "../../pipeline/selection";
 import { NodeShell } from "./NodeShell";
 
@@ -47,7 +47,7 @@ const hintStyle: React.CSSProperties = {
 };
 
 export function FilterNode({ id, data }: NodeProps<Node<PipelineNodeData>>) {
-  const updateNodeParams = usePipelineStore((s) => s.updateNodeParams);
+  const updateNodeParams = useScopedPipelineStore((s) => s.updateNodeParams);
   const params = data.params as FilterParams;
   const [localQuery, setLocalQuery] = useState(params.query);
   const [localBondQuery, setLocalBondQuery] = useState(params.bond_query ?? "");

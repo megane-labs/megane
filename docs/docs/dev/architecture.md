@@ -69,7 +69,7 @@ Nine typed channels flow through pipeline edges. Defined in `src/pipeline/types.
 | `volumetric` | `VolumetricData` | `nx`, `ny`, `nz`, `origin`, `step`, `data` | LoadVolumetric | Isosurface |
 | `spectrum` | `SpectrumData` | `title`, `dataType`, `xUnits`, `yUnits`, `x`, `y` | LoadSpectrum | SpectrumPlot |
 
-Each edge in the UI is color-coded by data type (`DATA_TYPE_COLORS`). Filter and Modify nodes are generic — they accept both `particle` and `bond` inputs via `GENERIC_NODE_ACCEPTS`. The Color and Representation nodes are particle-only modifiers that share the same Modify category in the toolbar (Ovito-style stack: each modifier owns one visual property — Modify = scale & opacity, Color = per-atom palette, Representation = atoms/licorice/cartoon/both/surface/line).
+Each edge in the UI is color-coded by data type (`DATA_TYPE_COLORS`). Filter and Modify nodes are generic — they accept both `particle` and `bond` inputs via `GENERIC_NODE_ACCEPTS`. The Color and Representation nodes are particle-only modifiers that share the same Modify category in the toolbar (Ovito-style stack: each modifier owns one visual property — Modify = scale & opacity, Color = per-atom palette, Representation = atoms/licorice/cartoon/both/surface/line/illustrative).
 
 ## Pipeline Execution
 
@@ -144,6 +144,10 @@ Bond order visualization:
 - **Aromatic** — 1 solid + 1 dashed offset cylinder
 
 Bond coloring is **split by endpoint**: each bond carries two per-instance colors (`instanceColorA`/`instanceColorB`), and the fragment shader picks one based on the sign of the cylinder's axial coordinate (`vCylUv.y`), so the half nearest each atom takes that atom's color (e.g. a C–H bond is half grey, half white). This matches the convention used by VMD/PyMOL/Mol*. The same split applies under every color scheme (by element/residue/chain/etc.) because the colors are derived from the per-atom color buffer.
+
+Each cylinder runs from atom centre to atom centre, so its ends are buried inside the endpoint spheres. While the atoms are opaque the depth test hides that, but a transparent atom stops writing depth and the buried stick blends straight through the ball — the model then reads as beads threaded onto rods instead of one fused solid. The bond fragment shader therefore renders the **CSG union** of stick and balls: after the ray/cylinder hit is computed it discards any fragment lying inside either endpoint sphere, so the stick ends exactly on the ball's skin at any viewing angle and each pixel is covered by one surface instead of two. Because a buried point is always behind the sphere's own front face along the same ray, the trim discards precisely the fragments the depth test was already rejecting — opaque renders are pixel-identical, and transparent ones cost slightly *less* because the discarded fragments skip the lighting block.
+
+The trim needs the radius of the ball actually on screen, which varies with the global atom scale, per-atom scale overrides and the licorice uniform radius. It rides in the otherwise-unused **alpha channel of the position DataTexture**, so the vertex shader gets it from the texel it already fetches — no extra attribute, texture or bandwidth. `ImpostorAtomMesh.setRadiusSink()` pushes the effective radii on every restyle (`MoleculeRenderer.swapRenderers` / `StructureLayer` wire it once) and `ImpostorBondMesh` mirrors them so they survive the per-frame topology rebuilds that distance-based bonding triggers. A radius of 0 — an atom hidden by a representation, or faded to fully transparent — disables the trim for that endpoint, so a stick with no ball stays whole. PBC ghost atoms, which live past the real-atom range and are drawn by a separate boundary renderer, fall back to the per-element ball-and-stick radius.
 
 ### Shader Architecture
 

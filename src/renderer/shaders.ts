@@ -67,11 +67,23 @@ export const atomFragmentShader = /* glsl */ `precision highp float;
   uniform mat4 projectionMatrix;
   uniform float uOpacity;
   uniform int uUsePerAtomOverrides;
+  // Illustrative (Mol*-style) mode: flat unlit color plus a constant-width
+  // silhouette outline. 0 = off (lit ball-and-stick shading).
+  uniform int uIllustrative;
+  uniform float uOutlineWidth;
+  uniform vec3 uOutlineColor;
+  uniform float uAmbientDarkening;
 
   out vec4 fragColor;
 
   void main() {
     float dist2 = dot(vUv, vUv);
+    // Screen-space derivative of the normalized silhouette distance, taken
+    // BEFORE the discard below: derivatives are undefined once a fragment in
+    // the 2x2 quad has terminated, which would make the outline flicker along
+    // the very edge it is supposed to trace.
+    float rim = sqrt(dist2);
+    float rimWidth = fwidth(rim) * uOutlineWidth;
     if (dist2 > 1.0) discard;
 
     float z = sqrt(1.0 - dist2);
@@ -82,6 +94,28 @@ export const atomFragmentShader = /* glsl */ `precision highp float;
     vec4 clipPos = projectionMatrix * vec4(fragViewPos, 1.0);
     float ndcDepth = clipPos.z / clipPos.w;
     gl_FragDepth = ndcDepth * 0.5 + 0.5;
+
+    float finalOpacity = uOpacity;
+    if (uUsePerAtomOverrides == 1) {
+      finalOpacity *= vOpacityOverride;
+    }
+
+    if (uIllustrative == 1) {
+      // Mol*'s illustrative representation renders spacefill spheres with
+      // ignoreLight, so the sphere reads as a flat disc of its own color and
+      // the shape is carried entirely by the outline. rimWidth comes from the
+      // screen-space derivative, so the band stays uOutlineWidth device pixels
+      // wide no matter how large the sphere is on screen.
+      // Stand-in for the ambient occlusion Mol* gets from its SSAO pass: in a
+      // spacefill field the dominant occlusion is contact with neighbouring
+      // spheres, which always sits near a sphere's rim, so a radial ramp
+      // recovers most of the sculpted look with no depth prepass. z is the
+      // sphere normal's view-space Z: 1 facing the camera, 0 at the silhouette.
+      vec3 shaded = vColor * mix(1.0 - uAmbientDarkening, 1.0, z);
+      float edge = smoothstep(1.0 - rimWidth, 1.0 - rimWidth * 0.5, rim);
+      fragColor = vec4(mix(shaded, uOutlineColor, edge), finalOpacity);
+      return;
+    }
 
     // Hemisphere ambient: sky blue on top, warm brown on bottom
     vec3 skyColor = vec3(0.87, 0.92, 1.0);
@@ -110,10 +144,6 @@ export const atomFragmentShader = /* glsl */ `precision highp float;
     vec3 color = vColor * (ambient + diffuse) * edgeFactor
                + vec3(1.0) * spec * 0.3
                + vec3(0.15) * fresnel;
-    float finalOpacity = uOpacity;
-    if (uUsePerAtomOverrides == 1) {
-      finalOpacity *= vOpacityOverride;
-    }
     fragColor = vec4(color, finalOpacity);
   }
 `;
@@ -123,6 +153,7 @@ export const bondVertexShader = /* glsl */ `precision highp float;
   uniform mat4 modelViewMatrix;
   uniform mat4 projectionMatrix;
   uniform float uBondScaleMultiplier;
+  uniform float uAtomRadiusScale;
   uniform sampler2D uPositionTex;
   uniform int uPositionTexWidth;
 
@@ -152,11 +183,19 @@ export const bondVertexShader = /* glsl */ `precision highp float;
   out float vRadius;
   out float vHalfLen;
   out vec3 vViewRayPos;
+  // Endpoint spheres in view space, used by the fragment shader to trim the
+  // stick where it is buried inside a ball (see the CSG union note there).
+  // The radii ride in the alpha channel of the position texture, scaled by
+  // uAtomRadiusScale — together they mirror whatever the atom impostor draws.
+  out vec3 vViewCenterA;
+  out vec3 vViewCenterB;
+  out float vAtomRadiusA;
+  out float vAtomRadiusB;
 
-  vec3 getAtomPos(int idx) {
+  vec4 getAtomTexel(int idx) {
     int tx = idx % uPositionTexWidth;
     int ty = idx / uPositionTexWidth;
-    return texelFetch(uPositionTex, ivec2(tx, ty), 0).rgb;
+    return texelFetch(uPositionTex, ivec2(tx, ty), 0);
   }
 
   void main() {
@@ -167,8 +206,18 @@ export const bondVertexShader = /* glsl */ `precision highp float;
 
     int atomA = int(instanceAtomA + 0.5);
     int atomB = int(instanceAtomB + 0.5);
-    vec3 posA = getAtomPos(atomA);
-    vec3 posB = getAtomPos(atomB);
+    vec4 texelA = getAtomTexel(atomA);
+    vec4 texelB = getAtomTexel(atomB);
+    vec3 posA = texelA.rgb;
+    vec3 posB = texelB.rgb;
+
+    // Sphere centres stay on the atoms even when the cylinder is pushed aside
+    // for a double / triple / aromatic bond, so the trim below cuts against
+    // the ball that is actually drawn.
+    vViewCenterA = (modelViewMatrix * vec4(posA, 1.0)).xyz;
+    vViewCenterB = (modelViewMatrix * vec4(posB, 1.0)).xyz;
+    vAtomRadiusA = texelA.a * uAtomRadiusScale;
+    vAtomRadiusB = texelB.a * uAtomRadiusScale;
 
     vec3 start = posA;
     vec3 end = posB;
@@ -228,6 +277,10 @@ export const bondFragmentShader = /* glsl */ `precision highp float;
   in float vRadius;
   in float vHalfLen;
   in vec3 vViewRayPos;
+  in vec3 vViewCenterA;
+  in vec3 vViewCenterB;
+  in float vAtomRadiusA;
+  in float vAtomRadiusB;
 
   uniform mat4 projectionMatrix;
   uniform float uOpacity;
@@ -264,6 +317,20 @@ export const bondFragmentShader = /* glsl */ `precision highp float;
     vec3 hit = ro + t * rd;
     float axial = dot(hit - vViewMid, d);
     if (abs(axial) > vHalfLen) discard; // beyond the stick ends; the spheres cap it
+
+    // CSG union trim. The cylinder runs centre-to-centre, so its ends are
+    // buried inside the endpoint spheres. An opaque atom hides that via the
+    // depth test — an interior point is always behind the sphere's front face
+    // along the same ray — but a transparent one stops writing depth and the
+    // buried stick blends through, so the ball reads as a bead threaded onto a
+    // rod. Discarding the fragments inside either sphere leaves exactly the
+    // union's outer surface: one covering surface per pixel, and the stick ends
+    // on the ball's skin at any viewing angle. Radius 0 (atom hidden or faded
+    // out entirely) disables the trim, so a stick with no ball stays whole.
+    vec3 toA = hit - vViewCenterA;
+    if (dot(toA, toA) < vAtomRadiusA * vAtomRadiusA) discard;
+    vec3 toB = hit - vViewCenterB;
+    if (dot(toB, toB) < vAtomRadiusB * vAtomRadiusB) discard;
 
     vec3 normal = normalize((hit - vViewMid) - axial * d);
     if (dot(normal, rd) > 0.0) normal = -normal; // face the camera

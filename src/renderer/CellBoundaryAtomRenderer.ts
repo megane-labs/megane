@@ -2,6 +2,7 @@ import * as THREE from "three";
 import type { Snapshot } from "../types";
 import type { DrawingBoundaryData, PeriodicAtomImageData } from "../pipeline/types";
 import { ImpostorAtomMesh } from "./ImpostorAtomMesh";
+import { BALL_STICK_ATOM_SCALE } from "../constants";
 
 /**
  * Visual layer for periodic atom images. Images mirror their structural
@@ -17,6 +18,8 @@ export class DrawingBoundaryAtomRenderer {
   private scale = 1;
   private opacity = 1;
   private uniformRadius: number | null = null;
+  private radiusScale = BALL_STICK_ATOM_SCALE;
+  private illustrative = false;
   private scaleOverrides: Float32Array | null = null;
   private opacityOverrides: Float32Array | null = null;
   private colorOverrides: Float32Array | null = null;
@@ -70,6 +73,18 @@ export class DrawingBoundaryAtomRenderer {
     if (this.imageSnapshot) this.atoms.setUniformRadius(radius, this.imageSnapshot);
   }
 
+  /** Mirror the structural atoms' vdW radius fraction (spacefill vs ball-and-stick). */
+  setRadiusScale(scale: number): void {
+    this.radiusScale = scale;
+    if (this.imageSnapshot) this.atoms.setRadiusScale(scale, this.imageSnapshot);
+  }
+
+  /** Mirror the structural atoms' illustrative (flat + outline) shading. */
+  setIllustrative(enabled: boolean): void {
+    this.illustrative = enabled;
+    this.atoms.setIllustrative(enabled);
+  }
+
   setScaleOverrides(overrides: Float32Array | null): void {
     this.scaleOverrides = overrides;
     if (overrides) this.atoms.setScaleOverrides(this.mapScalar(overrides, 1));
@@ -120,7 +135,9 @@ export class DrawingBoundaryAtomRenderer {
     this.atoms.loadSnapshot(this.imageSnapshot);
     this.atoms.setScale(this.scale, this.imageSnapshot);
     this.atoms.setOpacity(this.opacity);
+    this.atoms.setRadiusScale(this.radiusScale, this.imageSnapshot);
     this.atoms.setUniformRadius(this.uniformRadius, this.imageSnapshot);
+    this.atoms.setIllustrative(this.illustrative);
     if (this.scaleOverrides) {
       this.atoms.setScaleOverrides(this.mapScalar(this.scaleOverrides, 1));
     }

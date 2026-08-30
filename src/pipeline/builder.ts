@@ -400,7 +400,8 @@ export type ColorMode =
   | "byResidue"
   | "byChain"
   | "byBFactor"
-  | "byProperty";
+  | "byProperty"
+  | "illustrative";
 
 export class Color extends PipelineNode {
   readonly nodeType = "color";
@@ -443,7 +444,14 @@ export class Color extends PipelineNode {
  *   inp.particle — atom data in
  *   out.particle — atom data tagged with the representation override
  */
-export type RepresentationMode = "atoms" | "cartoon" | "both" | "surface" | "line";
+export type RepresentationMode =
+  | "atoms"
+  | "licorice"
+  | "cartoon"
+  | "both"
+  | "surface"
+  | "line"
+  | "illustrative";
 
 export class Representation extends PipelineNode {
   readonly nodeType = "representation";

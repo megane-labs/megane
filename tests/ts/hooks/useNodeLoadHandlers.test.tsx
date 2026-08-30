@@ -2,24 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { renderHook, act } from "@testing-library/react";
 import type { StructureParseResult } from "@/parsers/structure";
 
-// Capture the handler the hook registers via setStructureLoadHandler so the
-// test can invoke it directly (the module keeps the handler private).
-const captured = vi.hoisted(() => ({
-  structure: null as null | ((nodeId: string, file: File) => void),
-}));
 const parseMock = vi.hoisted(() => vi.fn());
-
-vi.mock("@/components/nodes/LoadStructureNode", () => ({
-  setStructureLoadHandler: (fn: ((nodeId: string, file: File) => void) | null) => {
-    captured.structure = fn;
-  },
-}));
-vi.mock("@/components/nodes/LoadTrajectoryNode", () => ({
-  setTrajectoryLoadHandler: vi.fn(),
-}));
-vi.mock("@/components/nodes/LoadVectorNode", () => ({
-  setVectorLoadHandler: vi.fn(),
-}));
 const shouldLazyMock = vi.hoisted(() => vi.fn(() => false));
 vi.mock("@/parsers/structure", () => ({
   parseStructureFile: parseMock,
@@ -28,6 +11,19 @@ vi.mock("@/parsers/structure", () => ({
 
 import { useNodeLoadHandlers } from "@/hooks/useNodeLoadHandlers";
 import { usePipelineStore } from "@/pipeline/store";
+import { globalLoadHandlers } from "@/stores/loadHandlers";
+
+// The hook registers into the load-handler slots rather than a module-level
+// setter, so the test reads the registered handler back off the global bundle
+// — which is what `useLoadHandlers()` resolves to with no provider mounted.
+const captured = {
+  get structure() {
+    return globalLoadHandlers.structure;
+  },
+  set structure(fn) {
+    globalLoadHandlers.setStructure(fn);
+  },
+};
 
 function makeResult(overrides: Partial<StructureParseResult> = {}): StructureParseResult {
   return {

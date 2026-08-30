@@ -8,7 +8,8 @@
 import type { NodeProps, Node } from "@xyflow/react";
 import type { PipelineNodeData } from "../../pipeline/execute";
 import type { LoadTrajectoryParams } from "../../pipeline/types";
-import { usePipelineStore } from "../../pipeline/store";
+import { useScopedPipelineStore, useLoadHandlers } from "../../stores/MeganeProvider";
+import { globalLoadHandlers, type TrajectoryLoadHandler } from "../../stores/loadHandlers";
 import { NodeShell } from "./NodeShell";
 import { smallBtnStyle, fileNameStyle } from "../ui";
 import { useRef, useCallback } from "react";
@@ -20,14 +21,20 @@ const TRAJECTORY_EXTS = [".xtc", ".lammpstrj", ".dump", ".trj", ".dcd", ".nc"];
  * Event bus for trajectory loading.
  * MeganeViewer listens for these events to trigger actual file parsing.
  */
-export type TrajectoryLoadHandler = (file: File) => void;
-let _onTrajectoryLoad: TrajectoryLoadHandler | null = null;
+export type { TrajectoryLoadHandler };
+
+/**
+ * Legacy module-global registration, kept so provider-less hosts and any
+ * existing embedder keep working. It writes the process-global slots; a
+ * viewer inside a <MeganeProvider> uses that provider's own slots instead.
+ */
 export function setTrajectoryLoadHandler(handler: TrajectoryLoadHandler | null) {
-  _onTrajectoryLoad = handler;
+  globalLoadHandlers.setTrajectory(handler);
 }
 
 export function LoadTrajectoryNode({ id, data }: NodeProps<Node<PipelineNodeData>>) {
-  const updateNodeParams = usePipelineStore((s) => s.updateNodeParams);
+  const updateNodeParams = useScopedPipelineStore((s) => s.updateNodeParams);
+  const loadHandlers = useLoadHandlers();
   const params = data.params as LoadTrajectoryParams;
   const inputRef = useRef<HTMLInputElement>(null);
 
@@ -36,9 +43,9 @@ export function LoadTrajectoryNode({ id, data }: NodeProps<Node<PipelineNodeData
       const lower = file.name.toLowerCase();
       if (!TRAJECTORY_EXTS.some((ext) => lower.endsWith(ext))) return;
       updateNodeParams(id, { fileName: file.name, source: "file" });
-      _onTrajectoryLoad?.(file);
+      loadHandlers.trajectory?.(file);
     },
-    [id, updateNodeParams],
+    [id, updateNodeParams, loadHandlers],
   );
 
   const handleDrop = useCallback(

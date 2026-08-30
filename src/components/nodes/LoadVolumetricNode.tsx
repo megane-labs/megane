@@ -7,7 +7,7 @@ import { useCallback, useRef } from "react";
 import type { NodeProps, Node } from "@xyflow/react";
 import type { PipelineNodeData } from "../../pipeline/execute";
 import type { LoadVolumetricParams } from "../../pipeline/types";
-import { usePipelineStore } from "../../pipeline/store";
+import { useScopedPipelineStore } from "../../stores/MeganeProvider";
 import { NodeShell } from "./NodeShell";
 import { smallBtnStyle, fileNameStyle } from "../ui";
 import {
@@ -17,7 +17,7 @@ import {
 } from "../../pipeline/executors/parseVolumetric";
 
 export function LoadVolumetricNode({ id, data }: NodeProps<Node<PipelineNodeData>>) {
-  const updateNodeParams = usePipelineStore((s) => s.updateNodeParams);
+  const updateNodeParams = useScopedPipelineStore((s) => s.updateNodeParams);
   const params = data.params as LoadVolumetricParams;
   const inputRef = useRef<HTMLInputElement>(null);
 

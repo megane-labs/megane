@@ -15,13 +15,16 @@ import {
   extractTrailingExplanation,
   RateLimitError,
 } from "../ai/client";
-import { usePipelineStore } from "../pipeline/store";
 import { summarizeStructure } from "../ai/structureSummary";
 import type { SelfCheckContext } from "../ai/selfCheck";
 import type { NodeSnapshotData } from "../pipeline/execute";
 import type { LoadStructureParams, SerializedPipeline } from "../pipeline/types";
 import type { Frame, Snapshot, TrajectoryMeta } from "../types";
-import { usePipelineUIStore } from "../stores/usePipelineUIStore";
+import {
+  useScopedPipelineStore,
+  usePipelineStoreApi,
+  usePipelineUIStoreApi,
+} from "../stores/MeganeProvider";
 
 interface ChatMessage {
   role: "user" | "assistant" | "error";
@@ -303,8 +306,10 @@ export function PipelineChatBox({ onPipelineApplied }: { onPipelineApplied?: () 
     [useDemo, provider, model, apiKey],
   );
 
-  const deserialize = usePipelineStore((s) => s.deserialize);
-  const autoLayout = usePipelineStore((s) => s.autoLayout);
+  const pipelineApi = usePipelineStoreApi();
+  const pipelineUIApi = usePipelineUIStoreApi();
+  const deserialize = useScopedPipelineStore((s) => s.deserialize);
+  const autoLayout = useScopedPipelineStore((s) => s.autoLayout);
 
   // Auto-scroll to bottom on new messages
   useEffect(() => {
@@ -347,14 +352,14 @@ export function PipelineChatBox({ onPipelineApplied }: { onPipelineApplied?: () 
     let appliedNodeCount = -1;
     let appliedJSON: string | null = null;
     const applyPipeline = (pipeline: SerializedPipeline) => {
-      const preState = usePipelineStore.getState();
+      const preState = pipelineApi.getState();
       const preserved = captureLoadedStructure(preState.nodes, preState.nodeSnapshots);
 
       deserialize(pipeline);
       autoLayout();
 
       if (preserved) {
-        const postState = usePipelineStore.getState();
+        const postState = pipelineApi.getState();
         const newLoader = postState.nodes.find((n) => n.type === "load_structure");
         if (newLoader) {
           postState.setNodeSnapshot(newLoader.id, preserved.snapshot);
@@ -370,14 +375,14 @@ export function PipelineChatBox({ onPipelineApplied }: { onPipelineApplied?: () 
       appliedJSON = JSON.stringify(pipeline);
       // Surface the result on the editor tab and trigger fitView via the
       // panel's mode-change effect.
-      usePipelineUIStore.getState().markPipelineApplied();
+      pipelineUIApi.getState().markPipelineApplied();
       onPipelineApplied?.();
     };
 
     // Describe the currently loaded structure so the model can build filter
     // queries from the real elements/resnames present rather than guessing —
     // and so the self-check can run the generated pipeline against it.
-    const checkContext = resolveStructureContext(usePipelineStore.getState());
+    const checkContext = resolveStructureContext(pipelineApi.getState());
     const structureSummary = summarizeStructure(
       checkContext.snapshot ?? null,
       checkContext.atomLabels ?? null,
@@ -464,6 +469,8 @@ export function PipelineChatBox({ onPipelineApplied }: { onPipelineApplied?: () 
     deserialize,
     autoLayout,
     onPipelineApplied,
+    pipelineApi,
+    pipelineUIApi,
   ]);
 
   const handleCancel = useCallback(() => {

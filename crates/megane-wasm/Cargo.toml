@@ -1,11 +1,11 @@
 [package]
 name = "megane-wasm"
-version = "0.13.1"
+version = "0.14.0"
 edition = "2021"
 description = "WASM bindings for megane molecular viewer"
 authors = ["hodakamori"]
 license = "MIT"
-repository = "https://github.com/hodakamori/megane"
+repository = "https://github.com/megane-labs/megane"
 
 # Run wasm-opt (binaryen) on the release build. -O3 optimizes the parser/decoder
 # hot loops (e.g. XTC bit decompression) and also shrinks the shipped .wasm, so

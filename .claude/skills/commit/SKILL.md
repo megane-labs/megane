@@ -66,7 +66,7 @@ Before reporting task completion to the user, always verify that CI has passed o
 ```bash
 # Check CI status for the current branch
 ORIG_REMOTE=$(git remote get-url origin)
-git remote set-url origin https://github.com/hodakamori/megane.git
+git remote set-url origin https://github.com/megane-labs/megane.git
 gh run list --branch "$(git branch --show-current)" --limit 1
 # For more detail on a specific run:
 # gh run view <run-id>

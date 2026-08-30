@@ -11,6 +11,7 @@ import {
   type ColorContext,
   type ColorScheme,
   computeBfactorRange,
+  computeChainSerials,
   getAtomColorForScheme,
 } from "../colorSchemes";
 
@@ -66,6 +67,9 @@ export function makeColorWriter(
     bfactorRange: range ?? computeBfactorRange(particle.source),
     propertyValues: null,
     propertyRange: range,
+    // Mol* indexes its palette by entity serial, i.e. order of first
+    // appearance — precomputed here so the per-atom path stays a lookup.
+    chainSerials: mode === "illustrative" ? computeChainSerials(particle.source) : undefined,
   };
   return (buf, i) => {
     const [r, g, b] = getAtomColorForScheme(i, particle.source, ctx);

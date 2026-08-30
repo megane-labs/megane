@@ -104,9 +104,133 @@ See the [TypeScript Pipeline API](/guide/pipeline/typescript) for the complete i
 
 ---
 
+## Multiple viewers on one page
+
+By default `MeganeViewer` reads a set of module-global stores. That is what a
+single-viewer app wants, and it is why the snippet above can reach the viewer's
+state through `usePipelineStore.getState()` from anywhere. But it also means two
+viewers mounted side by side share one pipeline: the second one's `openFile()`
+replaces the graph the first is rendering, and both panels end up showing the
+same structure.
+
+Wrap each viewer in a `MeganeProvider` and it gets its own state:
+
+```tsx
+import { useEffect, useState } from "react";
+import "megane-viewer/styles.css";
+import {
+  MeganeViewer,
+  MeganeProvider,
+  createMeganeStores,
+  type MeganeStores,
+} from "megane-viewer/lib";
+
+function Preview({ stores, text, fileName }: {
+  stores: MeganeStores;
+  text: string;
+  fileName: string;
+}) {
+  useEffect(() => {
+    // Straight onto THIS viewer's pipeline store.
+    void stores.pipeline.getState().openFile(new File([text], fileName));
+  }, [stores, text, fileName]);
+
+  return (
+    <MeganeProvider stores={stores}>
+      <MeganeViewer onUploadStructure={() => {}} width="100%" height="100%" />
+    </MeganeProvider>
+  );
+}
+
+function App() {
+  // Created once — not inside render, or every render starts a new viewer.
+  const [left] = useState(() => createMeganeStores());
+  const [right] = useState(() => createMeganeStores());
+
+  return (
+    <div style={{ display: "flex", height: 500 }}>
+      <Preview stores={left} text={crambinPdb} fileName="crambin.pdb" />
+      <Preview stores={right} text={butanePdb} fileName="butane.pdb" />
+    </div>
+  );
+}
+```
+
+`MeganeProvider` can also create and own its bundle, which is all you need when
+nothing outside the viewer has to drive it:
+
+```tsx
+<MeganeProvider>
+  <MeganeViewer onUploadStructure={handleUpload} />
+</MeganeProvider>
+```
+
+### What a bundle contains
+
+`createMeganeStores()` returns the six stores that belong to one viewer —
+`pipeline`, `playback`, `measurement`, `viewState`, `pipelineUI` and
+`inspector` — plus the file-drop handlers its Load nodes route through.
+
+Three stores stay page-level and are deliberately **not** scoped:
+
+| Store | Why it stays global |
+|-------|---------------------|
+| `useThemeStore` | Writes `data-theme` on `<html>`, and the CSS tokens are defined on `:root`. Two viewers scoping it would fight over one DOM node. |
+| `useAIConfigStore` | One API key and model per user. |
+| `useTourStore` | One guided-tour overlay per document. |
+
+### Reaching a viewer's state
+
+Inside the provider's subtree, the scoped hooks mirror the global ones:
+
+```tsx
+import { useScopedPipelineStore, usePipelineStoreApi } from "megane-viewer/lib";
+
+function AtomCount() {
+  // Selector form, for the render path.
+  return <>{useScopedPipelineStore((s) => s.viewportState.particles[0]?.source?.nAtoms ?? 0)}</>;
+}
+
+function ToggleCellAxes() {
+  // Store API, for effects and event handlers. Writing viewportState directly
+  // updates the renderer without re-executing the graph, so the camera stays
+  // where the user left it.
+  const api = usePipelineStoreApi();
+  return <button onClick={() => {
+    const vs = api.getState().viewportState;
+    api.setState({ viewportState: { ...vs, cellAxesVisible: !vs.cellAxesVisible } });
+  }}>Toggle cell axes</button>;
+}
+```
+
+Outside the subtree, hold the bundle you created and use `stores.pipeline`,
+`stores.playback`, and so on, as in the two-viewer example above.
+
+### Persistence
+
+A scoped bundle keeps its camera and panel tab **in memory**. The single-viewer
+defaults persist them under one fixed key each (`megane-view-state` in
+`localStorage`, `megane-pipeline-ui` in `sessionStorage`), which two viewers
+would overwrite for each other. Opt in per viewer with a key of your own:
+
+```tsx
+createMeganeStores({
+  id: "left",
+  persist: { camera: "megane-view-state-left", pipelineUI: "megane-pipeline-ui-left" },
+});
+```
+
+### Compatibility
+
+Mounting no provider changes nothing: every hook falls back to the module-global
+stores, so `usePipelineStore.getState().openFile(file)` and the rest of this page
+keep working as before.
+
+---
+
 ## PipelineViewer (Docs / MDX Embed)
 
-`PipelineViewer` is a self-contained React component designed for embedding molecular visualizations in documentation, blog posts, and MDX pages. Unlike `MeganeViewer`, it has **no dependency on global stores** — multiple instances on the same page are fully independent and each manages its own playback state.
+`PipelineViewer` is a self-contained React component designed for embedding molecular visualizations in documentation, blog posts, and MDX pages. It uses **no stores at all** — it holds its state in local React state, so multiple instances on the same page are independent with no extra wiring. `MeganeViewer` can also be mounted more than once per page, by giving each one its own store bundle — see [Multiple viewers on one page](#multiple-viewers-on-one-page).
 
 ### Key differences from `MeganeViewer`
 
@@ -114,7 +238,7 @@ See the [TypeScript Pipeline API](/guide/pipeline/typescript) for the complete i
 |---------|---------------|-----------------|
 | UI panels (sidebar, appearance) | Yes | No |
 | Pipeline control | Internal editor UI | `pipeline` prop |
-| Multiple instances per page | Conflicts (global store) | Fully independent |
+| Multiple instances per page | Yes, with [`MeganeProvider`](#multiple-viewers-on-one-page) | Fully independent |
 | File loading | Upload / drag-drop | URL fetch via `fileUrl` |
 | Trajectory playback | Yes | Yes (Timeline shown automatically) |
 

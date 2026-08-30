@@ -68,6 +68,7 @@ const sidebars: SidebarsConfig = {
   developSidebar: [
     { type: "doc", id: "dev/architecture", label: "Architecture" },
     { type: "doc", id: "dev/custom-nodes", label: "Custom Nodes" },
+    { type: "doc", id: "dev/molstar-illustrative-parity", label: "Mol* Illustrative Parity" },
   ],
 
   referenceSidebar: [

@@ -74,4 +74,4 @@ fig = go.FigureWidget(
 fig
 ```
 
-See [`examples/external_events.ipynb`](https://github.com/hodakamori/megane/blob/main/examples/external_events.ipynb) for complete working examples.
+See [`examples/external_events.ipynb`](https://github.com/megane-labs/megane/blob/main/examples/external_events.ipynb) for complete working examples.

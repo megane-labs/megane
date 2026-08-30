@@ -12,8 +12,12 @@
  */
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { usePipelineStore } from "../pipeline/store";
-import { usePipelineUIStore } from "../stores/usePipelineUIStore";
+import {
+  useScopedPipelineStore,
+  useScopedPipelineUIStore,
+  useScopedInspectorStore,
+  usePipelineStoreApi,
+} from "../stores/MeganeProvider";
 import { getStructureFacts } from "../ai/structureSummary";
 import { evaluateSelection, validateQuery } from "../pipeline/selection";
 import {
@@ -22,7 +26,6 @@ import {
   indicesToExpression,
   type QuickSelectKind,
 } from "../pipeline/inspectorQuery";
-import { useInspectorInteractionStore } from "../stores/useInspectorInteractionStore";
 import {
   defaultInspectorAppearance,
   layersFromGraph,
@@ -38,6 +41,7 @@ const COLOR_MODE_LABELS: Record<ColorMode, string> = {
   byChain: "Chain",
   byBFactor: "B-Factor",
   byProperty: "Property",
+  illustrative: "Illustrative",
 };
 
 const REP_LABELS: Record<RepresentationMode, string> = {
@@ -47,6 +51,7 @@ const REP_LABELS: Record<RepresentationMode, string> = {
   both: "Ball + Stick",
   surface: "Surface",
   line: "Line",
+  illustrative: "Illustrative",
 };
 
 const panelStyle: React.CSSProperties = {
@@ -128,17 +133,20 @@ export function PipelineInspector() {
   // The rendered snapshot lives on the primary particle stream (as in
   // MeganeViewer); fall back to the legacy top-level `snapshot` for hosts that
   // set it directly (Jupyter widget / tests).
-  const snapshot = usePipelineStore((s) => s.viewportState.particles[0]?.source ?? s.snapshot);
-  const atomLabels = usePipelineStore((s) => s.atomLabels);
-  const setInspectorLayers = usePipelineStore((s) => s.setInspectorLayers);
-  const setMode = usePipelineUIStore((s) => s.setMode);
-  const isActiveMode = usePipelineUIStore((s) => s.mode === "inspector");
+  const pipelineApi = usePipelineStoreApi();
+  const snapshot = useScopedPipelineStore(
+    (s) => s.viewportState.particles[0]?.source ?? s.snapshot,
+  );
+  const atomLabels = useScopedPipelineStore((s) => s.atomLabels);
+  const setInspectorLayers = useScopedPipelineStore((s) => s.setInspectorLayers);
+  const setMode = useScopedPipelineUIStore((s) => s.setMode);
+  const isActiveMode = useScopedPipelineUIStore((s) => s.mode === "inspector");
 
-  const setPreviewIndices = useInspectorInteractionStore((s) => s.setPreviewIndices);
-  const boxSelectActive = useInspectorInteractionStore((s) => s.boxSelectActive);
-  const setBoxSelectActive = useInspectorInteractionStore((s) => s.setBoxSelectActive);
-  const boxResult = useInspectorInteractionStore((s) => s.boxResult);
-  const pickedAtom = useInspectorInteractionStore((s) => s.pickedAtom);
+  const setPreviewIndices = useScopedInspectorStore((s) => s.setPreviewIndices);
+  const boxSelectActive = useScopedInspectorStore((s) => s.boxSelectActive);
+  const setBoxSelectActive = useScopedInspectorStore((s) => s.setBoxSelectActive);
+  const boxResult = useScopedInspectorStore((s) => s.boxResult);
+  const pickedAtom = useScopedInspectorStore((s) => s.pickedAtom);
 
   const facts = useMemo(() => getStructureFacts(snapshot, atomLabels), [snapshot, atomLabels]);
 
@@ -158,12 +166,12 @@ export function PipelineInspector() {
   useEffect(() => {
     if (hydrated.current) return;
     hydrated.current = true;
-    const existing = layersFromGraph(usePipelineStore.getState().nodes);
+    const existing = layersFromGraph(pipelineApi.getState().nodes);
     if (existing.length > 0) {
       setLayersState(existing);
       setActiveId(existing[0].id);
     }
-  }, []);
+  }, [pipelineApi]);
 
   useEffect(() => {
     // Reset the chip composer when switching layers.

@@ -7,6 +7,7 @@
 
 import { useState, useEffect, useRef, useCallback } from "react";
 import { WebSocketClient } from "../stream/WebSocketClient";
+import { usePipelineStoreApi, usePlaybackStoreApi } from "../stores/MeganeProvider";
 import { StreamFrameProvider } from "../stream/StreamFrameProvider";
 import {
   decodeSnapshot,
@@ -20,8 +21,6 @@ import {
 import { withBonds, computeBondsForSource, loadBondFileData } from "../logic/bondSourceLogic";
 import { computeLabelsForSource, loadLabelFileData } from "../logic/labelSourceLogic";
 import { getVectorsForFrame, loadVectorFileData } from "../logic/vectorSourceLogic";
-import { usePipelineStore } from "../pipeline/store";
-import { usePlaybackStore } from "../stores/usePlaybackStore";
 import type {
   Snapshot,
   Frame,
@@ -65,6 +64,10 @@ export interface MeganeWebSocketState {
 }
 
 export function useMeganeWebSocket(url: string | null): MeganeWebSocketState {
+  // See useMeganeLocal: scoped when a provider is mounted, global otherwise.
+  const pipelineApi = usePipelineStoreApi();
+  const playbackApi = usePlaybackStoreApi();
+
   const [snapshot, setSnapshot] = useState<Snapshot | null>(null);
   const [frame, setFrame] = useState<Frame | null>(null);
   const [meta, setMeta] = useState<TrajectoryMeta | null>(null);
@@ -108,10 +111,10 @@ export function useMeganeWebSocket(url: string | null): MeganeWebSocketState {
    * Used to associate WebSocket data with a streaming node.
    */
   const getStreamingNodeId = useCallback((): string | null => {
-    const nodes = usePipelineStore.getState().nodes;
+    const nodes = pipelineApi.getState().nodes;
     const streamingNode = nodes.find((n) => n.type === "streaming");
     return streamingNode?.id ?? null;
-  }, []);
+  }, [pipelineApi]);
 
   useEffect(() => {
     if (!url) return;
@@ -142,7 +145,7 @@ export function useMeganeWebSocket(url: string | null): MeganeWebSocketState {
           setSnapshot(decoded);
           // Update per-node streaming data
           if (nodeId) {
-            const store = usePipelineStore.getState();
+            const store = pipelineApi.getState();
             const existing = store.nodeStreamingData[nodeId];
             store.setNodeStreamingData(nodeId, {
               snapshot: decoded,
@@ -165,14 +168,14 @@ export function useMeganeWebSocket(url: string | null): MeganeWebSocketState {
             streamProviderRef.current = streamProvider;
             // Wire async frame delivery to the playback store
             streamProvider.setOnFrameReady((frame) => {
-              usePlaybackStore.getState()._onAsyncFrame(frame);
+              playbackApi.getState()._onAsyncFrame(frame);
             });
           } else {
             streamProvider.meta = decoded;
           }
           // Update per-node streaming data with stream provider
           if (nodeId) {
-            const store = usePipelineStore.getState();
+            const store = pipelineApi.getState();
             const existing = store.nodeStreamingData[nodeId];
             store.setNodeStreamingData(nodeId, {
               snapshot: existing?.snapshot ?? baseSnapshotRef.current!,
@@ -188,7 +191,7 @@ export function useMeganeWebSocket(url: string | null): MeganeWebSocketState {
         // Update the streaming node's connected status
         const nodeId = getStreamingNodeId();
         if (nodeId) {
-          usePipelineStore.getState().updateNodeParams(nodeId, { connected: isConnected });
+          pipelineApi.getState().updateNodeParams(nodeId, { connected: isConnected });
         }
       },
     );
@@ -204,11 +207,11 @@ export function useMeganeWebSocket(url: string | null): MeganeWebSocketState {
       }
       const nodeId = getStreamingNodeId();
       if (nodeId) {
-        usePipelineStore.getState().removeNodeStreamingData(nodeId);
-        usePipelineStore.getState().updateNodeParams(nodeId, { connected: false });
+        pipelineApi.getState().removeNodeStreamingData(nodeId);
+        pipelineApi.getState().updateNodeParams(nodeId, { connected: false });
       }
     };
-  }, [url, getStreamingNodeId]);
+  }, [url, getStreamingNodeId, pipelineApi, playbackApi]);
 
   const setBondSource = useCallback(
     async (source: BondSource) => {

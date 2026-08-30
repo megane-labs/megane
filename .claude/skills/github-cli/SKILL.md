@@ -15,7 +15,7 @@ The git remote may point to a local proxy (`http://127.0.0.1:…/git/…`) inste
 ```bash
 # Save current remote and switch to GitHub
 ORIG_REMOTE=$(git remote get-url origin)
-git remote set-url origin https://github.com/hodakamori/megane.git
+git remote set-url origin https://github.com/megane-labs/megane.git
 
 # Run gh commands
 gh pr create --base main --title "..." --body "..."

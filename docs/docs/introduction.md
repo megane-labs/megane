@@ -101,4 +101,4 @@ All environments share the same parser and pipeline execution engine — a pipel
 
 - [Installation & Quick Start](./getting-started) — get megane running in 2 minutes
 - [Gallery](/gallery) — live 3D examples with copy-paste code
-- [Live Demo](https://hodakamori.github.io/megane/app/) — interactive viewer in the browser
+- [Live Demo](https://megane-labs.github.io/megane/app/) — interactive viewer in the browser

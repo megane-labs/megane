@@ -35,7 +35,12 @@ import { DrawingBoundaryAtomRenderer } from "./CellBoundaryAtomRenderer";
 import type { DrawingBoundaryData, PeriodicAtomImageData } from "../pipeline/types";
 import { generateDrawingBoundaryImages } from "../logic/cellBoundaryImages";
 import type { MeshData } from "../pipeline/types";
-import { getRadius, BALL_STICK_ATOM_SCALE, LICORICE_RADIUS } from "../constants";
+import {
+  getRadius,
+  BALL_STICK_ATOM_SCALE,
+  LICORICE_RADIUS,
+  SPACEFILL_ATOM_SCALE,
+} from "../constants";
 import { pickAtPixel, projectToScreen, atomsInRect, type ClientRect } from "./Picking";
 import { computeMeasurement } from "./Selection";
 import { FpsCounter } from "./FpsCounter";
@@ -96,7 +101,11 @@ function clearGroup(group: THREE.Group): void {
   }
 }
 
-/** Draw translucent highlight spheres (1.6× atom radius) over the given atoms. */
+/**
+ * Draw translucent highlight spheres (1.6× atom radius) over the given atoms.
+ * `radiusScale` must match the fraction of the vdW radius the atoms are drawn
+ * at, or the highlight ends up buried inside a spacefill sphere.
+ */
 function drawHighlightSpheres(
   group: THREE.Group,
   atomIndices: number[],
@@ -104,9 +113,10 @@ function drawHighlightSpheres(
   elements: Uint8Array,
   color: number,
   opacity: number,
+  radiusScale: number = BALL_STICK_ATOM_SCALE,
 ): void {
   for (const atomIdx of atomIndices) {
-    const r = getRadius(elements[atomIdx]) * BALL_STICK_ATOM_SCALE * 1.6;
+    const r = getRadius(elements[atomIdx]) * radiusScale * 1.6;
     const geo = new THREE.SphereGeometry(r, 16, 16);
     const mat = new THREE.MeshBasicMaterial({
       color,
@@ -172,7 +182,14 @@ export interface MeganeSubsystemVisibility {
 }
 
 /** Representation mode for the viewer. */
-export type RepresentationType = "atoms" | "licorice" | "cartoon" | "both" | "surface" | "line";
+export type RepresentationType =
+  | "atoms"
+  | "licorice"
+  | "cartoon"
+  | "both"
+  | "surface"
+  | "line"
+  | "illustrative";
 
 export interface MeganeRendererMemory {
   geometries: number;
@@ -1190,10 +1207,16 @@ export class MoleculeRenderer {
    * "both"   – cartoon overlaid on atoms/bonds
    * "surface" – solvent-accessible surface only
    * "line"   – VMD/PyMOL-style thin wireframe lines; atoms/bonds meshes hidden
+   * "illustrative" – Mol*-style spacefill spheres at full vdW radius with flat,
+   *                  unlit shading and a silhouette outline; bonds hidden
    */
   setRepresentationType(type: RepresentationType): void {
     this.representationType = type;
-    const showAtoms = type === "atoms" || type === "both" || type === "licorice";
+    const illustrative = type === "illustrative";
+    const showAtoms = type === "atoms" || type === "both" || type === "licorice" || illustrative;
+    // Illustrative draws touching vdW spheres, so the sticks it would hide
+    // anyway are switched off (matching Mol*'s spacefill-only preset).
+    const showBonds = showAtoms && !illustrative;
     const showCartoon = type === "cartoon" || type === "both";
     const showSurface = type === "surface";
     const showLine = type === "line";
@@ -1202,20 +1225,28 @@ export class MoleculeRenderer {
     // act as round caps on the sticks, producing a continuous tube. Reverting
     // to ball-and-stick (atoms/both) restores per-element vdW atom radii and
     // per-order bond radii. setUniformRadius only rewrites the radius buffers.
+    // Illustrative instead keeps per-element radii but at full vdW size.
     if (this.snapshot) {
       const licoriceRadius = type === "licorice" ? LICORICE_RADIUS : null;
+      const radiusScale = illustrative ? SPACEFILL_ATOM_SCALE : BALL_STICK_ATOM_SCALE;
+      this.atomRenderer?.setRadiusScale?.(radiusScale, this.snapshot);
+      this.drawingBoundaryAtomRenderer?.setRadiusScale(radiusScale);
+      this.bondPeriodicAtomRenderer?.setRadiusScale(radiusScale);
       this.atomRenderer?.setUniformRadius?.(licoriceRadius, this.snapshot);
       this.bondRenderer?.setUniformRadius?.(licoriceRadius, this.snapshot);
       this.drawingBoundaryAtomRenderer?.setUniformRadius(licoriceRadius);
       this.bondPeriodicAtomRenderer?.setUniformRadius(licoriceRadius);
     }
+    this.atomRenderer?.setIllustrative?.(illustrative);
+    this.drawingBoundaryAtomRenderer?.setIllustrative(illustrative);
+    this.bondPeriodicAtomRenderer?.setIllustrative(illustrative);
 
     if (this.atomRenderer) this.atomRenderer.mesh.visible = showAtoms;
     this.drawingBoundaryAtomRenderer?.setVisible(showAtoms);
     this.bondPeriodicAtomRenderer?.setVisible(showAtoms);
     // Bonds also depend on whether the pipeline emits any bonds; otherwise
     // stale geometry from a previous structure would resurface here.
-    if (this.bondRenderer) this.bondRenderer.mesh.visible = showAtoms && this.bondsAvailable;
+    if (this.bondRenderer) this.bondRenderer.mesh.visible = showBonds && this.bondsAvailable;
     if (this.cartoonRenderer) {
       // Only show cartoon when it has backbone data
       const hasBackbone = this.snapshot?.caIndices != null && this.snapshot.caIndices.length > 0;
@@ -1230,6 +1261,17 @@ export class MoleculeRenderer {
     if (this.lineRenderer) {
       this.lineRenderer.setVisible(showLine);
     }
+  }
+
+  /**
+   * Fraction of the vdW radius the atom spheres are currently drawn at.
+   * Anything that has to line up with a rendered sphere — picking, selection
+   * highlights — must scale by this rather than assuming ball-and-stick.
+   */
+  private atomRadiusScale(): number {
+    return this.representationType === "illustrative"
+      ? SPACEFILL_ATOM_SCALE
+      : BALL_STICK_ATOM_SCALE;
   }
 
   /**
@@ -1291,11 +1333,13 @@ export class MoleculeRenderer {
   setBondsVisible(visible: boolean): void {
     this.bondsAvailable = visible;
     if (this.bondRenderer) {
-      const showAtoms =
+      // "illustrative" shows atoms but never bonds — its spacefill spheres
+      // already touch, so a stick would only ever be hidden geometry.
+      const showBonds =
         this.representationType === "atoms" ||
         this.representationType === "both" ||
         this.representationType === "licorice";
-      this.bondRenderer.mesh.visible = visible && showAtoms;
+      this.bondRenderer.mesh.visible = visible && showBonds;
     }
   }
 
@@ -1389,6 +1433,15 @@ export class MoleculeRenderer {
 
     this.scene.add(this.atomRenderer.mesh);
     this.scene.add(this.bondRenderer.mesh);
+
+    // Keep the bond shader's copy of the ball sizes current so each stick is
+    // trimmed where it enters a ball (see the CSG union note in shaders.ts).
+    // The sink fires on every atom restyle, so no individual call site has to
+    // remember to push.
+    atoms.setRadiusSink((radii, scale) => {
+      if (radii) bonds.setAtomRadii(radii);
+      bonds.setAtomRadiusScale(scale);
+    });
 
     // Re-apply stored appearance settings
     if (this.atomOpacity !== 1.0) {
@@ -1822,6 +1875,7 @@ export class MoleculeRenderer {
       clientY,
       this.currentDrawingBoundary,
       this.currentBondPeriodicImages,
+      this.atomRadiusScale(),
     );
   }
 
@@ -1864,6 +1918,7 @@ export class MoleculeRenderer {
       this.snapshot.elements,
       0x22c55e,
       0.3,
+      this.atomRadiusScale(),
     );
   }
 
@@ -1907,7 +1962,15 @@ export class MoleculeRenderer {
     const elements = this.snapshot.elements;
 
     // Highlight spheres
-    drawHighlightSpheres(this.selectionGroup, this.selectedAtoms, pos, elements, 0x4285f4, 0.35);
+    drawHighlightSpheres(
+      this.selectionGroup,
+      this.selectedAtoms,
+      pos,
+      elements,
+      0x4285f4,
+      0.35,
+      this.atomRadiusScale(),
+    );
 
     // Connecting lines
     if (this.selectedAtoms.length >= 2) {

@@ -4,7 +4,7 @@ build-backend = "maturin"
 
 [project]
 name = "megane"
-version = "0.13.1"
+version = "0.14.0"
 description = "A fast, beautiful molecular viewer"
 requires-python = ">=3.10"
 license = "MIT"
@@ -40,9 +40,9 @@ dependencies = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/hodakamori/megane"
-Repository = "https://github.com/hodakamori/megane"
-Issues = "https://github.com/hodakamori/megane/issues"
+Homepage = "https://github.com/megane-labs/megane"
+Repository = "https://github.com/megane-labs/megane"
+Issues = "https://github.com/megane-labs/megane/issues"
 
 [project.optional-dependencies]
 traj = ["ase>=3.22"]
@@ -95,7 +95,7 @@ show_missing = true
 skip_empty = true
 
 [tool.bumpversion]
-current_version = "0.13.1"
+current_version = "0.14.0"
 commit = false
 tag = false
 allow_dirty = true

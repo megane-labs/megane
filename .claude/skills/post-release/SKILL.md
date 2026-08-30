@@ -9,7 +9,7 @@ Run this skill after pushing a release tag (`vX.Y.Z`). Verify every item before 
 > **Note on `gh` commands:** The git remote points to a local proxy, not GitHub directly. Wrap all `gh` commands that reference the repository with the remote URL swap from the `github-cli` skill:
 > ```bash
 > ORIG_REMOTE=$(git remote get-url origin)
-> git remote set-url origin https://github.com/hodakamori/megane.git
+> git remote set-url origin https://github.com/megane-labs/megane.git
 > gh <command>
 > git remote set-url origin "$ORIG_REMOTE"
 > ```
@@ -19,7 +19,7 @@ Run this skill after pushing a release tag (`vX.Y.Z`). Verify every item before 
 ### 1.1 Monitor all publish workflows
 ```bash
 ORIG_REMOTE=$(git remote get-url origin)
-git remote set-url origin https://github.com/hodakamori/megane.git
+git remote set-url origin https://github.com/megane-labs/megane.git
 gh run list --limit 10
 git remote set-url origin "$ORIG_REMOTE"
 ```
@@ -33,7 +33,7 @@ Wait for all tag-triggered workflows to finish. Expected workflows:
 To inspect a failing workflow:
 ```bash
 ORIG_REMOTE=$(git remote get-url origin)
-git remote set-url origin https://github.com/hodakamori/megane.git
+git remote set-url origin https://github.com/megane-labs/megane.git
 gh run view <run-id> --log-failed
 git remote set-url origin "$ORIG_REMOTE"
 ```
@@ -66,7 +66,7 @@ Expected output: `X.Y.Z`
 ### 2.3 VS Code Marketplace
 ```bash
 ORIG_REMOTE=$(git remote get-url origin)
-git remote set-url origin https://github.com/hodakamori/megane.git
+git remote set-url origin https://github.com/megane-labs/megane.git
 gh run list --workflow=publish-vscode.yml --limit 1
 git remote set-url origin "$ORIG_REMOTE"
 ```
@@ -140,7 +140,7 @@ All `gh release` commands in this phase require the remote URL workaround.
 ```bash
 # Set once and restore after all release commands
 ORIG_REMOTE=$(git remote get-url origin)
-git remote set-url origin https://github.com/hodakamori/megane.git
+git remote set-url origin https://github.com/megane-labs/megane.git
 ```
 
 ### 4.1 Find the previous release tag
@@ -185,7 +185,7 @@ npm install megane-viewer@X.Y.Z
 ### VS Code
 Search for "megane" in the VS Code Extensions panel
 
-**Full Changelog**: https://github.com/hodakamori/megane/compare/vPREV...vX.Y.Z
+**Full Changelog**: https://github.com/megane-labs/megane/compare/vPREV...vX.Y.Z
 ```
 
 ### 4.3 Update the draft release with generated notes
@@ -213,7 +213,7 @@ npm install megane-viewer@X.Y.Z
 ### VS Code
 Search for "megane" in the VS Code Extensions panel
 
-**Full Changelog**: https://github.com/hodakamori/megane/compare/vPREV...vX.Y.Z
+**Full Changelog**: https://github.com/megane-labs/megane/compare/vPREV...vX.Y.Z
 EOF
 )"
 ```
@@ -248,7 +248,7 @@ Verify the notes look correct and the three screenshots are listed as assets. Th
 ### 5.1 GitHub Pages deployment
 ```bash
 ORIG_REMOTE=$(git remote get-url origin)
-git remote set-url origin https://github.com/hodakamori/megane.git
+git remote set-url origin https://github.com/megane-labs/megane.git
 gh run list --workflow=docs.yml --limit 1
 git remote set-url origin "$ORIG_REMOTE"
 ```
@@ -262,7 +262,7 @@ Visit the docs site and verify the version shown matches `X.Y.Z`:
 ### 6.1 AWS ECS demo health
 ```bash
 ORIG_REMOTE=$(git remote get-url origin)
-git remote set-url origin https://github.com/hodakamori/megane.git
+git remote set-url origin https://github.com/megane-labs/megane.git
 gh run list --workflow=deploy.yml --limit 1
 git remote set-url origin "$ORIG_REMOTE"
 ```

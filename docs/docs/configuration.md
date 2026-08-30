@@ -13,7 +13,7 @@
 ### Clone and Install
 
 ```bash
-git clone https://github.com/hodakamori/megane.git
+git clone https://github.com/megane-labs/megane.git
 cd megane
 
 # Install Node.js dependencies first (required by make dev)

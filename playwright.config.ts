@@ -88,6 +88,15 @@ export default defineConfig({
       },
     },
     {
+      // Two <MeganeViewer>s on one page, each in its own <MeganeProvider>
+      // (issue #672). Served from the multi-instance.html Vite entry.
+      name: "multi-instance",
+      testMatch: /multi-instance\.spec\.ts$/,
+      use: {
+        baseURL: `http://127.0.0.1:${PORT_WEBAPP}`,
+      },
+    },
+    {
       name: "contract",
       testMatch: /contract\.spec\.ts$/,
       use: {
@@ -155,6 +164,11 @@ export default defineConfig({
       use: { baseURL: `http://127.0.0.1:${PORT_WEBAPP}` },
     },
     {
+      name: "illustrative",
+      testMatch: /illustrative\.spec\.ts$/,
+      use: { baseURL: `http://127.0.0.1:${PORT_WEBAPP}` },
+    },
+    {
       name: "water-line",
       testMatch: /water-line\.spec\.ts$/,
       timeout: 120_000,
@@ -188,6 +202,11 @@ export default defineConfig({
     {
       name: "resname-filter-opacity",
       testMatch: /resname-filter-opacity\.spec\.ts$/,
+      use: { baseURL: `http://127.0.0.1:${PORT_WEBAPP}` },
+    },
+    {
+      name: "atom-bond-junction",
+      testMatch: /atom-bond-junction\.spec\.ts$/,
       use: { baseURL: `http://127.0.0.1:${PORT_WEBAPP}` },
     },
 

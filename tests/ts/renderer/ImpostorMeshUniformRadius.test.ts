@@ -7,6 +7,9 @@ import {
   BOND_RADIUS,
   DOUBLE_BOND_RADIUS,
   LICORICE_RADIUS,
+  SPACEFILL_ATOM_SCALE,
+  ILLUSTRATIVE_AMBIENT_DARKENING,
+  ILLUSTRATIVE_OUTLINE_WIDTH,
   getRadius,
   BALL_STICK_ATOM_SCALE,
 } from "@/constants";
@@ -31,6 +34,82 @@ function atomRadii(mesh: ImpostorAtomMesh): Float32Array {
 function bondRadii(mesh: ImpostorBondMesh): Float32Array {
   return (mesh as unknown as { radiusBuf: Float32Array }).radiusBuf;
 }
+
+describe("ImpostorAtomMesh.setRadiusScale", () => {
+  it("scales every atom to its full vdW radius (spacefill)", () => {
+    const mesh = new ImpostorAtomMesh(8);
+    const snap = makeSnapshot();
+    mesh.loadSnapshot(snap);
+    mesh.setRadiusScale(SPACEFILL_ATOM_SCALE, snap);
+
+    const r = atomRadii(mesh);
+    expect(r[0]).toBeCloseTo(getRadius(6), 6);
+    expect(r[1]).toBeCloseTo(getRadius(8), 6);
+  });
+
+  it("survives a reload of the snapshot", () => {
+    // loadSnapshot refills the radius buffer; it must honour the active scale
+    // instead of silently reverting to ball-and-stick on the next frame.
+    const mesh = new ImpostorAtomMesh(8);
+    const snap = makeSnapshot();
+    mesh.loadSnapshot(snap);
+    mesh.setRadiusScale(SPACEFILL_ATOM_SCALE, snap);
+    mesh.loadSnapshot(snap);
+
+    expect(atomRadii(mesh)[0]).toBeCloseTo(getRadius(6), 6);
+  });
+
+  it("yields to an active uniform radius", () => {
+    const mesh = new ImpostorAtomMesh(8);
+    const snap = makeSnapshot();
+    mesh.loadSnapshot(snap);
+    mesh.setUniformRadius(LICORICE_RADIUS, snap);
+    mesh.setRadiusScale(SPACEFILL_ATOM_SCALE, snap);
+
+    expect(atomRadii(mesh)[0]).toBeCloseTo(LICORICE_RADIUS, 6);
+  });
+
+  it("applies the scale once the uniform radius is cleared", () => {
+    const mesh = new ImpostorAtomMesh(8);
+    const snap = makeSnapshot();
+    mesh.loadSnapshot(snap);
+    mesh.setRadiusScale(SPACEFILL_ATOM_SCALE, snap);
+    mesh.setUniformRadius(LICORICE_RADIUS, snap);
+    mesh.setUniformRadius(null, snap);
+
+    expect(atomRadii(mesh)[0]).toBeCloseTo(getRadius(6), 6);
+  });
+});
+
+describe("ImpostorAtomMesh.setIllustrative", () => {
+  it("toggles the flat-shading uniform", () => {
+    const mesh = new ImpostorAtomMesh(8);
+    const uniforms = (
+      mesh as unknown as { material: { uniforms: { uIllustrative: { value: number } } } }
+    ).material.uniforms;
+    expect(uniforms.uIllustrative.value).toBe(0);
+    mesh.setIllustrative(true);
+    expect(uniforms.uIllustrative.value).toBe(1);
+    mesh.setIllustrative(false);
+    expect(uniforms.uIllustrative.value).toBe(0);
+  });
+
+  it("seeds the illustrative shading uniforms from the constants", () => {
+    // The rim ramp stands in for Mol*'s SSAO pass, so a zero here would
+    // silently return the mode to the flat look it is meant to replace.
+    const mesh = new ImpostorAtomMesh(8);
+    const uniforms = (
+      mesh as unknown as {
+        material: {
+          uniforms: { uAmbientDarkening: { value: number }; uOutlineWidth: { value: number } };
+        };
+      }
+    ).material.uniforms;
+    expect(uniforms.uAmbientDarkening.value).toBeCloseTo(ILLUSTRATIVE_AMBIENT_DARKENING, 6);
+    expect(uniforms.uAmbientDarkening.value).toBeGreaterThan(0);
+    expect(uniforms.uOutlineWidth.value).toBeCloseTo(ILLUSTRATIVE_OUTLINE_WIDTH, 6);
+  });
+});
 
 describe("ImpostorAtomMesh.setUniformRadius", () => {
   it("renders per-element vdW radii by default (ball-and-stick)", () => {

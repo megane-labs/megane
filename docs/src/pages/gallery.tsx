@@ -19,7 +19,7 @@ export default function GalleryPage() {
         <p>
           To contribute a new gallery example, edit{" "}
           <a
-            href="https://github.com/hodakamori/megane/blob/main/docs/src/gallery/registry.ts"
+            href="https://github.com/megane-labs/megane/blob/main/docs/src/gallery/registry.ts"
             target="_blank"
             rel="noreferrer"
           >

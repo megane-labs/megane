@@ -1,7 +1,7 @@
 import type { Node, NodeProps } from "@xyflow/react";
 import type { PipelineNodeData } from "../../pipeline/execute";
 import type { DrawingBoundaryParams } from "../../pipeline/types";
-import { usePipelineStore } from "../../pipeline/store";
+import { useScopedPipelineStore } from "../../stores/MeganeProvider";
 import { NodeShell } from "./NodeShell";
 
 const inputStyle: React.CSSProperties = {
@@ -21,7 +21,7 @@ const AXES = [
 ] as const;
 
 export function DrawingBoundaryNode({ id, data }: NodeProps<Node<PipelineNodeData>>) {
-  const updateNodeParams = usePipelineStore((state) => state.updateNodeParams);
+  const updateNodeParams = useScopedPipelineStore((state) => state.updateNodeParams);
   const params = data.params as DrawingBoundaryParams;
 
   return (

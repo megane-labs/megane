@@ -78,6 +78,39 @@ describe("atom shaders", () => {
   });
 });
 
+describe("atom shader — illustrative branch", () => {
+  it("takes the silhouette derivative before the discard", () => {
+    // GLSL ES 3.0 leaves derivatives undefined once a fragment in the 2x2 quad
+    // has terminated, so fwidth() must run in uniform control flow or the
+    // outline flickers along the very edge it traces.
+    const fwidthAt = atomFragmentShader.indexOf("fwidth(");
+    // The statement, not the word — the comment above it also says "discard".
+    const discardAt = atomFragmentShader.indexOf("discard;");
+    expect(fwidthAt).toBeGreaterThan(-1);
+    expect(discardAt).toBeGreaterThan(-1);
+    expect(fwidthAt).toBeLessThan(discardAt);
+  });
+
+  it("shades toward the rim before compositing the outline", () => {
+    // The rim ramp stands in for the SSAO pass megane has no post-processing
+    // stack for; without it the mode is a field of flat discs.
+    expect(atomFragmentShader).toContain("uAmbientDarkening");
+    const shadeAt = atomFragmentShader.indexOf("uAmbientDarkening");
+    const outlineAt = atomFragmentShader.indexOf("uOutlineColor, edge");
+    expect(outlineAt).toBeGreaterThan(shadeAt);
+  });
+
+  it("keeps the lit path free of the illustrative uniforms", () => {
+    // Everything illustrative must sit behind uIllustrative and return early,
+    // so ball-and-stick renders byte-identically to before the mode existed.
+    const branchAt = atomFragmentShader.indexOf("uIllustrative == 1");
+    const hemisphereAt = atomFragmentShader.indexOf("skyColor");
+    expect(branchAt).toBeGreaterThan(-1);
+    expect(branchAt).toBeLessThan(hemisphereAt);
+    expect(atomFragmentShader.slice(hemisphereAt)).not.toContain("uAmbientDarkening");
+  });
+});
+
 describe("bond shaders", () => {
   it("vertex shader declares per-instance attributes used for endpoint lookups", () => {
     const required = [

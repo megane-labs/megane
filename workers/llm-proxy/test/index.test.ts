@@ -24,7 +24,7 @@ import {
   type Env,
 } from "../src/proxy";
 
-const ALLOWED_ORIGIN = "https://hodakamori.github.io";
+const ALLOWED_ORIGIN = "https://megane-labs.github.io";
 const SECOND_ORIGIN = "https://megane.tech-office-mori.com";
 
 class FakeKV {

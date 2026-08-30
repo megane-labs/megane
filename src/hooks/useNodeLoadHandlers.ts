@@ -5,15 +5,21 @@
  */
 
 import { useEffect, useRef, type MutableRefObject } from "react";
-import { usePipelineStore } from "../pipeline/store";
-import { setStructureLoadHandler } from "../components/nodes/LoadStructureNode";
-import { setTrajectoryLoadHandler } from "../components/nodes/LoadTrajectoryNode";
-import { setVectorLoadHandler } from "../components/nodes/LoadVectorNode";
+import {
+  useScopedPipelineStore,
+  usePipelineStoreApi,
+  useLoadHandlers,
+} from "../stores/MeganeProvider";
 import { loadVectorFileData } from "../logic/vectorSourceLogic";
 import { parseStructureFile, shouldUseLazyStructure } from "../parsers/structure";
 import type { StructureParseResult, LazyStructureKind } from "../parsers/structure";
 import type { NodeSnapshotData } from "../pipeline/execute";
 import type { Snapshot } from "../types";
+import type {
+  StructureLoadHandler,
+  TrajectoryLoadHandler,
+  VectorLoadHandler,
+} from "../stores/loadHandlers";
 
 interface UseNodeLoadHandlersOptions {
   snapshot: Snapshot | null;
@@ -30,12 +36,15 @@ export function useNodeLoadHandlers({
   onUploadStructure,
   onUploadTrajectory,
 }: UseNodeLoadHandlersOptions): MutableRefObject<string | null> {
-  const setNodeSnapshot = usePipelineStore((s) => s.setNodeSnapshot);
-  const updateNodeParams = usePipelineStore((s) => s.updateNodeParams);
-  const setNodeParseError = usePipelineStore((s) => s.setNodeParseError);
-  const clearNodeParseError = usePipelineStore((s) => s.clearNodeParseError);
-  const setFileVectors = usePipelineStore((s) => s.setFileVectors);
-  const pipelineNodes = usePipelineStore((s) => s.nodes);
+  const setNodeSnapshot = useScopedPipelineStore((s) => s.setNodeSnapshot);
+  const updateNodeParams = useScopedPipelineStore((s) => s.updateNodeParams);
+  const setNodeParseError = useScopedPipelineStore((s) => s.setNodeParseError);
+  const clearNodeParseError = useScopedPipelineStore((s) => s.clearNodeParseError);
+  const setFileVectors = useScopedPipelineStore((s) => s.setFileVectors);
+  const pipelineNodes = useScopedPipelineStore((s) => s.nodes);
+
+  const pipelineApi = usePipelineStoreApi();
+  const loadHandlers = useLoadHandlers();
 
   const primaryNodeIdRef = useRef<string | null>(null);
 
@@ -47,7 +56,7 @@ export function useNodeLoadHandlers({
 
   // Wire up structure load handler
   useEffect(() => {
-    setStructureLoadHandler((nodeId, file) => {
+    const handler: StructureLoadHandler = (nodeId, file) => {
       const isPrimary = nodeId === primaryNodeIdRef.current;
 
       // Large multi-frame structure files (XYZ / multi-MODEL PDB), primary node
@@ -84,7 +93,7 @@ export function useNodeLoadHandlers({
           // Offer embedded vector channels (e.g. GRO velocities) to the
           // load_vector node UI. Nothing is rendered until the user activates
           // one — a parse must not switch a visual overlay on as a side effect.
-          usePipelineStore
+          pipelineApi
             .getState()
             .setEmbeddedVectorChannels(
               result.vectorChannels.length > 0
@@ -105,9 +114,12 @@ export function useNodeLoadHandlers({
           const message = err instanceof Error ? err.message : String(err);
           setNodeParseError(nodeId, `Failed to parse file: ${message}`);
         });
-    });
+    };
+    loadHandlers.setStructure(handler);
     return () => {
-      setStructureLoadHandler(null);
+      // Only release the slot if it is still ours — StrictMode's double-effect
+      // otherwise has the first cleanup clear the second registration.
+      if (loadHandlers.structure === handler) loadHandlers.setStructure(null);
     };
   }, [
     onUploadStructure,
@@ -116,21 +128,23 @@ export function useNodeLoadHandlers({
     setNodeParseError,
     clearNodeParseError,
     setFileVectors,
+    pipelineApi,
+    loadHandlers,
   ]);
 
   // Wire up trajectory load handler
   useEffect(() => {
-    if (onUploadTrajectory) {
-      setTrajectoryLoadHandler((file) => onUploadTrajectory(file));
-    }
+    if (!onUploadTrajectory) return;
+    const handler: TrajectoryLoadHandler = (file) => onUploadTrajectory(file);
+    loadHandlers.setTrajectory(handler);
     return () => {
-      setTrajectoryLoadHandler(null);
+      if (loadHandlers.trajectory === handler) loadHandlers.setTrajectory(null);
     };
-  }, [onUploadTrajectory]);
+  }, [onUploadTrajectory, loadHandlers]);
 
   // Wire up vector load handler
   useEffect(() => {
-    setVectorLoadHandler((file) => {
+    const handler: VectorLoadHandler = (file) => {
       const nAtoms = snapshot?.nAtoms ?? 0;
       if (nAtoms === 0) return;
       loadVectorFileData(file, nAtoms)
@@ -140,11 +154,12 @@ export function useNodeLoadHandlers({
         .catch((err: unknown) => {
           console.error("Failed to load vector file:", err);
         });
-    });
-    return () => {
-      setVectorLoadHandler(null);
     };
-  }, [snapshot, setFileVectors]);
+    loadHandlers.setVector(handler);
+    return () => {
+      if (loadHandlers.vector === handler) loadHandlers.setVector(null);
+    };
+  }, [snapshot, setFileVectors, loadHandlers]);
 
   return primaryNodeIdRef;
 }
