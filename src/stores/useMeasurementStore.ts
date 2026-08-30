@@ -1,4 +1,5 @@
-import { create } from "zustand";
+import { create, type StateCreator, type StoreApi } from "zustand";
+import { createStore } from "zustand/vanilla";
 import type { StoredMeasurement, Measurement } from "../types";
 
 let _nextId = 1;
@@ -31,7 +32,7 @@ export interface MeasurementStore {
   clearAll: () => void;
 }
 
-export const useMeasurementStore = create<MeasurementStore>((set) => ({
+export const measurementStateCreator: StateCreator<MeasurementStore> = (set) => ({
   measurements: [],
 
   addMeasurement: (m: Measurement) => {
@@ -65,4 +66,19 @@ export const useMeasurementStore = create<MeasurementStore>((set) => ({
     })),
 
   clearAll: () => set({ measurements: [] }),
-}));
+});
+
+/** App-wide singleton — used when no <MeganeProvider> is mounted. */
+export const useMeasurementStore = create<MeasurementStore>(measurementStateCreator);
+
+/**
+ * Private measurement list for one viewer. Two viewers on a page (and, today,
+ * two `MolecularViewer`s in one notebook — `WidgetViewer` mounts
+ * `MeasurementPanel`, which reads the singleton) otherwise share one list.
+ *
+ * The `nextId` counter stays module-level on purpose: ids only need to be
+ * unique, and a per-store counter would hand both viewers an id "1".
+ */
+export function createMeasurementStore(): StoreApi<MeasurementStore> {
+  return createStore<MeasurementStore>(measurementStateCreator);
+}

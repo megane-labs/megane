@@ -9,7 +9,8 @@
  * preserved across navigations.
  */
 
-import { create } from "zustand";
+import { create, type StateCreator, type StoreApi } from "zustand";
+import { createStore } from "zustand/vanilla";
 
 export type PipelinePanelMode = "editor" | "chat" | "inspector";
 
@@ -19,11 +20,19 @@ export interface PipelineAppliedNotice {
   id: number;
 }
 
-const STORAGE_KEY = "megane-pipeline-ui";
+/** sessionStorage key the app-wide singleton persists under. */
+export const PIPELINE_UI_STORAGE_KEY = "megane-pipeline-ui";
 
-function loadMode(): PipelinePanelMode {
+/**
+ * Where one store persists its panel tab. A string names a sessionStorage
+ * key; `false` keeps the tab in memory for this instance only.
+ */
+export type PipelineUIStorage = string | false;
+
+function loadMode(storageKey: PipelineUIStorage): PipelinePanelMode {
+  if (storageKey === false) return "chat";
   try {
-    const raw = sessionStorage.getItem(STORAGE_KEY);
+    const raw = sessionStorage.getItem(storageKey);
     if (raw) {
       const parsed = JSON.parse(raw);
       if (
@@ -39,22 +48,23 @@ function loadMode(): PipelinePanelMode {
   // Drop any stale localStorage entry from earlier builds so the per-session
   // model is the single source of truth.
   try {
-    localStorage.removeItem(STORAGE_KEY);
+    localStorage.removeItem(storageKey);
   } catch {
     // ignore
   }
   return "chat";
 }
 
-function saveMode(mode: PipelinePanelMode) {
+function saveMode(storageKey: PipelineUIStorage, mode: PipelinePanelMode) {
+  if (storageKey === false) return;
   try {
-    sessionStorage.setItem(STORAGE_KEY, JSON.stringify({ mode }));
+    sessionStorage.setItem(storageKey, JSON.stringify({ mode }));
   } catch {
     // ignore quota / blocked storage
   }
 }
 
-interface PipelineUIStore {
+export interface PipelineUIStore {
   mode: PipelinePanelMode;
   pendingNotice: PipelineAppliedNotice | null;
   setMode: (mode: PipelinePanelMode) => void;
@@ -65,23 +75,40 @@ interface PipelineUIStore {
 
 let nextNoticeId = 1;
 
-export const usePipelineUIStore = create<PipelineUIStore>((set) => ({
-  mode: loadMode(),
-  pendingNotice: null,
+export function pipelineUIStateCreator(
+  storageKey: PipelineUIStorage = PIPELINE_UI_STORAGE_KEY,
+): StateCreator<PipelineUIStore> {
+  return (set) => ({
+    mode: loadMode(storageKey),
+    pendingNotice: null,
 
-  setMode: (mode) => {
-    saveMode(mode);
-    set({ mode });
-  },
+    setMode: (mode) => {
+      saveMode(storageKey, mode);
+      set({ mode });
+    },
 
-  markPipelineApplied: () => {
-    // Stay on the current tab (typically Chat) so the assistant's reply remains
-    // visible; the editor frames the freshly applied graph via its own
-    // mode-change effect when the user switches to it.
-    set({ pendingNotice: { kind: "applied", id: nextNoticeId++ } });
-  },
+    markPipelineApplied: () => {
+      // Stay on the current tab (typically Chat) so the assistant's reply remains
+      // visible; the editor frames the freshly applied graph via its own
+      // mode-change effect when the user switches to it.
+      set({ pendingNotice: { kind: "applied", id: nextNoticeId++ } });
+    },
 
-  dismissNotice: () => {
-    set({ pendingNotice: null });
-  },
-}));
+    dismissNotice: () => {
+      set({ pendingNotice: null });
+    },
+  });
+}
+
+/** App-wide singleton — used when no <MeganeProvider> is mounted. */
+export const usePipelineUIStore = create<PipelineUIStore>(pipelineUIStateCreator());
+
+/**
+ * Private pipeline-panel UI state for one viewer. Defaults to in-memory so
+ * two viewers do not overwrite each other's saved tab under one fixed key.
+ */
+export function createPipelineUIStore(
+  storageKey: PipelineUIStorage = false,
+): StoreApi<PipelineUIStore> {
+  return createStore<PipelineUIStore>(pipelineUIStateCreator(storageKey));
+}

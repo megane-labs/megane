@@ -43,15 +43,30 @@ vi.mock("@/ai/client", () => ({
     }
   },
 }));
+// A full StoreApi shape, not just `getState`: the component now reads the
+// store through zustand's `useStore`, which subscribes via
+// `subscribe` / `getState` / `getInitialState`.
 vi.mock("@/pipeline/store", () => {
   const usePipelineStore = (selector: (s: typeof storeState) => unknown) => selector(storeState);
-  (usePipelineStore as unknown as { getState: () => typeof storeState }).getState = () =>
-    storeState;
-  return { usePipelineStore };
+  Object.assign(usePipelineStore, {
+    getState: () => storeState,
+    getInitialState: () => storeState,
+    setState: () => {},
+    subscribe: () => () => {},
+  });
+  return { usePipelineStore, createPipelineStore: () => usePipelineStore };
 });
-vi.mock("@/stores/usePipelineUIStore", () => ({
-  usePipelineUIStore: { getState: () => ({ markPipelineApplied: vi.fn() }) },
-}));
+vi.mock("@/stores/usePipelineUIStore", () => {
+  const uiState = { markPipelineApplied: vi.fn() };
+  const usePipelineUIStore = (selector: (s: typeof uiState) => unknown) => selector(uiState);
+  Object.assign(usePipelineUIStore, {
+    getState: () => uiState,
+    getInitialState: () => uiState,
+    setState: () => {},
+    subscribe: () => () => {},
+  });
+  return { usePipelineUIStore, createPipelineUIStore: () => usePipelineUIStore };
+});
 
 import {
   PipelineChatBox,

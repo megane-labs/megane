@@ -27,6 +27,7 @@ import { PIPELINE_TEMPLATES } from "./templates";
 import { getLayoutedElements } from "./layout";
 import { performOpenFile, type OpenFileOptions } from "./openFile";
 import { reconcileInspectorLayers, isInspectorId, type InspectorLayer } from "./inspectorSync";
+import { registerTestStores, GLOBAL_BUNDLE_ID } from "../stores/testRegistry";
 
 let nextNodeId = 1;
 
@@ -143,8 +144,17 @@ function getInitialPipeline() {
   return createDefaultPipeline();
 }
 
-const rawDefault = getInitialPipeline();
-const defaultState = getLayoutedElements(rawDefault.nodes, rawDefault.edges);
+/**
+ * Build a FRESH default graph. Called once per store instance rather than
+ * memoised at module scope: with a shared object every store created by
+ * `createPipelineStore()` would start out holding the *same* node objects, so
+ * two viewers' initial graphs would be aliases of each other. The layout pass
+ * is cheap (a handful of nodes) and runs once per viewer mount.
+ */
+function createInitialGraph(): { nodes: Node<PipelineNodeData>[]; edges: Edge[] } {
+  const raw = getInitialPipeline();
+  return getLayoutedElements(raw.nodes, raw.edges);
+}
 
 const CLEARED_EXECUTION_CONTEXT = {
   snapshot: null,
@@ -168,9 +178,8 @@ function disposeIfLazy(provider: FrameProvider | null | undefined): void {
   if (provider instanceof LazyFrameProvider) provider.dispose();
 }
 
-const pipelineStateCreator: StateCreator<PipelineStore> = (set, get, api) => ({
-  nodes: defaultState.nodes,
-  edges: defaultState.edges,
+export const pipelineStateCreator: StateCreator<PipelineStore> = (set, get, api) => ({
+  ...createInitialGraph(),
   viewportState: { ...DEFAULT_VIEWPORT_STATE },
   nodeErrors: {},
   snapshot: null,
@@ -611,28 +620,10 @@ export function createPipelineStore(): StoreApi<PipelineStore> {
 }
 
 // ── Test-only window hook ──────────────────────────────────────────────
-// When testMode is detected we expose the Zustand store on the global so
-// Playwright specs (under tests/e2e/lib/pipeline.ts) can drive
-// addNode / removeNode / connectEdge / updateNodeParams without scripting
-// React Flow mouse interactions. No-op outside testMode.
-(() => {
-  if (typeof window === "undefined") return;
-  try {
-    const g = globalThis as { __MEGANE_TEST__?: boolean };
-    let testMode = g.__MEGANE_TEST__ === true;
-    if (!testMode) {
-      const params = new URLSearchParams(window.location?.search ?? "");
-      if (params.get("test") === "1") testMode = true;
-    }
-    if (!testMode && window.parent && window.parent !== window) {
-      const pg = (window.parent as Window & { __MEGANE_TEST__?: boolean }).__MEGANE_TEST__;
-      if (pg) testMode = true;
-    }
-    if (!testMode) return;
-    (
-      window as Window & { __megane_test_pipeline_store?: typeof usePipelineStore }
-    ).__megane_test_pipeline_store = usePipelineStore;
-  } catch {
-    /* noop — same-origin checks may throw inside cross-origin frames */
-  }
-})();
+// Publishes the singleton so Playwright specs (tests/e2e/lib/pipeline.ts) can
+// drive addNode / removeNode / connectEdge / updateNodeParams without
+// scripting React Flow mouse interactions. Registered through the shared
+// registry so a mounted <MeganeProvider> can take the hook over with the
+// store it actually renders — see src/stores/testRegistry.ts. No-op outside
+// testMode.
+registerTestStores(GLOBAL_BUNDLE_ID, { pipeline: usePipelineStore });

@@ -7,12 +7,12 @@
 import type { NodeProps, Node } from "@xyflow/react";
 import type { PipelineNodeData } from "../../pipeline/execute";
 import type { StreamingParams } from "../../pipeline/types";
-import { usePipelineStore } from "../../pipeline/store";
+import { useScopedPipelineStore } from "../../stores/MeganeProvider";
 import { NodeShell } from "./NodeShell";
 
 export function StreamingNode({ id, data }: NodeProps<Node<PipelineNodeData>>) {
   const params = data.params as StreamingParams;
-  const nodeStreamingData = usePipelineStore((s) => s.nodeStreamingData[id]);
+  const nodeStreamingData = useScopedPipelineStore((s) => s.nodeStreamingData[id]);
 
   const connected = params.connected;
   const hasSnapshot = !!nodeStreamingData?.snapshot;

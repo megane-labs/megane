@@ -9,7 +9,7 @@
 import type { NodeProps, Node } from "@xyflow/react";
 import type { PipelineNodeData } from "../../pipeline/execute";
 import type { SymmetryMode, SymmetryParams } from "../../pipeline/types";
-import { usePipelineStore } from "../../pipeline/store";
+import { useScopedPipelineStore } from "../../stores/MeganeProvider";
 import { NodeShell } from "./NodeShell";
 
 const rowStyle: React.CSSProperties = {
@@ -40,7 +40,7 @@ const SYMMETRY_OPTIONS: { value: SymmetryMode; label: string }[] = [
 ];
 
 export function SymmetryNode({ id, data }: NodeProps<Node<PipelineNodeData>>) {
-  const updateNodeParams = usePipelineStore((s) => s.updateNodeParams);
+  const updateNodeParams = useScopedPipelineStore((s) => s.updateNodeParams);
   const params = data.params as SymmetryParams;
 
   return (

@@ -32,11 +32,10 @@ import {
 import type { TrajectoryLazyHandle, LazyTrajectoryKind } from "../parsers/xtc";
 import { remapTrajectoryTypesToElements } from "../parsers/parseCore";
 import { LazyFrameProvider } from "../stream/LazyFrameProvider";
-import { usePlaybackStore } from "../stores/usePlaybackStore";
+import { usePipelineStoreApi, usePlaybackStoreApi } from "../stores/MeganeProvider";
 import { useBondSource } from "./useBondSource";
 import { useLabelSource } from "./useLabelSource";
 import { useVectorSource } from "./useVectorSource";
-import { usePipelineStore } from "../pipeline/store";
 import { createMinimalStructurePipeline } from "../pipeline/defaults";
 import { syncAddBondSourceForLoader, applyTopologyFile } from "../pipeline/openFile";
 import { getLayoutedElements } from "../pipeline/layout";
@@ -98,6 +97,12 @@ export interface MeganeLocalState {
 }
 
 export function useMeganeLocal(): MeganeLocalState {
+  // Resolved through the provider, so a viewer inside a <MeganeProvider> has
+  // its loader write to the same store the viewer renders. With no provider
+  // these are the module-global singletons, exactly as before.
+  const pipelineApi = usePipelineStoreApi();
+  const playbackApi = usePlaybackStoreApi();
+
   const [snapshot, setSnapshot] = useState<Snapshot | null>(null);
   const [frame, setFrame] = useState<Frame | null>(null);
   const [meta, setMeta] = useState<TrajectoryMeta | null>(null);
@@ -202,7 +207,7 @@ export function useMeganeLocal(): MeganeLocalState {
       // with incompatible atom count; never clear during the very first
       // load (no prior structure) to avoid racing against a follow-up
       // loadXtc() in the auto-load.
-      const pipeStore = usePipelineStore.getState();
+      const pipeStore = pipelineApi.getState();
       if (lazy) {
         // Extra frames stream through the structure-trajectory channel. Clear
         // (and dispose) any prior file trajectory so only this provider is live;
@@ -251,8 +256,8 @@ export function useMeganeLocal(): MeganeLocalState {
         if (!loaderNode) {
           const raw = createMinimalStructurePipeline();
           const { nodes, edges } = getLayoutedElements(raw.nodes, raw.edges);
-          usePipelineStore.setState({ nodes, edges });
-          loaderNode = usePipelineStore.getState().nodes.find((n) => n.type === "load_structure");
+          pipelineApi.setState({ nodes, edges });
+          loaderNode = pipelineApi.getState().nodes.find((n) => n.type === "load_structure");
         }
         if (loaderNode) {
           pipeStore.setNodeSnapshot(loaderNode.id, {
@@ -271,7 +276,7 @@ export function useMeganeLocal(): MeganeLocalState {
           // so VSCode and JupyterLab single-file viewers — which feed files
           // through this hook instead of usePipelineStore.openFile — also
           // start with a sensible default for formats that lack bond info.
-          syncAddBondSourceForLoader(usePipelineStore.getState(), loaderNode.id, filename);
+          syncAddBondSourceForLoader(pipelineApi.getState(), loaderNode.id, filename);
         }
         const trajNode = pipeStore.nodes.find((n) => n.type === "load_trajectory");
         if (trajNode) {
@@ -307,7 +312,7 @@ export function useMeganeLocal(): MeganeLocalState {
       setMeta(lazy ? lazy.provider.meta : result.meta);
       resetPlayback();
     },
-    [resetPlayback, bonds.reset, labels.reset, vectors.reset],
+    [resetPlayback, bonds.reset, labels.reset, vectors.reset, pipelineApi],
   );
 
   // Apply an ALREADY-parsed structure result without re-reading or re-parsing
@@ -323,14 +328,14 @@ export function useMeganeLocal(): MeganeLocalState {
       // applyResult calls syncAddBondSourceForLoader (sets "distance" for GRO).
       // If the host pre-loaded a sibling .top, overwrite with topology bonds.
       if (topFile) {
-        const store = usePipelineStore.getState();
+        const store = pipelineApi.getState();
         const loaderNode = store.nodes.find((n) => n.type === "load_structure");
         if (loaderNode) {
           await applyTopologyFile(store, loaderNode.id, topFile);
         }
       }
     },
-    [applyResult],
+    [applyResult, pipelineApi],
   );
 
   // Build the streaming provider from frame 0 and attach it to the pipeline,
@@ -353,8 +358,8 @@ export function useMeganeLocal(): MeganeLocalState {
         provider.dispose(); // a newer file superseded this load
         return;
       }
-      provider.setOnFrameReady((f) => usePlaybackStore.getState()._onAsyncFrame(f));
-      const store = usePipelineStore.getState();
+      provider.setOnFrameReady((f) => playbackApi.getState()._onAsyncFrame(f));
+      const store = pipelineApi.getState();
       store.setStructureProvider(provider);
       const loaderNode = store.nodes.find((n) => n.type === "load_structure");
       if (loaderNode) store.updateNodeParams(loaderNode.id, { hasTrajectory: true });
@@ -368,7 +373,7 @@ export function useMeganeLocal(): MeganeLocalState {
       setTrajectorySourceState("structure");
       setXtcFileName("PDB models");
     },
-    [],
+    [pipelineApi, playbackApi],
   );
 
   // Lazy path for large multi-frame structure files (XYZ / PDB) — the target is
@@ -389,7 +394,7 @@ export function useMeganeLocal(): MeganeLocalState {
 
       const applyTop = async () => {
         if (!topFile) return;
-        const store = usePipelineStore.getState();
+        const store = pipelineApi.getState();
         const loaderNode = store.nodes.find((n) => n.type === "load_structure");
         if (loaderNode) await applyTopologyFile(store, loaderNode.id, topFile);
       };
@@ -462,7 +467,7 @@ export function useMeganeLocal(): MeganeLocalState {
       await applyTop();
       return true;
     },
-    [applyResult, attachStreamingProvider, applyStructureResult],
+    [applyResult, attachStreamingProvider, applyStructureResult, pipelineApi],
   );
 
   const loadFile = useCallback(
@@ -506,7 +511,7 @@ export function useMeganeLocal(): MeganeLocalState {
         dispose: disposeTrajectoryLazy,
         seedFrame0,
       });
-      provider.setOnFrameReady((f) => usePlaybackStore.getState()._onAsyncFrame(f));
+      provider.setOnFrameReady((f) => playbackApi.getState()._onAsyncFrame(f));
 
       // Stream embedded vector channels (LAMMPS velocity/force) as frames
       // decode, OFFERING them to the load_vector node UI (the first channel,
@@ -521,13 +526,11 @@ export function useMeganeLocal(): MeganeLocalState {
         const flush = () => {
           flushScheduled = false;
           // Only apply while this provider is still the active trajectory.
-          if (usePipelineStore.getState().fileProvider !== provider) return;
+          if (pipelineApi.getState().fileProvider !== provider) return;
           const frames = [...accumulated.entries()]
             .sort((a, b) => a[0] - b[0])
             .map(([frame, vectors]) => ({ frame, vectors }));
-          usePipelineStore
-            .getState()
-            .setEmbeddedVectorChannels([{ name: channelNames[0], frames }]);
+          pipelineApi.getState().setEmbeddedVectorChannels([{ name: channelNames[0], frames }]);
         };
         provider.setOnVectors((frameId, vectors) => {
           accumulated.set(frameId, vectors.slice(0, stride));
@@ -550,14 +553,14 @@ export function useMeganeLocal(): MeganeLocalState {
       resetPlayback();
       setXtcFileName(fileName);
 
-      const store = usePipelineStore.getState();
+      const store = pipelineApi.getState();
       store.setFileProvider(provider);
       const trajNode = store.nodes.find((n) => n.type === "load_trajectory");
       if (trajNode) {
         store.updateNodeParams(trajNode.id, { fileName });
       }
     },
-    [resetPlayback],
+    [resetPlayback, pipelineApi, playbackApi],
   );
 
   const loadXtc = useCallback(
@@ -572,7 +575,7 @@ export function useMeganeLocal(): MeganeLocalState {
       const isNetcdf = ext.endsWith(".nc");
       const isXtc = !isLammpstrj && !isDcd && !isNetcdf;
       const nAtoms = baseSnapshotRef.current.nAtoms;
-      const store = usePipelineStore.getState();
+      const store = pipelineApi.getState();
 
       // Eager whole-file parse + apply. Used for small files, when the worker is
       // unavailable, and as the fallback for a heterogeneous (variable-atom)
@@ -688,7 +691,7 @@ export function useMeganeLocal(): MeganeLocalState {
 
       await eagerLoad();
     },
-    [resetPlayback, attachFileProvider],
+    [resetPlayback, attachFileProvider, pipelineApi],
   );
 
   const seekFrame = useCallback(

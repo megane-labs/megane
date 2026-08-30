@@ -3,7 +3,7 @@
  */
 
 import { useState } from "react";
-import { useMeasurementStore } from "../stores/useMeasurementStore";
+import { useScopedMeasurementStore } from "../stores/MeganeProvider";
 import { MEASUREMENT_BOTTOM_DEFAULT } from "./overlayLayout";
 import { exportToCSV, exportToJSON, downloadFile } from "../utils/measurementExport";
 import { getElementSymbol } from "../constants";
@@ -37,7 +37,7 @@ interface RowProps {
 function MeasurementRow({ id, name, type, label, atoms, hidden, elements }: RowProps) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(name);
-  const { renameMeasurement, toggleVisibility, removeMeasurement } = useMeasurementStore();
+  const { renameMeasurement, toggleVisibility, removeMeasurement } = useScopedMeasurementStore();
 
   const commitRename = () => {
     const trimmed = draft.trim();
@@ -144,7 +144,7 @@ export function MeasurementListPanel({
   elements,
   bottom = MEASUREMENT_BOTTOM_DEFAULT,
 }: MeasurementListPanelProps) {
-  const { measurements, clearAll } = useMeasurementStore();
+  const { measurements, clearAll } = useScopedMeasurementStore();
 
   if (measurements.length === 0) return null;
 
