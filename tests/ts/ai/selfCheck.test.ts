@@ -262,6 +262,40 @@ describe("collectRuntimeErrors", () => {
     expect(errors).toEqual(['node "ab": No bonds found (reported when the pipeline was run)']);
   });
 
+  it("reports a node whose output reaches no viewport", () => {
+    // The scorer grades this as a structural defect ("all nodes reach a
+    // viewport"), and the executor never runs the node, so the model must hear
+    // about it — even though validatePipeline files it as a warning.
+    const p = pipeline(
+      [
+        LOADER,
+        { id: "t1", type: "load_trajectory", position: { x: 200, y: 155 } } as Node,
+        VIEWPORT,
+      ],
+      [edge("l1", "particle", "t1", "particle"), edge("l1", "particle", "v1", "particle")],
+    );
+    const errors = collectRuntimeErrors(p);
+    expect(errors).toHaveLength(1);
+    expect(errors[0]).toContain('node "t1"');
+    expect(errors[0]).toContain("reaches nothing");
+  });
+
+  it("accepts a chain that legitimately ends at a non-viewport sink", () => {
+    // spectrum_plot has no output ports and draws into its own node body, so
+    // load_spectrum -> spectrum_plot arrives somewhere; flagging either node
+    // would ask the model for something impossible.
+    const p = pipeline(
+      [
+        { id: "s1", type: "load_spectrum", position: { x: 0, y: 0 } } as Node,
+        { id: "p1", type: "spectrum_plot", position: { x: 0, y: 155 } } as Node,
+        LOADER,
+        VIEWPORT,
+      ],
+      [edge("s1", "spectrum", "p1", "spectrum"), edge("l1", "particle", "v1", "particle")],
+    );
+    expect(collectRuntimeErrors(p)).toEqual([]);
+  });
+
   it("returns a single message when the pipeline cannot be deserialized", () => {
     const p = pipeline([{ id: "x", type: "nope", position: { x: 0, y: 0 } } as Node], []);
     const errors = collectRuntimeErrors(p);

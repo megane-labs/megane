@@ -729,11 +729,29 @@ describe("generatePipeline — structure summary + query repair", () => {
     expect(result).toContain("Still bad.");
   });
 
-  it("does not repair a response that carries no pipeline", async () => {
+  it("does not repair a plain-text response with no fenced block", async () => {
     fetchMock.mockResolvedValueOnce(anthropicTextResponse("I need a structure first."));
     const result = await generatePipeline(ANTHROPIC_CONFIG, "hi", () => {});
     expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(result).toContain("I need a structure first.");
+  });
+
+  it("asks for the JSON again when the fenced block does not parse", async () => {
+    // Nothing can be applied at all here, so this is the costliest failure —
+    // it must not slip through just because there is no pipeline to inspect.
+    fetchMock.mockResolvedValueOnce(
+      anthropicTextResponse('```json\n{ "version": 3, "nodes": [ }\n```\nDone.'),
+    );
+    fetchMock.mockResolvedValueOnce(
+      anthropicTextResponse("```json\n" + VALID_FILTER_PIPELINE + "\n```\nFixed."),
+    );
+
+    const result = await generatePipeline(ANTHROPIC_CONFIG, "show carbons", () => {});
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    const repairBody = JSON.parse((fetchMock.mock.calls[1][1] as RequestInit).body as string);
+    const userMsg = repairBody.messages[repairBody.messages.length - 1];
+    expect(userMsg.content).toContain("not a usable pipeline");
+    expect(result).toContain("Fixed.");
   });
 
   it("stops repairing on the demo proxy before the message budget runs out", async () => {

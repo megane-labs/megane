@@ -16,8 +16,7 @@
  */
 
 import { buildSystemPrompt } from "@/ai/prompt";
-import { tryExtractPipeline } from "@/ai/client";
-import { buildRepairPrompt, collectPipelineErrors } from "@/ai/validatePipeline";
+import { diagnoseResponse } from "@/ai/client";
 import {
   buildOpenAITools,
   buildToolDefinitions,
@@ -151,13 +150,12 @@ export async function generatePipelineLive(
 
   let text = await send(userMessage);
   for (let round = 0; round < MAX_REPAIR_ROUNDS; round++) {
-    const pipeline = tryExtractPipeline(text);
-    if (!pipeline) break;
-    // No structure is loaded in the benchmark, so this runs the static checks
-    // (schema, query syntax, edge typing, overlapping branches, graph wiring).
-    const errors = collectPipelineErrors(pipeline);
-    if (errors.length === 0) break;
-    text = await send(buildRepairPrompt(errors));
+    // No structure is loaded in the benchmark, so this runs the static half of
+    // the self-check (schema, query syntax, edge typing, overlapping branches,
+    // graph wiring) plus the unparsable-JSON retry.
+    const findings = diagnoseResponse(text, {});
+    if (!findings) break;
+    text = await send(findings.prompt);
   }
   return text;
 }

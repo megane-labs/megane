@@ -6,7 +6,11 @@
 import type { AIConfig } from "./config";
 import type { SerializedPipeline } from "../pipeline/types";
 import { buildSystemPrompt } from "./prompt";
-import { collectPipelineErrors, buildRepairPrompt } from "./validatePipeline";
+import {
+  collectPipelineErrors,
+  buildRepairPrompt,
+  buildUnparsablePipelinePrompt,
+} from "./validatePipeline";
 import type { SelfCheckContext } from "./selfCheck";
 import {
   getSkills,
@@ -172,16 +176,50 @@ export async function generatePipeline(
   let text = await session.send(userMessage, onChunk, signal);
 
   for (let round = 1; round <= MAX_REPAIR_ROUNDS; round++) {
-    const pipeline = tryExtractPipeline(text);
-    if (!pipeline) break;
-    const errors = collectPipelineErrors(pipeline, checkContext);
-    if (errors.length === 0) break;
+    const findings = diagnoseResponse(text, checkContext);
+    if (!findings) break;
     if (!session.hasRoomForAnotherRound()) break;
-    onRepairRound?.(round, errors);
-    text = await session.send(buildRepairPrompt(errors), onChunk, signal);
+    onRepairRound?.(round, findings.errors);
+    text = await session.send(findings.prompt, onChunk, signal);
   }
 
   return text;
+}
+
+/** True when `text` contains a closed ```` ``` ```` fence pair. */
+function hasClosedFence(text: string): boolean {
+  return /```(?:json)?\s*\n?[\s\S]*?```/.test(text);
+}
+
+/**
+ * Decide whether a response needs another round, and with what prompt.
+ * Returns null when the response is acceptable as-is.
+ *
+ * Exported so the prompt benchmark drives the identical loop — a divergence
+ * here would make its scores describe something users never run.
+ *
+ * There are three outcomes. A pipeline that checks out is done. A pipeline with
+ * findings gets the standard repair prompt. A response that *tried* to emit a
+ * pipeline — it has a closed fence — but produced nothing parsable is the worst
+ * case (nothing can be applied at all), so it is asked for the JSON again;
+ * without this it would be the one failure the loop silently accepted. A reply
+ * with no fence at all is prose, e.g. the model asking which file to load, and
+ * is deliberately left alone.
+ */
+export function diagnoseResponse(
+  text: string,
+  checkContext: SelfCheckContext,
+): { prompt: string; errors: string[] } | null {
+  const pipeline = tryExtractPipeline(text);
+  if (!pipeline) {
+    if (!hasClosedFence(text)) return null;
+    const message = "the fenced block is not valid, complete pipeline JSON";
+    return { prompt: buildUnparsablePipelinePrompt(), errors: [message] };
+  }
+
+  const errors = collectPipelineErrors(pipeline, checkContext);
+  if (errors.length === 0) return null;
+  return { prompt: buildRepairPrompt(errors), errors };
 }
 
 // ─── Anthropic with tool_use ─────────────────────────────────────────

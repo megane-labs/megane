@@ -72,6 +72,29 @@ export function collectPipelineErrors(
 export const MAX_REPORTED_ERRORS = 12;
 
 /**
+ * Build the follow-up message for a response that emitted a fenced block which
+ * is not a usable pipeline — malformed JSON, a wrong `version`, or missing
+ * `nodes`/`edges`.
+ *
+ * This is the most expensive failure there is: nothing can be applied, so the
+ * viewport does not change at all and every quality dimension scores zero. It
+ * needs its own prompt because the pipeline could not be parsed, so there are
+ * no per-node findings to list.
+ */
+export function buildUnparsablePipelinePrompt(): string {
+  return [
+    "The code block you just produced is not a usable pipeline — it either is",
+    "not valid JSON, or it is missing the required `version: 3` / `nodes` /",
+    "`edges` fields. Nothing could be applied.",
+    "",
+    "Send the pipeline again as a single, complete, valid JSON code block —",
+    "check that every brace and bracket is closed and that no comments or",
+    "trailing commas are present — then one short sentence describing what it",
+    "does.",
+  ].join("\n");
+}
+
+/**
  * Build the follow-up user message asking the model to fix the problems found
  * in the pipeline it just produced.
  *

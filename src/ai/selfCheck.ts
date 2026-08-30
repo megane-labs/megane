@@ -61,6 +61,17 @@ const PARTICLE_PASSTHROUGH: ReadonlySet<string> = new Set([
 /** `validatePipeline` findings already reported by `collectQueryErrors`. */
 const QUERY_SYNTAX_PREFIX = "Query syntax error";
 
+/**
+ * Node types with no output ports: the graph's legitimate sinks. That is the
+ * viewport, and `spectrum_plot`, which draws into its own node body rather than
+ * the 3D scene. A stream that ends at either of these has arrived somewhere.
+ */
+const SINK_NODE_TYPES: ReadonlySet<string> = new Set(
+  Object.entries(NODE_PORTS)
+    .filter(([, ports]) => ports.outputs.length === 0)
+    .map(([type]) => type),
+);
+
 // ─── Edge typing ─────────────────────────────────────────────────────
 
 /** Render a node's ports as `name (type)` for an error message. */
@@ -325,6 +336,54 @@ const REPORTED_RUNTIME_WARNINGS: readonly string[] = [
 ];
 
 /**
+ * Report authored nodes whose output arrives nowhere.
+ *
+ * `validatePipeline` has its own version of this, but it walks back from
+ * viewports only, so it condemns a perfectly good `load_spectrum ->
+ * spectrum_plot` chain — and it files the finding as a warning, which the
+ * severity filter drops. This walks back from every *sink* (any node type with
+ * no output ports) instead, which is the honest question: does this node's work
+ * end up anywhere at all? A node that fails it is dead weight — the executor
+ * runs it and discards the result — and the prompt benchmark grades it as a
+ * structural defect.
+ *
+ * The walk runs on the deserialized graph, so the edges normalization adds are
+ * counted; a loader the model left dangling is connected by then and correctly
+ * not reported.
+ */
+function collectDeadEndErrors(
+  graph: ReturnType<typeof deserializePipeline>,
+  authored: Set<unknown>,
+): string[] {
+  const sinkIds = graph.nodes.filter((n) => SINK_NODE_TYPES.has(n.type ?? "")).map((n) => n.id);
+  // No sink at all is "pipeline has no viewport", which the schema check owns.
+  if (sinkIds.length === 0) return [];
+
+  const predecessors = new Map<string, string[]>();
+  for (const node of graph.nodes) predecessors.set(node.id, []);
+  for (const edge of graph.edges) predecessors.get(edge.target)?.push(edge.source);
+
+  const reaches = new Set(sinkIds);
+  const queue = [...sinkIds];
+  while (queue.length > 0) {
+    const id = queue.shift()!;
+    for (const previous of predecessors.get(id) ?? []) {
+      if (reaches.has(previous)) continue;
+      reaches.add(previous);
+      queue.push(previous);
+    }
+  }
+
+  return graph.nodes
+    .filter((n) => authored.has(n.id) && !reaches.has(n.id))
+    .map(
+      (n) =>
+        `node "${n.id}": its output reaches nothing — no path leads from it to the viewport, ` +
+        `so the node has no effect. Connect it downstream or remove it.`,
+    );
+}
+
+/**
  * Run the candidate pipeline and report what the executor complained about.
  *
  * Graph-level problems (`No input connected`, `Cycle detected`) come from the
@@ -368,6 +427,7 @@ export function collectRuntimeErrors(
       errors.push(`node "${nodeId}": ${err.message}`);
     }
   }
+  errors.push(...collectDeadEndErrors(graph, authored));
 
   if (!ctx.snapshot) return errors;
 
