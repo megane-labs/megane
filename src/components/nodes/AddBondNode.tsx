@@ -7,7 +7,7 @@
 import type { NodeProps, Node } from "@xyflow/react";
 import type { PipelineNodeData } from "../../pipeline/execute";
 import type { AddBondParams } from "../../pipeline/types";
-import { usePipelineStore } from "../../pipeline/store";
+import { useScopedPipelineStore } from "../../stores/MeganeProvider";
 import { NodeShell } from "./NodeShell";
 import { TabSelector, smallBtnStyle, fileNameStyle } from "../ui";
 import { parseTopBonds, parsePsfBonds } from "../../parsers/structure";
@@ -61,7 +61,7 @@ const thresholdValueStyle: React.CSSProperties = {
 };
 
 export function AddBondNode({ id, data }: NodeProps<Node<PipelineNodeData>>) {
-  const updateNodeParams = usePipelineStore((s) => s.updateNodeParams);
+  const updateNodeParams = useScopedPipelineStore((s) => s.updateNodeParams);
   const params = data.params as AddBondParams;
   const inputRef = useRef<HTMLInputElement>(null);
 

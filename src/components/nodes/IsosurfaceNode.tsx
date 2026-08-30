@@ -8,7 +8,7 @@ import type { NodeProps, Node } from "@xyflow/react";
 import type { PipelineNodeData } from "../../pipeline/execute";
 import type { IsosurfaceParams, IsosurfaceColorMode, VolumeColormap } from "../../pipeline/types";
 import { VOLUME_COLORMAP_LABELS } from "../../pipeline/executors/volumeColor";
-import { usePipelineStore } from "../../pipeline/store";
+import { useScopedPipelineStore } from "../../stores/MeganeProvider";
 import { NodeShell } from "./NodeShell";
 
 const rowStyle: React.CSSProperties = {
@@ -81,7 +81,7 @@ const rangeInputStyle: React.CSSProperties = {
 };
 
 export function IsosurfaceNode({ id, data }: NodeProps<Node<PipelineNodeData>>) {
-  const updateNodeParams = usePipelineStore((s) => s.updateNodeParams);
+  const updateNodeParams = useScopedPipelineStore((s) => s.updateNodeParams);
   const params = data.params as IsosurfaceParams;
   const colorMode = params.colorMode ?? "solid";
 

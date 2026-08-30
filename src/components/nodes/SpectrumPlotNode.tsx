@@ -14,7 +14,7 @@
 import { useMemo } from "react";
 import type { NodeProps, Node } from "@xyflow/react";
 import type { PipelineNodeData } from "../../pipeline/execute";
-import { usePipelineStore } from "../../pipeline/store";
+import { useScopedPipelineStore } from "../../stores/MeganeProvider";
 import { NodeShell } from "./NodeShell";
 import type { LoadSpectrumParams, SpectrumData, SpectrumPlotParams } from "../../pipeline/types";
 
@@ -104,10 +104,10 @@ export function buildPlot(
 }
 
 export function SpectrumPlotNode({ id, data }: NodeProps<Node<PipelineNodeData>>) {
-  const updateNodeParams = usePipelineStore((s) => s.updateNodeParams);
+  const updateNodeParams = useScopedPipelineStore((s) => s.updateNodeParams);
   const params = data.params as SpectrumPlotParams;
-  const nodes = usePipelineStore((s) => s.nodes);
-  const edges = usePipelineStore((s) => s.edges);
+  const nodes = useScopedPipelineStore((s) => s.nodes);
+  const edges = useScopedPipelineStore((s) => s.edges);
   const spectrum = useMemo(() => resolveConnectedSpectrum(id, nodes, edges), [id, nodes, edges]);
 
   const plot = useMemo(

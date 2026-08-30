@@ -33,6 +33,14 @@ export default defineConfig({
   build: {
     outDir: "python/megane/static/app",
     rollupOptions: {
+      // Two entries: the app itself, plus the two-viewer harness that backs
+      // the `multi-instance` Playwright project (issue #672). Naming `input`
+      // at all means the implicit index.html default no longer applies, so
+      // both must be listed.
+      input: {
+        main: path.resolve(__dirname, "index.html"),
+        multiInstance: path.resolve(__dirname, "multi-instance.html"),
+      },
       output: {
         // Split the large, stable third-party libraries into their own chunks so
         // the app shell no longer ships as a single ~1.8 MB bundle. These deps

@@ -27,13 +27,17 @@ import {
   hasDistanceBondNode,
   distanceBondVdwScale,
 } from "../hooks/useFrameDistanceBonds";
-import { usePipelineStore } from "../pipeline/store";
-import { usePipelineUIStore } from "../stores/usePipelineUIStore";
-import { useInspectorInteractionStore } from "../stores/useInspectorInteractionStore";
+import {
+  useMeganeStores,
+  useScopedPipelineStore,
+  useScopedPlaybackStore,
+  useScopedPipelineUIStore,
+  useScopedInspectorStore,
+  usePipelineStoreApi,
+  useViewStateStoreApi,
+} from "../stores/MeganeProvider";
 import { getElementSymbol } from "../constants";
 import { parseResname, computeMoleculeIds } from "../pipeline/selection";
-import { usePlaybackStore } from "../stores/usePlaybackStore";
-import { useViewStateStore } from "../stores/useViewStateStore";
 import { applyViewportState, applyVectorsForFrame } from "../pipeline/apply";
 import { useAtomSelection } from "../hooks/useAtomSelection";
 import { useNodeLoadHandlers } from "../hooks/useNodeLoadHandlers";
@@ -177,6 +181,10 @@ export function MeganeViewer({
   initialCameraState,
   onCameraStateChange,
 }: MeganeViewerProps) {
+  const stores = useMeganeStores();
+  const pipelineApi = usePipelineStoreApi();
+  const viewStateApi = useViewStateStoreApi();
+
   const rendererRef = useRef<MoleculeRenderer | null>(null);
   const [hoverInfo, setHoverInfo] = useState<HoverInfo>(null);
   const [bondCount, setBondCount] = useState<number>(0);
@@ -236,16 +244,16 @@ export function MeganeViewer({
   // The Inspector lives inside the pipeline panel, and `mode` is restored from
   // sessionStorage — so without the panel a previously-saved "inspector" mode
   // would leave the Viewport in pick mode with no UI to leave it.
-  const inspectorMode = usePipelineUIStore((s) => s.mode === "inspector");
+  const inspectorMode = useScopedPipelineUIStore((s) => s.mode === "inspector");
   const inspectorActive = showPipelineEditor && inspectorMode;
-  const previewIndices = useInspectorInteractionStore((s) => s.previewIndices);
-  const boxSelectActive = useInspectorInteractionStore((s) => s.boxSelectActive);
-  const publishBoxResult = useInspectorInteractionStore((s) => s.publishBoxResult);
-  const publishPickedAtom = useInspectorInteractionStore((s) => s.publishPickedAtom);
+  const previewIndices = useScopedInspectorStore((s) => s.previewIndices);
+  const boxSelectActive = useScopedInspectorStore((s) => s.boxSelectActive);
+  const publishBoxResult = useScopedInspectorStore((s) => s.publishBoxResult);
+  const publishPickedAtom = useScopedInspectorStore((s) => s.publishPickedAtom);
 
   const handleInspectorPick = useCallback(
     (atomIndex: number) => {
-      const { snapshot: snap, atomLabels } = usePipelineStore.getState();
+      const { snapshot: snap, atomLabels } = pipelineApi.getState();
       if (!snap) return;
       const chainCode = snap.atomChainIds?.[atomIndex] ?? 0;
       const molIds = snap.bonds.length > 0 ? computeMoleculeIds(snap.bonds, snap.nAtoms) : null;
@@ -257,7 +265,7 @@ export function MeganeViewer({
         moleculeId: molIds ? molIds[atomIndex] : null,
       });
     },
-    [publishPickedAtom],
+    [publishPickedAtom, pipelineApi],
   );
 
   useEffect(() => {
@@ -277,7 +285,7 @@ export function MeganeViewer({
   // triggering a render. The `snapshot` selector still drives the React
   // tree because it changes identity only on file load (snapshots are
   // pinned to the LoadStructure's NodeSnapshotData).
-  const snapshot = usePipelineStore((s) => s.viewportState.particles[0]?.source ?? null);
+  const snapshot = useScopedPipelineStore((s) => s.viewportState.particles[0]?.source ?? null);
 
   // Wire up node load handlers (structure, trajectory, vector) and track primary node
   const primaryNodeIdRef = useNodeLoadHandlers({
@@ -294,7 +302,7 @@ export function MeganeViewer({
     setBondCount(snapshot?.nBonds ?? 0);
     const renderer = rendererRef.current;
     if (renderer) {
-      const state = usePipelineStore.getState();
+      const state = pipelineApi.getState();
       applyViewportState(
         renderer,
         state.viewportState,
@@ -310,21 +318,19 @@ export function MeganeViewer({
       if (snapshot && !hasRestoredCameraRef.current) {
         hasRestoredCameraRef.current = true;
         const saved =
-          initialCameraState !== undefined
-            ? initialCameraState
-            : useViewStateStore.getState().camera;
+          initialCameraState !== undefined ? initialCameraState : viewStateApi.getState().camera;
         if (saved) {
           renderer.applyCameraState(saved);
         }
       }
     }
-  }, [snapshot, initialCameraState]);
+  }, [snapshot, initialCameraState, pipelineApi, viewStateApi]);
 
   // Apply viewportState changes to the renderer + drive playback / bond-count
   // updates without triggering a React re-render of MeganeViewer. Subscribing
   // through the vanilla zustand API (instead of `usePipelineStore(selector)`)
   // means a full pipeline execute flushes only effect callbacks here.
-  const setPlaybackProvider = usePlaybackStore((s) => s.setProvider);
+  const setPlaybackProvider = useScopedPlaybackStore((s) => s.setProvider);
   useEffect(() => {
     let prevBondsRef: ViewportState["bonds"] | null = null;
     let prevTrajRef: unknown = null;
@@ -332,7 +338,7 @@ export function MeganeViewer({
     const apply = (vs: ViewportState) => {
       const renderer = rendererRef.current;
       if (renderer) {
-        const atomLabels = usePipelineStore.getState().atomLabels;
+        const atomLabels = pipelineApi.getState().atomLabels;
         applyViewportState(
           renderer,
           vs,
@@ -357,16 +363,16 @@ export function MeganeViewer({
       }
     };
 
-    apply(usePipelineStore.getState().viewportState);
-    return usePipelineStore.subscribe((state, prev) => {
+    apply(pipelineApi.getState().viewportState);
+    return pipelineApi.subscribe((state, prev) => {
       if (state.viewportState !== prev.viewportState) apply(state.viewportState);
     });
-  }, [setPlaybackProvider]);
+  }, [setPlaybackProvider, pipelineApi]);
 
   // Frame, currentFrame, and totalFrames come straight from the playback store.
-  const frame = usePlaybackStore((s) => s.currentFrameData);
-  const currentFrame = usePlaybackStore((s) => s.currentFrame);
-  const totalFrames = usePlaybackStore((s) => s.totalFrames);
+  const frame = useScopedPlaybackStore((s) => s.currentFrameData);
+  const currentFrame = useScopedPlaybackStore((s) => s.currentFrame);
+  const totalFrames = useScopedPlaybackStore((s) => s.totalFrames);
 
   // Surface frame changes to host React apps (e.g. Plotly integration). We
   // skip the synthetic 0-on-mount value so consumers only receive transitions
@@ -381,18 +387,18 @@ export function MeganeViewer({
     lastFrameRef.current = currentFrame;
   }, [currentFrame, onFrameChange]);
 
-  const storePlaying = usePlaybackStore((s) => s.playing);
-  const storeFps = usePlaybackStore((s) => s.fps);
-  const storeSpeedMultiplier = usePlaybackStore((s) => s.speedMultiplier);
-  const storeLoopStart = usePlaybackStore((s) => s.loopStart);
-  const storeLoopEnd = usePlaybackStore((s) => s.loopEnd);
-  const storeSeek = usePlaybackStore((s) => s.seekFrame);
-  const storeTogglePlayPause = usePlaybackStore((s) => s.togglePlayPause);
-  const storeSetFps = usePlaybackStore((s) => s.setFps);
-  const storeSetSpeedMultiplier = usePlaybackStore((s) => s.setSpeedMultiplier);
-  const storeSetLoopRange = usePlaybackStore((s) => s.setLoopRange);
-  const storeStepForward = usePlaybackStore((s) => s.stepForward);
-  const storeStepBackward = usePlaybackStore((s) => s.stepBackward);
+  const storePlaying = useScopedPlaybackStore((s) => s.playing);
+  const storeFps = useScopedPlaybackStore((s) => s.fps);
+  const storeSpeedMultiplier = useScopedPlaybackStore((s) => s.speedMultiplier);
+  const storeLoopStart = useScopedPlaybackStore((s) => s.loopStart);
+  const storeLoopEnd = useScopedPlaybackStore((s) => s.loopEnd);
+  const storeSeek = useScopedPlaybackStore((s) => s.seekFrame);
+  const storeTogglePlayPause = useScopedPlaybackStore((s) => s.togglePlayPause);
+  const storeSetFps = useScopedPlaybackStore((s) => s.setFps);
+  const storeSetSpeedMultiplier = useScopedPlaybackStore((s) => s.setSpeedMultiplier);
+  const storeSetLoopRange = useScopedPlaybackStore((s) => s.setLoopRange);
+  const storeStepForward = useScopedPlaybackStore((s) => s.stepForward);
+  const storeStepBackward = useScopedPlaybackStore((s) => s.stepBackward);
 
   // Hosts may forward custom playback callbacks (the webapp wraps them to
   // pause on file uploads). When omitted (VSCode webview, JupyterLab
@@ -405,8 +411,8 @@ export function MeganeViewer({
   const effectiveOnFpsChange = onFpsChange ?? storeSetFps;
 
   // Per-frame bond recalculation for distance mode
-  const hasDistanceBond = usePipelineStore((s) => hasDistanceBondNode(s.nodes));
-  const distanceBondScale = usePipelineStore((s) => distanceBondVdwScale(s.nodes));
+  const hasDistanceBond = useScopedPipelineStore((s) => hasDistanceBondNode(s.nodes));
+  const distanceBondScale = useScopedPipelineStore((s) => distanceBondVdwScale(s.nodes));
   useFrameDistanceBonds({
     rendererRef,
     snapshot,
@@ -420,11 +426,11 @@ export function MeganeViewer({
   useEffect(() => {
     const renderer = rendererRef.current;
     if (!renderer) return;
-    const vs = usePipelineStore.getState().viewportState;
+    const vs = pipelineApi.getState().viewportState;
     if (vs.vectors.length > 0) {
       applyVectorsForFrame(renderer, vs.vectors, currentFrame);
     }
-  }, [currentFrame]);
+  }, [currentFrame, pipelineApi]);
 
   const resolvedTheme = useThemeStore((s) => s.resolvedTheme);
 
@@ -441,7 +447,7 @@ export function MeganeViewer({
       rendererRef.current = renderer;
       renderer.setBackgroundColor(themeToHex(useThemeStore.getState().resolvedTheme));
       renderer.setViewInsets(0, rightInset());
-      const storeState = usePipelineStore.getState();
+      const storeState = pipelineApi.getState();
       applyViewportState(
         renderer,
         storeState.viewportState,
@@ -458,11 +464,11 @@ export function MeganeViewer({
         if (onCameraStateChangeRef.current) {
           onCameraStateChangeRef.current(state);
         } else {
-          useViewStateStore.getState().updateCamera(state);
+          viewStateApi.getState().updateCamera(state);
         }
       });
     },
-    [rightInset],
+    [rightInset, pipelineApi, viewStateApi],
   );
 
   // Escape clears the atom selection. Right-click selection stays wired
@@ -541,8 +547,8 @@ export function MeganeViewer({
     const renderer = rendererRef.current;
     if (!renderer) return;
     renderer.resetCamera();
-    useViewStateStore.getState().clearViewState();
-  }, []);
+    viewStateApi.getState().clearViewState();
+  }, [viewStateApi]);
 
   // Timeline renders nothing for a single-frame structure (its own
   // `totalFrames <= 1` guard), so the overlays below it must key on whether the
@@ -567,6 +573,7 @@ export function MeganeViewer({
       tabIndex={-1}
       data-testid="megane-viewer"
       data-megane-context={testContext}
+      data-megane-instance={stores.id}
       data-atom-count={snapshot?.nAtoms ?? 0}
       // Atom count of the currently displayed frame. Differs from
       // data-atom-count only for heterogeneous trajectories whose per-frame

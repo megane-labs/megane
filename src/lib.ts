@@ -16,7 +16,31 @@ export type { BondConfig, TrajectoryConfig } from "./components/Sidebar";
 
 // Pipeline
 export { PipelineEditor } from "./components/PipelineEditor";
-export { usePipelineStore } from "./pipeline/store";
+export { usePipelineStore, createPipelineStore } from "./pipeline/store";
+export type { PipelineStore } from "./pipeline/store";
+
+// Multi-instance support (#672). Wrap each viewer in its own provider and the
+// viewers stop sharing state; with no provider mounted every hook falls back
+// to the module-global stores, so existing embedders are unaffected.
+export {
+  MeganeProvider,
+  useMeganeStores,
+  usePipelineStoreApi,
+  usePlaybackStoreApi,
+  useMeasurementStoreApi,
+  useViewStateStoreApi,
+  usePipelineUIStoreApi,
+  useInspectorStoreApi,
+  useScopedPipelineStore,
+  useScopedPlaybackStore,
+  useScopedMeasurementStore,
+  useScopedViewStateStore,
+  useScopedPipelineUIStore,
+  useScopedInspectorStore,
+} from "./stores/MeganeProvider";
+export type { MeganeProviderProps } from "./stores/MeganeProvider";
+export { createMeganeStores, globalMeganeStores } from "./stores/meganeStores";
+export type { MeganeStores, CreateMeganeStoresOptions } from "./stores/meganeStores";
 export { executePipeline } from "./pipeline/execute";
 export { applyViewportState } from "./pipeline/apply";
 export { serializePipeline, deserializePipeline } from "./pipeline/serialize";

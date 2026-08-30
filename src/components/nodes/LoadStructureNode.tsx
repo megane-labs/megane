@@ -8,7 +8,8 @@
 import type { NodeProps, Node } from "@xyflow/react";
 import type { PipelineNodeData } from "../../pipeline/execute";
 import type { LoadStructureParams } from "../../pipeline/types";
-import { usePipelineStore } from "../../pipeline/store";
+import { useScopedPipelineStore, useLoadHandlers } from "../../stores/MeganeProvider";
+import { globalLoadHandlers, type StructureLoadHandler } from "../../stores/loadHandlers";
 import { NodeShell } from "./NodeShell";
 import { smallBtnStyle, fileNameStyle } from "../ui";
 import { useRef, useCallback } from "react";
@@ -65,14 +66,20 @@ export const STRUCTURE_EXTS = [
  * Event bus for structure loading.
  * MeganeViewer listens for these events to trigger actual file parsing.
  */
-export type StructureLoadHandler = (nodeId: string, file: File) => void;
-let _onStructureLoad: StructureLoadHandler | null = null;
+export type { StructureLoadHandler };
+
+/**
+ * Legacy module-global registration, kept so provider-less hosts and any
+ * existing embedder keep working. It writes the process-global slots; a
+ * viewer inside a <MeganeProvider> uses that provider's own slots instead.
+ */
 export function setStructureLoadHandler(handler: StructureLoadHandler | null) {
-  _onStructureLoad = handler;
+  globalLoadHandlers.setStructure(handler);
 }
 
 export function LoadStructureNode({ id, data }: NodeProps<Node<PipelineNodeData>>) {
-  const updateNodeParams = usePipelineStore((s) => s.updateNodeParams);
+  const updateNodeParams = useScopedPipelineStore((s) => s.updateNodeParams);
+  const loadHandlers = useLoadHandlers();
   const params = data.params as LoadStructureParams;
   const inputRef = useRef<HTMLInputElement>(null);
 
@@ -80,9 +87,9 @@ export function LoadStructureNode({ id, data }: NodeProps<Node<PipelineNodeData>
     (file: File) => {
       if (!matchesStructureName(file.name, STRUCTURE_EXTS)) return;
       updateNodeParams(id, { fileName: file.name });
-      _onStructureLoad?.(id, file);
+      loadHandlers.structure?.(id, file);
     },
-    [id, updateNodeParams],
+    [id, updateNodeParams, loadHandlers],
   );
 
   const handleDrop = useCallback(

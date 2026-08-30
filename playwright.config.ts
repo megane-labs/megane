@@ -88,6 +88,15 @@ export default defineConfig({
       },
     },
     {
+      // Two <MeganeViewer>s on one page, each in its own <MeganeProvider>
+      // (issue #672). Served from the multi-instance.html Vite entry.
+      name: "multi-instance",
+      testMatch: /multi-instance\.spec\.ts$/,
+      use: {
+        baseURL: `http://127.0.0.1:${PORT_WEBAPP}`,
+      },
+    },
+    {
       name: "contract",
       testMatch: /contract\.spec\.ts$/,
       use: {
