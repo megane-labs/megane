@@ -1,6 +1,6 @@
 /**
  * Representation node — picks the visual representation (atoms / cartoon /
- * both / surface) for the upstream particle stream. Stacks Ovito-style: the
+ * both / surface / illustrative) for the upstream particle stream. Stacks Ovito-style: the
  * Viewport reads the override from the first particle stream that carries one.
  */
 
@@ -39,6 +39,7 @@ const REPRESENTATION_OPTIONS: { value: RepresentationMode; label: string }[] = [
   { value: "both", label: "Both" },
   { value: "surface", label: "Surface" },
   { value: "line", label: "Line" },
+  { value: "illustrative", label: "Illustrative" },
 ];
 
 export function RepresentationNode({ id, data }: NodeProps<Node<PipelineNodeData>>) {

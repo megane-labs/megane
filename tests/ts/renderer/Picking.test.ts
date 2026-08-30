@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach } from "vitest";
 import * as THREE from "three";
 import { projectToScreen, screenRadius, pickAtPixel } from "@/renderer/Picking";
 import type { Snapshot } from "@/types";
+import { SPACEFILL_ATOM_SCALE } from "@/constants";
 
 /** Create a mock container that reports a fixed bounding rect. */
 function mockContainer(left: number, top: number, width: number, height: number): HTMLElement {
@@ -168,6 +169,65 @@ describe("pickAtPixel", () => {
     const hitTiny = pickAtPixel(cam, container, snap, snap.positions, 0.1, 54, 50);
     expect(hitDefault).not.toBeNull();
     expect(hitTiny).toBeNull();
+  });
+
+  it("widens the hit zone to the spacefill radius under the illustrative mode", () => {
+    const cam = makeOrthoCamera();
+    const container = mockContainer(0, 0, 100, 100);
+    const snap = makeSnapshot({ positions: [0, 0, 0], elements: [6] });
+    // (60, 50) is 10 px from the center: outside the 5.1 px ball-and-stick
+    // footprint, inside the 17 px full-vdW one the illustrative mode draws.
+    const ballAndStick = pickAtPixel(cam, container, snap, snap.positions, 1, 60, 50);
+    const spacefill = pickAtPixel(
+      cam,
+      container,
+      snap,
+      snap.positions,
+      1,
+      60,
+      50,
+      null,
+      null,
+      SPACEFILL_ATOM_SCALE,
+    );
+    expect(ballAndStick).toBeNull();
+    expect(spacefill).not.toBeNull();
+    expect(spacefill!.kind).toBe("atom");
+  });
+
+  it("picks a periodic image at the representation's radius, reporting its source atom", () => {
+    const cam = makeOrthoCamera();
+    const container = mockContainer(0, 0, 100, 100);
+    // One real carbon far off screen-center plus a periodic image of it at the
+    // origin, so only the image can be under the cursor.
+    const snap = makeSnapshot({ positions: [4, 4, 0], elements: [6] });
+    const images = {
+      positions: new Float32Array([0, 0, 0]),
+      elements: new Uint8Array([6]),
+      sourceIndices: new Uint32Array([0]),
+      latticeShifts: new Int32Array([1, 0, 0]),
+    };
+    // 10 px out: outside the ball-and-stick footprint, inside the spacefill one.
+    const ballAndStick = pickAtPixel(cam, container, snap, snap.positions, 1, 60, 50, null, images);
+    const spacefill = pickAtPixel(
+      cam,
+      container,
+      snap,
+      snap.positions,
+      1,
+      60,
+      50,
+      null,
+      images,
+      SPACEFILL_ATOM_SCALE,
+    );
+    expect(ballAndStick).toBeNull();
+    expect(spacefill).not.toBeNull();
+    if (spacefill && spacefill.kind === "atom") {
+      // Images report the structural atom they came from, not their own index.
+      expect(spacefill.atomIndex).toBe(0);
+      expect(spacefill.position).toEqual([0, 0, 0]);
+    }
   });
 
   it("picks the closer atom when two atom footprints overlap on screen", () => {

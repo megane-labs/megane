@@ -41,6 +41,7 @@ const COLOR_MODE_LABELS: Record<ColorMode, string> = {
   byChain: "Chain",
   byBFactor: "B-Factor",
   byProperty: "Property",
+  illustrative: "Illustrative",
 };
 
 const REP_LABELS: Record<RepresentationMode, string> = {
@@ -50,6 +51,7 @@ const REP_LABELS: Record<RepresentationMode, string> = {
   both: "Ball + Stick",
   surface: "Surface",
   line: "Line",
+  illustrative: "Illustrative",
 };
 
 const panelStyle: React.CSSProperties = {

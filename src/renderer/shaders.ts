@@ -67,11 +67,23 @@ export const atomFragmentShader = /* glsl */ `precision highp float;
   uniform mat4 projectionMatrix;
   uniform float uOpacity;
   uniform int uUsePerAtomOverrides;
+  // Illustrative (Mol*-style) mode: flat unlit color plus a constant-width
+  // silhouette outline. 0 = off (lit ball-and-stick shading).
+  uniform int uIllustrative;
+  uniform float uOutlineWidth;
+  uniform vec3 uOutlineColor;
+  uniform float uAmbientDarkening;
 
   out vec4 fragColor;
 
   void main() {
     float dist2 = dot(vUv, vUv);
+    // Screen-space derivative of the normalized silhouette distance, taken
+    // BEFORE the discard below: derivatives are undefined once a fragment in
+    // the 2x2 quad has terminated, which would make the outline flicker along
+    // the very edge it is supposed to trace.
+    float rim = sqrt(dist2);
+    float rimWidth = fwidth(rim) * uOutlineWidth;
     if (dist2 > 1.0) discard;
 
     float z = sqrt(1.0 - dist2);
@@ -82,6 +94,28 @@ export const atomFragmentShader = /* glsl */ `precision highp float;
     vec4 clipPos = projectionMatrix * vec4(fragViewPos, 1.0);
     float ndcDepth = clipPos.z / clipPos.w;
     gl_FragDepth = ndcDepth * 0.5 + 0.5;
+
+    float finalOpacity = uOpacity;
+    if (uUsePerAtomOverrides == 1) {
+      finalOpacity *= vOpacityOverride;
+    }
+
+    if (uIllustrative == 1) {
+      // Mol*'s illustrative representation renders spacefill spheres with
+      // ignoreLight, so the sphere reads as a flat disc of its own color and
+      // the shape is carried entirely by the outline. rimWidth comes from the
+      // screen-space derivative, so the band stays uOutlineWidth device pixels
+      // wide no matter how large the sphere is on screen.
+      // Stand-in for the ambient occlusion Mol* gets from its SSAO pass: in a
+      // spacefill field the dominant occlusion is contact with neighbouring
+      // spheres, which always sits near a sphere's rim, so a radial ramp
+      // recovers most of the sculpted look with no depth prepass. z is the
+      // sphere normal's view-space Z: 1 facing the camera, 0 at the silhouette.
+      vec3 shaded = vColor * mix(1.0 - uAmbientDarkening, 1.0, z);
+      float edge = smoothstep(1.0 - rimWidth, 1.0 - rimWidth * 0.5, rim);
+      fragColor = vec4(mix(shaded, uOutlineColor, edge), finalOpacity);
+      return;
+    }
 
     // Hemisphere ambient: sky blue on top, warm brown on bottom
     vec3 skyColor = vec3(0.87, 0.92, 1.0);
@@ -110,10 +144,6 @@ export const atomFragmentShader = /* glsl */ `precision highp float;
     vec3 color = vColor * (ambient + diffuse) * edgeFactor
                + vec3(1.0) * spec * 0.3
                + vec3(0.15) * fresnel;
-    float finalOpacity = uOpacity;
-    if (uUsePerAtomOverrides == 1) {
-      finalOpacity *= vOpacityOverride;
-    }
     fragColor = vec4(color, finalOpacity);
   }
 `;

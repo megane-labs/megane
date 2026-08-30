@@ -128,22 +128,24 @@ infinite periodic networks unexpanded.
 
 ### color
 Recolors atoms using a palette mode, overriding the default per-element coloring.
-- Parameters: `{ type: "color", mode: "uniform" | "byElement" | "byResidue" | "byChain" | "byBFactor" | "byProperty", uniformColor: string, range?: [number, number] }`
+- Parameters: `{ type: "color", mode: "uniform" | "byElement" | "byResidue" | "byChain" | "byBFactor" | "byProperty" | "illustrative", uniformColor: string, range?: [number, number] }`
   - "uniform": every atom gets `uniformColor` (hex string, e.g. "#ff8800")
   - "byElement" / "byResidue" / "byChain": categorical palette by that property
   - "byBFactor" / "byProperty": continuous palette over `range` (auto-computed if omitted)
+  - "illustrative": Goodsell-style — every atom takes a soft pastel color for its chain and carbon a lighter shade of the same color (no CPK coloring); pair it with the "illustrative" representation
 - Inputs: `in` (particle only — NOT bond)
 - Outputs: `out` (particle)
 
 ### representation
 Switches the rendering style for the connected particle stream.
-- Parameters: `{ type: "representation", mode: "atoms" | "licorice" | "cartoon" | "both" | "surface" | "line" }`
+- Parameters: `{ type: "representation", mode: "atoms" | "licorice" | "cartoon" | "both" | "surface" | "line" | "illustrative" }`
   - "atoms": ball-and-stick / van der Waals spheres (default)
   - "licorice": equal-radius atoms and bonds drawn as one continuous stick/tube (PyMOL licorice / sticks)
   - "cartoon": protein backbone cartoon (secondary structure)
   - "both": atoms and cartoon overlaid
   - "surface": molecular surface
   - "line": thin wireframe lines (VMD/PyMOL "lines" style)
+  - "illustrative": Mol*-style spacefill spheres at full van der Waals radius, softly shaded toward the rim of each sphere with a dark silhouette outline; bonds are hidden. Best paired with a `color` node in "illustrative" mode
 - Inputs: `in` (particle only — NOT bond)
 - Outputs: `out` (particle)
 

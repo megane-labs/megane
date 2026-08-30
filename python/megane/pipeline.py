@@ -408,7 +408,10 @@ class Color(PipelineNode):
 
     Args:
         mode: One of ``"uniform"``, ``"byElement"``, ``"byResidue"``,
-              ``"byChain"``, ``"byBFactor"``, ``"byProperty"``.
+              ``"byChain"``, ``"byBFactor"``, ``"byProperty"``,
+              ``"illustrative"``. ``"illustrative"`` is Goodsell-style: every
+              atom takes a soft pastel color for its chain, with carbon a
+              lighter shade of that same color (no CPK coloring).
         uniform_color: Hex color used when ``mode == "uniform"``
                        (e.g. ``"#ff8800"``).
         range: Optional ``(min, max)`` for ``byBFactor`` / ``byProperty``.
@@ -425,7 +428,15 @@ class Color(PipelineNode):
     def __init__(
         self,
         *,
-        mode: Literal["uniform", "byElement", "byResidue", "byChain", "byBFactor", "byProperty"] = "uniform",
+        mode: Literal[
+            "uniform",
+            "byElement",
+            "byResidue",
+            "byChain",
+            "byBFactor",
+            "byProperty",
+            "illustrative",
+        ] = "uniform",
         uniform_color: str = "#ff8800",
         range: tuple[float, float] | None = None,
     ) -> None:
@@ -444,10 +455,13 @@ class Representation(PipelineNode):
 
     Args:
         mode: One of ``"atoms"`` (default), ``"licorice"``, ``"cartoon"``,
-              ``"both"``, ``"surface"``, ``"line"``. ``"licorice"`` draws atoms
-              and bonds at one equal radius as a continuous stick/tube (PyMOL
-              licorice). ``"line"`` draws thin wireframe lines (VMD/PyMOL
-              "lines").
+              ``"both"``, ``"surface"``, ``"line"``, ``"illustrative"``.
+              ``"licorice"`` draws atoms and bonds at one equal radius as a
+              continuous stick/tube (PyMOL licorice). ``"line"`` draws thin
+              wireframe lines (VMD/PyMOL "lines"). ``"illustrative"`` draws
+              Mol*-style spacefill spheres at the full van der Waals radius,
+              shaded toward each sphere's rim with a dark silhouette outline
+              (bonds hidden); pair it with ``Color(mode="illustrative")``.
 
     Ports:
         inp.particle — atom data in
@@ -461,7 +475,7 @@ class Representation(PipelineNode):
     def __init__(
         self,
         *,
-        mode: Literal["atoms", "licorice", "cartoon", "both", "surface", "line"] = "atoms",
+        mode: Literal["atoms", "licorice", "cartoon", "both", "surface", "line", "illustrative"] = "atoms",
     ) -> None:
         super().__init__()
         self.mode = mode

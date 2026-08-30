@@ -452,6 +452,46 @@ export const BOND_RADIUS = 0.15;
  */
 export const LICORICE_RADIUS = 0.3;
 
+/**
+ * Spacefill atom radius scale factor: atoms are drawn at their full van der
+ * Waals radius, as in Mol*'s `spacefill` representation. Used by the
+ * `illustrative` representation.
+ */
+export const SPACEFILL_ATOM_SCALE = 1.0;
+
+/**
+ * Silhouette outline width, in device pixels, drawn around every sphere in the
+ * `illustrative` representation. Mol* draws its outline as a screen-space
+ * post-process over the depth buffer; megane instead darkens a constant-width
+ * band at each impostor's silhouette, which needs no extra render target and so
+ * behaves identically in the offscreen render/capture path and on every host.
+ */
+export const ILLUSTRATIVE_OUTLINE_WIDTH = 1.6;
+
+/**
+ * How far each sphere is darkened toward its own silhouette in the
+ * `illustrative` representation (0 = perfectly flat, as Mol*'s `ignoreLight`
+ * leaves it; 1 = black at the rim).
+ *
+ * Mol* gets its sculpted look from an SSAO pass, which megane has no
+ * post-processing stack for. In a spacefill field the dominant occlusion term
+ * is the contact with neighbouring spheres, which always sits near a sphere's
+ * rim — so a radial ramp recovers most of that look per-fragment, with no
+ * depth prepass, no render target, and no neighbour lookup. It cannot darken a
+ * large pocket the way true AO does; that needs the real pass.
+ */
+export const ILLUSTRATIVE_AMBIENT_DARKENING = 0.45;
+
+/** Silhouette outline color for the `illustrative` representation. */
+export const ILLUSTRATIVE_OUTLINE_COLOR: [number, number, number] = [0.0, 0.0, 0.0];
+
+/**
+ * Mol*'s `carbonLightness` on its illustrative color theme, in that theme's own
+ * units: the carbon color is the entity color with `18 * amount` added to its
+ * CIE Lab L*. 0.8 is Mol*'s default (L* + 14.4).
+ */
+export const ILLUSTRATIVE_CARBON_LIGHTNESS = 0.8;
+
 /** Bond order constants (matches Python encoding). */
 export const BOND_SINGLE = 1;
 export const BOND_DOUBLE = 2;

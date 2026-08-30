@@ -12,7 +12,14 @@
 
 import * as THREE from "three";
 import type { Snapshot } from "../types";
-import { getColor, getRadius, BALL_STICK_ATOM_SCALE } from "../constants";
+import {
+  getColor,
+  getRadius,
+  BALL_STICK_ATOM_SCALE,
+  ILLUSTRATIVE_AMBIENT_DARKENING,
+  ILLUSTRATIVE_OUTLINE_COLOR,
+  ILLUSTRATIVE_OUTLINE_WIDTH,
+} from "../constants";
 import { atomVertexShader, atomFragmentShader } from "./shaders";
 import { type ColorContext, getAtomColorForScheme } from "../colorSchemes";
 
@@ -39,8 +46,12 @@ export class ImpostorAtomMesh {
   private nAtoms = 0;
   private capacity: number;
   // When non-null, every atom renders at this fixed radius (licorice mode);
-  // when null, radii fall back to per-element vdW * BALL_STICK_ATOM_SCALE.
+  // when null, radii fall back to per-element vdW * `radiusScale`.
   private uniformRadius: number | null = null;
+  // Fraction of the van der Waals radius each atom is drawn at when no uniform
+  // radius is set: BALL_STICK_ATOM_SCALE for ball-and-stick, 1.0 (spacefill)
+  // for the illustrative representation.
+  private radiusScale = BALL_STICK_ATOM_SCALE;
   /**
    * Notified whenever the balls change size. The bond impostor subscribes so it
    * can trim each stick at the ball's surface; see `getBaseRadii` /
@@ -97,6 +108,10 @@ export class ImpostorAtomMesh {
         uScaleMultiplier: { value: 1.0 },
         uOpacity: { value: 1.0 },
         uUsePerAtomOverrides: { value: 0 },
+        uIllustrative: { value: 0 },
+        uOutlineWidth: { value: ILLUSTRATIVE_OUTLINE_WIDTH },
+        uOutlineColor: { value: new THREE.Vector3(...ILLUSTRATIVE_OUTLINE_COLOR) },
+        uAmbientDarkening: { value: ILLUSTRATIVE_AMBIENT_DARKENING },
       },
       depthWrite: true,
       depthTest: true,
@@ -122,7 +137,7 @@ export class ImpostorAtomMesh {
       this.centerBuf[i3 + 1] = positions[i3 + 1];
       this.centerBuf[i3 + 2] = positions[i3 + 2];
 
-      this.radiusBuf[i] = this.uniformRadius ?? getRadius(elements[i]) * BALL_STICK_ATOM_SCALE;
+      this.radiusBuf[i] = this.uniformRadius ?? getRadius(elements[i]) * this.radiusScale;
 
       const [r, g, b] = colorCtx
         ? getAtomColorForScheme(i, snapshot, colorCtx)
@@ -166,9 +181,34 @@ export class ImpostorAtomMesh {
    */
   setUniformRadius(radius: number | null, snapshot: Snapshot): void {
     this.uniformRadius = radius;
+    this.rewriteRadii(snapshot);
+  }
+
+  /**
+   * Set the fraction of the van der Waals radius atoms are drawn at when no
+   * uniform radius is active: BALL_STICK_ATOM_SCALE for ball-and-stick,
+   * SPACEFILL_ATOM_SCALE for the spacefill spheres of the illustrative
+   * representation. A uniform radius (licorice) still wins over this.
+   */
+  setRadiusScale(scale: number, snapshot: Snapshot): void {
+    this.radiusScale = scale;
+    this.rewriteRadii(snapshot);
+  }
+
+  /**
+   * Toggle Mol*-style illustrative shading: a flat, unlit fill plus a
+   * constant-width silhouette outline. Purely a shader uniform — geometry,
+   * colors and radii are untouched.
+   */
+  setIllustrative(enabled: boolean): void {
+    this.material.uniforms.uIllustrative.value = enabled ? 1 : 0;
+  }
+
+  /** Refill the radius buffer from the current uniform-radius / scale state. */
+  private rewriteRadii(snapshot: Snapshot): void {
     const { elements } = snapshot;
     for (let i = 0; i < this.nAtoms; i++) {
-      this.radiusBuf[i] = radius ?? getRadius(elements[i]) * BALL_STICK_ATOM_SCALE;
+      this.radiusBuf[i] = this.uniformRadius ?? getRadius(elements[i]) * this.radiusScale;
     }
     this.radiusAttr.needsUpdate = true;
     this.publishRadii(true);

@@ -176,16 +176,16 @@ Isosurface(
 )
 ```
 
-| Parameter        | Type                             | Default     | Description                                                                                     |
-| ---------------- | -------------------------------- | ----------- | ----------------------------------------------------------------------------------------------- |
-| `iso_level`      | `float`                          | `0.05`      | Contour value for the positive isosurface                                                       |
-| `color`          | `str`                            | `"#4488ff"` | Hex color for the positive isosurface                                                           |
-| `opacity`        | `float`                          | `0.7`       | Surface transparency (0–1)                                                                      |
-| `show_negative`  | `bool`                           | `False`     | Show a second isosurface at −iso_level (dual-contour for ESP maps)                              |
-| `negative_color` | `str`                            | `"#ff4444"` | Hex color for the negative isosurface                                                           |
-| `color_mode`     | `str`                            | `"solid"`   | `"volume"` paints the surface by sampling the volume connected to `inp.color_volumetric`        |
-| `colormap`       | `str`                            | `"rwb"`     | `"rwb"` (red→white→blue, chemistry ESP convention), `"bwr"`, or `"rainbow"`                     |
-| `color_range`    | `tuple[float, float] \| None`    | `None`      | Explicit colormap range; `None` = auto (symmetric around 0 for the diverging maps)              |
+| Parameter        | Type                          | Default     | Description                                                                              |
+| ---------------- | ----------------------------- | ----------- | ---------------------------------------------------------------------------------------- |
+| `iso_level`      | `float`                       | `0.05`      | Contour value for the positive isosurface                                                |
+| `color`          | `str`                         | `"#4488ff"` | Hex color for the positive isosurface                                                    |
+| `opacity`        | `float`                       | `0.7`       | Surface transparency (0–1)                                                               |
+| `show_negative`  | `bool`                        | `False`     | Show a second isosurface at −iso_level (dual-contour for ESP maps)                       |
+| `negative_color` | `str`                         | `"#ff4444"` | Hex color for the negative isosurface                                                    |
+| `color_mode`     | `str`                         | `"solid"`   | `"volume"` paints the surface by sampling the volume connected to `inp.color_volumetric` |
+| `colormap`       | `str`                         | `"rwb"`     | `"rwb"` (red→white→blue, chemistry ESP convention), `"bwr"`, or `"rainbow"`              |
+| `color_range`    | `tuple[float, float] \| None` | `None`      | Explicit colormap range; `None` = auto (symmetric around 0 for the diverging maps)       |
 
 **Ports:** `inp.volumetric`, `inp.color_volumetric`, `out.mesh`
 
@@ -240,17 +240,19 @@ modifier stack).
 ```python
 Color(
     *,
-    mode: Literal["uniform", "byElement", "byResidue", "byChain", "byBFactor", "byProperty"] = "uniform",
+    mode: Literal[
+        "uniform", "byElement", "byResidue", "byChain", "byBFactor", "byProperty", "illustrative"
+    ] = "uniform",
     uniform_color: str = "#ff8800",
     range: tuple[float, float] | None = None,
 )
 ```
 
-| Parameter       | Type                          | Default     | Description                                            |
-| --------------- | ----------------------------- | ----------- | ------------------------------------------------------ |
-| `mode`          | `str`                         | `"uniform"` | Coloring scheme                                        |
-| `uniform_color` | `str`                         | `"#ff8800"` | Hex color used when `mode == "uniform"`                |
-| `range`         | `tuple[float, float] \| None` | `None`      | Optional explicit range for `byBFactor` / `byProperty` |
+| Parameter       | Type                          | Default     | Description                                                                                                                                            |
+| --------------- | ----------------------------- | ----------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `mode`          | `str`                         | `"uniform"` | Coloring scheme. `"illustrative"` is Goodsell-style: every atom takes a soft pastel color for its chain, with carbon a lighter shade of the same color |
+| `uniform_color` | `str`                         | `"#ff8800"` | Hex color used when `mode == "uniform"`                                                                                                                |
+| `range`         | `tuple[float, float] \| None` | `None`      | Optional explicit range for `byBFactor` / `byProperty`                                                                                                 |
 
 **Ports:** `inp.particle`, `out.particle`
 
@@ -263,12 +265,15 @@ wins over an upstream one on the same chain. When no chain has an override,
 the Viewport falls back to `"atoms"`.
 
 ```python
-Representation(*, mode: Literal["atoms", "licorice", "cartoon", "both", "surface", "line"] = "atoms")
+Representation(
+    *,
+    mode: Literal["atoms", "licorice", "cartoon", "both", "surface", "line", "illustrative"] = "atoms",
+)
 ```
 
-| Parameter | Type  | Default   | Description                                                                                                                                                        |
-| --------- | ----- | --------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `mode`    | `str` | `"atoms"` | Visual representation: `"atoms"` (ball-and-stick), `"licorice"` (equal-radius continuous sticks), `"cartoon"`, `"both"`, `"surface"`, or `"line"` (thin wireframe) |
+| Parameter | Type  | Default   | Description                                                                                                                                                                                                                                                                                        |
+| --------- | ----- | --------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `mode`    | `str` | `"atoms"` | Visual representation: `"atoms"` (ball-and-stick), `"licorice"` (equal-radius continuous sticks), `"cartoon"`, `"both"`, `"surface"`, `"line"` (thin wireframe), or `"illustrative"` (Mol\*-style spacefill spheres shaded toward each sphere's rim, with a dark silhouette outline, bonds hidden) |
 
 **Ports:** `inp.particle`, `out.particle`
 

@@ -60,6 +60,12 @@ export function pickAtPixel(
   clientY: number,
   drawingBoundary: DrawingBoundaryData | null = null,
   periodicImages: PeriodicAtomImageData | null = null,
+  /**
+   * Fraction of the vdW radius the atoms are drawn at. Must track the active
+   * representation (SPACEFILL_ATOM_SCALE under "illustrative"), or the pick
+   * radius stops matching the sphere the user is actually clicking on.
+   */
+  radiusScale: number = BALL_STICK_ATOM_SCALE,
 ): HoverInfo {
   const rect = container.getBoundingClientRect();
   const mx = clientX - rect.left; // mouse in pixels relative to container
@@ -88,7 +94,7 @@ export function pickAtPixel(
     );
     if (depth <= 0) continue; // behind camera
 
-    const worldR = getRadius(elements[i]) * BALL_STICK_ATOM_SCALE * atomScale;
+    const worldR = getRadius(elements[i]) * radiusScale * atomScale;
     const screenR = screenRadius(camera, worldR, depth, h);
     const dx = mx - sx;
     const dy = my - sy;
@@ -115,7 +121,7 @@ export function pickAtPixel(
         h,
       );
       if (depth <= 0) continue;
-      const worldR = getRadius(elements[source]) * BALL_STICK_ATOM_SCALE * atomScale;
+      const worldR = getRadius(elements[source]) * radiusScale * atomScale;
       const screenR = screenRadius(camera, worldR, depth, h);
       const dx = mx - sx;
       const dy = my - sy;

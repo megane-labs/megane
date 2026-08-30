@@ -121,7 +121,7 @@ handle and emits the recolored particle stream on `out`.
 
 | Field          | Type                | Description                                                                              |
 | -------------- | ------------------- | ---------------------------------------------------------------------------------------- |
-| `mode`         | `string`            | `"uniform"`, `"byElement"`, `"byResidue"`, `"byChain"`, `"byBFactor"`, or `"byProperty"` |
+| `mode`         | `string`            | `"uniform"`, `"byElement"`, `"byResidue"`, `"byChain"`, `"byBFactor"`, `"byProperty"`, or `"illustrative"` |
 | `uniformColor` | `string`            | Hex color used when `mode === "uniform"`                                                 |
 | `range`        | `[number, number]?` | Optional `[min, max]` for `byBFactor` / `byProperty`                                     |
 
@@ -134,7 +134,7 @@ handle and emits the tagged particle stream on `out`.
 
 | Field  | Type     | Description                                                                        |
 | ------ | -------- | ---------------------------------------------------------------------------------- |
-| `mode` | `string` | `"atoms"` (default), `"licorice"`, `"cartoon"`, `"both"`, `"surface"`, or `"line"` |
+| `mode` | `string` | `"atoms"` (default), `"licorice"`, `"cartoon"`, `"both"`, `"surface"`, `"line"`, or `"illustrative"` |
 
 #### `add_bond`
 
