@@ -1162,9 +1162,37 @@ export class MoleculeRenderer {
     if (overrides) {
       (this.atomRenderer as ImpostorAtomMesh).applyColorOverrides(overrides);
     }
+    this.restoreAtomPerAtomState();
     this.drawingBoundaryAtomRenderer?.applyColorOverrides(overrides);
     this.bondPeriodicAtomRenderer?.applyColorOverrides(overrides);
     this.syncBondColorsToAtoms();
+  }
+
+  /**
+   * Re-apply the per-atom state that `ImpostorAtomMesh.loadSnapshot` clears.
+   *
+   * Reloading the snapshot is how a color change resets the mesh to base CPK
+   * before the new overrides are painted on, but the reload also zeroes the
+   * per-atom scale, opacity and hidden buffers. Those belong to other layers —
+   * the Modify node's scale / opacity and the per-atom representation split —
+   * and a color change must not silently drop them, so they are pushed back
+   * from the copies this renderer already keeps.
+   *
+   * Scale is restored before the hidden mask because the mesh composites the
+   * effective scale as raw * (hidden ? 0 : 1); the reverse order would leave
+   * hidden atoms visible until the next mask write. Null overrides need no
+   * restore: the reload already left those buffers at their 1.0 / 0 defaults.
+   */
+  private restoreAtomPerAtomState(): void {
+    if (this.currentAtomScaleOverrides) {
+      this.atomRenderer?.setScaleOverrides?.(this.currentAtomScaleOverrides);
+    }
+    if (this.currentAtomOpacityOverrides) {
+      this.atomRenderer?.setOpacityOverrides?.(this.currentAtomOpacityOverrides);
+    }
+    if (this.drawingBoundaryHiddenMask || this.representationHiddenMask) {
+      this.applyCombinedAtomHiddenMask();
+    }
   }
 
   /**
