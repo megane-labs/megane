@@ -992,6 +992,22 @@ M  END
     }
 
     #[test]
+    fn caffeine_demo_fixture_parses_with_full_connectivity() {
+        // The "ESP Isosurface" template pairs this file with caffeine_esp.cube;
+        // both are written by tests/fixtures/generate_caffeine_esp.py.
+        let result = parse(include_str!("../../../tests/fixtures/caffeine.sdf")).unwrap();
+        assert_eq!(result.n_atoms, 24, "caffeine is C8H10N4O2");
+        assert_eq!(result.bonds.len(), 25);
+        assert_eq!(result.n_file_bonds, 25, "every bond comes from the SDF bond block");
+        let count = |z: u8| result.elements.iter().filter(|&&e| e == z).count();
+        assert_eq!((count(6), count(1), count(7), count(8)), (8, 10, 4, 2));
+        // Bond orders survive: the two carbonyls and the ring double bonds.
+        let orders = result.bond_orders.as_ref().expect("SDF declares bond orders");
+        assert_eq!(orders.iter().filter(|&&o| o == 2).count(), 4);
+        assert!(result.warnings.is_empty());
+    }
+
+    #[test]
     fn bond_order_sorted() {
         // Bonds should always be stored as (min, max)
         let mol = "\

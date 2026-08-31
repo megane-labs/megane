@@ -18,13 +18,20 @@ import { usePlaybackStore } from "./stores/usePlaybackStore";
 import { restorePipelineFromHash } from "./pipeline/shareLink";
 import { useTour } from "./tour/useTour";
 import { parseXTCFile } from "./parsers/xtc";
+import { loadMultiFileTemplate } from "./pipeline/templateAssets";
+import type { TemplateAssetSources } from "./pipeline/templateAssets";
 import { MemoryFrameProvider } from "./pipeline/types";
 import defaultPDB from "../tests/fixtures/caffeine_water.pdb?raw";
 import defaultXtcUrl from "../tests/fixtures/caffeine_water_vibration.xtc?url";
 import perovskiteXYZ from "../tests/fixtures/perovskite_srtio3_3x3x3.xyz?raw";
 import quartzXYZ from "../tests/fixtures/quartz_sio2_2x2x2.xyz?raw";
 import ubiquitinPDB from "../tests/fixtures/1ubq.pdb?raw";
+import ubiquitinCgPDB from "../tests/fixtures/1ubq_cg.pdb?raw";
 import glycineCIF from "../tests/fixtures/glycine_csd.cif?raw";
+import caffeineSDF from "../tests/fixtures/caffeine.sdf?raw";
+// The ESP grid is fetched rather than inlined: ~150 kB of text belongs in an
+// emitted asset, not in the entry bundle every visitor downloads.
+import caffeineEspCubeUrl from "../tests/fixtures/caffeine_esp.cube?url";
 import "./styles/megane.css";
 import { useThemeStore } from "./stores/useThemeStore";
 import { ErrorBoundary } from "./components/ErrorBoundary";
@@ -50,6 +57,14 @@ function ThemeSync() {
 
   return null;
 }
+
+/** Bundled fixtures for the templates that load more than one file. */
+const TEMPLATE_ASSETS: TemplateAssetSources = {
+  caffeineSdf: caffeineSDF,
+  caffeineEspCubeUrl,
+  ubiquitinPdb: ubiquitinPDB,
+  ubiquitinCgPdb: ubiquitinCgPDB,
+};
 
 function App() {
   const [mode] = useState<DataMode>("local");
@@ -119,6 +134,15 @@ function App() {
           });
           store.updateNodeParams(streamNode.id, { connected: true });
         }
+      } else {
+        // Templates that need more than one file (a cube for an isosurface, a
+        // second structure to overlay) load through the pipeline-side helper.
+        await loadMultiFileTemplate(
+          pendingTemplateId,
+          TEMPLATE_ASSETS,
+          usePipelineStore.getState,
+          ds.local.loadText,
+        );
       }
       clearPendingTemplate();
     })().catch(() => {});

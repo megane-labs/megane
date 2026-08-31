@@ -873,6 +873,7 @@ function PipelineEditorInner({
             {PIPELINE_TEMPLATES.map((template) => (
               <button
                 key={template.id}
+                data-testid={`pipeline-template-${template.id}`}
                 onClick={() => handleApplyTemplate(template.id)}
                 style={{ ...dropdownItemStyle, padding: "8px 14px" }}
                 onMouseEnter={(e) => {
