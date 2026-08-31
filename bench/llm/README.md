@@ -29,7 +29,7 @@ The runner makes **real, paid LLM API calls**, so it is gated behind
 ```bash
 # Anthropic
 MEGANE_LLM_BENCH=1 ANTHROPIC_API_KEY=sk-ant-... \
-  MEGANE_LLM_PROVIDER=anthropic MEGANE_LLM_MODEL=claude-sonnet-4-20250514 \
+  MEGANE_LLM_PROVIDER=anthropic MEGANE_LLM_MODEL=claude-haiku-4-5 \
   npx vitest run tests/ts/bench/llm.bench.test.ts
 
 # OpenAI
@@ -107,11 +107,19 @@ It makes real, paid API calls — at least 48 generations per run (24 cases x
 before/after), plus one more per repair round the self-check triggers — so it is
 opt-in via the label rather than running on every PR.
 The provider comes from the `MEGANE_LLM_BENCH_PROVIDER` repository variable —
-`plamo` (the default; requires the `PLAMO_API_KEY` repository secret) or
-`openrouter` (requires `OPENROUTER_API_KEY`). The model defaults per provider
-(`plamo-3.0-prime` / `anthropic/claude-haiku-4.5`); override it with the
+`plamo` (the default; requires the `PLAMO_API_KEY` repository secret),
+`openrouter` (requires `OPENROUTER_API_KEY`), or `anthropic` (requires
+`ANTHROPIC_API_KEY`). The model defaults per provider (`plamo-3.0-prime` /
+`anthropic/claude-haiku-4.5` / `claude-haiku-4-5`); override it with the
 `MEGANE_LLM_BENCH_MODEL` repository variable (a PLaMo id from
-https://docs.plamo.preferredai.jp/en/api, or an OpenRouter slug).
+https://docs.plamo.preferredai.jp/en/api, an OpenRouter slug, or an Anthropic
+model id).
+
+To score a **Claude** model, either route works and both default to Haiku 4.5:
+set `MEGANE_LLM_BENCH_PROVIDER` to `openrouter` (no new secret needed if the
+proxy's OpenRouter key is already configured) or to `anthropic` (needs the
+`ANTHROPIC_API_KEY` secret). For Sonnet, also set `MEGANE_LLM_BENCH_MODEL` —
+`claude-sonnet-5` on the `anthropic` route.
 Because GitHub withholds secrets from `pull_request` workflows triggered by
 forks, this only runs for PRs from branches within the repository.
 

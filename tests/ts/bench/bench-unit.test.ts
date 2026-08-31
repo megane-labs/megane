@@ -441,7 +441,7 @@ describe("providers", () => {
     it("defaults to anthropic when MEGANE_LLM_PROVIDER is unset", () => {
       const config = configFromEnv({ ANTHROPIC_API_KEY: "sk-ant-x" });
       expect(config.provider).toBe("anthropic");
-      expect(config.model).toBe("claude-sonnet-4-20250514");
+      expect(config.model).toBe("claude-haiku-4-5");
       expect(config.apiKey).toBe("sk-ant-x");
     });
 

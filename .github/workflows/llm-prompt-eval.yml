@@ -7,9 +7,15 @@ name: LLM Prompt Eval
 #
 # The provider is chosen by the `MEGANE_LLM_BENCH_PROVIDER` repository
 # variable — `plamo` (default, Preferred Networks' PLaMo API, key at
-# https://plamo.preferredai.jp/) or `openrouter` (key at
-# https://openrouter.ai/keys) — and reads the matching repository secret
-# (`PLAMO_API_KEY` / `OPENROUTER_API_KEY`). Note: GitHub does not expose
+# https://plamo.preferredai.jp/), `openrouter` (key at
+# https://openrouter.ai/keys), or `anthropic` (key at
+# https://console.anthropic.com/) — and reads the matching repository secret
+# (`PLAMO_API_KEY` / `OPENROUTER_API_KEY` / `ANTHROPIC_API_KEY`).
+#
+# To score a Claude model, either route works: `openrouter` already defaults to
+# `anthropic/claude-haiku-4.5`, or set the provider to `anthropic` and
+# `MEGANE_LLM_BENCH_MODEL` to `claude-haiku-4-5` / `claude-sonnet-5`.
+# Note: GitHub does not expose
 # repository secrets to `pull_request` workflows triggered from forks, so
 # this only runs for PRs from branches within this repository.
 #
@@ -64,13 +70,15 @@ jobs:
 
       # An empty MEGANE_LLM_MODEL falls through to the provider's default
       # model in bench/llm/providers.ts (plamo-3.0-prime for plamo,
-      # anthropic/claude-haiku-4.5 for openrouter).
+      # anthropic/claude-haiku-4.5 for openrouter, claude-haiku-4-5 for
+      # anthropic).
       - name: Run benchmark (after = PR branch)
         working-directory: after
         env:
           MEGANE_LLM_BENCH: "1"
           PLAMO_API_KEY: ${{ secrets.PLAMO_API_KEY }}
           OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           MEGANE_LLM_PROVIDER: ${{ vars.MEGANE_LLM_BENCH_PROVIDER || 'plamo' }}
           MEGANE_LLM_MODEL: ${{ vars.MEGANE_LLM_BENCH_MODEL || '' }}
         run: |
@@ -83,6 +91,7 @@ jobs:
           MEGANE_LLM_BENCH: "1"
           PLAMO_API_KEY: ${{ secrets.PLAMO_API_KEY }}
           OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           MEGANE_LLM_PROVIDER: ${{ vars.MEGANE_LLM_BENCH_PROVIDER || 'plamo' }}
           MEGANE_LLM_MODEL: ${{ vars.MEGANE_LLM_BENCH_MODEL || '' }}
         run: |

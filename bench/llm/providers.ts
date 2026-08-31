@@ -37,6 +37,9 @@ export const PLAMO_API_URL = "https://api.platform.preferredai.jp/v1/chat/comple
 /** Default PLaMo model — the largest-context id that supports tool calling. */
 export const DEFAULT_PLAMO_MODEL = "plamo-3.0-prime";
 
+/** Default Anthropic model — the cheapest current Claude for a 24-case sweep. */
+export const DEFAULT_ANTHROPIC_MODEL = "claude-haiku-4-5";
+
 /** OpenRouter's OpenAI-compatible Chat Completions endpoint. */
 export const OPENROUTER_API_URL = "https://openrouter.ai/api/v1/chat/completions";
 
@@ -59,6 +62,16 @@ export type FetchLike = typeof fetch;
 const MAX_TOOL_ROUNDS = 4;
 
 /**
+ * Output ceiling for the Anthropic path, matching `src/ai/client.ts`.
+ *
+ * Current Claude models think adaptively unless told otherwise, and thinking
+ * tokens are billed against `max_tokens` — a ceiling sized for the pipeline
+ * JSON alone truncates the answer mid-object, which scores as a format failure
+ * rather than the model error it actually is.
+ */
+const ANTHROPIC_MAX_TOKENS = 16000;
+
+/**
  * Repair rounds the benchmark allows, matching `MAX_REPAIR_ROUNDS` in
  * `src/ai/client.ts`. Kept as its own constant rather than imported so a
  * deliberate change to production behaviour shows up as a benchmark diff to
@@ -74,7 +87,7 @@ export function configFromEnv(
   if (provider === "anthropic") {
     return {
       provider,
-      model: env.MEGANE_LLM_MODEL || "claude-sonnet-4-20250514",
+      model: env.MEGANE_LLM_MODEL || DEFAULT_ANTHROPIC_MODEL,
       apiKey: env.ANTHROPIC_API_KEY,
     };
   }
@@ -194,7 +207,7 @@ async function runAnthropic(
   for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
     const body: Record<string, unknown> = {
       model: config.model,
-      max_tokens: 4096,
+      max_tokens: ANTHROPIC_MAX_TOKENS,
       system,
       messages,
     };

@@ -7,7 +7,7 @@
  *
  * Usage:
  *   MEGANE_LLM_BENCH=1 ANTHROPIC_API_KEY=sk-... \
- *     MEGANE_LLM_PROVIDER=anthropic MEGANE_LLM_MODEL=claude-sonnet-4-20250514 \
+ *     MEGANE_LLM_PROVIDER=anthropic MEGANE_LLM_MODEL=claude-haiku-4-5 \
  *     npx vitest run tests/ts/bench/llm.bench.test.ts
  *
  * Providers: anthropic (ANTHROPIC_API_KEY), openai (OPENAI_API_KEY),
