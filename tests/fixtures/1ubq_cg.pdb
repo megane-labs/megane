@@ -1,0 +1,159 @@
+REMARK   1 COARSE-GRAINED UBIQUITIN, ONE BEAD PER RESIDUE
+REMARK   1 GENERATED FROM 1ubq.pdb BY tests/fixtures/generate_1ubq_cg.py
+REMARK   1 EACH BEAD SITS AT ITS RESIDUE'S HEAVY-ATOM CENTER OF MASS AND
+REMARK   1 CARRIES THE PARENT RESIDUE NAME / CHAIN / SEQUENCE NUMBER.
+REMARK   1 BEADS ARE PSEUDO-ATOMS WRITTEN AS ELEMENT C; THE OCCUPANCY
+REMARK   1 COLUMN HOLDS THE MAPPED RESIDUE MASS IN DALTON / 100.
+REMARK   1 CONECT RECORDS JOIN CONSECUTIVE BEADS ALONG EACH CHAIN.
+ATOM      1  BB  MET A   1      25.670  24.929   4.648  1.22  0.00           C  
+ATOM      2  BB  GLN A   2      26.410  30.603   3.319  1.20  0.00           C  
+ATOM      3  BB  ILE A   3      26.972  29.649   8.076  1.02  0.00           C  
+ATOM      4  BB  PHE A   4      25.665  33.963   7.929  1.38  0.00           C  
+ATOM      5  BB  VAL A   5      29.294  34.095  12.566  0.90  0.00           C  
+ATOM      6  BB  LYS A   6      26.128  38.275  14.811  1.16  0.00           C  
+ATOM      7  BB  THR A   7      30.512  39.310  16.234  0.94  0.00           C  
+ATOM      8  BB  LEU A   8      29.458  41.016  20.355  1.02  0.00           C  
+ATOM      9  BB  THR A   9      32.018  43.784  17.028  0.94  0.00           C  
+ATOM     10  BB  GLY A  10      29.381  43.791  14.001  0.54  0.00           C  
+ATOM     11  BB  LYS A  11      32.578  41.062  11.770  1.16  0.00           C  
+ATOM     12  BB  THR A  12      29.162  39.037  10.096  0.94  0.00           C  
+ATOM     13  BB  ILE A  13      32.069  35.472   9.811  1.02  0.00           C  
+ATOM     14  BB  THR A  14      31.058  34.123   5.834  0.94  0.00           C  
+ATOM     15  BB  LEU A  15      31.580  29.936   7.535  1.02  0.00           C  
+ATOM     16  BB  GLU A  16      31.774  27.565   2.740  1.22  0.00           C  
+ATOM     17  BB  VAL A  17      29.619  24.501   6.424  0.90  0.00           C  
+ATOM     18  BB  GLU A  18      28.725  20.483   4.995  1.22  0.00           C  
+ATOM     19  BB  PRO A  19      25.726  19.525   8.122  0.90  0.00           C  
+ATOM     20  BB  SER A  20      28.720  16.803   8.896  0.82  0.00           C  
+ATOM     21  BB  ASP A  21      30.963  19.777   9.967  1.10  0.00           C  
+ATOM     22  BB  THR A  22      32.235  19.149  14.221  0.94  0.00           C  
+ATOM     23  BB  ILE A  23      30.992  22.541  16.856  1.02  0.00           C  
+ATOM     24  BB  GLU A  24      36.331  20.470  17.277  1.22  0.00           C  
+ATOM     25  BB  ASN A  25      35.549  22.122  12.079  1.08  0.00           C  
+ATOM     26  BB  VAL A  26      33.207  25.526  13.168  0.90  0.00           C  
+ATOM     27  BB  LYS A  27      35.173  26.500  17.399  1.16  0.00           C  
+ATOM     28  BB  ALA A  28      38.817  26.033  13.350  0.66  0.00           C  
+ATOM     29  BB  LYS A  29      36.428  26.716   9.611  1.16  0.00           C  
+ATOM     30  BB  ILE A  30      36.272  30.882  13.326  1.02  0.00           C  
+ATOM     31  BB  GLN A  31      41.727  29.793  14.711  1.20  0.00           C  
+ATOM     32  BB  ASP A  32      42.122  29.713   9.687  1.10  0.00           C  
+ATOM     33  BB  LYS A  33      38.300  33.433   8.401  1.16  0.00           C  
+ATOM     34  BB  GLU A  34      38.641  36.384  11.904  1.22  0.00           C  
+ATOM     35  BB  GLY A  35      42.134  34.179  15.169  0.54  0.00           C  
+ATOM     36  BB  ILE A  36      39.248  33.727  17.375  1.02  0.00           C  
+ATOM     37  BB  PRO A  37      41.194  31.445  20.047  0.90  0.00           C  
+ATOM     38  BB  PRO A  38      39.173  27.792  19.926  0.90  0.00           C  
+ATOM     39  BB  ASP A  39      39.585  28.672  24.796  1.10  0.00           C  
+ATOM     40  BB  GLN A  40      38.833  32.823  23.383  1.20  0.00           C  
+ATOM     41  BB  GLN A  41      35.224  30.179  19.998  1.20  0.00           C  
+ATOM     42  BB  ARG A  42      29.233  31.513  24.415  1.44  0.00           C  
+ATOM     43  BB  LEU A  43      29.104  28.995  19.288  1.02  0.00           C  
+ATOM     44  BB  ILE A  44      24.880  30.788  20.730  1.02  0.00           C  
+ATOM     45  BB  PHE A  45      21.153  28.074  16.794  1.38  0.00           C  
+ATOM     46  BB  ALA A  46      18.488  28.666  19.612  0.66  0.00           C  
+ATOM     47  BB  GLY A  47      19.668  29.225  23.001  0.54  0.00           C  
+ATOM     48  BB  LYS A  48      20.670  25.942  21.986  1.16  0.00           C  
+ATOM     49  BB  GLN A  49      26.593  26.739  24.754  1.20  0.00           C  
+ATOM     50  BB  LEU A  50      26.822  25.056  20.314  1.02  0.00           C  
+ATOM     51  BB  GLU A  51      28.825  20.282  23.183  1.22  0.00           C  
+ATOM     52  BB  ASP A  52      33.138  21.140  20.701  1.10  0.00           C  
+ATOM     53  BB  GLY A  53      30.918  16.867  19.372  0.54  0.00           C  
+ATOM     54  BB  ARG A  54      27.814  16.518  19.352  1.44  0.00           C  
+ATOM     55  BB  THR A  55      26.860  17.748  14.506  0.94  0.00           C  
+ATOM     56  BB  LEU A  56      25.939  21.701  12.538  1.02  0.00           C  
+ATOM     57  BB  SER A  57      22.877  17.969  12.340  0.82  0.00           C  
+ATOM     58  BB  ASP A  58      23.002  17.095  16.219  1.10  0.00           C  
+ATOM     59  BB  TYR A  59      22.666  21.599  17.822  1.54  0.00           C  
+ATOM     60  BB  ASN A  60      17.899  21.732  12.628  1.08  0.00           C  
+ATOM     61  BB  ILE A  61      22.164  24.242  11.830  1.02  0.00           C  
+ATOM     62  BB  GLN A  62      18.582  24.616   7.680  1.20  0.00           C  
+ATOM     63  BB  LYS A  63      20.274  26.865   3.757  1.16  0.00           C  
+ATOM     64  BB  GLU A  64      21.359  30.778   4.449  1.22  0.00           C  
+ATOM     65  BB  SER A  65      21.904  29.942   9.632  0.82  0.00           C  
+ATOM     66  BB  THR A  66      22.870  33.244  12.234  0.94  0.00           C  
+ATOM     67  BB  LEU A  67      25.833  31.075  14.530  1.02  0.00           C  
+ATOM     68  BB  HIS A  68      24.781  34.556  17.878  1.30  0.00           C  
+ATOM     69  BB  LEU A  69      30.878  34.534  18.666  1.02  0.00           C  
+ATOM     70  BB  VAL A  70      30.371  34.945  22.845  0.90  0.00           C  
+ATOM     71  BB  LEU A  71      34.603  35.953  23.080  1.02  0.00           C  
+ATOM     72  BB  ARG A  72      35.258  31.608  26.902  1.44  0.00           C  
+ATOM     73  BB  LEU A  73      38.683  36.248  27.411  1.02  0.00           C  
+ATOM     74  BB  ARG A  74      42.572  32.011  30.020  1.44  0.00           C  
+ATOM     75  BB  GLY A  75      41.317  37.179  32.109  0.54  0.00           C  
+ATOM     76  BB  GLY A  76      40.212  39.684  35.087  0.70  0.00           C  
+CONECT    1    2
+CONECT    2    3
+CONECT    3    4
+CONECT    4    5
+CONECT    5    6
+CONECT    6    7
+CONECT    7    8
+CONECT    8    9
+CONECT    9   10
+CONECT   10   11
+CONECT   11   12
+CONECT   12   13
+CONECT   13   14
+CONECT   14   15
+CONECT   15   16
+CONECT   16   17
+CONECT   17   18
+CONECT   18   19
+CONECT   19   20
+CONECT   20   21
+CONECT   21   22
+CONECT   22   23
+CONECT   23   24
+CONECT   24   25
+CONECT   25   26
+CONECT   26   27
+CONECT   27   28
+CONECT   28   29
+CONECT   29   30
+CONECT   30   31
+CONECT   31   32
+CONECT   32   33
+CONECT   33   34
+CONECT   34   35
+CONECT   35   36
+CONECT   36   37
+CONECT   37   38
+CONECT   38   39
+CONECT   39   40
+CONECT   40   41
+CONECT   41   42
+CONECT   42   43
+CONECT   43   44
+CONECT   44   45
+CONECT   45   46
+CONECT   46   47
+CONECT   47   48
+CONECT   48   49
+CONECT   49   50
+CONECT   50   51
+CONECT   51   52
+CONECT   52   53
+CONECT   53   54
+CONECT   54   55
+CONECT   55   56
+CONECT   56   57
+CONECT   57   58
+CONECT   58   59
+CONECT   59   60
+CONECT   60   61
+CONECT   61   62
+CONECT   62   63
+CONECT   63   64
+CONECT   64   65
+CONECT   65   66
+CONECT   66   67
+CONECT   67   68
+CONECT   68   69
+CONECT   69   70
+CONECT   70   71
+CONECT   71   72
+CONECT   72   73
+CONECT   73   74
+CONECT   74   75
+CONECT   75   76
+END

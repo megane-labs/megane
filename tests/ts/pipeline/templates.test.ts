@@ -2,6 +2,10 @@ import { describe, it, expect } from "vitest";
 import { PIPELINE_TEMPLATES } from "@/pipeline/templates";
 import type {
   LoadStructureParams,
+  LoadVolumetricParams,
+  IsosurfaceParams,
+  AddBondParams,
+  ColorParams,
   FilterParams,
   ModifyParams,
   RepresentationParams,
@@ -265,9 +269,226 @@ describe("PIPELINE_TEMPLATES solid", () => {
   });
 });
 
+describe("PIPELINE_TEMPLATES esp", () => {
+  const esp = PIPELINE_TEMPLATES.find((t) => t.id === "esp");
+
+  it("is registered", () => {
+    expect(esp).toBeDefined();
+  });
+
+  it("loads the caffeine.sdf / caffeine_esp.cube fixture pair", () => {
+    const { nodes } = esp!.create();
+    const loader = nodes.find((n) => n.type === "load_structure");
+    expect((loader!.data.params as LoadStructureParams).fileName).toBe("caffeine.sdf");
+    const volumetric = nodes.find((n) => n.type === "load_volumetric");
+    expect(volumetric).toBeDefined();
+    expect((volumetric!.data.params as LoadVolumetricParams).fileName).toBe("caffeine_esp.cube");
+  });
+
+  it("draws both ESP lobes: dual contour at a level the potential actually reaches", () => {
+    const { nodes } = esp!.create();
+    const iso = nodes.find((n) => n.type === "isosurface");
+    expect(iso).toBeDefined();
+    const params = iso!.data.params as IsosurfaceParams;
+    // Caffeine's potential reaches about ±0.03 Hartree/e on its van der Waals
+    // surface: a level above that would render only slivers near the nuclei,
+    // and a much lower one swells past the camera's atom-fitted framing.
+    expect(params.isoLevel).toBeGreaterThan(0.01);
+    expect(params.isoLevel).toBeLessThanOrEqual(0.03);
+    expect(params.showNegative).toBe(true);
+    expect(params.color).not.toBe(params.negativeColor);
+    expect(params.opacity).toBeGreaterThan(0);
+    expect(params.opacity).toBeLessThan(1);
+  });
+
+  it("keeps the structure and the grid on independent branches into one Viewport", () => {
+    const { nodes, edges } = esp!.create();
+    const wrap = nodes.find((n) => n.type === "wrap")!;
+    const addBond = nodes.find((n) => n.type === "add_bond")!;
+    const volumetric = nodes.find((n) => n.type === "load_volumetric")!;
+    const iso = nodes.find((n) => n.type === "isosurface")!;
+    const viewport = nodes.find((n) => n.type === "viewport")!;
+
+    expect(edges).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          source: wrap.id,
+          target: viewport.id,
+          sourceHandle: "particle",
+          targetHandle: "particle",
+        }),
+        expect.objectContaining({
+          source: addBond.id,
+          target: viewport.id,
+          sourceHandle: "bond",
+          targetHandle: "bond",
+        }),
+        expect.objectContaining({
+          source: volumetric.id,
+          target: iso.id,
+          sourceHandle: "volumetric",
+          targetHandle: "volumetric",
+        }),
+        expect.objectContaining({
+          source: iso.id,
+          target: viewport.id,
+          sourceHandle: "mesh",
+          targetHandle: "mesh",
+        }),
+      ]),
+    );
+
+    // Nothing feeds the isosurface from the structure branch — they overlay
+    // because they share a coordinate frame, not because the graph joins them.
+    expect(edges.some((e) => e.target === iso.id && e.source !== volumetric.id)).toBe(false);
+  });
+
+  it("takes caffeine's bonds from the SDF bond block rather than inferring them", () => {
+    const { nodes } = esp!.create();
+    const addBond = nodes.find((n) => n.type === "add_bond")!;
+    expect((addBond.data.params as AddBondParams).bondSource).toBe("structure");
+  });
+});
+
+describe("PIPELINE_TEMPLATES coarse grained", () => {
+  const cg = PIPELINE_TEMPLATES.find((t) => t.id === "coarse_grained");
+
+  it("is registered", () => {
+    expect(cg).toBeDefined();
+  });
+
+  it("overlays the all-atom and coarse-grained fixtures from two loaders", () => {
+    const { nodes } = cg!.create();
+    const loaders = nodes.filter((n) => n.type === "load_structure");
+    expect(loaders).toHaveLength(2);
+    const fileNames = loaders.map((n) => (n.data.params as LoadStructureParams).fileName);
+    expect(fileNames).toEqual(["1ubq.pdb", "1ubq_cg.pdb"]);
+  });
+
+  it("puts the all-atom loader first so ds.local.loadText fills it", () => {
+    // `useMeganeLocal.applyResult` targets the FIRST load_structure node; the
+    // coarse-grained beads are loaded into "loader-cg" by node id instead.
+    const { nodes } = cg!.create();
+    const first = nodes.find((n) => n.type === "load_structure")!;
+    expect(first.id).toBe("loader-aa");
+    expect(nodes.some((n) => n.id === "loader-cg")).toBe(true);
+  });
+
+  it("ghosts the all-atom model semi-transparent", () => {
+    const { nodes, edges } = cg!.create();
+    const filter = nodes.find((n) => n.id === "aa-filter")!;
+    expect((filter.data.params as FilterParams).query).toBe('resname != "HOH"');
+
+    const atomModify = nodes.find((n) => n.id === "aa-modify")!;
+    const params = atomModify.data.params as ModifyParams;
+    expect(params.opacity).toBeGreaterThan(0);
+    expect(params.opacity).toBeLessThan(1);
+    expect(params.scale).toBe(1);
+
+    expect(edges).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ source: filter.id, target: atomModify.id }),
+        expect.objectContaining({
+          source: atomModify.id,
+          target: "viewport-1",
+          sourceHandle: "out",
+          targetHandle: "particle",
+        }),
+      ]),
+    );
+  });
+
+  it("hides the crystallographic waters through their own branch", () => {
+    // A Modify behind a Filter writes opacity only at the selected indices and
+    // leaves everything else at 1.0 — so without this second branch the 58
+    // waters would render fully opaque over the ghost they were filtered out
+    // of. Both branches together cover every atom of the snapshot.
+    const { nodes, edges } = cg!.create();
+    const waterFilter = nodes.find((n) => n.id === "water-filter")!;
+    expect((waterFilter.data.params as FilterParams).query).toBe('resname == "HOH"');
+    expect((nodes.find((n) => n.id === "water-modify")!.data.params as ModifyParams).opacity).toBe(
+      0,
+    );
+
+    const queries = nodes
+      .filter((n) => n.type === "filter")
+      .map((n) => (n.data.params as FilterParams).query);
+    expect(queries).toEqual(['resname != "HOH"', 'resname == "HOH"']);
+
+    expect(edges).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ source: "wrap-1", target: "water-filter" }),
+        expect.objectContaining({ source: "water-filter", target: "water-modify" }),
+        expect.objectContaining({
+          source: "water-modify",
+          target: "viewport-1",
+          sourceHandle: "out",
+          targetHandle: "particle",
+        }),
+      ]),
+    );
+  });
+
+  it("gives the all-atom branch no AddBond node", () => {
+    // 1UBQ is an X-ray entry with no CONECT for the protein, and opening a
+    // `.pdb` forces every AddBond reachable from that loader to "structure"
+    // (syncAddBondSourceForLoader) — so one here could only ever warn
+    // "No bonds found". Only the CG branch, whose file does carry CONECT,
+    // gets a bond node.
+    const { nodes, edges } = cg!.create();
+    const bondNodes = nodes.filter((n) => n.type === "add_bond");
+    expect(bondNodes.map((n) => n.id)).toEqual(["cg-addbond"]);
+    expect(edges.some((e) => e.source === "aa-filter" && e.target === "cg-addbond")).toBe(false);
+  });
+
+  it("scales the beads up and colors them so they read over the ghost", () => {
+    const { nodes } = cg!.create();
+    const beadModify = nodes.find((n) => n.id === "cg-modify")!;
+    const beadParams = beadModify.data.params as ModifyParams;
+    // Rendered radius is vdW(C) 1.7 A x BALL_STICK_ATOM_SCALE 0.3 x scale;
+    // scale 3.2 gives ~1.6 A, under half the 3.94 A closest approach of two
+    // non-bonded beads, so the chain stays a string of separate beads.
+    expect(beadParams.scale).toBeGreaterThan(1);
+    expect(beadParams.scale * 1.7 * 0.3).toBeLessThan(3.94 / 2);
+    expect(beadParams.opacity).toBe(1);
+
+    const color = nodes.find((n) => n.type === "color")!;
+    const colorParams = color.data.params as ColorParams;
+    expect(colorParams.mode).toBe("uniform");
+    expect(colorParams.uniformColor).toMatch(/^#[0-9a-f]{6}$/i);
+  });
+
+  it("takes the bead chain from the CG file's CONECT records", () => {
+    const { nodes, edges } = cg!.create();
+    const cgBond = nodes.find((n) => n.id === "cg-addbond")!;
+    expect((cgBond.data.params as AddBondParams).bondSource).toBe("structure");
+    expect(edges).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          source: "loader-cg",
+          target: cgBond.id,
+          sourceHandle: "particle",
+          targetHandle: "particle",
+        }),
+        expect.objectContaining({
+          source: cgBond.id,
+          target: "viewport-1",
+          sourceHandle: "bond",
+          targetHandle: "bond",
+        }),
+      ]),
+    );
+  });
+
+  it("leaves 1ubq's crystallographic cell unwired", () => {
+    const { edges } = cg!.create();
+    expect(edges.some((e) => e.targetHandle === "cell")).toBe(false);
+  });
+});
+
 describe("PIPELINE_TEMPLATES wrap toggle", () => {
   it("every structure template carries a pass-through wrap node", () => {
-    for (const id of ["molecule", "solid", "surface_mesh", "protein"]) {
+    for (const id of ["molecule", "solid", "surface_mesh", "protein", "esp", "coarse_grained"]) {
       const template = PIPELINE_TEMPLATES.find((t) => t.id === id)!;
       const { nodes } = template.create();
       const wrap = nodes.find((n) => n.type === "wrap");
@@ -279,7 +500,15 @@ describe("PIPELINE_TEMPLATES wrap toggle", () => {
 
 describe("PIPELINE_TEMPLATES symmetry expansion", () => {
   it("every structure template carries an expand-mode symmetry node feeding wrap", () => {
-    for (const id of ["molecule", "molecular_crystal", "solid", "surface_mesh", "protein"]) {
+    for (const id of [
+      "molecule",
+      "molecular_crystal",
+      "solid",
+      "surface_mesh",
+      "protein",
+      "esp",
+      "coarse_grained",
+    ]) {
       const template = PIPELINE_TEMPLATES.find((t) => t.id === id)!;
       const { nodes, edges } = template.create();
       const symmetry = nodes.find((n) => n.type === "symmetry");

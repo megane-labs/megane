@@ -1,4 +1,6 @@
 import { describe, it, expect } from "vitest";
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { parseCube, BOHR_TO_ANGSTROM } from "@/pipeline/executors/parseCube";
 
 /** Minimal valid CUBE file with a 2×2×2 grid and one atom. */
@@ -90,7 +92,11 @@ describe("parseCube", () => {
 
   it("handles a DSET_IDS id list wrapping onto following lines", () => {
     const perPoint = Array.from({ length: 8 }, (_, i) => [i * 0.5]);
-    const text = makeMoCube(2, [7], perPoint.map((v) => [...v, ...v])).replace("2  7", "2\n7  8");
+    const text = makeMoCube(
+      2,
+      [7],
+      perPoint.map((v) => [...v, ...v]),
+    ).replace("2  7", "2\n7  8");
     const result = parseCube(text);
     expect(result.data[2]).toBeCloseTo(1.0);
   });
@@ -208,5 +214,47 @@ describe("parseCube", () => {
     expect(result.ny).toBe(3);
     expect(result.nz).toBe(3);
     expect(result.data.length).toBe(27);
+  });
+
+  describe("caffeine_esp.cube fixture", () => {
+    const text = readFileSync(resolve(__dirname, "../../../fixtures/caffeine_esp.cube"), "utf8");
+
+    it("parses the grid and caffeine's 24 atoms", () => {
+      const r = parseCube(text);
+      expect(r.nAtoms).toBe(24);
+      expect(r.data.length).toBe(r.nx * r.ny * r.nz);
+      expect(r.elements.length).toBe(24);
+      // Caffeine is C8H10N4O2.
+      const counts = new Map<number, number>();
+      for (const z of r.elements) counts.set(z, (counts.get(z) ?? 0) + 1);
+      expect(counts.get(6)).toBe(8);
+      expect(counts.get(1)).toBe(10);
+      expect(counts.get(7)).toBe(4);
+      expect(counts.get(8)).toBe(2);
+    });
+
+    it("carries a signed potential the ESP template's iso level sits inside", () => {
+      const r = parseCube(text);
+      // Dual-contour rendering needs both signs present, and the "esp"
+      // template draws at ±0.02 Hartree/e — outside this range it would
+      // render nothing.
+      expect(r.dataMin).toBeLessThan(-0.02);
+      expect(r.dataMax).toBeGreaterThan(0.02);
+    });
+
+    it("places the grid around the molecule, not beside it", () => {
+      const r = parseCube(text);
+      // Origin below every atom, far corner above every one: the box the
+      // generator pads by 3.6 A on each side.
+      for (let a = 0; a < r.nAtoms; a++) {
+        for (let axis = 0; axis < 3; axis++) {
+          const lo = r.origin[axis];
+          const n = [r.nx, r.ny, r.nz][axis];
+          const hi = lo + (n - 1) * r.step[axis * 3 + axis];
+          expect(r.positions[a * 3 + axis]).toBeGreaterThan(lo);
+          expect(r.positions[a * 3 + axis]).toBeLessThan(hi);
+        }
+      }
+    });
   });
 });

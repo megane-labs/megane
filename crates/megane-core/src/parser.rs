@@ -899,6 +899,23 @@ mod tests {
     }
 
     #[test]
+    fn coarse_grained_ubiquitin_fixture_is_a_bead_chain() {
+        // Written by tests/fixtures/generate_1ubq_cg.py and overlaid on the
+        // all-atom 1ubq.pdb by the "Coarse-Grained Overlay" template.
+        let result = parse(include_str!("../../../tests/fixtures/1ubq_cg.pdb")).unwrap();
+        assert_eq!(result.n_atoms, 76, "one bead per ubiquitin residue");
+        // 75 CONECT records join consecutive beads; nothing is distance-inferred
+        // on top of them (parser-purity rule: file bonds win outright).
+        assert_eq!(result.n_file_bonds, 75);
+        assert_eq!(result.bonds.len(), 75);
+        for (a, b) in result.bonds.iter() {
+            assert_eq!(*b, *a + 1, "beads bond only to the next residue");
+        }
+        // Beads are pseudo-atoms written as carbon.
+        assert!(result.elements.iter().all(|&z| z == 6));
+    }
+
+    #[test]
     fn test_parse_pdb_multi_model() {
         let pdb = "MODEL        1\nATOM      1  CA  ALA A   1       1.000   2.000   3.000  1.00  0.00           C  \nENDMDL\nMODEL        2\nATOM      1  CA  ALA A   1       4.000   5.000   6.000  1.00  0.00           C  \nENDMDL\n";
         let result = parse(pdb).expect("parse failed");
