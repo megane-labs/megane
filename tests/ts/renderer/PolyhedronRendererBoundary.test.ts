@@ -22,7 +22,8 @@ describe("PolyhedronRenderer responsibility", () => {
     const renderer = new PolyhedronRenderer();
     renderer.loadMeshData(meshData());
 
-    expect(renderer.group.children).toHaveLength(1);
+    // Two children: the back-face and front-face passes of the same mesh.
+    expect(renderer.group.children).toHaveLength(2);
 
     renderer.clear();
     expect(renderer.group.children).toHaveLength(0);

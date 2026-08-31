@@ -131,6 +131,7 @@ npm run test:e2e:pipeline-editor     # seeded node kinds + Render button mounts 
 npm run test:e2e:pipeline-file       # drag-drop .megane.json on webapp
 npm run test:e2e:render-modal        # snapshot mode (GIF/MP4 gated by MEGANE_E2E_FFMPEG=1)
 npm run test:e2e:atom-bond-junction  # transparent ball-and-stick junction (stick trimmed at the ball surface)
+npm run test:e2e:isosurface-opacity  # isosurface hue survives a low opacity (measures chroma, no pixel baseline)
 ```
 
 The 5-host feature matrices (`modify-node`, `camera`, `measurement`,
@@ -140,9 +141,9 @@ The 5-host feature matrices (`modify-node`, `camera`, `measurement`,
 Playwright project names use `<feature>__<host>` (double underscore), e.g.
 `npx playwright test --project=trajectory-bonds__webapp`. The authoritative
 project list is `playwright.config.ts` — newer webapp-hosted regression
-projects (`heterogeneous-traj`, `trajectory-bonds-vdw-leak`, `licorice`,
-`water-line`, `inspector`, `resname-filter-opacity`) exist only there and
-are run with `npx playwright test --project=<name>`.
+projects (`heterogeneous-traj`, `trajectory-bonds-vdw-leak`,
+`water-line`, `inspector`, `resname-filter-opacity`, `multi-instance`) exist
+only there and are run with `npx playwright test --project=<name>`.
 
 Specs that iterate hosts read `MEGANE_HOST=webapp|widget-jupyterlab|widget-vscode|jupyterlab-doc|vscode`. Default = webapp.
 

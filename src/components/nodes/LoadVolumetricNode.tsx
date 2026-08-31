@@ -94,6 +94,7 @@ export function LoadVolumetricNode({ id, data }: NodeProps<Node<PipelineNodeData
         </button>
         <input
           ref={inputRef}
+          data-testid="load-volumetric-input"
           type="file"
           accept={VOLUMETRIC_ACCEPT}
           onChange={(e) => {

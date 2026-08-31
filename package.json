@@ -85,6 +85,7 @@
     "test:e2e:pipeline-file": "playwright test --project=pipeline-file",
     "test:e2e:render-modal": "playwright test --project=render-modal",
     "test:e2e:atom-bond-junction": "playwright test --project=atom-bond-junction",
+    "test:e2e:isosurface-opacity": "playwright test --project=isosurface-opacity",
     "test:e2e:modify-node": "playwright test --project=modify-node__webapp --project=modify-node__jupyterlab-doc --project=modify-node__vscode --project=modify-node__widget-jupyterlab --project=modify-node__widget-vscode",
     "test:e2e:modify-node:webapp": "playwright test --project=modify-node__webapp",
     "test:e2e:camera": "playwright test --project=camera__webapp --project=camera__jupyterlab-doc --project=camera__vscode --project=camera__widget-jupyterlab --project=camera__widget-vscode",

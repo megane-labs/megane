@@ -57,7 +57,13 @@ export default defineConfig({
   forbidOnly: !!process.env.CI,
   retries: 0,
   workers: 1,
-  reporter: process.env.CI ? [["list"], ["junit", { outputFile: "playwright-report/junit.xml" }], ["html", { open: "never" }]] : [["list"], ["html", { open: "never" }]],
+  reporter: process.env.CI
+    ? [
+        ["list"],
+        ["junit", { outputFile: "playwright-report/junit.xml" }],
+        ["html", { open: "never" }],
+      ]
+    : [["list"], ["html", { open: "never" }]],
   use: {
     actionTimeout: 15_000,
     navigationTimeout: 30_000,
@@ -207,6 +213,11 @@ export default defineConfig({
     {
       name: "atom-bond-junction",
       testMatch: /atom-bond-junction\.spec\.ts$/,
+      use: { baseURL: `http://127.0.0.1:${PORT_WEBAPP}` },
+    },
+    {
+      name: "isosurface-opacity",
+      testMatch: /isosurface-opacity\.spec\.ts$/,
       use: { baseURL: `http://127.0.0.1:${PORT_WEBAPP}` },
     },
 

@@ -1,7 +1,11 @@
 /**
- * Polyhedron renderer using Three.js.
- * Renders coordination polyhedra as semi-transparent face meshes
- * with optional wireframe edge overlay.
+ * Mesh renderer using Three.js.
+ *
+ * Draws every MeshData packet the pipeline produces — coordination polyhedra,
+ * isosurfaces and alpha-shape surfaces — as semi-transparent face meshes with
+ * an optional wireframe edge overlay. Shading comes from
+ * {@link createSurfaceMaterial}, which is built so a surface keeps its hue as
+ * the opacity slider comes down.
  */
 
 import * as THREE from "three";
@@ -9,10 +13,12 @@ import { LineSegmentsGeometry } from "three/examples/jsm/lines/LineSegmentsGeome
 import { LineSegments2 } from "three/examples/jsm/lines/LineSegments2.js";
 import { LineMaterial } from "three/examples/jsm/lines/LineMaterial.js";
 import type { MeshData } from "../pipeline/types";
+import { createSurfaceMaterial } from "./surfaceMaterial";
 
 export class PolyhedronRenderer {
   readonly group: THREE.Group;
-  private faceMesh: THREE.Mesh | null = null;
+  /** Back faces first, then front faces — see loadMeshData(). */
+  private faceMeshes: THREE.Mesh[] = [];
   private edgeLines: LineSegments2 | null = null;
   private edgeMaterial: LineMaterial | null = null;
 
@@ -42,18 +48,17 @@ export class PolyhedronRenderer {
     faceGeo.setAttribute("color", new THREE.BufferAttribute(colorRGB, 3));
     faceGeo.setIndex(new THREE.BufferAttribute(data.indices, 1));
 
-    const faceMat = new THREE.MeshPhongMaterial({
-      vertexColors: true,
-      transparent: true,
-      opacity: data.opacity,
-      side: THREE.DoubleSide,
-      depthWrite: false,
-      shininess: 30,
-    });
-
-    this.faceMesh = new THREE.Mesh(faceGeo, faceMat);
-    this.faceMesh.renderOrder = 1;
-    this.group.add(this.faceMesh);
+    // A closed surface covers each pixel at least twice, and with depth writes
+    // off the two layers composite in whatever order the triangles happen to be
+    // emitted. Drawing the mesh twice — back faces, then front faces — puts
+    // them in back-to-front order instead, which is exact for a convex blob and
+    // never worse for a lumpy one.
+    for (const [i, side] of [THREE.BackSide, THREE.FrontSide].entries()) {
+      const mesh = new THREE.Mesh(faceGeo, createSurfaceMaterial(data.opacity, side));
+      mesh.renderOrder = 1 + i;
+      this.faceMeshes.push(mesh);
+      this.group.add(mesh);
+    }
 
     // Edge wireframe (fat lines via LineSegments2)
     if (data.showEdges && data.edgePositions && data.edgePositions.length > 0) {
@@ -70,7 +75,7 @@ export class PolyhedronRenderer {
       this.edgeMaterial = edgeMat;
 
       this.edgeLines = new LineSegments2(edgeGeo, edgeMat);
-      this.edgeLines.renderOrder = 2;
+      this.edgeLines.renderOrder = 3;
       this.group.add(this.edgeLines);
     }
   }
@@ -83,12 +88,13 @@ export class PolyhedronRenderer {
   }
 
   clear(): void {
-    if (this.faceMesh) {
-      this.faceMesh.geometry.dispose();
-      (this.faceMesh.material as THREE.Material).dispose();
-      this.group.remove(this.faceMesh);
-      this.faceMesh = null;
+    // The two face passes share one geometry, so dispose it once.
+    this.faceMeshes[0]?.geometry.dispose();
+    for (const mesh of this.faceMeshes) {
+      (mesh.material as THREE.Material).dispose();
+      this.group.remove(mesh);
     }
+    this.faceMeshes = [];
     if (this.edgeLines) {
       this.edgeLines.geometry.dispose();
       (this.edgeLines.material as THREE.Material).dispose();

@@ -228,6 +228,13 @@ To color a charge-density isosurface by electrostatic potential, add a second
 the isosurface node's `colorVolumetric` input, then set `colorMode` to
 `"volume"`.
 
+`opacity` keeps the surface's hue as it comes down. Alpha blending scales a
+transparent surface's chroma by its opacity, which against the white background
+would fade a blue and a red lobe onto the same pale grey; the renderer
+compensates for that scaling and firms up the silhouette, so a surface at
+`0.2` still reads as the colour you chose while staying see-through. An opaque
+surface (`1.0`) is drawn with its literal colour, uncompensated.
+
 #### `vector_overlay`
 
 | Field   | Type     | Description                    |
