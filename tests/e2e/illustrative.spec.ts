@@ -95,3 +95,38 @@ test("illustrative: spacefill spheres render flat with an outline and no bonds",
   await expectFullPageMatch(boot!.scope, PLATFORM, `${getHost()}-illustrative`);
   await expectViewerRegionMatch(boot!.scope, PLATFORM, `${getHost()}-illustrative-viewer`);
 });
+
+/**
+ * Regression for the Modify node's scale being dropped by the Color node.
+ *
+ * The illustrative preset always pairs `color` with `representation`, and the
+ * color pass reloads the atom mesh to reset it to base CPK before painting the
+ * new overrides on. That reload used to zero the per-atom scale buffer, so a
+ * `modify` node downstream appeared to do nothing and the spacefill spheres
+ * could not be shrunk at all. `MoleculeRenderer.restoreAtomPerAtomState` now
+ * pushes the overrides back after the reload.
+ *
+ * Runs on the same host boot as the test above, which leaves both nodes already
+ * set to "illustrative" — this only appends the Modify node and drops the
+ * scale, so the baseline differs from the preceding one purely by sphere size.
+ */
+test("illustrative: the Modify node still shrinks the spheres through a Color node", async () => {
+  if (!boot) test.skip(true, "boot not initialised");
+  const scope = boot!.scope;
+
+  const repId = await findNodeIdByType(scope, "representation");
+  const viewportId = await findNodeIdByType(scope, "viewport");
+  const modifyId = await insertNode(scope, "modify");
+  await connectEdge(scope, repId, modifyId, "out", "in");
+  await connectEdge(scope, modifyId, viewportId, "out", "particle");
+
+  const before = await getReadyState(scope);
+  await setNodeParam(scope, modifyId, { scale: 0.5 });
+  await waitForReady(scope, { untilEpoch: before.renderEpoch + 1, timeout: 10_000 }).catch(() => {
+    /* a param change may re-render synchronously without bumping the epoch */
+  });
+
+  await pinFrame(scope, 0);
+  await stabilizeUi(scope);
+  await expectViewerRegionMatch(boot!.scope, PLATFORM, `${getHost()}-illustrative-scaled-viewer`);
+});
