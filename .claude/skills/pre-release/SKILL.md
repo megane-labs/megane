@@ -160,7 +160,7 @@ PRs — do **not** skip a host because it needs extra setup.
   still validates them).
 
 The release commit will run through CI on the way to `main`, and CI uploads
-to Codecov with `fail_ci_on_error: true` (`codecov.yml` patch target 70 %).
+to Codecov with `fail_ci_if_error: true` (`codecov.yml` patch target 70 %).
 The release diff is mostly version bumps + CHANGELOG, which Codecov ignores
 (`pyproject.toml`, `Cargo.toml`, `*.md`), so the gate normally passes
 trivially. If the release branch happens to also include source-code

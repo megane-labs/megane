@@ -1,0 +1,62 @@
+name: Codecov upload
+description: >
+  Upload one coverage report to Codecov and fail the job when the upload does
+  not land. Wraps codecov/codecov-action@v5 so the three coverage jobs (Rust,
+  TypeScript, Python) share a single definition of the patch-coverage gate
+  described in CRITICAL RULE #8 of CLAUDE.md.
+
+inputs:
+  files:
+    description: Coverage report to upload (single path).
+    required: true
+  flags:
+    description: Codecov flag the report is filed under (rust / typescript / python).
+    required: true
+  token:
+    description: >
+      CODECOV_TOKEN. An empty value is only legitimate for pull requests from
+      forks, where GitHub withholds secrets and Codecov accepts a tokenless
+      upload.
+    required: false
+    default: ""
+
+runs:
+  using: composite
+  steps:
+    - name: Check the upload can authenticate
+      shell: bash
+      env:
+        CODECOV_UPLOAD_TOKEN: ${{ inputs.token }}
+        FORK_PR: ${{ github.event.pull_request.head.repo.fork }}
+      # Codecov only accepts tokenless uploads from fork PRs. Every other run
+      # needs the token, and without it the upload is rejected with
+      # {"message":"Token required because branch is protected"} — the commit
+      # then never gets processed, so no codecov/patch status is ever posted and
+      # the PR sits blocked with no visible failure.
+      #
+      # The case that bites: GitHub does NOT pass repository Actions secrets to
+      # Dependabot-triggered runs, so `secrets.CODECOV_TOKEN` is empty there. The
+      # token has to be stored a second time under
+      # Settings -> Secrets and variables -> Dependabot. Keep the two copies in
+      # sync when the token is rotated.
+      #
+      # Fail here rather than letting the upload fail: a missing token is a
+      # repository-configuration bug, and the Codecov error alone does not say
+      # where to fix it.
+      run: |
+        if [ -n "$CODECOV_UPLOAD_TOKEN" ] || [ "$FORK_PR" = "true" ]; then
+          exit 0
+        fi
+        echo "::error::CODECOV_TOKEN is empty on a run that is not a fork PR, so Codecov will reject the upload (\"Token required because branch is protected\") and no codecov/patch status will be posted. Dependabot runs do not receive repository Actions secrets: add CODECOV_TOKEN under Settings -> Secrets and variables -> Dependabot as well."
+        exit 1
+
+    - uses: codecov/codecov-action@v5
+      with:
+        files: ${{ inputs.files }}
+        flags: ${{ inputs.flags }}
+        token: ${{ inputs.token }}
+        # The input is `fail_ci_if_error`, NOT `fail_ci_on_error`. codecov-action
+        # silently ignores unknown inputs, so the misspelling leaves
+        # CC_FAIL_ON_ERROR at its "false" default and turns the hard gate into a
+        # no-op that reports success on a rejected upload.
+        fail_ci_if_error: true

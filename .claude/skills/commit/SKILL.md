@@ -23,7 +23,7 @@ Keep the first line under 72 characters. Add details in the body if needed.
 
 ## Before Committing
 
-1. Run relevant tests for the changed code, **with coverage** so you can confirm the Codecov patch gate (≥ 70 % per `codecov.yml`) before pushing — see CRITICAL RULE #8 in `CLAUDE.md` and the `testing` skill's "Coverage & Codecov" section. CI uploads with `fail_ci_on_error: true`, so an uncovered diff blocks merge.
+1. Run relevant tests for the changed code, **with coverage** so you can confirm the Codecov patch gate (≥ 70 % per `codecov.yml`) before pushing — see CRITICAL RULE #8 in `CLAUDE.md` and the `testing` skill's "Coverage & Codecov" section. CI uploads with `fail_ci_if_error: true`, so an uncovered diff blocks merge.
    - Rust changes: `cargo llvm-cov --package megane-core --lcov --output-path lcov.info` (or `cargo test -p megane-core` if the diff is test-only)
    - TypeScript changes: `npm test -- --coverage`
    - Python changes: `python -m pytest` (coverage is auto-enabled via `pyproject.toml` addopts; use `--cov-report=xml:coverage.xml` to mirror CI)

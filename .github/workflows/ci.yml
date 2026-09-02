@@ -43,19 +43,23 @@ jobs:
       - run: cargo llvm-cov --package megane-core --lcov --output-path lcov.info
       # Fork PRs: secrets are not passed to fork-triggered runs, so
       # CODECOV_TOKEN resolves to an empty string there. That is expected
-      # and fine — codecov-action v5 falls back to a tokenless upload for
-      # PRs from forks of public repos, so the patch-coverage gate still
-      # works for external contributors. Do NOT "fix" the empty token by
-      # gating this step on the secret; that would silently skip the gate
-      # for forks. If a tokenless upload fails transiently (rate limit),
-      # re-run the job. The same applies to the test-ts and test-python
-      # upload steps below.
-      - uses: codecov/codecov-action@v5
+      # and fine — Codecov accepts a tokenless upload for PRs from forks of
+      # public repos, so the patch-coverage gate still works for external
+      # contributors. Do NOT "fix" the empty token by gating this step on the
+      # secret; that would silently skip the gate for forks. If a tokenless
+      # upload fails transiently (rate limit), re-run the job.
+      #
+      # Every other run does need the token, including Dependabot's — GitHub
+      # withholds repository Actions secrets there, so CODECOV_TOKEN must also
+      # be stored under Settings -> Secrets and variables -> Dependabot. The
+      # composite action below checks that before uploading; see
+      # .github/actions/codecov-upload/action.yml. The same applies to the
+      # test-ts and test-python upload steps.
+      - uses: ./.github/actions/codecov-upload
         with:
           files: lcov.info
           flags: rust
           token: ${{ secrets.CODECOV_TOKEN }}
-          fail_ci_on_error: true
 
   test-ts:
     name: TypeScript tests
@@ -82,12 +86,11 @@ jobs:
       - run: npm run format:check
       - run: npm run lint
       - run: npm test -- --coverage
-      - uses: codecov/codecov-action@v5
+      - uses: ./.github/actions/codecov-upload
         with:
           files: coverage/ts/lcov.info
           flags: typescript
           token: ${{ secrets.CODECOV_TOKEN }}
-          fail_ci_on_error: true
 
   test-ts-react18:
     name: TypeScript tests (React 18)
@@ -185,12 +188,11 @@ jobs:
       - name: Install package
         run: pip install -e ".[dev]"
       - run: python -m pytest --cov-report=xml:coverage.xml
-      - uses: codecov/codecov-action@v5
+      - uses: ./.github/actions/codecov-upload
         with:
           files: coverage.xml
           flags: python
           token: ${{ secrets.CODECOV_TOKEN }}
-          fail_ci_on_error: true
 
   test-notebooks:
     name: Notebook tests

@@ -43,7 +43,8 @@ Tests: `tests/python/`. Config: `pyproject.toml` under `[tool.pytest.ini_options
 ## Coverage & Codecov (merge gate)
 
 **Codecov is a hard merge gate — see CRITICAL RULE #8 in `CLAUDE.md`.** The
-three CI jobs that upload coverage all use `fail_ci_on_error: true`, and
+three CI jobs that upload coverage all go through
+`.github/actions/codecov-upload` (`fail_ci_if_error: true`), and
 `codecov.yml` requires **patch coverage ≥ 70 %** on every PR (project
 coverage status is `off`, so only the diff matters — but the diff matters a
 lot).
@@ -97,8 +98,24 @@ If a line genuinely cannot be covered (e.g. a defensive branch that's
 unreachable from public APIs, or platform-gated code that only runs in a
 specific host), document the gap in the PR description and prefer
 `#[cfg(...)]` / `/* c8 ignore next */` / `# pragma: no cover` over
-disabling the gate. Never set `fail_ci_on_error: false` or relax
+disabling the gate. Never set `fail_ci_if_error: false` or relax
 `codecov.yml` to make a PR pass.
+
+### When Codecov posts no status at all
+
+A missing `codecov/patch` check is not a slow Codecov — it means no report
+reached Codecov for that commit. The upload needs `CODECOV_TOKEN`, and the
+only runs allowed to go without it are pull requests from forks (Codecov
+accepts tokenless uploads there). Anything else is rejected with
+`{"message":"Token required because branch is protected"}` and no status is
+ever posted.
+
+The recurring cause is Dependabot: GitHub does **not** pass repository Actions
+secrets to Dependabot-triggered runs, so `secrets.CODECOV_TOKEN` is empty
+unless the token is *also* stored under
+Settings -> Secrets and variables -> Dependabot. Keep both copies in sync when
+rotating the token. `.github/actions/codecov-upload` fails the job with an
+explicit error in that case rather than letting the run go green with no gate.
 
 ## E2E Tests (cross-platform 3-layer suite)
 
