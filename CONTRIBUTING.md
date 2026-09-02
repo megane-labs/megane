@@ -81,6 +81,8 @@ UI-affecting changes are covered by a Playwright E2E suite with pixel-diff basel
 
 Codecov measures unit-test coverage only (patch coverage ≥ 70 % is required on every PR); E2E does not count toward it, so new code still needs unit tests.
 
+Maintainers: the Codecov upload needs `CODECOV_TOKEN` stored **twice** — once as an Actions secret and once as a Dependabot secret (Settings → Secrets and variables → Dependabot). GitHub withholds Actions secrets from Dependabot-triggered runs, and without a token Codecov rejects the upload, so those PRs never receive a `codecov/patch` status at all. `.github/actions/codecov-upload` fails the job with an explicit message when that happens.
+
 ### CI on fork pull requests
 
 Everything you need runs automatically on PRs from forks — no secrets or special setup required on your side:
