@@ -151,7 +151,15 @@ test("water-hidden: fading water to opacity 0 leaves only the caffeine", async (
   // this faded stream is the one the viewport renders.
   const filterWaterBonds = await insertNode(scope, "filter");
   const hideWaterBonds = await insertNode(scope, "modify");
-  await setNodeParam(scope, filterWaterBonds, { bond_query: 'both resname == "HOH"' });
+  // `resname` is an ATOM field. The bond DSL only knows bond_index / atom_index
+  // / element / molecule_id, so `both resname == "HOH"` threw "Unknown
+  // identifier" and this branch produced nothing — and because the default
+  // add_bond → viewport.bond edge is dropped just below, the viewport ended up
+  // with *no* bonds at all. The caffeine lost its sticks and the baseline
+  // recorded that as the "water hidden" reference. The caffeine is atoms 0-23
+  // and every water follows, so `both atom_index >= 24` names the solvent's own
+  // bonds; `both` keeps caffeine-water contacts out of the selection.
+  await setNodeParam(scope, filterWaterBonds, { bond_query: "both atom_index >= 24" });
   await setNodeParam(scope, hideWaterBonds, { scale: 1.0, opacity: 0.0 });
 
   const before = await getReadyState(scope);

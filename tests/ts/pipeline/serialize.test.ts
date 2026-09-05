@@ -224,6 +224,58 @@ describe("round-trip serialization", () => {
 });
 
 describe("deserializePipeline normalization", () => {
+  /** loader -> add_bond, with the bond stream optionally routed via filter/modify. */
+  function bondGraph(routed: boolean): SerializedPipeline {
+    const nodes = [
+      { id: "load-1", type: "load_structure", fileName: "s.pdb" },
+      { id: "ab-1", type: "add_bond" },
+      { id: "view-1", type: "viewport" },
+      ...(routed
+        ? [
+            { id: "fb-1", type: "filter", query: "", bond_query: "both atom_index >= 24" },
+            { id: "mb-1", type: "modify", scale: 1, opacity: 0 },
+          ]
+        : []),
+    ];
+    const edges = [
+      { source: "load-1", sourceHandle: "particle", target: "ab-1", targetHandle: "particle" },
+      { source: "load-1", sourceHandle: "particle", target: "view-1", targetHandle: "particle" },
+      ...(routed
+        ? [
+            { source: "ab-1", sourceHandle: "bond", target: "fb-1", targetHandle: "in" },
+            { source: "fb-1", sourceHandle: "out", target: "mb-1", targetHandle: "in" },
+            { source: "mb-1", sourceHandle: "out", target: "view-1", targetHandle: "bond" },
+          ]
+        : []),
+    ];
+    return { version: 3, nodes, edges } as unknown as SerializedPipeline;
+  }
+
+  const rawBondEdge = (edges: Edge[]) =>
+    edges.filter(
+      (e) =>
+        e.source === "ab-1" &&
+        e.sourceHandle === "bond" &&
+        e.target === "view-1" &&
+        e.targetHandle === "bond",
+    );
+
+  it("wires AddBond straight to the viewport when nothing else feeds viewport.bond", () => {
+    const { edges } = deserializePipeline(bondGraph(false));
+    expect(rawBondEdge(edges)).toHaveLength(1);
+  });
+
+  // The raw stream would be drawn at full opacity underneath the faded copy,
+  // which makes fading or hiding a species' bonds impossible — and that branch
+  // is the only way to reach viewport.bond with a selection applied.
+  it("leaves the raw bond stream out when a filtered branch already feeds viewport.bond", () => {
+    const { edges } = deserializePipeline(bondGraph(true));
+    expect(rawBondEdge(edges)).toHaveLength(0);
+    expect(
+      edges.some((e) => e.source === "mb-1" && e.target === "view-1" && e.targetHandle === "bond"),
+    ).toBe(true);
+  });
+
   it("migrates legacy Polyhedra wiring to Drawing Boundary and Coordination", () => {
     const json: SerializedPipeline = {
       version: 3,

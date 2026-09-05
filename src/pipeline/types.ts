@@ -1004,6 +1004,19 @@ export function canConnect(
     return acceptedTypes.includes(sourcePort.dataType);
   }
 
+  // A generic node passes its input type straight through, so its output is
+  // whatever came in — its declared "particle" output dataType is a
+  // placeholder, as GENERIC_NODE_ACCEPTS' comment says. Judge such an output by
+  // what the node can carry, not by that placeholder. Without this, fading a
+  // selection's bonds (`add_bond -> filter -> modify -> viewport.bond`) reads
+  // as an invalid edge even though the executor handles bond streams through
+  // filter and modify — and that branch is the only way to hide or fade a
+  // species' bonds, which arrive on their own viewport stream.
+  const sourceAccepts = GENERIC_NODE_ACCEPTS[sourceNodeType];
+  if (sourceAccepts) {
+    return sourceAccepts.includes(targetPort.dataType);
+  }
+
   return sourcePort.dataType === targetPort.dataType;
 }
 
