@@ -3,14 +3,17 @@
  *
  * Drives the renderer's camera state via the test API exposed in Stage 1
  * (`window.__megane_test.{setCameraMode,resetCamera,getCameraState}`).
- * The OrbitControls drag path is non-deterministic; this spec
- * deliberately avoids mouse-driven camera input and instead asserts
- * state transitions through the programmatic API.
+ * The pixel cases deliberately avoid mouse-driven camera input (pointer
+ * event batching makes a drag's exact end pose timing-dependent) and
+ * assert state transitions through the programmatic API; the
+ * pole-crossing case drags for real but only asserts camera state, never
+ * pixels.
  *
  * Cases:
  *   - Initial state: orthographic, target near origin
  *   - setCameraMode('perspective') flips mode and re-fits
  *   - resetCamera() returns target to the snapshot center after pan
+ *   - a vertical left-drag rotates past the pole (issue #662)
  *
  * Widget hosts skip — WidgetViewer also exposes the renderer test API,
  * but the widget-jupyterlab/widget-vscode boots add ~30s+ overhead per
@@ -169,4 +172,99 @@ test("camera: orthographic wheel zoom-out restores atoms (no reset needed)", asy
 
   const state = await getCameraState(scope);
   expect(state!.zoom).toBeCloseTo(1, 2);
+});
+
+/**
+ * Issue #662: rotation must not stop at the ±c-axis poles. The fitted view
+ * looks along +y with z up; a vertical left-drag tilts the camera over the
+ * z pole. OrbitControls clamped the polar angle there, so the camera could
+ * never reach the far side (position.y > target.y). The trackball controls
+ * keep turning, so repeated upward drags eventually put it there.
+ */
+test("camera: left-drag rotates continuously across the pole", async () => {
+  if (!boot) test.skip(true, "boot not initialised");
+  const scope = boot!.scope;
+  const page = "page" in scope ? scope.page() : scope;
+
+  await setCameraMode(scope, "orthographic");
+  await resetCamera(scope);
+  await scope.waitForTimeout(200);
+
+  const canvas = scope.locator('[data-testid="viewer-root"] canvas').first();
+  // In a notebook the widget output can extend below the fold; bring the
+  // canvas on screen and drag only within its visible band.
+  await canvas.scrollIntoViewIfNeeded();
+  const box = await canvas.boundingBox();
+  expect(box).not.toBeNull();
+  // On the VSCode hosts the viewer lives in a webview iframe: the mouse
+  // works in page coordinates while elementFromPoint wants frame-local
+  // ones, so keep the offset between the two.
+  const local = await canvas.evaluate((el) => {
+    const r = el.getBoundingClientRect();
+    return { x: r.x, y: r.y };
+  });
+  const offX = box!.x - local.x;
+  const offY = box!.y - local.y;
+  const viewportH = page.viewportSize()?.height ?? box!.y + box!.height;
+  const visTop = Math.max(box!.y, 0);
+  const visBottom = Math.min(box!.y + box!.height, viewportH);
+  const visH = visBottom - visTop;
+  expect(visH).toBeGreaterThan(50);
+  // The Pipeline side panel overlays part of the canvas (on the JupyterLab
+  // hosts the canvas spans the full width, so its centre sits under the
+  // panel), and a notebook cell can clip the canvas vertically. Probe a few
+  // columns and drag bands and use the first pair where the pointer lands
+  // on the WebGL canvas at both ends of the drag.
+  const pick = await scope.evaluate(
+    ({ x0, w, top, h, offX, offY }) => {
+      const onCanvas = (x: number, y: number) => {
+        const el = document.elementFromPoint(x - offX, y - offY);
+        return el?.tagName === "CANVAS" && !!el.closest('[data-testid="viewer-root"]');
+      };
+      for (const [fFrom, fTo] of [
+        [0.85, 0.15],
+        [0.7, 0.3],
+      ]) {
+        const yFrom = top + h * fFrom;
+        const yTo = top + h * fTo;
+        for (const f of [0.5, 0.3, 0.2, 0.15]) {
+          const x = x0 + w * f;
+          if (onCanvas(x, yFrom) && onCanvas(x, yTo)) return { cx: x, yFrom, yTo };
+        }
+      }
+      throw new Error("no unobstructed drag path on the viewer canvas");
+    },
+    { x0: box!.x, w: box!.width, top: visTop, h: visH, offX, offY },
+  );
+  const { cx, yFrom, yTo } = pick;
+
+  const start = (await getCameraState(scope))!;
+  const distance = (s: NonNullable<typeof start>) =>
+    Math.hypot(
+      s.position[0] - s.target[0],
+      s.position[1] - s.target[1],
+      s.position[2] - s.target[2],
+    );
+  const startDistance = distance(start);
+  expect(start.position[1]).toBeLessThan(start.target[1]);
+
+  let crossed = false;
+  for (let i = 0; i < 8 && !crossed; i++) {
+    await page.mouse.move(cx, yFrom);
+    await page.mouse.down();
+    await page.mouse.move(cx, yTo, { steps: 12 });
+    await page.mouse.up();
+    // Let the render loop consume the final pointer segment.
+    await scope.waitForTimeout(200);
+    const s = (await getCameraState(scope))!;
+    crossed = s.position[1] > s.target[1];
+  }
+  expect(crossed).toBe(true);
+
+  const end = (await getCameraState(scope))!;
+  // A pure rotation keeps the camera on the same sphere around the pivot.
+  expect(distance(end)).toBeCloseTo(startDistance, 3);
+  expect(end.target[0]).toBeCloseTo(start.target[0], 3);
+  expect(end.target[1]).toBeCloseTo(start.target[1], 3);
+  expect(end.target[2]).toBeCloseTo(start.target[2], 3);
 });

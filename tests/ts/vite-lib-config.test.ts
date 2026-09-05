@@ -36,7 +36,7 @@ describe("vite.lib.config externals", () => {
     "react-dom",
     "react-dom/client",
     "three",
-    "three/examples/jsm/controls/OrbitControls.js",
+    "three/examples/jsm/controls/TrackballControls.js",
     "three/examples/jsm/lines/LineMaterial.js",
   ])("externalizes %s", (id) => {
     expect(isExternal(external, id)).toBe(true);
