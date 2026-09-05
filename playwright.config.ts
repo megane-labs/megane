@@ -200,6 +200,13 @@ export default defineConfig({
       use: { baseURL: `http://127.0.0.1:${PORT_WEBAPP}` },
     },
     {
+      // Renders bench/llm's reference pipelines from serialized JSON and
+      // compares them against water-line's committed baselines. Webapp only.
+      name: "bench-golden",
+      testMatch: /bench-golden\.spec\.ts$/,
+      use: { baseURL: `http://127.0.0.1:${PORT_WEBAPP}` },
+    },
+    {
       name: "resname-filter-opacity",
       testMatch: /resname-filter-opacity\.spec\.ts$/,
       use: { baseURL: `http://127.0.0.1:${PORT_WEBAPP}` },

@@ -47,7 +47,17 @@ export interface DimensionResult {
 export interface ConnectionReq {
   label?: string;
   sourceType: PipelineNodeType;
-  targetType: PipelineNodeType;
+  /**
+   * Accepted node types on the target end.
+   *
+   * A single type pins one solution shape, which is how a rubric ends up
+   * scoring a correct pipeline *below* a broken one for having taken a
+   * different route. Several requests ("highlight just the oxygens") are
+   * answered equally well by `modify`, `color` or `representation`; naming all
+   * three lets the rubric require that the selection is *used* without
+   * dictating how.
+   */
+  targetType: PipelineNodeType | PipelineNodeType[];
   /** Optional output-port name on the source (e.g. "bond"). */
   sourceHandle?: string;
   /** Optional input-port name on the target (e.g. "bond"). */
@@ -60,6 +70,15 @@ export interface ParamCheck {
   nodeType: PipelineNodeType;
   /** 0-based index among nodes of `nodeType`. Defaults to 0 (the first). */
   index?: number;
+  /**
+   * Pass when ANY node of `nodeType` satisfies `test`, ignoring `index`.
+   *
+   * Use this wherever a correct answer may hold several nodes of one type — a
+   * request that touches atoms *and* bonds needs two `filter`s and two
+   * `modify`s, and nothing fixes which the model writes first. An index-pinned
+   * check would fail a correct pipeline over its node ordering.
+   */
+  any?: boolean;
   test: (node: SerializedNode) => boolean;
 }
 
@@ -225,14 +244,15 @@ export function scoreTask(pipeline: SerializedPipeline | null, rubric: Rubric): 
     checks.push({ label: `omits ${t} node`, passed: !present.has(t) });
   }
   for (const c of rubric.requiredConnections ?? []) {
+    const targets = Array.isArray(c.targetType) ? c.targetType : [c.targetType];
     const label =
       c.label ??
       `connects ${c.sourceType}${c.sourceHandle ? `(${c.sourceHandle})` : ""} -> ` +
-        `${c.targetType}${c.targetHandle ? `(${c.targetHandle})` : ""}`;
+        `${targets.join("|")}${c.targetHandle ? `(${c.targetHandle})` : ""}`;
     const passed = (pipeline?.edges ?? []).some(
       (e) =>
         types.get(e.source) === c.sourceType &&
-        types.get(e.target) === c.targetType &&
+        targets.includes(types.get(e.target) as PipelineNodeType) &&
         (c.sourceHandle === undefined || e.sourceHandle === c.sourceHandle) &&
         (c.targetHandle === undefined || e.targetHandle === c.targetHandle),
     );
@@ -261,17 +281,20 @@ export function scoreParams(pipeline: SerializedPipeline | null, rubric: Rubric)
   const paramChecks = rubric.paramChecks ?? [];
   if (paramChecks.length === 0) return { score: null, checks: [] };
 
+  const safeTest = (pc: ParamCheck, node: SerializedNode | undefined): boolean => {
+    if (!node) return false;
+    try {
+      return pc.test(node);
+    } catch {
+      return false;
+    }
+  };
+
   const checks: CheckResult[] = paramChecks.map((pc) => {
     const matches = (pipeline?.nodes ?? []).filter((n) => n.type === pc.nodeType);
-    const node = matches[pc.index ?? 0];
-    let passed = false;
-    if (node) {
-      try {
-        passed = pc.test(node);
-      } catch {
-        passed = false;
-      }
-    }
+    const passed = pc.any
+      ? matches.some((n) => safeTest(pc, n))
+      : safeTest(pc, matches[pc.index ?? 0]);
     return { label: pc.label, passed };
   });
 

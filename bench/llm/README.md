@@ -107,3 +107,96 @@ actor against the `LLM_EVAL_ALLOWED_USERS` repository variable — a JSON array
 of GitHub usernames (e.g. `["alice","bob"]`), defaulting to `["hodakamori"]`
 if the variable is unset. Applying the `llm-eval` label as a user not in this
 list does not run the job.
+
+## Ground truth (what the score cannot see)
+
+The scorer above grades the **shape** of a pipeline: which node types exist, how
+they are wired, what their parameters say. It never draws anything, so it cannot
+tell a pipeline that answers the request from one that draws the opposite.
+
+Ground truth lives beside the prompt it answers — one folder per case, named
+after its `dataset.ts` id:
+
+```
+bench/llm/dataset.ts                              the prompt and its rubric
+bench/llm/golden/<case id>/pipeline.megane.json   a pipeline that answers it
+bench/llm/golden/<case id>/expected.png           what that pipeline draws
+bench/llm/golden/<case id>/meta.json              fixture, expectation, capture source
+```
+
+Adding ground truth to a case means dropping a folder named after it. There is
+no registry to update: `golden.ts` discovers the directory, joins each folder to
+its prompt by id, and throws if a folder names a case `dataset.ts` does not
+have. Today:
+
+| case | shows |
+| --- | --- |
+| `hide-water` | only the caffeine, in ball-and-stick |
+| `representation-water-line` | water as thin lines, caffeine untouched |
+
+The pipelines are **captured, not hand-authored**: each is `store.serialize()`
+taken from the graph `tests/e2e/water-line.spec.ts` builds through the editor,
+from a fresh boot per case (`meta.json` records which). Hand-rolling them is how
+the first attempt went wrong three ways over — an atom field in a `bond_query`,
+a `bondSource` no fixture loads, and a `molecule_id` selection that
+distance-inferred bonds break — none of it obvious from reading a graph.
+
+```
+npm run build:app                 # the runner renders the built webapp
+npm run test:e2e:bench-golden
+```
+
+`tests/e2e/bench-golden.spec.ts` is only the runner. It loads each reference as
+serialized JSON — the same form a model emits — renders it, and compares against
+that case's `expected.png`. The round trip is the point: it is what lets the
+bench grade generated JSON against a reviewed picture. Nothing about a case
+lives in the E2E suite, so a case can be added, re-captured or experimented on
+without touching it.
+
+Every case also carries **counterexamples**: wrong pipelines derived from its
+reference by mutation, which must *not* draw it. Without them a green run would
+prove nothing — a comparison that accepts everything looks identical to one that
+works. The first is the bond query `water-line.spec.ts` itself shipped until
+PR #690, `both resname == "HOH"`: `resname` is an atom field, so the query threw,
+the branch produced nothing, and with the default bond edge already dropped the
+viewport rendered no bonds at all. The caffeine lost its sticks and the baseline
+recorded that as "only the caffeine shows".
+
+The pixel budget is **0.005 %**, not the E2E default. The caffeine is about 1 % of
+the frame, so the differences that matter are small in absolute terms: measured
+on this fixture a reference re-rendered against its own image differs by
+0.000 %, while the closest wrong pipeline — the one that drops the caffeine's 25
+sticks — differs by 0.023 %. Raise the budget and the suite stops separating
+them.
+
+To re-record an `expected.png` after an intended change, delete it and re-run —
+then **look at the new image**. If a reference stops matching, re-capture
+`pipeline.megane.json` from the source `meta.json` names rather than re-recording
+the PNG; an image recorded from an unreviewed render is the exact failure mode
+this suite exists to catch.
+
+### Rubric corrections found by rendering
+
+Auditing all 24 cases against the real renderer turned up rubrics that graded a
+pipeline which does not produce the requested view. Seven were corrected:
+
+| cases | what the rubric accepted | fix |
+| --- | --- | --- |
+| `filter-carbon`, `filter-residue`, `filter-oxygen-nitrogen`, `filter-carbon-ja`, `multistep-filter-bonds` | `load_structure → filter → viewport`, at full marks. A bare filter *selects*; it does not change what is drawn — selecting 8 carbons and selecting 1006 oxygens+nitrogens differ from each other by **0.002 %** of pixels | require the selection to feed a node that changes the drawing (`modify`, `color` or `representation`) |
+| `hide-water`, `multistep-water-transparent` | the particle branch alone, leaving the solvent's bonds drawn at full opacity | require the bond branch, with a `bond_query` on a field that exists |
+
+`ConnectionReq.targetType` accepts a list so the first fix can require that a
+selection is *used* without dictating which node uses it. Pinning one shape is
+how a rubric ends up scoring a correct pipeline below a broken one: before this,
+`hide-water` gave the working answer 96.1 % and the broken one 100 %.
+
+Two cases were **investigated and left alone**:
+
+- `color-by-element` renders identically to the default view (0.000 % on two
+  fixtures) because `byElement` is already the default palette. The request is
+  satisfied by the default, so requiring the explicit node is the only check
+  available; there is no visual signal to add.
+- `crystal-distance-bonds` and `crystal-polyhedra` could not be settled here.
+  The control view already carries the `add_bond` node `deserialize` injects, so
+  a probe cannot isolate it, and no fixture in `tests/fixtures/` is a perovskite
+  for the polyhedra case.
