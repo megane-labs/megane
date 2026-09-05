@@ -7,6 +7,9 @@ import {
   createSwitchedCamera,
   updatePerspectiveClipping,
   zoomOrthographicAroundTarget,
+  wheelZoomFactor,
+  dollyPerspectiveTowardTarget,
+  DEFAULT_CAMERA_UP,
 } from "@/renderer/CameraManager";
 import type { Snapshot } from "@/types";
 
@@ -35,7 +38,7 @@ function makeSnapshot(opts: {
   };
 }
 
-/** Mock OrbitControls — only the surface used by fitCameraToView. */
+/** Mock camera controls — only the surface used by fitCameraToView. */
 function makeMockControls() {
   return {
     target: new THREE.Vector3(),
@@ -444,5 +447,106 @@ describe("zoomOrthographicAroundTarget", () => {
     expect(cam.left).toBeCloseTo(-25, 9);
     expect(cam.right).toBeCloseTo(25, 9);
     expect(cam.zoom).toBeCloseTo(3, 9);
+  });
+});
+
+describe("fitCameraToView orientation reset", () => {
+  it("restores the canonical up vector after the trackball rolled the camera", () => {
+    const cam = new THREE.OrthographicCamera(-5, 5, 5, -5, 0.1, 100);
+    // Simulate a trackball drag that left the camera rolled and over a pole.
+    cam.up.set(0.3, -0.8, 0.5).normalize();
+    cam.position.set(12, 40, -7);
+    const controls = makeMockControls();
+    const snap = makeSnapshot({ positions: [-1, 0, 0, 1, 0, 0] });
+
+    fitCameraToView(cam, controls, snap);
+
+    expect(cam.up.toArray()).toEqual([...DEFAULT_CAMERA_UP]);
+    // Canonical view: below the centre on -y, looking along +y.
+    expect(cam.position.x).toBeCloseTo(0, 6);
+    expect(cam.position.y).toBeLessThan(0);
+    expect(cam.position.z).toBeCloseTo(0, 6);
+    expect(controls.update).toHaveBeenCalled();
+  });
+});
+
+describe("wheelZoomFactor", () => {
+  it("zooms in (factor > 1) for negative deltaY and out for positive", () => {
+    expect(wheelZoomFactor(-100, 0, 1.2)).toBeGreaterThan(1);
+    expect(wheelZoomFactor(100, 0, 1.2)).toBeLessThan(1);
+  });
+
+  it("is exactly reversible: in then out returns to 1", () => {
+    const zoomIn = wheelZoomFactor(-120, 0, 1.2);
+    const zoomOut = wheelZoomFactor(120, 0, 1.2);
+    expect(zoomIn * zoomOut).toBeCloseTo(1, 12);
+  });
+
+  it("matches the OrbitControls ramp 0.95^(zoomSpeed * |delta| / 100)", () => {
+    expect(wheelZoomFactor(100, 0, 1.2)).toBeCloseTo(Math.pow(0.95, 1.2), 12);
+    expect(wheelZoomFactor(-50, 0, 2)).toBeCloseTo(1 / Math.pow(0.95, 1), 12);
+  });
+
+  it("scales line and page delta modes onto the pixel ramp", () => {
+    const px = wheelZoomFactor(40, 0, 1);
+    const line = wheelZoomFactor(1, 1, 1);
+    const page = wheelZoomFactor(1, 2, 1);
+    expect(line).toBeCloseTo(px, 12);
+    expect(page).toBeCloseTo(wheelZoomFactor(800, 0, 1), 12);
+  });
+
+  it("returns 1 for a zero delta", () => {
+    expect(wheelZoomFactor(0, 0, 1.2)).toBe(1);
+  });
+});
+
+describe("dollyPerspectiveTowardTarget", () => {
+  it("divides the distance to the target by the zoom factor", () => {
+    const cam = new THREE.PerspectiveCamera(50, 1, 0.1, 1000);
+    cam.position.set(0, -40, 0);
+    const target = new THREE.Vector3(0, 0, 0);
+    dollyPerspectiveTowardTarget(cam, target, 2);
+    expect(cam.position.distanceTo(target)).toBeCloseTo(20, 9);
+    // Direction is preserved.
+    expect(cam.position.x).toBeCloseTo(0, 9);
+    expect(cam.position.y).toBeCloseTo(-20, 9);
+    expect(cam.position.z).toBeCloseTo(0, 9);
+  });
+
+  it("zooming out (factor < 1) moves the camera away along the same axis", () => {
+    const cam = new THREE.PerspectiveCamera(50, 1, 0.1, 1000);
+    cam.position.set(3, 4, 0);
+    const target = new THREE.Vector3(0, 0, 0);
+    dollyPerspectiveTowardTarget(cam, target, 0.5);
+    expect(cam.position.distanceTo(target)).toBeCloseTo(10, 9);
+    expect(cam.position.x).toBeCloseTo(6, 9);
+    expect(cam.position.y).toBeCloseTo(8, 9);
+  });
+
+  it("is reversible around an off-origin target", () => {
+    const cam = new THREE.PerspectiveCamera(50, 1, 0.1, 1000);
+    cam.position.set(5, -30, 2);
+    const target = new THREE.Vector3(5, 5, 2);
+    const start = cam.position.clone();
+    dollyPerspectiveTowardTarget(cam, target, 1.7);
+    dollyPerspectiveTowardTarget(cam, target, 1 / 1.7);
+    expect(cam.position.distanceTo(start)).toBeLessThan(1e-9);
+  });
+
+  it("never dollies through the pivot: distance is floored at minDistance", () => {
+    const cam = new THREE.PerspectiveCamera(50, 1, 0.1, 1000);
+    cam.position.set(0, -1, 0);
+    const target = new THREE.Vector3(0, 0, 0);
+    dollyPerspectiveTowardTarget(cam, target, 1e6, 0.05);
+    expect(cam.position.distanceTo(target)).toBeCloseTo(0.05, 9);
+    expect(cam.position.y).toBeLessThan(0);
+  });
+
+  it("is a no-op when the camera sits exactly on the target", () => {
+    const cam = new THREE.PerspectiveCamera(50, 1, 0.1, 1000);
+    const target = new THREE.Vector3(1, 2, 3);
+    cam.position.copy(target);
+    dollyPerspectiveTowardTarget(cam, target, 2);
+    expect(cam.position.toArray()).toEqual([1, 2, 3]);
   });
 });

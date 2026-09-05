@@ -8,7 +8,7 @@
  */
 
 import * as THREE from "three";
-import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
+import { CameraControls } from "./CameraControls";
 import type {
   Snapshot,
   Frame,
@@ -52,6 +52,8 @@ import {
   createSwitchedCamera,
   updatePerspectiveClipping,
   zoomOrthographicAroundTarget,
+  wheelZoomFactor,
+  dollyPerspectiveTowardTarget,
   type ViewExtent,
 } from "./CameraManager";
 
@@ -166,6 +168,13 @@ export interface MeganeCameraState {
   position: [number, number, number];
   target: [number, number, number];
   zoom: number;
+  /**
+   * Camera up vector. The trackball controls roll the camera freely, so the
+   * orientation is only fully described together with `up`. Optional for
+   * backward compatibility with states saved before it existed (those are
+   * restored with whatever up the camera currently has).
+   */
+  up?: [number, number, number];
 }
 
 export interface MeganeSubsystemVisibility {
@@ -272,7 +281,7 @@ export class MoleculeRenderer {
   private renderer!: THREE.WebGLRenderer;
   private scene!: THREE.Scene;
   private camera!: THREE.OrthographicCamera | THREE.PerspectiveCamera;
-  private controls!: OrbitControls;
+  private controls!: CameraControls;
   private perspectiveMode = false;
   private atomRenderer: AtomRenderer | null = null;
   private bondRenderer: BondRenderer | null = null;
@@ -353,7 +362,7 @@ export class MoleculeRenderer {
     duration: number;
   } | null = null;
 
-  /** Custom pan handler state (right-mouse drag, replaces OrbitControls pan). */
+  /** Custom pan handler state (right-mouse drag, replaces the controls' built-in pan). */
   private customPanActive = false;
   private customPanLastX = 0;
   private customPanLastY = 0;
@@ -464,22 +473,12 @@ export class MoleculeRenderer {
     this.camera.position.set(0, -50, 0);
     this.camera.up.set(0, 0, 1);
 
-    // Controls
-    this.controls = new OrbitControls(this.camera, this.renderer.domElement);
-    this.controls.enableDamping = true;
-    this.controls.dampingFactor = 0.1;
-    this.controls.rotateSpeed = 0.8;
-    this.controls.zoomSpeed = 1.2;
-    // Disable built-in pan and handle right-drag via attachCustomPanListener(),
-    // which translates both camera.position and controls.target together so the
-    // rotation pivot always stays at the screen center.
-    this.controls.enablePan = false;
-    this.attachPivotCancelListener();
+    // Controls (trackball: unrestricted rotation, no pole clamp). Built-in
+    // pan is off; right-drag is handled by attachCustomPanListener(), which
+    // keeps the rotation pivot at the screen center.
+    this.controls = this.createControls();
     this.attachWheelZoomListener();
     this.attachCustomPanListener();
-    this.controls.addEventListener("end", () => {
-      this._cameraChangeCallback?.();
-    });
 
     // Lighting - hemisphere + 3-point
     const hemi = new THREE.HemisphereLight(0xddeeff, 0x997744, 0.4);
@@ -1408,7 +1407,7 @@ export class MoleculeRenderer {
     this.axesDragging = true;
     this.axesDragLastX = cssX;
     this.axesDragLastY = cssY;
-    // Disable orbit controls while dragging the inset
+    // Disable camera controls while dragging the inset
     this.controls.enabled = false;
   }
 
@@ -1495,7 +1494,7 @@ export class MoleculeRenderer {
     }
   }
 
-  /** Set the rotation center (orbit target) to the given world coordinates.
+  /** Set the rotation center (controls target) to the given world coordinates.
    * @param animate  - When true (default), smoothly animates the transition over
    *   PIVOT_ANIM_DURATION_MS.  Pass false to update synchronously (legacy behaviour).
    * The clicked atom is animated to the screen center.
@@ -1522,8 +1521,8 @@ export class MoleculeRenderer {
 
     // Translate both controls.target and camera.position by the same delta
     // so the scene pans smoothly to center the clicked atom on screen.
-    // Damping is disabled during animation frames (see render loop) to
-    // prevent residual sphericalDelta from adding unwanted rotation.
+    // Damping momentum is dropped during animation frames (see render loop)
+    // so a decaying drag rotation cannot add unwanted motion.
     this.pivotAnim = {
       startTarget,
       endTarget,
@@ -1543,28 +1542,36 @@ export class MoleculeRenderer {
     this.controls.target.copy(this.pivotAnim.endTarget);
     this.camera.position.copy(this.pivotAnim.endCameraPos);
     this.pivotAnim = null;
-    // Sync camera world matrices and OrbitControls internal state so that
+    // Sync camera world matrices and the controls' internal state so that
     // subsequent project()/unproject() calls and interaction math use the
     // snapped end pose rather than the mid-animation matrices.
     this.camera.updateMatrixWorld(true);
-    const wasDamping = this.controls.enableDamping;
-    this.controls.enableDamping = false;
-    this.controls.update();
-    this.controls.enableDamping = wasDamping;
+    this.controls.syncImmediate();
   }
 
-  private attachPivotCancelListener(): void {
-    this.controls.addEventListener("start", () => {
+  /**
+   * Build trackball controls for the current camera and wire the renderer's
+   * interaction hooks: a starting drag snaps any pivot animation to its end
+   * pose, and a finished interaction notifies the camera-change callback.
+   */
+  private createControls(): CameraControls {
+    const controls = new CameraControls(this.camera, this.renderer.domElement);
+    controls.addEventListener("start", () => {
       this.snapPivotAnimToEnd();
     });
+    controls.addEventListener("end", () => {
+      this._cameraChangeCallback?.();
+    });
+    return controls;
   }
 
-  /** Zoom orthographic camera centered on controls.target using mouse wheel.
+  /** Zoom the camera around controls.target using the mouse wheel.
    *
-   * Registered on the container in capture phase so it fires before
-   * OrbitControls' bubble-phase wheel listener, letting us intercept only
-   * wheel events for orthographic cameras while leaving touch/pinch dolly
-   * (handled by OrbitControls' pointer events) fully intact.
+   * Registered on the container in capture phase so it fires before the
+   * controls' own wheel listener and replaces it for both projection modes,
+   * while leaving touch/pinch zoom (handled by the controls' pointer events)
+   * fully intact. Orthographic cameras zoom the frustum around the target;
+   * perspective cameras dolly toward it. Both use the same reversible ramp.
    */
   private attachWheelZoomListener(): void {
     const el = this.container!;
@@ -1572,33 +1579,30 @@ export class MoleculeRenderer {
       el.removeEventListener("wheel", this.wheelZoomHandler, true);
     }
     this.wheelZoomHandler = (e: WheelEvent) => {
-      if (!(this.camera instanceof THREE.OrthographicCamera)) return;
       e.preventDefault();
-      e.stopPropagation(); // prevent OrbitControls from also processing this
+      e.stopPropagation(); // prevent the controls from also processing this
 
       // Snap pivot animation to its end state so zoom is always centered on
       // the clicked atom, not on an intermediate position mid-animation.
       this.snapPivotAnimToEnd();
 
-      // Normalize deltaY across deltaMode (pixel / line / page)
-      let delta = e.deltaY;
-      if (e.deltaMode === 1 /* DOM_DELTA_LINE */) delta *= 40;
-      else if (e.deltaMode === 2 /* DOM_DELTA_PAGE */) delta *= 800;
+      const zoomFactor = wheelZoomFactor(e.deltaY, e.deltaMode, this.controls.zoomSpeed);
 
-      // Mirror OrbitControls' getZoomScale: exponential ramp with zoomSpeed
-      const scale = Math.pow(0.95, this.controls.zoomSpeed * Math.abs(delta) * 0.01);
-      const zoomFactor = delta < 0 ? 1 / scale : scale;
-
-      // Zoom around controls.target, keeping it fixed on screen. The helper
-      // applies a reversible frustum shift; accumulate it into our pan
-      // bookkeeping so resize re-applies the same offset.
-      const { shiftX, shiftY } = zoomOrthographicAroundTarget(
-        this.camera,
-        this.controls.target,
-        zoomFactor,
-      );
-      this._frustumPanX += shiftX;
-      this._frustumPanY += shiftY;
+      if (this.camera instanceof THREE.OrthographicCamera) {
+        // Zoom around controls.target, keeping it fixed on screen. The helper
+        // applies a reversible frustum shift; accumulate it into our pan
+        // bookkeeping so resize re-applies the same offset.
+        const { shiftX, shiftY } = zoomOrthographicAroundTarget(
+          this.camera,
+          this.controls.target,
+          zoomFactor,
+        );
+        this._frustumPanX += shiftX;
+        this._frustumPanY += shiftY;
+      } else {
+        dollyPerspectiveTowardTarget(this.camera, this.controls.target, zoomFactor);
+      }
+      this._cameraChangeCallback?.();
     };
     el.addEventListener("wheel", this.wheelZoomHandler, { capture: true, passive: false });
   }
@@ -1660,7 +1664,7 @@ export class MoleculeRenderer {
    * For OrthographicCamera: shifts the projection frustum (camera.left/right/top/bottom),
    * giving a true screen-space pan without touching camera.position or controls.target.
    * For PerspectiveCamera: translates both camera.position and controls.target together
-   * (standard OrbitControls pan). */
+   * (standard orbit-style pan). */
   private applyCustomPan(screenDx: number, screenDy: number): void {
     if (!this.container) return;
     const W = this.container.clientWidth;
@@ -1739,22 +1743,11 @@ export class MoleculeRenderer {
     );
 
     // Recreate controls with new camera
-    const oldDamping = this.controls.enableDamping;
-    const oldDampingFactor = this.controls.dampingFactor;
-    const oldRotateSpeed = this.controls.rotateSpeed;
-    const oldZoomSpeed = this.controls.zoomSpeed;
     this.controls.dispose();
     this.camera = newCamera;
-    this.controls = new OrbitControls(this.camera, this.renderer.domElement);
-    this.controls.enableDamping = oldDamping;
-    this.controls.dampingFactor = oldDampingFactor;
-    this.controls.rotateSpeed = oldRotateSpeed;
-    this.controls.zoomSpeed = oldZoomSpeed;
-    this.controls.enablePan = false;
+    this.controls = this.createControls();
     this.controls.target.copy(target);
     this.controls.update();
-    this.attachPivotCancelListener();
-    this.attachWheelZoomListener();
 
     if (this.snapshot) {
       this.fitToView(this.snapshot);
@@ -1964,7 +1957,7 @@ export class MoleculeRenderer {
     );
   }
 
-  /** Enable/disable orbit controls (used to suspend camera rotation during a box drag). */
+  /** Enable/disable camera controls (used to suspend camera rotation during a box drag). */
   setControlsEnabled(enabled: boolean): void {
     if (this.controls) this.controls.enabled = enabled;
   }
@@ -2056,6 +2049,9 @@ export class MoleculeRenderer {
     }
     this.renderer.setSize(w, h, false);
     this.labelOverlay?.resize(w, h, dpr);
+    // The trackball maps pointer travel onto a virtual sphere sized from the
+    // canvas rect, so it has to learn the new dimensions.
+    this.controls.handleResize();
   }
 
   private animate = (): void => {
@@ -2081,8 +2077,8 @@ export class MoleculeRenderer {
     // Tick smooth pivot animation (set by setRotationCenter).
     // Both controls.target and camera.position are translated by the same
     // delta so the scene pans to center the clicked atom on screen.
-    // Damping is temporarily disabled so residual sphericalDelta from prior
-    // interaction does not add unwanted rotation.
+    // Damping momentum is dropped so a decaying rotation from a prior drag
+    // does not add unwanted motion.
     if (this.pivotAnim) {
       const t = Math.min(
         (performance.now() - this.pivotAnim.startTime) / this.pivotAnim.duration,
@@ -2096,12 +2092,9 @@ export class MoleculeRenderer {
         ease,
       );
       if (t >= 1) this.pivotAnim = null;
-      // Update with damping off so sphericalDelta is zeroed and cannot
-      // override the manually-set camera position.
-      const wasDamping = this.controls.enableDamping;
-      this.controls.enableDamping = false;
-      this.controls.update();
-      this.controls.enableDamping = wasDamping;
+      // Sync without momentum so the controls cannot override the
+      // manually-set camera position.
+      this.controls.syncImmediate();
     } else {
       this.controls.update();
     }
@@ -2247,11 +2240,13 @@ export class MoleculeRenderer {
     if (!this.camera || !this.controls) return null;
     const pos = this.camera.position;
     const tgt = this.controls.target;
+    const up = this.camera.up;
     return {
       mode: this.perspectiveMode ? "perspective" : "orthographic",
       position: [pos.x, pos.y, pos.z],
       target: [tgt.x, tgt.y, tgt.z],
       zoom: this.camera.zoom,
+      up: [up.x, up.y, up.z],
     };
   }
 
@@ -2263,27 +2258,17 @@ export class MoleculeRenderer {
     }
     this.camera.position.set(...state.position);
     this.controls.target.set(...state.target);
+    if (state.up) this.camera.up.set(...state.up);
     this.camera.zoom = state.zoom;
     this.camera.updateProjectionMatrix();
-    const wasDamping = this.controls.enableDamping;
-    this.controls.enableDamping = false;
-    this.controls.update();
-    this.controls.enableDamping = wasDamping;
+    this.controls.syncImmediate();
     this._frustumPanX = 0;
     this._frustumPanY = 0;
   }
 
   /** Read camera state for tests. Returns null before mount/snapshot. */
   testGetCameraState(): MeganeCameraState | null {
-    if (!this.camera || !this.controls) return null;
-    const pos = this.camera.position;
-    const tgt = this.controls.target;
-    return {
-      mode: this.perspectiveMode ? "perspective" : "orthographic",
-      position: [pos.x, pos.y, pos.z],
-      target: [tgt.x, tgt.y, tgt.z],
-      zoom: this.camera.zoom,
-    };
+    return this.getCameraState();
   }
 
   /** Aggregate visibility booleans for each renderer subsystem. */

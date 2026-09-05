@@ -4,8 +4,11 @@
  */
 
 import * as THREE from "three";
-import type { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
+import type { CameraControlsLike } from "./CameraControls";
 import type { Snapshot } from "../types";
+
+/** World-space up axis of the canonical (fitted / reset) view. */
+export const DEFAULT_CAMERA_UP: readonly [number, number, number] = [0, 0, 1];
 
 export interface ViewExtent {
   maxExtent: number;
@@ -100,10 +103,15 @@ export function computeViewBounds(snapshot: Snapshot): {
   };
 }
 
-/** Fit the camera to show all atoms (or simulation cell if present). */
+/** Fit the camera to show all atoms (or simulation cell if present).
+ *
+ * Restores the canonical orientation (looking along +y with z up). The
+ * trackball controls rotate `camera.up` freely, so without resetting it a
+ * re-fit after a few drags would keep the current roll.
+ */
 export function fitCameraToView(
   camera: THREE.OrthographicCamera | THREE.PerspectiveCamera,
-  controls: OrbitControls,
+  controls: CameraControlsLike,
   snapshot: Snapshot,
 ): ViewExtent {
   const { center, extent } = computeViewBounds(snapshot);
@@ -113,6 +121,7 @@ export function fitCameraToView(
 
   const distance = Math.max(extent.maxExtent * 1.2, 0.1);
   camera.position.set(cx, cy - distance, cz);
+  camera.up.set(...DEFAULT_CAMERA_UP);
 
   if (camera instanceof THREE.OrthographicCamera) {
     camera.near = -distance * 10;
@@ -132,8 +141,8 @@ export function fitCameraToView(
  * Keep a perspective camera's near/far planes tracking the current dolly
  * distance so the model's bounding sphere always stays inside the frustum.
  *
- * Perspective wheel zoom is handled by OrbitControls' dolly, which moves the
- * camera (changing its distance to the target) but never touches near/far.
+ * Perspective wheel zoom dollies the camera (changing its distance to the
+ * target) but never touches near/far.
  * Without this, zooming out past the initial `far` (set once in
  * fitCameraToView) pushes the whole model behind the far plane and nothing is
  * drawn until "Reset view" re-fits. Recomputing per frame fixes that.
@@ -143,7 +152,7 @@ export function fitCameraToView(
  */
 export function updatePerspectiveClipping(
   camera: THREE.OrthographicCamera | THREE.PerspectiveCamera,
-  controls: Pick<OrbitControls, "target">,
+  controls: Pick<CameraControlsLike, "target">,
   extent: ViewExtent,
 ): boolean {
   if (!(camera instanceof THREE.PerspectiveCamera)) return false;
@@ -165,6 +174,40 @@ export function updatePerspectiveClipping(
   camera.far = far;
   camera.updateProjectionMatrix();
   return true;
+}
+
+/**
+ * Convert a wheel event into a multiplicative zoom factor (> 1 zooms in).
+ *
+ * Normalises `deltaY` across `deltaMode` (pixel / line / page) and applies
+ * the same exponential ramp OrbitControls used (`0.95^(zoomSpeed * |delta| / 100)`)
+ * so wheel zoom feels identical in both projection modes and is exactly
+ * reversible: N ticks in followed by N ticks out return to the start.
+ */
+export function wheelZoomFactor(deltaY: number, deltaMode: number, zoomSpeed: number): number {
+  let delta = deltaY;
+  if (deltaMode === 1 /* DOM_DELTA_LINE */) delta *= 40;
+  else if (deltaMode === 2 /* DOM_DELTA_PAGE */) delta *= 800;
+  const scale = Math.pow(0.95, zoomSpeed * Math.abs(delta) * 0.01);
+  return delta < 0 ? 1 / scale : scale;
+}
+
+/**
+ * Dolly a perspective camera along its view axis so its distance to `target`
+ * is divided by `zoomFactor` (> 1 moves closer). The distance is floored at
+ * `minDistance` so the camera can never pass through the pivot, which would
+ * flip the view.
+ */
+export function dollyPerspectiveTowardTarget(
+  camera: THREE.PerspectiveCamera,
+  target: THREE.Vector3,
+  zoomFactor: number,
+  minDistance = 0.01,
+): void {
+  const eye = camera.position.clone().sub(target);
+  const distance = Math.max(eye.length() / zoomFactor, minDistance);
+  if (eye.lengthSq() === 0) return;
+  camera.position.copy(target).addScaledVector(eye.normalize(), distance);
 }
 
 /**
@@ -245,7 +288,7 @@ export function applyFrustumInsets(
 /**
  * Create a new camera for switching between orthographic and perspective projection.
  * Returns the new camera with position/up preserved from the old one.
- * Caller is responsible for recreating OrbitControls.
+ * Caller is responsible for recreating the camera controls.
  */
 export function createSwitchedCamera(
   currentCamera: THREE.OrthographicCamera | THREE.PerspectiveCamera,
