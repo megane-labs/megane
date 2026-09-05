@@ -9,12 +9,12 @@ with a rubric, and the scorer grades the model's response on four dimensions.
 
 ## What it measures
 
-| Dimension | Weight | What it checks |
-|---|---|---|
-| **schema** | 0.35 | Structural validity — parses as a v3 pipeline, exactly one viewport, unique ids, known node types, **type-compatible edges** (reuses `canConnect`/`NODE_PORTS` from `src/pipeline/types.ts`), acyclic, every node reaches a viewport, required inputs connected. |
-| **task** | 0.35 | Task coverage — does the pipeline include the node types, connections, and size the request implies? |
-| **params** | 0.15 | Parameter accuracy — are individual node params right (filter queries, `bondSource`, `excludedCenters`, label `source`, scale/opacity, …)? |
-| **format** | 0.15 | Robustness / output-format compliance — fenced JSON-first output with a single trailing one-sentence explanation, no unclosed fences. |
+| Dimension  | Weight | What it checks                                                                                                                                                                                                                                                   |
+| ---------- | ------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **schema** | 0.35   | Structural validity — parses as a v3 pipeline, exactly one viewport, unique ids, known node types, **type-compatible edges** (reuses `canConnect`/`NODE_PORTS` from `src/pipeline/types.ts`), acyclic, every node reaches a viewport, required inputs connected. |
+| **task**   | 0.35   | Task coverage — does the pipeline include the node types, connections, and size the request implies?                                                                                                                                                             |
+| **params** | 0.15   | Parameter accuracy — are individual node params right (filter queries, `bondSource`, `excludedCenters`, label `source`, scale/opacity, …)?                                                                                                                       |
+| **format** | 0.15   | Robustness / output-format compliance — fenced JSON-first output with a single trailing one-sentence explanation, no unclosed fences.                                                                                                                            |
 
 A dimension with no applicable checks for a case is reported as `—` (n/a) and
 excluded from that case's weighted total (the total is renormalised over the
@@ -127,18 +127,15 @@ bench/llm/golden/<case id>/meta.json              fixture, expectation, capture 
 Adding ground truth to a case means dropping a folder named after it. There is
 no registry to update: `golden.ts` discovers the directory, joins each folder to
 its prompt by id, and throws if a folder names a case `dataset.ts` does not
-have. Today:
-
-| case | shows |
-| --- | --- |
-| `hide-water` | only the caffeine, in ball-and-stick |
-| `representation-water-line` | water as thin lines, caffeine untouched |
+have. **All 24 cases have all three files** — that pairing is CRITICAL RULE #12
+in `CLAUDE.md` and `tests/ts/bench/golden.test.ts` fails if any piece is missing.
 
 The pipelines are **captured, not hand-authored**: each is `store.serialize()`
-taken from the graph `tests/e2e/water-line.spec.ts` builds through the editor,
-from a fresh boot per case (`meta.json` records which). Hand-rolling them is how
-the first attempt went wrong three ways over — an atom field in a `bond_query`,
-a `bondSource` no fixture loads, and a `molecule_id` selection that
+taken from a graph built through the editor store — usually a
+`PIPELINE_TEMPLATES` entry (`store.applyTemplate`) plus the edits the prompt
+asks for, from a fresh boot per case; `meta.json` records which. Hand-rolling
+them is how the first attempt went wrong three ways over — an atom field in a
+`bond_query`, a `bondSource` no fixture loads, and a `molecule_id` selection that
 distance-inferred bonds break — none of it obvious from reading a graph.
 
 ```
@@ -154,13 +151,25 @@ lives in the E2E suite, so a case can be added, re-captured or experimented on
 without touching it.
 
 Every case also carries **counterexamples**: wrong pipelines derived from its
-reference by mutation, which must *not* draw it. Without them a green run would
+reference by mutation, which must _not_ draw it. Without them a green run would
 prove nothing — a comparison that accepts everything looks identical to one that
-works. The first is the bond query `water-line.spec.ts` itself shipped until
-PR #690, `both resname == "HOH"`: `resname` is an atom field, so the query threw,
-the branch produced nothing, and with the default bond edge already dropped the
-viewport rendered no bonds at all. The caffeine lost its sticks and the baseline
-recorded that as "only the caffeine shows".
+works. Most are generated from `meta.json`'s `answeringNodes`: delete the node
+that answers the prompt and the graph still validates, still runs, and draws the
+untreated view — which is exactly the failure the static rubric could not see.
+A handful are hand-written where deletion is not the wrong answer: `color-by-element`
+swaps the palette for a uniform colour, `crystal-polyhedra-exclude` empties the
+exclusion list, and `molecule-no-bonds` — whose right answer is an _absence_ —
+adds bonds back. The oldest is the bond query `water-line.spec.ts` itself shipped
+until PR #690, `both resname == "HOH"`: `resname` is an atom field, so the query
+threw, the branch produced nothing, and with the default bond edge already
+dropped the viewport rendered no bonds at all. The caffeine lost its sticks and
+the baseline recorded that as "only the caffeine shows".
+
+The counterexample check compares each wrong pipeline against a reference render
+taken **in the same page**, not against the committed PNG. Within a page the
+renderer is exactly repeatable (measured: five consecutive renders of one
+pipeline, byte-identical), so this isolates the pipeline difference from
+anything session-dependent.
 
 The pixel budget is **0.005 %**, not the E2E default. The caffeine is about 1 % of
 the frame, so the differences that matter are small in absolute terms: measured
@@ -175,28 +184,135 @@ then **look at the new image**. If a reference stops matching, re-capture
 the PNG; an image recorded from an unreviewed render is the exact failure mode
 this suite exists to catch.
 
+### Making a render mean something
+
+A picture is ground truth only if the same pipeline draws it again. Two things
+had to be pinned down before that was true, and `renderPipeline` now does both
+before every capture:
+
+- **Re-fit the camera.** `deserialize` does not re-frame the scene, and the
+  Viewport keeps its zoom when a new snapshot has the same topology as the last,
+  so framing is inherited from whatever ran before in the same page.
+  `molecule-basic` and `color-by-element` render byte-identical pixels, yet two
+  reference images captured in different batches differed by **10.9 %** — purely
+  in framing.
+- **Collapse the editor pane.** `MeganeViewer` reserves room for the pane by
+  insetting the camera frustum (`setViewInsets(0, pipelineWidth + 12)`), so the
+  pane's width is part of the projection. Collapsing takes the inset to zero and
+  takes the editor out of the screenshot, which is what makes the "two pipelines
+  laid out differently must score the same" rule above actually hold.
+
+Neither is enough for every case, and the remainder is not something this
+harness can fix. A handful of cases render one of exactly _two_ pictures
+depending on the session, differing by 2.5–13 %. Across four independent boots
+of those pipelines the store's viewport state is bit-identical (same atom count,
+same position checksums, same bond count, same mesh vertex and coordinate
+checksums), `__megane_test.getCameraState()` returns the same position, target
+and zoom to the last float, and `getVisibleSubsystems()` agrees — and the images
+still differ. Whatever flips is below the scene, in how coincident geometry
+rasterises.
+
+`meta.json` records the result per case as `imageStability`: how many
+independent boots the reference was rendered in, the worst pairwise difference
+between them, and whether the runner may assert the committed image. **16 of 24
+are asserted; 8 are recorded and not asserted.** The split is by fixture: every
+case on `caffeine_water.pdb` reproduced in every run made, and every case on
+another fixture differed in at least one. Three boots agreeing is not treated as
+evidence on its own — `crystal-distance-bonds` reproduced three times and then
+differed by 6.9 % on the next render. A case that does not reproduce keeps its
+image for review with `asserted: false` and a note saying what was measured; its
+counterexamples are still checked, against a reference rendered in the same
+page. Silently widening the pixel budget to absorb an unstable render would turn
+the suite green without making it true.
+
+Two cases carry `imageDiscriminates: false`. `molecule-trajectory` and
+`vectors-forces` depend on data a `SerializedPipeline` does not carry —
+trajectory frames and `fileVectors` — which `deserialize` clears, so
+`load_trajectory` and `load_vector` draw nothing after the round trip. The
+product drops them the same way (`PipelineChatBox` re-attaches only the loaded
+structure), so no pipeline can draw a different picture for those prompts:
+`vectors-forces` renders byte-identically to `molecule-basic`. Their rubrics are
+the only grading available, and the metadata says so rather than implying the
+image is doing work.
+
+### What rendering the answers turned up
+
+Building a picture for every prompt surfaced things a rubric cannot see. They
+are recorded here because anyone extending the bench will hit them:
+
+- **Particle streams merge; bond streams concatenate.** Two branches into
+  `viewport.particle` are merged per atom and any non-1.0 opacity wins, so a
+  fade-the-complement branch works beside a full-opacity base. Two branches into
+  `viewport.bond` are _appended_ — the bond count doubles and nothing is hidden —
+  so a bond selection has to be routed through the filter rather than added
+  beside the raw `add_bond` edge.
+- **The cartoon representation ignores upstream filters.** It is built from the
+  primary structure snapshot, not from the particle stream, so no `filter` in
+  front of it narrows the ribbon. This is why `filter-residue` cannot be answered
+  on the `protein` template and is built the way `filter-carbon` is. Labels are
+  the other way round: `label_generator` does honour the filter feeding it, which
+  is what lets `multistep-filter-bonds` label only the carbons.
+- **The bond DSL has no `resname`.** `BOND_FIELDS` is `bond_index`,
+  `atom_index`, `element`, `molecule_id`, and `both` takes a field rather than a
+  parenthesised expression. "Only the alanines, bonds included" therefore has to
+  be spelled with atom-index ranges — `filter-residue` uses 1UBQ's Ala28
+  (211–215) and Ala46 (358–362).
+- **An assistant edit drops the loaded trajectory and forces.**
+  `PipelineChatBox` re-attaches only the structure snapshot across
+  `deserialize`, so frames and `fileVectors` are lost while the loader keeps
+  `hasTrajectory: true`. The harness mirrors this deliberately — grading against
+  a picture the product cannot produce would be grading the wrong thing — and it
+  is why `molecule-trajectory` and `vectors-forces` carry
+  `imageDiscriminates: false`.
+- **A node whose parameters fail to parse contributes nothing rather than
+  failing.** An earlier `filter-residue` reference carried a `bond_query` the DSL
+  rejects and still drew a plausible picture; only `collectPipelineErrors` in
+  the unit tests saw it. That is the check to keep green — reading node errors
+  from the running store is not equivalent, because a node whose _input_ a
+  `SerializedPipeline` cannot carry (`load_trajectory`, `load_volumetric`) warns
+  intermittently for reasons that have nothing to do with the reference.
+- **Not every case can be graded by pixels, and two more turned out that way
+  while capturing.** `crystal-polyhedra-exclude` moves about 34 pixels between
+  excluding titanium as a coordination centre and not excluding it — the
+  strontium-centred polyhedra already cover the same volume in that projection —
+  against 4.2 % of render-to-render noise, so the signal is a thousandth of the
+  noise. `volumetric-isosurface` cannot draw an isosurface at all after the round
+  trip; both its nodes report having no input.
+- **A reference has to be re-checked under the conditions it was captured in.**
+  The runner originally shared one page across cases and `filter-carbon` failed
+  against its own image while reproducing byte-for-byte across three fresh
+  boots: the Viewport keeps its framing when a new snapshot has the same
+  topology as the last, so a reference rendered second inherits the previous
+  pipeline's view. The runner now boots one page per case.
+
 ### Rubric corrections found by rendering
 
 Auditing all 24 cases against the real renderer turned up rubrics that graded a
 pipeline which does not produce the requested view. Seven were corrected:
 
-| cases | what the rubric accepted | fix |
-| --- | --- | --- |
-| `filter-carbon`, `filter-residue`, `filter-oxygen-nitrogen`, `filter-carbon-ja`, `multistep-filter-bonds` | `load_structure → filter → viewport`, at full marks. A bare filter *selects*; it does not change what is drawn — selecting 8 carbons and selecting 1006 oxygens+nitrogens differ from each other by **0.002 %** of pixels | require the selection to feed a node that changes the drawing (`modify`, `color` or `representation`) |
-| `hide-water`, `multistep-water-transparent` | the particle branch alone, leaving the solvent's bonds drawn at full opacity | require the bond branch, with a `bond_query` on a field that exists |
+| cases                                                                                                     | what the rubric accepted                                                                                                                                                                                                  | fix                                                                                                   |
+| --------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------- |
+| `filter-carbon`, `filter-residue`, `filter-oxygen-nitrogen`, `filter-carbon-ja`, `multistep-filter-bonds` | `load_structure → filter → viewport`, at full marks. A bare filter _selects_; it does not change what is drawn — selecting 8 carbons and selecting 1006 oxygens+nitrogens differ from each other by **0.002 %** of pixels | require the selection to feed a node that changes the drawing (`modify`, `color` or `representation`) |
+| `hide-water`, `multistep-water-transparent`                                                               | the particle branch alone, leaving the solvent's bonds drawn at full opacity                                                                                                                                              | require the bond branch, with a `bond_query` on a field that exists                                   |
 
 `ConnectionReq.targetType` accepts a list so the first fix can require that a
-selection is *used* without dictating which node uses it. Pinning one shape is
+selection is _used_ without dictating which node uses it. Pinning one shape is
 how a rubric ends up scoring a correct pipeline below a broken one: before this,
 `hide-water` gave the working answer 96.1 % and the broken one 100 %.
 
-Two cases were **investigated and left alone**:
+An eighth was found while capturing the images:
 
-- `color-by-element` renders identically to the default view (0.000 % on two
-  fixtures) because `byElement` is already the default palette. The request is
-  satisfied by the default, so requiring the explicit node is the only check
-  available; there is no visual signal to add.
-- `crystal-distance-bonds` and `crystal-polyhedra` could not be settled here.
-  The control view already carries the `add_bond` node `deserialize` injects, so
-  a probe cannot isolate it, and no fixture in `tests/fixtures/` is a perovskite
-  for the polyhedra case.
+| case                        | what the rubric accepted                                                                                                                                                                                                                                                                       | fix                                                                  |
+| --------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------- |
+| `crystal-polyhedra-exclude` | `polyhedron_generator.excludedCenters` contains 22. That parameter does not exist on Polyhedron Generator — `excludedCenters` belongs to `CoordinationGeneratorParams`, the node that searches for centre/ligand pairs — so the check could not pass for _any_ pipeline, correct ones included | check `coordination_generator.excludedCenters`, and require the node |
+
+Two earlier notes are **superseded by measurement**:
+
+- `color-by-element` was recorded as rendering identically to the default view.
+  It does not. Captured through the harness on `caffeine_water.pdb`, the
+  reference and the same graph with the colour node deleted differ, so the case
+  does have a visual signal and carries a counterexample like every other.
+- `crystal-distance-bonds` and `crystal-polyhedra` were recorded as
+  "could not be settled here". They are settled now:
+  `tests/fixtures/perovskite_srtio3_3x3x3.xyz` is the perovskite the earlier note
+  said was missing, and both cases carry a reference and a counterexample.

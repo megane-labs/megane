@@ -1,0 +1,13 @@
+{
+  "fixture": "caffeine_water.pdb",
+  "expectation": "Only the carbon atoms and the bonds between them; every other element hidden.",
+  "capturedFrom": "pipeline template \"molecule\" applied via store.applyTemplate, then edited through the editor store",
+  "imageStability": {
+    "boots": 3,
+    "worstDiffPercent": 0.0,
+    "asserted": true
+  },
+  "answeringNodes": [
+    "filter"
+  ]
+}

@@ -1,0 +1,171 @@
+{
+  "version": 3,
+  "nodes": [
+    {
+      "type": "load_structure",
+      "fileName": "1ubq.pdb",
+      "hasTrajectory": false,
+      "hasCell": true,
+      "id": "loader-1",
+      "position": {
+        "x": -190,
+        "y": 0
+      },
+      "enabled": true
+    },
+    {
+      "type": "symmetry",
+      "mode": "expand",
+      "id": "symmetry-1",
+      "position": {
+        "x": -190,
+        "y": 360
+      },
+      "enabled": true
+    },
+    {
+      "type": "wrap",
+      "mode": "none",
+      "id": "wrap-1",
+      "position": {
+        "x": -190,
+        "y": 720
+      },
+      "enabled": true
+    },
+    {
+      "type": "viewport",
+      "perspective": false,
+      "cellAxesVisible": true,
+      "pivotMarkerVisible": true,
+      "id": "viewport-1",
+      "position": {
+        "x": -190,
+        "y": 2160
+      },
+      "enabled": true
+    },
+    {
+      "type": "add_bond",
+      "bondSource": "distance",
+      "id": "node-1",
+      "position": {
+        "x": 600,
+        "y": 400
+      },
+      "enabled": true
+    },
+    {
+      "type": "filter",
+      "query": "not resname == \"ALA\"",
+      "bond_query": "",
+      "id": "node-2",
+      "position": {
+        "x": 200,
+        "y": 400
+      },
+      "enabled": true
+    },
+    {
+      "type": "modify",
+      "scale": 1,
+      "opacity": 0,
+      "id": "node-3",
+      "position": {
+        "x": 200,
+        "y": 560
+      },
+      "enabled": true
+    },
+    {
+      "type": "filter",
+      "query": "",
+      "bond_query": "not ((both atom_index >= 211 and both atom_index <= 215) or (both atom_index >= 358 and both atom_index <= 362))",
+      "id": "node-4",
+      "position": {
+        "x": 800,
+        "y": 400
+      },
+      "enabled": true
+    },
+    {
+      "type": "modify",
+      "scale": 1,
+      "opacity": 0,
+      "id": "node-5",
+      "position": {
+        "x": 800,
+        "y": 560
+      },
+      "enabled": true
+    }
+  ],
+  "edges": [
+    {
+      "source": "loader-1",
+      "target": "symmetry-1",
+      "sourceHandle": "particle",
+      "targetHandle": "particle"
+    },
+    {
+      "source": "symmetry-1",
+      "target": "wrap-1",
+      "sourceHandle": "particle",
+      "targetHandle": "particle"
+    },
+    {
+      "source": "loader-1",
+      "target": "viewport-1",
+      "sourceHandle": "cell",
+      "targetHandle": "cell"
+    },
+    {
+      "source": "wrap-1",
+      "target": "viewport-1",
+      "sourceHandle": "particle",
+      "targetHandle": "particle"
+    },
+    {
+      "source": "wrap-1",
+      "target": "node-1",
+      "sourceHandle": "particle",
+      "targetHandle": "particle"
+    },
+    {
+      "source": "wrap-1",
+      "target": "node-2",
+      "sourceHandle": "particle",
+      "targetHandle": "in"
+    },
+    {
+      "source": "node-2",
+      "target": "node-3",
+      "sourceHandle": "out",
+      "targetHandle": "in"
+    },
+    {
+      "source": "node-3",
+      "target": "viewport-1",
+      "sourceHandle": "out",
+      "targetHandle": "particle"
+    },
+    {
+      "source": "node-1",
+      "target": "node-4",
+      "sourceHandle": "bond",
+      "targetHandle": "in"
+    },
+    {
+      "source": "node-4",
+      "target": "node-5",
+      "sourceHandle": "out",
+      "targetHandle": "in"
+    },
+    {
+      "source": "node-5",
+      "target": "viewport-1",
+      "sourceHandle": "out",
+      "targetHandle": "bond"
+    }
+  ]
+}

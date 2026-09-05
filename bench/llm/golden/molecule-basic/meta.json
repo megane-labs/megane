@@ -1,0 +1,13 @@
+{
+  "fixture": "caffeine_water.pdb",
+  "expectation": "Caffeine in water with its chemical bonds drawn.",
+  "capturedFrom": "pipeline template \"molecule\" applied via store.applyTemplate, then edited through the editor store",
+  "imageStability": {
+    "boots": 3,
+    "worstDiffPercent": 0.0,
+    "asserted": true
+  },
+  "answeringNodes": [
+    "add_bond"
+  ]
+}

@@ -1,0 +1,12 @@
+{
+  "fixture": "caffeine_water.pdb",
+  "expectation": "The structure with bonds and a trajectory loaded, so the timeline can play frames.",
+  "capturedFrom": "pipeline template \"molecule\" applied via store.applyTemplate, then edited through the editor store",
+  "imageStability": {
+    "boots": 3,
+    "worstDiffPercent": 0.0,
+    "asserted": true
+  },
+  "imageDiscriminates": false,
+  "discriminationNote": "a SerializedPipeline carries the load_trajectory node but not its frames, and deserialize clears them, so after the round trip this pipeline draws exactly what molecule-basic draws — measured byte-identical. The product drops the frames the same way (PipelineChatBox re-attaches only the loaded structure), so no pipeline can draw a different picture for this prompt and the image grades nothing"
+}

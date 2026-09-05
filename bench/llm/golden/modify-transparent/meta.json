@@ -1,0 +1,13 @@
+{
+  "fixture": "caffeine_water.pdb",
+  "expectation": "The whole structure semi-transparent, so overlapping atoms show through.",
+  "capturedFrom": "pipeline template \"molecule\" applied via store.applyTemplate, then edited through the editor store",
+  "imageStability": {
+    "boots": 3,
+    "worstDiffPercent": 0.0,
+    "asserted": true
+  },
+  "answeringNodes": [
+    "modify"
+  ]
+}

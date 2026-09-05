@@ -1,0 +1,14 @@
+{
+  "fixture": "1ubq.pdb",
+  "expectation": "The protein drawn as a cartoon ribbon.",
+  "capturedFrom": "pipeline template \"protein\" applied via store.applyTemplate, then edited through the editor store",
+  "imageStability": {
+    "boots": 3,
+    "worstDiffPercent": 19.1891,
+    "asserted": false,
+    "note": "did not reproduce in every run. The pipeline is not what varies: across independent boots the store's viewport state is bit-identical (same atom count, same position checksums, same bond count, same mesh vertex and coordinate checksums) and __megane_test.getCameraState() returns the same position, target and zoom to the last float — but that API does not report the orthographic frustum, and the framing is what differs. Clicking Reset View changes neither mode (before and after are byte-identical), so the fit is settled by the time it runs. The split is by fixture: every case on caffeine_water.pdb reproduced in every run made, and every case on another fixture differed in at least one — including cases whose three-boot sample agreed, which is why agreement alone is not treated as evidence here (crystal-distance-bonds reproduced three times and then differed by 6.9% on the next render)"
+  },
+  "answeringNodes": [
+    "representation"
+  ]
+}

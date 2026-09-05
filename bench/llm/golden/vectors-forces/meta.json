@@ -1,0 +1,12 @@
+{
+  "fixture": "caffeine_water.pdb",
+  "expectation": "The structure with a Load Vector -> Vectors overlay wired to the Viewport's vector channel. No arrows are drawn: the forces file is not part of the pipeline JSON, so the overlay has nothing to draw.",
+  "capturedFrom": "pipeline template \"molecule\" applied via store.applyTemplate, then load_vector + vector_overlay added through the editor store and wired to viewport.vector",
+  "imageStability": {
+    "boots": 3,
+    "worstDiffPercent": 0.0,
+    "asserted": true
+  },
+  "imageDiscriminates": false,
+  "discriminationNote": "load_vector reads fileVectors, which is ephemeral store state a SerializedPipeline does not carry and deserialize clears, so vector_overlay emits nothing and this pipeline draws the plain structure. The product behaves the same way, so the image grades nothing"
+}

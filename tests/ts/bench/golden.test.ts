@@ -32,6 +32,12 @@ const edgesInto = (p: SerializedPipeline, type: string, handle: string) =>
   });
 
 describe("bench ground truth", () => {
+  // This is the check that catches a reference megane would reject at runtime,
+  // and it has already earned its keep: a `filter-residue` rebuild shipped
+  // `both ((atom_index >= 211 and ...))`, which the bond DSL rejects — `both`
+  // takes a field, not a parenthesised expression. The render looked plausible
+  // anyway, because a node whose params fail to parse contributes nothing
+  // rather than failing the draw, so only the validator saw it.
   it("captures references megane's own validators accept", () => {
     for (const v of GOLDEN_CASES) {
       expect(collectPipelineErrors(v.pipeline), v.caseId).toEqual([]);
@@ -59,10 +65,77 @@ describe("bench ground truth", () => {
     }
   });
 
-  it("gives every view a counterexample and a stated expectation", () => {
+  it("gives every case a counterexample and a stated expectation", () => {
     for (const v of GOLDEN_CASES) {
-      expect(v.counterexamples.length, `${v.caseId} has no negative control`).toBeGreaterThan(0);
       expect(v.expectation.length, `${v.caseId} has no stated expectation`).toBeGreaterThan(0);
+      if (v.imageDiscriminates === false) {
+        // Allowed only with the reason written down: these are the cases whose
+        // answer depends on ephemeral data a SerializedPipeline does not carry,
+        // so no pipeline can draw a different picture and a negative control
+        // would be a lie rather than a check.
+        expect(
+          v.discriminationNote?.length ?? 0,
+          `${v.caseId} claims its image cannot discriminate but does not say why`,
+        ).toBeGreaterThan(0);
+        continue;
+      }
+      expect(v.counterexamples.length, `${v.caseId} has no negative control`).toBeGreaterThan(0);
+    }
+  });
+
+  // The images are only worth what their reproducibility is worth, and six of
+  // them are not reproducible across boots (translucent generated meshes flip
+  // the order atoms composite against them). Recording the number is what keeps
+  // an unassertable image from quietly becoming an asserted one.
+  it("records what repeated renders of each reference measured", () => {
+    for (const v of GOLDEN_CASES) {
+      const s = v.imageStability;
+      expect(s, `${v.caseId} records no image stability`).toBeDefined();
+      if (s.asserted) {
+        expect(s.boots, `${v.caseId} asserts an image it never re-rendered`).toBeGreaterThanOrEqual(
+          2,
+        );
+        expect(
+          s.worstDiffPercent,
+          `${v.caseId} asserts an image that did not reproduce`,
+        ).toBeLessThanOrEqual(0.005);
+      } else {
+        expect(
+          s.note?.length ?? 0,
+          `${v.caseId} withholds its image assertion but does not say why`,
+        ).toBeGreaterThan(0);
+      }
+    }
+  });
+
+  // A counterexample derived by deleting the answering node has to stay a
+  // *runnable* pipeline: one megane accepts, that draws the untreated view.
+  // A graph that fails validation would be rejected for the wrong reason.
+  it("keeps every derived counterexample a pipeline megane accepts", () => {
+    for (const v of GOLDEN_CASES) {
+      for (const wrong of v.counterexamples) {
+        if (wrong.label.startsWith("invalid bond query")) continue;
+        expect(collectPipelineErrors(wrong.pipeline), `${v.caseId}: ${wrong.label}`).toEqual([]);
+      }
+    }
+  });
+
+  it("removes the answering node in the generated counterexamples", () => {
+    for (const v of GOLDEN_CASES) {
+      for (const type of v.answeringNodes ?? []) {
+        const wrong = v.counterexamples.find(
+          (c) => c.label === `no ${type} node: the graph runs and answers nothing`,
+        );
+        expect(wrong, `${v.caseId} has no counterexample for ${type}`).toBeDefined();
+        expect(
+          v.pipeline.nodes.some((n) => n.type === type),
+          `${v.caseId} names ${type} as an answering node but has none`,
+        ).toBe(true);
+        expect(
+          wrong!.pipeline.nodes.some((n) => n.type === type),
+          `${v.caseId}: the ${type} counterexample still has one`,
+        ).toBe(false);
+      }
     }
   });
 

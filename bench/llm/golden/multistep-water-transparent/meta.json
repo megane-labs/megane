@@ -1,0 +1,10 @@
+{
+  "fixture": "caffeine_water.pdb",
+  "expectation": "Caffeine fully opaque; the water's atoms and its bonds both faded to 20%.",
+  "capturedFrom": "tests/e2e/water-line.spec.ts construction at opacity 0.2, fresh boot, store.serialize()",
+  "imageStability": {
+    "boots": 3,
+    "worstDiffPercent": 0.0,
+    "asserted": true
+  }
+}

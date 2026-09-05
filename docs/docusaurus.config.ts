@@ -79,6 +79,12 @@ const config: Config = {
           position: "left",
           label: "Reference",
         },
+        {
+          type: "docSidebar",
+          sidebarId: "benchSidebar",
+          position: "left",
+          label: "Benchmark",
+        },
         { to: "/gallery", label: "Gallery", position: "left" },
         {
           href: "https://megane-labs.github.io/megane/app/",

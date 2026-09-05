@@ -1,0 +1,14 @@
+{
+  "fixture": "caffeine_water.pdb",
+  "expectation": "Only the caffeine's carbons, with the bonds between them, each labelled \"C\". Every other atom, its bonds, and its label are gone.",
+  "capturedFrom": "pipeline template \"molecule\" applied via store.applyTemplate, then edited through the editor store. The label branch was rebuilt afterwards: it was fed the whole particle stream, so every atom in the box was labelled \"H\" or \"O\" rather than the carbons being labelled \"C\". Labels, unlike the cartoon representation, do honour an upstream filter, so a filter selecting the carbons now feeds the generator.",
+  "imageStability": {
+    "boots": 3,
+    "worstDiffPercent": 0.0,
+    "asserted": true
+  },
+  "answeringNodes": [
+    "filter",
+    "label_generator"
+  ]
+}

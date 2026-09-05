@@ -1,5 +1,10 @@
 {
   "fixture": "caffeine_water.pdb",
   "expectation": "Only the caffeine, in ball-and-stick — the solvent's atoms and its bonds are both gone, and the caffeine keeps its own 25 bonds.",
-  "capturedFrom": "tests/e2e/water-line.spec.ts :: water-hidden, fresh boot, store.serialize()"
+  "capturedFrom": "tests/e2e/water-line.spec.ts :: water-hidden, fresh boot, store.serialize()",
+  "imageStability": {
+    "boots": 3,
+    "worstDiffPercent": 0.0,
+    "asserted": true
+  }
 }
