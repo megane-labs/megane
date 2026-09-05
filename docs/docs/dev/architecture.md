@@ -304,7 +304,7 @@ the same PR. The full per-host registration checklist lives in the
 | **Bond impostor** | `src/renderer/ImpostorBondMesh.ts` |
 | **Shaders** | `src/renderer/shaders.ts` |
 | **Multi-structure** | `src/renderer/StructureLayer.ts` |
-| **Camera/controls** | `src/renderer/CameraManager.ts` |
+| **Camera/controls** | `src/renderer/CameraManager.ts` (fit, insets, zoom), `src/renderer/cameraOrientation.ts` (VESTA standard orientation, ±a/±b/±c and ±x/±y/±z views) |
 | **Picking** | `src/renderer/Picking.ts` |
 | **Element data** | `src/constants.ts` (colors, vdW radii, bond params) |
 | **WASM parsers** | `crates/megane-core/`, `crates/megane-wasm/` |

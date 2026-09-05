@@ -14,7 +14,10 @@ import { Viewport } from "./Viewport";
 import { Timeline } from "./Timeline";
 import { Tooltip } from "./Tooltip";
 import { MeasurementPanel } from "./MeasurementPanel";
+import { ViewAxisControls } from "./ViewAxisControls";
+import { OVERLAY_INSET } from "./overlayLayout";
 import { MoleculeRenderer, type MeganeCameraState } from "../renderer/MoleculeRenderer";
+import { latticeVectors, type ViewAxis } from "../renderer/cameraOrientation";
 import { useAtomSelection } from "../hooks/useAtomSelection";
 import {
   useFrameDistanceBonds,
@@ -349,6 +352,13 @@ export function WidgetViewer({
 
   const effectiveSnapshot = storeSnapshot ?? snapshot;
 
+  // Axis alignment moves the camera like a drag does; the renderer's
+  // camera-change callback then syncs `camera_state` back to Python.
+  const handleAlignView = useCallback((axis: ViewAxis) => {
+    rendererRef.current?.alignCameraToAxis(axis);
+  }, []);
+  const hasCell = latticeVectors(effectiveSnapshot?.box) !== null;
+
   return (
     <div
       data-testid="megane-viewer"
@@ -391,6 +401,12 @@ export function WidgetViewer({
           onStepForward={handleStepForward}
         />
       )}
+      <div
+        data-testid="view-controls"
+        style={{ position: "absolute", top: OVERLAY_INSET, left: OVERLAY_INSET, zIndex: 10 }}
+      >
+        <ViewAxisControls hasCell={hasCell} onAlign={handleAlignView} />
+      </div>
       <Tooltip info={hoverInfo} />
       <MeasurementPanel
         selection={selection}

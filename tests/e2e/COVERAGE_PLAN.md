@@ -36,8 +36,8 @@ Highlights:
 
 - `__megane_test` namespace + `__megane_test_pipeline_store` exposing
   `getProjectedAtomPositions`, `getCameraState`,
-  `getVisibleSubsystems`, `setCameraMode`, `resetCamera`, and
-  programmatic pipeline editing.
+  `getVisibleSubsystems`, `setCameraMode`, `resetCamera`, `alignCamera`
+  (issue #661 axis views), and programmatic pipeline editing.
 - `AppearancePanel` mounted in `MeganeViewer` (webapp /
   jupyterlab-doc / vscode shell).
 - `MolecularViewer.load()` dispatches by extension (PDB / GRO / XYZ /
@@ -203,6 +203,9 @@ The OrbitControls drag path is non-deterministic. Either:
 - Tests:
   - [x] perspective ↔ ortho switch baseline parity **(PR #309)**
   - [x] resetCamera restores fitted target (delta < 1e-3) **(PR #309)**
+  - [x] initial view is the VESTA standard orientation of the fixture cell;
+        `alignCamera('+c')` and the ±a…±z buttons turn the camera onto an
+        axis keeping target / distance / zoom **(issue #661)**
   - [ ] pivot animation (smooth lerp) renderEpoch increments
   - [ ] frustum-inset baseline (camera respects sidebar width)
 

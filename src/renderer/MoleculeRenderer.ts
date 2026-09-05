@@ -54,8 +54,11 @@ import {
   zoomOrthographicAroundTarget,
   wheelZoomFactor,
   dollyPerspectiveTowardTarget,
+  orientCamera,
+  currentOrientation,
   type ViewExtent,
 } from "./CameraManager";
+import { axisOrientation, type ViewAxis } from "./cameraOrientation";
 
 const _testMode = (() => {
   try {
@@ -211,6 +214,7 @@ export interface MeganeTestApi {
   getVisibleSubsystems: () => MeganeSubsystemVisibility;
   setCameraMode: (mode: MeganeCameraMode) => void;
   resetCamera: () => void;
+  alignCamera: (axis: ViewAxis) => void;
   getRendererMemory: () => MeganeRendererMemory | null;
 }
 
@@ -246,6 +250,7 @@ function _setActiveRenderer(r: MoleculeRenderer | null): void {
             },
       setCameraMode: (mode) => _activeRenderer?.setCameraMode(mode),
       resetCamera: () => _activeRenderer?.resetCamera(),
+      alignCamera: (axis) => _activeRenderer?.alignCameraToAxis(axis),
       getRendererMemory: () => {
         const info = _activeRenderer?.getRenderer().info.memory;
         return info ? { geometries: info.geometries, textures: info.textures } : null;
@@ -672,8 +677,12 @@ export class MoleculeRenderer {
       this.fitToView(snapshot);
     } else {
       // Camera untouched, but the extent drives zoom clamping elsewhere —
-      // keep it in sync with the new positions.
-      this.lastExtent = computeViewBounds(snapshot).extent;
+      // keep it in sync with the new positions (measured in the view the
+      // camera is actually in, not the standard orientation).
+      this.lastExtent = computeViewBounds(
+        snapshot,
+        currentOrientation(this.camera, this.controls) ?? undefined,
+      ).extent;
     }
   }
 
@@ -2227,6 +2236,25 @@ export class MoleculeRenderer {
     }
     this._frustumPanX = 0;
     this._frustumPanY = 0;
+    this._cameraChangeCallback?.();
+  }
+
+  /**
+   * Turn the camera to look along a crystallographic (`±a`, `±b`, `±c`) or
+   * Cartesian (`±x`, `±y`, `±z`) axis, keeping the current target, distance
+   * and zoom. The crystal axes come from the loaded snapshot's cell; without
+   * one they coincide with x/y/z. See `cameraOrientation.ts` for the sign
+   * and up-vector conventions.
+   */
+  alignCameraToAxis(axis: ViewAxis): void {
+    if (!this.camera || !this.controls) return;
+    const orientation = axisOrientation(axis, this.snapshot?.box ?? null);
+    orientCamera(this.camera, this.controls, orientation);
+    if (this.snapshot) {
+      // Resize / inset handling re-fits the orthographic frustum from
+      // lastExtent, which is measured along the screen axes.
+      this.lastExtent = computeViewBounds(this.snapshot, orientation).extent;
+    }
     this._cameraChangeCallback?.();
   }
 

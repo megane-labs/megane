@@ -10,9 +10,12 @@
  * pixels.
  *
  * Cases:
- *   - Initial state: orthographic, target near origin
+ *   - Initial state: orthographic, target near origin, VESTA standard
+ *     orientation derived from the fixture's cell (issue #661)
  *   - setCameraMode('perspective') flips mode and re-fits
  *   - resetCamera() returns target to the snapshot center after pan
+ *   - alignCamera('+c') / the ±a…±z buttons turn the camera onto an axis
+ *     keeping the distance (issue #661)
  *   - a vertical left-drag rotates past the pole (issue #662)
  *
  * Widget hosts skip — WidgetViewer also exposes the renderer test API,
@@ -32,11 +35,41 @@ import {
   getReadyState,
 } from "./lib/setup";
 import { bootHost, getHost, type HostBoot } from "./lib/host-fixture";
-import { getCameraState, getProjectedAtoms, resetCamera, setCameraMode } from "./lib/render-utils";
+import {
+  alignCamera,
+  getCameraState,
+  getProjectedAtoms,
+  resetCamera,
+  setCameraMode,
+  type CameraState,
+} from "./lib/render-utils";
 
 const PLATFORM = "camera";
 const FIXTURE = "caffeine_water.pdb";
 const FIXTURE_ATOMS = 3024;
+
+/** VESTA standard orientation angles (see src/renderer/cameraOrientation.ts). */
+const AZIMUTH = Math.atan(1 / 3);
+const ELEVATION = Math.atan(1 / 6);
+
+/** Unit vector from the target to the camera. */
+function eyeOf(s: CameraState): [number, number, number] {
+  const d = [s.position[0] - s.target[0], s.position[1] - s.target[1], s.position[2] - s.target[2]];
+  const len = Math.hypot(d[0], d[1], d[2]);
+  return [d[0] / len, d[1] / len, d[2] / len];
+}
+
+function distanceOf(s: CameraState): number {
+  return Math.hypot(
+    s.position[0] - s.target[0],
+    s.position[1] - s.target[1],
+    s.position[2] - s.target[2],
+  );
+}
+
+function expectVec(got: ArrayLike<number>, want: ArrayLike<number>, digits = 3) {
+  for (let i = 0; i < 3; i++) expect(got[i]).toBeCloseTo(want[i], digits);
+}
 
 test.describe.configure({ mode: "serial" });
 
@@ -77,6 +110,25 @@ test("camera: default state is orthographic and viewer-region baseline matches",
   await expectFullPageMatch(boot!.scope, PLATFORM, `${getHost()}-orthographic`);
 });
 
+/**
+ * Issue #661: the initial view is VESTA's standard orientation computed from
+ * the fixture's CRYST1 cell (44 × 44 × 44 Å, orthogonal): +c up, +b right,
+ * eye swung by arctan(1/3) toward +b and raised by arctan(1/6).
+ */
+test("camera: initial view is the standard orientation of the cell", async () => {
+  if (!boot) test.skip(true, "boot not initialised");
+  const state = (await getCameraState(boot!.scope))!;
+  const cosA = Math.cos(AZIMUTH);
+  const sinA = Math.sin(AZIMUTH);
+  const cosE = Math.cos(ELEVATION);
+  const sinE = Math.sin(ELEVATION);
+  expectVec(eyeOf(state), [cosE * cosA, cosE * sinA, sinE]);
+  expect(state.up).toBeDefined();
+  expectVec(state.up!, [-sinE * cosA, -sinE * sinA, cosE]);
+  // The target is the cell centre.
+  expectVec(state.target, [44.042 / 2, 44.046 / 2, 44.45 / 2], 2);
+});
+
 test("camera: setCameraMode('perspective') flips mode and re-fits", async () => {
   if (!boot) test.skip(true, "boot not initialised");
   const before = await getReadyState(boot!.scope);
@@ -108,6 +160,63 @@ test("camera: resetCamera() restores fitted view", async () => {
   }
   await stabilizeUi(boot!.scope);
   await expectFullPageMatch(boot!.scope, PLATFORM, `${getHost()}-reset`);
+});
+
+/**
+ * Issue #661: aligning with an axis only turns the camera — target, distance
+ * and zoom stay — and "+c" puts the camera above the cell looking down c
+ * with b up.
+ */
+test("camera: alignCamera('+c') looks down the c axis keeping the distance", async () => {
+  if (!boot) test.skip(true, "boot not initialised");
+  const scope = boot!.scope;
+  await resetCamera(scope);
+  await scope.waitForTimeout(200);
+  const before = (await getCameraState(scope))!;
+
+  await alignCamera(scope, "+c");
+  await scope.waitForTimeout(200);
+  const after = (await getCameraState(scope))!;
+
+  expectVec(eyeOf(after), [0, 0, 1]);
+  expectVec(after.up!, [0, 1, 0]);
+  expectVec(after.target, before.target);
+  expect(distanceOf(after)).toBeCloseTo(distanceOf(before), 3);
+  expect(after.zoom).toBeCloseTo(before.zoom, 6);
+  await stabilizeUi(scope);
+  await expectFullPageMatch(scope, PLATFORM, `${getHost()}-align-c`);
+});
+
+/**
+ * Issue #661: the axis buttons in the viewer chrome drive the same operation.
+ * The fixture carries a cell, so both the crystal and the Cartesian rows are
+ * present; "-a" puts the camera on the -a side of the cell.
+ */
+test("camera: axis buttons align the camera", async () => {
+  if (!boot) test.skip(true, "boot not initialised");
+  const scope = boot!.scope;
+  await assertDomContract(scope, [
+    { testid: "view-axis-controls", visible: true },
+    { testid: "view-axis-row-lattice", visible: true },
+    { testid: "view-axis-row-cartesian", visible: true },
+  ]);
+  await resetCamera(scope);
+  await scope.waitForTimeout(200);
+  const before = (await getCameraState(scope))!;
+
+  await scope.locator('[data-testid="view-axis--a"]').click();
+  await scope.waitForTimeout(200);
+  const alongA = (await getCameraState(scope))!;
+  expectVec(eyeOf(alongA), [-1, 0, 0]);
+  expectVec(alongA.up!, [0, 0, 1]);
+  expect(distanceOf(alongA)).toBeCloseTo(distanceOf(before), 3);
+
+  await scope.locator('[data-testid="view-axis-+y"]').click();
+  await scope.waitForTimeout(200);
+  const alongY = (await getCameraState(scope))!;
+  expectVec(eyeOf(alongY), [0, 1, 0]);
+  expectVec(alongY.up!, [0, 0, 1]);
+  expectVec(alongY.target, before.target);
 });
 
 /**
@@ -176,10 +285,11 @@ test("camera: orthographic wheel zoom-out restores atoms (no reset needed)", asy
 
 /**
  * Issue #662: rotation must not stop at the ±c-axis poles. The fitted view
- * looks along +y with z up; a vertical left-drag tilts the camera over the
- * z pole. OrbitControls clamped the polar angle there, so the camera could
- * never reach the far side (position.y > target.y). The trackball controls
- * keep turning, so repeated upward drags eventually put it there.
+ * sits slightly above the ab plane with c up; a vertical left-drag tilts the
+ * camera over the c pole. OrbitControls clamped the polar angle there, so
+ * the camera could never reach the far side of the cell (its horizontal
+ * offset from the target flipped sign). The trackball controls keep turning,
+ * so repeated upward drags eventually put it there.
  */
 test("camera: left-drag rotates continuously across the pole", async () => {
   if (!boot) test.skip(true, "boot not initialised");
@@ -239,14 +349,18 @@ test("camera: left-drag rotates continuously across the pole", async () => {
   const { cx, yFrom, yTo } = pick;
 
   const start = (await getCameraState(scope))!;
-  const distance = (s: NonNullable<typeof start>) =>
-    Math.hypot(
-      s.position[0] - s.target[0],
-      s.position[1] - s.target[1],
-      s.position[2] - s.target[2],
-    );
-  const startDistance = distance(start);
-  expect(start.position[1]).toBeLessThan(start.target[1]);
+  const startDistance = distanceOf(start);
+  // Horizontal (ab-plane) direction the camera starts on; a vertical drag
+  // rotates in the plane spanned by it and c, so once the camera is over the
+  // pole its offset along this direction goes negative.
+  const startEye = eyeOf(start);
+  const hLen = Math.hypot(startEye[0], startEye[1]);
+  const h0 = [startEye[0] / hLen, startEye[1] / hLen];
+  const side = (s: CameraState) => {
+    const e = eyeOf(s);
+    return e[0] * h0[0] + e[1] * h0[1];
+  };
+  expect(side(start)).toBeGreaterThan(0);
 
   let crossed = false;
   for (let i = 0; i < 8 && !crossed; i++) {
@@ -257,13 +371,13 @@ test("camera: left-drag rotates continuously across the pole", async () => {
     // Let the render loop consume the final pointer segment.
     await scope.waitForTimeout(200);
     const s = (await getCameraState(scope))!;
-    crossed = s.position[1] > s.target[1];
+    crossed = side(s) < 0;
   }
   expect(crossed).toBe(true);
 
   const end = (await getCameraState(scope))!;
   // A pure rotation keeps the camera on the same sphere around the pivot.
-  expect(distance(end)).toBeCloseTo(startDistance, 3);
+  expect(distanceOf(end)).toBeCloseTo(startDistance, 3);
   expect(end.target[0]).toBeCloseTo(start.target[0], 3);
   expect(end.target[1]).toBeCloseTo(start.target[1], 3);
   expect(end.target[2]).toBeCloseTo(start.target[2], 3);

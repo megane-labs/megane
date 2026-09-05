@@ -6,18 +6,33 @@
 import * as THREE from "three";
 import type { CameraControlsLike } from "./CameraControls";
 import type { Snapshot } from "../types";
-
-/** World-space up axis of the canonical (fitted / reset) view. */
-export const DEFAULT_CAMERA_UP: readonly [number, number, number] = [0, 0, 1];
+import {
+  orientationFromPose,
+  screenRight,
+  standardOrientation,
+  type CameraOrientation,
+} from "./cameraOrientation";
 
 export interface ViewExtent {
+  /** Largest world-axis-aligned extent; sizes the fit distance and clipping. */
   maxExtent: number;
+  /** Extent along screen-right for the orientation the bounds were computed for. */
   extentX: number;
+  /** Extent along screen-up for the orientation the bounds were computed for. */
   extentY: number;
 }
 
-/** Compute bounding box and center for a snapshot. */
-export function computeViewBounds(snapshot: Snapshot): {
+/**
+ * Compute bounding box and center for a snapshot.
+ *
+ * `extentX` / `extentY` are measured along the screen axes of `orientation`
+ * (default: the structure's standard orientation), so the orthographic
+ * frustum fit stays tight in any view; `maxExtent` is the world AABB.
+ */
+export function computeViewBounds(
+  snapshot: Snapshot,
+  orientation: CameraOrientation = standardOrientation(snapshot.box),
+): {
   center: [number, number, number];
   extent: ViewExtent;
 } {
@@ -39,6 +54,27 @@ export function computeViewBounds(snapshot: Snapshot): {
   let maxX = -Infinity,
     maxY = -Infinity,
     maxZ = -Infinity;
+  // Screen-space extents along the orientation's right / up axes.
+  const right = screenRight(orientation);
+  const up = orientation.up;
+  let minR = Infinity,
+    maxR = -Infinity,
+    minU = Infinity,
+    maxU = -Infinity;
+  const track = (x: number, y: number, z: number) => {
+    minX = Math.min(minX, x);
+    minY = Math.min(minY, y);
+    minZ = Math.min(minZ, z);
+    maxX = Math.max(maxX, x);
+    maxY = Math.max(maxY, y);
+    maxZ = Math.max(maxZ, z);
+    const r = x * right[0] + y * right[1] + z * right[2];
+    const u = x * up[0] + y * up[1] + z * up[2];
+    minR = Math.min(minR, r);
+    maxR = Math.max(maxR, r);
+    minU = Math.min(minU, u);
+    maxU = Math.max(maxU, u);
+  };
 
   const hasBox = snapshot.box && snapshot.box.some((v) => v !== 0);
 
@@ -62,15 +98,11 @@ export function computeViewBounds(snapshot: Snapshot): {
     for (let ia = 0; ia <= 1; ia++) {
       for (let ib = 0; ib <= 1; ib++) {
         for (let ic = 0; ic <= 1; ic++) {
-          const vx = ox + ia * va[0] + ib * vb[0] + ic * vc[0];
-          const vy = oy + ia * va[1] + ib * vb[1] + ic * vc[1];
-          const vz = oz + ia * va[2] + ib * vb[2] + ic * vc[2];
-          minX = Math.min(minX, vx);
-          minY = Math.min(minY, vy);
-          minZ = Math.min(minZ, vz);
-          maxX = Math.max(maxX, vx);
-          maxY = Math.max(maxY, vy);
-          maxZ = Math.max(maxZ, vz);
+          track(
+            ox + ia * va[0] + ib * vb[0] + ic * vc[0],
+            oy + ia * va[1] + ib * vb[1] + ic * vc[1],
+            oz + ia * va[2] + ib * vb[2] + ic * vc[2],
+          );
         }
       }
     }
@@ -80,48 +112,41 @@ export function computeViewBounds(snapshot: Snapshot): {
     cz = nAtoms > 0 ? sumZ / nAtoms : 0;
 
     for (let i = 0; i < nAtoms; i++) {
-      const x = positions[i * 3];
-      const y = positions[i * 3 + 1];
-      const z = positions[i * 3 + 2];
-      minX = Math.min(minX, x);
-      minY = Math.min(minY, y);
-      minZ = Math.min(minZ, z);
-      maxX = Math.max(maxX, x);
-      maxY = Math.max(maxY, y);
-      maxZ = Math.max(maxZ, z);
+      track(positions[i * 3], positions[i * 3 + 1], positions[i * 3 + 2]);
     }
   }
 
-  const extentX = maxX - minX;
-  const extentY = maxY - minY;
-  const extentZ = maxZ - minZ;
-  const maxExtent = Math.max(extentX, extentY, extentZ);
+  const maxExtent = Math.max(maxX - minX, maxY - minY, maxZ - minZ);
 
   return {
     center: [cx, cy, cz],
-    extent: { maxExtent, extentX, extentY },
+    extent: { maxExtent, extentX: maxR - minR, extentY: maxU - minU },
   };
 }
 
-/** Fit the camera to show all atoms (or simulation cell if present).
+/**
+ * Fit the camera to show all atoms (or simulation cell if present).
  *
- * Restores the canonical orientation (looking along +y with z up). The
- * trackball controls rotate `camera.up` freely, so without resetting it a
+ * Restores `orientation` — by default the structure's standard orientation
+ * (VESTA's "Standard orientation of crystal shape", see `cameraOrientation.ts`).
+ * The trackball controls rotate `camera.up` freely, so without resetting it a
  * re-fit after a few drags would keep the current roll.
  */
 export function fitCameraToView(
   camera: THREE.OrthographicCamera | THREE.PerspectiveCamera,
   controls: CameraControlsLike,
   snapshot: Snapshot,
+  orientation: CameraOrientation = standardOrientation(snapshot.box),
 ): ViewExtent {
-  const { center, extent } = computeViewBounds(snapshot);
+  const { center, extent } = computeViewBounds(snapshot, orientation);
   const [cx, cy, cz] = center;
 
   controls.target.set(cx, cy, cz);
 
   const distance = Math.max(extent.maxExtent * 1.2, 0.1);
-  camera.position.set(cx, cy - distance, cz);
-  camera.up.set(...DEFAULT_CAMERA_UP);
+  const [ex, ey, ez] = orientation.eye;
+  camera.position.set(cx + ex * distance, cy + ey * distance, cz + ez * distance);
+  camera.up.set(...orientation.up);
 
   if (camera instanceof THREE.OrthographicCamera) {
     camera.near = -distance * 10;
@@ -135,6 +160,40 @@ export function fitCameraToView(
   controls.update();
 
   return extent;
+}
+
+/**
+ * Turn the camera to `orientation` around the current target, keeping its
+ * distance (perspective) and zoom (orthographic) so only the viewing
+ * direction changes — the "align with axis" operation, as opposed to the
+ * full re-fit of {@link fitCameraToView}.
+ *
+ * A camera sitting exactly on its target has no distance to keep; it is
+ * backed off by 1 unit so the orientation is still applied.
+ */
+export function orientCamera(
+  camera: THREE.OrthographicCamera | THREE.PerspectiveCamera,
+  controls: CameraControlsLike,
+  orientation: CameraOrientation,
+): void {
+  const target = controls.target;
+  const distance = camera.position.distanceTo(target) || 1;
+  const [ex, ey, ez] = orientation.eye;
+  camera.position.set(target.x + ex * distance, target.y + ey * distance, target.z + ez * distance);
+  camera.up.set(...orientation.up);
+  controls.update();
+}
+
+/** The orientation a camera currently has relative to its controls target. */
+export function currentOrientation(
+  camera: THREE.OrthographicCamera | THREE.PerspectiveCamera,
+  controls: Pick<CameraControlsLike, "target">,
+): CameraOrientation | null {
+  return orientationFromPose(
+    camera.position.toArray(),
+    controls.target.toArray(),
+    camera.up.toArray(),
+  );
 }
 
 /**

@@ -19,8 +19,10 @@ import { Tooltip } from "./Tooltip";
 import { MeasurementPanel } from "./MeasurementPanel";
 import { MeasurementListPanel } from "./MeasurementListPanel";
 import { PerfHud } from "./PerfHud";
+import { ViewAxisControls } from "./ViewAxisControls";
 import { OVERLAY_INSET, PERF_HUD_LEFT_DEFAULT, MEASUREMENT_BOTTOM_DEFAULT } from "./overlayLayout";
 import { MoleculeRenderer, isMeganeTestMode } from "../renderer/MoleculeRenderer";
+import { latticeVectors, type ViewAxis } from "../renderer/cameraOrientation";
 import type { StructureParseResult } from "../parsers/structure";
 import {
   useFrameDistanceBonds,
@@ -68,6 +70,11 @@ export interface MeganeViewerUiOptions {
   pipelineEditor: boolean;
   /** "Reset View" button in the top-left corner. */
   resetView: boolean;
+  /**
+   * Axis-alignment buttons (±a/±b/±c while a cell is loaded, ±x/±y/±z always)
+   * under the Reset View button.
+   */
+  viewAxes: boolean;
   /** Perf HUD readout — atom count, bond count, draw calls, FPS. */
   perfHud: boolean;
   /** Playback timeline (scrubber, play/pause, fps) along the bottom. */
@@ -90,6 +97,7 @@ export interface MeganeViewerUiOptions {
 export const DEFAULT_MEGANE_VIEWER_UI: Readonly<MeganeViewerUiOptions> = Object.freeze({
   pipelineEditor: true,
   resetView: true,
+  viewAxes: true,
   perfHud: true,
   timeline: true,
   tooltip: true,
@@ -205,6 +213,7 @@ export function MeganeViewer({
   // and hide a tool the documented contract keeps visible.
   const showPipelineEditor = ui?.pipelineEditor ?? DEFAULT_MEGANE_VIEWER_UI.pipelineEditor;
   const showResetView = ui?.resetView ?? DEFAULT_MEGANE_VIEWER_UI.resetView;
+  const showViewAxes = ui?.viewAxes ?? DEFAULT_MEGANE_VIEWER_UI.viewAxes;
   const showPerfHud = ui?.perfHud ?? DEFAULT_MEGANE_VIEWER_UI.perfHud;
   const showTimeline = ui?.timeline ?? DEFAULT_MEGANE_VIEWER_UI.timeline;
   const showTooltip = ui?.tooltip ?? DEFAULT_MEGANE_VIEWER_UI.tooltip;
@@ -550,6 +559,16 @@ export function MeganeViewer({
     viewStateApi.getState().clearViewState();
   }, [viewStateApi]);
 
+  // Alignment is a camera move like a drag: the renderer fires its
+  // camera-change callback, which persists the new pose the usual way.
+  const handleAlignView = useCallback((axis: ViewAxis) => {
+    rendererRef.current?.alignCameraToAxis(axis);
+  }, []);
+
+  // The a/b/c row only makes sense with a real cell; without one the crystal
+  // axes would just duplicate x/y/z.
+  const hasCell = latticeVectors(snapshot?.box) !== null;
+
   // Timeline renders nothing for a single-frame structure (its own
   // `totalFrames <= 1` guard), so the overlays below it must key on whether the
   // strip is actually on screen — not just on the `ui.timeline` switch, which
@@ -619,30 +638,46 @@ export function MeganeViewer({
           opacity: 0,
         }}
       />
-      {showResetView && (
-        <button
-          data-testid="reset-view-btn"
-          title="Reset view (fit to structure)"
-          onClick={handleResetView}
+      {(showResetView || showViewAxes) && (
+        // Reset View and the axis buttons stack in the top-left corner; the
+        // column keeps the button exactly where it always was (the perf HUD's
+        // default `left` is tuned to clear it) and hangs the axis rows below.
+        <div
+          data-testid="view-controls"
           style={{
             position: "absolute",
-            top: 12,
-            left: 12,
-            padding: "4px 8px",
-            fontSize: 11,
-            lineHeight: 1,
-            background: "rgba(255,255,255,0.85)",
-            border: "1px solid rgba(0,0,0,0.15)",
-            borderRadius: 4,
-            cursor: "pointer",
-            color: "#374151",
-            backdropFilter: "blur(4px)",
+            top: OVERLAY_INSET,
+            left: OVERLAY_INSET,
+            display: "flex",
+            flexDirection: "column",
+            alignItems: "flex-start",
+            gap: 4,
             zIndex: 10,
-            userSelect: "none",
           }}
         >
-          Reset View
-        </button>
+          {showResetView && (
+            <button
+              data-testid="reset-view-btn"
+              title="Reset view (fit to structure, standard orientation)"
+              onClick={handleResetView}
+              style={{
+                padding: "4px 8px",
+                fontSize: 11,
+                lineHeight: 1,
+                background: "rgba(255,255,255,0.85)",
+                border: "1px solid rgba(0,0,0,0.15)",
+                borderRadius: 4,
+                cursor: "pointer",
+                color: "#374151",
+                backdropFilter: "blur(4px)",
+                userSelect: "none",
+              }}
+            >
+              Reset View
+            </button>
+          )}
+          {showViewAxes && <ViewAxisControls hasCell={hasCell} onAlign={handleAlignView} />}
+        </div>
       )}
       {showPerfHud && (
         <PerfHud

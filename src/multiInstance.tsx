@@ -68,7 +68,7 @@ function Panel({ label, stores }: PanelProps) {
           <MeganeViewer
             onUploadStructure={handleUploadStructure}
             testContext="multi-instance"
-            ui={{ pipelineEditor: false, perfHud: false, resetView: false }}
+            ui={{ pipelineEditor: false, perfHud: false, resetView: false, viewAxes: false }}
             width="100%"
             height="100%"
           />
