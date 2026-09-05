@@ -107,3 +107,59 @@ actor against the `LLM_EVAL_ALLOWED_USERS` repository variable — a JSON array
 of GitHub usernames (e.g. `["alice","bob"]`), defaulting to `["hodakamori"]`
 if the variable is unset. Applying the `llm-eval` label as a user not in this
 list does not run the job.
+
+## Ground truth (what the score cannot see)
+
+The scorer above grades the **shape** of a pipeline: which node types exist, how
+they are wired, what their parameters say. It never draws anything, so it cannot
+tell a pipeline that answers the request from one that draws the opposite.
+
+`bench/llm/golden/` holds the other half — the pipelines a correct answer
+produces, as `SerializedPipeline` JSON, for the dataset's two molecule-selection
+requests:
+
+| file | answers | shows |
+| --- | --- | --- |
+| `water-hidden.megane.json` | `hide-water` | only the caffeine, in ball-and-stick |
+| `water-line.megane.json` | `representation-water-line` | water as thin lines, caffeine untouched |
+
+These are **captured, not hand-authored**. Each is `store.serialize()` taken from
+the graph `tests/e2e/water-line.spec.ts` builds through the editor, from a fresh
+boot per view. Hand-rolling them is how the first attempt went wrong three ways
+over — an atom field in a `bond_query`, a `bondSource` no fixture loads, and a
+`molecule_id` selection that distance-inferred bonds break — none of which is
+obvious from reading a graph.
+
+```
+npm run build:app                 # the spec renders the built webapp
+npm run test:e2e:bench-golden
+```
+
+`tests/e2e/bench-golden.spec.ts` loads each reference as serialized JSON — the
+same form a model emits — renders it, and compares against
+`tests/e2e/baselines/bench-golden/`. That round trip is the point: it is what
+lets the bench grade generated JSON against a reviewed image.
+
+Every view also carries **counterexamples**: wrong pipelines derived from the
+reference by mutation, which must *not* draw it. Without them a green run would
+prove nothing — a comparison that accepts everything looks identical to one that
+works. The first is the bond query `water-line.spec.ts` itself shipped until
+PR #690, `both resname == "HOH"`: `resname` is an atom field, so the query threw,
+the branch produced nothing, and with the default bond edge already dropped the
+viewport rendered no bonds at all. The caffeine lost its sticks and the baseline
+recorded that as "only the caffeine shows".
+
+The pixel budget is **0.005 %**, not the E2E default. The caffeine is about 1 % of
+the frame, so the differences that matter are small in absolute terms: measured
+on this fixture a reference re-rendered against its own baseline differs by
+0.000 %, while the closest wrong pipeline — the one that drops the caffeine's 25
+sticks — differs by 0.023 %. Raise the budget and the suite stops separating
+them.
+
+To re-record a baseline after an intended change, delete the PNG (or set
+`MEGANE_E2E_UPDATE=1`) and re-run — then **look at the new image**. If a
+reference stops matching, re-capture `golden/*.megane.json` from the spec rather
+than re-recording the PNG; a reference recorded from an unreviewed render is the
+exact failure mode this suite exists to catch. The project is not part of
+`test:e2e:ci:webapp`; wiring it in also needs `tests/e2e/baselines-ci/bench-golden/`
+recorded by the "E2E update baselines" workflow.

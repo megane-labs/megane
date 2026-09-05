@@ -1,0 +1,201 @@
+{
+  "version": 3,
+  "nodes": [
+    {
+      "type": "load_structure",
+      "fileName": "caffeine_water.pdb",
+      "hasTrajectory": false,
+      "hasCell": true,
+      "id": "loader-1",
+      "position": {
+        "x": -190,
+        "y": 0
+      },
+      "enabled": true
+    },
+    {
+      "type": "load_trajectory",
+      "fileName": "",
+      "source": "file",
+      "id": "traj-1",
+      "position": {
+        "x": -190,
+        "y": 360
+      },
+      "enabled": true
+    },
+    {
+      "type": "symmetry",
+      "mode": "expand",
+      "id": "symmetry-1",
+      "position": {
+        "x": -190,
+        "y": 720
+      },
+      "enabled": true
+    },
+    {
+      "type": "wrap",
+      "mode": "none",
+      "id": "wrap-1",
+      "position": {
+        "x": -190,
+        "y": 1080
+      },
+      "enabled": true
+    },
+    {
+      "type": "replicate",
+      "nx": 1,
+      "ny": 1,
+      "nz": 1,
+      "id": "replicate-1",
+      "position": {
+        "x": -190,
+        "y": 1440
+      },
+      "enabled": true
+    },
+    {
+      "type": "add_bond",
+      "bondSource": "structure",
+      "id": "addbond-1",
+      "position": {
+        "x": -190,
+        "y": 1800
+      },
+      "enabled": true
+    },
+    {
+      "type": "viewport",
+      "perspective": false,
+      "cellAxesVisible": true,
+      "pivotMarkerVisible": true,
+      "id": "viewport-1",
+      "position": {
+        "x": -190,
+        "y": 2160
+      },
+      "enabled": true
+    },
+    {
+      "type": "filter",
+      "query": "resname == \"HOH\"",
+      "bond_query": "",
+      "id": "node-1",
+      "position": {
+        "x": 425,
+        "y": 2360
+      },
+      "enabled": true
+    },
+    {
+      "type": "representation",
+      "mode": "line",
+      "id": "node-2",
+      "position": {
+        "x": 425,
+        "y": 2560
+      },
+      "enabled": true
+    }
+  ],
+  "edges": [
+    {
+      "source": "loader-1",
+      "target": "symmetry-1",
+      "sourceHandle": "particle",
+      "targetHandle": "particle"
+    },
+    {
+      "source": "loader-1",
+      "target": "replicate-1",
+      "sourceHandle": "cell",
+      "targetHandle": "cell"
+    },
+    {
+      "source": "loader-1",
+      "target": "traj-1",
+      "sourceHandle": "particle",
+      "targetHandle": "particle"
+    },
+    {
+      "source": "symmetry-1",
+      "target": "wrap-1",
+      "sourceHandle": "particle",
+      "targetHandle": "particle"
+    },
+    {
+      "source": "wrap-1",
+      "target": "replicate-1",
+      "sourceHandle": "particle",
+      "targetHandle": "particle"
+    },
+    {
+      "source": "replicate-1",
+      "target": "addbond-1",
+      "sourceHandle": "particle",
+      "targetHandle": "particle"
+    },
+    {
+      "source": "replicate-1",
+      "target": "viewport-1",
+      "sourceHandle": "particle",
+      "targetHandle": "particle"
+    },
+    {
+      "source": "replicate-1",
+      "target": "viewport-1",
+      "sourceHandle": "cell",
+      "targetHandle": "cell"
+    },
+    {
+      "source": "addbond-1",
+      "target": "viewport-1",
+      "sourceHandle": "bond",
+      "targetHandle": "bond"
+    },
+    {
+      "source": "traj-1",
+      "target": "symmetry-1",
+      "sourceHandle": "trajectory",
+      "targetHandle": "trajectory"
+    },
+    {
+      "source": "symmetry-1",
+      "target": "wrap-1",
+      "sourceHandle": "trajectory",
+      "targetHandle": "trajectory"
+    },
+    {
+      "source": "wrap-1",
+      "target": "replicate-1",
+      "sourceHandle": "trajectory",
+      "targetHandle": "trajectory"
+    },
+    {
+      "source": "replicate-1",
+      "target": "viewport-1",
+      "sourceHandle": "trajectory",
+      "targetHandle": "trajectory"
+    },
+    {
+      "source": "replicate-1",
+      "target": "node-1",
+      "sourceHandle": "particle",
+      "targetHandle": "in"
+    },
+    {
+      "source": "node-1",
+      "target": "node-2",
+      "sourceHandle": "out",
+      "targetHandle": "in"
+    },
+    {
+      "source": "node-2",
+      "target": "viewport-1",
+      "sourceHandle": "out",
+      "targetHandle": "particle"
+    }
+  ]
+}
