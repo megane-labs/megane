@@ -441,7 +441,7 @@ describe("providers", () => {
     it("defaults to anthropic when MEGANE_LLM_PROVIDER is unset", () => {
       const config = configFromEnv({ ANTHROPIC_API_KEY: "sk-ant-x" });
       expect(config.provider).toBe("anthropic");
-      expect(config.model).toBe("claude-sonnet-4-20250514");
+      expect(config.model).toBe("claude-haiku-4-5");
       expect(config.apiKey).toBe("sk-ant-x");
     });
 
@@ -588,6 +588,16 @@ describe("providers", () => {
       expect(Array.isArray(calls[0].body.tools)).toBe(true);
     });
 
+    /** loader -> viewport: the smallest graph the self-check accepts as-is. */
+    const CLEAN_PIPELINE_JSON = JSON.stringify({
+      version: 3,
+      nodes: [
+        { id: "l1", type: "load_structure", position: { x: 0, y: 0 } },
+        { id: "v1", type: "viewport", position: { x: 0, y: 310 } },
+      ],
+      edges: [{ source: "l1", target: "v1", sourceHandle: "particle", targetHandle: "particle" }],
+    });
+
     it("answers a tool_calls round trip with the skill body and returns the follow-up text", async () => {
       const skillName = buildOpenAITools(loadSkills())[0].function.name;
       let round = 0;
@@ -619,7 +629,9 @@ describe("providers", () => {
             { status: 200 },
           );
         }
-        return completion("```json\n{}\n```");
+        // A pipeline that passes the self-check, so this test exercises the
+        // tool round trip only and no repair round is triggered.
+        return completion("```json\n" + CLEAN_PIPELINE_JSON + "\n```\nShows it.");
       }) as unknown as typeof fetch;
 
       const text = await generatePipelineLive(

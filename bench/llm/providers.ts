@@ -16,6 +16,7 @@
  */
 
 import { buildSystemPrompt } from "@/ai/prompt";
+import { diagnoseResponse } from "@/ai/client";
 import {
   buildOpenAITools,
   buildToolDefinitions,
@@ -35,6 +36,9 @@ export const PLAMO_API_URL = "https://api.platform.preferredai.jp/v1/chat/comple
 
 /** Default PLaMo model — the largest-context id that supports tool calling. */
 export const DEFAULT_PLAMO_MODEL = "plamo-3.0-prime";
+
+/** Default Anthropic model — the cheapest current Claude for a 24-case sweep. */
+export const DEFAULT_ANTHROPIC_MODEL = "claude-haiku-4-5";
 
 /** OpenRouter's OpenAI-compatible Chat Completions endpoint. */
 export const OPENROUTER_API_URL = "https://openrouter.ai/api/v1/chat/completions";
@@ -57,6 +61,24 @@ export type FetchLike = typeof fetch;
 
 const MAX_TOOL_ROUNDS = 4;
 
+/**
+ * Output ceiling for the Anthropic path, matching `src/ai/client.ts`.
+ *
+ * Current Claude models think adaptively unless told otherwise, and thinking
+ * tokens are billed against `max_tokens` — a ceiling sized for the pipeline
+ * JSON alone truncates the answer mid-object, which scores as a format failure
+ * rather than the model error it actually is.
+ */
+const ANTHROPIC_MAX_TOKENS = 16000;
+
+/**
+ * Repair rounds the benchmark allows, matching `MAX_REPAIR_ROUNDS` in
+ * `src/ai/client.ts`. Kept as its own constant rather than imported so a
+ * deliberate change to production behaviour shows up as a benchmark diff to
+ * review, not a silent shift in what the scores mean.
+ */
+const MAX_REPAIR_ROUNDS = 2;
+
 /** Resolve a provider config from environment variables. */
 export function configFromEnv(
   env: Record<string, string | undefined> = process.env,
@@ -65,7 +87,7 @@ export function configFromEnv(
   if (provider === "anthropic") {
     return {
       provider,
-      model: env.MEGANE_LLM_MODEL || "claude-sonnet-4-20250514",
+      model: env.MEGANE_LLM_MODEL || DEFAULT_ANTHROPIC_MODEL,
       apiKey: env.ANTHROPIC_API_KEY,
     };
   }
@@ -113,6 +135,16 @@ export function assertConfig(config: ProviderConfig): void {
 }
 
 /**
+ * Counters a caller can pass in to observe how a generation went. Recorded per
+ * case in the JSON report so a score change can be attributed to the repair
+ * loop instead of guessed at — without it, a regression and an unlucky first
+ * sample look identical.
+ */
+export interface GenerationStats {
+  repairRounds: number;
+}
+
+/**
  * Generate a pipeline response for one prompt. Returns the full model text
  * (JSON code block + trailing explanation), ready to hand to the scorer.
  */
@@ -120,13 +152,37 @@ export async function generatePipelineLive(
   config: ProviderConfig,
   userMessage: string,
   fetchImpl: FetchLike = fetch,
+  stats?: GenerationStats,
 ): Promise<string> {
   const system = buildSystemPrompt();
   const skills = loadSkills();
-  if (config.provider === "anthropic") {
-    return runAnthropic(config, system, userMessage, skills, fetchImpl);
+
+  // One live conversation, driven the same way production drives it: generate,
+  // check the result, and feed any findings back into the *same* history so the
+  // model repairs its own pipeline. Without this the benchmark would score the
+  // raw first attempt and miss what users actually get.
+  const anthropicMessages: Array<{ role: string; content: unknown }> = [];
+  const openAIMessages: OpenAIMessage[] = [{ role: "system", content: system }];
+  const send = (message: string): Promise<string> => {
+    if (config.provider === "anthropic") {
+      anthropicMessages.push({ role: "user", content: message });
+      return runAnthropic(config, system, anthropicMessages, skills, fetchImpl);
+    }
+    openAIMessages.push({ role: "user", content: message });
+    return runOpenAICompat(config, openAIMessages, skills, fetchImpl);
+  };
+
+  let text = await send(userMessage);
+  for (let round = 0; round < MAX_REPAIR_ROUNDS; round++) {
+    // No structure is loaded in the benchmark, so this runs the static half of
+    // the self-check (schema, query syntax, edge typing, overlapping branches,
+    // graph wiring) plus the unparsable-JSON retry.
+    const findings = diagnoseResponse(text, {});
+    if (!findings) break;
+    if (stats) stats.repairRounds += 1;
+    text = await send(findings.prompt);
   }
-  return runOpenAICompat(config, system, userMessage, skills, fetchImpl);
+  return text;
 }
 
 // ─── Anthropic ────────────────────────────────────────────────────────
@@ -142,19 +198,16 @@ interface AnthropicContentBlock {
 async function runAnthropic(
   config: ProviderConfig,
   system: string,
-  userMessage: string,
+  messages: Array<{ role: string; content: unknown }>,
   skills: BenchSkill[],
   fetchImpl: FetchLike,
 ): Promise<string> {
   const tools = buildToolDefinitions(skills);
-  const messages: Array<{ role: string; content: unknown }> = [
-    { role: "user", content: userMessage },
-  ];
 
   for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
     const body: Record<string, unknown> = {
       model: config.model,
-      max_tokens: 4096,
+      max_tokens: ANTHROPIC_MAX_TOKENS,
       system,
       messages,
     };
@@ -182,7 +235,10 @@ async function runAnthropic(
       .map((b) => b.text ?? "")
       .join("");
 
-    if (data.stop_reason !== "tool_use") return text;
+    if (data.stop_reason !== "tool_use") {
+      messages.push({ role: "assistant", content: text });
+      return text;
+    }
 
     // Echo assistant content, answer each tool_use with the skill body.
     messages.push({ role: "assistant", content: data.content });
@@ -215,16 +271,11 @@ interface OpenAIMessage {
 
 async function runOpenAICompat(
   config: ProviderConfig,
-  system: string,
-  userMessage: string,
+  messages: OpenAIMessage[],
   skills: BenchSkill[],
   fetchImpl: FetchLike,
 ): Promise<string> {
   const tools = buildOpenAITools(skills);
-  const messages: OpenAIMessage[] = [
-    { role: "system", content: system },
-    { role: "user", content: userMessage },
-  ];
   const isDemo = config.provider === "demo";
   const url = isDemo
     ? config.proxyUrl!
@@ -254,7 +305,9 @@ async function runOpenAICompat(
     const msg = choice.message;
 
     if (choice.finish_reason !== "tool_calls" || !msg.tool_calls?.length) {
-      return msg.content ?? "";
+      const text = msg.content ?? "";
+      messages.push({ role: "assistant", content: text });
+      return text;
     }
 
     messages.push({ role: "assistant", content: msg.content ?? null, tool_calls: msg.tool_calls });

@@ -6,7 +6,12 @@
 import type { AIConfig } from "./config";
 import type { SerializedPipeline } from "../pipeline/types";
 import { buildSystemPrompt } from "./prompt";
-import { collectPipelineErrors, buildRepairPrompt } from "./validatePipeline";
+import {
+  collectPipelineErrors,
+  buildRepairPrompt,
+  buildUnparsablePipelinePrompt,
+} from "./validatePipeline";
+import type { SelfCheckContext } from "./selfCheck";
 import {
   getSkills,
   buildToolDefinitions,
@@ -51,14 +56,109 @@ interface AnthropicStreamResult {
 // ─── Public API ──────────────────────────────────────────────────────
 
 /**
+ * How many times the model may be asked to repair its own pipeline before we
+ * stop and hand back whatever it last produced. Each round is a full request,
+ * so this bounds both latency and cost; two is enough for the failures the
+ * self-check finds in practice (a mistyped edge or an overlapping branch is
+ * fixed in one, and a second round covers a fix that introduces a new problem).
+ */
+export const MAX_REPAIR_ROUNDS = 2;
+
+/**
+ * Message budget the demo proxy enforces (`MAX_MESSAGES` in
+ * `workers/llm-proxy/src/proxy.ts`); exceeding it makes the proxy reject the
+ * request outright. A repair round costs two slots (the assistant reply plus
+ * the repair prompt) and the model may spend two more on a skill round trip,
+ * so the session stops repairing while fewer than four remain.
+ */
+const DEMO_MAX_MESSAGES = 12;
+
+/**
+ * One ongoing conversation with a provider.
+ *
+ * `send` appends a user message, drives the skill tool-use loop, records the
+ * assistant's reply, and returns its text — so a repair round is simply a
+ * second `send` on the same session, and the model still has its own JSON, the
+ * skill templates it fetched, and the original request in view. (The previous
+ * implementation restarted the conversation for the repair pass and had to
+ * paste the broken pipeline back in, which threw away everything else.)
+ */
+interface GenerationSession {
+  send(message: string, onChunk: (text: string) => void, signal?: AbortSignal): Promise<string>;
+  /** False when another round would exceed the provider's message budget. */
+  hasRoomForAnotherRound(): boolean;
+}
+
+/** Open a session against whichever provider the config selects. */
+function createSession(
+  config: AIConfig,
+  systemPrompt: string,
+  skills: PipelineSkill[],
+): GenerationSession {
+  if (config.provider === "anthropic") {
+    const tools = buildToolDefinitions(skills);
+    const messages: AnthropicMessage[] = [];
+    return {
+      send: (message, onChunk, signal) => {
+        messages.push({ role: "user", content: message });
+        return streamAnthropicWithSkills(
+          config,
+          systemPrompt,
+          messages,
+          skills,
+          tools,
+          onChunk,
+          signal,
+        );
+      },
+      hasRoomForAnotherRound: () => true,
+    };
+  }
+
+  // OpenAI-compatible providers (and the PLaMo/OpenRouter-backed demo proxy)
+  // speak the OpenAI tool-calling protocol, so the model fetches skill
+  // templates on demand via function calls — the same on-demand behaviour
+  // as the Anthropic path, no inlining required.
+  const tools = buildOpenAITools(skills);
+  const isDemo = config.provider === "demo";
+  const messages: OpenAIChatMessage[] = [{ role: "system", content: systemPrompt }];
+  const send: OpenAISender = isDemo ? demoProxySender() : openAISender(config);
+
+  return {
+    send: (message, onChunk, signal) => {
+      messages.push({ role: "user", content: message });
+      return streamOpenAICompatWithSkills(
+        send,
+        // The demo proxy chooses the model server-side.
+        isDemo ? undefined : config.model,
+        messages,
+        skills,
+        tools,
+        onChunk,
+        signal,
+      );
+    },
+    hasRoomForAnotherRound: () => !isDemo || messages.length + 4 <= DEMO_MAX_MESSAGES,
+  };
+}
+
+/**
  * Generate a pipeline by calling the LLM API with streaming.
- * Returns the full response text.
+ * Returns the full response text of the final round.
  *
  * When `structureSummary` is provided it is appended to the system prompt so
  * the model can reference the real elements/resnames present when building
- * filter queries. After generation, the resulting pipeline's selection queries
- * are validated; if any are invalid, one repair round trip is performed asking
- * the model to fix them.
+ * filter queries.
+ *
+ * After each round the pipeline is checked — schema, selection-query syntax,
+ * edge typing, overlapping viewport branches, and (when `checkContext` carries
+ * a loaded structure) what the executor actually reports when the graph is run.
+ * Anything found is fed back into the same conversation and the model is asked
+ * to fix it, up to {@link MAX_REPAIR_ROUNDS} times. A response with no pipeline
+ * in it is left alone, so plain-text replies are unaffected.
+ *
+ * `onRepairRound` fires just before each repair request goes out, so the caller
+ * can discard the partial output of the round being replaced.
  */
 export async function generatePipeline(
   config: AIConfig,
@@ -66,76 +166,101 @@ export async function generatePipeline(
   onChunk: (text: string) => void,
   signal?: AbortSignal,
   structureSummary?: string | null,
+  checkContext: SelfCheckContext = {},
+  onRepairRound?: (round: number, errors: string[]) => void,
 ): Promise<string> {
   const systemPrompt = buildSystemPrompt(structureSummary);
   const skills = getSkills();
+  const session = createSession(config, systemPrompt, skills);
 
-  // Dispatch one streamed generation for a given user message. Reused for the
-  // optional repair pass with a different (correction) message.
-  const runProvider = (message: string): Promise<string> => {
-    if (config.provider === "anthropic") {
-      const tools = buildToolDefinitions(skills);
-      return streamAnthropicWithSkills(
-        config,
-        systemPrompt,
-        message,
-        skills,
-        tools,
-        onChunk,
-        signal,
-      );
-    }
+  let text = await session.send(userMessage, onChunk, signal);
 
-    // OpenAI-compatible providers (and the PLaMo/OpenRouter-backed demo proxy)
-    // speak the OpenAI tool-calling protocol, so the model fetches skill
-    // templates on demand via function calls — the same on-demand behaviour
-    // as the Anthropic path, no inlining required.
-    const tools = buildOpenAITools(skills);
-    if (config.provider === "demo") {
-      return streamDemoProxy(systemPrompt, message, skills, tools, onChunk, signal);
-    }
-    return streamOpenAI(config, systemPrompt, message, skills, tools, onChunk, signal);
-  };
-
-  const text = await runProvider(userMessage);
-
-  // Validate the generated pipeline (structure + selection queries) and, if any
-  // problems are found, ask the model once to repair them. Only fires when a
-  // pipeline was actually produced, so plain text responses are unaffected.
-  const pipeline = tryExtractPipeline(text);
-  if (pipeline) {
-    const errors = collectPipelineErrors(pipeline);
-    if (errors.length > 0) {
-      return runProvider(buildRepairPrompt(userMessage, pipeline, errors));
-    }
+  for (let round = 1; round <= MAX_REPAIR_ROUNDS; round++) {
+    const findings = diagnoseResponse(text, checkContext);
+    if (!findings) break;
+    if (!session.hasRoomForAnotherRound()) break;
+    onRepairRound?.(round, findings.errors);
+    text = await session.send(findings.prompt, onChunk, signal);
   }
+
   return text;
 }
 
+/** True when `text` contains a closed ```` ``` ```` fence pair. */
+function hasClosedFence(text: string): boolean {
+  return /```(?:json)?\s*\n?[\s\S]*?```/.test(text);
+}
+
+/**
+ * Decide whether a response needs another round, and with what prompt.
+ * Returns null when the response is acceptable as-is.
+ *
+ * Exported so the prompt benchmark drives the identical loop — a divergence
+ * here would make its scores describe something users never run.
+ *
+ * There are three outcomes. A pipeline that checks out is done. A pipeline with
+ * findings gets the standard repair prompt. A response that *tried* to emit a
+ * pipeline — it has a closed fence — but produced nothing parsable is the worst
+ * case (nothing can be applied at all), so it is asked for the JSON again;
+ * without this it would be the one failure the loop silently accepted. A reply
+ * with no fence at all is prose, e.g. the model asking which file to load, and
+ * is deliberately left alone.
+ */
+export function diagnoseResponse(
+  text: string,
+  checkContext: SelfCheckContext,
+): { prompt: string; errors: string[] } | null {
+  const pipeline = tryExtractPipeline(text);
+  if (!pipeline) {
+    if (!hasClosedFence(text)) return null;
+    const message = "the fenced block is not valid, complete pipeline JSON";
+    return { prompt: buildUnparsablePipelinePrompt(), errors: [message] };
+  }
+
+  const errors = collectPipelineErrors(pipeline, checkContext);
+  if (errors.length === 0) return null;
+  return { prompt: buildRepairPrompt(errors), errors };
+}
+
 // ─── Anthropic with tool_use ─────────────────────────────────────────
+
+/** One entry in an Anthropic `messages` array (string or content blocks). */
+interface AnthropicMessage {
+  role: string;
+  content: unknown;
+}
+
+/**
+ * Output ceiling for the Anthropic path. It has to cover the model's reasoning
+ * as well as the pipeline JSON: the default model thinks adaptively, and
+ * thinking tokens are billed against `max_tokens`, so a ceiling sized for the
+ * JSON alone truncates the answer mid-object. The demo proxy sets its own.
+ */
+const ANTHROPIC_MAX_TOKENS = 16000;
 
 /**
  * Stream an Anthropic API call, handling tool_use for skills.
  * If Claude calls a skill tool, we execute it locally and send
  * the result back in a follow-up request.
+ *
+ * `messages` is the session's live history and is appended to in place: the
+ * tool round trips are recorded as they happen and the final assistant reply is
+ * added before returning, so a later repair round continues this conversation.
  */
 async function streamAnthropicWithSkills(
   config: AIConfig,
   systemPrompt: string,
-  userMessage: string,
+  messages: AnthropicMessage[],
   skills: PipelineSkill[],
   tools: ToolDefinition[],
   onChunk: (text: string) => void,
   signal?: AbortSignal,
 ): Promise<string> {
-  type Message = { role: string; content: unknown };
-  const messages: Message[] = [{ role: "user", content: userMessage }];
-
   // Allow up to 3 tool-use round trips to prevent infinite loops
   for (let turn = 0; turn < 4; turn++) {
     const body: Record<string, unknown> = {
       model: config.model,
-      max_tokens: 4096,
+      max_tokens: ANTHROPIC_MAX_TOKENS,
       system: systemPrompt,
       messages,
       stream: true,
@@ -166,8 +291,10 @@ async function streamAnthropicWithSkills(
 
     const result = await readAnthropicSSE(response, onChunk);
 
-    // If the model stopped with end_turn (text response), we're done
+    // If the model stopped with end_turn (text response), we're done — record
+    // the reply so a repair round sees the pipeline it is being asked to fix.
     if (result.stopReason !== "tool_use") {
+      messages.push({ role: "assistant", content: result.text });
       return result.text;
     }
 
@@ -313,23 +440,19 @@ interface OpenAIChatMessage {
  * handling the tool-call round trip: when the model emits tool_calls we
  * run each skill locally and feed the result back, just like the Anthropic
  * path. `model` is omitted for the demo proxy, which picks it server-side.
+ *
+ * `messages` is the session's live history (system prompt first) and is
+ * appended to in place, so a later repair round continues this conversation.
  */
 async function streamOpenAICompatWithSkills(
   send: OpenAISender,
   model: string | undefined,
-  systemPrompt: string,
-  userMessage: string,
+  messages: OpenAIChatMessage[],
   skills: PipelineSkill[],
   tools: OpenAITool[],
   onChunk: (text: string) => void,
-  errorLabel: string,
   signal?: AbortSignal,
 ): Promise<string> {
-  const messages: OpenAIChatMessage[] = [
-    { role: "system", content: systemPrompt },
-    { role: "user", content: userMessage },
-  ];
-
   // Allow up to 3 tool-call round trips to prevent infinite loops.
   for (let turn = 0; turn < 4; turn++) {
     const body: Record<string, unknown> = { messages, stream: true };
@@ -346,6 +469,8 @@ async function streamOpenAICompatWithSkills(
     const result = await readOpenAISSE(response, onChunk);
 
     if (result.finishReason !== "tool_calls" || result.toolCalls.length === 0) {
+      // Record the reply so a repair round sees the pipeline it must fix.
+      messages.push({ role: "assistant", content: result.text });
       return result.text;
     }
 
@@ -443,75 +568,41 @@ async function readOpenAISSE(
   return { text, finishReason, toolCalls };
 }
 
-async function streamOpenAI(
-  config: AIConfig,
-  systemPrompt: string,
-  userMessage: string,
-  skills: PipelineSkill[],
-  tools: OpenAITool[],
-  onChunk: (text: string) => void,
-  signal?: AbortSignal,
-): Promise<string> {
-  return streamOpenAICompatWithSkills(
-    (body, sig) =>
-      fetch("https://api.openai.com/v1/chat/completions", {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${config.apiKey}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify(body),
-        signal: sig,
-      }),
-    config.model,
-    systemPrompt,
-    userMessage,
-    skills,
-    tools,
-    onChunk,
-    "OpenAI API error",
-    signal,
-  );
+/** Post directly to the OpenAI chat-completions endpoint with the user's key. */
+function openAISender(config: AIConfig): OpenAISender {
+  return (body, signal) =>
+    fetch("https://api.openai.com/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${config.apiKey}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(body),
+      signal,
+    });
 }
 
 // ─── Demo proxy (no API key required) ────────────────────────────────
 
 /**
- * Stream a chat completion through the docs-demo Cloudflare Worker proxy.
- * The proxy holds its own provider API keys (PLaMo and/or OpenRouter),
- * picks the provider and model server-side, and speaks the OpenAI
- * tool-calling protocol, so the same skill round trip works end to end.
+ * Post to the docs-demo Cloudflare Worker proxy. The proxy holds its own
+ * provider API keys (PLaMo and/or OpenRouter), picks the provider and model
+ * server-side, and speaks the OpenAI tool-calling protocol, so the same skill
+ * round trip works end to end.
  */
-async function streamDemoProxy(
-  systemPrompt: string,
-  userMessage: string,
-  skills: PipelineSkill[],
-  tools: OpenAITool[],
-  onChunk: (text: string) => void,
-  signal?: AbortSignal,
-): Promise<string> {
-  const proxyUrl = import.meta.env.VITE_LLM_PROXY_URL;
-  if (!proxyUrl) {
-    throw new Error("The free demo is not available in this build.");
-  }
-
-  return streamOpenAICompatWithSkills(
-    (body, sig) =>
-      fetch(proxyUrl, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body),
-        signal: sig,
-      }),
-    undefined, // the proxy chooses the model server-side
-    systemPrompt,
-    userMessage,
-    skills,
-    tools,
-    onChunk,
-    "Demo proxy error",
-    signal,
-  );
+function demoProxySender(): OpenAISender {
+  return (body, signal) => {
+    const proxyUrl = import.meta.env.VITE_LLM_PROXY_URL;
+    if (!proxyUrl) {
+      return Promise.reject(new Error("The free demo is not available in this build."));
+    }
+    return fetch(proxyUrl, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+      signal,
+    });
+  };
 }
 
 // ─── Action summary ──────────────────────────────────────────────────

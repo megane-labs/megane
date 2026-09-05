@@ -19,6 +19,8 @@ export interface CaseRecord {
   score: CaseScore;
   /** Wall-clock latency of the generation call in ms. */
   latencyMs?: number;
+  /** Repair rounds the self-check triggered for this case (0 = first try stood). */
+  repairRounds?: number;
   /** Set when the generation call threw instead of returning text. */
   error?: string;
 }
@@ -97,6 +99,10 @@ export function toJSON(meta: ReportMeta, records: CaseRecord[], agg: Aggregate) 
         r.score[d].checks.filter((c) => !c.passed).map((c) => `${d}: ${c.label}`),
       ),
       latencyMs: r.latencyMs,
+      repairRounds: r.repairRounds,
+      // The raw text is what makes a format regression diagnosable at all: the
+      // failed-check labels say the fence was missing, not what came instead.
+      response: r.response,
       error: r.error,
     })),
   };

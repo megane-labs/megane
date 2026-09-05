@@ -7,7 +7,7 @@
  *
  * Usage:
  *   MEGANE_LLM_BENCH=1 ANTHROPIC_API_KEY=sk-... \
- *     MEGANE_LLM_PROVIDER=anthropic MEGANE_LLM_MODEL=claude-sonnet-4-20250514 \
+ *     MEGANE_LLM_PROVIDER=anthropic MEGANE_LLM_MODEL=claude-haiku-4-5 \
  *     npx vitest run tests/ts/bench/llm.bench.test.ts
  *
  * Providers: anthropic (ANTHROPIC_API_KEY), openai (OPENAI_API_KEY),
@@ -31,15 +31,28 @@ describe.skipIf(!ENABLED)("megane LLM benchmark (live)", () => {
     const config = configFromEnv();
     assertConfig(config);
 
-    const records = await runDataset(DATASET, (prompt) => generatePipelineLive(config, prompt), {
-      onResult: (r, i, total) => {
-        const pct = Math.round(r.score.total * 100);
-        // eslint-disable-next-line no-console
-        console.log(
-          `[${i + 1}/${total}] ${r.case.id}: ${pct}%${r.error ? ` (error: ${r.error})` : ""}`,
-        );
+    // Prompts are unique per case, so they key the per-case repair counts that
+    // `runDataset` itself has no slot for.
+    const repairsByPrompt = new Map<string, number>();
+    const records = await runDataset(
+      DATASET,
+      async (prompt) => {
+        const stats = { repairRounds: 0 };
+        const text = await generatePipelineLive(config, prompt, fetch, stats);
+        repairsByPrompt.set(prompt, stats.repairRounds);
+        return text;
       },
-    });
+      {
+        onResult: (r, i, total) => {
+          r.repairRounds = repairsByPrompt.get(r.case.prompt);
+          const pct = Math.round(r.score.total * 100);
+          // eslint-disable-next-line no-console
+          console.log(
+            `[${i + 1}/${total}] ${r.case.id}: ${pct}%${r.error ? ` (error: ${r.error})` : ""}`,
+          );
+        },
+      },
+    );
 
     const agg = aggregate(records);
     const meta = {

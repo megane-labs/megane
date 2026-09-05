@@ -3,6 +3,8 @@ import {
   collectQueryErrors,
   collectPipelineErrors,
   buildRepairPrompt,
+  buildUnparsablePipelinePrompt,
+  MAX_REPORTED_ERRORS,
 } from "@/ai/validatePipeline";
 import type { SerializedPipeline } from "@/pipeline/types";
 
@@ -71,13 +73,27 @@ describe("collectQueryErrors", () => {
 });
 
 describe("collectPipelineErrors", () => {
-  it("returns no errors for a structurally valid pipeline with valid queries", () => {
+  it("returns no errors for a fully wired pipeline with valid queries", () => {
+    const p = pipeline([
+      { id: "l1", type: "load_structure", position: { x: 0, y: 0 } },
+      { id: "f1", type: "filter", position: { x: 0, y: 155 }, query: 'element == "C"' },
+      { id: "v1", type: "viewport", position: { x: 0, y: 310 } },
+    ] as SerializedPipeline["nodes"]);
+    p.edges = [
+      { source: "l1", target: "f1", sourceHandle: "particle", targetHandle: "in" },
+      { source: "f1", target: "v1", sourceHandle: "out", targetHandle: "particle" },
+    ];
+    expect(collectPipelineErrors(p)).toEqual([]);
+  });
+
+  it("reports the self-check findings that survive the schema and query gates", () => {
+    // Schema-clean, queries valid — but the filter has nothing upstream.
     const p = pipeline([
       { id: "f1", type: "filter", position: { x: 0, y: 0 }, query: 'element == "C"' },
       { id: "v1", type: "viewport", position: { x: 0, y: 310 } },
     ] as SerializedPipeline["nodes"]);
     p.edges = [{ source: "f1", target: "v1", sourceHandle: "out", targetHandle: "particle" }];
-    expect(collectPipelineErrors(p)).toEqual([]);
+    expect(collectPipelineErrors(p)).toEqual(['node "f1": No input connected']);
   });
 
   it("combines schema errors and query errors", () => {
@@ -92,15 +108,43 @@ describe("collectPipelineErrors", () => {
 });
 
 describe("buildRepairPrompt", () => {
-  const broken = pipeline([
-    { id: "f1", type: "filter", position: { x: 0, y: 0 }, query: "protein" },
-  ] as SerializedPipeline["nodes"]);
-
-  it("includes the original request, errors, and the broken pipeline JSON", () => {
-    const msg = buildRepairPrompt("show the protein", broken, ['node "f1": bad']);
-    expect(msg).toContain("show the protein");
+  it("lists every finding and asks for a corrected pipeline", () => {
+    const msg = buildRepairPrompt(['node "f1": bad', 'node "f2": worse']);
     expect(msg).toContain('node "f1": bad');
-    expect(msg).toContain(JSON.stringify(broken));
+    expect(msg).toContain('node "f2": worse');
+    expect(msg).toContain("has the problems listed below");
+    expect(msg).toContain("fix them all");
+  });
+
+  it("does not restate the broken pipeline — it is already in the conversation", () => {
+    const msg = buildRepairPrompt(['node "f1": bad']);
+    // The skeleton below is the only JSON in the message; the actual nodes and
+    // edges the model produced are never pasted back in.
+    expect(msg).not.toContain('"position"');
+    expect(msg).not.toContain('"load_structure"');
+  });
+
+  it("pins the output shape with a literal skeleton", () => {
+    // Prose alone let repair rounds come back as bare JSON, which cost format
+    // score in the prompt benchmark.
+    const msg = buildRepairPrompt(['node "f1": bad']);
     expect(msg).toContain("```json");
+    expect(msg).toContain('{ "version": 3, "nodes": [...], "edges": [...] }');
+    expect(msg).toContain("then one short");
+  });
+
+  it("uses the same skeleton when the JSON could not be parsed", () => {
+    const msg = buildUnparsablePipelinePrompt();
+    expect(msg).toContain("not a usable pipeline");
+    expect(msg).toContain("```json");
+    expect(msg).toContain('{ "version": 3, "nodes": [...], "edges": [...] }');
+  });
+
+  it("caps the finding list and says how many were omitted", () => {
+    const errors = Array.from({ length: MAX_REPORTED_ERRORS + 3 }, (_, i) => `problem ${i}`);
+    const msg = buildRepairPrompt(errors);
+    expect(msg).toContain(`problem ${MAX_REPORTED_ERRORS - 1}`);
+    expect(msg).not.toContain(`problem ${MAX_REPORTED_ERRORS}`);
+    expect(msg).toContain("and 3 more");
   });
 });

@@ -16,8 +16,10 @@ import {
   RateLimitError,
 } from "../ai/client";
 import { summarizeStructure } from "../ai/structureSummary";
+import type { SelfCheckContext } from "../ai/selfCheck";
 import type { NodeSnapshotData } from "../pipeline/execute";
 import type { LoadStructureParams, SerializedPipeline } from "../pipeline/types";
+import type { Frame, Snapshot, TrajectoryMeta } from "../types";
 import {
   useScopedPipelineStore,
   usePipelineStoreApi,
@@ -60,6 +62,38 @@ export function captureLoadedStructure(
     fileName: params.fileName ?? null,
     hasTrajectory: !!params.hasTrajectory,
     hasCell: !!params.hasCell,
+  };
+}
+
+/** The pipeline-store fields {@link resolveStructureContext} reads. */
+interface StructureStateSlice {
+  nodes: Array<{ id: string; type?: string; data: { params: unknown } }>;
+  nodeSnapshots: Record<string, NodeSnapshotData>;
+  snapshot: Snapshot | null;
+  atomLabels: string[] | null;
+  structureFrames: Frame[] | null;
+  structureMeta: TrajectoryMeta | null;
+}
+
+/**
+ * Resolve the structure the user currently has on screen, for the prompt's
+ * structure summary and for running the generated pipeline during the
+ * self-check.
+ *
+ * The store's global `snapshot` / `atomLabels` fields are the primary source,
+ * but `deserialize()` clears them and applying an AI-generated pipeline
+ * re-attaches the structure *per node* instead — so from the second turn of a
+ * conversation onwards they are null while the structure is still very much
+ * loaded. Falling back to the first `load_structure` node's snapshot keeps both
+ * the summary and the self-check working on every turn, not just the first.
+ */
+export function resolveStructureContext(state: StructureStateSlice): SelfCheckContext {
+  const fallback = captureLoadedStructure(state.nodes, state.nodeSnapshots)?.snapshot ?? null;
+  return {
+    snapshot: state.snapshot ?? fallback?.snapshot ?? null,
+    atomLabels: state.atomLabels ?? fallback?.labels ?? null,
+    structureFrames: state.structureFrames ?? fallback?.frames ?? null,
+    structureMeta: state.structureMeta ?? fallback?.meta ?? null,
   };
 }
 
@@ -345,10 +379,14 @@ export function PipelineChatBox({ onPipelineApplied }: { onPipelineApplied?: () 
       onPipelineApplied?.();
     };
 
-    // Summarize the currently loaded structure so the model can build filter
-    // queries from the real elements/resnames present rather than guessing.
-    const { snapshot, atomLabels } = pipelineApi.getState();
-    const structureSummary = summarizeStructure(snapshot, atomLabels);
+    // Describe the currently loaded structure so the model can build filter
+    // queries from the real elements/resnames present rather than guessing —
+    // and so the self-check can run the generated pipeline against it.
+    const checkContext = resolveStructureContext(pipelineApi.getState());
+    const structureSummary = summarizeStructure(
+      checkContext.snapshot ?? null,
+      checkContext.atomLabels ?? null,
+    );
 
     try {
       let streamBuffer = "";
@@ -381,6 +419,15 @@ export function PipelineChatBox({ onPipelineApplied }: { onPipelineApplied?: () 
         },
         abort.signal,
         structureSummary,
+        checkContext,
+        () => {
+          // A repair round is starting: the round being replaced has already
+          // streamed its JSON and explanation into the buffer, and leaving them
+          // there would splice the old explanation onto the new one. Start the
+          // placeholder over so the user sees the corrected answer only.
+          streamBuffer = "";
+          setMessages((prev) => replaceTrailingAssistant(prev, { role: "assistant", content: "" }));
+        },
       );
 
       // Fallback: the JSON may only have closed in the final, non-streamed text

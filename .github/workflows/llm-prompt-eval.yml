@@ -6,10 +6,16 @@ name: LLM Prompt Eval
 # comment. Add the `llm-eval` label to a PR to run it.
 #
 # The provider is chosen by the `MEGANE_LLM_BENCH_PROVIDER` repository
-# variable — `plamo` (default, Preferred Networks' PLaMo API, key at
-# https://plamo.preferredai.jp/) or `openrouter` (key at
-# https://openrouter.ai/keys) — and reads the matching repository secret
-# (`PLAMO_API_KEY` / `OPENROUTER_API_KEY`). Note: GitHub does not expose
+# variable — `openrouter` (the default, key at https://openrouter.ai/keys),
+# `plamo` (Preferred Networks' PLaMo API, key at https://plamo.preferredai.jp/),
+# or `anthropic` (key at https://console.anthropic.com/) — and reads the
+# matching repository secret (`OPENROUTER_API_KEY` / `PLAMO_API_KEY` /
+# `ANTHROPIC_API_KEY`).
+#
+# The default scores Claude Haiku 4.5 through OpenRouter. For Sonnet, set
+# `MEGANE_LLM_BENCH_MODEL` to the matching OpenRouter slug, or switch the
+# provider to `anthropic` and use `claude-sonnet-5`.
+# Note: GitHub does not expose
 # repository secrets to `pull_request` workflows triggered from forks, so
 # this only runs for PRs from branches within this repository.
 #
@@ -64,14 +70,16 @@ jobs:
 
       # An empty MEGANE_LLM_MODEL falls through to the provider's default
       # model in bench/llm/providers.ts (plamo-3.0-prime for plamo,
-      # anthropic/claude-haiku-4.5 for openrouter).
+      # anthropic/claude-haiku-4.5 for openrouter, claude-haiku-4-5 for
+      # anthropic).
       - name: Run benchmark (after = PR branch)
         working-directory: after
         env:
           MEGANE_LLM_BENCH: "1"
           PLAMO_API_KEY: ${{ secrets.PLAMO_API_KEY }}
           OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
-          MEGANE_LLM_PROVIDER: ${{ vars.MEGANE_LLM_BENCH_PROVIDER || 'plamo' }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          MEGANE_LLM_PROVIDER: ${{ vars.MEGANE_LLM_BENCH_PROVIDER || 'openrouter' }}
           MEGANE_LLM_MODEL: ${{ vars.MEGANE_LLM_BENCH_MODEL || '' }}
         run: |
           npx vitest run tests/ts/bench/llm.bench.test.ts
@@ -83,7 +91,8 @@ jobs:
           MEGANE_LLM_BENCH: "1"
           PLAMO_API_KEY: ${{ secrets.PLAMO_API_KEY }}
           OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
-          MEGANE_LLM_PROVIDER: ${{ vars.MEGANE_LLM_BENCH_PROVIDER || 'plamo' }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          MEGANE_LLM_PROVIDER: ${{ vars.MEGANE_LLM_BENCH_PROVIDER || 'openrouter' }}
           MEGANE_LLM_MODEL: ${{ vars.MEGANE_LLM_BENCH_MODEL || '' }}
         run: |
           npx vitest run tests/ts/bench/llm.bench.test.ts

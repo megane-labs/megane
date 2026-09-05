@@ -29,7 +29,7 @@ The runner makes **real, paid LLM API calls**, so it is gated behind
 ```bash
 # Anthropic
 MEGANE_LLM_BENCH=1 ANTHROPIC_API_KEY=sk-ant-... \
-  MEGANE_LLM_PROVIDER=anthropic MEGANE_LLM_MODEL=claude-sonnet-4-20250514 \
+  MEGANE_LLM_PROVIDER=anthropic MEGANE_LLM_MODEL=claude-haiku-4-5 \
   npx vitest run tests/ts/bench/llm.bench.test.ts
 
 # OpenAI
@@ -66,9 +66,21 @@ and printed to stdout. The results directory is git-ignored.
   `import.meta.glob`).
 - The **JSON extraction** mirrors `src/ai/client.ts` (prefers the last valid
   fenced pipeline), pinned by unit tests.
+- The **self-check repair loop** is the production one: after each generation
+  the response is checked with `collectPipelineErrors()` and, if anything is
+  wrong, the findings are fed back into the same conversation and the model is
+  asked to fix them (up to 2 rounds, matching `MAX_REPAIR_ROUNDS`). What is
+  scored is therefore the pipeline a user would actually get, not the raw
+  first attempt.
 
 The providers use non-streaming requests (the benchmark only needs the final
 text) but otherwise replicate the production tool round-trip behaviour.
+
+No structure is loaded during the benchmark, so the self-check runs its static
+half only — schema, selection-query syntax, edge typing, overlapping viewport
+branches and graph wiring. The runtime half (executing the graph against the
+loaded structure to catch a filter that matches zero atoms) needs data and only
+fires in the app.
 
 ## Extending it
 
@@ -91,14 +103,22 @@ For PRs that change the system prompt, skills, or dataset/rubrics, add the
    and per-case score deltas, plus any cases that regressed by >= 5
    percentage points.
 
-It makes real, paid API calls (32 generations per run: 16 cases x
-before/after), so it is opt-in via the label rather than running on every PR.
+It makes real, paid API calls — at least 48 generations per run (24 cases x
+before/after), plus one more per repair round the self-check triggers — so it is
+opt-in via the label rather than running on every PR.
 The provider comes from the `MEGANE_LLM_BENCH_PROVIDER` repository variable —
-`plamo` (the default; requires the `PLAMO_API_KEY` repository secret) or
-`openrouter` (requires `OPENROUTER_API_KEY`). The model defaults per provider
-(`plamo-3.0-prime` / `anthropic/claude-haiku-4.5`); override it with the
+`openrouter` (the default; requires the `OPENROUTER_API_KEY` repository
+secret), `plamo` (requires `PLAMO_API_KEY`), or `anthropic` (requires
+`ANTHROPIC_API_KEY`). The model defaults per provider
+(`anthropic/claude-haiku-4.5` / `plamo-3.0-prime` / `claude-haiku-4-5`);
+override it with the
 `MEGANE_LLM_BENCH_MODEL` repository variable (a PLaMo id from
-https://docs.plamo.preferredai.jp/en/api, or an OpenRouter slug).
+https://docs.plamo.preferredai.jp/en/api, an OpenRouter slug, or an Anthropic
+model id).
+
+The default therefore scores **Claude Haiku 4.5** through OpenRouter. For
+Sonnet, set `MEGANE_LLM_BENCH_MODEL` to the matching OpenRouter slug, or switch
+the provider to `anthropic` and use `claude-sonnet-5`.
 Because GitHub withholds secrets from `pull_request` workflows triggered by
 forks, this only runs for PRs from branches within the repository.
 

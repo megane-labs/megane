@@ -105,17 +105,37 @@ The `:vscode` / `:widget-vscode` projects need code-server. In a sandboxed/proxi
 | `node scripts/dev-preview.mjs --screenshot` | Dev preview screenshots  |
 | `node scripts/capture-screenshots.mjs`      | Hero screenshot for docs |
 
+## LLM pipeline generator (src/ai)
+
+The chat tab of the pipeline editor turns a natural-language request into a
+`SerializedPipeline`. It **self-checks its own output**: after each generation
+`collectPipelineErrors()` (`src/ai/validatePipeline.ts`) runs the schema check,
+the selection-DSL syntax check, and `src/ai/selfCheck.ts` — edge typing via
+`canConnect`, overlapping viewport branches (the "hide the water draws it
+twice" bug), and, when a structure is loaded, the graph is actually executed so
+the real `nodeErrors` (`Filter returned 0 atoms`, `Replicate requires a unit
+cell`, …) come back. Findings are fed into the **same** conversation and the
+model is asked to fix them, up to `MAX_REPAIR_ROUNDS` (`src/ai/client.ts`).
+
+Two rules when touching this code: the self-check must never report a node the
+model did not write (`deserializePipeline` normalizes the graph and injects an
+`add_bond` node plus default viewport edges), and it must never report a finding
+that only means "the user has not opened a file yet" — every generated pipeline
+has `fileName: null` by design. Both are enforced by `tests/ts/ai/selfCheck.test.ts`.
+
 ## LLM Prompt-Eval CI (bench/llm)
 
 `bench/llm/` is a prompt-suite + scorer that grades megane's LLM pipeline
-generator (`src/ai/prompt.ts` + skills) on a fixed dataset of requests. Adding
+generator (`src/ai/prompt.ts` + skills, including the self-check repair loop) on
+a fixed dataset of requests. Adding
 the **`llm-eval`** label to a PR runs `.github/workflows/llm-prompt-eval.yml`,
-which scores the PR branch and its base branch via Preferred Networks' PLaMo
-API or OpenRouter — the provider comes from the `MEGANE_LLM_BENCH_PROVIDER`
-repository variable (`plamo`, the default, or `openrouter`), reading the
-matching `PLAMO_API_KEY` / `OPENROUTER_API_KEY` repository secret; the model
-defaults per provider (`plamo-3.0-prime` / `anthropic/claude-haiku-4.5`) and is
-overridable via the `MEGANE_LLM_BENCH_MODEL` repository variable — and posts a
+which scores the PR branch and its base branch via OpenRouter, Preferred
+Networks' PLaMo API, or the Anthropic API — the provider comes from the
+`MEGANE_LLM_BENCH_PROVIDER` repository variable (`openrouter`, the default, or
+`plamo` / `anthropic`), reading the matching `OPENROUTER_API_KEY` /
+`PLAMO_API_KEY` / `ANTHROPIC_API_KEY` repository secret; the model defaults per
+provider (`anthropic/claude-haiku-4.5` / `plamo-3.0-prime` / `claude-haiku-4-5`)
+and is overridable via the `MEGANE_LLM_BENCH_MODEL` repository variable — and posts a
 before/after score comparison as a PR comment. It is opt-in (real, paid API calls) and only runs for PRs from
 branches within this repository (forks don't get secrets). The job also only
 runs for actors listed in the `LLM_EVAL_ALLOWED_USERS` repository variable (a
