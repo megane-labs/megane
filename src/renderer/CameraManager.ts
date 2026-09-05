@@ -6,6 +6,7 @@
 import * as THREE from "three";
 import type { CameraControlsLike } from "./CameraControls";
 import type { Snapshot } from "../types";
+import { getRadius } from "../constants";
 import {
   orientationFromPose,
   screenRight,
@@ -28,6 +29,12 @@ export interface ViewExtent {
  * `extentX` / `extentY` are measured along the screen axes of `orientation`
  * (default: the structure's standard orientation), so the orthographic
  * frustum fit stays tight in any view; `maxExtent` is the world AABB.
+ *
+ * Without a cell the bounds are those of the atoms' van der Waals spheres,
+ * not just their centres: a small molecule seen along its long axis
+ * projects to a very short span of centres, and a fit to that alone put
+ * the spheres off screen. With a cell the parallelepiped's corners bound
+ * the view, as before.
  */
 export function computeViewBounds(
   snapshot: Snapshot,
@@ -61,19 +68,20 @@ export function computeViewBounds(
     maxR = -Infinity,
     minU = Infinity,
     maxU = -Infinity;
-  const track = (x: number, y: number, z: number) => {
-    minX = Math.min(minX, x);
-    minY = Math.min(minY, y);
-    minZ = Math.min(minZ, z);
-    maxX = Math.max(maxX, x);
-    maxY = Math.max(maxY, y);
-    maxZ = Math.max(maxZ, z);
+  /** Grow the bounds by a sphere of `radius` at (x, y, z). */
+  const track = (x: number, y: number, z: number, radius: number) => {
+    minX = Math.min(minX, x - radius);
+    minY = Math.min(minY, y - radius);
+    minZ = Math.min(minZ, z - radius);
+    maxX = Math.max(maxX, x + radius);
+    maxY = Math.max(maxY, y + radius);
+    maxZ = Math.max(maxZ, z + radius);
     const r = x * right[0] + y * right[1] + z * right[2];
     const u = x * up[0] + y * up[1] + z * up[2];
-    minR = Math.min(minR, r);
-    maxR = Math.max(maxR, r);
-    minU = Math.min(minU, u);
-    maxU = Math.max(maxU, u);
+    minR = Math.min(minR, r - radius);
+    maxR = Math.max(maxR, r + radius);
+    minU = Math.min(minU, u - radius);
+    maxU = Math.max(maxU, u + radius);
   };
 
   const hasBox = snapshot.box && snapshot.box.some((v) => v !== 0);
@@ -102,6 +110,7 @@ export function computeViewBounds(
             ox + ia * va[0] + ib * vb[0] + ic * vc[0],
             oy + ia * va[1] + ib * vb[1] + ic * vc[1],
             oz + ia * va[2] + ib * vb[2] + ic * vc[2],
+            0,
           );
         }
       }
@@ -111,8 +120,9 @@ export function computeViewBounds(
     cy = nAtoms > 0 ? sumY / nAtoms : 0;
     cz = nAtoms > 0 ? sumZ / nAtoms : 0;
 
+    const { elements } = snapshot;
     for (let i = 0; i < nAtoms; i++) {
-      track(positions[i * 3], positions[i * 3 + 1], positions[i * 3 + 2]);
+      track(positions[i * 3], positions[i * 3 + 1], positions[i * 3 + 2], getRadius(elements[i]));
     }
   }
 

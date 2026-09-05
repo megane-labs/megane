@@ -55,30 +55,43 @@ function makeMockControls() {
   };
 }
 
+/** Carbon's vdW radius — makeSnapshot defaults every atom to element 6. */
+const R_C = 1.7;
+
 describe("computeViewBounds", () => {
   it("returns atom-centroid center when no box is present", () => {
     const snap = makeSnapshot({ positions: [-1, -2, -3, 1, 2, 3] });
     const { center, extent } = computeViewBounds(snap, LOOK_ALONG_Y);
     expect(center).toEqual([0, 0, 0]);
-    // Screen axes of LOOK_ALONG_Y are world x (right) and z (up).
-    expect(extent.extentX).toBeCloseTo(2, 5);
-    expect(extent.extentY).toBeCloseTo(6, 5);
-    expect(extent.maxExtent).toBeCloseTo(6, 5);
+    // Screen axes of LOOK_ALONG_Y are world x (right) and z (up); the atom
+    // spheres add a radius on each side.
+    expect(extent.extentX).toBeCloseTo(2 + 2 * R_C, 5);
+    expect(extent.extentY).toBeCloseTo(6 + 2 * R_C, 5);
+    expect(extent.maxExtent).toBeCloseTo(6 + 2 * R_C, 5);
+  });
+
+  it("bounds the atoms' vdW spheres, per element, not just their centres", () => {
+    // H (1.2 Å) at -1 and C (1.7 Å) at +1 along x.
+    const snap = makeSnapshot({ positions: [-1, 0, 0, 1, 0, 0], elements: [1, 6] });
+    const { extent } = computeViewBounds(snap, LOOK_ALONG_Y);
+    expect(extent.extentX).toBeCloseTo(1 + 1.2 + (1 + 1.7), 5);
+    expect(extent.extentY).toBeCloseTo(2 * 1.7, 5);
+    expect(extent.maxExtent).toBeCloseTo(4.9, 5);
   });
 
   it("measures extentX / extentY along the screen axes of the orientation", () => {
     const snap = makeSnapshot({ positions: [-1, -2, -3, 1, 2, 3] });
     // Looking down +z with y up: right is x, up is y.
     const top = computeViewBounds(snap, { eye: [0, 0, 1], up: [0, 1, 0] }).extent;
-    expect(top.extentX).toBeCloseTo(2, 5);
-    expect(top.extentY).toBeCloseTo(4, 5);
+    expect(top.extentX).toBeCloseTo(2 + 2 * R_C, 5);
+    expect(top.extentY).toBeCloseTo(4 + 2 * R_C, 5);
     // Looking along -x from +x with z up: right is y, up is z.
     const side = computeViewBounds(snap, { eye: [1, 0, 0], up: [0, 0, 1] }).extent;
-    expect(side.extentX).toBeCloseTo(4, 5);
-    expect(side.extentY).toBeCloseTo(6, 5);
+    expect(side.extentX).toBeCloseTo(4 + 2 * R_C, 5);
+    expect(side.extentY).toBeCloseTo(6 + 2 * R_C, 5);
     // maxExtent is the world AABB whichever way the camera looks.
-    expect(top.maxExtent).toBeCloseTo(6, 5);
-    expect(side.maxExtent).toBeCloseTo(6, 5);
+    expect(top.maxExtent).toBeCloseTo(6 + 2 * R_C, 5);
+    expect(side.maxExtent).toBeCloseTo(6 + 2 * R_C, 5);
   });
 
   it("defaults to the structure's standard orientation", () => {
@@ -87,9 +100,9 @@ describe("computeViewBounds", () => {
     const explicit = computeViewBounds(snap, standardOrientation(snap.box));
     expect(implicit).toEqual(explicit);
     // The tilted view sees a projection somewhere between an axis extent
-    // and the space diagonal.
-    expect(implicit.extent.extentX).toBeGreaterThan(2);
-    expect(implicit.extent.extentX).toBeLessThan(Math.sqrt(4 + 16 + 36));
+    // and the space diagonal (plus the sphere radii).
+    expect(implicit.extent.extentX).toBeGreaterThan(2 + 2 * R_C);
+    expect(implicit.extent.extentX).toBeLessThan(Math.sqrt(4 + 16 + 36) + 2 * R_C);
   });
 
   it("uses simulation cell when box is non-zero", () => {
@@ -112,7 +125,7 @@ describe("computeViewBounds", () => {
     });
     const { center, extent } = computeViewBounds(snap, LOOK_ALONG_Y);
     expect(center).toEqual([0, 0, 0]);
-    expect(extent.extentX).toBeCloseTo(2, 5);
+    expect(extent.extentX).toBeCloseTo(2 + 2 * R_C, 5);
   });
 
   it("returns center=(0,0,0) for a snapshot with zero atoms", () => {
@@ -185,9 +198,9 @@ describe("fitCameraToView", () => {
     const controls = makeMockControls();
     const snap = makeSnapshot({ positions: [-1, -1, -1, 1, 1, 1] });
     fitCameraToView(cam, controls as never, snap, LOOK_ALONG_Y);
-    // Max extent = 2, distance = 2 × 1.2 = 2.4
+    // Max extent = 2 + 2 × 1.7 (carbon spheres) = 5.4, distance = 5.4 × 1.2
     expect(cam.position.x).toBeCloseTo(0, 5);
-    expect(cam.position.y).toBeCloseTo(-2.4, 5);
+    expect(cam.position.y).toBeCloseTo(-6.48, 5);
     expect(cam.position.z).toBeCloseTo(0, 5);
     expect(cam.up.toArray()).toEqual([0, 0, 1]);
   });
@@ -213,14 +226,23 @@ describe("fitCameraToView", () => {
     expect(cam.position.x - 5).toBeGreaterThan(cam.position.y - 5);
   });
 
-  it("enforces a minimum distance of 0.1 for tiny structures", () => {
+  it("enforces a minimum distance of 0.1 for empty structures", () => {
     const cam = new THREE.OrthographicCamera(-5, 5, 5, -5, 0.1, 1000);
     const controls = makeMockControls();
-    const snap = makeSnapshot({ positions: [0, 0, 0] }); // single atom → maxExtent=0
+    const snap = makeSnapshot({ positions: [], elements: [] }); // no atoms → no extent
     fitCameraToView(cam, controls as never, snap);
     expect(cam.position.distanceTo(controls.target)).toBeCloseTo(0.1, 5);
     expect(cam.near).toBeCloseTo(-1, 5); // -distance * 10
     expect(cam.far).toBeCloseTo(1, 5);
+  });
+
+  it("frames a single atom by its vdW sphere", () => {
+    const cam = new THREE.OrthographicCamera(-5, 5, 5, -5, 0.1, 1000);
+    const controls = makeMockControls();
+    const snap = makeSnapshot({ positions: [0, 0, 0] }); // one carbon → 3.4 Å across
+    const extent = fitCameraToView(cam, controls as never, snap);
+    expect(extent.maxExtent).toBeCloseTo(2 * R_C, 5);
+    expect(cam.position.distanceTo(controls.target)).toBeCloseTo(2 * R_C * 1.2, 5);
   });
 
   it("resets ortho zoom and sets near/far from distance", () => {
@@ -230,8 +252,8 @@ describe("fitCameraToView", () => {
     const snap = makeSnapshot({ positions: [-1, -1, -1, 1, 1, 1] });
     fitCameraToView(cam, controls as never, snap);
     expect(cam.zoom).toBe(1);
-    expect(cam.near).toBeCloseTo(-24, 5); // -2.4 × 10
-    expect(cam.far).toBeCloseTo(24, 5);
+    expect(cam.near).toBeCloseTo(-64.8, 5); // -6.48 × 10
+    expect(cam.far).toBeCloseTo(64.8, 5);
   });
 
   it("updates perspective camera near/far and projection matrix", () => {
@@ -240,9 +262,9 @@ describe("fitCameraToView", () => {
     const controls = makeMockControls();
     const snap = makeSnapshot({ positions: [-5, -5, -5, 5, 5, 5] });
     fitCameraToView(cam, controls as never, snap);
-    // distance = 10 × 1.2 = 12
-    expect(cam.near).toBeCloseTo(0.12, 5);
-    expect(cam.far).toBeCloseTo(120, 5);
+    // distance = (10 + 2 × 1.7) × 1.2 = 16.08
+    expect(cam.near).toBeCloseTo(0.1608, 5);
+    expect(cam.far).toBeCloseTo(160.8, 5);
     // projection matrix should have been recomputed
     expect(cam.projectionMatrix.elements).not.toEqual(before);
   });
@@ -252,9 +274,9 @@ describe("fitCameraToView", () => {
     const controls = makeMockControls();
     const snap = makeSnapshot({ positions: [-3, -2, -1, 3, 2, 1] });
     const extent = fitCameraToView(cam, controls as never, snap, LOOK_ALONG_Y);
-    expect(extent.extentX).toBeCloseTo(6, 5);
-    expect(extent.extentY).toBeCloseTo(2, 5);
-    expect(extent.maxExtent).toBeCloseTo(6, 5);
+    expect(extent.extentX).toBeCloseTo(6 + 2 * R_C, 5);
+    expect(extent.extentY).toBeCloseTo(2 + 2 * R_C, 5);
+    expect(extent.maxExtent).toBeCloseTo(6 + 2 * R_C, 5);
   });
 });
 
@@ -572,7 +594,7 @@ describe("fitCameraToView orientation reset", () => {
 
     const want = standardOrientation(null);
     const distance = cam.position.distanceTo(controls.target);
-    expect(distance).toBeCloseTo(2.4, 6);
+    expect(distance).toBeCloseTo((2 + 2 * R_C) * 1.2, 6);
     for (let i = 0; i < 3; i++) {
       expect(cam.up.toArray()[i]).toBeCloseTo(want.up[i], 9);
       expect(cam.position.toArray()[i]).toBeCloseTo(want.eye[i] * distance, 6);
