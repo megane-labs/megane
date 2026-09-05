@@ -1,0 +1,13 @@
+{
+  "fixture": "caffeine_water.pdb",
+  "expectation": "炭素原子とその間の結合だけが見え、他の元素は隠れている。",
+  "capturedFrom": "pipeline template \"molecule\" applied via store.applyTemplate, then edited through the editor store",
+  "imageStability": {
+    "boots": 3,
+    "worstDiffPercent": 0.0,
+    "asserted": true
+  },
+  "answeringNodes": [
+    "filter"
+  ]
+}

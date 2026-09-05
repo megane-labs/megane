@@ -1,0 +1,129 @@
+{
+  "version": 3,
+  "nodes": [
+    {
+      "type": "load_structure",
+      "fileName": "caffeine.sdf",
+      "hasTrajectory": false,
+      "hasCell": false,
+      "id": "loader-1",
+      "position": {
+        "x": -190,
+        "y": 0
+      },
+      "enabled": true
+    },
+    {
+      "type": "symmetry",
+      "mode": "expand",
+      "id": "symmetry-1",
+      "position": {
+        "x": -190,
+        "y": 360
+      },
+      "enabled": true
+    },
+    {
+      "type": "wrap",
+      "mode": "none",
+      "id": "wrap-1",
+      "position": {
+        "x": -395,
+        "y": 720
+      },
+      "enabled": true
+    },
+    {
+      "type": "add_bond",
+      "bondSource": "structure",
+      "id": "addbond-1",
+      "position": {
+        "x": -395,
+        "y": 1080
+      },
+      "enabled": true
+    },
+    {
+      "type": "load_volumetric",
+      "fileName": "caffeine_esp.cube",
+      "id": "volumetric-1",
+      "position": {
+        "x": 15,
+        "y": 720
+      },
+      "enabled": true
+    },
+    {
+      "type": "isosurface",
+      "isoLevel": 0.03,
+      "color": "#3b82f6",
+      "opacity": 0.55,
+      "showNegative": true,
+      "negativeColor": "#ef4444",
+      "colorMode": "solid",
+      "colormap": "rwb",
+      "id": "isosurface-1",
+      "position": {
+        "x": 15,
+        "y": 1080
+      },
+      "enabled": true
+    },
+    {
+      "type": "viewport",
+      "perspective": false,
+      "cellAxesVisible": true,
+      "pivotMarkerVisible": true,
+      "id": "viewport-1",
+      "position": {
+        "x": -190,
+        "y": 1440
+      },
+      "enabled": true
+    }
+  ],
+  "edges": [
+    {
+      "source": "loader-1",
+      "target": "symmetry-1",
+      "sourceHandle": "particle",
+      "targetHandle": "particle"
+    },
+    {
+      "source": "symmetry-1",
+      "target": "wrap-1",
+      "sourceHandle": "particle",
+      "targetHandle": "particle"
+    },
+    {
+      "source": "wrap-1",
+      "target": "addbond-1",
+      "sourceHandle": "particle",
+      "targetHandle": "particle"
+    },
+    {
+      "source": "wrap-1",
+      "target": "viewport-1",
+      "sourceHandle": "particle",
+      "targetHandle": "particle"
+    },
+    {
+      "source": "addbond-1",
+      "target": "viewport-1",
+      "sourceHandle": "bond",
+      "targetHandle": "bond"
+    },
+    {
+      "source": "volumetric-1",
+      "target": "isosurface-1",
+      "sourceHandle": "volumetric",
+      "targetHandle": "volumetric"
+    },
+    {
+      "source": "isosurface-1",
+      "target": "viewport-1",
+      "sourceHandle": "mesh",
+      "targetHandle": "mesh"
+    }
+  ]
+}

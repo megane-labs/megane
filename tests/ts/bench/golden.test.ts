@@ -32,6 +32,12 @@ const edgesInto = (p: SerializedPipeline, type: string, handle: string) =>
   });
 
 describe("bench ground truth", () => {
+  // This is the check that catches a reference megane would reject at runtime,
+  // and it has already earned its keep: a `filter-residue` rebuild shipped
+  // `both ((atom_index >= 211 and ...))`, which the bond DSL rejects — `both`
+  // takes a field, not a parenthesised expression. The render looked plausible
+  // anyway, because a node whose params fail to parse contributes nothing
+  // rather than failing the draw, so only the validator saw it.
   it("captures references megane's own validators accept", () => {
     for (const v of GOLDEN_CASES) {
       expect(collectPipelineErrors(v.pipeline), v.caseId).toEqual([]);

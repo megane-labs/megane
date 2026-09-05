@@ -1,0 +1,206 @@
+{
+  "version": 3,
+  "nodes": [
+    {
+      "type": "load_structure",
+      "fileName": "caffeine_water.pdb",
+      "hasTrajectory": false,
+      "hasCell": true,
+      "id": "loader-1",
+      "position": {
+        "x": -190,
+        "y": 0
+      },
+      "enabled": true
+    },
+    {
+      "type": "load_trajectory",
+      "fileName": "caffeine_water_vibration.xtc",
+      "source": "file",
+      "id": "traj-1",
+      "position": {
+        "x": -190,
+        "y": 360
+      },
+      "enabled": true
+    },
+    {
+      "type": "symmetry",
+      "mode": "expand",
+      "id": "symmetry-1",
+      "position": {
+        "x": -190,
+        "y": 720
+      },
+      "enabled": true
+    },
+    {
+      "type": "wrap",
+      "mode": "none",
+      "id": "wrap-1",
+      "position": {
+        "x": -190,
+        "y": 1080
+      },
+      "enabled": true
+    },
+    {
+      "type": "add_bond",
+      "bondSource": "structure",
+      "id": "addbond-1",
+      "position": {
+        "x": -190,
+        "y": 1440
+      },
+      "enabled": true
+    },
+    {
+      "type": "viewport",
+      "perspective": false,
+      "cellAxesVisible": true,
+      "pivotMarkerVisible": true,
+      "id": "viewport-1",
+      "position": {
+        "x": -190,
+        "y": 1800
+      },
+      "enabled": true
+    },
+    {
+      "type": "filter",
+      "query": "not element == \"C\"",
+      "bond_query": "",
+      "id": "node-5",
+      "position": {
+        "x": 425,
+        "y": 2000
+      },
+      "enabled": true
+    },
+    {
+      "type": "modify",
+      "scale": 1,
+      "opacity": 0,
+      "id": "node-6",
+      "position": {
+        "x": 425,
+        "y": 2200
+      },
+      "enabled": true
+    },
+    {
+      "type": "filter",
+      "query": "",
+      "bond_query": "not both element == \"C\"",
+      "id": "node-7",
+      "position": {
+        "x": 425,
+        "y": 2400
+      },
+      "enabled": true
+    },
+    {
+      "type": "modify",
+      "scale": 1,
+      "opacity": 0,
+      "id": "node-8",
+      "position": {
+        "x": 425,
+        "y": 2600
+      },
+      "enabled": true
+    }
+  ],
+  "edges": [
+    {
+      "source": "loader-1",
+      "target": "symmetry-1",
+      "sourceHandle": "particle",
+      "targetHandle": "particle"
+    },
+    {
+      "source": "loader-1",
+      "target": "traj-1",
+      "sourceHandle": "particle",
+      "targetHandle": "particle"
+    },
+    {
+      "source": "traj-1",
+      "target": "symmetry-1",
+      "sourceHandle": "trajectory",
+      "targetHandle": "trajectory"
+    },
+    {
+      "source": "symmetry-1",
+      "target": "wrap-1",
+      "sourceHandle": "particle",
+      "targetHandle": "particle"
+    },
+    {
+      "source": "symmetry-1",
+      "target": "wrap-1",
+      "sourceHandle": "trajectory",
+      "targetHandle": "trajectory"
+    },
+    {
+      "source": "wrap-1",
+      "target": "addbond-1",
+      "sourceHandle": "particle",
+      "targetHandle": "particle"
+    },
+    {
+      "source": "wrap-1",
+      "target": "viewport-1",
+      "sourceHandle": "particle",
+      "targetHandle": "particle"
+    },
+    {
+      "source": "loader-1",
+      "target": "viewport-1",
+      "sourceHandle": "cell",
+      "targetHandle": "cell"
+    },
+    {
+      "source": "wrap-1",
+      "target": "viewport-1",
+      "sourceHandle": "trajectory",
+      "targetHandle": "trajectory"
+    },
+    {
+      "source": "wrap-1",
+      "target": "node-5",
+      "sourceHandle": "particle",
+      "targetHandle": "in"
+    },
+    {
+      "source": "node-5",
+      "target": "node-6",
+      "sourceHandle": "out",
+      "targetHandle": "in"
+    },
+    {
+      "source": "node-6",
+      "target": "viewport-1",
+      "sourceHandle": "out",
+      "targetHandle": "particle"
+    },
+    {
+      "source": "addbond-1",
+      "target": "node-7",
+      "sourceHandle": "bond",
+      "targetHandle": "in"
+    },
+    {
+      "source": "node-7",
+      "target": "node-8",
+      "sourceHandle": "out",
+      "targetHandle": "in"
+    },
+    {
+      "source": "node-8",
+      "target": "viewport-1",
+      "sourceHandle": "out",
+      "targetHandle": "bond"
+    }
+  ]
+}

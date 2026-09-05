@@ -214,11 +214,16 @@ rasterises.
 
 `meta.json` records the result per case as `imageStability`: how many
 independent boots the reference was rendered in, the worst pairwise difference
-between them, and whether the runner may assert the committed image. A case that
-does not reproduce keeps its image for review with `asserted: false` and a note
-saying what was measured — its counterexamples are still checked, against a
-reference rendered in the same page. Silently widening the pixel budget to
-absorb an unstable render would turn the suite green without making it true.
+between them, and whether the runner may assert the committed image. **16 of 24
+are asserted; 8 are recorded and not asserted.** The split is by fixture: every
+case on `caffeine_water.pdb` reproduced in every run made, and every case on
+another fixture differed in at least one. Three boots agreeing is not treated as
+evidence on its own — `crystal-distance-bonds` reproduced three times and then
+differed by 6.9 % on the next render. A case that does not reproduce keeps its
+image for review with `asserted: false` and a note saying what was measured; its
+counterexamples are still checked, against a reference rendered in the same
+page. Silently widening the pixel budget to absorb an unstable render would turn
+the suite green without making it true.
 
 Two cases carry `imageDiscriminates: false`. `molecule-trajectory` and
 `vectors-forces` depend on data a `SerializedPipeline` does not carry —
@@ -244,7 +249,9 @@ are recorded here because anyone extending the bench will hit them:
 - **The cartoon representation ignores upstream filters.** It is built from the
   primary structure snapshot, not from the particle stream, so no `filter` in
   front of it narrows the ribbon. This is why `filter-residue` cannot be answered
-  on the `protein` template and is built the way `filter-carbon` is.
+  on the `protein` template and is built the way `filter-carbon` is. Labels are
+  the other way round: `label_generator` does honour the filter feeding it, which
+  is what lets `multistep-filter-bonds` label only the carbons.
 - **The bond DSL has no `resname`.** `BOND_FIELDS` is `bond_index`,
   `atom_index`, `element`, `molecule_id`, and `both` takes a field rather than a
   parenthesised expression. "Only the alanines, bonds included" therefore has to
@@ -259,8 +266,24 @@ are recorded here because anyone extending the bench will hit them:
   `imageDiscriminates: false`.
 - **A node whose parameters fail to parse contributes nothing rather than
   failing.** An earlier `filter-residue` reference carried a `bond_query` the DSL
-  rejects and still drew a plausible picture. The runner now asserts the store's
-  `nodeErrors` is empty for every reference.
+  rejects and still drew a plausible picture; only `collectPipelineErrors` in
+  the unit tests saw it. That is the check to keep green — reading node errors
+  from the running store is not equivalent, because a node whose _input_ a
+  `SerializedPipeline` cannot carry (`load_trajectory`, `load_volumetric`) warns
+  intermittently for reasons that have nothing to do with the reference.
+- **Not every case can be graded by pixels, and two more turned out that way
+  while capturing.** `crystal-polyhedra-exclude` moves about 34 pixels between
+  excluding titanium as a coordination centre and not excluding it — the
+  strontium-centred polyhedra already cover the same volume in that projection —
+  against 4.2 % of render-to-render noise, so the signal is a thousandth of the
+  noise. `volumetric-isosurface` cannot draw an isosurface at all after the round
+  trip; both its nodes report having no input.
+- **A reference has to be re-checked under the conditions it was captured in.**
+  The runner originally shared one page across cases and `filter-carbon` failed
+  against its own image while reproducing byte-for-byte across three fresh
+  boots: the Viewport keeps its framing when a new snapshot has the same
+  topology as the last, so a reference rendered second inherits the previous
+  pipeline's view. The runner now boots one page per case.
 
 ### Rubric corrections found by rendering
 

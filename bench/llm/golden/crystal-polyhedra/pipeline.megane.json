@@ -1,0 +1,146 @@
+{
+  "version": 3,
+  "nodes": [
+    {
+      "type": "load_structure",
+      "fileName": "perovskite_srtio3_3x3x3.xyz",
+      "hasTrajectory": false,
+      "hasCell": true,
+      "id": "loader-1",
+      "position": {
+        "x": -190,
+        "y": 0
+      },
+      "enabled": true
+    },
+    {
+      "type": "symmetry",
+      "mode": "expand",
+      "id": "symmetry-1",
+      "position": {
+        "x": -190,
+        "y": 360
+      },
+      "enabled": true
+    },
+    {
+      "type": "wrap",
+      "mode": "none",
+      "id": "wrap-1",
+      "position": {
+        "x": -190,
+        "y": 720
+      },
+      "enabled": true
+    },
+    {
+      "type": "drawing_boundary",
+      "xMin": 0,
+      "xMax": 1,
+      "yMin": 0,
+      "yMax": 1,
+      "zMin": 0,
+      "zMax": 1,
+      "id": "drawing-boundary-1",
+      "position": {
+        "x": -190,
+        "y": 1080
+      },
+      "enabled": true
+    },
+    {
+      "type": "coordination_generator",
+      "excludedCenters": [],
+      "excludedLigands": [],
+      "cutoffTolerance": 1.15,
+      "boundaryMode": "complete",
+      "id": "coordination-1",
+      "position": {
+        "x": -190,
+        "y": 1440
+      },
+      "enabled": true
+    },
+    {
+      "type": "polyhedron_generator",
+      "opacity": 0.5,
+      "showEdges": false,
+      "edgeColor": "#dddddd",
+      "edgeWidth": 3,
+      "id": "polyhedron-1",
+      "position": {
+        "x": -190,
+        "y": 1800
+      },
+      "enabled": true
+    },
+    {
+      "type": "viewport",
+      "perspective": false,
+      "cellAxesVisible": true,
+      "pivotMarkerVisible": true,
+      "id": "viewport-1",
+      "position": {
+        "x": -190,
+        "y": 2160
+      },
+      "enabled": true
+    }
+  ],
+  "edges": [
+    {
+      "source": "loader-1",
+      "target": "symmetry-1",
+      "sourceHandle": "particle",
+      "targetHandle": "particle"
+    },
+    {
+      "source": "symmetry-1",
+      "target": "wrap-1",
+      "sourceHandle": "particle",
+      "targetHandle": "particle"
+    },
+    {
+      "source": "wrap-1",
+      "target": "drawing-boundary-1",
+      "sourceHandle": "particle",
+      "targetHandle": "particle"
+    },
+    {
+      "source": "drawing-boundary-1",
+      "target": "coordination-1",
+      "sourceHandle": "particle",
+      "targetHandle": "particle"
+    },
+    {
+      "source": "drawing-boundary-1",
+      "target": "viewport-1",
+      "sourceHandle": "particle",
+      "targetHandle": "particle"
+    },
+    {
+      "source": "loader-1",
+      "target": "viewport-1",
+      "sourceHandle": "cell",
+      "targetHandle": "cell"
+    },
+    {
+      "source": "coordination-1",
+      "target": "viewport-1",
+      "sourceHandle": "bond",
+      "targetHandle": "bond"
+    },
+    {
+      "source": "coordination-1",
+      "target": "polyhedron-1",
+      "sourceHandle": "coordination",
+      "targetHandle": "coordination"
+    },
+    {
+      "source": "polyhedron-1",
+      "target": "viewport-1",
+      "sourceHandle": "mesh",
+      "targetHandle": "mesh"
+    }
+  ]
+}

@@ -289,12 +289,6 @@ const COUNTEREXAMPLES: Record<string, (ref: SerializedPipeline) => LabelledPipel
       pipeline: withParam(ref, "color", { mode: "uniform", uniformColor: "#ff8800" }),
     },
   ],
-  "crystal-polyhedra-exclude": (ref) => [
-    {
-      label: "empty exclusion list: draws titanium's polyhedra too",
-      pipeline: withParam(ref, "coordination_generator", { excludedCenters: [] }),
-    },
-  ],
   "molecule-no-bonds": (ref) => {
     // The right answer is an absence, so the wrong one has to *add* something.
     const p = clone(ref);

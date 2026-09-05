@@ -1,0 +1,10 @@
+{
+  "fixture": "caffeine_water.pdb",
+  "expectation": "Atoms only — no bond cylinders anywhere.",
+  "capturedFrom": "pipeline template \"molecule\" applied via store.applyTemplate, then edited through the editor store; add_bond removed",
+  "imageStability": {
+    "boots": 3,
+    "worstDiffPercent": 0.0,
+    "asserted": true
+  }
+}
