@@ -108,7 +108,47 @@ export async function applyPipeline(
 }
 
 /**
- * Apply `pipeline` and screenshot the viewer region.
+ * Put the viewer in the one state every render can be compared in: editor pane
+ * collapsed, camera re-fit to whatever is drawn.
+ *
+ * The camera fit is load-bearing and was established by measurement.
+ * `deserialize` does not re-frame the scene, and the Viewport keeps the current
+ * zoom whenever a new snapshot has the same topology as the last, so the framing
+ * a render inherits depends on which pipelines ran before it in the same page.
+ * `molecule-basic` and `color-by-element` describe the same scene (byElement is
+ * the default palette) and render byte-identical pixels, yet two reference
+ * images captured in different batches differed by 10.9% of pixels, purely in
+ * framing.
+ *
+ * Collapsing the pane removes the editor from the screenshot, which is what
+ * makes the "two pipelines laid out differently must score the same" claim below
+ * true, and takes the camera's frustum inset (`setViewInsets(0, pipelineWidth +
+ * 12)`) out of the picture with it.
+ *
+ * Neither is enough to make every case reproducible, and the reason is not in
+ * this file. Six cases still render one of exactly two pictures depending on the
+ * session. Across four independent boots of those pipelines the store's viewport
+ * state is bit-identical (same atom count, same position checksums, same bond
+ * count, same mesh vertex and coordinate checksums), `getCameraState()` returns
+ * the same position, target and zoom to the last float, and
+ * `getVisibleSubsystems()` agrees — and the images still differ by 2.5-13% of
+ * pixels. Whatever flips is below the scene: coincident geometry rasterised in a
+ * different order. `meta.json` records that per case as `imageStability`, and
+ * the runner declines to assert those images rather than widening the pixel
+ * budget until they pass.
+ */
+async function normalizeViewer(scope: Page | Frame): Promise<void> {
+  const collapse = scope.locator(
+    '[data-testid="panel-pipeline-toggle"][aria-label="Collapse panel"]',
+  );
+  if (await collapse.count()) await collapse.first().click();
+  const reset = scope.locator('[data-testid="reset-view-btn"]');
+  await reset.waitFor({ state: "visible", timeout: 15_000 });
+  await reset.click();
+}
+
+/**
+ * Apply `pipeline`, re-frame the scene, and screenshot the viewer region.
  *
  * The *viewer* region rather than the full page on purpose: two pipelines that
  * draw the same molecule but lay their nodes out differently must score the
@@ -120,6 +160,7 @@ export async function renderPipeline(
   outPath?: string,
 ): Promise<Buffer> {
   await applyPipeline(scope, pipeline);
+  await normalizeViewer(scope);
   const target = outPath ?? join(mkdtempSync(join(tmpdir(), "megane-bench-render-")), "render.png");
   return await captureViewerRegion(scope, target);
 }

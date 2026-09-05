@@ -38,7 +38,12 @@ export const DATASET: BenchCase[] = [
       requiredNodeTypes: ["load_structure", "add_bond", "viewport"],
       requiredConnections: [
         { sourceType: "load_structure", targetType: "viewport", sourceHandle: "particle" },
-        { sourceType: "add_bond", targetType: "viewport", sourceHandle: "bond", targetHandle: "bond" },
+        {
+          sourceType: "add_bond",
+          targetType: "viewport",
+          sourceHandle: "bond",
+          targetHandle: "bond",
+        },
       ],
       minNodes: 3,
     },
@@ -63,7 +68,12 @@ export const DATASET: BenchCase[] = [
     rubric: {
       requiredNodeTypes: ["load_structure", "add_bond", "viewport"],
       requiredConnections: [
-        { sourceType: "add_bond", targetType: "viewport", sourceHandle: "bond", targetHandle: "bond" },
+        {
+          sourceType: "add_bond",
+          targetType: "viewport",
+          sourceHandle: "bond",
+          targetHandle: "bond",
+        },
         { sourceType: "load_trajectory", targetType: "viewport", targetHandle: "trajectory" },
       ],
     },
@@ -83,7 +93,12 @@ export const DATASET: BenchCase[] = [
           sourceHandle: "mesh",
           targetHandle: "mesh",
         },
-        { sourceType: "load_structure", targetType: "viewport", sourceHandle: "cell", targetHandle: "cell" },
+        {
+          sourceType: "load_structure",
+          targetType: "viewport",
+          sourceHandle: "cell",
+          targetHandle: "cell",
+        },
       ],
     },
   },
@@ -95,7 +110,12 @@ export const DATASET: BenchCase[] = [
     rubric: {
       requiredNodeTypes: ["load_structure", "add_bond", "viewport"],
       requiredConnections: [
-        { sourceType: "load_structure", targetType: "viewport", sourceHandle: "cell", targetHandle: "cell" },
+        {
+          sourceType: "load_structure",
+          targetType: "viewport",
+          sourceHandle: "cell",
+          targetHandle: "cell",
+        },
       ],
       paramChecks: [
         {
@@ -112,11 +132,22 @@ export const DATASET: BenchCase[] = [
       "Show coordination polyhedra for an oxide but skip titanium (Z=22) as a center, keep only the others.",
     tags: ["solid", "polyhedra", "params"],
     rubric: {
-      requiredNodeTypes: ["load_structure", "polyhedron_generator", "viewport"],
+      // `excludedCenters` is a Coordination Generator parameter
+      // (`CoordinationGeneratorParams`, src/pipeline/types.ts) — the node that
+      // searches for centre/ligand pairs. Polyhedron Generator only turns that
+      // coordination into a mesh and carries no exclusion list at all, so the
+      // check this rubric used to make ("polyhedron_generator.excludedCenters
+      // includes 22") could not pass for any pipeline, correct ones included.
+      requiredNodeTypes: [
+        "load_structure",
+        "coordination_generator",
+        "polyhedron_generator",
+        "viewport",
+      ],
       paramChecks: [
         {
-          label: "polyhedron excludedCenters contains 22 (Ti)",
-          nodeType: "polyhedron_generator",
+          label: "coordination excludedCenters contains 22 (Ti)",
+          nodeType: "coordination_generator",
           test: (n) => arr(n, "excludedCenters").includes(22),
         },
       ],
@@ -400,7 +431,12 @@ export const DATASET: BenchCase[] = [
     rubric: {
       requiredNodeTypes: ["load_structure", "filter", "representation", "viewport"],
       requiredConnections: [
-        { sourceType: "filter", targetType: "representation", sourceHandle: "out", targetHandle: "in" },
+        {
+          sourceType: "filter",
+          targetType: "representation",
+          sourceHandle: "out",
+          targetHandle: "in",
+        },
         {
           sourceType: "representation",
           targetType: "viewport",
@@ -492,7 +528,12 @@ export const DATASET: BenchCase[] = [
     rubric: {
       requiredNodeTypes: ["load_structure", "add_bond", "viewport"],
       requiredConnections: [
-        { sourceType: "add_bond", targetType: "viewport", sourceHandle: "bond", targetHandle: "bond" },
+        {
+          sourceType: "add_bond",
+          targetType: "viewport",
+          sourceHandle: "bond",
+          targetHandle: "bond",
+        },
       ],
     },
   },

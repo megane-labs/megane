@@ -1,5 +1,10 @@
 {
   "fixture": "caffeine_water.pdb",
   "expectation": "Water drawn as thin lines, caffeine left in the default ball-and-stick style.",
-  "capturedFrom": "tests/e2e/water-line.spec.ts :: water-line, fresh boot, store.serialize()"
+  "capturedFrom": "tests/e2e/water-line.spec.ts :: water-line, fresh boot, store.serialize()",
+  "imageStability": {
+    "boots": 3,
+    "worstDiffPercent": 0.0,
+    "asserted": true
+  }
 }
