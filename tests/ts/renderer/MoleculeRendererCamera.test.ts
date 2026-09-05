@@ -240,6 +240,70 @@ describe("MoleculeRenderer.applyCameraState", () => {
   });
 });
 
+describe("MoleculeRenderer.alignCameraToAxis", () => {
+  function makeSnapshot(box: number[] | null) {
+    return {
+      nAtoms: 1,
+      nBonds: 0,
+      nFileBonds: 0,
+      positions: new Float32Array([5, 5, 5]),
+      elements: new Uint8Array([6]),
+      bonds: new Uint32Array(0),
+      bondOrders: null,
+      box: box ? new Float32Array(box) : null,
+      boxOrigin: null,
+    };
+  }
+
+  it("is a no-op before mount", () => {
+    const r = new MoleculeRenderer();
+    expect(() => r.alignCameraToAxis("+a")).not.toThrow();
+  });
+
+  it("looks along the snapshot's lattice vector, keeping target, distance and zoom", () => {
+    const cam = new THREE.OrthographicCamera();
+    cam.position.set(5, -15, 5);
+    cam.zoom = 2;
+    const ctrls = makeControls();
+    ctrls.target.set(5, 5, 5);
+    const r = makeRenderer({ camera: cam, controls: ctrls, perspectiveMode: false });
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const internals = r as any;
+    // Hexagonal-ish cell: b is not along y, so "+b" differs from "+y".
+    internals.snapshot = makeSnapshot([10, 0, 0, -5, 8.66, 0, 0, 0, 10]);
+    const cb = vi.fn();
+    r.setCameraChangeCallback(cb);
+
+    r.alignCameraToAxis("+b");
+
+    const b = new THREE.Vector3(-5, 8.66, 0).normalize();
+    const eye = cam.position.clone().sub(ctrls.target);
+    expect(eye.length()).toBeCloseTo(20, 9);
+    // The box is a Float32Array, so the lattice vector is only float-exact.
+    expect(eye.normalize().distanceTo(b)).toBeLessThan(1e-6);
+    expect(cam.up.toArray()).toEqual([0, 0, 1]);
+    expect(cam.zoom).toBe(2);
+    expect(ctrls.target.toArray()).toEqual([5, 5, 5]);
+    expect(ctrls.update).toHaveBeenCalled();
+    expect(cb).toHaveBeenCalledTimes(1);
+    // The frustum-fit extent follows the new view.
+    expect(internals.lastExtent).toBeDefined();
+    expect(internals.lastExtent.maxExtent).toBeCloseTo(15, 5);
+  });
+
+  it("falls back to the Cartesian axes without a snapshot", () => {
+    const cam = new THREE.PerspectiveCamera(50, 1, 0.1, 1000);
+    cam.position.set(0, -10, 0);
+    const ctrls = makeControls();
+    const r = makeRenderer({ camera: cam, controls: ctrls, perspectiveMode: true });
+
+    r.alignCameraToAxis("-c");
+
+    expect(cam.position.toArray()).toEqual([0, 0, -10]);
+    expect(cam.up.toArray()).toEqual([0, 1, 0]);
+  });
+});
+
 describe("MoleculeRenderer.setCameraChangeCallback", () => {
   it("stores the callback so subsequent camera ops can fire it", () => {
     const cam = new THREE.OrthographicCamera();

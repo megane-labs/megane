@@ -9,9 +9,18 @@ import {
   zoomOrthographicAroundTarget,
   wheelZoomFactor,
   dollyPerspectiveTowardTarget,
-  DEFAULT_CAMERA_UP,
+  orientCamera,
+  currentOrientation,
 } from "@/renderer/CameraManager";
+import {
+  axisOrientation,
+  standardOrientation,
+  type CameraOrientation,
+} from "@/renderer/cameraOrientation";
 import type { Snapshot } from "@/types";
+
+/** The pre-#661 canonical view: camera on -y looking along +y, z up. */
+const LOOK_ALONG_Y: CameraOrientation = { eye: [0, -1, 0], up: [0, 0, 1] };
 
 function makeSnapshot(opts: {
   positions: number[];
@@ -46,14 +55,54 @@ function makeMockControls() {
   };
 }
 
+/** Carbon's vdW radius — makeSnapshot defaults every atom to element 6. */
+const R_C = 1.7;
+
 describe("computeViewBounds", () => {
   it("returns atom-centroid center when no box is present", () => {
     const snap = makeSnapshot({ positions: [-1, -2, -3, 1, 2, 3] });
-    const { center, extent } = computeViewBounds(snap);
+    const { center, extent } = computeViewBounds(snap, LOOK_ALONG_Y);
     expect(center).toEqual([0, 0, 0]);
-    expect(extent.extentX).toBeCloseTo(2, 5);
-    expect(extent.extentY).toBeCloseTo(4, 5);
-    expect(extent.maxExtent).toBeCloseTo(6, 5);
+    // Screen axes of LOOK_ALONG_Y are world x (right) and z (up); the atom
+    // spheres add a radius on each side.
+    expect(extent.extentX).toBeCloseTo(2 + 2 * R_C, 5);
+    expect(extent.extentY).toBeCloseTo(6 + 2 * R_C, 5);
+    expect(extent.maxExtent).toBeCloseTo(6 + 2 * R_C, 5);
+  });
+
+  it("bounds the atoms' vdW spheres, per element, not just their centres", () => {
+    // H (1.2 Å) at -1 and C (1.7 Å) at +1 along x.
+    const snap = makeSnapshot({ positions: [-1, 0, 0, 1, 0, 0], elements: [1, 6] });
+    const { extent } = computeViewBounds(snap, LOOK_ALONG_Y);
+    expect(extent.extentX).toBeCloseTo(1 + 1.2 + (1 + 1.7), 5);
+    expect(extent.extentY).toBeCloseTo(2 * 1.7, 5);
+    expect(extent.maxExtent).toBeCloseTo(4.9, 5);
+  });
+
+  it("measures extentX / extentY along the screen axes of the orientation", () => {
+    const snap = makeSnapshot({ positions: [-1, -2, -3, 1, 2, 3] });
+    // Looking down +z with y up: right is x, up is y.
+    const top = computeViewBounds(snap, { eye: [0, 0, 1], up: [0, 1, 0] }).extent;
+    expect(top.extentX).toBeCloseTo(2 + 2 * R_C, 5);
+    expect(top.extentY).toBeCloseTo(4 + 2 * R_C, 5);
+    // Looking along -x from +x with z up: right is y, up is z.
+    const side = computeViewBounds(snap, { eye: [1, 0, 0], up: [0, 0, 1] }).extent;
+    expect(side.extentX).toBeCloseTo(4 + 2 * R_C, 5);
+    expect(side.extentY).toBeCloseTo(6 + 2 * R_C, 5);
+    // maxExtent is the world AABB whichever way the camera looks.
+    expect(top.maxExtent).toBeCloseTo(6 + 2 * R_C, 5);
+    expect(side.maxExtent).toBeCloseTo(6 + 2 * R_C, 5);
+  });
+
+  it("defaults to the structure's standard orientation", () => {
+    const snap = makeSnapshot({ positions: [-1, -2, -3, 1, 2, 3] });
+    const implicit = computeViewBounds(snap);
+    const explicit = computeViewBounds(snap, standardOrientation(snap.box));
+    expect(implicit).toEqual(explicit);
+    // The tilted view sees a projection somewhere between an axis extent
+    // and the space diagonal (plus the sphere radii).
+    expect(implicit.extent.extentX).toBeGreaterThan(2 + 2 * R_C);
+    expect(implicit.extent.extentX).toBeLessThan(Math.sqrt(4 + 16 + 36) + 2 * R_C);
   });
 
   it("uses simulation cell when box is non-zero", () => {
@@ -62,7 +111,7 @@ describe("computeViewBounds", () => {
       positions: [0, 0, 0], // single atom near origin (ignored for centering)
       box: [10, 0, 0, 0, 10, 0, 0, 0, 10],
     });
-    const { center, extent } = computeViewBounds(snap);
+    const { center, extent } = computeViewBounds(snap, LOOK_ALONG_Y);
     expect(center).toEqual([5, 5, 5]);
     expect(extent.extentX).toBeCloseTo(10, 5);
     expect(extent.extentY).toBeCloseTo(10, 5);
@@ -74,9 +123,9 @@ describe("computeViewBounds", () => {
       positions: [-1, 0, 0, 1, 0, 0],
       box: [0, 0, 0, 0, 0, 0, 0, 0, 0],
     });
-    const { center, extent } = computeViewBounds(snap);
+    const { center, extent } = computeViewBounds(snap, LOOK_ALONG_Y);
     expect(center).toEqual([0, 0, 0]);
-    expect(extent.extentX).toBeCloseTo(2, 5);
+    expect(extent.extentX).toBeCloseTo(2 + 2 * R_C, 5);
   });
 
   it("returns center=(0,0,0) for a snapshot with zero atoms", () => {
@@ -95,7 +144,7 @@ describe("computeViewBounds", () => {
       box: [10, 0, 0, 0, 10, 0, 0, 0, 10],
       boxOrigin: [100, 200, 600],
     });
-    const { center, extent } = computeViewBounds(snap);
+    const { center, extent } = computeViewBounds(snap, LOOK_ALONG_Y);
     expect(center[0]).toBeCloseTo(105, 5);
     expect(center[1]).toBeCloseTo(205, 5);
     expect(center[2]).toBeCloseTo(605, 5);
@@ -120,7 +169,8 @@ describe("computeViewBounds", () => {
       // a=(4,0,0), b=(2,4,0), c=(0,0,5) — sheared parallelepiped
       box: [4, 0, 0, 2, 4, 0, 0, 0, 5],
     });
-    const { center, extent } = computeViewBounds(snap);
+    // Looking down +z with y up: right is x, up is y.
+    const { center, extent } = computeViewBounds(snap, { eye: [0, 0, 1], up: [0, 1, 0] });
     // Center is (a+b+c)/2 = (3, 2, 2.5)
     expect(center[0]).toBeCloseTo(3, 5);
     expect(center[1]).toBeCloseTo(2, 5);
@@ -143,25 +193,56 @@ describe("fitCameraToView", () => {
     expect(controls.update).toHaveBeenCalled();
   });
 
-  it("places camera offset along -y by 1.2× max extent", () => {
+  it("places camera along the orientation's eye vector by 1.2× max extent", () => {
     const cam = new THREE.OrthographicCamera(-5, 5, 5, -5, 0.1, 1000);
     const controls = makeMockControls();
     const snap = makeSnapshot({ positions: [-1, -1, -1, 1, 1, 1] });
-    fitCameraToView(cam, controls as never, snap);
-    // Max extent = 2, distance = 2 × 1.2 = 2.4
+    fitCameraToView(cam, controls as never, snap, LOOK_ALONG_Y);
+    // Max extent = 2 + 2 × 1.7 (carbon spheres) = 5.4, distance = 5.4 × 1.2
     expect(cam.position.x).toBeCloseTo(0, 5);
-    expect(cam.position.y).toBeCloseTo(-2.4, 5);
+    expect(cam.position.y).toBeCloseTo(-6.48, 5);
     expect(cam.position.z).toBeCloseTo(0, 5);
+    expect(cam.up.toArray()).toEqual([0, 0, 1]);
   });
 
-  it("enforces a minimum distance of 0.1 for tiny structures", () => {
+  it("defaults to the standard orientation of the snapshot's cell", () => {
     const cam = new THREE.OrthographicCamera(-5, 5, 5, -5, 0.1, 1000);
     const controls = makeMockControls();
-    const snap = makeSnapshot({ positions: [0, 0, 0] }); // single atom → maxExtent=0
+    const snap = makeSnapshot({
+      positions: [1, 1, 1],
+      box: [10, 0, 0, 0, 10, 0, 0, 0, 10],
+    });
     fitCameraToView(cam, controls as never, snap);
-    expect(cam.position.y).toBeCloseTo(-0.1, 5);
+    const want = standardOrientation(snap.box);
+    // distance = 10 × 1.2 = 12 from the cell centre (5, 5, 5)
+    for (let i = 0; i < 3; i++) {
+      expect(cam.position.toArray()[i]).toBeCloseTo(5 + want.eye[i] * 12, 5);
+      expect(cam.up.toArray()[i]).toBeCloseTo(want.up[i], 9);
+    }
+    // VESTA look: the camera sits on the +a side, swung toward +b and above.
+    expect(cam.position.x).toBeGreaterThan(5);
+    expect(cam.position.y).toBeGreaterThan(5);
+    expect(cam.position.z).toBeGreaterThan(5);
+    expect(cam.position.x - 5).toBeGreaterThan(cam.position.y - 5);
+  });
+
+  it("enforces a minimum distance of 0.1 for empty structures", () => {
+    const cam = new THREE.OrthographicCamera(-5, 5, 5, -5, 0.1, 1000);
+    const controls = makeMockControls();
+    const snap = makeSnapshot({ positions: [], elements: [] }); // no atoms → no extent
+    fitCameraToView(cam, controls as never, snap);
+    expect(cam.position.distanceTo(controls.target)).toBeCloseTo(0.1, 5);
     expect(cam.near).toBeCloseTo(-1, 5); // -distance * 10
     expect(cam.far).toBeCloseTo(1, 5);
+  });
+
+  it("frames a single atom by its vdW sphere", () => {
+    const cam = new THREE.OrthographicCamera(-5, 5, 5, -5, 0.1, 1000);
+    const controls = makeMockControls();
+    const snap = makeSnapshot({ positions: [0, 0, 0] }); // one carbon → 3.4 Å across
+    const extent = fitCameraToView(cam, controls as never, snap);
+    expect(extent.maxExtent).toBeCloseTo(2 * R_C, 5);
+    expect(cam.position.distanceTo(controls.target)).toBeCloseTo(2 * R_C * 1.2, 5);
   });
 
   it("resets ortho zoom and sets near/far from distance", () => {
@@ -171,8 +252,8 @@ describe("fitCameraToView", () => {
     const snap = makeSnapshot({ positions: [-1, -1, -1, 1, 1, 1] });
     fitCameraToView(cam, controls as never, snap);
     expect(cam.zoom).toBe(1);
-    expect(cam.near).toBeCloseTo(-24, 5); // -2.4 × 10
-    expect(cam.far).toBeCloseTo(24, 5);
+    expect(cam.near).toBeCloseTo(-64.8, 5); // -6.48 × 10
+    expect(cam.far).toBeCloseTo(64.8, 5);
   });
 
   it("updates perspective camera near/far and projection matrix", () => {
@@ -181,9 +262,9 @@ describe("fitCameraToView", () => {
     const controls = makeMockControls();
     const snap = makeSnapshot({ positions: [-5, -5, -5, 5, 5, 5] });
     fitCameraToView(cam, controls as never, snap);
-    // distance = 10 × 1.2 = 12
-    expect(cam.near).toBeCloseTo(0.12, 5);
-    expect(cam.far).toBeCloseTo(120, 5);
+    // distance = (10 + 2 × 1.7) × 1.2 = 16.08
+    expect(cam.near).toBeCloseTo(0.1608, 5);
+    expect(cam.far).toBeCloseTo(160.8, 5);
     // projection matrix should have been recomputed
     expect(cam.projectionMatrix.elements).not.toEqual(before);
   });
@@ -192,10 +273,60 @@ describe("fitCameraToView", () => {
     const cam = new THREE.OrthographicCamera(-5, 5, 5, -5, 0.1, 1000);
     const controls = makeMockControls();
     const snap = makeSnapshot({ positions: [-3, -2, -1, 3, 2, 1] });
-    const extent = fitCameraToView(cam, controls as never, snap);
-    expect(extent.extentX).toBeCloseTo(6, 5);
-    expect(extent.extentY).toBeCloseTo(4, 5);
-    expect(extent.maxExtent).toBeCloseTo(6, 5);
+    const extent = fitCameraToView(cam, controls as never, snap, LOOK_ALONG_Y);
+    expect(extent.extentX).toBeCloseTo(6 + 2 * R_C, 5);
+    expect(extent.extentY).toBeCloseTo(2 + 2 * R_C, 5);
+    expect(extent.maxExtent).toBeCloseTo(6 + 2 * R_C, 5);
+  });
+});
+
+describe("orientCamera", () => {
+  it("turns the camera around the target keeping its distance and zoom", () => {
+    const cam = new THREE.OrthographicCamera(-5, 5, 5, -5, 0.1, 1000);
+    cam.zoom = 3;
+    cam.position.set(1, -9, 4);
+    cam.up.set(0.2, 0.3, 0.9).normalize();
+    const controls = makeMockControls();
+    controls.target.set(1, 1, 1);
+    const distance = cam.position.distanceTo(controls.target);
+
+    orientCamera(cam, controls as never, axisOrientation("+z", null));
+
+    expect(cam.position.x).toBeCloseTo(1, 9);
+    expect(cam.position.y).toBeCloseTo(1, 9);
+    expect(cam.position.z).toBeCloseTo(1 + distance, 9);
+    expect(cam.up.toArray()).toEqual([0, 1, 0]);
+    expect(cam.zoom).toBe(3);
+    expect(controls.target.toArray()).toEqual([1, 1, 1]);
+    expect(controls.update).toHaveBeenCalled();
+  });
+
+  it("backs a camera sitting on its target off by one unit", () => {
+    const cam = new THREE.PerspectiveCamera(50, 1, 0.1, 1000);
+    cam.position.set(2, 2, 2);
+    const controls = makeMockControls();
+    controls.target.set(2, 2, 2);
+
+    orientCamera(cam, controls as never, { eye: [-1, 0, 0], up: [0, 0, 1] });
+
+    expect(cam.position.toArray()).toEqual([1, 2, 2]);
+  });
+});
+
+describe("currentOrientation", () => {
+  it("reads eye and up back from the camera pose", () => {
+    const cam = new THREE.OrthographicCamera(-5, 5, 5, -5, 0.1, 1000);
+    cam.position.set(0, -10, 0);
+    cam.up.set(0, 0, 1);
+    const controls = makeMockControls();
+    const o = currentOrientation(cam, controls);
+    expect(o).toEqual(LOOK_ALONG_Y);
+  });
+
+  it("is null while the camera sits on its target", () => {
+    const cam = new THREE.OrthographicCamera(-5, 5, 5, -5, 0.1, 1000);
+    const controls = makeMockControls();
+    expect(currentOrientation(cam, controls)).toBeNull();
   });
 });
 
@@ -451,7 +582,7 @@ describe("zoomOrthographicAroundTarget", () => {
 });
 
 describe("fitCameraToView orientation reset", () => {
-  it("restores the canonical up vector after the trackball rolled the camera", () => {
+  it("restores the standard orientation after the trackball rolled the camera", () => {
     const cam = new THREE.OrthographicCamera(-5, 5, 5, -5, 0.1, 100);
     // Simulate a trackball drag that left the camera rolled and over a pole.
     cam.up.set(0.3, -0.8, 0.5).normalize();
@@ -461,11 +592,13 @@ describe("fitCameraToView orientation reset", () => {
 
     fitCameraToView(cam, controls, snap);
 
-    expect(cam.up.toArray()).toEqual([...DEFAULT_CAMERA_UP]);
-    // Canonical view: below the centre on -y, looking along +y.
-    expect(cam.position.x).toBeCloseTo(0, 6);
-    expect(cam.position.y).toBeLessThan(0);
-    expect(cam.position.z).toBeCloseTo(0, 6);
+    const want = standardOrientation(null);
+    const distance = cam.position.distanceTo(controls.target);
+    expect(distance).toBeCloseTo((2 + 2 * R_C) * 1.2, 6);
+    for (let i = 0; i < 3; i++) {
+      expect(cam.up.toArray()[i]).toBeCloseTo(want.up[i], 9);
+      expect(cam.position.toArray()[i]).toBeCloseTo(want.eye[i] * distance, 6);
+    }
     expect(controls.update).toHaveBeenCalled();
   });
 });

@@ -39,7 +39,7 @@ import {
   removeNode,
   setNodeParam,
 } from "./lib/pipeline";
-import { getProjectedAtoms, resetCamera } from "./lib/render-utils";
+import { alignCamera, getProjectedAtoms, resetCamera } from "./lib/render-utils";
 import { join } from "path";
 import { fileURLToPath } from "url";
 
@@ -122,6 +122,12 @@ test.beforeAll(async ({ browser }, info) => {
  * ask for the fit rather than hoping boot delivered it, then poll until it has
  * landed. The atoms are static afterwards (the frame is pinned and nothing
  * moves the camera), so one settled read serves the whole run.
+ *
+ * The fit lands in the standard orientation (#661), which looks roughly down
+ * the x axis — and the fixture's bond runs along x, so the two balls would
+ * overlap on screen and swallow the midpoint this spec samples. Turn the
+ * camera onto +y afterwards: the bond then lies flat across the screen with
+ * the fit's zoom kept.
  */
 async function waitForFittedAtoms(
   scope: Page | Frame,
@@ -133,6 +139,7 @@ async function waitForFittedAtoms(
   let latest: Awaited<ReturnType<typeof getProjectedAtoms>> = [];
   do {
     await resetCamera(scope);
+    await alignCamera(scope, "+y");
     latest = await getProjectedAtoms(scope);
     const fitted =
       latest.length === FIXTURE_ATOMS &&

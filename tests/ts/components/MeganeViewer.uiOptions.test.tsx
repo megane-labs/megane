@@ -18,6 +18,7 @@ const {
     setCameraChangeCallback: vi.fn<(cb: () => void) => void>(),
     applyCameraState: vi.fn(),
     resetCamera: vi.fn(),
+    alignCameraToAxis: vi.fn(),
     updateBondsExt: vi.fn(),
     getStats: vi.fn(() => ({ fps: 60, drawCalls: 3 })),
     getCameraState: vi.fn<() => unknown>(() => null),
@@ -96,6 +97,7 @@ import type { MeganeCameraState } from "@/renderer/MoleculeRenderer";
 const TOOL_TESTIDS: Record<keyof MeganeViewerUiOptions, string[]> = {
   pipelineEditor: ["mock-pipeline-editor"],
   resetView: ["reset-view-btn"],
+  viewAxes: ["view-axis-controls"],
   perfHud: ["perf-hud"],
   timeline: ["mock-timeline"],
   tooltip: ["mock-tooltip"],
@@ -141,6 +143,7 @@ describe("MeganeViewer ui options", () => {
     expect(DEFAULT_MEGANE_VIEWER_UI).toEqual({
       pipelineEditor: true,
       resetView: true,
+      viewAxes: true,
       perfHud: true,
       timeline: true,
       tooltip: true,
@@ -343,6 +346,45 @@ describe("MeganeViewer ui options", () => {
 
     expect(rendererStub.resetCamera).toHaveBeenCalledTimes(1);
     expect(useViewStateStore.getState().camera).toBeNull();
+  });
+
+  it("aligns the camera from the axis buttons without touching the persisted view state", () => {
+    const saved = { position: [9, 9, 9] } as never;
+    useViewStateStore.setState({ camera: saved });
+    render(<MeganeViewer onUploadStructure={() => {}} />);
+
+    fireEvent.click(screen.getByTestId("view-axis-+z"));
+    expect(rendererStub.alignCameraToAxis).toHaveBeenLastCalledWith("+z");
+    fireEvent.click(screen.getByTestId("view-axis--x"));
+    expect(rendererStub.alignCameraToAxis).toHaveBeenLastCalledWith("-x");
+    expect(rendererStub.alignCameraToAxis).toHaveBeenCalledTimes(2);
+    // Persistence is the renderer's camera-change callback's job, not the
+    // click handler's — nothing is cleared here.
+    expect(useViewStateStore.getState().camera).toBe(saved);
+    useViewStateStore.setState({ camera: null });
+  });
+
+  // No structure is loaded in this suite, so there is no cell: the crystal
+  // axes would only duplicate x/y/z and stay hidden.
+  it("shows only the Cartesian axis row while no cell is loaded", () => {
+    render(<MeganeViewer onUploadStructure={() => {}} />);
+    expect(screen.getByTestId("view-axis-row-cartesian")).toBeTruthy();
+    expect(screen.queryByTestId("view-axis-row-lattice")).toBeNull();
+  });
+
+  it("stacks the axis buttons under the Reset View button in one corner block", () => {
+    render(<MeganeViewer onUploadStructure={() => {}} />);
+    const block = screen.getByTestId("view-controls");
+    expect(block).toHaveStyle({ top: "12px", left: "12px" });
+    expect(block.contains(screen.getByTestId("reset-view-btn"))).toBe(true);
+    expect(block.contains(screen.getByTestId("view-axis-controls"))).toBe(true);
+  });
+
+  it("drops the corner block entirely when both its tools are hidden", () => {
+    render(
+      <MeganeViewer onUploadStructure={() => {}} ui={{ resetView: false, viewAxes: false }} />,
+    );
+    expect(screen.queryByTestId("view-controls")).toBeNull();
   });
 
   it("reclaims the inset and pulls the tour anchor in when the panel is collapsed", () => {

@@ -87,7 +87,8 @@ import { MeganeViewer, usePipelineStore } from "megane-viewer/lib";
 | Key | Default | Hides |
 |------|---------|-------|
 | `pipelineEditor` | `true` | Pipeline editor panel on the right, including the viewer's only file-open UI |
-| `resetView` | `true` | "Reset View" button in the top-left corner |
+| `resetView` | `true` | "Reset View" button in the top-left corner (re-fits the structure in the standard orientation) |
+| `viewAxes` | `true` | Axis-alignment buttons under Reset View: ±a / ±b / ±c while a cell is loaded, ±x / ±y / ±z always |
 | `perfHud` | `true` | Atoms / Bonds / Draws / FPS readout |
 | `timeline` | `true` | Playback timeline along the bottom |
 | `tooltip` | `true` | Hover tooltip over atoms and bonds |
@@ -99,6 +100,30 @@ pipeline still executes and the renderer still receives every update. The type
 are exported for typed configs. With `pipelineEditor: false` you must drive
 file loading yourself (`usePipelineStore.getState().openFile(file)`), since the
 Load Structure node lives inside the editor.
+
+### Camera orientation
+
+The initial view and "Reset View" use VESTA's *standard orientation of crystal
+shape*, derived from the structure's actual lattice vectors: +c points up the
+screen and +b to the right, then the eye is swung by arctan(1/3) ≈ 18.4° around
+the vertical axis and raised by arctan(1/6) ≈ 9.5°, so the +a end of the cell
+comes toward the viewer at the lower left. Structures without a cell use the
+Cartesian frame (a = x, b = y, c = z).
+
+The axis buttons (`ui.viewAxes`) turn the camera to look straight along an
+axis from its + or − side while keeping the target, distance and zoom; the
+same operation is available programmatically:
+
+```ts
+import { MoleculeRenderer, standardOrientation, axisOrientation } from "megane-viewer/lib";
+
+renderer.alignCameraToAxis("+c"); // camera above the cell, b up
+renderer.resetView(); // standard orientation, re-fitted
+
+// Pure helpers, no renderer needed: unit `eye` (target → camera) and `up`.
+standardOrientation(snapshot.box); // VESTA standard orientation
+axisOrientation("-b", snapshot.box); // camera on the −b side, c up
+```
 
 See the [TypeScript Pipeline API](/guide/pipeline/typescript) for the complete interface.
 

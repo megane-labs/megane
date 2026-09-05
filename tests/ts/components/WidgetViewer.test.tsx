@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach, beforeEach } from "vitest";
-import { render, act, cleanup } from "@testing-library/react";
+import { render, act, cleanup, fireEvent } from "@testing-library/react";
 import type { Frame, HoverInfo, Snapshot } from "@/types";
 
 // Mock heavy components to avoid WebGL/canvas in jsdom
@@ -105,6 +105,41 @@ describe("WidgetViewer", () => {
     render(<WidgetViewer {...defaultProps} />);
     const tooltipProps = mockTooltip.mock.calls[0][0];
     expect(tooltipProps.info).toBeNull();
+  });
+
+  it("renders the axis-alignment buttons and forwards clicks to the renderer", () => {
+    const { getByTestId, queryByTestId } = render(<WidgetViewer {...defaultProps} />);
+    // No snapshot → no cell → only the Cartesian row.
+    expect(getByTestId("view-axis-controls")).toBeTruthy();
+    expect(queryByTestId("view-axis-row-lattice")).toBeNull();
+
+    const alignCameraToAxis = vi.fn();
+    const renderer = new Proxy(
+      {},
+      { get: (_t, prop) => (prop === "alignCameraToAxis" ? alignCameraToAxis : vi.fn()) },
+    );
+    act(() => {
+      mockViewport.mock.calls[0][0].onRendererReady?.(renderer as never);
+    });
+    fireEvent.click(getByTestId("view-axis-+y"));
+    expect(alignCameraToAxis).toHaveBeenCalledWith("+y");
+  });
+
+  it("shows the crystal-axis row once a snapshot with a cell is loaded", () => {
+    const snapshot: Snapshot = {
+      nAtoms: 1,
+      nBonds: 0,
+      nFileBonds: 0,
+      positions: new Float32Array([0, 0, 0]),
+      elements: new Uint8Array([6]),
+      bonds: new Uint32Array(0),
+      bondOrders: null,
+      box: new Float32Array([10, 0, 0, 0, 10, 0, 0, 0, 10]),
+      boxOrigin: null,
+    };
+    const { getByTestId } = render(<WidgetViewer {...defaultProps} snapshot={snapshot} />);
+    expect(getByTestId("view-axis-row-lattice")).toBeTruthy();
+    expect(getByTestId("view-axis-+a")).toBeTruthy();
   });
 });
 

@@ -72,6 +72,20 @@ export type { StructureParseResult } from "./parsers/structure";
 
 // Core renderer (framework-agnostic)
 export { MoleculeRenderer } from "./renderer/MoleculeRenderer";
+export type { MeganeCameraState, MeganeCameraMode } from "./renderer/MoleculeRenderer";
+
+// Camera orientations: VESTA's standard orientation and the ±a/±b/±c,
+// ±x/±y/±z axis views (`MoleculeRenderer.alignCameraToAxis`).
+export {
+  VIEW_AXES,
+  LATTICE_VIEW_AXES,
+  CARTESIAN_VIEW_AXES,
+  isViewAxis,
+  latticeVectors,
+  standardOrientation,
+  axisOrientation,
+} from "./renderer/cameraOrientation";
+export type { ViewAxis, CameraOrientation, LatticeVectors } from "./renderer/cameraOrientation";
 
 // Pipeline builder API
 export {

@@ -15,11 +15,15 @@ export type Scope = Page | Frame;
 
 export type CameraMode = "perspective" | "orthographic";
 
+/** Signed axis accepted by `alignCamera` (mirrors `ViewAxis` in src). */
+export type ViewAxis = `${"+" | "-"}${"a" | "b" | "c" | "x" | "y" | "z"}`;
+
 export interface CameraState {
   mode: CameraMode;
   position: [number, number, number];
   target: [number, number, number];
   zoom: number;
+  up?: [number, number, number];
 }
 
 export interface ProjectedAtom {
@@ -47,6 +51,7 @@ interface TestApi {
   getVisibleSubsystems: () => SubsystemVisibility;
   setCameraMode: (mode: CameraMode) => void;
   resetCamera: () => void;
+  alignCamera: (axis: ViewAxis) => void;
 }
 
 export async function getProjectedAtoms(scope: Scope): Promise<ProjectedAtom[]> {
@@ -85,6 +90,14 @@ export async function resetCamera(scope: Scope): Promise<void> {
     const w = window as Window & { __megane_test?: TestApi };
     w.__megane_test?.resetCamera();
   });
+}
+
+/** Turn the camera to look along a crystal / Cartesian axis (issue #661). */
+export async function alignCamera(scope: Scope, axis: ViewAxis): Promise<void> {
+  await scope.evaluate((a) => {
+    const w = window as Window & { __megane_test?: TestApi };
+    w.__megane_test?.alignCamera(a);
+  }, axis);
 }
 
 /**

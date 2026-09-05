@@ -70,7 +70,9 @@ class MolecularViewer(anywidget.AnyWidget):
 
     # Camera state (JS ↔ Python). Persisted by anywidget kernel-side storage.
     # Schema: {"mode": "orthographic"|"perspective", "position": [x,y,z],
-    #           "target": [x,y,z], "zoom": float}
+    #           "target": [x,y,z], "zoom": float, "up": [x,y,z]}
+    # `up` was added with the free-rotation trackball; states saved before it
+    # (no `up`) still restore with the camera's current up vector.
     camera_state = traitlets.Dict({}).tag(sync=True)
 
     # Pipeline data delivery (the visual pipeline editor is intentionally
