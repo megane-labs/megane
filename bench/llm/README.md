@@ -114,33 +114,46 @@ The scorer above grades the **shape** of a pipeline: which node types exist, how
 they are wired, what their parameters say. It never draws anything, so it cannot
 tell a pipeline that answers the request from one that draws the opposite.
 
-`bench/llm/golden/` holds the other half — the pipelines a correct answer
-produces, as `SerializedPipeline` JSON, for the dataset's two molecule-selection
-requests:
-
-| file | answers | shows |
-| --- | --- | --- |
-| `water-hidden.megane.json` | `hide-water` | only the caffeine, in ball-and-stick |
-| `water-line.megane.json` | `representation-water-line` | water as thin lines, caffeine untouched |
-
-These are **captured, not hand-authored**. Each is `store.serialize()` taken from
-the graph `tests/e2e/water-line.spec.ts` builds through the editor, from a fresh
-boot per view. Hand-rolling them is how the first attempt went wrong three ways
-over — an atom field in a `bond_query`, a `bondSource` no fixture loads, and a
-`molecule_id` selection that distance-inferred bonds break — none of which is
-obvious from reading a graph.
+Ground truth lives beside the prompt it answers — one folder per case, named
+after its `dataset.ts` id:
 
 ```
-npm run build:app                 # the spec renders the built webapp
+bench/llm/dataset.ts                              the prompt and its rubric
+bench/llm/golden/<case id>/pipeline.megane.json   a pipeline that answers it
+bench/llm/golden/<case id>/expected.png           what that pipeline draws
+bench/llm/golden/<case id>/meta.json              fixture, expectation, capture source
+```
+
+Adding ground truth to a case means dropping a folder named after it. There is
+no registry to update: `golden.ts` discovers the directory, joins each folder to
+its prompt by id, and throws if a folder names a case `dataset.ts` does not
+have. Today:
+
+| case | shows |
+| --- | --- |
+| `hide-water` | only the caffeine, in ball-and-stick |
+| `representation-water-line` | water as thin lines, caffeine untouched |
+
+The pipelines are **captured, not hand-authored**: each is `store.serialize()`
+taken from the graph `tests/e2e/water-line.spec.ts` builds through the editor,
+from a fresh boot per case (`meta.json` records which). Hand-rolling them is how
+the first attempt went wrong three ways over — an atom field in a `bond_query`,
+a `bondSource` no fixture loads, and a `molecule_id` selection that
+distance-inferred bonds break — none of it obvious from reading a graph.
+
+```
+npm run build:app                 # the runner renders the built webapp
 npm run test:e2e:bench-golden
 ```
 
-`tests/e2e/bench-golden.spec.ts` loads each reference as serialized JSON — the
-same form a model emits — renders it, and compares against
-`tests/e2e/baselines/bench-golden/`. That round trip is the point: it is what
-lets the bench grade generated JSON against a reviewed image.
+`tests/e2e/bench-golden.spec.ts` is only the runner. It loads each reference as
+serialized JSON — the same form a model emits — renders it, and compares against
+that case's `expected.png`. The round trip is the point: it is what lets the
+bench grade generated JSON against a reviewed picture. Nothing about a case
+lives in the E2E suite, so a case can be added, re-captured or experimented on
+without touching it.
 
-Every view also carries **counterexamples**: wrong pipelines derived from the
+Every case also carries **counterexamples**: wrong pipelines derived from its
 reference by mutation, which must *not* draw it. Without them a green run would
 prove nothing — a comparison that accepts everything looks identical to one that
 works. The first is the bond query `water-line.spec.ts` itself shipped until
@@ -151,18 +164,16 @@ recorded that as "only the caffeine shows".
 
 The pixel budget is **0.005 %**, not the E2E default. The caffeine is about 1 % of
 the frame, so the differences that matter are small in absolute terms: measured
-on this fixture a reference re-rendered against its own baseline differs by
+on this fixture a reference re-rendered against its own image differs by
 0.000 %, while the closest wrong pipeline — the one that drops the caffeine's 25
 sticks — differs by 0.023 %. Raise the budget and the suite stops separating
 them.
 
-To re-record a baseline after an intended change, delete the PNG (or set
-`MEGANE_E2E_UPDATE=1`) and re-run — then **look at the new image**. If a
-reference stops matching, re-capture `golden/*.megane.json` from the spec rather
-than re-recording the PNG; a reference recorded from an unreviewed render is the
-exact failure mode this suite exists to catch. The project is not part of
-`test:e2e:ci:webapp`; wiring it in also needs `tests/e2e/baselines-ci/bench-golden/`
-recorded by the "E2E update baselines" workflow.
+To re-record an `expected.png` after an intended change, delete it and re-run —
+then **look at the new image**. If a reference stops matching, re-capture
+`pipeline.megane.json` from the source `meta.json` names rather than re-recording
+the PNG; an image recorded from an unreviewed render is the exact failure mode
+this suite exists to catch.
 
 ### Rubric corrections found by rendering
 

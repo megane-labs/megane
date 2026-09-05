@@ -7,8 +7,10 @@
  * compares the result against a committed reference image.
  *
  * The pixel comparison itself is delegated to the E2E suite's
- * `compareToBaseline`, so render scores live under the same baseline root and
- * the same `MEGANE_E2E_*` controls as every other pixel check in the repo.
+ * `compareToBaseline`, but the images themselves live beside the prompts in
+ * `bench/llm/golden/<case id>/expected.png` rather than under the E2E baseline
+ * root — ground truth for a prompt belongs with that prompt, so a case can be
+ * added, re-captured or experimented on without touching the E2E suite.
  */
 
 import { join } from "node:path";
@@ -19,34 +21,11 @@ import type { SerializedPipeline } from "@/pipeline/types";
 import {
   captureViewerRegion,
   compareToBaseline,
-  baselinePath,
   getReadyState,
   waitForReady,
   stabilizeUi,
 } from "../../tests/e2e/lib/setup";
 
-/**
- * Baseline directory: `tests/e2e/baselines/bench-golden/`.
- *
- * The bench records its own rather than reusing `water-line`'s. Those two
- * baselines were captured from a single shared boot, so the "hide the water"
- * one sits on top of the previous test's water-as-lines branch — a fine thing
- * for that spec to pin, but not the answer to "hide the water". The references
- * here are captured from a fresh boot per view, one construction each.
- */
-export const RENDER_PLATFORM = "bench-golden";
-
-/**
- * Pixel budget for "this pipeline draws the reference picture".
- *
- * Far tighter than the E2E default, and deliberately so: the caffeine occupies
- * about 1% of the frame, so the differences that matter here are small in
- * absolute terms. Measured on this fixture, a golden re-rendered against its own
- * baseline differs by 0.000%, while the *closest* wrong pipeline — the one whose
- * invalid bond query drops the caffeine's 25 sticks — differs by 0.023%. A
- * budget of 0.005% (about 30 pixels) sits an order of magnitude below that and
- * still absorbs antialiasing. Raise it and the suite stops separating them.
- */
 export const RENDER_MAX_DIFF_PERCENT = 0.005;
 
 export interface RenderScore {
@@ -145,21 +124,17 @@ export async function renderPipeline(
   return await captureViewerRegion(scope, target);
 }
 
-/** Reference image path for a bench case id. */
-export function renderBaselinePath(caseId: string): string {
-  return baselinePath(RENDER_PLATFORM, caseId);
-}
-
 /**
- * Compare a capture against a case's reference image.
+ * Compare a capture against a case's reference image
+ * (`bench/llm/golden/<case id>/expected.png`; delete it and re-run to record).
  *
  * `score` is intentionally binary. A pipeline either draws the requested
  * picture or it does not; a partial credit curve over pixel counts would reward
  * "wrong, but only in a small corner of the screen", which is not a thing users
  * care about.
  */
-export async function scoreRender(capture: Buffer, caseId: string): Promise<RenderScore> {
-  const result = await compareToBaseline(renderBaselinePath(caseId), capture, {
+export async function scoreRender(capture: Buffer, expectedImage: string): Promise<RenderScore> {
+  const result = await compareToBaseline(expectedImage, capture, {
     maxDiffPercent: RENDER_MAX_DIFF_PERCENT,
   });
   return {

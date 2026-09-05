@@ -1,66 +1,52 @@
 /**
- * Ground truth for the LLM benchmark: the pipelines a correct answer produces,
- * and the pictures they must draw.
+ * Ground truth for the LLM benchmark, stored beside the prompts it answers.
  *
  * `scorer.ts` grades the *shape* of a generated pipeline — node types, edges,
  * parameters — and never draws anything, so it cannot tell an answer from its
- * opposite. This module supplies the other half.
+ * opposite. This module supplies the other half, and keeps it in one place per
+ * case rather than scattered across the E2E suite:
  *
- * The reference pipelines are not hand-authored. They are captured with
- * `store.serialize()` from the graphs `tests/e2e/water-line.spec.ts` builds
- * through the editor, and they are compared against **that spec's own committed
- * baselines**. Both halves of that matter:
+ *     bench/llm/dataset.ts                        the prompt and its rubric
+ *     bench/llm/golden/<case id>/pipeline.megane.json   a pipeline that answers it
+ *     bench/llm/golden/<case id>/expected.png           what that pipeline draws
+ *     bench/llm/golden/<case id>/meta.json              fixture + what to look for
  *
- *   - Hand-rolling a "correct" graph is how this file got written the first
- *     time, and it was wrong three ways over (an atom field in a `bond_query`,
- *     a `bondSource` no fixture loads, and a `molecule_id` selection that
- *     distance-inferred bonds break). Capturing the real graph removes the
- *     guesswork: what is committed under `golden/` is what the editor produced.
- *   - Each view is captured from its OWN boot. `water-line.spec.ts` runs its two
- *     tests against one shared viewer, so its "water hidden" graph still carries
- *     the previous test's water-as-lines branch — reasonable for that spec to
- *     pin, but not the answer to "hide the water", and the stream ordering
- *     `deserialize` produces renders it differently besides.
+ * The directory name IS the `dataset.ts` case id, so adding ground truth to a
+ * case means dropping a folder named after it — no registry to update, and
+ * nothing to keep in sync by hand. `GOLDEN_CASES` joins the two halves and fails
+ * loudly if a folder names a case that does not exist.
  *
- * `counterexamples` are wrong pipelines derived from each golden by mutation.
- * They are the reason a green run means anything: a comparison that accepts
- * everything is indistinguishable from one that works. The first entry under
- * `water-hidden` is the bond query the spec itself shipped until PR #690 —
- * `resname` is an atom field, so it threw, the branch produced nothing, and with
- * the default bond edge dropped the viewport drew no bonds at all. That went
- * unnoticed because the baseline recorded it.
+ * The reference pipelines are captured, not hand-authored: each is
+ * `store.serialize()` from the graph `tests/e2e/water-line.spec.ts` builds
+ * through the editor, from a fresh boot per case (`meta.json` records which).
+ * Writing them by hand is how the first attempt went wrong three ways over — an
+ * atom field in a `bond_query`, a `bondSource` no fixture loads, and a
+ * `molecule_id` selection that distance-inferred bonds break. A fresh boot also
+ * keeps "hide the water" from inheriting the other case's water-as-lines branch.
  *
- * To regenerate `golden/*.megane.json`, reproduce water-line.spec.ts's two
- * constructions in order (water-hidden is built on top of water-line's graph —
- * one boot, serial mode) and dump `serialize()` after each.
+ * `counterexamples` are wrong pipelines derived from each reference by mutation.
+ * They are why a green run means anything: a comparison that accepts everything
+ * is indistinguishable from one that works.
  */
 
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { SerializedPipeline } from "@/pipeline/types";
+import { DATASET } from "./dataset";
 
-const HERE = dirname(fileURLToPath(import.meta.url));
+/** Root of the per-case ground truth. */
+export const GOLDEN_DIR = join(dirname(fileURLToPath(import.meta.url)), "golden");
 
-function loadGolden(name: string): SerializedPipeline {
-  return JSON.parse(
-    readFileSync(join(HERE, "golden", `${name}.megane.json`), "utf8"),
-  ) as SerializedPipeline;
-}
-
-/** Deep copy so a mutation never leaks into the loaded reference. */
-function clone(p: SerializedPipeline): SerializedPipeline {
-  return JSON.parse(JSON.stringify(p)) as SerializedPipeline;
-}
-
-type Node = SerializedPipeline["nodes"][number];
 type Mutable = Record<string, unknown>;
 
-/** The filter carrying a bond selection (`bond_query` set, `query` empty). */
-function bondFilter(p: SerializedPipeline): Node {
-  const n = p.nodes.find((x) => x.type === "filter" && (x as Mutable).bond_query);
-  if (!n) throw new Error("golden has no bond filter");
-  return n;
+interface GoldenMeta {
+  /** Fixture under `tests/fixtures/` the reference renders against. */
+  fixture: string;
+  /** What the image shows — the reviewable statement of "correct". */
+  expectation: string;
+  /** Where the pipeline was captured from, so it can be re-captured. */
+  capturedFrom: string;
 }
 
 export interface LabelledPipeline {
@@ -68,40 +54,47 @@ export interface LabelledPipeline {
   pipeline: SerializedPipeline;
 }
 
-export interface GoldenView {
-  /** Identifier, and the stem of `golden/<id>.megane.json`. */
-  id: string;
-  /** Baseline under `tests/e2e/baselines/bench-golden/`, without the extension. */
-  baseline: string;
-  /** `bench/llm/dataset.ts` cases this view is the correct answer to. */
-  benchCases: string[];
-  /** What the reference image shows — the reviewable statement of "correct". */
-  expectation: string;
+export interface GoldenCase extends GoldenMeta {
+  /** `dataset.ts` case id, and the folder name. */
+  caseId: string;
+  /** The request this pipeline answers, from `dataset.ts`. */
+  prompt: string;
+  /** A pipeline that genuinely answers `prompt`. */
   pipeline: SerializedPipeline;
-  /** Wrong pipelines that must NOT draw the reference image. */
+  /** Absolute path to the image `pipeline` must draw. */
+  expectedImage: string;
+  /** Wrong pipelines that must NOT draw `expectedImage`. */
   counterexamples: LabelledPipeline[];
 }
 
-const WATER_LINE = loadGolden("water-line");
-const WATER_HIDDEN = loadGolden("water-hidden");
+function clone(p: SerializedPipeline): SerializedPipeline {
+  return JSON.parse(JSON.stringify(p)) as SerializedPipeline;
+}
 
-/** water-hidden with its bond selection replaced. */
-function withBondQuery(query: string): SerializedPipeline {
-  const p = clone(WATER_HIDDEN);
+/** The filter carrying a bond selection (`bond_query` set). */
+function bondFilter(p: SerializedPipeline) {
+  const n = p.nodes.find((x) => x.type === "filter" && (x as Mutable).bond_query);
+  if (!n) throw new Error("reference has no bond filter");
+  return n;
+}
+
+/** Replace the bond selection. */
+function withBondQuery(base: SerializedPipeline, query: string): SerializedPipeline {
+  const p = clone(base);
   (bondFilter(p) as Mutable).bond_query = query;
   return p;
 }
 
-/** water-hidden with the bond branch removed and the raw bond stream restored. */
-function particlesOnly(): SerializedPipeline {
-  const p = clone(WATER_HIDDEN);
+/** Drop the bond branch and wire the raw AddBond stream back to the viewport. */
+function particlesOnly(base: SerializedPipeline): SerializedPipeline {
+  const p = clone(base);
   const bf = bondFilter(p);
   const fed = p.edges.find((e) => e.source === bf.id);
   const bondModify = fed ? p.nodes.find((n) => n.id === fed.target) : undefined;
   const drop = new Set([bf.id, bondModify?.id].filter(Boolean) as string[]);
   const addBond = p.nodes.find((n) => n.type === "add_bond");
   const viewport = p.nodes.find((n) => n.type === "viewport");
-  if (!addBond || !viewport) throw new Error("golden is missing add_bond/viewport");
+  if (!addBond || !viewport) throw new Error("reference is missing add_bond/viewport");
   p.nodes = p.nodes.filter((n) => !drop.has(n.id));
   p.edges = p.edges.filter((e) => !drop.has(e.source) && !drop.has(e.target));
   p.edges.push({
@@ -113,7 +106,7 @@ function particlesOnly(): SerializedPipeline {
   return p;
 }
 
-/** Swap every `resname == "HOH"` atom selection for its complement. */
+/** Swap every solvent selection for its complement. */
 function invertAtomSelection(base: SerializedPipeline): SerializedPipeline {
   const p = clone(base);
   for (const n of p.nodes) {
@@ -125,50 +118,65 @@ function invertAtomSelection(base: SerializedPipeline): SerializedPipeline {
   return p;
 }
 
-export const GOLDEN_VIEWS: GoldenView[] = [
-  {
-    id: "water-hidden",
-    baseline: "water-hidden",
-    benchCases: ["hide-water"],
-    expectation:
-      "Only the caffeine, in ball-and-stick — the solvent's atoms and its bonds are both gone, " +
-      "and the caffeine keeps its own 25 bonds.",
-    pipeline: WATER_HIDDEN,
-    counterexamples: [
-      {
-        // What water-line.spec.ts shipped until PR #690. `resname` is an atom
-        // field; the bond DSL rejects it, the branch yields nothing, and the
-        // default bond edge is already dropped — so no bonds reach the viewport
-        // and the caffeine loses its sticks too.
-        label: 'invalid bond query: `both resname == "HOH"` drops every bond',
-        pipeline: withBondQuery('both resname == "HOH"'),
-      },
-      {
-        label: "particle-only branch leaves the solvent's bonds drawn",
-        pipeline: particlesOnly(),
-      },
-      {
-        label: "inverted selection: hides the caffeine and keeps the water",
-        pipeline: invertAtomSelection(WATER_HIDDEN),
-      },
-    ],
-  },
-  {
-    id: "water-line",
-    baseline: "water-line",
-    benchCases: ["representation-water-line"],
-    expectation: "Water drawn as thin lines, caffeine left in the default ball-and-stick style.",
-    pipeline: WATER_LINE,
-    counterexamples: [
-      {
-        label: "inverted selection: draws the caffeine as lines, water as spheres",
-        pipeline: invertAtomSelection(WATER_LINE),
-      },
-    ],
-  },
-];
+/** Per-case wrong pipelines, derived from the captured reference. */
+const COUNTEREXAMPLES: Record<string, (ref: SerializedPipeline) => LabelledPipeline[]> = {
+  "hide-water": (ref) => [
+    {
+      // The bond query water-line.spec.ts shipped until PR #690. `resname` is an
+      // atom field; the bond DSL rejects it, the branch produced nothing, and
+      // with the default bond edge dropped the viewport drew no bonds at all —
+      // the caffeine lost its sticks and the baseline recorded that.
+      label: 'invalid bond query: `both resname == "HOH"` drops every bond',
+      pipeline: withBondQuery(ref, 'both resname == "HOH"'),
+    },
+    {
+      label: "particle-only branch leaves the solvent's bonds drawn",
+      pipeline: particlesOnly(ref),
+    },
+    {
+      label: "inverted selection: hides the caffeine and keeps the water",
+      pipeline: invertAtomSelection(ref),
+    },
+  ],
+  "representation-water-line": (ref) => [
+    {
+      label: "inverted selection: draws the caffeine as lines, water as spheres",
+      pipeline: invertAtomSelection(ref),
+    },
+  ],
+};
 
-/** Look up a view by id. */
-export function goldenView(id: string): GoldenView | undefined {
-  return GOLDEN_VIEWS.find((v) => v.id === id);
+function loadCase(caseId: string): GoldenCase {
+  const dir = join(GOLDEN_DIR, caseId);
+  const bench = DATASET.find((c) => c.id === caseId);
+  if (!bench) {
+    throw new Error(
+      `bench/llm/golden/${caseId}/ names no case in dataset.ts — the folder name is ` +
+        `the case id, so ground truth and prompt cannot drift apart`,
+    );
+  }
+  const meta = JSON.parse(readFileSync(join(dir, "meta.json"), "utf8")) as GoldenMeta;
+  const pipeline = JSON.parse(
+    readFileSync(join(dir, "pipeline.megane.json"), "utf8"),
+  ) as SerializedPipeline;
+  return {
+    ...meta,
+    caseId,
+    prompt: bench.prompt,
+    pipeline,
+    expectedImage: join(dir, "expected.png"),
+    counterexamples: COUNTEREXAMPLES[caseId]?.(pipeline) ?? [],
+  };
+}
+
+/** Every case with ground truth, discovered from the directory. */
+export const GOLDEN_CASES: GoldenCase[] = readdirSync(GOLDEN_DIR, { withFileTypes: true })
+  .filter((d) => d.isDirectory())
+  .map((d) => d.name)
+  .sort()
+  .map(loadCase);
+
+/** Look up ground truth by dataset case id. */
+export function goldenCase(caseId: string): GoldenCase | undefined {
+  return GOLDEN_CASES.find((c) => c.caseId === caseId);
 }

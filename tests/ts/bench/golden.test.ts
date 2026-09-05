@@ -9,7 +9,9 @@
  */
 
 import { describe, it, expect } from "vitest";
-import { GOLDEN_VIEWS, goldenView } from "../../../bench/llm/golden";
+import { GOLDEN_CASES, GOLDEN_DIR, goldenCase } from "../../../bench/llm/golden";
+import { existsSync } from "node:fs";
+import { join } from "node:path";
 import { DATASET } from "../../../bench/llm/dataset";
 import { scoreResponse, type Rubric } from "../../../bench/llm/scorer";
 import { collectPipelineErrors } from "@/ai/validatePipeline";
@@ -31,26 +33,36 @@ const edgesInto = (p: SerializedPipeline, type: string, handle: string) =>
 
 describe("bench ground truth", () => {
   it("captures references megane's own validators accept", () => {
-    for (const v of GOLDEN_VIEWS) {
-      expect(collectPipelineErrors(v.pipeline), v.id).toEqual([]);
+    for (const v of GOLDEN_CASES) {
+      expect(collectPipelineErrors(v.pipeline), v.caseId).toEqual([]);
       for (const q of bondQueries(v.pipeline)) {
-        expect(validateBondQuery(q), `${v.id}: ${q}`).toEqual({ valid: true });
+        expect(validateBondQuery(q), `${v.caseId}: ${q}`).toEqual({ valid: true });
       }
     }
   });
 
-  it("names only dataset cases that exist", () => {
+  // The folder name IS the case id, so this is what keeps the prompt and its
+  // ground truth from drifting apart. `golden.ts` throws on a folder that names
+  // no case; this pins the other direction — the pairing is complete.
+  it("pairs every ground-truth folder with its prompt and files", () => {
     const ids = new Set(DATASET.map((c) => c.id));
-    for (const v of GOLDEN_VIEWS) {
-      expect(v.benchCases.length, `${v.id} names no bench case`).toBeGreaterThan(0);
-      for (const id of v.benchCases) expect(ids, v.id).toContain(id);
+    for (const v of GOLDEN_CASES) {
+      expect(ids, `${v.caseId} is not a dataset case`).toContain(v.caseId);
+      expect(v.prompt.length, `${v.caseId} carries no prompt`).toBeGreaterThan(0);
+      for (const f of ["pipeline.megane.json", "expected.png", "meta.json"]) {
+        expect(existsSync(join(GOLDEN_DIR, v.caseId, f)), `${v.caseId}/${f}`).toBe(true);
+      }
+      expect(v.fixture.length, `${v.caseId} names no fixture`).toBeGreaterThan(0);
+      expect(v.capturedFrom.length, `${v.caseId} does not say where it came from`).toBeGreaterThan(
+        0,
+      );
     }
   });
 
   it("gives every view a counterexample and a stated expectation", () => {
-    for (const v of GOLDEN_VIEWS) {
-      expect(v.counterexamples.length, `${v.id} has no negative control`).toBeGreaterThan(0);
-      expect(v.expectation.length, `${v.id} has no stated expectation`).toBeGreaterThan(0);
+    for (const v of GOLDEN_CASES) {
+      expect(v.counterexamples.length, `${v.caseId} has no negative control`).toBeGreaterThan(0);
+      expect(v.expectation.length, `${v.caseId} has no stated expectation`).toBeGreaterThan(0);
     }
   });
 
@@ -59,7 +71,7 @@ describe("bench ground truth", () => {
   // broken query. water-line.spec.ts shipped it, the branch produced nothing,
   // and the baseline recorded a viewport with no bonds at all.
   it("keeps the invalid-bond-query counterexample genuinely invalid", () => {
-    const hidden = goldenView("water-hidden");
+    const hidden = goldenCase("hide-water");
     expect(hidden).toBeDefined();
     const invalid = hidden!.counterexamples.find((c) => c.label.includes("invalid bond query"));
     expect(invalid, "the invalid-bond-query counterexample is gone").toBeDefined();
@@ -69,7 +81,7 @@ describe("bench ground truth", () => {
   });
 
   it("derives the particle-only counterexample by dropping the bond branch", () => {
-    const hidden = goldenView("water-hidden")!;
+    const hidden = goldenCase("hide-water")!;
     const particleOnly = hidden.counterexamples.find((c) => c.label.startsWith("particle-only"))!;
     // No bond selection survives, and the raw AddBond stream is wired straight
     // to the viewport again — which is what leaves the solvent's bonds drawn.
@@ -87,19 +99,19 @@ describe("bench ground truth", () => {
   });
 
   it("inverts every solvent selection in the inverted counterexamples", () => {
-    for (const v of GOLDEN_VIEWS) {
+    for (const v of GOLDEN_CASES) {
       const inverted = v.counterexamples.find((c) => c.label.startsWith("inverted selection"));
       if (!inverted) continue;
       const queries = inverted.pipeline.nodes
         .map((n) => (n as Mutable).query)
         .filter((q): q is string => typeof q === "string" && q.includes("HOH"));
-      expect(queries.length, `${v.id} has no HOH selection to invert`).toBeGreaterThan(0);
-      for (const q of queries) expect(q, v.id).toMatch(/^not /);
+      expect(queries.length, `${v.caseId} has no HOH selection to invert`).toBeGreaterThan(0);
+      for (const q of queries) expect(q, v.caseId).toMatch(/^not /);
     }
   });
 
   it("never mutates the loaded reference", () => {
-    const hidden = goldenView("water-hidden")!;
+    const hidden = goldenCase("hide-water")!;
     for (const q of bondQueries(hidden.pipeline)) {
       expect(validateBondQuery(q).valid).toBe(true);
     }
@@ -187,18 +199,16 @@ describe("bench ground truth", () => {
   // genuinely answers the request. `water-hidden` is captured from the editor
   // and pinned pixel-for-pixel by tests/e2e/bench-golden.spec.ts.
   it("accepts the captured reference for the case it answers", () => {
-    for (const v of GOLDEN_VIEWS) {
-      for (const id of v.benchCases) {
-        expect(
-          score(v.pipeline, rubricFor(id)),
-          `${id}: the rubric rejects the reference pipeline the editor produced`,
-        ).toBeGreaterThanOrEqual(0.8);
-      }
+    for (const v of GOLDEN_CASES) {
+      expect(
+        score(v.pipeline, rubricFor(v.caseId)),
+        `${v.caseId}: the rubric rejects the reference pipeline the editor produced`,
+      ).toBeGreaterThanOrEqual(0.8);
     }
   });
 
-  it("looks up views by id", () => {
-    expect(goldenView("water-hidden")?.id).toBe("water-hidden");
-    expect(goldenView("nope")).toBeUndefined();
+  it("looks up ground truth by case id", () => {
+    expect(goldenCase("hide-water")?.caseId).toBe("hide-water");
+    expect(goldenCase("nope")).toBeUndefined();
   });
 });

@@ -19,6 +19,9 @@ tests/e2e/snapshots/*.diff.png
 tests/e2e/snapshots/*.new.png
 tests/e2e/screenshots/
 tests/e2e/diffs/
+bench/llm/golden/**/*.diff.png
+bench/llm/golden/**/*.new.png
+bench/llm/golden/**/*.current.png
 tests/e2e/baselines/**/*.diff.png
 tests/e2e/baselines/**/*.new.png
 tests/e2e/baselines/**/*.current.png
