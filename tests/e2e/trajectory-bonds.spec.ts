@@ -31,6 +31,7 @@ import {
 } from "./lib/setup";
 import { bootHost, getHost, type HostBoot } from "./lib/host-fixture";
 import { findNodeIdByType, setNodeParam } from "./lib/pipeline";
+import { alignCamera } from "./lib/render-utils";
 import type { Page, Frame } from "playwright/test";
 
 const PLATFORM = "trajectory-bonds";
@@ -109,6 +110,13 @@ test.beforeAll(async ({ browser }, info) => {
     untilEpoch: before.renderEpoch + 1,
     timeout: 10_000,
   });
+
+  // The H-H pair lies along x and the fitted standard orientation (#661)
+  // looks roughly down x, which hides the stick between two overlapping
+  // balls. View from +y so the bonded / unbonded captures actually show the
+  // bond appearing and vanishing.
+  await alignCamera(boot.scope, "+y");
+  await boot.scope.waitForTimeout(200);
 });
 
 test.afterAll(async () => {
