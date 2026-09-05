@@ -53,6 +53,8 @@ workers/llm-proxy/.wrangler/
 workers/llm-proxy/.dev.vars
 docs/docs/api/typescript/
 docs/docs/reference/node-reference.md
+docs/docs/bench/
+docs/public/bench/
 docs/notebooks/
 docs/public/notebooks/
 docs/public/app/

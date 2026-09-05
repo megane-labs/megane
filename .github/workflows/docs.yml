@@ -84,6 +84,7 @@ jobs:
           npm run api:py
           npm run api:ts
           npm run api:nodes
+          npm run api:bench
 
       - name: Build docs
         working-directory: docs
