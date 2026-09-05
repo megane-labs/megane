@@ -190,11 +190,37 @@ test("camera: left-drag rotates continuously across the pole", async () => {
   await resetCamera(scope);
   await scope.waitForTimeout(200);
 
-  const box = await scope.locator("canvas").first().boundingBox();
+  const canvas = scope.locator('[data-testid="viewer-root"] canvas').first();
+  // In a notebook the widget output can extend below the fold; bring the
+  // canvas on screen and drag only within its visible band.
+  await canvas.scrollIntoViewIfNeeded();
+  const box = await canvas.boundingBox();
   expect(box).not.toBeNull();
-  const cx = box!.x + box!.width / 2;
-  const yFrom = box!.y + box!.height * 0.85;
-  const yTo = box!.y + box!.height * 0.15;
+  const viewportH = page.viewportSize()?.height ?? box!.y + box!.height;
+  const visTop = Math.max(box!.y, 0);
+  const visBottom = Math.min(box!.y + box!.height, viewportH);
+  const visH = visBottom - visTop;
+  expect(visH).toBeGreaterThan(50);
+  const yFrom = visBottom - visH * 0.15;
+  const yTo = visTop + visH * 0.15;
+  // The Pipeline side panel overlays part of the canvas (on the JupyterLab
+  // hosts the canvas spans the full width, so its centre sits under the
+  // panel). Probe a few columns and drag on the first one where the pointer
+  // lands on the WebGL canvas at both ends of the drag.
+  const cx = await scope.evaluate(
+    ({ x0, w, ys }) => {
+      const onCanvas = (x: number, y: number) => {
+        const el = document.elementFromPoint(x, y);
+        return el?.tagName === "CANVAS" && !!el.closest('[data-testid="viewer-root"]');
+      };
+      for (const f of [0.5, 0.3, 0.2, 0.15]) {
+        const x = x0 + w * f;
+        if (ys.every((y) => onCanvas(x, y))) return x;
+      }
+      throw new Error("no unobstructed column on the viewer canvas");
+    },
+    { x0: box!.x, w: box!.width, ys: [yFrom, yTo] },
+  );
 
   const start = (await getCameraState(scope))!;
   const distance = (s: NonNullable<typeof start>) =>
