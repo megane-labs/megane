@@ -57,7 +57,9 @@ async function loadDataset() {
 async function loadGolden() {
   const entries = await readdir(GOLDEN_DIR, { withFileTypes: true });
   const cases = new Map();
-  for (const entry of entries.filter((e) => e.isDirectory()).sort((a, b) => (a.name < b.name ? -1 : 1))) {
+  for (const entry of entries
+    .filter((e) => e.isDirectory())
+    .sort((a, b) => (a.name < b.name ? -1 : 1))) {
     const dir = join(GOLDEN_DIR, entry.name);
     cases.set(entry.name, {
       caseId: entry.name,
@@ -87,10 +89,10 @@ function halve(srcPath, destPath) {
     for (let x = 0; x < w; x++) {
       const d = (y * w + x) << 2;
       for (let c = 0; c < 4; c++) {
-        const a = src.data[(((y * 2) * src.width + x * 2) << 2) + c];
-        const b = src.data[(((y * 2) * src.width + x * 2 + 1) << 2) + c];
-        const e = src.data[((((y * 2 + 1) * src.width) + x * 2) << 2) + c];
-        const f = src.data[((((y * 2 + 1) * src.width) + x * 2 + 1) << 2) + c];
+        const a = src.data[((y * 2 * src.width + x * 2) << 2) + c];
+        const b = src.data[((y * 2 * src.width + x * 2 + 1) << 2) + c];
+        const e = src.data[(((y * 2 + 1) * src.width + x * 2) << 2) + c];
+        const f = src.data[(((y * 2 + 1) * src.width + x * 2 + 1) << 2) + c];
         out.data[d + c] = (a + b + e + f + 2) >> 2;
       }
     }
@@ -120,7 +122,9 @@ function renderCase(bench, golden) {
   lines.push("");
   lines.push(`> ${bench.prompt}`);
   lines.push("");
-  lines.push(`**Fixture:** \`${meta.fixture}\` · **Tags:** ${bench.tags.map((t) => `\`${t}\``).join(", ")}`);
+  lines.push(
+    `**Fixture:** \`${meta.fixture}\` · **Tags:** ${bench.tags.map((t) => `\`${t}\``).join(", ")}`,
+  );
   lines.push("");
   lines.push(`![${caseId}](/bench/${caseId}.png)`);
   lines.push("");
@@ -300,9 +304,7 @@ async function main() {
   const missing = dataset.filter((c) => !golden.has(c.id)).map((c) => c.id);
   const orphaned = [...golden.keys()].filter((id) => !dataset.some((c) => c.id === id));
   if (orphaned.length) {
-    throw new Error(
-      `bench/llm/golden/ has folders naming no dataset case: ${orphaned.join(", ")}`,
-    );
+    throw new Error(`bench/llm/golden/ has folders naming no dataset case: ${orphaned.join(", ")}`);
   }
 
   await mkdir(OUT_DIR, { recursive: true });
@@ -314,7 +316,9 @@ async function main() {
     await halve(g.image, join(IMAGE_DIR, `${g.caseId}.png`));
   }
 
-  const note = missing.length ? ` (${missing.length} without ground truth: ${missing.join(", ")})` : "";
+  const note = missing.length
+    ? ` (${missing.length} without ground truth: ${missing.join(", ")})`
+    : "";
   // eslint-disable-next-line no-console
   console.log(`Generated docs/docs/bench/ for ${golden.size} of ${dataset.length} cases${note}`);
 }
