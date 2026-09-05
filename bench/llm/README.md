@@ -107,3 +107,56 @@ actor against the `LLM_EVAL_ALLOWED_USERS` repository variable — a JSON array
 of GitHub usernames (e.g. `["alice","bob"]`), defaulting to `["hodakamori"]`
 if the variable is unset. Applying the `llm-eval` label as a user not in this
 list does not run the job.
+
+## Render verification (what the score cannot see)
+
+The scorer above grades the **shape** of a pipeline: which node types exist,
+how they are wired, what their parameters say. It never draws anything, so it
+cannot tell a pipeline that answers the request from one that draws the
+opposite. That is not a hypothetical — measured against this repo's own
+rubrics:
+
+| case | genuinely correct pipeline | a wrong pipeline |
+| --- | --- | --- |
+| `hide-water` | **96.1 %** | **100.0 %** — particle-only branch, water bonds still drawn |
+| `multistep-water-transparent` | **96.1 %** | **100.0 %** — particle-only branch, water bonds opaque |
+| `representation-water-line` | 100.0 % | **100.0 %** — caffeine drawn as lines instead of the water |
+
+The static rubric **ranks the broken pipeline above the correct one** on the
+first two. `viewport.particle` and `viewport.bond` are independent streams, so
+hiding or fading a selection takes a second branch through the bond stream —
+which the rubrics neither require nor reward, and which costs the correct
+answer points for having "extra" nodes.
+
+`bench/llm/golden.ts` closes that gap by pinning the picture. Each entry is a
+bench case plus a reference pipeline that genuinely answers it;
+`tests/e2e/bench-render.spec.ts` renders it against `caffeine_water.pdb` and
+compares to a committed PNG under `tests/e2e/baselines/bench-render/`.
+
+```
+npm run build:app                 # the spec renders the built webapp
+npm run test:e2e:bench-render
+```
+
+Two extra fields keep the comparison from being a rubber stamp:
+
+- **`equivalents`** — structurally different graphs that must produce the *same*
+  image (e.g. selecting the solvent by `molecule_id` instead of `resname`).
+  These prove the check grades the outcome, not the graph shape.
+- **`counterexamples`** — wrong pipelines the static rubric still accepts, which
+  must **not** match. If one ever matches, the render check has stopped
+  checking. `tests/ts/bench/golden.test.ts` additionally asserts that each case
+  keeps at least one counterexample scoring *at or above* its golden, so the
+  premise cannot rot when a rubric is edited.
+
+Only pipelines whose behaviour was actually measured belong in those lists. The
+"draws it twice" overlap (a filtered branch plus the unfiltered structure both
+wired to the viewport) was tried as a counterexample and dropped: per-atom
+overrides merge across streams, so for `modify` and `representation` the extra
+stream changes 0.13 % / 0.02 % of pixels and the picture is unaffected.
+
+To re-record a baseline after an intended change, delete the PNG (or set
+`MEGANE_E2E_UPDATE=1`) and re-run — then **look at the new image** before
+committing it. The project is not part of `test:e2e:ci:webapp`; wiring it in
+also needs `tests/e2e/baselines-ci/bench-render/` recorded by the "E2E update
+baselines" workflow, since CI fails on a missing CI baseline.

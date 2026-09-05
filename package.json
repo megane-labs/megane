@@ -66,6 +66,7 @@
     "test:e2e": "playwright test",
     "test:e2e:ci:webapp": "playwright test --project=webapp --project=contract --project=multi-instance --project=atom-bond-junction --project=format-loading --project=playback --project=heterogeneous-traj --project=trajectory-bonds-vdw-leak --project=sidebar --project=licorice --project=illustrative --project=water-line --project=pipeline-editor --project=inspector --project=pipeline-file --project=render-modal --project=resname-filter-opacity --project=modify-node__webapp --project=camera__webapp --project=measurement__webapp --project=subsystem-rendering__webapp --project=trajectory-bonds__webapp",
     "test:e2e:ci:jupyterlab": "playwright test --project=jupyterlab-doc --project=widget-jupyterlab --project=widget-api",
+    "test:e2e:bench-render": "playwright test --project=bench-render",
     "test:e2e:webapp": "playwright test --project=webapp",
     "test:e2e:contract": "playwright test --project=contract",
     "test:e2e:widget-jupyterlab": "playwright test --project=widget-jupyterlab",
