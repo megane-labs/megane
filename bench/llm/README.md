@@ -163,3 +163,29 @@ than re-recording the PNG; a reference recorded from an unreviewed render is the
 exact failure mode this suite exists to catch. The project is not part of
 `test:e2e:ci:webapp`; wiring it in also needs `tests/e2e/baselines-ci/bench-golden/`
 recorded by the "E2E update baselines" workflow.
+
+### Rubric corrections found by rendering
+
+Auditing all 24 cases against the real renderer turned up rubrics that graded a
+pipeline which does not produce the requested view. Seven were corrected:
+
+| cases | what the rubric accepted | fix |
+| --- | --- | --- |
+| `filter-carbon`, `filter-residue`, `filter-oxygen-nitrogen`, `filter-carbon-ja`, `multistep-filter-bonds` | `load_structure → filter → viewport`, at full marks. A bare filter *selects*; it does not change what is drawn — selecting 8 carbons and selecting 1006 oxygens+nitrogens differ from each other by **0.002 %** of pixels | require the selection to feed a node that changes the drawing (`modify`, `color` or `representation`) |
+| `hide-water`, `multistep-water-transparent` | the particle branch alone, leaving the solvent's bonds drawn at full opacity | require the bond branch, with a `bond_query` on a field that exists |
+
+`ConnectionReq.targetType` accepts a list so the first fix can require that a
+selection is *used* without dictating which node uses it. Pinning one shape is
+how a rubric ends up scoring a correct pipeline below a broken one: before this,
+`hide-water` gave the working answer 96.1 % and the broken one 100 %.
+
+Two cases were **investigated and left alone**:
+
+- `color-by-element` renders identically to the default view (0.000 % on two
+  fixtures) because `byElement` is already the default palette. The request is
+  satisfied by the default, so requiring the explicit node is the only check
+  available; there is no visual signal to add.
+- `crystal-distance-bonds` and `crystal-polyhedra` could not be settled here.
+  The control view already carries the `add_bond` node `deserialize` injects, so
+  a probe cannot isolate it, and no fixture in `tests/fixtures/` is a perovskite
+  for the polyhedra case.

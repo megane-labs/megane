@@ -11,6 +11,7 @@
 import { describe, it, expect } from "vitest";
 import { GOLDEN_VIEWS, goldenView } from "../../../bench/llm/golden";
 import { DATASET } from "../../../bench/llm/dataset";
+import { scoreResponse, type Rubric } from "../../../bench/llm/scorer";
 import { collectPipelineErrors } from "@/ai/validatePipeline";
 import { validateBondQuery } from "@/pipeline/selection";
 import type { SerializedPipeline } from "@/pipeline/types";
@@ -101,6 +102,98 @@ describe("bench ground truth", () => {
     const hidden = goldenView("water-hidden")!;
     for (const q of bondQueries(hidden.pipeline)) {
       expect(validateBondQuery(q).valid).toBe(true);
+    }
+  });
+
+  const rubricFor = (id: string): Rubric => {
+    const c = DATASET.find((x) => x.id === id);
+    if (!c) throw new Error(`no dataset case ${id}`);
+    return c.rubric;
+  };
+  const score = (p: SerializedPipeline, r: Rubric) =>
+    scoreResponse("```json\n" + JSON.stringify(p) + "\n```\n\nDone.", r).total;
+
+  /** loader -> filter(query) -> viewport: a selection nothing acts on. */
+  const bareFilter = (query: string): SerializedPipeline =>
+    ({
+      version: 3,
+      nodes: [
+        {
+          id: "l",
+          type: "load_structure",
+          fileName: null,
+          hasTrajectory: false,
+          hasCell: false,
+          position: { x: 0, y: 0 },
+        },
+        { id: "f", type: "filter", query, position: { x: 0, y: 300 } },
+        {
+          id: "v",
+          type: "viewport",
+          perspective: true,
+          cellAxesVisible: false,
+          pivotMarkerVisible: false,
+          position: { x: 0, y: 600 },
+        },
+      ],
+      edges: [
+        { source: "l", sourceHandle: "particle", target: "f", targetHandle: "in" },
+        { source: "f", sourceHandle: "out", target: "v", targetHandle: "particle" },
+      ],
+    }) as unknown as SerializedPipeline;
+
+  /** The same selection, with a modify that actually hides the complement. */
+  const filterAndHide = (query: string): SerializedPipeline => {
+    const p = bareFilter(query);
+    p.nodes.push({
+      id: "m",
+      type: "modify",
+      scale: 1,
+      opacity: 0,
+      position: { x: 0, y: 450 },
+    } as unknown as SerializedPipeline["nodes"][number]);
+    p.edges = [
+      p.edges[0],
+      { source: "f", sourceHandle: "out", target: "m", targetHandle: "in" },
+      { source: "m", sourceHandle: "out", target: "v", targetHandle: "particle" },
+    ];
+    return p;
+  };
+
+  // A bare filter selects; it does not change what is drawn. Measured on
+  // caffeine_water.pdb, selecting 8 carbons and selecting 1006 oxygens+nitrogens
+  // differ from each other by 0.002% of pixels — the same picture. The rubric
+  // cannot see that, but it can stop *preferring* it: what these cases graded
+  // before was a pipeline that renders the default view, at full marks.
+  it("scores a selection nothing acts on below one that does", () => {
+    const cases: Array<[string, string]> = [
+      ["filter-carbon", 'element == "C"'],
+      ["filter-residue", 'resname == "ALA"'],
+      ["filter-oxygen-nitrogen", 'element == "O" or element == "N"'],
+      ["filter-carbon-ja", 'element == "C"'],
+    ];
+    for (const [id, query] of cases) {
+      const r = rubricFor(id);
+      const noop = score(bareFilter(query), r);
+      const acts = score(filterAndHide(query), r);
+      expect(
+        noop,
+        `${id}: a bare filter still scores as well as a pipeline that acts`,
+      ).toBeLessThan(acts);
+    }
+  });
+
+  // The other half: the tightened rubrics must still accept the pipeline that
+  // genuinely answers the request. `water-hidden` is captured from the editor
+  // and pinned pixel-for-pixel by tests/e2e/bench-golden.spec.ts.
+  it("accepts the captured reference for the case it answers", () => {
+    for (const v of GOLDEN_VIEWS) {
+      for (const id of v.benchCases) {
+        expect(
+          score(v.pipeline, rubricFor(id)),
+          `${id}: the rubric rejects the reference pipeline the editor produced`,
+        ).toBeGreaterThanOrEqual(0.8);
+      }
     }
   });
 

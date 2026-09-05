@@ -394,7 +394,11 @@ describe("dataset", () => {
       }
       for (const conn of r.requiredConnections ?? []) {
         expect(known.has(conn.sourceType)).toBe(true);
-        expect(known.has(conn.targetType)).toBe(true);
+        // `targetType` accepts a list so a rubric can require that a selection
+        // is *used* without dictating which visual node uses it.
+        for (const t of Array.isArray(conn.targetType) ? conn.targetType : [conn.targetType]) {
+          expect(known.has(t)).toBe(true);
+        }
       }
       for (const pc of r.paramChecks ?? []) {
         expect(known.has(pc.nodeType)).toBe(true);
