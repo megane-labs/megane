@@ -113,20 +113,23 @@ list does not run the job.
 The scorer above grades the **shape** of a pipeline: which node types exist,
 how they are wired, what their parameters say. It never draws anything, so it
 cannot tell a pipeline that answers the request from one that draws the
-opposite. That is not a hypothetical — measured against this repo's own
-rubrics:
+opposite. That is not a hypothetical. `viewport.particle` and `viewport.bond`
+are independent streams, so hiding or fading a species takes a second branch
+through the bond stream; the rubrics used to require only the particle branch,
+and scored the correct answer *below* the broken one for its "extra" nodes:
 
-| case | genuinely correct pipeline | a wrong pipeline |
+| case | genuinely correct pipeline | particle-only pipeline |
 | --- | --- | --- |
-| `hide-water` | **96.1 %** | **100.0 %** — particle-only branch, water bonds still drawn |
-| `multistep-water-transparent` | **96.1 %** | **100.0 %** — particle-only branch, water bonds opaque |
-| `representation-water-line` | 100.0 % | **100.0 %** — caffeine drawn as lines instead of the water |
+| `hide-water` | 96.1 % → **100.0 %** | 100.0 % → **81.0 %** |
+| `multistep-water-transparent` | 96.1 % → **100.0 %** | 100.0 % → **81.0 %** |
 
-The static rubric **ranks the broken pipeline above the correct one** on the
-first two. `viewport.particle` and `viewport.bond` are independent streams, so
-hiding or fading a selection takes a second branch through the bond stream —
-which the rubrics neither require nor reward, and which costs the correct
-answer points for having "extra" nodes.
+(before → after requiring the bond branch)
+
+Tightening those rubrics fixed the ordering. It did not fix the blind spot: a
+rubric matches `resname == "HOH"` inside `not resname == "HOH"` just as
+happily, so **"hide the water" and "hide the caffeine" still score identically**
+(100.0 % each), as do "water as lines" and "caffeine as lines". Only a picture
+tells them apart.
 
 `bench/llm/golden.ts` closes that gap by pinning the picture. Each entry is a
 bench case plus a reference pipeline that genuinely answers it;
@@ -145,9 +148,11 @@ Two extra fields keep the comparison from being a rubber stamp:
   These prove the check grades the outcome, not the graph shape.
 - **`counterexamples`** — wrong pipelines the static rubric still accepts, which
   must **not** match. If one ever matches, the render check has stopped
-  checking. `tests/ts/bench/golden.test.ts` additionally asserts that each case
-  keeps at least one counterexample scoring *at or above* its golden, so the
-  premise cannot rot when a rubric is edited.
+  checking. `tests/ts/bench/golden.test.ts` additionally asserts that no
+  counterexample ever outscores its golden, that every golden clears the
+  benchmark's own pass threshold, and that at least one counterexample still
+  ties its golden — so neither the ordering nor the render check's reason to
+  exist can rot silently when a rubric is edited.
 
 Only pipelines whose behaviour was actually measured belong in those lists. The
 "draws it twice" overlap (a filtered branch plus the unfiltered structure both

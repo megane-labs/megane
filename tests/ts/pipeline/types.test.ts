@@ -32,6 +32,31 @@ describe("canConnect", () => {
     expect(canConnect("load_structure", "particle", "modify", "in")).toBe(true);
   });
 
+  // A generic node passes its input type through, so its output must be judged
+  // by what the node can carry rather than by the "particle" placeholder on its
+  // declared output port. Fading or hiding a species' bonds runs
+  // `add_bond -> filter -> modify -> viewport.bond`, and that branch is the only
+  // way to reach the viewport's bond stream.
+  it("allows filter → viewport bond (generic output carries the bond stream)", () => {
+    expect(canConnect("filter", "out", "viewport", "bond")).toBe(true);
+  });
+
+  it("allows modify → viewport bond (generic output carries the bond stream)", () => {
+    expect(canConnect("modify", "out", "viewport", "bond")).toBe(true);
+  });
+
+  it("still allows modify → viewport particle", () => {
+    expect(canConnect("modify", "out", "viewport", "particle")).toBe(true);
+  });
+
+  it("rejects modify → viewport cell (modify carries neither cells)", () => {
+    expect(canConnect("modify", "out", "viewport", "cell")).toBe(false);
+  });
+
+  it("rejects color → viewport bond (color accepts particle only)", () => {
+    expect(canConnect("color", "out", "viewport", "bond")).toBe(false);
+  });
+
   it("rejects mismatched types: trajectory → viewport particle", () => {
     expect(canConnect("load_structure", "trajectory", "viewport", "particle")).toBe(false);
   });

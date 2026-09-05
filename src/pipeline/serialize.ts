@@ -392,7 +392,13 @@ function normalizePipeline(
       pushEdge(loader.id, "particle", addBondId, "particle");
     }
 
-    if (addBondId) {
+    // Mirror of the particle guard below: only wire AddBond straight to the
+    // viewport when nothing downstream of the loader already feeds
+    // viewport.bond. Without the guard, a graph that routes bonds through
+    // `add_bond -> filter -> modify -> viewport.bond` — the only way to fade or
+    // hide a species' bonds — also gets the raw, unfiltered bond stream, and
+    // the selection is drawn at full opacity underneath the faded copy.
+    if (addBondId && !hasDerivedBondInput) {
       pushEdge(addBondId, "bond", viewport.id, "bond");
     }
     // Only add the direct loader.particle → viewport.particle edge when the

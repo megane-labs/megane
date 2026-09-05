@@ -2,17 +2,19 @@
  * Guards the premise of `tests/e2e/bench-render.spec.ts`.
  *
  * That spec renders every entry in `GOLDEN_RENDERS` and asserts the
- * counterexamples do not draw the reference picture. It only means something if
- * the counterexamples are pipelines the *static* scorer already waves through —
- * a wrong pipeline the rubric rejects on its own needs no render check to catch
- * it. These tests pin that relationship so it cannot rot silently when a rubric
- * is tightened or a case renamed.
+ * counterexamples do not draw the reference picture. These tests pin the
+ * relationship between the two scorers so neither can rot silently: the static
+ * rubric must rank the correct pipeline first (it did not, until the rubrics
+ * required the bond branch), and at least one counterexample must remain that
+ * only the pixel comparison can catch — otherwise the render check is
+ * ceremony.
  */
 
 import { describe, it, expect } from "vitest";
 import { GOLDEN_RENDERS, goldenFor } from "../../../bench/llm/golden";
 import { DATASET } from "../../../bench/llm/dataset";
 import { scoreResponse, type Rubric } from "../../../bench/llm/scorer";
+import { collectPipelineErrors } from "@/ai/validatePipeline";
 import type { SerializedPipeline } from "@/pipeline/types";
 
 /** Score a pipeline the way the benchmark scores a model response. */
@@ -28,6 +30,23 @@ function rubricFor(caseId: string): Rubric {
 }
 
 describe("bench golden renders", () => {
+  // The guard that caught the first draft of these goldens: `bond_query` has no
+  // `resname` field, so `resname == "HOH"` on a bond filter is not a narrower
+  // selection — it is a broken query, and the reference image it produced hid
+  // the caffeine's bonds along with the water's.
+  it("runs every pipeline through the production validators", () => {
+    for (const g of GOLDEN_RENDERS) {
+      const all = [
+        { label: "golden", pipeline: g.pipeline },
+        ...g.equivalents,
+        ...g.counterexamples,
+      ];
+      for (const { label, pipeline } of all) {
+        expect(collectPipelineErrors(pipeline), `${g.caseId} / ${label}`).toEqual([]);
+      }
+    }
+  });
+
   it("names only cases that exist in the dataset", () => {
     const ids = new Set(DATASET.map((c) => c.id));
     for (const g of GOLDEN_RENDERS) {
@@ -46,24 +65,50 @@ describe("bench golden renders", () => {
     }
   });
 
-  // The reason the render check exists. On `hide-water` and
-  // `multistep-water-transparent` the wrong pipeline scores a perfect 100%
-  // while the genuinely correct one scores 96.1%, because the rubric rewards
-  // the exact node/edge shape it anticipated and the correct answer needs an
-  // extra branch through `viewport.bond` to actually hide the solvent. The
-  // static scorer therefore ranks the broken pipeline *above* the correct one.
-  it("keeps every counterexample invisible to the static scorer", () => {
+  // The rubrics require the bond branch, so the static scorer now ranks the
+  // correct pipeline first. That ordering is the thing worth pinning: it is
+  // what a rubric edit is most likely to break silently.
+  it("never lets a counterexample outscore its golden", () => {
     for (const g of GOLDEN_RENDERS) {
       const rubric = rubricFor(g.caseId);
       const golden = staticScore(g.pipeline, rubric);
-      const best = Math.max(...g.counterexamples.map((c) => staticScore(c.pipeline, rubric)));
-      expect(
-        best,
-        `${g.caseId}: every counterexample now scores below the golden (${golden.toFixed(3)}), ` +
-          `so the static rubric already rejects them and the render check adds nothing here. ` +
-          `Replace them with pipelines the rubric still accepts.`,
-      ).toBeGreaterThanOrEqual(golden);
+      for (const c of g.counterexamples) {
+        expect(
+          staticScore(c.pipeline, rubric),
+          `${g.caseId}: "${c.label}" scores above the golden (${golden.toFixed(3)}). ` +
+            `The rubric is rewarding a pipeline that draws the wrong picture.`,
+        ).toBeLessThanOrEqual(golden);
+      }
     }
+  });
+
+  it("scores every golden at or above the benchmark's own pass threshold", () => {
+    for (const g of GOLDEN_RENDERS) {
+      expect(
+        staticScore(g.pipeline, rubricFor(g.caseId)),
+        `${g.caseId}: the rubric rejects the pipeline that actually answers the prompt`,
+      ).toBeGreaterThanOrEqual(0.8);
+    }
+  });
+
+  // What the render check is for. Tightening the rubrics fixed the ordering but
+  // not the blind spot: a rubric matches `resname == "HOH"` inside
+  // `not resname == "HOH"` just as happily, so "hide the water" and "hide the
+  // caffeine" are indistinguishable to it. Both inverted counterexamples still
+  // tie their golden at 100%. If that ever stops being true for every case, the
+  // pixel comparison has no signal the static scorer lacks and this file should
+  // say so out loud rather than leave a suite that quietly tests nothing.
+  it("keeps at least one counterexample the static scorer cannot separate from its golden", () => {
+    const tied = GOLDEN_RENDERS.filter((g) => {
+      const rubric = rubricFor(g.caseId);
+      const golden = staticScore(g.pipeline, rubric);
+      return g.counterexamples.some((c) => staticScore(c.pipeline, rubric) >= golden);
+    });
+    expect(
+      tied.map((g) => g.caseId),
+      "every counterexample is now caught by the static rubric alone, so the " +
+        "render comparison adds nothing — replace them with pipelines it still accepts",
+    ).not.toHaveLength(0);
   });
 
   it("looks up goldens by case id", () => {

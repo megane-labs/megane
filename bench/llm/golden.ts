@@ -4,16 +4,24 @@
  * `scorer.ts` grades the *shape* of a generated pipeline — which node types
  * exist, how they are wired, what their parameters say. It cannot see what the
  * pipeline draws, and that gap is not theoretical. Rendering the dataset's own
- * `hide-water` rubric turns up a pipeline that scores a perfect 100% while
- * showing the user the opposite of what they asked for: the rubric is satisfied
- * by a particle-only branch (`filter → modify(opacity 0) → viewport.particle`),
- * but the viewport draws bonds from a *separate* stream, so every water bond is
- * still drawn at full opacity and the solvent shell stays on screen as sticks.
- * Hiding the water actually takes a second branch through `viewport.bond`,
- * which the rubric neither requires nor rewards — and which costs the correct
- * answer points for its "extra" nodes. Measured against the shipped rubrics,
- * the static scorer ranks the broken pipeline (100.0%) *above* the correct one
- * (96.1%) on both `hide-water` and `multistep-water-transparent`.
+ * `hide-water` rubric turned up a pipeline that scored a perfect 100% while
+ * showing the user the opposite of what they asked for: the rubric was
+ * satisfied by a particle-only branch
+ * (`filter → modify(opacity 0) → viewport.particle`), but the viewport draws
+ * bonds from a *separate* stream, so every water bond was still drawn at full
+ * opacity and the solvent shell stayed on screen as sticks. Hiding the water
+ * takes a second branch through `viewport.bond`, which the rubric neither
+ * required nor rewarded — and which cost the correct answer points for its
+ * "extra" nodes. The static scorer ranked the broken pipeline (100.0%) *above*
+ * the correct one (96.1%) on both `hide-water` and
+ * `multistep-water-transparent`.
+ *
+ * Those two rubrics now require the bond branch, so the ordering is right:
+ * every golden here scores 100% and the particle-only pipelines score 81%. The
+ * blind spot itself did not go away, which is why this module still exists —
+ * a rubric matches `resname == "HOH"` inside `not resname == "HOH"` just as
+ * happily, so "hide the water" and "hide the caffeine" remain indistinguishable
+ * to it. Both inverted counterexamples below still tie their golden at 100%.
  *
  * What did *not* survive measurement is worth recording too. The "draws it
  * twice" overlap (a filtered branch plus the unfiltered structure both wired to
@@ -41,6 +49,16 @@
  * Pipelines are authored pre-normalization. `deserializePipeline` injects an
  * `add_bond` node and default viewport edges when the graph does not already
  * reach the viewport, exactly as it does for a model's output.
+ *
+ * One caveat the baselines record rather than hide: about twenty solvent
+ * molecules stay on screen in `hide-water` no matter what these pipelines do.
+ * Setting BOTH `query` and `bond_query` to `all` at `opacity: 0` — fading every
+ * atom and every bond in the structure — still renders them, and moves only
+ * 0.24% of pixels versus the reference. They are drawn outside the per-atom
+ * override path (periodic / drawing-boundary display copies are the likely
+ * source) and no pipeline edit reaches them. The `expectation` strings below
+ * say so; do not "fix" a baseline by re-recording it until that path honours
+ * opacity overrides.
  */
 
 import type { SerializedPipeline } from "@/pipeline/types";
@@ -59,6 +77,26 @@ const WATER = 'resname == "HOH"';
  * every water gets its own id >= 1. Used as an `equivalents` entry.
  */
 const WATER_BY_MOLECULE = "not molecule_id == 0";
+
+/**
+ * The solvent's BONDS.
+ *
+ * `bond_query` has its own, smaller field list — `bond_index`, `atom_index`,
+ * `element`, `molecule_id` — and no `resname`, so an atom selection cannot be
+ * copied across.
+ *
+ * `not molecule_id == 0` is the obvious translation and it is measurably wrong
+ * here: `molecule_id` follows the bond graph, the default AddBond infers bonds
+ * by distance, and that pulls the waters closest to the caffeine into the
+ * solute's connected component. Rendering it leaves ~20 water molecules on
+ * screen as sticks. The caffeine is atoms 0-23 and every water follows, so
+ * `both atom_index >= 24` names the solvent's own bonds exactly — `both`
+ * because without it a bond matches when *either* endpoint does, which would
+ * also catch caffeine-water contacts.
+ */
+const WATER_BONDS = "both atom_index >= 24";
+/** The solute's bonds — the complement of {@link WATER_BONDS}. */
+const CAFFEINE_BONDS = "both atom_index < 24";
 
 const loader = (): Node =>
   ({
@@ -80,8 +118,12 @@ const viewport = (): Node =>
     position: { x: 150, y: 700 },
   }) as Node;
 
-const addBond = (): Node =>
-  ({ id: "ab", type: "add_bond", bondSource: "file", position: { x: 320, y: 180 } }) as Node;
+// `bondSource` is deliberately omitted so the node inherits `defaultParams`
+// ("distance"), which is exactly what `deserializePipeline` gives the AddBond
+// it injects when a graph has none. Pinning it here would let the reference
+// drift from what every un-annotated pipeline actually renders. ("file" wants a
+// separate topology file no bench case loads and yields "No bonds found".)
+const addBond = (): Node => ({ id: "ab", type: "add_bond", position: { x: 320, y: 180 } }) as Node;
 
 const particleFilter = (id: string, query: string): Node =>
   ({ id, type: "filter", query, position: { x: 0, y: 320 } }) as Node;
@@ -175,12 +217,14 @@ export const GOLDEN_RENDERS: GoldenRender[] = [
   {
     caseId: "hide-water",
     fixture: CAFFEINE_WATER,
-    expectation: "Only the caffeine molecule is drawn — no water atoms and no water bonds.",
-    pipeline: fadeSelection(WATER, WATER, 0),
+    expectation:
+      "The caffeine molecule, with the solvent's atoms and bonds gone — except the ~20 " +
+      "periodic display copies no override reaches (see the module note).",
+    pipeline: fadeSelection(WATER, WATER_BONDS, 0),
     equivalents: [
       {
         label: "selects the solvent by connectivity instead of residue name",
-        pipeline: fadeSelection(WATER_BY_MOLECULE, WATER_BY_MOLECULE, 0),
+        pipeline: fadeSelection(WATER_BY_MOLECULE, WATER_BONDS, 0),
       },
     ],
     counterexamples: [
@@ -194,7 +238,7 @@ export const GOLDEN_RENDERS: GoldenRender[] = [
       {
         // Structurally identical to the golden, visually its opposite.
         label: "inverted selection: hides the caffeine and keeps the water",
-        pipeline: fadeSelection("not " + WATER, "not " + WATER, 0),
+        pipeline: fadeSelection("not " + WATER, CAFFEINE_BONDS, 0),
       },
     ],
   },
@@ -202,8 +246,8 @@ export const GOLDEN_RENDERS: GoldenRender[] = [
   {
     caseId: "multistep-water-transparent",
     fixture: CAFFEINE_WATER,
-    expectation: "Caffeine fully opaque, water (atoms and bonds) faded to 20%.",
-    pipeline: fadeSelection(WATER, WATER, 0.2),
+    expectation: "Caffeine fully opaque, the solvent's atoms and bonds both faded to 20%.",
+    pipeline: fadeSelection(WATER, WATER_BONDS, 0.2),
     equivalents: [],
     counterexamples: [
       {
@@ -222,7 +266,7 @@ export const GOLDEN_RENDERS: GoldenRender[] = [
       {
         // Hidden, not faded — the neighbouring `hide-water` answer.
         label: "hides the water outright instead of fading it",
-        pipeline: fadeSelection(WATER, WATER, 0),
+        pipeline: fadeSelection(WATER, WATER_BONDS, 0),
       },
     ],
   },

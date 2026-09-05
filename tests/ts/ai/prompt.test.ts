@@ -14,6 +14,23 @@ function exampleAfter(prompt: string, heading: string): SerializedPipeline {
   return JSON.parse(match![1].trim()) as SerializedPipeline;
 }
 
+/**
+ * True when a `modify` node feeds the viewport's `bond` input — i.e. the
+ * example carries a real bond branch, not just a particle one.
+ */
+function bondStreamReachesViewport(pipeline: {
+  nodes: Array<{ id: string; type: string }>;
+  edges: Array<{ source: string; target: string; sourceHandle?: string; targetHandle?: string }>;
+}): boolean {
+  const typeById = new Map(pipeline.nodes.map((n) => [n.id, n.type]));
+  return pipeline.edges.some(
+    (e) =>
+      e.targetHandle === "bond" &&
+      typeById.get(e.target) === "viewport" &&
+      typeById.get(e.source) === "modify",
+  );
+}
+
 describe("buildSystemPrompt", () => {
   const prompt = buildSystemPrompt();
 
@@ -123,10 +140,26 @@ describe("buildSystemPrompt", () => {
     // validators the repair round trip uses, so the model has a correct
     // template to follow.
     expect(collectPipelineErrors(pipeline)).toEqual([]);
-    // Two disjoint filter branches (water vs. the rest), only one modified.
+    // Two disjoint particle branches (water vs. the rest) plus a bond branch:
+    // atoms and bonds are separate viewport streams, so fading only the
+    // particles would leave the water's sticks fully opaque.
     const filters = pipeline.nodes.filter((n) => n.type === "filter");
-    expect(filters).toHaveLength(2);
-    expect(pipeline.nodes.filter((n) => n.type === "modify")).toHaveLength(1);
+    expect(filters).toHaveLength(3);
+    const bondFilters = filters.filter((n) => (n as { bond_query?: string }).bond_query);
+    expect(bondFilters).toHaveLength(1);
+    // `bond_query` has no `resname` field, so the atom selection has to be
+    // translated rather than copied across.
+    expect((bondFilters[0] as { bond_query?: string }).bond_query).toContain("molecule_id");
+
+    // Both streams fade to the same opacity.
+    const modifies = pipeline.nodes.filter((n) => n.type === "modify");
+    expect(modifies).toHaveLength(2);
+    const opacities = new Set(modifies.map((n) => (n as { opacity?: number }).opacity));
+    expect(opacities.size).toBe(1);
+    expect([...opacities][0]).toBeGreaterThan(0);
+    expect([...opacities][0]).toBeLessThan(1);
+
+    expect(bondStreamReachesViewport(pipeline)).toBe(true);
   });
 
   it("documents the selective representation (style one species) pattern", () => {
@@ -165,16 +198,22 @@ describe("buildSystemPrompt", () => {
   it("ships a valid hide-species example that fades the target to opacity 0", () => {
     const pipeline = exampleAfter(prompt, "## Example: Hiding / removing a species");
     expect(collectPipelineErrors(pipeline)).toEqual([]);
+    // Both the atoms and their bonds fade to 0 — hiding only the particles
+    // leaves the species on screen as sticks.
     const modifies = pipeline.nodes.filter((n) => n.type === "modify");
-    expect(modifies.length).toBeGreaterThanOrEqual(1);
-    expect((modifies[0] as { opacity?: number }).opacity).toBe(0);
+    expect(modifies).toHaveLength(2);
+    for (const m of modifies) expect((m as { opacity?: number }).opacity).toBe(0);
+    expect(bondStreamReachesViewport(pipeline)).toBe(true);
     // Two disjoint filter branches: the first selects the species to hide
     // (water), the second keeps the rest. Routing the rest through its own
     // filter — instead of re-sending the full structure — is what actually
     // hides the species (an unfiltered branch would re-draw it at full opacity).
     const filters = pipeline.nodes.filter((n) => n.type === "filter");
-    expect(filters).toHaveLength(2);
+    expect(filters).toHaveLength(3);
     expect((filters[0] as { query?: string }).query).toContain("HOH");
+    const bondFilters = filters.filter((n) => (n as { bond_query?: string }).bond_query);
+    expect(bondFilters).toHaveLength(1);
+    expect((bondFilters[0] as { bond_query?: string }).bond_query).toContain("molecule_id");
     // No edge feeds the load_structure's particles straight to the viewport;
     // every particle path into the viewport goes through a filter first.
     const loaderId = pipeline.nodes.find((n) => n.type === "load_structure")!.id;
