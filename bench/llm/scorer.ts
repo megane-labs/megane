@@ -60,15 +60,6 @@ export interface ParamCheck {
   nodeType: PipelineNodeType;
   /** 0-based index among nodes of `nodeType`. Defaults to 0 (the first). */
   index?: number;
-  /**
-   * Pass when ANY node of `nodeType` satisfies `test`, ignoring `index`.
-   *
-   * Use this wherever a correct answer may contain several nodes of the same
-   * type — a request that touches atoms *and* bonds needs two `filter`s and two
-   * `modify`s, and nothing fixes which the model writes first. An index-pinned
-   * check would then fail a correct pipeline for its node ordering.
-   */
-  any?: boolean;
   test: (node: SerializedNode) => boolean;
 }
 
@@ -270,20 +261,17 @@ export function scoreParams(pipeline: SerializedPipeline | null, rubric: Rubric)
   const paramChecks = rubric.paramChecks ?? [];
   if (paramChecks.length === 0) return { score: null, checks: [] };
 
-  const safeTest = (pc: ParamCheck, node: SerializedNode | undefined): boolean => {
-    if (!node) return false;
-    try {
-      return pc.test(node);
-    } catch {
-      return false;
-    }
-  };
-
   const checks: CheckResult[] = paramChecks.map((pc) => {
     const matches = (pipeline?.nodes ?? []).filter((n) => n.type === pc.nodeType);
-    const passed = pc.any
-      ? matches.some((n) => safeTest(pc, n))
-      : safeTest(pc, matches[pc.index ?? 0]);
+    const node = matches[pc.index ?? 0];
+    let passed = false;
+    if (node) {
+      try {
+        passed = pc.test(node);
+      } catch {
+        passed = false;
+      }
+    }
     return { label: pc.label, passed };
   });
 

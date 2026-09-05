@@ -292,21 +292,6 @@ user named FIRST, then the complementary filter for the rest. Do NOT route the
 full structure AND a filtered copy of the same atoms to the viewport — the
 overlap renders twice.
 
-Atoms and bonds are SEPARATE streams into the viewport (\`particle\` and
-\`bond\`), and a \`modify\` on the particle stream does not touch bonds. Fading
-only the particles leaves the species' bonds drawn at full opacity, so a
-solvent shell stays on screen as sticks and the request looks ignored. Whenever
-opacity is involved, mirror the branch on the bond stream at the SAME opacity:
-\`add_bond\` -> \`filter\` (with \`bond_query\`, not \`query\`) -> \`modify\` ->
-\`viewport.bond\`. Scale and color affect atoms only and need no bond branch.
-
-\`bond_query\` has its OWN, smaller field list — \`bond_index\`, \`atom_index\`,
-\`element\`, \`molecule_id\`. \`resname\` does NOT exist there, so an atom
-selection cannot simply be copied across. Translate it: solvent picked out by
-\`resname == "HOH"\` is every molecule except the solute, i.e.
-\`not molecule_id == 0\` (the molecule containing atom 0 is \`molecule_id == 0\`,
-and both endpoints of a bond always share one molecule).
-
 User request: "Keep the solute fully visible but make the water (resname HOH)
 semi-transparent."
 
@@ -346,29 +331,6 @@ semi-transparent."
       "enabled": true
     },
     {
-      "id": "addbond-1",
-      "type": "add_bond",
-      "position": { "x": 900, "y": 160 },
-      "bondSource": "structure",
-      "enabled": true
-    },
-    {
-      "id": "filter-water-bonds",
-      "type": "filter",
-      "position": { "x": 900, "y": 310 },
-      "query": "",
-      "bond_query": "not molecule_id == 0",
-      "enabled": true
-    },
-    {
-      "id": "fade-water-bonds",
-      "type": "modify",
-      "position": { "x": 900, "y": 460 },
-      "scale": 1.0,
-      "opacity": 0.3,
-      "enabled": true
-    },
-    {
       "id": "viewport-1",
       "type": "viewport",
       "position": { "x": 425, "y": 615 },
@@ -383,16 +345,12 @@ semi-transparent."
     { "source": "filter-water", "target": "modify-water", "sourceHandle": "out", "targetHandle": "in" },
     { "source": "modify-water", "target": "viewport-1", "sourceHandle": "out", "targetHandle": "particle" },
     { "source": "loader-1", "target": "filter-solute", "sourceHandle": "particle", "targetHandle": "in" },
-    { "source": "filter-solute", "target": "viewport-1", "sourceHandle": "out", "targetHandle": "particle" },
-    { "source": "loader-1", "target": "addbond-1", "sourceHandle": "particle", "targetHandle": "particle" },
-    { "source": "addbond-1", "target": "filter-water-bonds", "sourceHandle": "bond", "targetHandle": "in" },
-    { "source": "filter-water-bonds", "target": "fade-water-bonds", "sourceHandle": "out", "targetHandle": "in" },
-    { "source": "fade-water-bonds", "target": "viewport-1", "sourceHandle": "out", "targetHandle": "bond" }
+    { "source": "filter-solute", "target": "viewport-1", "sourceHandle": "out", "targetHandle": "particle" }
   ]
 }
 \`\`\`
 
-Fades the water's atoms AND its bonds to the same opacity, and shows the rest of the structure at full opacity. Without the bond branch the water's sticks would stay opaque and the solvent would still read as solid.
+Filters the water into its own branch, makes only it semi-transparent, and shows the rest of the structure at full opacity.
 
 ## Example: Selective Representation (style one species only)
 
@@ -476,17 +434,10 @@ invisible), and route the REST through a SECOND \`filter\` (the complementary
 query, e.g. \`resname != "HOH"\`) so it keeps its default appearance. Do NOT send
 the full, unfiltered structure to the viewport alongside the hidden branch — that
 re-draws the hidden species at full opacity through the unfiltered branch, so it
-is not hidden at all. List the filter for the species the user named FIRST.
-
-Hiding the atoms is only half the job: bonds reach the viewport on their own
-\`bond\` stream, so a particle-only branch leaves every bond of the hidden
-species drawn at full opacity — the solvent shell stays on screen as sticks.
-ALWAYS mirror the branch on the bond stream: \`add_bond\` -> \`filter\` (with
-\`bond_query\`, not \`query\`) -> \`modify (opacity 0)\` -> \`viewport.bond\`.
-\`bond_query\` has no \`resname\` field, so translate the atom selection into one
-of \`bond_index\` / \`atom_index\` / \`element\` / \`molecule_id\` — for a solvent
-that is \`not molecule_id == 0\`. Do NOT set \`enabled: false\` and do NOT invent
-a delete node.
+is not hidden at all. List the filter for the species the user named FIRST. (To
+also drop the hidden atoms' bonds, send the bond stream through \`add_bond\` ->
+\`filter\` (\`bond_query\`) -> \`modify (opacity 0)\`.) Do NOT set \`enabled: false\`
+and do NOT invent a delete node.
 
 User request: "Hide the water (resname HOH) so only the rest of the structure
 shows."
@@ -527,29 +478,6 @@ shows."
       "enabled": true
     },
     {
-      "id": "addbond-1",
-      "type": "add_bond",
-      "position": { "x": 900, "y": 160 },
-      "bondSource": "structure",
-      "enabled": true
-    },
-    {
-      "id": "filter-water-bonds",
-      "type": "filter",
-      "position": { "x": 900, "y": 310 },
-      "query": "",
-      "bond_query": "not molecule_id == 0",
-      "enabled": true
-    },
-    {
-      "id": "hide-water-bonds",
-      "type": "modify",
-      "position": { "x": 900, "y": 460 },
-      "scale": 1.0,
-      "opacity": 0.0,
-      "enabled": true
-    },
-    {
       "id": "viewport-1",
       "type": "viewport",
       "position": { "x": 425, "y": 615 },
@@ -564,16 +492,12 @@ shows."
     { "source": "filter-water", "target": "hide-water", "sourceHandle": "out", "targetHandle": "in" },
     { "source": "hide-water", "target": "viewport-1", "sourceHandle": "out", "targetHandle": "particle" },
     { "source": "loader-1", "target": "filter-rest", "sourceHandle": "particle", "targetHandle": "in" },
-    { "source": "filter-rest", "target": "viewport-1", "sourceHandle": "out", "targetHandle": "particle" },
-    { "source": "loader-1", "target": "addbond-1", "sourceHandle": "particle", "targetHandle": "particle" },
-    { "source": "addbond-1", "target": "filter-water-bonds", "sourceHandle": "bond", "targetHandle": "in" },
-    { "source": "filter-water-bonds", "target": "hide-water-bonds", "sourceHandle": "out", "targetHandle": "in" },
-    { "source": "hide-water-bonds", "target": "viewport-1", "sourceHandle": "out", "targetHandle": "bond" }
+    { "source": "filter-rest", "target": "viewport-1", "sourceHandle": "out", "targetHandle": "particle" }
   ]
 }
 \`\`\`
 
-Fades the water's atoms AND its bonds to fully transparent and shows the rest of the structure at its default appearance, so only the non-water atoms remain visible. Dropping the bond branch would leave the water's sticks on screen.
+Fades the water to fully transparent and shows the rest of the structure at its default appearance, so only the non-water atoms remain visible.
 
 ## Guidelines
 
@@ -591,12 +515,6 @@ Fades the water's atoms AND its bonds to fully transparent and shows the rest of
   branches and apply the \`modify\`/\`color\` node to the target branch only — see
   the "Selective Visual Property" example. Never send both the full structure
   and a filtered subset of the same atoms to the viewport.
-- Opacity needs a bond branch as well as a particle branch. Atoms and bonds are
-  separate viewport streams, so fading or hiding a species' atoms leaves its
-  bonds fully opaque. Mirror the branch: \`add_bond\` -> \`filter\` (\`bond_query\`)
-  -> \`modify\` (same opacity) -> \`viewport.bond\`. \`bond_query\` has no
-  \`resname\` field — translate the atom selection (a solvent is
-  \`not molecule_id == 0\`). Scale and color are per-atom and need no bond branch.
 - For supercells: add a \`replicate\` node between load_structure and viewport
   (and add_bond, if present), forwarding its \`particle\`/\`cell\`/\`trajectory\`
   outputs downstream.
@@ -621,12 +539,9 @@ Fades the water's atoms AND its bonds to fully transparent and shows the rest of
   it into its own branch and set a \`modify\` node's \`opacity\` to 0, and route the
   REST through a second \`filter\` (the complementary query) to the viewport (a
   bare \`filter\` does NOT remove atoms; only a downstream modify/representation
-  acts on the selection) — and hide its BONDS the same way via \`add_bond\` ->
-  \`filter\` (\`bond_query\`) -> \`modify (opacity 0)\` -> \`viewport.bond\`, or the
-  species stays visible as sticks — see the "Hiding / removing a species"
-  example. Do NOT also send the full, unfiltered structure to the viewport (it
-  would re-draw the hidden species at full opacity). Never use a delete node or
-  \`enabled: false\`.
+  acts on the selection) — see the "Hiding / removing a species" example. Do NOT
+  also send the full, unfiltered structure to the viewport (it would re-draw the
+  hidden species at full opacity). Never use a delete node or \`enabled: false\`.
 - For volumetric data (cube files, electron density, ESP maps): use
   load_volumetric → isosurface → viewport (mesh), independent of
   load_structure unless the request also wants the atoms shown.

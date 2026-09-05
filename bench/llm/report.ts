@@ -98,12 +98,6 @@ export function toJSON(meta: ReportMeta, records: CaseRecord[], agg: Aggregate) 
       ),
       latencyMs: r.latencyMs,
       error: r.error,
-      // The pipeline the scorer recovered from the response. Kept so the
-      // render check (tests/e2e/bench-render.spec.ts, via
-      // MEGANE_BENCH_RENDER_RESULTS) can draw what the model actually produced
-      // and compare it against the reference image — the static dimensions
-      // above cannot see whether it renders the right picture.
-      pipeline: r.score.pipeline,
     })),
   };
 }

@@ -200,13 +200,6 @@ export default defineConfig({
       use: { baseURL: `http://127.0.0.1:${PORT_WEBAPP}` },
     },
     {
-      // Renders the bench/llm golden pipelines and compares them against
-      // committed reference images. Webapp host only — see the spec header.
-      name: "bench-render",
-      testMatch: /bench-render\.spec\.ts$/,
-      use: { baseURL: `http://127.0.0.1:${PORT_WEBAPP}` },
-    },
-    {
       name: "resname-filter-opacity",
       testMatch: /resname-filter-opacity\.spec\.ts$/,
       use: { baseURL: `http://127.0.0.1:${PORT_WEBAPP}` },

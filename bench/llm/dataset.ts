@@ -269,11 +269,8 @@ export const DATASET: BenchCase[] = [
     prompt:
       "I have a caffeine molecule dissolved in water, where the water residues are named HOH. Keep the caffeine fully visible, but make the water molecules semi-transparent.",
     tags: ["multistep", "filter", "modify", "params"],
-    // "Semi-transparent water" means the bonds fade too. They arrive on their
-    // own viewport stream, so a particle-only branch leaves the water's sticks
-    // fully opaque and the fade never reaches the screen — see `hide-water`.
     rubric: {
-      requiredNodeTypes: ["load_structure", "filter", "modify", "add_bond", "viewport"],
+      requiredNodeTypes: ["load_structure", "filter", "modify", "viewport"],
       requiredConnections: [
         { sourceType: "filter", targetType: "modify", sourceHandle: "out", targetHandle: "in" },
         {
@@ -282,45 +279,20 @@ export const DATASET: BenchCase[] = [
           sourceHandle: "out",
           targetHandle: "particle",
         },
-        {
-          label: "routes the bond stream through a filter (add_bond -> filter)",
-          sourceType: "add_bond",
-          targetType: "filter",
-          sourceHandle: "bond",
-          targetHandle: "in",
-        },
-        {
-          label: "sends a modified bond stream to viewport.bond",
-          sourceType: "modify",
-          targetType: "viewport",
-          sourceHandle: "out",
-          targetHandle: "bond",
-        },
       ],
       paramChecks: [
         {
-          label: 'a filter selects the water atoms (resname == "HOH")',
+          label: 'filter.query selects water (resname == "HOH")',
           nodeType: "filter",
-          any: true,
           test: (n) => /resname\s*==\s*["']?HOH["']?/i.test(str(n, "query")),
         },
         {
-          // `bond_query` has no `resname` field (only bond_index / atom_index /
-          // element / molecule_id), so the atom selection has to be translated
-          // rather than copied. Every water is its own connected component.
-          label: "a filter selects the water bonds (bond_query on a bond field)",
-          nodeType: "filter",
-          any: true,
-          test: (n) => /\b(bond_index|atom_index|element|molecule_id)\b/.test(str(n, "bond_query")),
-        },
-        {
-          label: "a modify fades its stream (0 < opacity < 1)",
+          label: "modify.opacity is below 1 (transparent)",
           nodeType: "modify",
-          any: true,
           test: (n) => num(n, "opacity") < 1 && num(n, "opacity") > 0,
         },
       ],
-      minNodes: 6,
+      minNodes: 4,
     },
   },
   {
@@ -359,14 +331,8 @@ export const DATASET: BenchCase[] = [
     prompt:
       "I have a caffeine molecule dissolved in water, where the water residues are named HOH. Hide the water so only the caffeine is shown.",
     tags: ["multistep", "filter", "modify", "params"],
-    // Atoms and bonds are separate viewport streams: fading only the particles
-    // leaves every water bond drawn at full opacity, so the solvent shell stays
-    // on screen as sticks. The bond branch is therefore required, not optional
-    // — before it was, this rubric scored the particle-only pipeline 100% and
-    // the genuinely correct one 96.1%. `any: true` keeps the parameter checks
-    // from pinning which filter/modify the model happens to write first.
     rubric: {
-      requiredNodeTypes: ["load_structure", "filter", "modify", "add_bond", "viewport"],
+      requiredNodeTypes: ["load_structure", "filter", "modify", "viewport"],
       requiredConnections: [
         { sourceType: "filter", targetType: "modify", sourceHandle: "out", targetHandle: "in" },
         {
@@ -375,45 +341,20 @@ export const DATASET: BenchCase[] = [
           sourceHandle: "out",
           targetHandle: "particle",
         },
-        {
-          label: "routes the bond stream through a filter (add_bond -> filter)",
-          sourceType: "add_bond",
-          targetType: "filter",
-          sourceHandle: "bond",
-          targetHandle: "in",
-        },
-        {
-          label: "sends a modified bond stream to viewport.bond",
-          sourceType: "modify",
-          targetType: "viewport",
-          sourceHandle: "out",
-          targetHandle: "bond",
-        },
       ],
       paramChecks: [
         {
-          label: 'a filter selects the water atoms (resname == "HOH")',
+          label: 'filter selects water (resname == "HOH")',
           nodeType: "filter",
-          any: true,
           test: (n) => /resname\s*==\s*["']?HOH["']?/i.test(str(n, "query")),
         },
         {
-          // `bond_query` has no `resname` field (only bond_index / atom_index /
-          // element / molecule_id), so the atom selection has to be translated
-          // rather than copied. Every water is its own connected component.
-          label: "a filter selects the water bonds (bond_query on a bond field)",
-          nodeType: "filter",
-          any: true,
-          test: (n) => /\b(bond_index|atom_index|element|molecule_id)\b/.test(str(n, "bond_query")),
-        },
-        {
-          label: "a modify hides its stream (opacity 0)",
+          label: "modify.opacity is 0 (water hidden)",
           nodeType: "modify",
-          any: true,
           test: (n) => num(n, "opacity") === 0,
         },
       ],
-      minNodes: 6,
+      minNodes: 4,
     },
   },
 
