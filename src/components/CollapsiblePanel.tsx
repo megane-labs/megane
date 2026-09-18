@@ -3,7 +3,7 @@
  * Used by AppearancePanel and PipelineEditor.
  */
 
-import type { CSSProperties, ReactNode } from "react";
+import type { CSSProperties, ReactNode, Ref } from "react";
 
 /** Frosted glass panel container style. */
 export const panelContainerStyle: CSSProperties = {
@@ -80,6 +80,18 @@ interface CollapsiblePanelProps {
   top?: number;
   /** Right offset in pixels (default: 12). Use to side-by-side panels. */
   right?: number;
+  /**
+   * Bottom offset (default: 60, clear of the Timeline). The expanded panel
+   * stretches from `top` to `bottom` unless `height` is given, in which case
+   * it is anchored at `bottom` with that height and `top` is ignored (a
+   * panel stacked under another one).
+   */
+  bottom?: number | string;
+  height?: number | string;
+  /** Title of the collapse button on the expanded panel (default: "Collapse panel"). */
+  collapseLabel?: string;
+  /** Ref to the expanded panel's container (e.g. to resize it imperatively). */
+  containerRef?: Ref<HTMLDivElement>;
   /** Extra header content (buttons etc.) placed before the collapse button. */
   headerExtra?: ReactNode;
   /** Extra elements prepended inside the panel container (e.g. resize handle). */
@@ -98,11 +110,17 @@ export function CollapsiblePanel({
   width = 220,
   top = 12,
   right = 12,
+  bottom = 60,
+  height,
+  collapseLabel = "Collapse panel",
+  containerRef,
   headerExtra,
   containerExtra,
   children,
 }: CollapsiblePanelProps) {
   const panelTestId = `panel-${title.replace(/\s+/g, "-").toLowerCase()}`;
+  const placement: CSSProperties =
+    height !== undefined ? { top: "auto", bottom, height } : { top, bottom };
 
   if (collapsed) {
     return (
@@ -130,7 +148,8 @@ export function CollapsiblePanel({
 
   return (
     <div
-      style={{ ...panelContainerStyle, width, top, right }}
+      ref={containerRef}
+      style={{ ...panelContainerStyle, width, right, ...placement }}
       data-testid={panelTestId}
       data-collapsed="false"
     >
@@ -141,8 +160,8 @@ export function CollapsiblePanel({
           onClick={onToggleCollapse}
           data-testid={`${panelTestId}-toggle`}
           style={collapseButtonStyle}
-          title="Collapse panel"
-          aria-label="Collapse panel"
+          title={collapseLabel}
+          aria-label={collapseLabel}
           aria-expanded="true"
         >
           &#9654;

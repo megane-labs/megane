@@ -64,7 +64,6 @@ import { SpectrumPlotNode } from "./nodes/SpectrumPlotNode";
 import { IsosurfaceNode } from "./nodes/IsosurfaceNode";
 import { PipelineChatBox } from "./PipelineChatBox";
 import { PipelineInspector } from "./PipelineInspector";
-import { BuildPanel } from "./BuildPanel";
 import { RenderModal } from "./RenderModal";
 import { ShareDialog } from "./ShareDialog";
 import { startTour, startPipelineTutorial } from "../tour/MeganeTour";
@@ -156,6 +155,17 @@ const IconRender = (
   <svg {...iconProps}>
     <circle cx="12" cy="12" r="10" />
     <circle cx="12" cy="12" r="3" />
+  </svg>
+);
+
+/* Two bonded atoms with a "+" — the Build panel launcher. */
+const IconBuild = (
+  <svg {...iconProps}>
+    <circle cx="7" cy="15" r="3" />
+    <circle cx="17" cy="9" r="3" />
+    <line x1="9.5" y1="13.5" x2="14.5" y2="10.5" />
+    <line x1="17" y1="16" x2="17" y2="22" />
+    <line x1="14" y1="19" x2="20" y2="19" />
   </svg>
 );
 
@@ -449,6 +459,19 @@ const guideBtnStyle: React.CSSProperties = {
   color: "#64748b",
 };
 
+const buildBtnStyle: React.CSSProperties = {
+  ...textBtnBase,
+  background: "rgba(16, 185, 129, 0.08)",
+  border: "1px solid rgba(16, 185, 129, 0.3)",
+  color: "#047857",
+};
+
+const buildBtnActiveStyle: React.CSSProperties = {
+  ...buildBtnStyle,
+  background: "rgba(16, 185, 129, 0.22)",
+  border: "1px solid rgba(16, 185, 129, 0.6)",
+};
+
 const tutorialBtnStyle: React.CSSProperties = {
   ...textBtnBase,
   background: "rgba(59, 130, 246, 0.08)",
@@ -554,6 +577,7 @@ function PipelineEditorInner({
   collapsed,
   onToggleCollapse,
   onWidthChange,
+  bottom,
   rendererRef,
   totalFrames,
   currentFrame,
@@ -562,6 +586,8 @@ function PipelineEditorInner({
   collapsed: boolean;
   onToggleCollapse: () => void;
   onWidthChange?: (width: number) => void;
+  /** Bottom offset of the panel; raised while the Build panel is stacked under it. */
+  bottom?: number | string;
   rendererRef: React.RefObject<MoleculeRenderer | null>;
   totalFrames: number;
   currentFrame: number;
@@ -610,6 +636,8 @@ function PipelineEditorInner({
 
   const mode = useScopedPipelineUIStore((s) => s.mode);
   const setMode = useScopedPipelineUIStore((s) => s.setMode);
+  const buildOpen = useScopedPipelineUIStore((s) => s.buildOpen);
+  const setBuildOpen = useScopedPipelineUIStore((s) => s.setBuildOpen);
   const pendingNotice = useScopedPipelineUIStore((s) => s.pendingNotice);
   const dismissNotice = useScopedPipelineUIStore((s) => s.dismissNotice);
 
@@ -900,7 +928,6 @@ function PipelineEditorInner({
   const TAB_OPTIONS: { value: PipelinePanelMode; label: string }[] = [
     { value: "editor", label: "Editor" },
     { value: "inspector", label: "Inspector" },
-    { value: "build", label: "Build" },
     { value: "chat", label: "Chat" },
   ];
 
@@ -956,6 +983,24 @@ function PipelineEditorInner({
           title="Render"
         >
           {IconRender} Render
+        </button>
+      </div>
+      {/* Structure: opens the Build panel, a separate panel stacked under this
+          one (see MeganeViewer) — editing the molecule is not a pipeline tab,
+          and the Editor should stay visible while the edit node grows. */}
+      <div style={toolbarRowStyle} data-testid="pipeline-editor-structure-row">
+        <span style={toolbarCategoryLabelStyle}>Structure</span>
+        <button
+          data-testid="pipeline-editor-build"
+          onClick={() => setBuildOpen(!buildOpen)}
+          style={buildOpen ? buildBtnActiveStyle : buildBtnStyle}
+          title={
+            buildOpen ? "Close the Build panel" : "Open the Build panel (edit atoms and bonds)"
+          }
+          aria-label="Build panel"
+          aria-pressed={buildOpen}
+        >
+          {IconBuild} Build
         </button>
       </div>
       {/* Others: editor-side help & appearance. Hidden on the Chat tab so the
@@ -1031,6 +1076,7 @@ function PipelineEditorInner({
       collapsed={collapsed}
       onToggleCollapse={onToggleCollapse}
       width={panelWidth}
+      bottom={bottom}
       headerExtra={headerExtra}
       containerExtra={resizeHandle}
     >
@@ -1128,22 +1174,6 @@ function PipelineEditorInner({
         </div>
         <div
           role="tabpanel"
-          id="pipeline-tabpanel-build"
-          aria-labelledby="pipeline-tab-build"
-          aria-hidden={mode !== "build"}
-          style={{
-            position: "absolute",
-            inset: 0,
-            display: "flex",
-            flexDirection: "column",
-            background: "var(--megane-surface-solid)",
-            visibility: mode === "build" ? "visible" : "hidden",
-          }}
-        >
-          {mode === "build" && <BuildPanel />}
-        </div>
-        <div
-          role="tabpanel"
           id="pipeline-tabpanel-chat"
           aria-labelledby="pipeline-tab-chat"
           aria-hidden={mode !== "chat"}
@@ -1188,6 +1218,7 @@ export function PipelineEditor({
   collapsed,
   onToggleCollapse,
   onWidthChange,
+  bottom,
   rendererRef,
   totalFrames = 0,
   currentFrame = 0,
@@ -1196,6 +1227,8 @@ export function PipelineEditor({
   collapsed: boolean;
   onToggleCollapse: () => void;
   onWidthChange?: (width: number) => void;
+  /** Bottom offset of the panel; raised while the Build panel is stacked under it. */
+  bottom?: number | string;
   rendererRef: React.RefObject<MoleculeRenderer | null>;
   totalFrames?: number;
   currentFrame?: number;
@@ -1208,6 +1241,7 @@ export function PipelineEditor({
         collapsed={collapsed}
         onToggleCollapse={onToggleCollapse}
         onWidthChange={onWidthChange}
+        bottom={bottom}
         rendererRef={rendererRef}
         totalFrames={totalFrames}
         currentFrame={currentFrame}

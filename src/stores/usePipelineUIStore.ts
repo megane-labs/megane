@@ -1,7 +1,8 @@
 /**
- * UI state for the Pipeline panel: which tab is active (Editor vs Chat) and a
+ * UI state for the Pipeline panel: which tab is active (Editor vs Chat), a
  * transient "pipeline applied" notice surfaced after the chat assistant
- * rewrites the graph.
+ * rewrites the graph, and whether the Build panel (structure editing, a
+ * separate panel stacked under the Pipeline panel) is open.
  *
  * Persistence is per-session (sessionStorage) rather than across reloads, so
  * every cold start opens on the Chat tab — the assistant is the primary entry
@@ -12,7 +13,7 @@
 import { create, type StateCreator, type StoreApi } from "zustand";
 import { createStore } from "zustand/vanilla";
 
-export type PipelinePanelMode = "editor" | "chat" | "inspector" | "build";
+export type PipelinePanelMode = "editor" | "chat" | "inspector";
 
 export interface PipelineAppliedNotice {
   kind: "applied";
@@ -37,10 +38,7 @@ function loadMode(storageKey: PipelineUIStorage): PipelinePanelMode {
       const parsed = JSON.parse(raw);
       if (
         parsed &&
-        (parsed.mode === "editor" ||
-          parsed.mode === "chat" ||
-          parsed.mode === "inspector" ||
-          parsed.mode === "build")
+        (parsed.mode === "editor" || parsed.mode === "chat" || parsed.mode === "inspector")
       ) {
         return parsed.mode;
       }
@@ -70,7 +68,14 @@ function saveMode(storageKey: PipelineUIStorage, mode: PipelinePanelMode) {
 export interface PipelineUIStore {
   mode: PipelinePanelMode;
   pendingNotice: PipelineAppliedNotice | null;
+  /**
+   * Whether the Build panel is open. Not persisted: an open panel puts the 3D
+   * view in edit mode (clicks edit atoms instead of picking / measuring), so
+   * every session starts with it closed.
+   */
+  buildOpen: boolean;
   setMode: (mode: PipelinePanelMode) => void;
+  setBuildOpen: (open: boolean) => void;
   /** Surface a one-shot "applied" notice without leaving the current tab. */
   markPipelineApplied: () => void;
   dismissNotice: () => void;
@@ -84,10 +89,15 @@ export function pipelineUIStateCreator(
   return (set) => ({
     mode: loadMode(storageKey),
     pendingNotice: null,
+    buildOpen: false,
 
     setMode: (mode) => {
       saveMode(storageKey, mode);
       set({ mode });
+    },
+
+    setBuildOpen: (open) => {
+      set({ buildOpen: open });
     },
 
     markPipelineApplied: () => {

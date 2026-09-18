@@ -55,7 +55,7 @@ export function summarizeEditOps(ops: EditOp[]): string {
 
 export function EditNode({ id, data }: NodeProps<Node<PipelineNodeData>>) {
   const updateNodeParams = useScopedPipelineStore((s) => s.updateNodeParams);
-  const setMode = useScopedPipelineUIStore((s) => s.setMode);
+  const setBuildOpen = useScopedPipelineUIStore((s) => s.setBuildOpen);
   const params = data.params as EditParams;
   const ops = Array.isArray(params.ops) ? params.ops : [];
 
@@ -91,7 +91,7 @@ export function EditNode({ id, data }: NodeProps<Node<PipelineNodeData>>) {
           className="nodrag"
           data-testid="edit-node-open-build"
           style={buttonStyle}
-          onClick={() => setMode("build")}
+          onClick={() => setBuildOpen(true)}
         >
           Open Build
         </button>

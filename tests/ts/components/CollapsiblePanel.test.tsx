@@ -7,6 +7,41 @@ afterEach(() => {
 });
 
 describe("CollapsiblePanel", () => {
+  it("stretches from top to bottom by default and anchors at the bottom when given a height", () => {
+    const { rerender } = render(
+      <CollapsiblePanel title="Build" collapsed={false} onToggleCollapse={() => {}}>
+        <div />
+      </CollapsiblePanel>,
+    );
+    let root = screen.getByTestId("panel-build");
+    expect(root.style.top).toBe("12px");
+    expect(root.style.bottom).toBe("60px");
+    expect(root.style.height).toBe("");
+
+    const containerRef = { current: null as HTMLDivElement | null };
+    rerender(
+      <CollapsiblePanel
+        title="Build"
+        collapsed={false}
+        onToggleCollapse={() => {}}
+        bottom={72}
+        height="min(440px, 55%)"
+        collapseLabel="Close Build panel"
+        containerRef={containerRef}
+      >
+        <div />
+      </CollapsiblePanel>,
+    );
+    root = screen.getByTestId("panel-build");
+    expect(root.style.top).toBe("auto");
+    expect(root.style.bottom).toBe("72px");
+    expect(root.style.height).toBe("min(440px, 55%)");
+    expect(containerRef.current).toBe(root);
+    const toggle = screen.getByTestId("panel-build-toggle");
+    expect(toggle.getAttribute("aria-label")).toBe("Close Build panel");
+    expect(toggle.getAttribute("title")).toBe("Close Build panel");
+  });
+
   it("renders the collapsed toggle button when collapsed", () => {
     const onToggle = vi.fn();
     render(

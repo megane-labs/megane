@@ -74,6 +74,18 @@ node warning instead of silent misapplication.
 
 ## Build panel and the 3D view
 
+The panel is its own surface, not a tab of the Pipeline panel: `MeganeViewer`
+stacks a second `CollapsiblePanel` under the Pipeline panel in the same
+column (same width, the Pipeline panel's bottom edge is raised to make room)
+and the Pipeline panel header carries the launcher. Two reasons. Editing the
+molecule is a different activity from authoring the pipeline, so it should
+not compete with Editor / Inspector / Chat for the same tab strip; and the
+pipeline *is* the edit history, so the Editor must stay visible while the
+`edit` node grows. Whether the 3D view is in edit mode follows one flag
+(`buildOpen` in `usePipelineUIStore`), never which tab happens to be in front.
+The flag is not persisted: an open panel changes what a click means, so every
+session starts with it closed.
+
 `src/components/BuildPanel.tsx` owns no atom data. It holds UI state in
 `useBuildStore` (tool, element, bond order, selection, pending bond atom, redo
 stack) and installs four callbacks (`pick`, `dragStart`, `dragMove`,

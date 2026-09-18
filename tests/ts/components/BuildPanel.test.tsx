@@ -121,7 +121,7 @@ function setTool(tool: string) {
 
 describe("BuildPanel", () => {
   beforeEach(() => {
-    usePipelineUIStore.setState({ mode: "build" });
+    usePipelineUIStore.setState({ mode: "editor", buildOpen: true });
     useBuildStore.setState({
       tool: "select",
       element: 6,

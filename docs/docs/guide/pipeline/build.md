@@ -1,9 +1,15 @@
 # Build Panel (Structure Editing)
 
-The **Build** tab in the pipeline panel (alongside **Editor**, **Inspector**,
-and **Chat**) lets you edit the loaded structure by clicking in the 3D view:
-add atoms, delete them, drag them around, change elements, and draw or remove
-bonds. When you are done, save the result as XYZ, PDB, or MOL.
+The **Build** panel lets you edit the loaded structure by clicking in the 3D
+view: add atoms, delete them, drag them around, change elements, and draw or
+remove bonds. When you are done, save the result as XYZ, PDB, or MOL.
+
+Open it with the **Build** button in the Pipeline panel header (or *Open
+Build* on an `edit` node). It is its own panel, stacked under the Pipeline
+panel, so the Editor tab stays visible while you work and you can watch the
+`edit` node grow with every click. While it is open, clicks in the 3D view
+edit atoms; close it with the ▶ button in its header to get the usual pick and
+measure behaviour back.
 
 Nothing you do here is hidden state. Every click appends one **edit
 operation** to an `edit` node that megane places directly after the
@@ -43,8 +49,8 @@ re-fits the view.
 ## History and Undo
 
 The **History** section shows every operation in order and offers **Undo**,
-**Redo**, and **Clear all**. *Show in Editor* jumps to the pipeline graph where
-the `edit` node lives.
+**Redo**, and **Clear all**. *Show in Editor* switches the Pipeline panel above
+to the graph where the `edit` node lives.
 
 Operations refer to atoms in two ways: atoms from the file by their index in the
 loaded structure, and atoms you created by an id the operation assigned. That is

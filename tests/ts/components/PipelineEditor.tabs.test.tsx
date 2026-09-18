@@ -116,16 +116,23 @@ describe("PipelineEditor — tab switching", () => {
     expect(row.style.flexShrink).toBe("0");
   });
 
-  it("offers a Build tab that mounts the Build panel only while active", () => {
+  it("launches the Build panel from the header instead of offering it as a tab", () => {
     render(<PipelineEditor collapsed={false} onToggleCollapse={() => {}} />);
+    // Editing the molecule is not a pipeline tab: the Editor must stay
+    // visible while the edit node grows, so the panel lives outside
+    // (MeganeViewer stacks it under this one) and is only toggled from here.
+    expect(screen.queryByTestId("pipeline-editor-tab-build")).toBeNull();
     expect(screen.queryByTestId("build-panel")).toBeNull();
-    fireEvent.click(screen.getByTestId("pipeline-editor-tab-build"));
-    expect(usePipelineUIStore.getState().mode).toBe("build");
-    expect(screen.getByTestId("build-panel")).toBeTruthy();
-    const panel = document.getElementById("pipeline-tabpanel-build")!;
-    expect(panel.style.visibility).toBe("visible");
-    fireEvent.click(screen.getByTestId("pipeline-editor-tab-editor"));
+    const launcher = screen.getByTestId("pipeline-editor-build");
+    expect(launcher.getAttribute("aria-pressed")).toBe("false");
+    fireEvent.click(launcher);
+    expect(usePipelineUIStore.getState().buildOpen).toBe(true);
+    expect(screen.getByTestId("pipeline-editor-build").getAttribute("aria-pressed")).toBe("true");
+    // The tab is untouched and the panel is not mounted inside this one.
+    expect(usePipelineUIStore.getState().mode).not.toBe("build" as never);
     expect(screen.queryByTestId("build-panel")).toBeNull();
+    fireEvent.click(screen.getByTestId("pipeline-editor-build"));
+    expect(usePipelineUIStore.getState().buildOpen).toBe(false);
   });
 
   it("hides Pipeline-tab-only buttons (Templates) when the chat tab is active", () => {

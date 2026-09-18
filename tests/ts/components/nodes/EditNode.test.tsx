@@ -68,10 +68,12 @@ describe("EditNode", () => {
     expect(screen.getByTestId("edit-node-summary").textContent).toBe("No edits");
   });
 
-  it("Open Build switches the pipeline panel to the Build tab", () => {
+  it("Open Build opens the Build panel without leaving the current tab", () => {
     const seeded = seedPipelineStore("edit", { id: "e1" });
+    usePipelineUIStore.setState({ mode: "editor", buildOpen: false });
     render(<EditNode {...nodeProps("e1", seeded.data.params as EditParams)} />);
     fireEvent.click(screen.getByTestId("edit-node-open-build"));
-    expect(usePipelineUIStore.getState().mode).toBe("build");
+    expect(usePipelineUIStore.getState().buildOpen).toBe(true);
+    expect(usePipelineUIStore.getState().mode).toBe("editor");
   });
 });

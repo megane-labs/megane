@@ -130,7 +130,69 @@ describe("MeganeViewer ui options", () => {
     viewportProps.current = null;
     rendererStub.toggleAtomSelection.mockReturnValue({ atoms: [0] });
     rendererStub.getMeasurement.mockReturnValue(null);
-    usePipelineUIStore.setState({ mode: "chat" });
+    usePipelineUIStore.setState({ mode: "chat", buildOpen: false });
+  });
+
+  // The Build panel is a separate surface stacked under the Pipeline panel in
+  // the same column (the pipeline is the edit history, so it must stay
+  // visible while editing). It is launched from that panel's header, so it
+  // follows `pipelineEditor` rather than having a `ui` key of its own.
+  describe("Build panel", () => {
+    it("is closed by default and puts nothing in edit mode", () => {
+      render(<MeganeViewer onUploadStructure={() => {}} />);
+      expect(screen.queryByTestId("panel-build")).toBeNull();
+      expect(viewportProps.current?.buildActive).toBe(false);
+      expect(pipelineEditorProps.current?.bottom).toBe(60);
+    });
+
+    it("stacks under the pipeline panel when open and hands the Viewport edit mode", () => {
+      render(<MeganeViewer onUploadStructure={() => {}} />);
+      act(() => {
+        usePipelineUIStore.getState().setBuildOpen(true);
+      });
+      const panel = screen.getByTestId("panel-build");
+      expect(panel.style.bottom).toBe("60px");
+      expect(panel.style.height).toBe("min(440px, 55%)");
+      // Same column: the panel takes the pipeline panel's width and the
+      // pipeline panel is raised to sit above it.
+      expect(panel.style.width).toBe("480px");
+      expect(pipelineEditorProps.current?.bottom).toBe("calc(72px + min(440px, 55%))");
+      expect(screen.getByTestId("build-panel")).toBeTruthy();
+      expect(viewportProps.current?.buildActive).toBe(true);
+      // The frustum inset is unchanged: no extra column was added.
+      expect(rendererStub.setViewInsets).toHaveBeenLastCalledWith(0, 492);
+    });
+
+    it("follows the pipeline panel's width without a re-render", () => {
+      render(<MeganeViewer onUploadStructure={() => {}} />);
+      act(() => {
+        usePipelineUIStore.getState().setBuildOpen(true);
+      });
+      const onWidthChange = pipelineEditorProps.current?.onWidthChange as (w: number) => void;
+      act(() => {
+        onWidthChange(560);
+      });
+      expect(screen.getByTestId("panel-build").style.width).toBe("560px");
+    });
+
+    it("closes from its own header and drops the Viewport out of edit mode", () => {
+      render(<MeganeViewer onUploadStructure={() => {}} />);
+      act(() => {
+        usePipelineUIStore.getState().setBuildOpen(true);
+      });
+      fireEvent.click(screen.getByTestId("panel-build-toggle"));
+      expect(usePipelineUIStore.getState().buildOpen).toBe(false);
+      expect(screen.queryByTestId("panel-build")).toBeNull();
+      expect(viewportProps.current?.buildActive).toBe(false);
+      expect(pipelineEditorProps.current?.bottom).toBe(60);
+    });
+
+    it("is unavailable without the pipeline editor, even when flagged open", () => {
+      usePipelineUIStore.setState({ buildOpen: true });
+      render(<MeganeViewer onUploadStructure={() => {}} ui={{ pipelineEditor: false }} />);
+      expect(screen.queryByTestId("panel-build")).toBeNull();
+      expect(viewportProps.current?.buildActive).toBe(false);
+    });
   });
 
   // Public API read on every render as the fallback for each unset key: a

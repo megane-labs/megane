@@ -1,7 +1,8 @@
 /**
  * Build panel E2E (webapp).
  *
- * Verifies the fourth pipeline tab: picking tools, editing through the 3D
+ * Verifies the Build panel (a separate panel stacked under the Pipeline
+ * panel, launched from its header): picking tools, editing through the 3D
  * view's click handlers, and — crucially — that every edit lands as an op on
  * a real `edit` pipeline node that is visible in the Editor tab and changes
  * the rendered atom count. Asserts DOM and store state rather than pixels to
@@ -41,6 +42,13 @@ async function editNode(page: import("playwright/test").Page): Promise<EditNodeI
   });
 }
 
+/** Open the Build panel from the Pipeline panel header. */
+async function openBuild(page: import("playwright/test").Page) {
+  await page.locator('[data-testid="pipeline-editor-build"]').click();
+  await expect(page.locator('[data-testid="panel-build"]')).toBeVisible();
+  await expect(page.locator('[data-testid="build-panel"]')).toBeVisible();
+}
+
 /**
  * Drive the Build panel's own pick handler, exactly what the Viewport calls on
  * a click. Going through the store (rather than a synthetic canvas click)
@@ -73,9 +81,7 @@ test.describe("build: webapp", () => {
   test("edits from the Build tab become ops on an edit node and change the rendered structure", async ({
     page,
   }) => {
-    await page.locator('[data-testid="pipeline-editor-tab-build"]').click();
-    const panel = page.locator('[data-testid="build-panel"]');
-    await expect(panel).toBeVisible();
+    await openBuild(page);
     await expect(page.locator('[data-testid="build-op-count"]')).toHaveText("0 edits");
 
     const viewer = page.locator('[data-testid="megane-viewer"]').first();
@@ -106,10 +112,12 @@ test.describe("build: webapp", () => {
     await page.locator('[data-testid="build-redo"]').click();
     await expect(page.locator('[data-testid="build-op-count"]')).toHaveText("2 edits");
 
-    // Reflection: the Editor tab shows the edit node.
+    // Reflection: the Editor tab shows the edit node — and the Build panel
+    // stays open beside it, since it is its own panel rather than a tab.
     await page.locator('[data-testid="pipeline-editor-tab-editor"]').click();
     await expect(page.locator('[data-testid="pipeline-node-edit"]').first()).toBeVisible();
     await expect(page.locator('[data-testid="edit-node-count"]').first()).toHaveText("2 ops");
+    await expect(page.locator('[data-testid="build-panel"]')).toBeVisible();
 
     // Clearing the history (the same store action the node's Clear button
     // calls; driven through the store because React Flow's canvas overlays
@@ -126,10 +134,18 @@ test.describe("build: webapp", () => {
     await expect(page.locator('[data-testid="edit-node-count"]').first()).toHaveText("0 ops");
     node = await editNode(page);
     expect(node!.ops).toHaveLength(0);
+
+    // Closing the panel from its header leaves the view in normal mode.
+    await page.locator('[data-testid="panel-build-toggle"]').click();
+    await expect(page.locator('[data-testid="panel-build"]')).toHaveCount(0);
+    await expect(page.locator('[data-testid="pipeline-editor-build"]')).toHaveAttribute(
+      "aria-pressed",
+      "false",
+    );
   });
 
   test("editing keeps the camera where the user left it", async ({ page }) => {
-    await page.locator('[data-testid="pipeline-editor-tab-build"]').click();
+    await openBuild(page);
     // Leave the standard orientation so a re-fit would be visible as a change.
     await alignCamera(page, "+a");
     const before = await getCameraState(page);
@@ -153,7 +169,7 @@ test.describe("build: webapp", () => {
   });
 
   test("the edit history survives a pipeline export / import round trip", async ({ page }) => {
-    await page.locator('[data-testid="pipeline-editor-tab-build"]').click();
+    await openBuild(page);
     await page.locator('[data-testid="build-tool-delete"]').click();
     await pickAtom(page, 5);
     await expect(page.locator('[data-testid="build-op-count"]')).toHaveText("1 edit");

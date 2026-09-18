@@ -17,6 +17,8 @@ import { PipelineEditor } from "./PipelineEditor";
 import { Timeline } from "./Timeline";
 import { Tooltip } from "./Tooltip";
 import { MeasurementPanel } from "./MeasurementPanel";
+import { BuildPanel } from "./BuildPanel";
+import { CollapsiblePanel } from "./CollapsiblePanel";
 import { MeasurementListPanel } from "./MeasurementListPanel";
 import { PerfHud } from "./PerfHud";
 import { ViewAxisControls } from "./ViewAxisControls";
@@ -104,6 +106,19 @@ export const DEFAULT_MEGANE_VIEWER_UI: Readonly<MeganeViewerUiOptions> = Object.
   tooltip: true,
   measurement: true,
 });
+
+/** Bottom offset shared by the right-column panels (clear of the Timeline). */
+const PANEL_BOTTOM = 60;
+/** Gap between the stacked Pipeline and Build panels. */
+const PANEL_GAP = 12;
+/**
+ * Height of the Build panel, stacked under the Pipeline panel in the same
+ * column: enough for its tools, history and export rows without dwarfing the
+ * node graph above it on a short window.
+ */
+const BUILD_PANEL_HEIGHT = "min(440px, 55%)";
+/** Where the Pipeline panel ends while the Build panel is open under it. */
+const PIPELINE_BOTTOM_WITH_BUILD = `calc(${PANEL_BOTTOM + PANEL_GAP}px + ${BUILD_PANEL_HEIGHT})`;
 
 interface MeganeViewerProps {
   playing?: boolean;
@@ -263,10 +278,16 @@ export function MeganeViewer({
 
   // Build panel ⇄ 3D view bridge: the panel installs its click / drag
   // handlers in the build store; the Viewport receives them only while the
-  // Build tab is showing so the other tabs keep their click semantics.
-  const buildMode = useScopedPipelineUIStore((s) => s.mode === "build");
-  const buildActive = showPipelineEditor && buildMode;
+  // panel is open so the view otherwise keeps its pick / measure semantics.
+  // The panel is a separate surface stacked under the Pipeline panel (the
+  // pipeline is the edit history, so it must stay visible while editing);
+  // it is launched from that panel's header, hence gated on it.
+  const buildOpen = useScopedPipelineUIStore((s) => s.buildOpen);
+  const setBuildOpen = useScopedPipelineUIStore((s) => s.setBuildOpen);
+  const buildActive = showPipelineEditor && buildOpen;
   const buildHandlers = useScopedBuildStore((s) => s.handlers);
+  const buildPanelRef = useRef<HTMLDivElement | null>(null);
+  const handleCloseBuild = useCallback(() => setBuildOpen(false), [setBuildOpen]);
   // Every change to the edit node bumps this; the Viewport keeps the camera
   // in place for the snapshot that follows (see `Viewport.preserveCameraKey`).
   const editRevision = useScopedPipelineStore((s) => s.editRevision);
@@ -562,6 +583,9 @@ export function MeganeViewer({
       pipelineWidthRef.current = w;
       rendererRef.current?.setViewInsets(0, rightInset());
       updateTourAnchor();
+      // The Build panel shares the column: follow the drag without a re-render.
+      const build = buildPanelRef.current;
+      if (build) build.style.width = `${w}px`;
     },
     [rightInset, updateTourAnchor],
   );
@@ -717,11 +741,26 @@ export function MeganeViewer({
           collapsed={pipelineCollapsed}
           onToggleCollapse={handleTogglePipeline}
           onWidthChange={handlePipelineWidthChange}
+          bottom={buildActive ? PIPELINE_BOTTOM_WITH_BUILD : PANEL_BOTTOM}
           rendererRef={rendererRef}
           totalFrames={totalFrames}
           currentFrame={currentFrame}
           onSeek={effectiveOnSeek}
         />
+      )}
+      {buildActive && (
+        <CollapsiblePanel
+          title="Build"
+          collapsed={false}
+          onToggleCollapse={handleCloseBuild}
+          collapseLabel="Close Build panel"
+          width={pipelineWidthRef.current}
+          height={BUILD_PANEL_HEIGHT}
+          bottom={PANEL_BOTTOM}
+          containerRef={buildPanelRef}
+        >
+          <BuildPanel />
+        </CollapsiblePanel>
       )}
       {timelineVisible && (
         <Timeline
