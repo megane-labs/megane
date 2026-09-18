@@ -363,7 +363,7 @@ mod tests {
     #[test]
     fn pdb_round_trips_atoms_bonds_cell_and_labels() {
         let labels = vec!["HOH1".to_string(), "HOH1".to_string(), "HOH1".to_string()];
-        let chains = [b'A', b'A', b'A'];
+        let chains = *b"AAA";
         let cell = [10.0, 0.0, 0.0, 0.0, 10.0, 0.0, 0.0, 0.0, 10.0];
         let text = write_pdb(&water(Some(&labels), Some(&chains), Some(cell))).unwrap();
         assert!(text.starts_with("CRYST1   10.000   10.000   10.000  90.00  90.00  90.00"));
