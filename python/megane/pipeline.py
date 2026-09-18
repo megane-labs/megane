@@ -347,6 +347,48 @@ class Replicate(PipelineNode):
         self.nz = nz
 
 
+class Edit(PipelineNode):
+    """Apply a list of structure edits to the upstream structure.
+
+    The node re-applies ``ops`` to its input on every execution and emits
+    the edited structure as a new particle stream. It is the node the Build
+    panel writes: every click there appends one op, so the history is
+    undoable, disable-able, and saved with the pipeline. From Python, pass
+    the same op dicts the panel would have produced::
+
+        Edit(ops=[
+            {"op": "add_atom", "id": "h1", "element": 1,
+             "position": [1.0, 0.0, 0.0], "bondTo": 0},
+            {"op": "delete_atoms", "atoms": [5, 6]},
+            {"op": "move_atoms", "atoms": ["h1"], "delta": [0.0, 0.5, 0.0]},
+            {"op": "add_bond", "a": 0, "b": 1, "order": 2},
+        ])
+
+    Atom references are input-stream indices (``int``) or the ``id`` of an
+    atom an earlier op created (``str``; fragment atoms are ``"<id>:<k>"``).
+
+    Args:
+        ops: Ordered edit operations (see ``EditOp`` in the TypeScript API).
+        source_atom_count: Atom count the index refs were authored against;
+            a mismatch raises a warning on the node. ``None`` when unknown.
+
+    Ports:
+        inp.particle — atom data in
+        inp.cell     — simulation cell in
+        out.particle — edited atom data
+        out.cell     — edited simulation cell
+    """
+
+    _node_type = "edit"
+    _out_ports = {"particle": "particle", "cell": "cell"}
+    _inp_ports = {"particle": "particle", "cell": "cell"}
+
+    def __init__(self, *, ops: list[dict] | None = None, source_atom_count: int | None = None) -> None:
+        super().__init__()
+        self.ops = list(ops) if ops else []
+        self.source_atom_count = source_atom_count
+
+
 class DrawingBoundary(PipelineNode):
     """Generate periodic display copies inside fractional drawing bounds.
 
@@ -969,6 +1011,8 @@ class Pipeline:
             return Wrap(mode=nd.get("mode", "none"))
         elif ntype == "replicate":
             return Replicate(nx=nd.get("nx", 1), ny=nd.get("ny", 1), nz=nd.get("nz", 1))
+        elif ntype == "edit":
+            return Edit(ops=nd.get("ops", []), source_atom_count=nd.get("sourceAtomCount"))
         elif ntype == "drawing_boundary":
             return DrawingBoundary(
                 x_min=nd.get("xMin", 0.0),
@@ -1173,6 +1217,9 @@ class Pipeline:
             base["nx"] = node.nx
             base["ny"] = node.ny
             base["nz"] = node.nz
+        elif isinstance(node, Edit):
+            base["ops"] = [dict(op) for op in node.ops]
+            base["sourceAtomCount"] = node.source_atom_count
         elif isinstance(node, DrawingBoundary):
             base["xMin"] = node.x_min
             base["xMax"] = node.x_max

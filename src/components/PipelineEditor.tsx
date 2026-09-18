@@ -46,6 +46,7 @@ import { ModifyNode } from "./nodes/ModifyNode";
 import { SymmetryNode } from "./nodes/SymmetryNode";
 import { WrapNode } from "./nodes/WrapNode";
 import { ReplicateNode } from "./nodes/ReplicateNode";
+import { EditNode } from "./nodes/EditNode";
 import { DrawingBoundaryNode } from "./nodes/DrawingBoundaryNode";
 import { BoundaryCompletionNode } from "./nodes/BoundaryCompletionNode";
 import { CoordinationGeneratorNode } from "./nodes/CoordinationGeneratorNode";
@@ -63,6 +64,7 @@ import { SpectrumPlotNode } from "./nodes/SpectrumPlotNode";
 import { IsosurfaceNode } from "./nodes/IsosurfaceNode";
 import { PipelineChatBox } from "./PipelineChatBox";
 import { PipelineInspector } from "./PipelineInspector";
+import { BuildPanel } from "./BuildPanel";
 import { RenderModal } from "./RenderModal";
 import { ShareDialog } from "./ShareDialog";
 import { startTour, startPipelineTutorial } from "../tour/MeganeTour";
@@ -81,6 +83,7 @@ const nodeTypes = {
   symmetry: SymmetryNode,
   wrap: WrapNode,
   replicate: ReplicateNode,
+  edit: EditNode,
   drawing_boundary: DrawingBoundaryNode,
   boundary_completion: BoundaryCompletionNode,
   color: ColorNode,
@@ -123,6 +126,7 @@ const ADD_NODE_GROUPS: { category: NodeCategory; label: string; types: PipelineN
       "symmetry",
       "wrap",
       "replicate",
+      "edit",
       "drawing_boundary",
       "boundary_completion",
     ],
@@ -896,6 +900,7 @@ function PipelineEditorInner({
   const TAB_OPTIONS: { value: PipelinePanelMode; label: string }[] = [
     { value: "editor", label: "Editor" },
     { value: "inspector", label: "Inspector" },
+    { value: "build", label: "Build" },
     { value: "chat", label: "Chat" },
   ];
 
@@ -1120,6 +1125,22 @@ function PipelineEditorInner({
           }}
         >
           <PipelineInspector />
+        </div>
+        <div
+          role="tabpanel"
+          id="pipeline-tabpanel-build"
+          aria-labelledby="pipeline-tab-build"
+          aria-hidden={mode !== "build"}
+          style={{
+            position: "absolute",
+            inset: 0,
+            display: "flex",
+            flexDirection: "column",
+            background: "var(--megane-surface-solid)",
+            visibility: mode === "build" ? "visible" : "hidden",
+          }}
+        >
+          {mode === "build" && <BuildPanel />}
         </div>
         <div
           role="tabpanel"

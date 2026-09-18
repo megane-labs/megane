@@ -57,7 +57,13 @@ export default defineConfig({
   forbidOnly: !!process.env.CI,
   retries: 0,
   workers: 1,
-  reporter: process.env.CI ? [["list"], ["junit", { outputFile: "playwright-report/junit.xml" }], ["html", { open: "never" }]] : [["list"], ["html", { open: "never" }]],
+  reporter: process.env.CI
+    ? [
+        ["list"],
+        ["junit", { outputFile: "playwright-report/junit.xml" }],
+        ["html", { open: "never" }],
+      ]
+    : [["list"], ["html", { open: "never" }]],
   use: {
     actionTimeout: 15_000,
     navigationTimeout: 30_000,
@@ -187,6 +193,11 @@ export default defineConfig({
     {
       name: "inspector",
       testMatch: /inspector\.spec\.ts$/,
+      use: { baseURL: `http://127.0.0.1:${PORT_WEBAPP}` },
+    },
+    {
+      name: "build",
+      testMatch: /build\.spec\.ts$/,
       use: { baseURL: `http://127.0.0.1:${PORT_WEBAPP}` },
     },
     {

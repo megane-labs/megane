@@ -11,7 +11,7 @@
  * the `ui` prop — see {@link MeganeViewerUiOptions}.
  */
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Viewport } from "./Viewport";
 import { PipelineEditor } from "./PipelineEditor";
 import { Timeline } from "./Timeline";
@@ -35,6 +35,7 @@ import {
   useScopedPlaybackStore,
   useScopedPipelineUIStore,
   useScopedInspectorStore,
+  useScopedBuildStore,
   usePipelineStoreApi,
   useViewStateStoreApi,
 } from "../stores/MeganeProvider";
@@ -259,6 +260,21 @@ export function MeganeViewer({
   const boxSelectActive = useScopedInspectorStore((s) => s.boxSelectActive);
   const publishBoxResult = useScopedInspectorStore((s) => s.publishBoxResult);
   const publishPickedAtom = useScopedInspectorStore((s) => s.publishPickedAtom);
+
+  // Build panel ⇄ 3D view bridge: the panel installs its click / drag
+  // handlers in the build store; the Viewport receives them only while the
+  // Build tab is showing so the other tabs keep their click semantics.
+  const buildMode = useScopedPipelineUIStore((s) => s.mode === "build");
+  const buildActive = showPipelineEditor && buildMode;
+  const buildHandlers = useScopedBuildStore((s) => s.handlers);
+  const buildSelected = useScopedBuildStore((s) => s.selected);
+  const buildPendingBondAtom = useScopedBuildStore((s) => s.pendingBondAtom);
+  const buildPreview = useMemo(() => {
+    if (!buildActive) return null;
+    const set = new Set(buildSelected);
+    if (buildPendingBondAtom !== null) set.add(buildPendingBondAtom);
+    return set.size > 0 ? [...set] : null;
+  }, [buildActive, buildSelected, buildPendingBondAtom]);
 
   const handleInspectorPick = useCallback(
     (atomIndex: number) => {
@@ -618,11 +634,13 @@ export function MeganeViewer({
         // Gated on the panel, not on `inspectorActive`, so the default
         // configuration behaves exactly as before: these carry Inspector
         // state that only the panel can produce or clear.
-        previewIndices={showPipelineEditor ? previewIndices : null}
+        previewIndices={showPipelineEditor ? (buildActive ? buildPreview : previewIndices) : null}
         boxSelectActive={showPipelineEditor && boxSelectActive}
         onBoxSelect={publishBoxResult}
         onInspectorPick={handleInspectorPick}
         inspectorActive={inspectorActive}
+        buildActive={buildActive}
+        buildHandlers={buildActive ? buildHandlers : null}
       />
       <div
         ref={tourAnchorRef}

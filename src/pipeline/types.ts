@@ -305,6 +305,7 @@ export type PipelineNodeType =
   | "symmetry"
   | "wrap"
   | "replicate"
+  | "edit"
   | "drawing_boundary"
   | "boundary_completion"
   | "color"
@@ -332,6 +333,7 @@ export const NODE_TYPE_LABELS: Record<PipelineNodeType, string> = {
   symmetry: "Symmetry",
   wrap: "Wrap / Unwrap",
   replicate: "Replicate",
+  edit: "Edit",
   drawing_boundary: "Drawing Boundary",
   boundary_completion: "Boundary Completion",
   color: "Color",
@@ -363,6 +365,7 @@ export const NODE_CATEGORY: Record<PipelineNodeType, NodeCategory> = {
   symmetry: "modify",
   wrap: "modify",
   replicate: "modify",
+  edit: "modify",
   drawing_boundary: "modify",
   boundary_completion: "modify",
   color: "modify",
@@ -482,6 +485,19 @@ export const NODE_PORTS: Record<PipelineNodeType, NodePortConfig> = {
       { name: "particle", dataType: "particle", label: "Particle" },
       { name: "cell", dataType: "cell", label: "Cell" },
       { name: "trajectory", dataType: "trajectory", label: "Trajectory" },
+    ],
+  },
+  // Structure editing: the op list rewrites atoms / bonds / cell, so the node
+  // emits a brand-new particle stream (and cell). Trajectories are not routed
+  // through it — an edited atom count no longer matches the frames.
+  edit: {
+    inputs: [
+      { name: "particle", dataType: "particle", label: "Particle" },
+      { name: "cell", dataType: "cell", label: "Cell" },
+    ],
+    outputs: [
+      { name: "particle", dataType: "particle", label: "Particle" },
+      { name: "cell", dataType: "cell", label: "Cell" },
     ],
   },
   drawing_boundary: {
@@ -696,6 +712,72 @@ export interface ReplicateParams {
   nz: number;
 }
 
+/**
+ * Reference to an atom from inside an `edit` node's op list. A number is an
+ * index into the node's *input* particle stream (the structure as loaded); a
+ * string is the `id` of an atom created earlier in the same op list by an
+ * `add_atom` op (its `id`) or an `add_fragment` op (`<fragmentId>:<k>` for the
+ * k-th fragment atom). Ops are applied in order, so a ref must be created
+ * before it is used.
+ */
+export type EditAtomRef = number | string;
+
+/** One structure edit, as authored by the Build panel (or by hand / the LLM). */
+export type EditOp =
+  | {
+      op: "add_atom";
+      /** Stable id later ops use to refer to this atom. */
+      id: string;
+      element: number;
+      /** Absolute Å position. */
+      position: [number, number, number];
+      /** Optionally bond the new atom to an existing one in the same op. */
+      bondTo?: EditAtomRef;
+      /** Bond order for `bondTo` (1..4, default 1). */
+      order?: number;
+    }
+  | { op: "delete_atoms"; atoms: EditAtomRef[] }
+  | { op: "move_atoms"; atoms: EditAtomRef[]; delta: [number, number, number] }
+  | { op: "set_element"; atoms: EditAtomRef[]; element: number }
+  | { op: "add_bond"; a: EditAtomRef; b: EditAtomRef; order?: number }
+  | { op: "delete_bond"; a: EditAtomRef; b: EditAtomRef }
+  | {
+      op: "add_fragment";
+      /** Stable id prefix for the fragment's atoms (`<id>:<k>`). */
+      id: string;
+      elements: number[];
+      /** Flat `[x0,y0,z0, x1,y1,z1, …]` in Å, fragment-local. */
+      positions: number[];
+      /** Intra-fragment bonds as local atom index pairs. */
+      bonds: [number, number][];
+      bondOrders?: number[];
+      /** Translation applied to every fragment atom (default none). */
+      translate?: [number, number, number];
+    }
+  | {
+      op: "set_cell";
+      /** Row-major 3×3 cell, or null to remove the cell. */
+      box: number[] | null;
+    };
+
+/**
+ * Edit node parameters — the serializable record of every structure edit made
+ * in the Build panel. The node re-applies `ops` to its input stream on every
+ * execution and emits a new Snapshot, so an edit is undoable (drop the last
+ * op), disable-able (toggle the node), shareable (it rides in the
+ * `.megane.json`), and visible in the pipeline editor like any other modifier.
+ */
+export interface EditParams {
+  type: "edit";
+  ops: EditOp[];
+  /**
+   * Atom count of the input structure the ops were authored against. Index refs
+   * only mean the same atoms on that structure, so a mismatch is surfaced as a
+   * node warning. `null` when unknown (e.g. a hand-written pipeline).
+   */
+  sourceAtomCount: number | null;
+}
+
 /** Inclusive fractional display range along the crystallographic axes. */
 export interface DrawingBoundaryParams {
   type: "drawing_boundary";
@@ -856,6 +938,7 @@ export type PipelineNodeParams =
   | SymmetryParams
   | WrapParams
   | ReplicateParams
+  | EditParams
   | DrawingBoundaryParams
   | BoundaryCompletionParams
   | ColorParams
@@ -911,6 +994,8 @@ export function defaultParams(type: PipelineNodeType): PipelineNodeParams {
       return { type, mode: "none" };
     case "replicate":
       return { type, nx: 1, ny: 1, nz: 1 };
+    case "edit":
+      return { type, ops: [], sourceAtomCount: null };
     case "drawing_boundary":
       return {
         type,

@@ -1,0 +1,513 @@
+//! Structure writers — the inverse of the parsers for the formats a user is
+//! most likely to hand to another tool after editing a structure in megane.
+//!
+//! Supported formats:
+//! - `xyz` — plain XYZ, or extended XYZ (`Lattice="…"` + `Properties=`)
+//!   when the structure carries a unit cell.
+//! - `pdb` — `CRYST1` (when a cell is present), `ATOM` records, and
+//!   `CONECT` records for every bond.
+//! - `mol` — MDL Molfile V2000 (atoms + bonds with bond orders). Limited
+//!   to 999 atoms / 999 bonds by the fixed-width format.
+//!
+//! Writers take a borrowed [`StructureView`] rather than a [`ParsedStructure`]
+//! so hosts (WASM, PyO3) can hand over flat arrays without building the full
+//! parser result. All coordinates are Ångström, matching the parser contract.
+
+use crate::atomic::atomic_num_to_symbol;
+use std::fmt::Write as _;
+
+/// Borrowed view over the minimal per-atom data a writer needs.
+pub struct StructureView<'a> {
+    /// Flat `[x0,y0,z0, x1,y1,z1, …]` in Å; length `3 * n_atoms`.
+    pub positions: &'a [f32],
+    /// Atomic numbers, length `n_atoms`. `0` is written as `X` (unknown).
+    pub elements: &'a [u8],
+    /// Flat bond pairs `[a0,b0, a1,b1, …]` (0-based atom indices).
+    pub bonds: &'a [u32],
+    /// Optional per-bond orders (1..4), length `bonds.len() / 2`.
+    pub bond_orders: Option<&'a [u8]>,
+    /// Optional row-major 3×3 cell matrix.
+    pub box_matrix: Option<[f32; 9]>,
+    /// Optional per-atom residue labels in megane's `RESNAME<resid>` form
+    /// (`ALA42`, `HOH`). Only the PDB writer consumes these.
+    pub atom_labels: Option<&'a [String]>,
+    /// Optional per-atom chain identifiers as ASCII bytes (`b'A'`).
+    pub chain_ids: Option<&'a [u8]>,
+}
+
+impl<'a> StructureView<'a> {
+    pub fn n_atoms(&self) -> usize {
+        self.elements.len()
+    }
+
+    pub fn n_bonds(&self) -> usize {
+        self.bonds.len() / 2
+    }
+
+    fn validate(&self) -> Result<(), String> {
+        let n = self.n_atoms();
+        if self.positions.len() != n * 3 {
+            return Err(format!(
+                "positions length {} does not match 3 * n_atoms ({})",
+                self.positions.len(),
+                n * 3
+            ));
+        }
+        if !self.bonds.len().is_multiple_of(2) {
+            return Err("bonds must be a flat list of index pairs".to_string());
+        }
+        if let Some(orders) = self.bond_orders {
+            if orders.len() != self.n_bonds() {
+                return Err(format!(
+                    "bond_orders length {} does not match n_bonds ({})",
+                    orders.len(),
+                    self.n_bonds()
+                ));
+            }
+        }
+        for &idx in self.bonds {
+            if idx as usize >= n {
+                return Err(format!("bond references atom {} but n_atoms is {}", idx, n));
+            }
+        }
+        if let Some(labels) = self.atom_labels {
+            if labels.len() != n {
+                return Err(format!(
+                    "atom_labels length {} does not match n_atoms ({})",
+                    labels.len(),
+                    n
+                ));
+            }
+        }
+        if let Some(chains) = self.chain_ids {
+            if chains.len() != n {
+                return Err(format!(
+                    "chain_ids length {} does not match n_atoms ({})",
+                    chains.len(),
+                    n
+                ));
+            }
+        }
+        Ok(())
+    }
+}
+
+/// Element symbol for a writer: `X` for unknown / virtual atoms so the output
+/// stays parseable instead of emitting an empty column.
+fn symbol(z: u8) -> &'static str {
+    let s = atomic_num_to_symbol(z);
+    if s.is_empty() {
+        "X"
+    } else {
+        s
+    }
+}
+
+/// Dispatch by format name (`"xyz"`, `"pdb"`, `"mol"`; case-insensitive).
+pub fn write(format: &str, view: &StructureView<'_>) -> Result<String, String> {
+    match format.to_ascii_lowercase().as_str() {
+        "xyz" | "extxyz" => write_xyz(view),
+        "pdb" => write_pdb(view),
+        "mol" | "sdf" => write_mol(view),
+        other => Err(format!("unsupported output format: {other}")),
+    }
+}
+
+/// Serialize as (extended) XYZ. With a cell the comment line carries
+/// `Lattice="…" Properties=species:S:1:pos:R:3` so ASE/OVITO read the box back.
+pub fn write_xyz(view: &StructureView<'_>) -> Result<String, String> {
+    view.validate()?;
+    let n = view.n_atoms();
+    let mut out = String::with_capacity(n * 48 + 64);
+    let _ = writeln!(out, "{n}");
+    match view.box_matrix {
+        Some(m) => {
+            let lattice: Vec<String> = m.iter().map(|v| format!("{v:.6}")).collect();
+            let _ = writeln!(
+                out,
+                "Lattice=\"{}\" Properties=species:S:1:pos:R:3",
+                lattice.join(" ")
+            );
+        }
+        None => {
+            let _ = writeln!(out, "generated by megane");
+        }
+    }
+    for i in 0..n {
+        let p = &view.positions[i * 3..i * 3 + 3];
+        let _ = writeln!(
+            out,
+            "{:<2} {:>12.6} {:>12.6} {:>12.6}",
+            symbol(view.elements[i]),
+            p[0],
+            p[1],
+            p[2]
+        );
+    }
+    Ok(out)
+}
+
+/// Convert a row-major cell matrix to crystallographic `(a, b, c, α, β, γ)`.
+fn cell_params(m: &[f32; 9]) -> (f32, f32, f32, f32, f32, f32) {
+    let a = [m[0], m[1], m[2]];
+    let b = [m[3], m[4], m[5]];
+    let c = [m[6], m[7], m[8]];
+    let norm = |v: &[f32; 3]| (v[0] * v[0] + v[1] * v[1] + v[2] * v[2]).sqrt();
+    let dot = |u: &[f32; 3], v: &[f32; 3]| u[0] * v[0] + u[1] * v[1] + u[2] * v[2];
+    let la = norm(&a);
+    let lb = norm(&b);
+    let lc = norm(&c);
+    let angle = |u: &[f32; 3], v: &[f32; 3], lu: f32, lv: f32| {
+        if lu == 0.0 || lv == 0.0 {
+            90.0
+        } else {
+            (dot(u, v) / (lu * lv)).clamp(-1.0, 1.0).acos().to_degrees()
+        }
+    };
+    (
+        la,
+        lb,
+        lc,
+        angle(&b, &c, lb, lc),
+        angle(&a, &c, la, lc),
+        angle(&a, &b, la, lb),
+    )
+}
+
+/// Split a megane residue label (`ALA42`) into `(resname, resid)`.
+fn split_label(label: &str) -> (&str, Option<u32>) {
+    let name_end = label
+        .char_indices()
+        .find(|(_, c)| !c.is_ascii_alphabetic())
+        .map(|(i, _)| i)
+        .unwrap_or(label.len());
+    let name = &label[..name_end];
+    let digits: String = label
+        .chars()
+        .rev()
+        .take_while(|c| c.is_ascii_digit())
+        .collect();
+    let resid = if digits.is_empty() {
+        None
+    } else {
+        digits.chars().rev().collect::<String>().parse().ok()
+    };
+    (name, resid)
+}
+
+/// Serialize as PDB: optional `CRYST1`, one `ATOM` per atom, `CONECT` for
+/// every bond, `END`. Atom names are the element symbol; residue name / number
+/// come from `atom_labels` when present (`UNK 1` otherwise).
+pub fn write_pdb(view: &StructureView<'_>) -> Result<String, String> {
+    view.validate()?;
+    let n = view.n_atoms();
+    if n > 99_999 {
+        return Err(format!(
+            "PDB serial numbers cannot exceed 99999 (got {n} atoms)"
+        ));
+    }
+    let mut out = String::with_capacity(n * 90 + 128);
+    if let Some(m) = &view.box_matrix {
+        let (a, b, c, alpha, beta, gamma) = cell_params(m);
+        let _ = writeln!(
+            out,
+            "CRYST1{:9.3}{:9.3}{:9.3}{:7.2}{:7.2}{:7.2} P 1           1",
+            a, b, c, alpha, beta, gamma
+        );
+    }
+    for i in 0..n {
+        let p = &view.positions[i * 3..i * 3 + 3];
+        let sym = symbol(view.elements[i]);
+        let (resname, resid) = match view.atom_labels {
+            Some(labels) => {
+                let (name, id) = split_label(&labels[i]);
+                (if name.is_empty() { "UNK" } else { name }, id.unwrap_or(1))
+            }
+            None => ("UNK", 1),
+        };
+        let chain = view
+            .chain_ids
+            .map(|c| c[i])
+            .filter(|&c| c != 0)
+            .map(|c| c as char)
+            .unwrap_or(' ');
+        // Atom name: element symbols of one letter are right-aligned in
+        // columns 13-16 per the PDB convention (" C  "), two-letter ones
+        // start in column 13 ("FE  ").
+        let upper = sym.to_ascii_uppercase();
+        let atom_name = if upper.len() == 1 {
+            format!(" {upper}  ")
+        } else {
+            format!("{upper:<4}")
+        };
+        let _ = writeln!(
+            out,
+            "ATOM  {:5} {} {:>3} {}{:4}    {:8.3}{:8.3}{:8.3}  1.00  0.00          {:>2}",
+            i + 1,
+            atom_name,
+            &resname[..resname.len().min(3)],
+            chain,
+            resid % 10_000,
+            p[0],
+            p[1],
+            p[2],
+            upper
+        );
+    }
+    // CONECT: group partners per atom, emitting both directions like most
+    // writers do so readers that only scan one direction still see the bond.
+    let mut partners: Vec<Vec<u32>> = vec![Vec::new(); n];
+    for pair in view.bonds.chunks(2) {
+        let (a, b) = (pair[0], pair[1]);
+        partners[a as usize].push(b);
+        partners[b as usize].push(a);
+    }
+    for (i, list) in partners.iter().enumerate() {
+        if list.is_empty() {
+            continue;
+        }
+        // At most four partners per CONECT line.
+        for chunk in list.chunks(4) {
+            let _ = write!(out, "CONECT{:5}", i + 1);
+            for &j in chunk {
+                let _ = write!(out, "{:5}", j + 1);
+            }
+            out.push('\n');
+        }
+    }
+    out.push_str("END\n");
+    Ok(out)
+}
+
+/// Serialize as an MDL Molfile (V2000). Bond orders default to single; the
+/// aromatic order (4) is written as-is, which is the V2000 convention.
+pub fn write_mol(view: &StructureView<'_>) -> Result<String, String> {
+    view.validate()?;
+    let n = view.n_atoms();
+    let nb = view.n_bonds();
+    if n > 999 || nb > 999 {
+        return Err(format!(
+            "MOL V2000 supports at most 999 atoms and 999 bonds (got {n} atoms, {nb} bonds)"
+        ));
+    }
+    let mut out = String::with_capacity(n * 70 + nb * 24 + 96);
+    out.push_str("megane\n  megane\n\n");
+    let _ = writeln!(out, "{n:3}{nb:3}  0  0  0  0  0  0  0  0999 V2000");
+    for i in 0..n {
+        let p = &view.positions[i * 3..i * 3 + 3];
+        let _ = writeln!(
+            out,
+            "{:10.4}{:10.4}{:10.4} {:<3} 0  0  0  0  0  0  0  0  0  0  0  0",
+            p[0],
+            p[1],
+            p[2],
+            symbol(view.elements[i])
+        );
+    }
+    for (k, pair) in view.bonds.chunks(2).enumerate() {
+        let order = view
+            .bond_orders
+            .map(|o| o[k])
+            .filter(|&o| (1..=4).contains(&o))
+            .unwrap_or(1);
+        let _ = writeln!(out, "{:3}{:3}{:3}  0", pair[0] + 1, pair[1] + 1, order);
+    }
+    out.push_str("M  END\n");
+    Ok(out)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn water<'a>(
+        labels: Option<&'a [String]>,
+        chains: Option<&'a [u8]>,
+        cell: Option<[f32; 9]>,
+    ) -> StructureView<'a> {
+        static POS: [f32; 9] = [0.0, 0.0, 0.0, 0.757, 0.586, 0.0, -0.757, 0.586, 0.0];
+        static ELEM: [u8; 3] = [8, 1, 1];
+        static BONDS: [u32; 4] = [0, 1, 0, 2];
+        StructureView {
+            positions: &POS,
+            elements: &ELEM,
+            bonds: &BONDS,
+            bond_orders: None,
+            box_matrix: cell,
+            atom_labels: labels,
+            chain_ids: chains,
+        }
+    }
+
+    #[test]
+    fn xyz_round_trips_through_parser() {
+        let text = write_xyz(&water(None, None, None)).unwrap();
+        assert!(text.starts_with("3\ngenerated by megane\n"));
+        let parsed = crate::xyz::parse(&text).unwrap();
+        assert_eq!(parsed.n_atoms, 3);
+        assert_eq!(parsed.elements, vec![8, 1, 1]);
+        assert!((parsed.positions[3] - 0.757).abs() < 1e-5);
+        assert!(parsed.box_matrix.is_none());
+    }
+
+    #[test]
+    fn extxyz_carries_lattice() {
+        let cell = [10.0, 0.0, 0.0, 0.0, 12.0, 0.0, 0.0, 0.0, 14.0];
+        let text = write_xyz(&water(None, None, Some(cell))).unwrap();
+        assert!(text.contains("Lattice=\"10.000000 0.000000 0.000000"));
+        let parsed = crate::xyz::parse(&text).unwrap();
+        let m = parsed.box_matrix.expect("lattice parsed back");
+        assert!((m[4] - 12.0).abs() < 1e-5);
+    }
+
+    #[test]
+    fn pdb_round_trips_atoms_bonds_cell_and_labels() {
+        let labels = vec!["HOH1".to_string(), "HOH1".to_string(), "HOH1".to_string()];
+        let chains = [b'A', b'A', b'A'];
+        let cell = [10.0, 0.0, 0.0, 0.0, 10.0, 0.0, 0.0, 0.0, 10.0];
+        let text = write_pdb(&water(Some(&labels), Some(&chains), Some(cell))).unwrap();
+        assert!(text.starts_with("CRYST1   10.000   10.000   10.000  90.00  90.00  90.00"));
+        assert!(text.contains("ATOM      1  O   HOH A   1       0.000   0.000   0.000"));
+        assert!(text.contains("CONECT    1    2    3\n"));
+        assert!(text.ends_with("END\n"));
+        let parsed = crate::parser::parse(&text).unwrap();
+        assert_eq!(parsed.n_atoms, 3);
+        assert_eq!(parsed.elements, vec![8, 1, 1]);
+        assert_eq!(parsed.n_file_bonds, 2);
+        assert_eq!(parsed.chain_ids.unwrap(), vec![b'A'; 3]);
+        assert_eq!(parsed.atom_labels.unwrap()[0], "HOH1");
+        let m = parsed.box_matrix.unwrap();
+        assert!((m[0] - 10.0).abs() < 1e-3);
+    }
+
+    #[test]
+    fn pdb_without_labels_uses_unk_and_two_letter_names() {
+        static POS: [f32; 3] = [1.0, 2.0, 3.0];
+        static ELEM: [u8; 1] = [26];
+        let view = StructureView {
+            positions: &POS,
+            elements: &ELEM,
+            bonds: &[],
+            bond_orders: None,
+            box_matrix: None,
+            atom_labels: None,
+            chain_ids: None,
+        };
+        let text = write_pdb(&view).unwrap();
+        assert!(text.contains("ATOM      1 FE   UNK     1       1.000   2.000   3.000"));
+        assert!(text.trim_end().ends_with("FE\nEND"));
+        assert!(!text.contains("CRYST1"));
+        assert!(!text.contains("CONECT"));
+    }
+
+    #[test]
+    fn mol_round_trips_bond_orders() {
+        static POS: [f32; 6] = [0.0, 0.0, 0.0, 1.2, 0.0, 0.0];
+        static ELEM: [u8; 2] = [6, 8];
+        static BONDS: [u32; 2] = [0, 1];
+        static ORDERS: [u8; 1] = [2];
+        let view = StructureView {
+            positions: &POS,
+            elements: &ELEM,
+            bonds: &BONDS,
+            bond_orders: Some(&ORDERS),
+            box_matrix: None,
+            atom_labels: None,
+            chain_ids: None,
+        };
+        let text = write_mol(&view).unwrap();
+        assert!(text.contains("  2  1  0  0  0  0  0  0  0  0999 V2000"));
+        assert!(text.contains("  1  2  2  0\n"));
+        let parsed = crate::mol::parse(&text).unwrap();
+        assert_eq!(parsed.n_atoms, 2);
+        assert_eq!(parsed.bonds, vec![(0, 1)]);
+        assert_eq!(parsed.bond_orders.unwrap(), vec![2]);
+    }
+
+    #[test]
+    fn dispatch_and_validation_errors() {
+        assert!(write("xyz", &water(None, None, None)).is_ok());
+        assert!(write("PDB", &water(None, None, None)).is_ok());
+        assert!(write("sdf", &water(None, None, None)).is_ok());
+        assert!(write("cif", &water(None, None, None))
+            .unwrap_err()
+            .contains("unsupported"));
+
+        static POS: [f32; 2] = [0.0, 0.0];
+        static ELEM: [u8; 1] = [6];
+        let bad = StructureView {
+            positions: &POS,
+            elements: &ELEM,
+            bonds: &[],
+            bond_orders: None,
+            box_matrix: None,
+            atom_labels: None,
+            chain_ids: None,
+        };
+        assert!(write_xyz(&bad).unwrap_err().contains("positions length"));
+
+        static POS3: [f32; 3] = [0.0, 0.0, 0.0];
+        static BONDS_OOB: [u32; 2] = [0, 5];
+        let oob = StructureView {
+            positions: &POS3,
+            elements: &ELEM,
+            bonds: &BONDS_OOB,
+            bond_orders: None,
+            box_matrix: None,
+            atom_labels: None,
+            chain_ids: None,
+        };
+        assert!(write_pdb(&oob).unwrap_err().contains("references atom 5"));
+        static ORDERS_BAD: [u8; 2] = [1, 1];
+        static BONDS_ONE: [u32; 2] = [0, 0];
+        let bad_orders = StructureView {
+            positions: &POS3,
+            elements: &ELEM,
+            bonds: &BONDS_ONE,
+            bond_orders: Some(&ORDERS_BAD),
+            box_matrix: None,
+            atom_labels: None,
+            chain_ids: None,
+        };
+        assert!(write_mol(&bad_orders)
+            .unwrap_err()
+            .contains("bond_orders length"));
+    }
+
+    #[test]
+    fn unknown_element_is_written_as_x() {
+        static POS: [f32; 3] = [0.0, 0.0, 0.0];
+        static ELEM: [u8; 1] = [0];
+        let view = StructureView {
+            positions: &POS,
+            elements: &ELEM,
+            bonds: &[],
+            bond_orders: None,
+            box_matrix: None,
+            atom_labels: None,
+            chain_ids: None,
+        };
+        assert!(write_xyz(&view).unwrap().contains("X "));
+    }
+
+    #[test]
+    fn cell_params_of_triclinic_cell() {
+        // 60° between a and b, everything else orthogonal.
+        let m = [2.0, 0.0, 0.0, 1.0, 3f32.sqrt(), 0.0, 0.0, 0.0, 5.0];
+        let (a, b, c, alpha, beta, gamma) = cell_params(&m);
+        assert!((a - 2.0).abs() < 1e-5);
+        assert!((b - 2.0).abs() < 1e-5);
+        assert!((c - 5.0).abs() < 1e-5);
+        assert!((alpha - 90.0).abs() < 1e-3);
+        assert!((beta - 90.0).abs() < 1e-3);
+        assert!((gamma - 60.0).abs() < 1e-3);
+    }
+
+    #[test]
+    fn split_label_variants() {
+        assert_eq!(split_label("ALA42"), ("ALA", Some(42)));
+        assert_eq!(split_label("HOH"), ("HOH", None));
+        assert_eq!(split_label(""), ("", None));
+        assert_eq!(split_label("7"), ("", Some(7)));
+    }
+}

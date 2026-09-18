@@ -12,7 +12,7 @@
 import { create, type StateCreator, type StoreApi } from "zustand";
 import { createStore } from "zustand/vanilla";
 
-export type PipelinePanelMode = "editor" | "chat" | "inspector";
+export type PipelinePanelMode = "editor" | "chat" | "inspector" | "build";
 
 export interface PipelineAppliedNotice {
   kind: "applied";
@@ -37,7 +37,10 @@ function loadMode(storageKey: PipelineUIStorage): PipelinePanelMode {
       const parsed = JSON.parse(raw);
       if (
         parsed &&
-        (parsed.mode === "editor" || parsed.mode === "chat" || parsed.mode === "inspector")
+        (parsed.mode === "editor" ||
+          parsed.mode === "chat" ||
+          parsed.mode === "inspector" ||
+          parsed.mode === "build")
       ) {
         return parsed.mode;
       }

@@ -83,6 +83,12 @@ describe("usePipelineUIStore initial load", () => {
     vi.restoreAllMocks();
   });
 
+  it("accepts the build tab as a persisted mode", () => {
+    usePipelineUIStore.getState().setMode("build");
+    expect(usePipelineUIStore.getState().mode).toBe("build");
+    expect(JSON.parse(sessionStorage.getItem(STORAGE_KEY)!)).toEqual({ mode: "build" });
+  });
+
   it("hydrates the mode from sessionStorage when a valid value is stored", async () => {
     sessionStorage.setItem(STORAGE_KEY, JSON.stringify({ mode: "editor" }));
     const mod = await import("@/stores/usePipelineUIStore");

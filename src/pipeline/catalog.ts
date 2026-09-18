@@ -351,6 +351,41 @@ export const NODE_CATALOG: Record<PipelineNodeType, NodeCatalogEntry> = {
     inPrompt: true,
     pythonClass: "Replicate",
   },
+  edit: {
+    description:
+      "Applies a list of structure edits — add / delete / move atoms, change elements,\nadd / delete bonds, place a fragment, set the cell — and emits the edited\nstructure as a new particle stream. This is the node the Build panel writes:\nevery click there appends one op, so the edit history is undoable (drop the\nlast op), disable-able (toggle the node) and saved with the pipeline.",
+    params: [
+      {
+        jsonKey: "ops",
+        tsType: "EditOp[]",
+        default: "[]",
+        doc:
+          "Ordered edit operations. Atom refs are input-stream indices (numbers) or ids of atoms " +
+          "created by an earlier `add_atom` / `add_fragment` op (strings).",
+      },
+      {
+        jsonKey: "sourceAtomCount",
+        tsType: "number | null",
+        default: "null",
+        doc: "Atom count the index refs were authored against; a mismatch raises a node warning.",
+      },
+    ],
+    promptNotes: [
+      'ops: array of { op: "add_atom", id, element, position: [x,y,z], bondTo?, order? } |\n' +
+        '    { op: "delete_atoms", atoms } | { op: "move_atoms", atoms, delta: [dx,dy,dz] } |\n' +
+        '    { op: "set_element", atoms, element } | { op: "add_bond", a, b, order? } |\n' +
+        '    { op: "delete_bond", a, b } | { op: "set_cell", box: number[9] | null } |\n' +
+        '    { op: "add_fragment", id, elements, positions (flat), bonds: [[i,j],…], translate? }',
+      "atoms / a / b / bondTo are atom refs: an input atom index (number) or the id of an atom\n" +
+        "    an earlier op in the same list created (string). element is an atomic number.",
+      "Place it directly after load_structure (before replicate / symmetry / wrap) so the\n" +
+        "    index refs address the atoms as loaded; keep sourceAtomCount null.",
+    ],
+    promptInputs: "`particle`, `cell`",
+    promptOutputs: "`particle`, `cell` (edited)",
+    inPrompt: true,
+    pythonClass: "Edit",
+  },
   drawing_boundary: {
     description:
       "Generates periodic display atoms inside an inclusive fractional range.\nUnlike Replicate it does not alter the structural atom count or unit cell.",

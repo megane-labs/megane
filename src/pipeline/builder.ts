@@ -25,7 +25,7 @@
  *   const json = pipe.toJSON()
  */
 
-import type { SerializedPipeline } from "./types";
+import type { SerializedPipeline, EditOp } from "./types";
 
 // ─── Port Objects ────────────────────────────────────────────────────
 
@@ -300,6 +300,40 @@ export class DrawingBoundary extends PipelineNode {
       zMin: this.bounds.zMin ?? 0,
       zMax: this.bounds.zMax ?? 1,
     };
+  }
+}
+
+/**
+ * Apply a list of structure edits (add / delete / move atoms, change
+ * elements, add / delete bonds, place a fragment, set the cell). This is the
+ * node the Build panel writes; from code, pass the same op list the panel
+ * would have produced.
+ *
+ * Ports:
+ *   inp.particle — atom data in
+ *   inp.cell     — simulation cell in
+ *   out.particle — edited atom data
+ *   out.cell     — edited simulation cell
+ */
+export class Edit extends PipelineNode {
+  readonly nodeType = "edit";
+  protected readonly _outPorts = { particle: "particle", cell: "cell" };
+  protected readonly _inpPorts = { particle: "particle", cell: "cell" };
+
+  public ops: EditOp[];
+  public sourceAtomCount: number | null;
+
+  constructor({
+    ops = [],
+    sourceAtomCount = null,
+  }: { ops?: EditOp[]; sourceAtomCount?: number | null } = {}) {
+    super();
+    this.ops = ops;
+    this.sourceAtomCount = sourceAtomCount;
+  }
+
+  _toSerializedParams() {
+    return { type: this.nodeType, ops: this.ops, sourceAtomCount: this.sourceAtomCount };
   }
 }
 

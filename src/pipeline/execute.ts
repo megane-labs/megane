@@ -20,6 +20,7 @@ import type {
   SymmetryParams,
   WrapParams,
   ReplicateParams,
+  EditParams,
   DrawingBoundaryParams,
   BoundaryCompletionParams,
   CoordinationGeneratorParams,
@@ -49,6 +50,7 @@ import { executeModify } from "./executors/modify";
 import { executeSymmetry } from "./executors/symmetry";
 import { executeWrap } from "./executors/wrap";
 import { executeReplicate } from "./executors/replicate";
+import { executeEdit } from "./executors/edit";
 import { executeDrawingBoundary } from "./executors/drawingBoundary";
 import { executeBoundaryCompletion } from "./executors/boundaryCompletion";
 import { executeCoordinationGenerator } from "./executors/coordinationGenerator";
@@ -344,6 +346,18 @@ export function executePipeline(
           addError(id, { message: "No input data (check upstream nodes)", severity: "warning" });
         } else if (wantsReplication && !particleIn.source.box) {
           addError(id, { message: "Replicate requires a unit cell", severity: "warning" });
+        }
+        break;
+      }
+      case "edit": {
+        const editWarnings: string[] = [];
+        const outputs = executeEdit(data.params as EditParams, inputs, editWarnings);
+        edgeOutputs.set(id, outputs);
+        if (!inputs.get("particle")?.length) {
+          addError(id, { message: "No input data (check upstream nodes)", severity: "warning" });
+        }
+        for (const message of editWarnings) {
+          addError(id, { message, severity: "warning" });
         }
         break;
       }

@@ -6,6 +6,7 @@
 import { useEffect, useRef } from "react";
 import { MoleculeRenderer } from "../renderer/MoleculeRenderer";
 import type { Snapshot, Frame, HoverInfo } from "../types";
+import type { BuildHandlers } from "../stores/useBuildStore";
 
 interface ViewportProps {
   snapshot: Snapshot | null;
@@ -26,6 +27,14 @@ interface ViewportProps {
   onInspectorPick?: (atomIndex: number) => void;
   /** True while the Selection Inspector tab is the active editing surface. */
   inspectorActive?: boolean;
+  /**
+   * True while the Build tab is the active editing surface: a left click
+   * reports the atom (or empty-space point) to `buildHandlers.pick`, and a
+   * left-drag on an atom becomes a move when `buildHandlers.dragStart`
+   * accepts it (camera rotation is suspended for that drag only).
+   */
+  buildActive?: boolean;
+  buildHandlers?: BuildHandlers | null;
 }
 
 export function Viewport({
@@ -42,6 +51,8 @@ export function Viewport({
   onBoxSelect,
   onInspectorPick,
   inspectorActive,
+  buildActive,
+  buildHandlers,
 }: ViewportProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const rendererRef = useRef<MoleculeRenderer | null>(null);
@@ -52,6 +63,8 @@ export function Viewport({
   const onBoxSelectRef = useRef(onBoxSelect);
   const onInspectorPickRef = useRef(onInspectorPick);
   const inspectorActiveRef = useRef(inspectorActive);
+  const buildActiveRef = useRef(buildActive);
+  const buildHandlersRef = useRef(buildHandlers);
 
   // Keep callback refs up to date
   onHoverRef.current = onHover;
@@ -61,6 +74,8 @@ export function Viewport({
   onBoxSelectRef.current = onBoxSelect;
   onInspectorPickRef.current = onInspectorPick;
   inspectorActiveRef.current = inspectorActive;
+  buildActiveRef.current = buildActive;
+  buildHandlersRef.current = buildHandlers;
 
   useEffect(() => {
     if (!containerRef.current) return;
@@ -187,6 +202,70 @@ export function Viewport({
       onBoxSelectRef.current?.(indices);
     };
 
+    // ── Build tab: click-to-edit and drag-to-move ──
+    // A press on an atom with the Move tool becomes a drag; anything else is a
+    // click reported on release (when the pointer barely moved). Camera
+    // controls are suspended only for the duration of an accepted drag, so
+    // the view still orbits when the user drags empty space.
+    let buildPress: { x: number; y: number; shiftKey: boolean } | null = null;
+    let buildDrag: { atomIndex: number; x: number; y: number } | null = null;
+    let buildRaf: number | null = null;
+
+    const handleBuildDown = (e: PointerEvent): boolean => {
+      if (!buildActiveRef.current || e.button !== 0) return false;
+      const handlers = buildHandlersRef.current;
+      if (!handlers) return false;
+      const info = renderer.raycastAtPixel(e.clientX, e.clientY);
+      if (info && info.kind === "atom" && handlers.dragStart(info.atomIndex)) {
+        buildDrag = { atomIndex: info.atomIndex, x: e.clientX, y: e.clientY };
+        renderer.setControlsEnabled(false);
+        (e.target as Element)?.setPointerCapture?.(e.pointerId);
+        return true;
+      }
+      buildPress = { x: e.clientX, y: e.clientY, shiftKey: e.shiftKey };
+      return false;
+    };
+
+    const handleBuildMove = (e: PointerEvent) => {
+      if (!buildDrag) return;
+      const drag = buildDrag;
+      if (buildRaf !== null) return;
+      buildRaf = requestAnimationFrame(() => {
+        buildRaf = null;
+        if (!buildDrag) return;
+        const delta = renderer.dragDeltaForAtom(
+          drag.atomIndex,
+          drag.x,
+          drag.y,
+          e.clientX,
+          e.clientY,
+        );
+        if (delta) buildHandlersRef.current?.dragMove(delta);
+      });
+    };
+
+    const handleBuildUp = (e: PointerEvent) => {
+      if (buildDrag) {
+        buildDrag = null;
+        if (buildRaf !== null) {
+          cancelAnimationFrame(buildRaf);
+          buildRaf = null;
+        }
+        renderer.setControlsEnabled(true);
+        buildHandlersRef.current?.dragEnd();
+        return;
+      }
+      if (!buildPress) return;
+      const press = buildPress;
+      buildPress = null;
+      if (!buildActiveRef.current) return;
+      if (Math.abs(e.clientX - press.x) >= 3 || Math.abs(e.clientY - press.y) >= 3) return;
+      const info = renderer.raycastAtPixel(e.clientX, e.clientY);
+      const atomIndex = info && info.kind === "atom" ? info.atomIndex : null;
+      const world = atomIndex === null ? renderer.screenToWorldAtPivot(e.clientX, e.clientY) : null;
+      buildHandlersRef.current?.pick({ atomIndex, world, shiftKey: press.shiftKey });
+    };
+
     // ── Axes-inset drag handlers (pointer events for mouse+touch) ──
 
     const containerEl = containerRef.current!;
@@ -204,6 +283,7 @@ export function Viewport({
         (e.target as Element)?.setPointerCapture?.(e.pointerId);
         return;
       }
+      if (handleBuildDown(e)) return;
       handleBoxDown(e);
     };
 
@@ -213,11 +293,13 @@ export function Viewport({
         renderer.moveAxesDrag(x, y);
         return;
       }
+      handleBuildMove(e);
       handleBoxMove(e);
     };
 
     const handlePointerUp = (e: PointerEvent) => {
       renderer.endAxesDrag();
+      handleBuildUp(e);
       handleBoxUp(e);
     };
 
@@ -243,6 +325,8 @@ export function Viewport({
       canvas.removeEventListener("pointercancel", handlePointerUp);
       clearBoxEl();
       if (rafId !== null) cancelAnimationFrame(rafId);
+      if (buildRaf !== null) cancelAnimationFrame(buildRaf);
+      if (buildDrag) renderer.setControlsEnabled(true);
     };
   }, []);
 

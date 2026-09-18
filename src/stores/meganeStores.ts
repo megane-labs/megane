@@ -47,6 +47,7 @@ import {
   useInspectorInteractionStore,
   type InspectorInteractionStore,
 } from "./useInspectorInteractionStore";
+import { createBuildStore, useBuildStore, type BuildStore } from "./useBuildStore";
 import { createLoadHandlers, globalLoadHandlers, type MeganeLoadHandlers } from "./loadHandlers";
 
 export interface MeganeStores {
@@ -64,6 +65,7 @@ export interface MeganeStores {
   readonly viewState: StoreApi<ViewStateStore>;
   readonly pipelineUI: StoreApi<PipelineUIStore>;
   readonly inspector: StoreApi<InspectorInteractionStore>;
+  readonly build: StoreApi<BuildStore>;
 
   /** Per-viewer file-drop routing — see ./loadHandlers.ts. */
   readonly loadHandlers: MeganeLoadHandlers;
@@ -118,6 +120,7 @@ export function createMeganeStores(options: CreateMeganeStoresOptions = {}): Meg
     viewState: createViewStateStore(options.persist?.camera ?? false),
     pipelineUI: createPipelineUIStore(options.persist?.pipelineUI ?? false),
     inspector: createInspectorInteractionStore(),
+    build: createBuildStore(),
     loadHandlers: createLoadHandlers(),
     destroy() {
       // Leaving the interval running would keep advancing frames — and hold a
@@ -142,6 +145,7 @@ export const globalMeganeStores: MeganeStores = {
   viewState: useViewStateStore,
   pipelineUI: usePipelineUIStore,
   inspector: useInspectorInteractionStore,
+  build: useBuildStore,
   loadHandlers: globalLoadHandlers,
   destroy() {
     /* the process-global bundle outlives every viewer */

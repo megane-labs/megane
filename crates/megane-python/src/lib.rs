@@ -634,6 +634,70 @@ fn infer_bonds_vdw(
     Ok(arr.into_pyarray(py).into())
 }
 
+/// Serialize a structure as `xyz` (extended XYZ when a cell is given), `pdb`,
+/// or `mol` text. Arrays follow the `PyStructure` layout: positions `(N, 3)`,
+/// elements `(N,)`, bonds `(M, 2)`. An all-zero `box_matrix` means "no cell".
+#[pyfunction]
+#[pyo3(signature = (format, positions, elements, bonds, bond_orders=None, box_matrix=None, atom_labels=None, chain_ids=None))]
+#[allow(clippy::too_many_arguments)]
+fn write_structure(
+    format: &str,
+    positions: PyReadonlyArray2<f32>,
+    elements: PyReadonlyArray1<u8>,
+    bonds: PyReadonlyArray2<u32>,
+    bond_orders: Option<PyReadonlyArray1<u8>>,
+    box_matrix: Option<PyReadonlyArray2<f32>>,
+    atom_labels: Option<Vec<String>>,
+    chain_ids: Option<Vec<u8>>,
+) -> PyResult<String> {
+    let positions_view = positions.as_array();
+    let shape = positions_view.shape();
+    if shape.len() != 2 || shape[1] != 3 {
+        return Err(PyValueError::new_err(format!(
+            "positions shape {:?} is not (n_atoms, 3)",
+            shape
+        )));
+    }
+    let bonds_view = bonds.as_array();
+    let bshape = bonds_view.shape();
+    if bshape.len() != 2 || (bshape[0] > 0 && bshape[1] != 2) {
+        return Err(PyValueError::new_err(format!(
+            "bonds shape {:?} is not (n_bonds, 2)",
+            bshape
+        )));
+    }
+    let positions_vec: Vec<f32> = positions_view.iter().copied().collect();
+    let elements_vec: Vec<u8> = elements.as_array().iter().copied().collect();
+    let bonds_vec: Vec<u32> = bonds_view.iter().copied().collect();
+    let orders_vec: Option<Vec<u8>> = bond_orders.map(|o| o.as_array().iter().copied().collect());
+    let cell: Option<[f32; 9]> = match box_matrix {
+        Some(m) => {
+            let v: Vec<f32> = m.as_array().iter().copied().collect();
+            if v.len() != 9 {
+                return Err(PyValueError::new_err("box_matrix must be (3, 3)"));
+            }
+            if v.iter().all(|x| *x == 0.0) {
+                None
+            } else {
+                let mut arr = [0.0f32; 9];
+                arr.copy_from_slice(&v);
+                Some(arr)
+            }
+        }
+        None => None,
+    };
+    let view = megane_core::writer::StructureView {
+        positions: &positions_vec,
+        elements: &elements_vec,
+        bonds: &bonds_vec,
+        bond_orders: orders_vec.as_deref(),
+        box_matrix: cell,
+        atom_labels: atom_labels.as_deref(),
+        chain_ids: chain_ids.as_deref(),
+    };
+    megane_core::writer::write(format, &view).map_err(PyValueError::new_err)
+}
+
 #[pymodule]
 fn megane_parser(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(parse_pdb, m)?)?;
@@ -666,5 +730,6 @@ fn megane_parser(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(parse_top_bonds_from_path, m)?)?;
     m.add_function(wrap_pyfunction!(default_bond_source, m)?)?;
     m.add_function(wrap_pyfunction!(infer_bonds_vdw, m)?)?;
+    m.add_function(wrap_pyfunction!(write_structure, m)?)?;
     Ok(())
 }

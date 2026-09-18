@@ -8,6 +8,7 @@ import {
   Streaming,
   Filter,
   Modify,
+  Edit,
   DrawingBoundary,
   BoundaryCompletion,
   Symmetry,
@@ -19,6 +20,7 @@ import {
   VectorOverlay,
   Viewport,
 } from "@/pipeline/builder";
+import { deserializePipeline } from "@/pipeline/serialize";
 
 // ─── NodePort ─────────────────────────────────────────────────────────
 
@@ -178,6 +180,44 @@ describe("Modify", () => {
   it("accepts custom values", () => {
     const node = new Modify({ scale: 1.5, opacity: 0.3 });
     expect(node._toSerializedParams()).toMatchObject({ scale: 1.5, opacity: 0.3 });
+  });
+});
+
+describe("Edit", () => {
+  it("serializes an empty op list by default", () => {
+    const node = new Edit();
+    expect(node._toSerializedParams()).toEqual({ type: "edit", ops: [], sourceAtomCount: null });
+  });
+
+  it("carries ops and the source atom count verbatim", () => {
+    const ops = [
+      {
+        op: "add_atom" as const,
+        id: "h1",
+        element: 1,
+        position: [1, 0, 0] as [number, number, number],
+        bondTo: 0,
+      },
+    ];
+    const node = new Edit({ ops, sourceAtomCount: 3 });
+    expect(node._toSerializedParams()).toEqual({ type: "edit", ops, sourceAtomCount: 3 });
+  });
+
+  it("round-trips through a Pipeline with particle and cell ports", () => {
+    const pipe = new Pipeline();
+    const s = pipe.addNode(new LoadStructure("water.xyz"));
+    const e = pipe.addNode(new Edit({ ops: [{ op: "delete_atoms", atoms: [0] }] }));
+    pipe.addEdge(s.out.particle, e.inp.particle);
+    pipe.addEdge(s.out.cell, e.inp.cell);
+    const json = pipe.toObject();
+    const node = json.nodes.find((n) => n.type === "edit") as { ops: unknown[] } | undefined;
+    expect(node?.ops).toEqual([{ op: "delete_atoms", atoms: [0] }]);
+    expect(
+      json.edges.some(
+        (ed) => ed.target === e._id && ed.targetHandle === "cell" && ed.sourceHandle === "cell",
+      ),
+    ).toBe(true);
+    expect(() => deserializePipeline(json)).not.toThrow();
   });
 });
 

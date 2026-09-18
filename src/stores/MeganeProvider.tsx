@@ -36,6 +36,7 @@ import type { MeasurementStore } from "./useMeasurementStore";
 import type { ViewStateStore } from "./useViewStateStore";
 import type { PipelineUIStore } from "./usePipelineUIStore";
 import type { InspectorInteractionStore } from "./useInspectorInteractionStore";
+import type { BuildStore } from "./useBuildStore";
 import type { MeganeLoadHandlers } from "./loadHandlers";
 
 const MeganeStoresContext = createContext<MeganeStores | null>(null);
@@ -82,6 +83,7 @@ export function MeganeProvider({ stores, options, children }: MeganeProviderProp
       registerTestStores(active.id, {
         pipeline: active.pipeline,
         playback: active.playback,
+        build: active.build,
       }),
     [active],
   );
@@ -121,6 +123,9 @@ export function usePipelineUIStoreApi(): StoreApi<PipelineUIStore> {
 }
 export function useInspectorStoreApi(): StoreApi<InspectorInteractionStore> {
   return useMeganeStores().inspector;
+}
+export function useBuildStoreApi(): StoreApi<BuildStore> {
+  return useMeganeStores().build;
 }
 export function useLoadHandlers(): MeganeLoadHandlers {
   return useMeganeStores().loadHandlers;
@@ -173,4 +178,10 @@ export function useScopedInspectorStore<T>(selector?: (state: InspectorInteracti
     useInspectorStoreApi(),
     selector ?? (identity as (state: InspectorInteractionStore) => T),
   );
+}
+
+export function useScopedBuildStore(): BuildStore;
+export function useScopedBuildStore<T>(selector: (state: BuildStore) => T): T;
+export function useScopedBuildStore<T>(selector?: (state: BuildStore) => T) {
+  return useStore(useBuildStoreApi(), selector ?? (identity as (state: BuildStore) => T));
 }

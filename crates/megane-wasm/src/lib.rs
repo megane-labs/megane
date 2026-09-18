@@ -3,7 +3,8 @@ use wasm_bindgen::prelude::*;
 
 use megane_core::{
     amber, bonds, c3xml, cif, cml, dcd, gamess, gro, jcampdx, lammps_data, lammpstrj, magres,
-    mmcif, mol, mol2, molden, netcdf, odydata, parser, phonon, psf, top, traj, vasp, xsf, xtc, xyz,
+    mmcif, mol, mol2, molden, netcdf, odydata, parser, phonon, psf, top, traj, vasp, writer, xsf,
+    xtc, xyz,
 };
 
 /// Serialize a slice of `VectorChannel`s into two parallel outputs:
@@ -1225,6 +1226,46 @@ pub fn infer_bonds_vdw(positions: &[f32], elements: &[u8], n_atoms: u32) -> Uint
         flat.push(*b);
     }
     Uint32Array::from(&flat[..])
+}
+
+/// Serialize a structure as `xyz` (extended XYZ when a cell is given), `pdb`,
+/// or `mol` text — the inverse of the parsers, used by the Build panel's
+/// export. Empty `bond_orders` / `box_matrix` / `atom_labels` / `chain_ids`
+/// mean "absent"; `atom_labels` is newline-delimited like `ParseResult`.
+#[wasm_bindgen]
+#[allow(clippy::too_many_arguments)]
+pub fn write_structure(
+    format: &str,
+    positions: &[f32],
+    elements: &[u8],
+    bonds: &[u32],
+    bond_orders: &[u8],
+    box_matrix: &[f32],
+    atom_labels: &str,
+    chain_ids: &[u8],
+) -> Result<String, JsError> {
+    let cell = if box_matrix.len() == 9 {
+        let mut m = [0.0f32; 9];
+        m.copy_from_slice(box_matrix);
+        Some(m)
+    } else {
+        None
+    };
+    let labels: Option<Vec<String>> = if atom_labels.is_empty() {
+        None
+    } else {
+        Some(atom_labels.split('\n').map(str::to_string).collect())
+    };
+    let view = writer::StructureView {
+        positions,
+        elements,
+        bonds,
+        bond_orders: (!bond_orders.is_empty()).then_some(bond_orders),
+        box_matrix: cell,
+        atom_labels: labels.as_deref(),
+        chain_ids: (!chain_ids.is_empty()).then_some(chain_ids),
+    };
+    writer::write(format, &view).map_err(|e| JsError::new(&e))
 }
 
 /// Parse GROMACS .top file and extract bond pairs.

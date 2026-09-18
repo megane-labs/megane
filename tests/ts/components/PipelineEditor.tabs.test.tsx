@@ -116,6 +116,18 @@ describe("PipelineEditor — tab switching", () => {
     expect(row.style.flexShrink).toBe("0");
   });
 
+  it("offers a Build tab that mounts the Build panel only while active", () => {
+    render(<PipelineEditor collapsed={false} onToggleCollapse={() => {}} />);
+    expect(screen.queryByTestId("build-panel")).toBeNull();
+    fireEvent.click(screen.getByTestId("pipeline-editor-tab-build"));
+    expect(usePipelineUIStore.getState().mode).toBe("build");
+    expect(screen.getByTestId("build-panel")).toBeTruthy();
+    const panel = document.getElementById("pipeline-tabpanel-build")!;
+    expect(panel.style.visibility).toBe("visible");
+    fireEvent.click(screen.getByTestId("pipeline-editor-tab-editor"));
+    expect(screen.queryByTestId("build-panel")).toBeNull();
+  });
+
   it("hides Pipeline-tab-only buttons (Templates) when the chat tab is active", () => {
     render(<PipelineEditor collapsed={false} onToggleCollapse={() => {}} />);
 

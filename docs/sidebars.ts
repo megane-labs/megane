@@ -42,6 +42,7 @@ const sidebars: SidebarsConfig = {
       items: [
         "guide/pipeline/index",
         "guide/pipeline/inspector",
+        "guide/pipeline/build",
         "guide/pipeline/python",
         "guide/pipeline/typescript",
         "guide/pipeline/json",
@@ -71,6 +72,7 @@ const sidebars: SidebarsConfig = {
   developSidebar: [
     { type: "doc", id: "dev/architecture", label: "Architecture" },
     { type: "doc", id: "dev/custom-nodes", label: "Custom Nodes" },
+    { type: "doc", id: "dev/editor-design", label: "Structure Editor Design" },
     { type: "doc", id: "dev/molstar-illustrative-parity", label: "Mol* Illustrative Parity" },
   ],
 
