@@ -94,4 +94,48 @@ describe("Viewport — loadSnapshot camera-fit gating", () => {
     expect(rendererMock.loadSnapshot).toHaveBeenLastCalledWith(grown, { fit: true });
     cleanup();
   });
+
+  // The Build tab re-executes the `edit` node on every click; its output has
+  // fresh element/bond arrays (and often a different atom count), which the
+  // topology heuristic reads as a new structure. The pipeline store bumps
+  // `editRevision` alongside, and the Viewport must keep the camera then.
+  it("keeps the camera when the snapshot arrives with a moved preserveCameraKey", () => {
+    const first = makeSnapshot();
+    const { rerender } = render(<Viewport snapshot={first} frame={null} preserveCameraKey={0} />);
+    const edited: Snapshot = {
+      ...first,
+      nAtoms: 3,
+      positions: new Float32Array(9),
+      elements: new Uint8Array([6, 8, 7]),
+      bonds: new Uint32Array([0, 1, 1, 2]),
+    };
+    rerender(<Viewport snapshot={edited} frame={null} preserveCameraKey={1} />);
+    expect(rendererMock.loadSnapshot).toHaveBeenLastCalledWith(edited, { fit: false });
+    // The key is acknowledged: the next structure with the same key re-fits.
+    const other = makeSnapshot();
+    rerender(<Viewport snapshot={other} frame={null} preserveCameraKey={1} />);
+    expect(rendererMock.loadSnapshot).toHaveBeenLastCalledWith(other, { fit: true });
+    cleanup();
+  });
+
+  it("still fits the very first snapshot even when the key has moved", () => {
+    const { rerender } = render(<Viewport snapshot={null} frame={null} preserveCameraKey={0} />);
+    const snapshot = makeSnapshot();
+    rerender(<Viewport snapshot={snapshot} frame={null} preserveCameraKey={1} />);
+    expect(rendererMock.loadSnapshot).toHaveBeenLastCalledWith(snapshot, { fit: true });
+    cleanup();
+  });
+
+  it("a key change without a snapshot change is acknowledged, so a later file load re-fits", () => {
+    const first = makeSnapshot();
+    const { rerender } = render(<Viewport snapshot={first} frame={null} preserveCameraKey={0} />);
+    // An edit action that left the rendered structure identical (e.g. a
+    // no-op param update on the edit node): key moves, snapshot does not.
+    rerender(<Viewport snapshot={first} frame={null} preserveCameraKey={1} />);
+    expect(rendererMock.loadSnapshot).toHaveBeenCalledTimes(1);
+    const other = makeSnapshot();
+    rerender(<Viewport snapshot={other} frame={null} preserveCameraKey={1} />);
+    expect(rendererMock.loadSnapshot).toHaveBeenLastCalledWith(other, { fit: true });
+    cleanup();
+  });
 });

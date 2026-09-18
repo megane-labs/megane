@@ -267,6 +267,9 @@ export function MeganeViewer({
   const buildMode = useScopedPipelineUIStore((s) => s.mode === "build");
   const buildActive = showPipelineEditor && buildMode;
   const buildHandlers = useScopedBuildStore((s) => s.handlers);
+  // Every change to the edit node bumps this; the Viewport keeps the camera
+  // in place for the snapshot that follows (see `Viewport.preserveCameraKey`).
+  const editRevision = useScopedPipelineStore((s) => s.editRevision);
   const buildSelected = useScopedBuildStore((s) => s.selected);
   const buildPendingBondAtom = useScopedBuildStore((s) => s.pendingBondAtom);
   const buildPreview = useMemo(() => {
@@ -641,6 +644,7 @@ export function MeganeViewer({
         inspectorActive={inspectorActive}
         buildActive={buildActive}
         buildHandlers={buildActive ? buildHandlers : null}
+        preserveCameraKey={editRevision}
       />
       <div
         ref={tourAnchorRef}

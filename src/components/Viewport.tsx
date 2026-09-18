@@ -35,6 +35,14 @@ interface ViewportProps {
    */
   buildActive?: boolean;
   buildHandlers?: BuildHandlers | null;
+  /**
+   * Changes to this value mark the next snapshot as an in-place edit of the
+   * structure already on screen (the `edit` node re-executing after a click
+   * in the Build tab): the camera then keeps its zoom / orbit instead of
+   * re-fitting to the new bounds. A snapshot arriving without a change here
+   * is gated by the topology heuristic as before.
+   */
+  preserveCameraKey?: number;
 }
 
 export function Viewport({
@@ -53,6 +61,7 @@ export function Viewport({
   inspectorActive,
   buildActive,
   buildHandlers,
+  preserveCameraKey,
 }: ViewportProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const rendererRef = useRef<MoleculeRenderer | null>(null);
@@ -347,6 +356,14 @@ export function Viewport({
   // The previously loaded snapshot, used to detect position-only re-mappings.
   const loadedSnapshotRef = useRef<Snapshot | null>(null);
 
+  // `preserveCameraKey` as last acknowledged by a loadSnapshot (or by the
+  // sync effect below when the key moved without a snapshot change). The
+  // latest prop value is mirrored through a ref so the snapshot effect can
+  // read it without listing it as a dependency.
+  const latestPreserveKeyRef = useRef(preserveCameraKey);
+  latestPreserveKeyRef.current = preserveCameraKey;
+  const seenPreserveKeyRef = useRef(preserveCameraKey);
+
   // Latest frame prop, readable from the snapshot effect without adding it to
   // that effect's deps (a frame change alone must not re-run loadSnapshot).
   const frameRef = useRef<Frame | null>(null);
@@ -367,7 +384,14 @@ export function Viewport({
         prev.elements === snapshot.elements &&
         prev.bonds === snapshot.bonds &&
         prev.box === snapshot.box;
-      rendererRef.current.loadSnapshot(snapshot, { fit: !positionsOnly });
+      // An edit of the structure on screen (add / delete / move atoms) rebuilds
+      // the topology arrays, so it fails the heuristic above even though the
+      // user is looking at the same molecule; the key from the pipeline store
+      // says so explicitly.
+      const editInPlace =
+        prev !== null && latestPreserveKeyRef.current !== seenPreserveKeyRef.current;
+      seenPreserveKeyRef.current = latestPreserveKeyRef.current;
+      rendererRef.current.loadSnapshot(snapshot, { fit: !positionsOnly && !editInPlace });
       loadedSnapshotRef.current = snapshot;
       // Re-apply the current trajectory frame after the snapshot geometry.
       // Snapshot and frame updates can land in separate commits in either
@@ -385,6 +409,14 @@ export function Viewport({
       }
     }
   }, [snapshot]);
+
+  // Declared after the snapshot effect on purpose: when the key and the
+  // snapshot change in the same commit, the snapshot effect sees the moved key
+  // first. When only the key moves (an edit that left the rendered structure
+  // as it was), this keeps it acknowledged so a later real file load re-fits.
+  useEffect(() => {
+    seenPreserveKeyRef.current = preserveCameraKey;
+  }, [preserveCameraKey]);
 
   useEffect(() => {
     if (frame && rendererRef.current) {

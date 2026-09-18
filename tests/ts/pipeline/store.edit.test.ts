@@ -152,6 +152,37 @@ describe("usePipelineStore — edit ops", () => {
     expect(usePipelineStore.getState().nodes.some((n) => n.type === "edit")).toBe(false);
   });
 
+  it("bumps editRevision on every change to the edit node and on nothing else", () => {
+    const s = usePipelineStore.getState();
+    const start = s.editRevision;
+    const id = s.pushEditOp({ op: "add_atom", id: "n1", element: 7, position: [2, 2, 2] });
+    expect(usePipelineStore.getState().editRevision).toBe(start + 1);
+    usePipelineStore.getState().replaceLastEditOp({ op: "delete_atoms", atoms: [0] });
+    expect(usePipelineStore.getState().editRevision).toBe(start + 2);
+    usePipelineStore.getState().undoEditOp();
+    expect(usePipelineStore.getState().editRevision).toBe(start + 3);
+    usePipelineStore.getState().pushEditOp({ op: "delete_atoms", atoms: [0] });
+    usePipelineStore.getState().clearEditOps();
+    expect(usePipelineStore.getState().editRevision).toBe(start + 5);
+    // Disabling / re-enabling the node or editing its params in the Inspector
+    // also re-executes with reshaped arrays, so those count as edits too.
+    usePipelineStore.getState().toggleNode(id);
+    expect(usePipelineStore.getState().editRevision).toBe(start + 6);
+    usePipelineStore.getState().updateNodeParams(id, { sourceAtomCount: 3 });
+    expect(usePipelineStore.getState().editRevision).toBe(start + 7);
+    // Other nodes leave it alone: their re-executions keep the existing
+    // topology heuristic (a wrap toggle keeps the camera, a replicate re-fits).
+    usePipelineStore.getState().updateNodeParams("viewport-1", { perspective: true });
+    usePipelineStore.getState().toggleNode("viewport-1");
+    expect(usePipelineStore.getState().editRevision).toBe(start + 7);
+    // No-op actions (nothing to undo / replace / clear) do not bump it either.
+    usePipelineStore.getState().clearEditOps();
+    expect(usePipelineStore.getState().editRevision).toBe(start + 8);
+    usePipelineStore.getState().undoEditOp();
+    usePipelineStore.getState().replaceLastEditOp({ op: "delete_atoms", atoms: [1] });
+    expect(usePipelineStore.getState().editRevision).toBe(start + 8);
+  });
+
   it("edits survive a serialize → deserialize round trip", () => {
     const s = usePipelineStore.getState();
     s.pushEditOp({ op: "add_atom", id: "n1", element: 7, position: [2, 2, 2], bondTo: 0 });

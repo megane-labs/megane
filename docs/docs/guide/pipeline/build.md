@@ -36,6 +36,10 @@ The **Element** section picks the element for *Add* and *Element* (quick chips
 for the common ones, or any atomic number), and the **bond order** used by
 *Add* and *Bond*.
 
+Editing never moves the camera: the view keeps its zoom and orientation across
+every operation (and across Undo / Redo / Clear). Only loading a new file
+re-fits the view.
+
 ## History and Undo
 
 The **History** section shows every operation in order and offers **Undo**,

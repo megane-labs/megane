@@ -10,6 +10,7 @@
 
 import { test, expect } from "playwright/test";
 import { waitForReady } from "./lib/setup";
+import { alignCamera, getCameraState } from "./lib/render-utils";
 
 const ATOM_COUNT_CAFFEINE = 3024;
 
@@ -125,6 +126,30 @@ test.describe("build: webapp", () => {
     await expect(page.locator('[data-testid="edit-node-count"]').first()).toHaveText("0 ops");
     node = await editNode(page);
     expect(node!.ops).toHaveLength(0);
+  });
+
+  test("editing keeps the camera where the user left it", async ({ page }) => {
+    await page.locator('[data-testid="pipeline-editor-tab-build"]').click();
+    // Leave the standard orientation so a re-fit would be visible as a change.
+    await alignCamera(page, "+a");
+    const before = await getCameraState(page);
+    expect(before).not.toBeNull();
+
+    const viewer = page.locator('[data-testid="megane-viewer"]').first();
+    await page.locator('[data-testid="build-tool-delete"]').click();
+    await pickAtom(page, 0);
+    await expect(viewer).toHaveAttribute("data-atom-count", String(ATOM_COUNT_CAFFEINE - 1));
+    await page.locator('[data-testid="build-tool-add"]').click();
+    await pickAtom(page, 0);
+    await expect(viewer).toHaveAttribute("data-atom-count", String(ATOM_COUNT_CAFFEINE));
+    await page.locator('[data-testid="build-undo"]').click();
+    await expect(viewer).toHaveAttribute("data-atom-count", String(ATOM_COUNT_CAFFEINE - 1));
+
+    const after = await getCameraState(page);
+    expect(after!.position).toEqual(before!.position);
+    expect(after!.target).toEqual(before!.target);
+    expect(after!.zoom).toBe(before!.zoom);
+    expect(after!.up).toEqual(before!.up);
   });
 
   test("the edit history survives a pipeline export / import round trip", async ({ page }) => {

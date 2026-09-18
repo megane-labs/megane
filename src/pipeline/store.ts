@@ -140,6 +140,13 @@ export interface PipelineStore {
   undoEditOp: () => EditOp | null;
   /** Drop every op (the node stays so the graph shape is stable). */
   clearEditOps: () => void;
+  /**
+   * Bumped whenever an `edit` node changes (ops pushed / undone / cleared,
+   * its params edited, or the node toggled). The viewer keeps the camera
+   * where it is on such re-executions: an edit reshapes the snapshot arrays,
+   * which would otherwise read as a new structure and re-fit the view.
+   */
+  editRevision: number;
 
   // Templates
   pendingTemplateId: string | null;
@@ -167,6 +174,11 @@ function getInitialPipeline() {
  * two viewers' initial graphs would be aliases of each other. The layout pass
  * is cheap (a handful of nodes) and runs once per viewer mount.
  */
+/** Whether `id` names an `edit` node in `nodes` (see `editRevision`). */
+function isEditNode(nodes: Node<PipelineNodeData>[], id: string): boolean {
+  return nodes.some((n) => n.id === id && n.type === "edit");
+}
+
 function createInitialGraph(): { nodes: Node<PipelineNodeData>[]; edges: Edge[] } {
   const raw = getInitialPipeline();
   return getLayoutedElements(raw.nodes, raw.edges);
@@ -198,6 +210,7 @@ export const pipelineStateCreator: StateCreator<PipelineStore> = (set, get, api)
   ...createInitialGraph(),
   viewportState: { ...DEFAULT_VIEWPORT_STATE },
   nodeErrors: {},
+  editRevision: 0,
   snapshot: null,
   atomLabels: null,
   structureFrames: null,
@@ -435,6 +448,7 @@ export const pipelineStateCreator: StateCreator<PipelineStore> = (set, get, api)
           },
         };
       }),
+      editRevision: state.editRevision + (isEditNode(state.nodes, id) ? 1 : 0),
     }));
     get().execute();
   },
@@ -448,6 +462,7 @@ export const pipelineStateCreator: StateCreator<PipelineStore> = (set, get, api)
           data: { ...n.data, enabled: !n.data.enabled },
         };
       }),
+      editRevision: state.editRevision + (isEditNode(state.nodes, id) ? 1 : 0),
     }));
     get().execute();
   },
@@ -601,7 +616,7 @@ export const pipelineStateCreator: StateCreator<PipelineStore> = (set, get, api)
         },
       };
     });
-    set({ nodes: nextNodes, edges: ensured.edges });
+    set({ nodes: nextNodes, edges: ensured.edges, editRevision: get().editRevision + 1 });
     get().execute();
     return ensured.editId;
   },
