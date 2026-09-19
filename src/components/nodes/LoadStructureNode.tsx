@@ -8,11 +8,7 @@
 import type { NodeProps, Node } from "@xyflow/react";
 import type { PipelineNodeData } from "../../pipeline/execute";
 import type { LoadStructureParams } from "../../pipeline/types";
-import {
-  useScopedPipelineStore,
-  useScopedPipelineUIStore,
-  useLoadHandlers,
-} from "../../stores/MeganeProvider";
+import { useScopedPipelineStore, useLoadHandlers } from "../../stores/MeganeProvider";
 import { globalLoadHandlers, type StructureLoadHandler } from "../../stores/loadHandlers";
 import { NodeShell } from "./NodeShell";
 import { smallBtnStyle, fileNameStyle } from "../ui";
@@ -83,7 +79,6 @@ export function setStructureLoadHandler(handler: StructureLoadHandler | null) {
 
 export function LoadStructureNode({ id, data }: NodeProps<Node<PipelineNodeData>>) {
   const updateNodeParams = useScopedPipelineStore((s) => s.updateNodeParams);
-  const setBuildOpen = useScopedPipelineUIStore((s) => s.setBuildOpen);
   const loadHandlers = useLoadHandlers();
   const params = data.params as LoadStructureParams;
   const inputRef = useRef<HTMLInputElement>(null);
@@ -139,34 +134,15 @@ export function LoadStructureNode({ id, data }: NodeProps<Node<PipelineNodeData>
             No structure loaded
           </div>
         )}
-        {/* The Build panel's history rides on this node (it edits the input,
-            not the view), so the graph shows only a count and a way back to
-            the panel — the ops themselves are managed there. */}
+        {/* An edit history (from the Builder, the chat, or a builder script)
+            rides on this node: it edits the input, not the view, so the graph
+            shows only a count. */}
         {editCount > 0 && (
           <div
             data-testid="load-structure-edits"
-            style={{
-              marginTop: 4,
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "space-between",
-              gap: 6,
-              fontSize: 12,
-              color: "#047857",
-            }}
+            style={{ marginTop: 4, fontSize: 12, color: "#047857" }}
           >
-            <span>
-              {editCount} edit{editCount === 1 ? "" : "s"}
-            </span>
-            <button
-              type="button"
-              className="nodrag"
-              data-testid="load-structure-open-build"
-              style={{ ...smallBtnStyle, padding: "1px 6px", fontSize: 11 }}
-              onClick={() => setBuildOpen(true)}
-            >
-              Open Build
-            </button>
+            {editCount} edit{editCount === 1 ? "" : "s"}
           </div>
         )}
         <button

@@ -114,7 +114,7 @@ export class LoadStructure extends PipelineNode {
   protected readonly _inpPorts: Record<string, string> = {};
 
   /**
-   * Structure edits replayed on the file as loaded (the Build panel's
+   * Structure edits replayed on the file as loaded (megane Builder's
    * history): add / delete / move atoms, change elements, add / delete bonds,
    * place a fragment, set the cell. Atom refs are indices into the file's
    * atoms (numbers) or ids of atoms an earlier op created (strings). The node

@@ -715,7 +715,7 @@ export interface ReplicateParams {
  */
 export type EditAtomRef = number | string;
 
-/** One structure edit, as authored by the Build panel (or by hand / the LLM). */
+/** One structure edit, as authored by megane Builder (or by hand / the LLM). */
 export type EditOp =
   | {
       op: "add_atom";

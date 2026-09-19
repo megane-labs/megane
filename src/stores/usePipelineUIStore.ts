@@ -1,8 +1,7 @@
 /**
- * UI state for the Pipeline panel: which tab is active (Editor vs Chat), a
+ * UI state for the Pipeline panel: which tab is active (Editor vs Chat) and a
  * transient "pipeline applied" notice surfaced after the chat assistant
- * rewrites the graph, and whether the Build panel (structure editing, a
- * separate panel stacked under the Pipeline panel) is open.
+ * rewrites the graph.
  *
  * Persistence is per-session (sessionStorage) rather than across reloads, so
  * every cold start opens on the Chat tab — the assistant is the primary entry
@@ -68,14 +67,7 @@ function saveMode(storageKey: PipelineUIStorage, mode: PipelinePanelMode) {
 export interface PipelineUIStore {
   mode: PipelinePanelMode;
   pendingNotice: PipelineAppliedNotice | null;
-  /**
-   * Whether the Build panel is open. Not persisted: an open panel puts the 3D
-   * view in edit mode (clicks edit atoms instead of picking / measuring), so
-   * every session starts with it closed.
-   */
-  buildOpen: boolean;
   setMode: (mode: PipelinePanelMode) => void;
-  setBuildOpen: (open: boolean) => void;
   /** Surface a one-shot "applied" notice without leaving the current tab. */
   markPipelineApplied: () => void;
   dismissNotice: () => void;
@@ -89,15 +81,10 @@ export function pipelineUIStateCreator(
   return (set) => ({
     mode: loadMode(storageKey),
     pendingNotice: null,
-    buildOpen: false,
 
     setMode: (mode) => {
       saveMode(storageKey, mode);
       set({ mode });
-    },
-
-    setBuildOpen: (open) => {
-      set({ buildOpen: open });
     },
 
     markPipelineApplied: () => {

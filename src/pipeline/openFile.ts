@@ -145,7 +145,7 @@ export function syncAddBondSourceForLoader(
 /**
  * Set every AddBond node fed (directly or through particle pass-through
  * nodes) by `loaderId` to `desired`. `syncAddBondSourceForLoader` derives
- * `desired` from a file name; the Build panel's blank cell has no file and
+ * `desired` from a file name; a blank cell to build into has no file and
  * asks for `"structure"` outright so the bonds the user draws are shown.
  */
 export function syncAddBondSource(

@@ -447,8 +447,8 @@ export function computeFrameDistanceBonds(
 
 /**
  * Bond stream for exactly the bonds a snapshot carries — file bonds, parser
- * inferred bonds, and bonds asserted by the Build panel's edit ops alike —
- * regardless of `nFileBonds`. The edit view (see `pipeline/editView.ts`)
+ * inferred bonds, and bonds asserted by edit ops alike — regardless of
+ * `nFileBonds`. megane Builder's view (see `builder/view.ts`)
  * draws the loader's output with these rather than re-inferring anything, so
  * what the user drew is what they see. PBC half-bonds get their ghost atoms
  * as in the "structure" source of `executeAddBond`.

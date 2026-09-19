@@ -7,7 +7,7 @@
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, cleanup } from "@testing-library/react";
-import type { BuildHandlers } from "@/stores/useBuildStore";
+import type { BuildHandlers } from "@/builder/types";
 
 const canvas = document.createElement("canvas");
 

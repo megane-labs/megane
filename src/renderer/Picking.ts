@@ -275,7 +275,7 @@ export function atomsInRect(
 
 /**
  * Convert a client-pixel position to a world point on the camera-facing
- * plane through `anchor` (a world point). Used by the Build panel: dragging
+ * plane through `anchor` (a world point). Used by megane Builder: dragging
  * an atom moves it in the plane parallel to the screen at the atom's own
  * depth, and placing a new atom on empty space lands it at the depth of the
  * structure's pivot. Works for both camera kinds because it unprojects the

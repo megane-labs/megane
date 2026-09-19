@@ -6,7 +6,7 @@
 import { useEffect, useRef } from "react";
 import { MoleculeRenderer } from "../renderer/MoleculeRenderer";
 import type { Snapshot, Frame, HoverInfo } from "../types";
-import type { BuildHandlers } from "../stores/useBuildStore";
+import type { BuildHandlers } from "../builder/types";
 
 interface ViewportProps {
   snapshot: Snapshot | null;
@@ -28,7 +28,7 @@ interface ViewportProps {
   /** True while the Selection Inspector tab is the active editing surface. */
   inspectorActive?: boolean;
   /**
-   * True while the Build tab is the active editing surface: a left click
+   * True while a structure editor (megane Builder) owns the view: a left click
    * reports the atom (or empty-space point) to `buildHandlers.pick`, and a
    * left-drag on an atom becomes a move when `buildHandlers.dragStart`
    * accepts it (camera rotation is suspended for that drag only).
@@ -38,7 +38,7 @@ interface ViewportProps {
   /**
    * Changes to this value mark the next snapshot as an in-place edit of the
    * structure already on screen (the `edit` node re-executing after a click
-   * in the Build tab): the camera then keeps its zoom / orbit instead of
+   * in the Builder): the camera then keeps its zoom / orbit instead of
    * re-fitting to the new bounds. A snapshot arriving without a change here
    * is gated by the topology heuristic as before.
    */
@@ -211,7 +211,7 @@ export function Viewport({
       onBoxSelectRef.current?.(indices);
     };
 
-    // ── Build tab: click-to-edit and drag-to-move ──
+    // ── Builder: click-to-edit and drag-to-move ──
     // A press on an atom with the Move tool becomes a drag; anything else is a
     // click reported on release (when the pointer barely moved). Camera
     // controls are suspended only for the duration of an accepted drag, so

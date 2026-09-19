@@ -7,62 +7,22 @@ afterEach(() => {
 });
 
 describe("CollapsiblePanel", () => {
-  it("stretches from top to bottom by default and anchors at the bottom when given a height", () => {
+  it("stretches from top to the given bottom offset and puts the stub at the top", () => {
     const { rerender } = render(
-      <CollapsiblePanel title="Build" collapsed={false} onToggleCollapse={() => {}}>
+      <CollapsiblePanel title="Pipeline" collapsed={false} onToggleCollapse={() => {}} bottom={72}>
         <div />
       </CollapsiblePanel>,
     );
-    let root = screen.getByTestId("panel-build");
+    let root = screen.getByTestId("panel-pipeline");
     expect(root.style.top).toBe("12px");
-    expect(root.style.bottom).toBe("60px");
-    expect(root.style.height).toBe("");
-
-    const containerRef = { current: null as HTMLDivElement | null };
-    rerender(
-      <CollapsiblePanel
-        title="Build"
-        collapsed={false}
-        onToggleCollapse={() => {}}
-        bottom={72}
-        height="min(440px, 55%)"
-        collapseLabel="Close Build panel"
-        containerRef={containerRef}
-      >
-        <div />
-      </CollapsiblePanel>,
-    );
-    root = screen.getByTestId("panel-build");
-    expect(root.style.top).toBe("auto");
     expect(root.style.bottom).toBe("72px");
-    expect(root.style.height).toBe("min(440px, 55%)");
-    expect(containerRef.current).toBe(root);
-    const toggle = screen.getByTestId("panel-build-toggle");
-    expect(toggle.getAttribute("aria-label")).toBe("Close Build panel");
-    expect(toggle.getAttribute("title")).toBe("Close Build panel");
-
-    // The collapsed stub follows the same anchor.
     rerender(
-      <CollapsiblePanel
-        title="Build"
-        collapsed={true}
-        onToggleCollapse={() => {}}
-        bottom={72}
-        height="min(440px, 55%)"
-      >
+      <CollapsiblePanel title="Pipeline" collapsed={true} onToggleCollapse={() => {}} bottom={72}>
         <div />
       </CollapsiblePanel>,
     );
-    root = screen.getByTestId("panel-build");
+    root = screen.getByTestId("panel-pipeline");
     expect(root.getAttribute("data-collapsed")).toBe("true");
-    expect(root.style.bottom).toBe("72px");
-    expect(root.style.top).toBe("");
-    rerender(
-      <CollapsiblePanel title="Build" collapsed={true} onToggleCollapse={() => {}}>
-        <div />
-      </CollapsiblePanel>,
-    );
-    root = screen.getByTestId("panel-build");
     expect(root.style.top).toBe("12px");
     expect(root.style.bottom).toBe("");
   });
@@ -126,57 +86,5 @@ describe("CollapsiblePanel", () => {
       </CollapsiblePanel>,
     );
     expect(screen.getByTestId("panel-render-settings")).toBeTruthy();
-  });
-});
-
-describe("CollapsiblePanel stubAnchor", () => {
-  it("pins the stub to the bottom while the expanded panel still fills the column", () => {
-    const { rerender } = render(
-      <CollapsiblePanel
-        title="Build"
-        collapsed={false}
-        onToggleCollapse={() => {}}
-        bottom={60}
-        stubAnchor="bottom"
-      >
-        <div />
-      </CollapsiblePanel>,
-    );
-    let root = screen.getByTestId("panel-build");
-    expect(root.style.top).toBe("12px");
-    expect(root.style.bottom).toBe("60px");
-    expect(root.style.height).toBe("");
-    rerender(
-      <CollapsiblePanel
-        title="Build"
-        collapsed={true}
-        onToggleCollapse={() => {}}
-        bottom={60}
-        stubAnchor="bottom"
-      >
-        <div />
-      </CollapsiblePanel>,
-    );
-    root = screen.getByTestId("panel-build");
-    expect(root.style.bottom).toBe("60px");
-    expect(root.style.top).toBe("");
-  });
-
-  it("keeps a height-anchored panel's stub at the top when asked to", () => {
-    render(
-      <CollapsiblePanel
-        title="Build"
-        collapsed={true}
-        onToggleCollapse={() => {}}
-        bottom={60}
-        height={200}
-        stubAnchor="top"
-      >
-        <div />
-      </CollapsiblePanel>,
-    );
-    const root = screen.getByTestId("panel-build");
-    expect(root.style.top).toBe("12px");
-    expect(root.style.bottom).toBe("");
   });
 });

@@ -1,5 +1,5 @@
 /**
- * Build panel → structure edit history.
+ * Structure edit history on the pipeline's loader.
  *
  * Edits live on the primary `load_structure` node (`LoadStructureParams.edits`),
  * not in a pipeline node of their own: they change what the molecule *is*,
@@ -14,7 +14,7 @@ import type { Node } from "@xyflow/react";
 import type { PipelineNodeData } from "./execute";
 import type { EditOp, LoadStructureParams } from "./types";
 
-/** The loader whose structure the Build panel edits: the first `load_structure`. */
+/** The loader that carries the edit history: the first `load_structure`. */
 export function findPrimaryLoader(nodes: Node<PipelineNodeData>[]): Node<PipelineNodeData> | null {
   return nodes.find((n) => n.type === "load_structure") ?? null;
 }

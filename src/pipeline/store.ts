@@ -24,16 +24,10 @@ import { LazyFrameProvider } from "../stream/LazyFrameProvider";
 import { executePipeline } from "./execute";
 import { validatePipeline } from "./validate";
 import { serializePipeline, deserializePipeline } from "./serialize";
-import {
-  createDefaultPipeline,
-  createDemoPipeline,
-  createEmptyPipeline,
-  createMinimalStructurePipeline,
-} from "./defaults";
-import { buildEditViewportState, emptyCellSnapshot } from "./editView";
+import { createDefaultPipeline, createDemoPipeline, createEmptyPipeline } from "./defaults";
 import { PIPELINE_TEMPLATES } from "./templates";
 import { getLayoutedElements } from "./layout";
-import { performOpenFile, syncAddBondSource, type OpenFileOptions } from "./openFile";
+import { performOpenFile, type OpenFileOptions } from "./openFile";
 import { reconcileInspectorLayers, isInspectorId, type InspectorLayer } from "./inspectorSync";
 import { findPrimaryLoader, loaderEdits } from "./editHistory";
 import { registerTestStores, GLOBAL_BUNDLE_ID } from "../stores/testRegistry";
@@ -134,7 +128,7 @@ export interface PipelineStore {
   // supercell effects are preserved. Non-Inspector nodes are left untouched.
   setInspectorLayers: (layers: InspectorLayer[]) => void;
 
-  // Build panel: the structure-edit history is the primary load_structure
+  // Structure editing: the edit history is the primary load_structure
   // node's `edits` list (see editHistory.ts) — part of the input, not a node
   // in the graph. These actions append / pop ops on it; every one re-executes
   // the pipeline so the 3D view reflects the edit immediately.
@@ -154,30 +148,6 @@ export interface PipelineStore {
    * otherwise read as a new structure and re-fit the view.
    */
   editRevision: number;
-  /**
-   * Show every loader's file as loaded, ignoring its edits (the Build panel's
-   * "Show original"). Not serialized.
-   */
-  editsBypassed: boolean;
-  setEditsBypassed: (bypassed: boolean) => void;
-  /**
-   * Edit mode (the Build panel is open): the 3D view shows the primary
-   * loader's output — the file plus its edits — as ball-and-stick with every
-   * atom, its bonds and its cell, and the rest of the graph is not applied
-   * (see editView.ts). The graph is still executed for its node errors. Not
-   * serialized; the viewer sets it from the Build panel's open state.
-   */
-  editMode: boolean;
-  setEditMode: (on: boolean) => void;
-  /**
-   * Replace the primary loader's structure with an empty cubic cell of edge
-   * `edge` Å and an empty edit history — the Build panel's blank sheet. The
-   * graph is kept (a minimal loader → viewport one is installed when there is
-   * no loader); trajectories are dropped; AddBond nodes fed by the loader are
-   * set to "structure" so the bonds the user draws are the bonds shown.
-   * Returns the loader id.
-   */
-  newEmptyCell: (edge: number) => string;
 
   // Templates
   pendingTemplateId: string | null;
@@ -237,8 +207,6 @@ export const pipelineStateCreator: StateCreator<PipelineStore> = (set, get, api)
   viewportState: { ...DEFAULT_VIEWPORT_STATE },
   nodeErrors: {},
   editRevision: 0,
-  editsBypassed: false,
-  editMode: false,
   snapshot: null,
   atomLabels: null,
   structureFrames: null,
@@ -529,7 +497,6 @@ export const pipelineStateCreator: StateCreator<PipelineStore> = (set, get, api)
       fileVectors,
       nodeSnapshots,
       nodeStreamingData,
-      editsBypassed: get().editsBypassed,
     };
 
     // Run validation and execution
@@ -550,12 +517,7 @@ export const pipelineStateCreator: StateCreator<PipelineStore> = (set, get, api)
       merged[id].push({ message, severity: "error" });
     }
 
-    // Edit mode shows the loader's output instead of the graph's (editView.ts);
-    // the graph still ran above so the editor keeps its node errors.
-    set({
-      viewportState: get().editMode ? buildEditViewportState(nodes, ctx) : viewportState,
-      nodeErrors: merged,
-    });
+    set({ viewportState, nodeErrors: merged });
   },
 
   openFile: async (file, opts) => {
@@ -660,83 +622,6 @@ export const pipelineStateCreator: StateCreator<PipelineStore> = (set, get, api)
     const loader = findPrimaryLoader(get().nodes);
     if (!loader || loaderEdits(loader).length === 0) return;
     get().updateNodeParams(loader.id, { edits: [] });
-  },
-
-  setEditsBypassed: (bypassed) => {
-    if (get().editsBypassed === bypassed) return;
-    // The preview swaps the rendered arrays like an edit does: keep the camera.
-    set((state) => ({ editsBypassed: bypassed, editRevision: state.editRevision + 1 }));
-    get().execute();
-  },
-
-  setEditMode: (on) => {
-    if (get().editMode === on) return;
-    // Entering or leaving edit mode swaps what is drawn, not what the user is
-    // looking at: keep the camera, like every other edit-driven re-execution.
-    set((state) => ({ editMode: on, editRevision: state.editRevision + 1 }));
-    get().execute();
-  },
-
-  newEmptyCell: (edge) => {
-    let loader = findPrimaryLoader(get().nodes);
-    if (!loader) {
-      const raw = createMinimalStructurePipeline();
-      const { nodes, edges } = getLayoutedElements(raw.nodes, raw.edges);
-      set({ nodes, edges });
-      loader = findPrimaryLoader(get().nodes);
-      if (!loader) return "";
-    }
-    const loaderId = loader.id;
-    disposeIfLazy(get().fileProvider);
-    disposeIfLazy(get().structureProvider);
-    set((state) => {
-      const { [loaderId]: _, ...restParseErrors } = state.nodeParseErrors;
-      return {
-        // The old structure's trajectory has the old atom count; drop it.
-        snapshot: null,
-        atomLabels: null,
-        structureFrames: null,
-        structureMeta: null,
-        structureProvider: null,
-        fileFrames: null,
-        fileMeta: null,
-        fileProvider: null,
-        nodeParseErrors: restParseErrors,
-        nodeSnapshots: {
-          ...state.nodeSnapshots,
-          [loaderId]: {
-            snapshot: emptyCellSnapshot(edge),
-            frames: null,
-            meta: null,
-            labels: null,
-          },
-        },
-        // The loader's params are rewritten here rather than through
-        // updateNodeParams: that would count the emptied edit list as an
-        // edit and keep the camera, whereas a new cell is a new structure
-        // the view must re-fit to.
-        nodes: state.nodes.map((n) => {
-          if (n.id === loaderId) {
-            const params: LoadStructureParams = {
-              ...(n.data.params as LoadStructureParams),
-              fileName: "untitled",
-              hasTrajectory: false,
-              hasCell: true,
-              edits: [],
-            };
-            return { ...n, data: { ...n.data, params } };
-          }
-          if (n.type === "load_trajectory") {
-            return { ...n, data: { ...n.data, params: { ...n.data.params, fileName: "" } } };
-          }
-          return n;
-        }),
-      };
-    });
-    // Re-executes; the bonds the user draws must be the bonds shown.
-    syncAddBondSource(get(), loaderId, "structure");
-    get().execute();
-    return loaderId;
   },
 
   pendingTemplateId: null,

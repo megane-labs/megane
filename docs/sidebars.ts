@@ -33,6 +33,7 @@ const sidebars: SidebarsConfig = {
         { type: "doc", id: "guide/cli", label: "Standalone web app" },
         { type: "doc", id: "guide/vscode", label: "VS Code extension" },
         { type: "doc", id: "guide/jupyterlab", label: "JupyterLab extension" },
+        { type: "doc", id: "guide/builder", label: "Builder (structure editor)" },
       ],
     },
     {
@@ -42,7 +43,6 @@ const sidebars: SidebarsConfig = {
       items: [
         "guide/pipeline/index",
         "guide/pipeline/inspector",
-        "guide/pipeline/build",
         "guide/pipeline/python",
         "guide/pipeline/typescript",
         "guide/pipeline/json",

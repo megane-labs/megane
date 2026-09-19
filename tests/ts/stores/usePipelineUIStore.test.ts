@@ -83,18 +83,6 @@ describe("usePipelineUIStore initial load", () => {
     vi.restoreAllMocks();
   });
 
-  it("keeps the Build panel closed by default and never persists it", () => {
-    expect(usePipelineUIStore.getState().buildOpen).toBe(false);
-    usePipelineUIStore.getState().setBuildOpen(true);
-    expect(usePipelineUIStore.getState().buildOpen).toBe(true);
-    usePipelineUIStore.getState().setMode("editor");
-    // Only the tab is written: an open Build panel puts the 3D view in edit
-    // mode, so a fresh session must not start there.
-    expect(JSON.parse(sessionStorage.getItem(STORAGE_KEY)!)).toEqual({ mode: "editor" });
-    usePipelineUIStore.getState().setBuildOpen(false);
-    expect(usePipelineUIStore.getState().buildOpen).toBe(false);
-  });
-
   it("treats a stale 'build' tab from an earlier build as unset", async () => {
     sessionStorage.setItem(STORAGE_KEY, JSON.stringify({ mode: "build" }));
     const mod = await import("@/stores/usePipelineUIStore");

@@ -34,7 +34,6 @@ function renderedAtoms(): number {
 
 describe("usePipelineStore — edit history on the loader", () => {
   beforeEach(() => {
-    usePipelineStore.setState({ editsBypassed: false });
     usePipelineStore.getState().deserialize({
       version: 3,
       nodes: [
@@ -166,27 +165,12 @@ describe("usePipelineStore — edit history on the loader", () => {
       .getState()
       .updateNodeParams("loader-1", { edits: [{ op: "delete_atoms", atoms: [0] }] });
     expect(usePipelineStore.getState().editRevision).toBe(start + 6);
-    // So does the original-structure preview (it swaps the rendered arrays).
-    usePipelineStore.getState().setEditsBypassed(true);
-    expect(usePipelineStore.getState().editRevision).toBe(start + 7);
-    usePipelineStore.getState().setEditsBypassed(true); // no change, no bump
-    expect(usePipelineStore.getState().editRevision).toBe(start + 7);
     // Other params and other nodes leave it alone (a wrap toggle keeps the
     // camera through the topology heuristic, a new file must re-fit).
     usePipelineStore.getState().updateNodeParams("viewport-1", { perspective: true });
     usePipelineStore.getState().toggleNode("viewport-1");
     usePipelineStore.getState().updateNodeParams("loader-1", { hasCell: true });
-    expect(usePipelineStore.getState().editRevision).toBe(start + 7);
-  });
-
-  it("setEditsBypassed shows the file as loaded and back", () => {
-    usePipelineStore.getState().pushEditOp({ op: "delete_atoms", atoms: [0] });
-    expect(renderedAtoms()).toBe(2);
-    usePipelineStore.getState().setEditsBypassed(true);
-    expect(renderedAtoms()).toBe(3);
-    expect(edits()).toHaveLength(1);
-    usePipelineStore.getState().setEditsBypassed(false);
-    expect(renderedAtoms()).toBe(2);
+    expect(usePipelineStore.getState().editRevision).toBe(start + 6);
   });
 
   it("loading a different file into the loader starts the history fresh", () => {

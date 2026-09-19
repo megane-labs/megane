@@ -559,7 +559,7 @@ function PipelineEditorInner({
   collapsed: boolean;
   onToggleCollapse: () => void;
   onWidthChange?: (width: number) => void;
-  /** Bottom offset of the panel; raised while the Build panel is stacked under it. */
+  /** Bottom offset of the panel (default: clear of the Timeline). */
   bottom?: number | string;
   rendererRef: React.RefObject<MoleculeRenderer | null>;
   totalFrames: number;
@@ -1180,7 +1180,7 @@ export function PipelineEditor({
   collapsed: boolean;
   onToggleCollapse: () => void;
   onWidthChange?: (width: number) => void;
-  /** Bottom offset of the panel; raised while the Build panel is stacked under it. */
+  /** Bottom offset of the panel (default: clear of the Timeline). */
   bottom?: number | string;
   rendererRef: React.RefObject<MoleculeRenderer | null>;
   totalFrames?: number;

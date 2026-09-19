@@ -2,14 +2,17 @@
 title: Structure Editor Design
 ---
 
-How structure editing (the **Build** panel) is built, why it lives where it
-does, and what is deliberately left for later. Read this before extending the
-editor or wiring it to a simulation backend.
+How structure editing (**megane Builder**, the standalone editor at
+`/builder.html`, and the edit engine it shares with the viewer's
+`load_structure` node) is built, why it lives where it does, and what is
+deliberately left for later. Read this before extending the editor or wiring
+it to a simulation backend.
 
 ## Where it lives
 
-Editing is implemented **inside megane** as a pipeline node plus a panel, not
-as a separate repository and not inside a simulation engine:
+Editing is implemented **inside megane** — a second app entry in the same
+repository (`builder.html` → `src/builder/`) on top of a shared edit engine —
+not as a separate repository and not inside a simulation engine:
 
 - It is tightly coupled to megane internals that are not public API — the
   `Snapshot` layout, screen-space picking (`src/renderer/Picking.ts`), the
@@ -58,7 +61,7 @@ shift on every deletion. An `EditAtomRef` is either
 The executor keeps a working copy keyed by ref, rebuilds the ref → index map
 after deletions, and materialises indices only when it builds the output
 `Snapshot`. It also reports, per output atom, which ref it came from
-(`EditResult.outputRefs`); the Build panel uses that to translate a click on
+(`EditResult.outputRefs`); the Builder uses that to translate a click on
 rendered atom *i* into the ref an op must name.
 
 Because refs address the file's atoms, the list is replayed *before* anything
@@ -82,54 +85,49 @@ applies is skipped with a warning on the loader.
   edited `cell` stream. The `trajectory` output follows the file: its frames
   index the atoms as loaded.
 
-## Build panel and the 3D view
+## The Builder app and the 3D view
 
-The panel is a peer of the Pipeline panel, not a tab or a launcher inside it:
-`MeganeViewer` renders a second `CollapsiblePanel` in the same column (same
-width; its collapsed "◀ Build" stub sits at the bottom, under the Pipeline
-panel, whose bottom edge is raised to make room for it), switched by its own
-`ui.build` option. The two are exclusive — the column shows the pipeline
-(view) or Build (edit), never both: opening Build collapses the Pipeline
-panel, expanding the Pipeline panel closes Build, and closing Build from its
-header restores the Pipeline panel to the state it had before. Editing the
-molecule is a different activity from authoring the pipeline, so it should not
-compete with Editor / Inspector / Chat for the same tab strip, and showing the
-graph beside an edit view that ignores it only confused people. Whether the 3D
-view is in edit mode follows one flag (`buildOpen` in `usePipelineUIStore`),
-never which tab happens to be in front. The flag is not persisted: an open
-panel changes what a click means, so every session starts with it closed.
+The Builder is its own application, not a panel or a mode of the viewer.
+Building changes what a structure *is*; the viewer's pipeline describes how a
+structure is *shown*, and every attempt to host editing inside the viewer
+(a tab in the Pipeline panel, a stacked panel, an exclusive "edit mode" that
+swapped the view) ended up with the two competing for the same column and
+users unsure which of them the picture reflected. So `src/builder/` mounts
+its own page (`builder.html`, a Vite entry beside `index.html` and the
+multi-instance harness) with a top bar (Open / New / Undo / Redo / Save), the
+3D view, a sidebar (tools, element, selection, new cell, history, export) and
+a status bar. Nothing in the viewer imports the Builder; the Builder reuses
+the viewer's renderer, parsers, writers and edit engine. Bringing a Builder
+document into the viewer is the planned integration, and the shared history
+format (below) is its seam.
 
-An open panel is also **edit mode** for the pipeline store (`editMode`,
-mirrored from `buildOpen` by `MeganeViewer`). In edit mode `execute()` still
-runs the graph — the editor keeps its node errors — but replaces the
-`ViewportState` with `buildEditViewportState()` (`src/pipeline/editView.ts`):
-the primary loader's output (file plus edits, or the file alone under *Show
-original*), its own bonds drawn straight from the snapshot regardless of any
-AddBond node (`bondDataFromSnapshotBonds`), its cell, no trajectory, no
-overlays, ball-and-stick. This is Blender's Object / Edit Mode split: the view
-pipeline is the modifier stack, the edit list edits the base structure, and
-the stack is re-applied when the panel closes. It is what makes the rendered
-index → op ref translation trivial (one rendered atom per loaded atom) — a
-Replicate or Symmetry node in the graph no longer pauses editing — and it
-keeps the pipeline's own concerns (filters, colours, representations) out of
-the editing loop. Entering or leaving edit mode bumps `editRevision`, so the
-camera stays put across the switch.
+**Document.** `useBuilderStore` (`src/builder/store.ts`) holds a source
+`Snapshot` (the opened file, or `emptyCellSnapshot(edge)` for *New*), its
+per-atom labels and file name, the ordered `edits: EditOp[]`, a `redoStack`,
+the *Show original* flag, and `result = applyEditOps(source, edits)`
+recomputed on every change. The source is never mutated; what the view shows
+(`shownSnapshot`) is the result, or the source alone under the preview. Undo
+pops the last op onto the redo stack, Redo pushes it back, any new op clears
+the stack; `replaceLastOp` rewrites the tail while a drag is in progress. A
+`revision` counter bumps on every change that reshapes the rendered
+structure without replacing the document, and the app hands it to
+`Viewport.preserveCameraKey` so edits never move the camera while a new file
+or cell still re-fits. There is no pipeline graph anywhere in the app.
 
-"New empty cell" (`newEmptyCell(edge)` in the store) is how building starts
-from nothing. It replaces only the primary loader's data — an atom-less
-snapshot with a cubic cell, file name `untitled`, an empty edit list — drops
-the old structure's trajectories, and sets the AddBond nodes fed by the loader
-to `"structure"`; the graph is left as the user built it (a minimal loader →
-viewport graph is installed only when there is no loader at all). It is
-deliberately not a Templates entry: templates describe how a structure is
-shown, and applying one replaces the whole graph.
+**View.** `builderViewportState(shown)` (`src/builder/view.ts`) turns the
+shown snapshot into a `ViewportState`: one particle stream with every atom,
+the structure's own bonds drawn straight from the snapshot regardless of
+`nFileBonds` (`bondDataFromSnapshotBonds`, so parser-inferred bonds and the
+ones the user drew are shown alike, PBC half-bonds included), the cell, no
+trajectory, no overlays, ball-and-stick. `BuilderApp` drives the renderer
+through the same `applyViewportState` the viewer uses, so the Builder does not
+fork the renderer.
 
-`src/components/BuildPanel.tsx` owns no atom data. It holds UI state in
-`useBuildStore` (tool, element, bond order, selection, pending bond atom, redo
-stack) and installs four callbacks (`pick`, `dragStart`, `dragMove`,
-`dragEnd`) in that store. `MeganeViewer` hands them to the `Viewport`, which
-already implements the "suspend camera, hit-test, act" pattern for the
-Inspector's box select:
+**Clicks.** `useBuilderHandlers` installs four callbacks (`pick`, `dragStart`,
+`dragMove`, `dragEnd`) as `BuildHandlers` (`src/builder/types.ts`), and the
+app passes them to the `Viewport` with `buildActive` permanently on. The
+Viewport already implements the "suspend camera, hit-test, act" pattern for
+the Inspector's box select:
 
 - a left press on an atom asks `dragStart`; if the Move tool accepts, camera
   controls are suspended for that drag only, and `dragMove` receives the world
@@ -138,15 +136,11 @@ Inspector's box select:
 - otherwise a press that barely moves is a click, reported to `pick` with the
   atom index or, on empty space, the world point at the pivot's depth.
 
-Drags write one `move_atoms` op at press time and rewrite its delta while the
-pointer moves (`replaceLastEditOp`), so the pipeline re-executes for live
-preview but the history gains a single op. A drag that ends with a zero delta
-is removed again.
-
-Undo is `undoEditOp` (pop) plus a push onto the panel's redo stack; any new op
-clears the redo stack. Everything the panel does goes through three store
-actions — `pushEditOp`, `replaceLastEditOp`, `undoEditOp` — so a host can drive
-the same edits without the panel (the Jupyter widget path).
+Rendered atom indices are translated to op refs through `result.outputRefs`
+before an op is written, so an op always names the atom the user saw. Drags
+write one `move_atoms` op at press time and rewrite its delta while the
+pointer moves, so the history gains a single op; a drag that ends with a zero
+delta is removed again without touching the redo stack.
 
 ## Writers
 

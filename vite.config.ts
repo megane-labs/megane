@@ -33,12 +33,14 @@ export default defineConfig({
   build: {
     outDir: "python/megane/static/app",
     rollupOptions: {
-      // Two entries: the app itself, plus the two-viewer harness that backs
-      // the `multi-instance` Playwright project (issue #672). Naming `input`
-      // at all means the implicit index.html default no longer applies, so
-      // both must be listed.
+      // Three entries: the viewer itself, megane Builder (the structure
+      // editor, a separate app at /builder.html), and the two-viewer harness
+      // that backs the `multi-instance` Playwright project (issue #672).
+      // Naming `input` at all means the implicit index.html default no longer
+      // applies, so all must be listed.
       input: {
         main: path.resolve(__dirname, "index.html"),
+        builder: path.resolve(__dirname, "builder.html"),
         multiInstance: path.resolve(__dirname, "multi-instance.html"),
       },
       output: {

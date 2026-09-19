@@ -45,10 +45,10 @@ export function buildStructureTrajectory(
 }
 
 /**
- * Loader executor. `params.edits` (the Build panel's history) is replayed on
+ * Loader executor. `params.edits` (an edit history in megane Builder's format) is replayed on
  * the loaded snapshot so the `particle` / `cell` outputs carry the *edited*
- * structure; `opts.editsBypassed` shows the file as loaded instead (the Build
- * panel's "Show original"). Per-op problems go to `opts.warnings` so the
+ * structure; `opts.editsBypassed` shows the file as loaded instead (a "show
+ * original" preview). Per-op problems go to `opts.warnings` so the
  * dispatcher can surface them on the node. The trajectory output always
  * follows the file: its frames index the atoms as loaded, so an edited atom
  * count could not be played back anyway.

@@ -196,8 +196,9 @@ export default defineConfig({
       use: { baseURL: `http://127.0.0.1:${PORT_WEBAPP}` },
     },
     {
-      name: "build",
-      testMatch: /build\.spec\.ts$/,
+      // megane Builder, the structure editor at /builder.html (its own Vite entry).
+      name: "builder",
+      testMatch: /builder\.spec\.ts$/,
       use: { baseURL: `http://127.0.0.1:${PORT_WEBAPP}` },
     },
     {

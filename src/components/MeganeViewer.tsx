@@ -11,14 +11,12 @@
  * the `ui` prop — see {@link MeganeViewerUiOptions}.
  */
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Viewport } from "./Viewport";
 import { PipelineEditor } from "./PipelineEditor";
 import { Timeline } from "./Timeline";
 import { Tooltip } from "./Tooltip";
 import { MeasurementPanel } from "./MeasurementPanel";
-import { BuildPanel } from "./BuildPanel";
-import { CollapsiblePanel } from "./CollapsiblePanel";
 import { MeasurementListPanel } from "./MeasurementListPanel";
 import { PerfHud } from "./PerfHud";
 import { ViewAxisControls } from "./ViewAxisControls";
@@ -37,7 +35,6 @@ import {
   useScopedPlaybackStore,
   useScopedPipelineUIStore,
   useScopedInspectorStore,
-  useScopedBuildStore,
   usePipelineStoreApi,
   useViewStateStoreApi,
 } from "../stores/MeganeProvider";
@@ -71,12 +68,6 @@ import { useThemeStore, themeToHex } from "../stores/useThemeStore";
 export interface MeganeViewerUiOptions {
   /** Pipeline editor panel on the right, with its toolbar and node graph. */
   pipelineEditor: boolean;
-  /**
-   * Build panel (structure editing) under the Pipeline panel in the same
-   * column, with its own collapsed stub. Independent of `pipelineEditor`:
-   * the edit history lives on the pipeline's loader node either way.
-   */
-  build: boolean;
   /** "Reset View" button in the top-left corner. */
   resetView: boolean;
   /**
@@ -105,7 +96,6 @@ export interface MeganeViewerUiOptions {
  */
 export const DEFAULT_MEGANE_VIEWER_UI: Readonly<MeganeViewerUiOptions> = Object.freeze({
   pipelineEditor: true,
-  build: true,
   resetView: true,
   viewAxes: true,
   perfHud: true,
@@ -114,23 +104,8 @@ export const DEFAULT_MEGANE_VIEWER_UI: Readonly<MeganeViewerUiOptions> = Object.
   measurement: true,
 });
 
-/** Bottom offset shared by the right-column panels (clear of the Timeline). */
+/** Bottom offset of the Pipeline panel (clear of the Timeline). */
 const PANEL_BOTTOM = 60;
-/** Gap between the Pipeline panel and the Build stub under it. */
-const PANEL_GAP = 12;
-/** Height reserved for the Build panel's collapsed stub (the "◀ Build" button). */
-const BUILD_STUB_HEIGHT = 36;
-/** Where the Pipeline panel ends while the Build stub sits under it. */
-const PIPELINE_BOTTOM_WITH_STUB = PANEL_BOTTOM + PANEL_GAP + BUILD_STUB_HEIGHT;
-/** Top offset shared by the right-column panels. */
-const PANEL_TOP = 12;
-/** Height of the Pipeline panel's collapsed stub (the "◀ Pipeline" button). */
-const PIPELINE_STUB_HEIGHT = 36;
-/**
- * Where the Build panel starts while the Pipeline stub sits above it: the two
- * panels are exclusive, and each leaves the other's stub reachable.
- */
-const BUILD_TOP_WITH_STUB = PANEL_TOP + PIPELINE_STUB_HEIGHT + PANEL_GAP;
 
 interface MeganeViewerProps {
   playing?: boolean;
@@ -240,7 +215,6 @@ export function MeganeViewer({
   // typechecks. A spread would copy that `undefined` over the `true` default
   // and hide a tool the documented contract keeps visible.
   const showPipelineEditor = ui?.pipelineEditor ?? DEFAULT_MEGANE_VIEWER_UI.pipelineEditor;
-  const showBuild = ui?.build ?? DEFAULT_MEGANE_VIEWER_UI.build;
   const showResetView = ui?.resetView ?? DEFAULT_MEGANE_VIEWER_UI.resetView;
   const showViewAxes = ui?.viewAxes ?? DEFAULT_MEGANE_VIEWER_UI.viewAxes;
   const showPerfHud = ui?.perfHud ?? DEFAULT_MEGANE_VIEWER_UI.perfHud;
@@ -248,22 +222,17 @@ export function MeganeViewer({
   const showTooltip = ui?.tooltip ?? DEFAULT_MEGANE_VIEWER_UI.tooltip;
   const showMeasurement = ui?.measurement ?? DEFAULT_MEGANE_VIEWER_UI.measurement;
 
-  // Right-edge inset the orthographic frustum leaves free for the right
-  // column: zero when neither the Pipeline panel nor the Build panel is
-  // expanded (or both are switched off entirely).
+  // Right-edge inset the orthographic frustum leaves free for the Pipeline
+  // panel: zero when it is collapsed or switched off entirely.
   //
-  // Depends on the `show*` flags for real rather than reading them through a
+  // Depends on the `show*` flag for real rather than reading it through a
   // ref: with a ref the callback never changes identity, which makes every dep
   // array listing it decorative and leaves correctness resting on hand-added
   // deps that exhaustive-deps cannot defend. Consumers only re-run on a
   // visibility change, and Viewport's mount effect ignores prop identity.
-  const buildOpenRef = useRef(false);
   const rightInset = useCallback(
-    () =>
-      (showPipelineEditor && !pipelineCollapsedRef.current) || (showBuild && buildOpenRef.current)
-        ? pipelineWidthRef.current + 12
-        : 0,
-    [showPipelineEditor, showBuild],
+    () => (showPipelineEditor && !pipelineCollapsedRef.current ? pipelineWidthRef.current + 12 : 0),
+    [showPipelineEditor],
   );
 
   // Shared atom selection & measurement
@@ -294,55 +263,10 @@ export function MeganeViewer({
   const publishBoxResult = useScopedInspectorStore((s) => s.publishBoxResult);
   const publishPickedAtom = useScopedInspectorStore((s) => s.publishPickedAtom);
 
-  // Build panel ⇄ 3D view bridge: the panel installs its click / drag
-  // handlers in the build store; the Viewport receives them only while the
-  // panel is open so the view otherwise keeps its pick / measure semantics.
-  // The panel is a peer of the Pipeline panel — its own CollapsiblePanel with
-  // its own stub in the same column — and the two are exclusive: the column
-  // shows the pipeline (view) or the Build panel (edit), never both. Opening
-  // one collapses the other; closing Build from its header brings the
-  // pipeline back to where it was.
-  const buildOpen = useScopedPipelineUIStore((s) => s.buildOpen);
-  const setBuildOpen = useScopedPipelineUIStore((s) => s.setBuildOpen);
-  const buildActive = showBuild && buildOpen;
-  const buildHandlers = useScopedBuildStore((s) => s.handlers);
-  const buildPanelRef = useRef<HTMLDivElement | null>(null);
-  // Whether the pipeline panel was expanded when Build took the column.
-  const pipelineBeforeBuildRef = useRef<boolean | null>(null);
-  useEffect(() => {
-    if (!buildActive) return;
-    // Whatever opened Build (its stub, the loader node's "Open Build", a host
-    // setting the flag): the pipeline panel gives way.
-    pipelineBeforeBuildRef.current = pipelineCollapsedRef.current;
-    setPipelineCollapsed(true);
-  }, [buildActive]);
-  const handleToggleBuild = useCallback(() => {
-    if (buildOpen) {
-      setBuildOpen(false);
-      if (pipelineBeforeBuildRef.current === false) setPipelineCollapsed(false);
-      pipelineBeforeBuildRef.current = null;
-    } else {
-      setBuildOpen(true);
-    }
-  }, [setBuildOpen, buildOpen]);
-  // An open Build panel is edit mode: the pipeline store then shows the
-  // loader's output (file + edits) instead of the graph's (editView.ts), and
-  // re-applies the graph when the panel closes or the host hides it.
-  useEffect(() => {
-    pipelineApi.getState().setEditMode(buildActive);
-    return () => pipelineApi.getState().setEditMode(false);
-  }, [pipelineApi, buildActive]);
-  // Every change to the edit node bumps this; the Viewport keeps the camera
-  // in place for the snapshot that follows (see `Viewport.preserveCameraKey`).
+  // Every change to a loader's edit list bumps this; the Viewport keeps the
+  // camera in place for the snapshot that follows (see
+  // `Viewport.preserveCameraKey`).
   const editRevision = useScopedPipelineStore((s) => s.editRevision);
-  const buildSelected = useScopedBuildStore((s) => s.selected);
-  const buildPendingBondAtom = useScopedBuildStore((s) => s.pendingBondAtom);
-  const buildPreview = useMemo(() => {
-    if (!buildActive) return null;
-    const set = new Set(buildSelected);
-    if (buildPendingBondAtom !== null) set.add(buildPendingBondAtom);
-    return set.size > 0 ? [...set] : null;
-  }, [buildActive, buildSelected, buildPendingBondAtom]);
 
   const handleInspectorPick = useCallback(
     (atomIndex: number) => {
@@ -603,13 +527,8 @@ export function MeganeViewer({
   }, [showTooltip]);
 
   const handleTogglePipeline = useCallback(() => {
-    // Expanding the pipeline takes the column back from the Build panel.
-    if (pipelineCollapsedRef.current) {
-      pipelineBeforeBuildRef.current = null;
-      setBuildOpen(false);
-    }
     setPipelineCollapsed((prev) => !prev);
-  }, [setBuildOpen]);
+  }, []);
 
   // Tour anchor — invisible rectangle the guide tour highlights when it
   // points to the Viewport. Sized to fill the visible 3D canvas region,
@@ -619,33 +538,27 @@ export function MeganeViewer({
   const updateTourAnchor = useCallback(() => {
     const el = tourAnchorRef.current;
     if (!el) return;
-    const columnOpen =
-      (showPipelineEditor && !pipelineCollapsedRef.current) || (showBuild && buildOpenRef.current);
-    const right = columnOpen
-      ? pipelineWidthRef.current + 24
-      : showPipelineEditor || showBuild
+    const right = !showPipelineEditor
+      ? 24
+      : pipelineCollapsedRef.current
         ? 60
-        : 24;
+        : pipelineWidthRef.current + 24;
     el.style.right = `${right}px`;
-  }, [showPipelineEditor, showBuild]);
+  }, [showPipelineEditor]);
 
   const handlePipelineWidthChange = useCallback(
     (w: number) => {
       pipelineWidthRef.current = w;
       rendererRef.current?.setViewInsets(0, rightInset());
       updateTourAnchor();
-      // The Build panel shares the column: follow the drag without a re-render.
-      const build = buildPanelRef.current;
-      if (build) build.style.width = `${w}px`;
     },
     [rightInset, updateTourAnchor],
   );
 
   useEffect(() => {
-    buildOpenRef.current = buildActive;
     rendererRef.current?.setViewInsets(0, rightInset());
     updateTourAnchor();
-  }, [pipelineCollapsed, buildActive, rightInset, updateTourAnchor]);
+  }, [pipelineCollapsed, rightInset, updateTourAnchor]);
 
   const handleResetView = useCallback(() => {
     const renderer = rendererRef.current;
@@ -713,13 +626,11 @@ export function MeganeViewer({
         // Gated on the panel, not on `inspectorActive`, so the default
         // configuration behaves exactly as before: these carry Inspector
         // state that only the panel can produce or clear.
-        previewIndices={showPipelineEditor ? (buildActive ? buildPreview : previewIndices) : null}
+        previewIndices={showPipelineEditor ? previewIndices : null}
         boxSelectActive={showPipelineEditor && boxSelectActive}
         onBoxSelect={publishBoxResult}
         onInspectorPick={handleInspectorPick}
         inspectorActive={inspectorActive}
-        buildActive={buildActive}
-        buildHandlers={buildActive ? buildHandlers : null}
         preserveCameraKey={editRevision}
       />
       <div
@@ -793,27 +704,12 @@ export function MeganeViewer({
           collapsed={pipelineCollapsed}
           onToggleCollapse={handleTogglePipeline}
           onWidthChange={handlePipelineWidthChange}
-          bottom={showBuild ? PIPELINE_BOTTOM_WITH_STUB : PANEL_BOTTOM}
+          bottom={PANEL_BOTTOM}
           rendererRef={rendererRef}
           totalFrames={totalFrames}
           currentFrame={currentFrame}
           onSeek={effectiveOnSeek}
         />
-      )}
-      {showBuild && (
-        <CollapsiblePanel
-          title="Build"
-          collapsed={!buildOpen}
-          onToggleCollapse={handleToggleBuild}
-          collapseLabel="Close Build panel"
-          width={pipelineWidthRef.current}
-          top={showPipelineEditor ? BUILD_TOP_WITH_STUB : PANEL_TOP}
-          bottom={PANEL_BOTTOM}
-          stubAnchor="bottom"
-          containerRef={buildPanelRef}
-        >
-          <BuildPanel />
-        </CollapsiblePanel>
       )}
       {timelineVisible && (
         <Timeline

@@ -70,7 +70,6 @@ function Panel({ label, stores }: PanelProps) {
             testContext="multi-instance"
             ui={{
               pipelineEditor: false,
-              build: false,
               perfHud: false,
               resetView: false,
               viewAxes: false,

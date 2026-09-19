@@ -87,7 +87,7 @@ Full runbook including environment setup, per-host quirks, and matrix expansion 
 | Full sweep                | `npm run test:e2e`                                                                                                                              | All Playwright projects                                                                                                                                                          |
 | Host projects             | `:webapp`, `:contract`, `:widget-jupyterlab`, `:widget-vscode`, `:jupyterlab-doc`, `:vscode`                                                    | `:webapp` / `:contract` run a Vite static server on port 15173; `:widget-vscode` / `:vscode` need `MEGANE_E2E_MODE=1` + code-server (see below)                                  |
 | Feature × 5-host matrices | `:modify-node`, `:camera`, `:measurement`, `:subsystems`, `:trajectory-bonds`                                                                   | Each runs the feature on `webapp`, `jupyterlab-doc`, `vscode`, `widget-jupyterlab`, `widget-vscode`. Per-host variants exist (e.g. `:trajectory-bonds:webapp`, `:camera:webapp`) |
-| Single-feature projects   | `:format-loading`, `:playback`, `:sidebar`, `:licorice`, `:widget-api`, `:widget-examples`, `:pipeline-editor`, `:pipeline-file`, `:build`, `:render-modal`, `:atom-bond-junction`, `:templates`, `:phase2` | Webapp host unless the project name encodes another                                                                                                                              |
+| Single-feature projects   | `:format-loading`, `:playback`, `:sidebar`, `:licorice`, `:widget-api`, `:widget-examples`, `:pipeline-editor`, `:pipeline-file`, `:builder`, `:render-modal`, `:atom-bond-junction`, `:templates`, `:phase2` | Webapp host unless the project name encodes another                                                                                                                              |
 | Legacy mjs runner         | `:vscode:legacy`, `:vscode:legacy:update`                                                                                                       | `tests/e2e/vscode_full_screen.test.mjs`                                                                                                                                          |
 | Re-baseline flag          | `MEGANE_E2E_UPDATE=1 npm run test:e2e:<project>`                                                                                                | Unlinks the existing baseline before capture                                                                                                                                     |
 
@@ -196,13 +196,13 @@ Rules for keeping the two hosts in sync:
 - VSCode extension workspace: `vscode-megane/` (extension code + `vite.webview.config.ts` for the webview bundle)
 - JupyterLab labextension source: `jupyterlab-megane/` (built with `@jupyterlab/builder` / webpack, imports the shared `src/` viewer via webpack alias `@megane/*`)
 - Vite configs at repo root:
-  - `vite.config.ts` — webapp
+  - `vite.config.ts` — webapp (three entries: `index.html` the viewer, `builder.html` megane Builder — the standalone structure editor, `multi-instance.html` the two-viewer E2E harness)
   - `vite.widget.config.ts` — anywidget bundle
   - `vite.lib.config.ts` — npm library (`megane-viewer`) bundle
   - `vite.docs-demo.config.ts` — docs demo build
   - VSCode webview config lives at `vscode-megane/vite.webview.config.ts` (not at repo root)
 - Playwright config at repo root: `playwright.config.ts` (declares all E2E projects)
-- App builds to: `python/megane/static/app/`
+- App builds to: `python/megane/static/app/` (the viewer at `/`, megane Builder at `/builder.html`)
 - Widget builds to: `dist/`
 - JupyterLab labextension builds to: `wheel-share/data/share/jupyter/labextensions/megane-jupyterlab/` and is shipped in the wheel via `[tool.maturin] data = "wheel-share"`
 - Test fixtures: `tests/fixtures/` (PDB, XYZ, XTC files)

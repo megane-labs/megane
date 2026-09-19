@@ -353,7 +353,8 @@ Sources of truth: `crates/megane-wasm/src/lib.rs` (browser parsers), `crates/meg
 | Crystallographic symmetry expansion for CIF (asymmetric unit → full cell) | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ (`Symmetry`) |
 | Wrap / unwrap periodic coordinates (pipeline node) | ✓ | ✓ (via pipeline) | ✓ | ✓ | ✓ | ✓ (`Wrap`) |
 | Replicate supercell (pipeline node) | ✓ | ✓ (via pipeline) | ✓ | ✓ | ✓ | ✓ (`Replicate`) |
-| Structure editing — Build panel + `load_structure.edits` (add / delete / move atoms, bonds, elements) | ✓ | ✓ (via pipeline) | ✓ | ✓ | ✓ | ✓ (`LoadStructure(edits=…)`) |
+| Structure editing — megane Builder (`/builder.html`: open a file or start from an empty cell; add / delete / move atoms, bonds, elements; save XYZ / PDB / MOL) | ✓ | — | — | — | — | — |
+| Edit-history replay on `load_structure.edits` (the Builder's history format, applied to the file as loaded) | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ (`LoadStructure(edits=…)`) |
 | Structure export (XYZ / PDB / MOL writer) | ✓ | — | ✓ | ✓ (save dialog) | ✓ | ✓ (`write_structure` / `save_structure`) |
 | `frame_change` callback | ✓ (React prop) | ✓ (Python event) | ✓ (status bar) | ✓ (status bar) | ✓ (React prop) | n/a |
 | `selection_change` / `measurement` events | ✓ (React props) | ✓ | ✓² | ✓² | ✓ (React props) | n/a |

@@ -204,10 +204,9 @@ describe("LoadStructureNode", () => {
     expect(trajectoryHandle.style.background).not.toBe("rgb(203, 213, 225)");
   });
 
-  // The Build panel's history rides on this node; the graph shows only a
-  // count and a way back to the panel (the ops themselves live in the panel).
-  it("shows no edit badge without edits, and the count plus Open Build with them", () => {
-    usePipelineUIStore.setState({ buildOpen: false });
+  // An edit history (Builder document, chat, builder script) rides on this
+  // node; the graph shows only a count.
+  it("shows no edit badge without edits, and the count with them", () => {
     const plain = seedPipelineStore("load_structure", { id: "ls1", params: { fileName: "a.xyz" } });
     const { unmount } = render(
       <LoadStructureNode {...nodeProps("ls1", plain.data.params as LoadStructureParams)} />,
@@ -224,8 +223,6 @@ describe("LoadStructureNode", () => {
     );
     expect(screen.getByTestId("load-structure-edits").textContent).toContain("1 edit");
     expect(screen.getByTestId("load-structure-edits").textContent).not.toContain("1 edits");
-    fireEvent.click(screen.getByTestId("load-structure-open-build"));
-    expect(usePipelineUIStore.getState().buildOpen).toBe(true);
     unmount2();
 
     const many = seedPipelineStore("load_structure", {
@@ -240,6 +237,5 @@ describe("LoadStructureNode", () => {
     });
     render(<LoadStructureNode {...nodeProps("ls3", many.data.params as LoadStructureParams)} />);
     expect(screen.getByTestId("load-structure-edits").textContent).toContain("2 edits");
-    usePipelineUIStore.setState({ buildOpen: false });
   });
 });

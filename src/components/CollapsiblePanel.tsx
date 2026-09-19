@@ -3,7 +3,7 @@
  * Used by AppearancePanel and PipelineEditor.
  */
 
-import type { CSSProperties, ReactNode, Ref } from "react";
+import type { CSSProperties, ReactNode } from "react";
 
 /** Frosted glass panel container style. */
 export const panelContainerStyle: CSSProperties = {
@@ -95,10 +95,6 @@ interface CollapsiblePanelProps {
    * that stretches the full column when expanded.
    */
   stubAnchor?: "top" | "bottom";
-  /** Title of the collapse button on the expanded panel (default: "Collapse panel"). */
-  collapseLabel?: string;
-  /** Ref to the expanded panel's container (e.g. to resize it imperatively). */
-  containerRef?: Ref<HTMLDivElement>;
   /** Extra header content (buttons etc.) placed before the collapse button. */
   headerExtra?: ReactNode;
   /** Extra elements prepended inside the panel container (e.g. resize handle). */
@@ -120,8 +116,6 @@ export function CollapsiblePanel({
   bottom = 60,
   height,
   stubAnchor,
-  collapseLabel = "Collapse panel",
-  containerRef,
   headerExtra,
   containerExtra,
   children,
@@ -159,7 +153,6 @@ export function CollapsiblePanel({
 
   return (
     <div
-      ref={containerRef}
       style={{ ...panelContainerStyle, width, right, ...placement }}
       data-testid={panelTestId}
       data-collapsed="false"
@@ -171,8 +164,8 @@ export function CollapsiblePanel({
           onClick={onToggleCollapse}
           data-testid={`${panelTestId}-toggle`}
           style={collapseButtonStyle}
-          title={collapseLabel}
-          aria-label={collapseLabel}
+          title="Collapse panel"
+          aria-label="Collapse panel"
           aria-expanded="true"
         >
           &#9654;

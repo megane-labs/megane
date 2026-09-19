@@ -10,7 +10,7 @@ import type { EditOp, EditAtomRef } from "../types";
  * the loaded Snapshot, atoms created by an `add_atom` / `add_fragment` op by
  * the id that op assigned. Deleting an atom therefore never shifts the meaning
  * of a later op, which is what makes the op list a safe undo history (the
- * Build panel undoes by dropping the last op and re-running the pipeline).
+ * Builder undoes by dropping the last op and replaying the rest).
  *
  * The result is a brand-new immutable Snapshot; the renderer keys on Snapshot
  * identity, so a re-run after a new op is a real reload.
