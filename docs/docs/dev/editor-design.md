@@ -141,7 +141,8 @@ offers: `presets.ts` (small molecules with 3D geometries), a persisted
 `useLibraryStore` (`store.ts`, the user's molecules in `localStorage`,
 sanitized on read), `fragment.ts` (centring, Hill formulas, the flat-sketch
 rescale, `autoPlacement`, and `fragmentOp` — the `add_fragment` op a
-placement writes), `sketch.ts` (a molfile, file or selection → library
+placement writes), `hydrogens.ts` (valence-rule hydrogen counts and their
+3D placement), `sketch.ts` (a molfile, file or selection → library
 molecule, through the shared parsers), and the UI (`LibrarySection`,
 `SketchModal`). Ketcher (`ketcher-react` + the standalone Indigo engine) is
 mounted only by `KetcherEditor.tsx`, which `SketchModal` loads lazily, so the
@@ -173,11 +174,13 @@ save dialog.
 - **Bake to file** — collapsing a long history into a re-loaded file. The
   writer makes this possible; it needs a host-specific "replace the loaded
   file" flow.
-- **Hydrogen addition / valence rules** — chemistry belongs in Python (RDKit as
-  an optional dependency), not in the TypeScript panel.
-- **3D embedding of sketches** — the library keeps a Ketcher sketch flat
-  (rescaled to Å, centred); generating a conformer belongs with the other
-  chemistry in Python (RDKit), not in the TypeScript app.
+- **3D embedding of sketches** — the library keeps a Ketcher sketch's heavy
+  atoms flat (rescaled to Å, centred); generating a conformer belongs with
+  the other chemistry in Python (RDKit), not in the TypeScript app. The one
+  piece of chemistry the library does carry is the valence-rule hydrogen
+  addition in `hydrogens.ts` (implicit hydrogens of a sketch, placed by
+  steric number), because a sketch without its hydrogens is not the molecule
+  the user drew.
 - **Trajectory editing** — the loader's trajectory output follows the file;
   an edited atom count no longer matches the frames.
 - **Save in place** — VS Code's editor is a `CustomReadonlyEditorProvider` and

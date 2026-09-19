@@ -1,7 +1,9 @@
 /**
  * The "Sketch a molecule" dialog: Ketcher in a modal, a name field, and an
  * *Add to library* button that reads the sketch back as a molfile and turns
- * it into a library molecule (`draftFromMolfile`).
+ * it into a library molecule (`draftFromMolfile`). The hydrogens a sketch
+ * leaves implicit are added by default; *Add hydrogens* turns that off for
+ * a bare skeleton.
  *
  * Ketcher is loaded on demand. While it loads, and if it cannot load at all
  * (offline bundle, blocked WASM), the dialog falls back to a plain molfile
@@ -45,6 +47,7 @@ export function SketchModal({ initialMolfile, initialName, onAdd, onClose }: Ske
   const [name, setName] = useState(initialName ?? "");
   const [pasteMode, setPasteMode] = useState(false);
   const [molText, setMolText] = useState(initialMolfile ?? "");
+  const [withHydrogens, setWithHydrogens] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [ready, setReady] = useState(false);
@@ -72,14 +75,14 @@ export function SketchModal({ initialMolfile, initialName, onAdd, onClose }: Ske
         if (!ketcher) throw new Error("The sketcher is still loading.");
         molfile = await ketcher.getMolfile("v2000");
       }
-      const draft = await draftFromMolfile(molfile, name);
+      const draft = await draftFromMolfile(molfile, name, { addHydrogens: withHydrogens });
       onAdd(draft);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
       setBusy(false);
     }
-  }, [molText, pasteMode, name, onAdd]);
+  }, [molText, pasteMode, name, withHydrogens, onAdd]);
 
   const canAdd = !busy && (pasteMode ? molText.trim().length > 0 : ready);
 
@@ -156,9 +159,18 @@ export function SketchModal({ initialMolfile, initialName, onAdd, onClose }: Ske
           >
             Paste MOL
           </span>
+          <label style={{ display: "flex", alignItems: "center", gap: 4, ...hintStyle }}>
+            <input
+              type="checkbox"
+              data-testid="sketch-hydrogens"
+              checked={withHydrogens}
+              onChange={(e) => setWithHydrogens(e.target.checked)}
+            />
+            Add hydrogens
+          </label>
           <span style={{ flex: 1 }} />
           <span style={hintStyle}>
-            Sketches are flat; add explicit hydrogens in Ketcher if you want them.
+            Sketches stay flat; missing hydrogens are added from valence and placed in 3D.
           </span>
         </div>
         <div
