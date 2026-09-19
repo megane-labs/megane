@@ -136,6 +136,22 @@ the Inspector's box select:
 - otherwise a press that barely moves is a click, reported to `pick` with the
   atom index or, on empty space, the world point at the pivot's depth.
 
+**Library.** `src/builder/library/` holds the molecule library the sidebar
+offers: `presets.ts` (small molecules with 3D geometries), a persisted
+`useLibraryStore` (`store.ts`, the user's molecules in `localStorage`,
+sanitized on read), `fragment.ts` (centring, Hill formulas, the flat-sketch
+rescale, `autoPlacement`, and `fragmentOp` — the `add_fragment` op a
+placement writes), `sketch.ts` (a molfile, file or selection → library
+molecule, through the shared parsers), and the UI (`LibrarySection`,
+`SketchModal`). Ketcher (`ketcher-react` + the standalone Indigo engine) is
+mounted only by `KetcherEditor.tsx`, which `SketchModal` loads lazily, so the
+sketcher's bundle and WASM are fetched on first use and the Builder itself
+stays small. A molecule enters the document through
+`BuilderStore.addFragment`, either at `autoPlacement` (the *Add* button) or
+where the *Place* tool's click landed (`BuildHandlers.pick` with
+`placeSource` set); the new atoms are selected so a Move drag carries them
+together.
+
 Rendered atom indices are translated to op refs through `result.outputRefs`
 before an op is written, so an op always names the atom the user saw. Drags
 write one `move_atoms` op at press time and rewrite its delta while the
@@ -159,8 +175,9 @@ save dialog.
   file" flow.
 - **Hydrogen addition / valence rules** — chemistry belongs in Python (RDKit as
   an optional dependency), not in the TypeScript panel.
-- **Fragment library** — `add_fragment` exists in the op set; a picker UI does
-  not yet.
+- **3D embedding of sketches** — the library keeps a Ketcher sketch flat
+  (rescaled to Å, centred); generating a conformer belongs with the other
+  chemistry in Python (RDKit), not in the TypeScript app.
 - **Trajectory editing** — the loader's trajectory output follows the file;
   an edited atom count no longer matches the frames.
 - **Save in place** — VS Code's editor is a `CustomReadonlyEditorProvider` and

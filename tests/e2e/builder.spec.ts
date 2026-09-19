@@ -5,7 +5,9 @@
  * always shows the document (source + edits) and every click is an edit.
  * Covers starting from an empty cell, placing atoms with real clicks, the
  * tools driven through the installed handlers, undo / redo, opening a file,
- * and saving. Asserts DOM and store state rather than pixels.
+ * saving, and the molecule library (presets, the Place tool, and a sketch
+ * drawn in the real Ketcher build). Asserts DOM and store state rather than
+ * pixels.
  */
 
 import { test, expect, type Page } from "playwright/test";
@@ -17,6 +19,8 @@ interface BuilderState {
   nAtoms: number | null;
   nBonds: number | null;
   edge: number | null;
+  selected: number[];
+  tool: string;
 }
 
 async function builderState(page: Page): Promise<BuilderState> {
@@ -30,6 +34,8 @@ async function builderState(page: Page): Promise<BuilderState> {
             result: {
               snapshot: { nAtoms: number; nBonds: number; box: Float32Array | null };
             } | null;
+            selected: number[];
+            tool: string;
           };
         };
       }
@@ -42,6 +48,8 @@ async function builderState(page: Page): Promise<BuilderState> {
       nAtoms: s.result?.snapshot.nAtoms ?? null,
       nBonds: s.result?.snapshot.nBonds ?? null,
       edge: s.result?.snapshot.box ? s.result.snapshot.box[0] : null,
+      selected: s.selected,
+      tool: s.tool,
     };
   });
 }
@@ -167,5 +175,115 @@ test.describe("builder: webapp", () => {
       .toArray()
       .then((chunks) => Buffer.concat(chunks as Buffer[]).toString("utf8"));
     expect(text.split("\n")[0].trim()).toBe("23");
+  });
+
+  test("adds library presets, places one with the Place tool, and keeps a Ketcher sketch", async ({
+    page,
+  }) => {
+    test.setTimeout(120_000);
+    const root = page.locator('[data-testid="megane-builder"]');
+    const library = page.locator('[data-testid="builder-library"]');
+    await expect(library).toBeVisible();
+    await expect(page.locator('[data-testid="builder-library-count"]')).toHaveText("10 molecules");
+    const water = page.locator('[data-testid="builder-library-item-preset:water"]');
+
+    // Add is inert without a document; with an empty cell it lands at the centre.
+    await water.locator('[data-testid="builder-library-add"]').click();
+    await expect(root).toHaveAttribute("data-atom-count", "0");
+    await page.locator('[data-testid="builder-welcome-new"]').click();
+    await waitForReady(page);
+    await water.locator('[data-testid="builder-library-add"]').click();
+    await expect(root).toHaveAttribute("data-atom-count", "3");
+    await expect(root).toHaveAttribute("data-bond-count", "2");
+    let state = await builderState(page);
+    expect(state.edits[0]).toMatchObject({ op: "add_fragment", translate: [5, 5, 5] });
+    expect(state.selected).toEqual([0, 1, 2]);
+    await expect(page.locator('[data-testid="builder-op-list"] li').first()).toHaveText(
+      /Add water-\d+ \(3 atoms\)/,
+    );
+
+    // A second Add goes beside the first molecule, past its bounding box.
+    await page
+      .locator(
+        '[data-testid="builder-library-item-preset:benzene"] [data-testid="builder-library-add"]',
+      )
+      .click();
+    await expect(root).toHaveAttribute("data-atom-count", "15");
+    state = await builderState(page);
+    const second = state.edits[1] as { translate: [number, number, number] };
+    expect(second.translate[0]).toBeGreaterThan(5 + 0.75 + 2);
+
+    // Place: choose methane, then a real click on empty space stamps it there.
+    const methane = page.locator('[data-testid="builder-library-item-preset:methane"]');
+    await methane.locator('[data-testid="builder-library-place"]').click();
+    await expect(methane).toHaveAttribute("data-placing", "true");
+    await expect(page.locator('[data-testid="builder-tool-place"]')).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+    await expect(page.locator('[data-testid="builder-tool-hint"]')).toContainText(
+      "Placing Methane",
+    );
+    const viewport = page.locator('[data-testid="viewer-root"]');
+    const box = (await viewport.boundingBox())!;
+    await page.mouse.click(box.x + box.width * 0.3, box.y + box.height * 0.8);
+    await expect(root).toHaveAttribute("data-atom-count", "20");
+    state = await builderState(page);
+    expect(state.edits[2]).toMatchObject({ op: "add_fragment" });
+    expect(state.selected).toEqual([15, 16, 17, 18, 19]);
+    expect(state.tool).toBe("place");
+    // The Place tool ignores clicks on atoms.
+    await pickAtom(page, 0);
+    await expect(root).toHaveAttribute("data-atom-count", "20");
+
+    // Sketch: Ketcher (the real standalone build) loads in the dialog; a
+    // molecule set through its API comes back as a flat, Å-scaled library
+    // entry that persists across a reload.
+    await page.locator('[data-testid="builder-library-sketch"]').click();
+    await expect(page.locator('[data-testid="sketch-modal"]')).toBeVisible();
+    await page.waitForFunction(
+      () => !!(window as unknown as { __megane_test_ketcher?: unknown }).__megane_test_ketcher,
+      null,
+      { timeout: 60_000 },
+    );
+    await page.evaluate(async () => {
+      const k = (
+        window as unknown as {
+          __megane_test_ketcher: { setMolecule: (s: string) => Promise<void> };
+        }
+      ).__megane_test_ketcher;
+      await k.setMolecule("CCO");
+    });
+    await page.locator('[data-testid="sketch-name"]').fill("Ethanol sketch");
+    await page.locator('[data-testid="sketch-add"]').click();
+    await expect(page.locator('[data-testid="sketch-modal"]')).toHaveCount(0);
+    await expect(page.locator('[data-testid="builder-library-count"]')).toHaveText("11 molecules");
+    const sketched = page.locator('[data-testid="builder-library-item-name"]', {
+      hasText: "Ethanol sketch",
+    });
+    await expect(sketched).toHaveCount(1);
+    const row = page.locator('[data-testid^="builder-library-item-user:"]');
+    await expect(row).toContainText("C2O");
+    await expect(row).toContainText("flat");
+    await row.locator('[data-testid="builder-library-add"]').click();
+    await expect(root).toHaveAttribute("data-atom-count", "23");
+    await expect(root).toHaveAttribute("data-bond-count", "20");
+    state = await builderState(page);
+    const sketchOp = state.edits[3] as { positions: number[]; bonds: [number, number][] };
+    // Ketcher draws unit bonds; the library rescaled C–C to ~1.5 Å.
+    const [a, b] = sketchOp.bonds[0];
+    const cc = Math.hypot(
+      sketchOp.positions[a * 3] - sketchOp.positions[b * 3],
+      sketchOp.positions[a * 3 + 1] - sketchOp.positions[b * 3 + 1],
+    );
+    expect(cc).toBeGreaterThan(1.3);
+    expect(cc).toBeLessThan(1.7);
+
+    // The user library survives a reload (localStorage); presets do not duplicate.
+    await page.reload({ waitUntil: "domcontentloaded" });
+    await expect(page.locator('[data-testid="builder-library-count"]')).toHaveText("11 molecules");
+    await expect(sketched).toHaveCount(1);
+    await row.locator('[data-testid="builder-library-remove"]').click();
+    await expect(page.locator('[data-testid="builder-library-count"]')).toHaveText("10 molecules");
   });
 });

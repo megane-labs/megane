@@ -87,6 +87,13 @@ export function useBuilderHandlers(api: StoreApi<BuilderStore>): BuildHandlers {
           // Moves are drags (below); a bare click selects.
           if (atomIndex !== null) state.setSelected([atomIndex]);
           return;
+        case "place": {
+          // Stamp the chosen library molecule at the clicked point; a click
+          // on an atom is ignored so a molecule never lands on top of one.
+          if (atomIndex !== null || !info.world || !state.placeSource) return;
+          state.addFragment(state.placeSource, info.world);
+          return;
+        }
       }
     },
     [api, refFor],

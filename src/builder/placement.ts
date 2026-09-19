@@ -81,7 +81,7 @@ export function describeOp(op: EditOp): string {
     case "delete_bond":
       return `Remove bond ${ref(op.a)} – ${ref(op.b)}`;
     case "add_fragment":
-      return `Add fragment "${op.id}" (${op.elements.length} atoms)`;
+      return `Add ${op.id} (${op.elements.length} atom${op.elements.length === 1 ? "" : "s"})`;
     case "set_cell":
       return op.box ? "Set cell" : "Remove cell";
     default:

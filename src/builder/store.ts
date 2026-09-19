@@ -23,6 +23,8 @@ import type { EditOp } from "../pipeline/types";
 import type { Snapshot } from "../types";
 import { registerTestStores, GLOBAL_BUNDLE_ID } from "../stores/testRegistry";
 import type { BuildHandlers, BuildTool } from "./types";
+import { fragmentOp, newFragmentId } from "./library/fragment";
+import type { LibraryMolecule } from "./library/types";
 
 /** A structure with no atoms and a cubic cell of edge `edge` Å: the blank sheet. */
 export function emptyCellSnapshot(edge: number): Snapshot {
@@ -78,6 +80,8 @@ export interface BuilderStore {
   pendingBondAtom: number | null;
   /** Installed by the mounted app; null otherwise. */
   handlers: BuildHandlers | null;
+  /** The library molecule the Place tool stamps; null until one is chosen. */
+  placeSource: LibraryMolecule | null;
 
   // ── Document actions ──
   /** Start a document from a parsed structure. Replaces everything. */
@@ -103,6 +107,15 @@ export interface BuilderStore {
   clearSelected: () => void;
   setPendingBondAtom: (index: number | null) => void;
   setHandlers: (handlers: BuildHandlers | null) => void;
+  /** Choose the molecule the Place tool stamps (and switch to that tool), or clear it. */
+  setPlaceSource: (molecule: LibraryMolecule | null) => void;
+  /**
+   * Drop a library molecule into the document with its centroid at `at`, as
+   * one `add_fragment` op, and select the new atoms so a Move drag carries
+   * the whole molecule. Returns the op's fragment id, or null when the
+   * document is not editable.
+   */
+  addFragment: (molecule: LibraryMolecule, at: [number, number, number]) => string | null;
 }
 
 /** The structure the 3D view draws for `state`: edited, or the source under the preview. */
@@ -136,6 +149,7 @@ export const builderStateCreator: StateCreator<BuilderStore> = (set, get) => ({
   selected: [],
   pendingBondAtom: null,
   handlers: null,
+  placeSource: null,
 
   openStructure: (snapshot, labels, fileName) =>
     set({
@@ -234,6 +248,23 @@ export const builderStateCreator: StateCreator<BuilderStore> = (set, get) => ({
   clearSelected: () => set({ selected: [], pendingBondAtom: null }),
   setPendingBondAtom: (index) => set({ pendingBondAtom: index }),
   setHandlers: (handlers) => set({ handlers }),
+  setPlaceSource: (molecule) =>
+    set((s) =>
+      molecule
+        ? { placeSource: molecule, tool: "place", pendingBondAtom: null }
+        : { placeSource: null, tool: s.tool === "place" ? "select" : s.tool },
+    ),
+  addFragment: (molecule, at) => {
+    const s = get();
+    if (!canEdit(s)) return null;
+    const before = s.result!.snapshot.nAtoms;
+    const id = newFragmentId(molecule.name);
+    s.pushOp(fragmentOp(id, molecule, at));
+    const after = get().result!.snapshot.nAtoms;
+    const added = Array.from({ length: after - before }, (_, k) => before + k);
+    set({ selected: added, pendingBondAtom: null });
+    return id;
+  },
 });
 
 /** The app's store. */
