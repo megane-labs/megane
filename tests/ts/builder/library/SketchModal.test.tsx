@@ -87,7 +87,8 @@ describe("SketchModal", () => {
     expect(parseStructureText).toHaveBeenCalledWith("KETCHER-MOL", "sketch.mol");
     const draft = onAdd.mock.calls[0][0];
     expect(draft.name).toBe("Ethanol-ish");
-    expect(draft.formula).toBe("C2O");
+    // The implicit hydrogens are added by default.
+    expect(draft.formula).toBe("C2H6O");
     expect(draft.molfile).toBe("KETCHER-MOL");
     expect(draft.planar).toBe(true);
     // Clicking the backdrop closes; clicking inside does not.
@@ -97,6 +98,22 @@ describe("SketchModal", () => {
     expect(onClose).toHaveBeenCalledTimes(1);
     fireEvent.click(screen.getByTestId("sketch-cancel"));
     expect(onClose).toHaveBeenCalledTimes(2);
+  });
+
+  it("keeps the sketch bare when Add hydrogens is unticked", async () => {
+    parseStructureText.mockResolvedValue(parsed(ethanolLike()));
+    const onAdd = vi.fn();
+    render(<SketchModal onAdd={onAdd} onClose={vi.fn()} />);
+    const box = screen.getByTestId("sketch-hydrogens") as HTMLInputElement;
+    expect(box.checked).toBe(true);
+    fireEvent.click(box);
+    expect(box.checked).toBe(false);
+    await waitFor(() =>
+      expect(screen.getByTestId("sketch-add").getAttribute("aria-disabled")).toBe("false"),
+    );
+    fireEvent.click(screen.getByTestId("sketch-add"));
+    await waitFor(() => expect(onAdd).toHaveBeenCalledTimes(1));
+    expect(onAdd.mock.calls[0][0].formula).toBe("C2O");
   });
 
   it("exposes the instance in test mode and seeds an initial molfile", async () => {
@@ -128,7 +145,7 @@ describe("SketchModal", () => {
     fireEvent.click(screen.getByTestId("sketch-add"));
     await waitFor(() => expect(onAdd).toHaveBeenCalledTimes(1));
     expect(parseStructureText).toHaveBeenLastCalledWith("MOLTEXT", "sketch.mol");
-    expect(onAdd.mock.calls[0][0].name).toBe("C2O");
+    expect(onAdd.mock.calls[0][0].name).toBe("C2H6O");
     // Back to the sketcher.
     fireEvent.click(screen.getByTestId("sketch-paste-toggle"));
     await waitFor(() => expect(screen.getByTestId("ketcher-stub")).toBeTruthy());

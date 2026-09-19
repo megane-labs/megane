@@ -36,7 +36,7 @@ const parsed = (s: Snapshot) => ({
   frames: [],
   meta: null,
   vectorChannels: [],
-  scalarChannels: [],
+  scalarChannels: [] as { name: string; frames: { frame: number; values: Float32Array }[] }[],
   warnings: [],
 });
 
@@ -81,14 +81,67 @@ describe("draftFromSnapshot", () => {
 });
 
 describe("draftFromMolfile / draftFromFile", () => {
-  it("parses the molfile through the MOL parser and keeps the text", async () => {
+  it("parses the molfile through the MOL parser, adds the implicit hydrogens and keeps the text", async () => {
     parseStructureText.mockResolvedValue(parsed(snapshot([0, 0, 0, 1, 0, 0], [8, 1], [0, 1])));
     const d = await draftFromMolfile("\n\n\nmol", "");
     expect(parseStructureText).toHaveBeenCalledWith("\n\n\nmol", "sketch.mol");
     expect(d.molfile).toBe("\n\n\nmol");
     expect(d.origin).toBe("sketch");
-    expect(d.formula).toBe("HO");
+    // O–H drawn: the oxygen gets its second hydrogen, the sketch stays marked flat.
+    expect(d.formula).toBe("H2O");
+    expect(d.elements).toEqual([8, 1, 1]);
+    expect(d.bonds).toEqual([
+      [0, 1],
+      [0, 2],
+    ]);
+    expect(d.planar).toBe(true);
     await expect(draftFromMolfile("   ", "x")).rejects.toThrow(/empty/);
+  });
+
+  it("completes a flat ethanol sketch to C2H6O, centred, with the skeleton untouched", async () => {
+    parseStructureText.mockResolvedValue(
+      parsed(snapshot([0, 0, 0, 0.866, 0.5, 0, 1.732, 0, 0], [6, 6, 8], [0, 1, 1, 2])),
+    );
+    const d = await draftFromMolfile("mol", "");
+    expect(d.formula).toBe("C2H6O");
+    expect(d.elements).toEqual([6, 6, 8, 1, 1, 1, 1, 1, 1]);
+    expect(d.bonds).toHaveLength(8);
+    // Heavy atoms keep z = 0 (rescaled and centred only); the CH2 pair leaves the plane.
+    for (let i = 0; i < 3; i++) expect(d.positions[i * 3 + 2]).toBeCloseTo(0, 6);
+    expect(d.positions.some((v, k) => k % 3 === 2 && Math.abs(v) > 0.5)).toBe(true);
+    const [cx, cy, cz] = [0, 1, 2].map(
+      (k) => d.positions.filter((_, i) => i % 3 === k).reduce((a, b) => a + b, 0) / 9,
+    );
+    expect(cx).toBeCloseTo(0, 6);
+    expect(cy).toBeCloseTo(0, 6);
+    expect(cz).toBeCloseTo(0, 6);
+    expect(d.positions[3] - d.positions[0]).toBeCloseTo((2 * getCovalentRadius(6) * 0.866) / 1, 1);
+  });
+
+  it("can leave the sketch as drawn, and reads formal charges from the parser", async () => {
+    parseStructureText.mockResolvedValue(parsed(snapshot([0, 0, 0, 1, 0, 0], [6, 8], [0, 1])));
+    const bare = await draftFromMolfile("mol", "", { addHydrogens: false });
+    expect(bare.formula).toBe("CO");
+    expect(bare.elements).toEqual([6, 8]);
+
+    const charged = parsed(snapshot([0, 0, 0, 1, 0, 0], [6, 8], [0, 1]));
+    charged.scalarChannels = [
+      { name: "formal_charge", frames: [{ frame: 0, values: new Float32Array([0, -1]) }] },
+    ];
+    parseStructureText.mockResolvedValue(charged);
+    const alkoxide = await draftFromMolfile("mol", "");
+    // Methoxide: the O⁻ takes no hydrogen, the carbon its three.
+    expect(alkoxide.formula).toBe("CH3O");
+  });
+
+  it("maps formal charges through a selection subset", () => {
+    const s = snapshot([0, 0, 0, 5, 0, 0, 9, 0, 0], [6, 8, 6], []);
+    const d = draftFromSnapshot(s, "", "selection", [2, 1], {
+      addHydrogens: true,
+      formalCharges: [0, -1, 1],
+    });
+    // Atom 1 (O⁻, one H) and atom 2 (C⁺, three H).
+    expect(d.formula).toBe("CH4O");
   });
 
   it("names a file import after the file", async () => {

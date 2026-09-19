@@ -238,7 +238,7 @@ test.describe("builder: webapp", () => {
 
     // Sketch: Ketcher (the real standalone build) loads in the dialog; a
     // molecule set through its API comes back as a flat, Å-scaled library
-    // entry that persists across a reload.
+    // entry with its implicit hydrogens added, and persists across a reload.
     await page.locator('[data-testid="builder-library-sketch"]').click();
     await expect(page.locator('[data-testid="sketch-modal"]')).toBeVisible();
     await page.waitForFunction(
@@ -263,13 +263,19 @@ test.describe("builder: webapp", () => {
     });
     await expect(sketched).toHaveCount(1);
     const row = page.locator('[data-testid^="builder-library-item-user:"]');
-    await expect(row).toContainText("C2O");
+    // Ethanol drawn as C–C–O comes back as C2H6O: the six implicit hydrogens are added.
+    await expect(row).toContainText("C2H6O");
     await expect(row).toContainText("flat");
     await row.locator('[data-testid="builder-library-add"]').click();
-    await expect(root).toHaveAttribute("data-atom-count", "23");
-    await expect(root).toHaveAttribute("data-bond-count", "20");
+    await expect(root).toHaveAttribute("data-atom-count", "29");
+    await expect(root).toHaveAttribute("data-bond-count", "26");
     state = await builderState(page);
-    const sketchOp = state.edits[3] as { positions: number[]; bonds: [number, number][] };
+    const sketchOp = state.edits[3] as {
+      elements: number[];
+      positions: number[];
+      bonds: [number, number][];
+    };
+    expect(sketchOp.elements).toEqual([6, 6, 8, 1, 1, 1, 1, 1, 1]);
     // Ketcher draws unit bonds; the library rescaled C–C to ~1.5 Å.
     const [a, b] = sketchOp.bonds[0];
     const cc = Math.hypot(
@@ -278,6 +284,10 @@ test.describe("builder: webapp", () => {
     );
     expect(cc).toBeGreaterThan(1.3);
     expect(cc).toBeLessThan(1.7);
+    // The heavy atoms stay in the drawing plane; the CH2 hydrogens leave it.
+    for (let i = 0; i < 3; i++) expect(Math.abs(sketchOp.positions[i * 3 + 2])).toBeLessThan(0.05);
+    const zs = sketchOp.positions.filter((_, k) => k % 3 === 2);
+    expect(Math.max(...zs.map(Math.abs))).toBeGreaterThan(0.5);
 
     // The user library survives a reload (localStorage); presets do not duplicate.
     await page.reload({ waitUntil: "domcontentloaded" });
