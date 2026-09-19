@@ -1,25 +1,19 @@
 import type { Snapshot } from "../../types";
-import type {
-  PipelineData,
-  ParticleData,
-  CellData,
-  EditParams,
-  EditOp,
-  EditAtomRef,
-} from "../types";
+import type { EditOp, EditAtomRef } from "../types";
 
 /**
- * Edit node — replays a list of structure edits on top of the input stream.
+ * Structure edits — replays a `load_structure` node's edit list on the
+ * structure as loaded from the file (see `LoadStructureParams.edits`).
  *
  * Every op is applied in order against a working copy keyed by *atom
- * reference* rather than by index: input atoms are referenced by their index
- * in the input Snapshot, atoms created by an `add_atom` / `add_fragment` op by
+ * reference* rather than by index: file atoms are referenced by their index in
+ * the loaded Snapshot, atoms created by an `add_atom` / `add_fragment` op by
  * the id that op assigned. Deleting an atom therefore never shifts the meaning
  * of a later op, which is what makes the op list a safe undo history (the
  * Build panel undoes by dropping the last op and re-running the pipeline).
  *
- * Like `replicate`, the node emits a brand-new immutable Snapshot; the renderer
- * keys on Snapshot identity, so a re-run after a new op is a real reload.
+ * The result is a brand-new immutable Snapshot; the renderer keys on Snapshot
+ * identity, so a re-run after a new op is a real reload.
  */
 
 /** Outcome of `applyEditOps`: the edited snapshot plus provenance. */
@@ -351,81 +345,3 @@ function clampOrder(order: number | undefined): number {
  * Remap a per-atom float array (`channels` values per atom) from input atom
  * indices to output atoms. Atoms created by the edit get `fill`.
  */
-function remapPerAtom(
-  arr: Float32Array | null,
-  outputRefs: EditAtomRef[],
-  channels: number,
-  fill: number,
-): Float32Array | null {
-  if (arr === null) return null;
-  const out = new Float32Array(outputRefs.length * channels).fill(fill);
-  outputRefs.forEach((ref, i) => {
-    if (typeof ref !== "number") return;
-    for (let c = 0; c < channels; c++) out[i * channels + c] = arr[ref * channels + c];
-  });
-  return out;
-}
-
-/** Remap a selection: input atoms keep their membership, new atoms are included. */
-function remapIndices(indices: Uint32Array | null, outputRefs: EditAtomRef[]): Uint32Array | null {
-  if (indices === null) return null;
-  const selected = new Set(indices);
-  const out: number[] = [];
-  outputRefs.forEach((ref, i) => {
-    if (typeof ref !== "number" || selected.has(ref)) out.push(i);
-  });
-  return new Uint32Array(out);
-}
-
-/**
- * Executor entry. `warnings` (optional sink) receives per-op problems so the
- * dispatcher can surface them as node warnings without re-running the ops.
- */
-export function executeEdit(
-  params: EditParams,
-  inputs: Map<string, PipelineData[]>,
-  warnings: string[] = [],
-): Map<string, PipelineData> {
-  const outputs = new Map<string, PipelineData>();
-  const particle = inputs.get("particle")?.[0] as ParticleData | undefined;
-  const cellIn = inputs.get("cell")?.[0] as CellData | undefined;
-  if (!particle) return outputs;
-
-  const ops = Array.isArray(params.ops) ? params.ops : [];
-  if (ops.length === 0) {
-    outputs.set("particle", particle);
-    if (cellIn) outputs.set("cell", cellIn);
-    return outputs;
-  }
-
-  if (params.sourceAtomCount !== null && params.sourceAtomCount !== particle.source.nAtoms) {
-    warnings.push(
-      `Edits were authored against ${params.sourceAtomCount} atoms but the input has ${particle.source.nAtoms}; index refs may address different atoms`,
-    );
-  }
-
-  const result = applyEditOps(particle.source, ops);
-  warnings.push(...result.warnings);
-
-  const edited: ParticleData = {
-    ...particle,
-    source: result.snapshot,
-    indices: remapIndices(particle.indices, result.outputRefs),
-    scaleOverrides: remapPerAtom(particle.scaleOverrides, result.outputRefs, 1, 1),
-    opacityOverrides: remapPerAtom(particle.opacityOverrides, result.outputRefs, 1, 1),
-    colorOverrides: remapPerAtom(particle.colorOverrides, result.outputRefs, 3, NaN),
-    // Drawing-boundary images index the *input* atoms; they no longer apply.
-    drawingBoundary: null,
-  };
-  outputs.set("particle", edited);
-
-  if (result.snapshot.box) {
-    const cellOut: CellData = {
-      type: "cell",
-      sourceNodeId: cellIn?.sourceNodeId ?? particle.sourceNodeId,
-      box: result.snapshot.box,
-    };
-    outputs.set("cell", cellOut);
-  }
-  return outputs;
-}

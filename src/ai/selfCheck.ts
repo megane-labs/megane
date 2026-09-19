@@ -54,7 +54,6 @@ const PARTICLE_PASSTHROUGH: ReadonlySet<string> = new Set([
   "symmetry",
   "wrap",
   "replicate",
-  "edit",
   "drawing_boundary",
   "boundary_completion",
 ]);

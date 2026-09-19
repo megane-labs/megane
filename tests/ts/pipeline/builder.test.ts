@@ -8,7 +8,6 @@ import {
   Streaming,
   Filter,
   Modify,
-  Edit,
   DrawingBoundary,
   BoundaryCompletion,
   Symmetry,
@@ -183,14 +182,13 @@ describe("Modify", () => {
   });
 });
 
-describe("Edit", () => {
-  it("serializes an empty op list by default", () => {
-    const node = new Edit();
-    expect(node._toSerializedParams()).toEqual({ type: "edit", ops: [], sourceAtomCount: null });
+describe("LoadStructure edits", () => {
+  it("serializes without an edits field when there are none", () => {
+    expect(new LoadStructure("water.xyz")._toSerializedParams()).not.toHaveProperty("edits");
   });
 
-  it("carries ops and the source atom count verbatim", () => {
-    const ops = [
+  it("carries the edit list verbatim on the loader", () => {
+    const edits = [
       {
         op: "add_atom" as const,
         id: "h1",
@@ -199,25 +197,22 @@ describe("Edit", () => {
         bondTo: 0,
       },
     ];
-    const node = new Edit({ ops, sourceAtomCount: 3 });
-    expect(node._toSerializedParams()).toEqual({ type: "edit", ops, sourceAtomCount: 3 });
+    const node = new LoadStructure("water.xyz", { edits });
+    expect(node._toSerializedParams()).toMatchObject({ type: "load_structure", edits });
   });
 
-  it("round-trips through a Pipeline with particle and cell ports", () => {
+  it("round-trips through a Pipeline with no edit node in the graph", () => {
     const pipe = new Pipeline();
-    const s = pipe.addNode(new LoadStructure("water.xyz"));
-    const e = pipe.addNode(new Edit({ ops: [{ op: "delete_atoms", atoms: [0] }] }));
-    pipe.addEdge(s.out.particle, e.inp.particle);
-    pipe.addEdge(s.out.cell, e.inp.cell);
+    pipe.addNode(new LoadStructure("water.xyz", { edits: [{ op: "delete_atoms", atoms: [0] }] }));
     const json = pipe.toObject();
-    const node = json.nodes.find((n) => n.type === "edit") as { ops: unknown[] } | undefined;
-    expect(node?.ops).toEqual([{ op: "delete_atoms", atoms: [0] }]);
-    expect(
-      json.edges.some(
-        (ed) => ed.target === e._id && ed.targetHandle === "cell" && ed.sourceHandle === "cell",
-      ),
-    ).toBe(true);
-    expect(() => deserializePipeline(json)).not.toThrow();
+    expect(json.nodes.some((n) => n.type === "edit")).toBe(false);
+    const loader = json.nodes.find((n) => n.type === "load_structure") as { edits: unknown[] };
+    expect(loader.edits).toEqual([{ op: "delete_atoms", atoms: [0] }]);
+    const { nodes } = deserializePipeline(json);
+    const rebuilt = nodes.find((n) => n.type === "load_structure")!;
+    expect((rebuilt.data.params as { edits?: unknown[] }).edits).toEqual([
+      { op: "delete_atoms", atoms: [0] },
+    ]);
   });
 });
 

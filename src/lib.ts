@@ -98,7 +98,6 @@ export {
   Modify,
   DrawingBoundary,
   BoundaryCompletion,
-  Edit,
   Color,
   Representation,
   AddBonds,

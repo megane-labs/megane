@@ -1,15 +1,16 @@
 /**
  * Build panel — click-driven structure editing.
  *
- * Every click in the 3D view while this tab is active becomes one `EditOp`
- * appended to the pipeline's `edit` node (see `pipeline/editSync.ts`), so the
- * history is undoable, disable-able, saved with the pipeline and visible in
- * the Editor tab. The panel itself only holds UI state (tool, element,
- * selection); it never touches atom arrays directly.
+ * Every click in the 3D view while the panel is open becomes one `EditOp`
+ * appended to the primary `load_structure` node's edit list (see
+ * `pipeline/editHistory.ts`), so the history is undoable, saved with the
+ * pipeline, and applied before the graph sees the structure. The panel itself
+ * only holds UI state (tool, element, selection); it never touches atom
+ * arrays directly.
  *
  * Atom indices arriving from the Viewport address the *rendered* structure.
- * They are translated to op refs (input index or created-atom id) through the
- * edit node's output provenance before an op is written.
+ * They are translated to op refs (file atom index or created-atom id) through
+ * the edit list's output provenance before an op is written.
  */
 
 import { useCallback, useEffect, useMemo, useRef } from "react";
@@ -21,8 +22,8 @@ import {
   useBuildStoreApi,
 } from "../stores/MeganeProvider";
 import { applyEditOps } from "../pipeline/executors/edit";
-import { findBuildEditNode, findPrimaryLoader } from "../pipeline/editSync";
-import type { EditAtomRef, EditOp, EditParams, LoadStructureParams } from "../pipeline/types";
+import { findPrimaryLoader, loaderEdits } from "../pipeline/editHistory";
+import type { EditAtomRef, EditOp, LoadStructureParams } from "../pipeline/types";
 import type { BuildTool } from "../stores/useBuildStore";
 import { getElementSymbol, getCovalentRadius } from "../constants";
 import { STRUCTURE_EXPORT_FORMATS, exportSnapshot } from "../export/structureExport";
@@ -179,6 +180,8 @@ export function BuildPanel() {
   const pushEditOp = useScopedPipelineStore((s) => s.pushEditOp);
   const undoEditOp = useScopedPipelineStore((s) => s.undoEditOp);
   const clearEditOps = useScopedPipelineStore((s) => s.clearEditOps);
+  const editsBypassed = useScopedPipelineStore((s) => s.editsBypassed);
+  const setEditsBypassed = useScopedPipelineStore((s) => s.setEditsBypassed);
   const setMode = useScopedPipelineUIStore((s) => s.setMode);
 
   const tool = useScopedBuildStore((s) => s.tool);
@@ -195,20 +198,18 @@ export function BuildPanel() {
   const popRedo = useScopedBuildStore((s) => s.popRedo);
   const clearRedo = useScopedBuildStore((s) => s.clearRedo);
 
-  const editNode = useMemo(() => findBuildEditNode(nodes), [nodes]);
-  const ops: EditOp[] = useMemo(() => {
-    const p = editNode?.data.params as EditParams | undefined;
-    return p && Array.isArray(p.ops) ? p.ops : [];
-  }, [editNode]);
   const loader = useMemo(() => findPrimaryLoader(nodes), [nodes]);
+  const ops: EditOp[] = useMemo(() => loaderEdits(loader), [loader]);
   const fileName = (loader?.data.params as LoadStructureParams | undefined)?.fileName ?? null;
-  const editWarnings = editNode ? (nodeErrors[editNode.id] ?? []) : [];
+  // The loader reports per-op problems (unknown ref, …) as its own warnings.
+  const editWarnings = loader ? (nodeErrors[loader.id] ?? []) : [];
 
-  // The rendered atom count must match the edit node's output for rendered
+  // The rendered atom count must match the loader's edited output for rendered
   // indices to be translatable into op refs. Anything downstream that changes
   // the atom count (replicate, symmetry expansion) breaks that, so editing is
   // disabled with an explanation rather than writing ops against the wrong
-  // atoms.
+  // atoms. The same holds while the original-structure preview is on: the
+  // view then shows the file, not the edited structure the refs describe.
   const editOutput = useMemo(() => {
     const state = pipelineApi.getState();
     const loaderNode = findPrimaryLoader(state.nodes);
@@ -222,7 +223,8 @@ export function BuildPanel() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ops, rendered, pipelineApi]);
 
-  const provenanceOk = !!rendered && !!editOutput && editOutput.snapshot.nAtoms === rendered.nAtoms;
+  const provenanceOk =
+    !editsBypassed && !!rendered && !!editOutput && editOutput.snapshot.nAtoms === rendered.nAtoms;
 
   const refFor = useCallback(
     (renderedIndex: number): EditAtomRef | null => {
@@ -347,9 +349,8 @@ export function BuildPanel() {
     if (!dragRefs.current) return;
     dragRefs.current = null;
     // A drag that never moved leaves a zero-delta op behind; drop it.
-    const last = findBuildEditNode(pipelineApi.getState().nodes);
-    const p = last?.data.params as EditParams | undefined;
-    const tail = p?.ops[p.ops.length - 1];
+    const edits = loaderEdits(findPrimaryLoader(pipelineApi.getState().nodes));
+    const tail = edits[edits.length - 1];
     if (tail && tail.op === "move_atoms" && tail.delta.every((d) => d === 0)) {
       pipelineApi.getState().undoEditOp();
     }
@@ -416,9 +417,9 @@ export function BuildPanel() {
             fontSize: 12,
           }}
         >
-          Editing is paused: a node after Edit changes the atom count (Replicate or Symmetry
-          expansion), so clicks cannot be mapped back to the loaded atoms. Set those nodes to 1×1×1
-          / none while building.
+          {editsBypassed
+            ? 'Editing is paused while the original structure is shown. Turn off "Show original" to continue editing.'
+            : "Editing is paused: a node in the pipeline changes the atom count (Replicate or Symmetry expansion), so clicks cannot be mapped back to the loaded atoms. Set those nodes to 1×1×1 / none while building."}
         </div>
       )}
 
@@ -566,6 +567,18 @@ export function BuildPanel() {
             }
           >
             Clear all
+          </span>
+          <span
+            role="button"
+            data-testid="build-show-original"
+            aria-pressed={editsBypassed}
+            style={chipStyle(editsBypassed, ops.length === 0 && !editsBypassed)}
+            onClick={
+              ops.length > 0 || editsBypassed ? () => setEditsBypassed(!editsBypassed) : undefined
+            }
+            title="Preview the file as loaded, without the edits"
+          >
+            Show original
           </span>
           <span
             role="button"

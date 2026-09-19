@@ -8,6 +8,7 @@ import type {
   FrameProvider,
 } from "../types";
 import { MemoryFrameProvider } from "../types";
+import { applyEditOps } from "./edit";
 
 /**
  * Trajectory carried by the structure file itself (multi-frame XYZ/PDB/.traj).
@@ -43,6 +44,15 @@ export function buildStructureTrajectory(
   return null;
 }
 
+/**
+ * Loader executor. `params.edits` (the Build panel's history) is replayed on
+ * the loaded snapshot so the `particle` / `cell` outputs carry the *edited*
+ * structure; `opts.editsBypassed` shows the file as loaded instead (the Build
+ * panel's "Show original"). Per-op problems go to `opts.warnings` so the
+ * dispatcher can surface them on the node. The trajectory output always
+ * follows the file: its frames index the atoms as loaded, so an edited atom
+ * count could not be played back anyway.
+ */
 export function executeLoadStructure(
   params: LoadStructureParams,
   snapshot: Snapshot | null,
@@ -50,13 +60,22 @@ export function executeLoadStructure(
   structureMeta: TrajectoryMeta | null,
   sourceNodeId: string,
   structureProvider: FrameProvider | null = null,
+  opts: { editsBypassed?: boolean; warnings?: string[] } = {},
 ): Map<string, PipelineData> {
   const outputs = new Map<string, PipelineData>();
   if (!snapshot) return outputs;
 
+  const edits = Array.isArray(params.edits) ? params.edits : [];
+  let shown = snapshot;
+  if (edits.length > 0 && !opts.editsBypassed) {
+    const result = applyEditOps(snapshot, edits);
+    shown = result.snapshot;
+    opts.warnings?.push(...result.warnings);
+  }
+
   const particle: ParticleData = {
     type: "particle",
-    source: snapshot,
+    source: shown,
     sourceNodeId,
     indices: null,
     scaleOverrides: null,
@@ -78,11 +97,11 @@ export function executeLoadStructure(
 
   // Cell data carries geometry only; whether the cell (and its axes) are
   // drawn is a Viewport/appearance decision, not loader output.
-  if (snapshot.box) {
+  if (shown.box) {
     const cell: CellData = {
       type: "cell",
       sourceNodeId,
-      box: snapshot.box,
+      box: shown.box,
     };
     outputs.set("cell", cell);
   }

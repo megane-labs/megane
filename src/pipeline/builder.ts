@@ -113,8 +113,21 @@ export class LoadStructure extends PipelineNode {
   protected readonly _outPorts = { particle: "particle", traj: "trajectory", cell: "cell" };
   protected readonly _inpPorts: Record<string, string> = {};
 
-  constructor(public path: string) {
+  /**
+   * Structure edits replayed on the file as loaded (the Build panel's
+   * history): add / delete / move atoms, change elements, add / delete bonds,
+   * place a fragment, set the cell. Atom refs are indices into the file's
+   * atoms (numbers) or ids of atoms an earlier op created (strings). The node
+   * then emits the edited structure.
+   */
+  public edits: EditOp[];
+
+  constructor(
+    public path: string,
+    { edits = [] }: { edits?: EditOp[] } = {},
+  ) {
     super();
+    this.edits = edits;
   }
 
   _toSerializedParams() {
@@ -124,6 +137,7 @@ export class LoadStructure extends PipelineNode {
       fileUrl: this.path,
       hasTrajectory: false,
       hasCell: false,
+      ...(this.edits.length > 0 ? { edits: this.edits } : {}),
     };
   }
 }
@@ -300,40 +314,6 @@ export class DrawingBoundary extends PipelineNode {
       zMin: this.bounds.zMin ?? 0,
       zMax: this.bounds.zMax ?? 1,
     };
-  }
-}
-
-/**
- * Apply a list of structure edits (add / delete / move atoms, change
- * elements, add / delete bonds, place a fragment, set the cell). This is the
- * node the Build panel writes; from code, pass the same op list the panel
- * would have produced.
- *
- * Ports:
- *   inp.particle — atom data in
- *   inp.cell     — simulation cell in
- *   out.particle — edited atom data
- *   out.cell     — edited simulation cell
- */
-export class Edit extends PipelineNode {
-  readonly nodeType = "edit";
-  protected readonly _outPorts = { particle: "particle", cell: "cell" };
-  protected readonly _inpPorts = { particle: "particle", cell: "cell" };
-
-  public ops: EditOp[];
-  public sourceAtomCount: number | null;
-
-  constructor({
-    ops = [],
-    sourceAtomCount = null,
-  }: { ops?: EditOp[]; sourceAtomCount?: number | null } = {}) {
-    super();
-    this.ops = ops;
-    this.sourceAtomCount = sourceAtomCount;
-  }
-
-  _toSerializedParams() {
-    return { type: this.nodeType, ops: this.ops, sourceAtomCount: this.sourceAtomCount };
   }
 }
 

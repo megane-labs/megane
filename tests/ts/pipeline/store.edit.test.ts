@@ -1,7 +1,6 @@
 import { describe, it, expect, beforeEach } from "vitest";
 import { usePipelineStore } from "@/pipeline/store";
-import { BUILD_EDIT_NODE_ID } from "@/pipeline/editSync";
-import type { EditParams, ParticleData } from "@/pipeline/types";
+import type { LoadStructureParams, ParticleData } from "@/pipeline/types";
 import type { Snapshot } from "@/types";
 
 function water(): Snapshot {
@@ -20,17 +19,22 @@ function water(): Snapshot {
   };
 }
 
-function editOps(): EditParams["ops"] {
-  const node = usePipelineStore.getState().nodes.find((n) => n.id === BUILD_EDIT_NODE_ID);
-  return node ? (node.data.params as EditParams).ops : [];
+function loaderParams(): LoadStructureParams {
+  return usePipelineStore.getState().nodes.find((n) => n.id === "loader-1")!.data
+    .params as LoadStructureParams;
+}
+
+function edits() {
+  return loaderParams().edits ?? [];
 }
 
 function renderedAtoms(): number {
   return usePipelineStore.getState().viewportState.particles[0]?.source.nAtoms ?? 0;
 }
 
-describe("usePipelineStore — edit ops", () => {
+describe("usePipelineStore — edit history on the loader", () => {
   beforeEach(() => {
+    usePipelineStore.setState({ editsBypassed: false });
     usePipelineStore.getState().deserialize({
       version: 3,
       nodes: [
@@ -69,27 +73,25 @@ describe("usePipelineStore — edit ops", () => {
     });
   });
 
-  it("pushEditOp creates the edit node on first use and re-executes the pipeline", () => {
+  it("pushEditOp appends to the loader's edits and re-executes the pipeline — no new node", () => {
     expect(renderedAtoms()).toBe(3);
     const id = usePipelineStore
       .getState()
       .pushEditOp({ op: "add_atom", id: "n1", element: 7, position: [2, 2, 2] });
-    expect(id).toBe(BUILD_EDIT_NODE_ID);
-    const editNode = usePipelineStore.getState().nodes.find((n) => n.id === id)!;
-    expect((editNode.data.params as EditParams).sourceAtomCount).toBe(3);
-    expect(editOps()).toHaveLength(1);
+    expect(id).toBe("loader-1");
+    expect(edits()).toHaveLength(1);
+    expect(usePipelineStore.getState().nodes.some((n) => n.type === "edit")).toBe(false);
     expect(renderedAtoms()).toBe(4);
-    // The rendered stream now comes through the edit node.
     const p = usePipelineStore.getState().viewportState.particles[0] as ParticleData;
     expect(p.source.elements[3]).toBe(7);
+    expect(p.sourceNodeId).toBe("loader-1");
   });
 
-  it("appends further ops to the same node", () => {
+  it("appends further ops in order", () => {
     const s = usePipelineStore.getState();
     s.pushEditOp({ op: "add_atom", id: "n1", element: 7, position: [2, 2, 2] });
     s.pushEditOp({ op: "delete_atoms", atoms: [1] });
-    expect(editOps()).toHaveLength(2);
-    expect(usePipelineStore.getState().nodes.filter((n) => n.type === "edit")).toHaveLength(1);
+    expect(edits().map((e) => e.op)).toEqual(["add_atom", "delete_atoms"]);
     expect(renderedAtoms()).toBe(3);
   });
 
@@ -97,8 +99,7 @@ describe("usePipelineStore — edit ops", () => {
     const s = usePipelineStore.getState();
     s.pushEditOp({ op: "move_atoms", atoms: [0], delta: [0, 0, 0] });
     s.replaceLastEditOp({ op: "move_atoms", atoms: [0], delta: [1, 0, 0] });
-    expect(editOps()).toHaveLength(1);
-    expect(editOps()[0]).toEqual({ op: "move_atoms", atoms: [0], delta: [1, 0, 0] });
+    expect(edits()).toEqual([{ op: "move_atoms", atoms: [0], delta: [1, 0, 0] }]);
     const p = usePipelineStore.getState().viewportState.particles[0] as ParticleData;
     expect(p.source.positions[0]).toBe(1);
   });
@@ -110,24 +111,20 @@ describe("usePipelineStore — edit ops", () => {
     s.pushEditOp({ op: "add_atom", id: "n2", element: 6, position: [3, 3, 3] });
     const popped = usePipelineStore.getState().undoEditOp();
     expect(popped).toEqual({ op: "add_atom", id: "n2", element: 6, position: [3, 3, 3] });
-    expect(editOps()).toHaveLength(1);
+    expect(edits()).toHaveLength(1);
     expect(renderedAtoms()).toBe(4);
     usePipelineStore.getState().clearEditOps();
-    expect(editOps()).toHaveLength(0);
+    expect(edits()).toHaveLength(0);
     expect(renderedAtoms()).toBe(3);
     expect(usePipelineStore.getState().undoEditOp()).toBeNull();
   });
 
-  it("replaceLastEditOp / clearEditOps are no-ops without an edit node", () => {
-    const s = usePipelineStore.getState();
-    s.replaceLastEditOp({ op: "move_atoms", atoms: [0], delta: [1, 0, 0] });
-    s.clearEditOps();
-    expect(usePipelineStore.getState().nodes.some((n) => n.type === "edit")).toBe(false);
-    // …and replaceLastEditOp with an empty op list leaves it empty.
-    s.pushEditOp({ op: "delete_atoms", atoms: [0] });
-    usePipelineStore.getState().clearEditOps();
+  it("replaceLastEditOp / clearEditOps are no-ops on an empty history", () => {
+    const before = usePipelineStore.getState().editRevision;
     usePipelineStore.getState().replaceLastEditOp({ op: "delete_atoms", atoms: [1] });
-    expect(editOps()).toHaveLength(0);
+    usePipelineStore.getState().clearEditOps();
+    expect(edits()).toHaveLength(0);
+    expect(usePipelineStore.getState().editRevision).toBe(before);
   });
 
   it("pushEditOp does nothing without a load_structure node", () => {
@@ -149,13 +146,13 @@ describe("usePipelineStore — edit ops", () => {
       .getState()
       .pushEditOp({ op: "add_atom", id: "n1", element: 7, position: [2, 2, 2] });
     expect(id).toBe("");
-    expect(usePipelineStore.getState().nodes.some((n) => n.type === "edit")).toBe(false);
+    expect(usePipelineStore.getState().nodes.some((n) => n.type === "load_structure")).toBe(false);
   });
 
-  it("bumps editRevision on every change to the edit node and on nothing else", () => {
+  it("bumps editRevision on every change to the edit list and on the preview, on nothing else", () => {
     const s = usePipelineStore.getState();
     const start = s.editRevision;
-    const id = s.pushEditOp({ op: "add_atom", id: "n1", element: 7, position: [2, 2, 2] });
+    s.pushEditOp({ op: "add_atom", id: "n1", element: 7, position: [2, 2, 2] });
     expect(usePipelineStore.getState().editRevision).toBe(start + 1);
     usePipelineStore.getState().replaceLastEditOp({ op: "delete_atoms", atoms: [0] });
     expect(usePipelineStore.getState().editRevision).toBe(start + 2);
@@ -164,34 +161,66 @@ describe("usePipelineStore — edit ops", () => {
     usePipelineStore.getState().pushEditOp({ op: "delete_atoms", atoms: [0] });
     usePipelineStore.getState().clearEditOps();
     expect(usePipelineStore.getState().editRevision).toBe(start + 5);
-    // Disabling / re-enabling the node or editing its params in the Inspector
-    // also re-executes with reshaped arrays, so those count as edits too.
-    usePipelineStore.getState().toggleNode(id);
+    // Editing the list directly (Inspector, hand edit) counts too.
+    usePipelineStore
+      .getState()
+      .updateNodeParams("loader-1", { edits: [{ op: "delete_atoms", atoms: [0] }] });
     expect(usePipelineStore.getState().editRevision).toBe(start + 6);
-    usePipelineStore.getState().updateNodeParams(id, { sourceAtomCount: 3 });
+    // So does the original-structure preview (it swaps the rendered arrays).
+    usePipelineStore.getState().setEditsBypassed(true);
     expect(usePipelineStore.getState().editRevision).toBe(start + 7);
-    // Other nodes leave it alone: their re-executions keep the existing
-    // topology heuristic (a wrap toggle keeps the camera, a replicate re-fits).
+    usePipelineStore.getState().setEditsBypassed(true); // no change, no bump
+    expect(usePipelineStore.getState().editRevision).toBe(start + 7);
+    // Other params and other nodes leave it alone (a wrap toggle keeps the
+    // camera through the topology heuristic, a new file must re-fit).
     usePipelineStore.getState().updateNodeParams("viewport-1", { perspective: true });
     usePipelineStore.getState().toggleNode("viewport-1");
+    usePipelineStore.getState().updateNodeParams("loader-1", { hasCell: true });
     expect(usePipelineStore.getState().editRevision).toBe(start + 7);
-    // No-op actions (nothing to undo / replace / clear) do not bump it either.
-    usePipelineStore.getState().clearEditOps();
-    expect(usePipelineStore.getState().editRevision).toBe(start + 8);
-    usePipelineStore.getState().undoEditOp();
-    usePipelineStore.getState().replaceLastEditOp({ op: "delete_atoms", atoms: [1] });
-    expect(usePipelineStore.getState().editRevision).toBe(start + 8);
   });
 
-  it("edits survive a serialize → deserialize round trip", () => {
+  it("setEditsBypassed shows the file as loaded and back", () => {
+    usePipelineStore.getState().pushEditOp({ op: "delete_atoms", atoms: [0] });
+    expect(renderedAtoms()).toBe(2);
+    usePipelineStore.getState().setEditsBypassed(true);
+    expect(renderedAtoms()).toBe(3);
+    expect(edits()).toHaveLength(1);
+    usePipelineStore.getState().setEditsBypassed(false);
+    expect(renderedAtoms()).toBe(2);
+  });
+
+  it("loading a different file into the loader starts the history fresh", () => {
+    usePipelineStore.getState().pushEditOp({ op: "delete_atoms", atoms: [0] });
+    // Same file name (a reload) keeps the history …
+    usePipelineStore.getState().updateNodeParams("loader-1", { fileName: "water.xyz" });
+    expect(edits()).toHaveLength(1);
+    // … a different one drops it, without counting as an edit (the camera must re-fit).
+    const rev = usePipelineStore.getState().editRevision;
+    usePipelineStore.getState().updateNodeParams("loader-1", { fileName: "other.pdb" });
+    expect(edits()).toEqual([]);
+    expect(usePipelineStore.getState().editRevision).toBe(rev);
+    expect(renderedAtoms()).toBe(3);
+  });
+
+  it("edits survive a serialize → deserialize round trip on the loader", () => {
     const s = usePipelineStore.getState();
     s.pushEditOp({ op: "add_atom", id: "n1", element: 7, position: [2, 2, 2], bondTo: 0 });
     const json = usePipelineStore.getState().serialize();
-    const serialized = json.nodes.find((n) => n.id === BUILD_EDIT_NODE_ID) as unknown as EditParams;
-    expect(serialized.type).toBe("edit");
-    expect(serialized.ops).toHaveLength(1);
-    expect(serialized.sourceAtomCount).toBe(3);
+    expect(json.nodes.some((n) => n.type === "edit")).toBe(false);
+    const serialized = json.nodes.find(
+      (n) => n.id === "loader-1",
+    ) as unknown as LoadStructureParams;
+    expect(serialized.edits).toHaveLength(1);
+    // Opening a pipeline resets the per-node data; load the file again and the
+    // history replays on it.
     usePipelineStore.getState().deserialize(json);
-    expect(editOps()).toHaveLength(1);
+    expect(edits()).toHaveLength(1);
+    usePipelineStore.getState().setNodeSnapshot("loader-1", {
+      snapshot: water(),
+      frames: null,
+      meta: null,
+      labels: null,
+    });
+    expect(renderedAtoms()).toBe(4);
   });
 });

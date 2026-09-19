@@ -46,7 +46,6 @@ import { ModifyNode } from "./nodes/ModifyNode";
 import { SymmetryNode } from "./nodes/SymmetryNode";
 import { WrapNode } from "./nodes/WrapNode";
 import { ReplicateNode } from "./nodes/ReplicateNode";
-import { EditNode } from "./nodes/EditNode";
 import { DrawingBoundaryNode } from "./nodes/DrawingBoundaryNode";
 import { BoundaryCompletionNode } from "./nodes/BoundaryCompletionNode";
 import { CoordinationGeneratorNode } from "./nodes/CoordinationGeneratorNode";
@@ -82,7 +81,6 @@ const nodeTypes = {
   symmetry: SymmetryNode,
   wrap: WrapNode,
   replicate: ReplicateNode,
-  edit: EditNode,
   drawing_boundary: DrawingBoundaryNode,
   boundary_completion: BoundaryCompletionNode,
   color: ColorNode,
@@ -125,7 +123,6 @@ const ADD_NODE_GROUPS: { category: NodeCategory; label: string; types: PipelineN
       "symmetry",
       "wrap",
       "replicate",
-      "edit",
       "drawing_boundary",
       "boundary_completion",
     ],
@@ -986,8 +983,9 @@ function PipelineEditorInner({
         </button>
       </div>
       {/* Structure: opens the Build panel, a separate panel stacked under this
-          one (see MeganeViewer) — editing the molecule is not a pipeline tab,
-          and the Editor should stay visible while the edit node grows. */}
+          one (see MeganeViewer) — editing the molecule is not a pipeline tab.
+          Its history lives on the load_structure node, so the graph above
+          only ever describes how the (edited) structure is shown. */}
       <div style={toolbarRowStyle} data-testid="pipeline-editor-structure-row">
         <span style={toolbarCategoryLabelStyle}>Structure</span>
         <button

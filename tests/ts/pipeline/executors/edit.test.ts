@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
-import { applyEditOps, executeEdit, fragmentAtomRef } from "@/pipeline/executors/edit";
-import type { EditOp, EditParams, ParticleData, CellData, PipelineData } from "@/pipeline/types";
+import { applyEditOps, fragmentAtomRef } from "@/pipeline/executors/edit";
+import { executeLoadStructure } from "@/pipeline/executors/loadStructure";
+import type { EditOp, ParticleData, CellData, LoadStructureParams } from "@/pipeline/types";
 import type { Snapshot } from "@/types";
 
 /** Water: O at origin, two H bonded to it, in a 10 Å cubic cell. */
@@ -25,29 +26,24 @@ function water(extra: Partial<Snapshot> = {}): Snapshot {
   };
 }
 
-function particle(source: Snapshot, opts: Partial<ParticleData> = {}): ParticleData {
+function loader(edits?: EditOp[]): LoadStructureParams {
   return {
-    type: "particle",
-    source,
-    sourceNodeId: "loader-1",
-    indices: null,
-    scaleOverrides: null,
-    opacityOverrides: null,
-    colorOverrides: null,
-    representationOverride: null,
-    ...opts,
+    type: "load_structure",
+    fileName: "water.xyz",
+    hasTrajectory: false,
+    hasCell: true,
+    edits,
   };
 }
 
-function inputs(p?: ParticleData, cell?: CellData): Map<string, PipelineData[]> {
-  const m = new Map<string, PipelineData[]>();
-  if (p) m.set("particle", [p]);
-  if (cell) m.set("cell", [cell]);
-  return m;
-}
-
-function params(ops: EditOp[], sourceAtomCount: number | null = null): EditParams {
-  return { type: "edit", ops, sourceAtomCount };
+/** Run the loader executor on `src` with `edits`, collecting its warnings. */
+function load(src: Snapshot, edits?: EditOp[], opts: { editsBypassed?: boolean } = {}) {
+  const warnings: string[] = [];
+  const out = executeLoadStructure(loader(edits), src, null, null, "loader-1", null, {
+    ...opts,
+    warnings,
+  });
+  return { out, warnings };
 }
 
 function bondSet(s: Snapshot): Set<string> {
@@ -210,78 +206,74 @@ describe("applyEditOps", () => {
   });
 });
 
-describe("executeEdit", () => {
-  it("returns nothing without a particle input", () => {
-    expect(executeEdit(params([]), inputs()).size).toBe(0);
+describe("executeLoadStructure with edits", () => {
+  it("emits the file as loaded when there are no edits (absent or empty)", () => {
+    const src = water();
+    for (const edits of [undefined, []]) {
+      const { out, warnings } = load(src, edits);
+      expect((out.get("particle") as ParticleData).source).toBe(src);
+      expect(Array.from((out.get("cell") as CellData).box)).toEqual(Array.from(src.box!));
+      expect(warnings).toEqual([]);
+    }
   });
 
-  it("passes the stream through untouched when there are no ops", () => {
-    const p = particle(water());
-    const cell: CellData = { type: "cell", sourceNodeId: "loader-1", box: water().box! };
-    const out = executeEdit(params([]), inputs(p, cell));
-    expect(out.get("particle")).toBe(p);
-    expect(out.get("cell")).toBe(cell);
-  });
-
-  it("emits an edited snapshot, remaps overrides and selection, and forwards the cell", () => {
-    const p = particle(water(), {
-      indices: new Uint32Array([0, 1]),
-      scaleOverrides: new Float32Array([2, 3, 4]),
-      opacityOverrides: new Float32Array([0.1, 0.2, 0.3]),
-      colorOverrides: new Float32Array([1, 0, 0, 0, 1, 0, NaN, 0, 0]),
-      drawingBoundary: null,
-    });
-    const warnings: string[] = [];
-    const out = executeEdit(
-      params([
-        { op: "delete_atoms", atoms: [1] },
-        { op: "add_atom", id: "n", element: 7, position: [3, 3, 3] },
-      ]),
-      inputs(p),
-      warnings,
-    );
+  it("emits the edited structure and cell, keeps the source node id, and reports op problems", () => {
+    const { out, warnings } = load(water(), [
+      { op: "delete_atoms", atoms: [1] },
+      { op: "add_atom", id: "n", element: 7, position: [3, 3, 3] },
+      { op: "set_cell", box: [5, 0, 0, 0, 5, 0, 0, 0, 5] },
+      { op: "delete_atoms", atoms: [99] },
+    ]);
     const edited = out.get("particle") as ParticleData;
+    expect(edited.sourceNodeId).toBe("loader-1");
     expect(edited.source.nAtoms).toBe(3);
     expect(Array.from(edited.source.elements)).toEqual([8, 1, 7]);
-    // Selection: original atom 0 kept, atom 2 was not selected, new atom included.
-    expect(Array.from(edited.indices!)).toEqual([0, 2]);
-    expect(Array.from(edited.scaleOverrides!)).toEqual([2, 4, 1]);
-    expect(Array.from(edited.opacityOverrides!)).toEqual([
-      new Float32Array([0.1])[0],
-      new Float32Array([0.3])[0],
-      1,
-    ]);
-    const colors = Array.from(edited.colorOverrides!);
-    expect(colors.slice(0, 3)).toEqual([1, 0, 0]);
-    expect(Number.isNaN(colors[6])).toBe(true);
-    expect(edited.drawingBoundary).toBeNull();
-    const cell = out.get("cell") as CellData;
-    expect(cell.sourceNodeId).toBe("loader-1");
-    expect(Array.from(cell.box)).toEqual([10, 0, 0, 0, 10, 0, 0, 0, 10]);
+    expect(edited.indices).toBeNull();
+    expect(Array.from((out.get("cell") as CellData).box)).toEqual([5, 0, 0, 0, 5, 0, 0, 0, 5]);
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]).toContain("unknown atom 99");
+  });
+
+  it("drops the cell output when the edits clear the box", () => {
+    const { out } = load(water(), [{ op: "set_cell", box: null }]);
+    expect(out.has("cell")).toBe(false);
+    expect(out.has("particle")).toBe(true);
+  });
+
+  it("shows the file as loaded while the edits are bypassed", () => {
+    const src = water();
+    const { out, warnings } = load(src, [{ op: "delete_atoms", atoms: [0] }], {
+      editsBypassed: true,
+    });
+    expect((out.get("particle") as ParticleData).source).toBe(src);
     expect(warnings).toEqual([]);
   });
 
-  it("drops the cell output when the ops clear the box", () => {
-    const out = executeEdit(params([{ op: "set_cell", box: null }]), inputs(particle(water())));
-    expect(out.has("cell")).toBe(false);
+  it("keeps the trajectory on the file's atoms even when the edits change the count", () => {
+    const src = water();
+    const frames = [{ frameId: 1, nAtoms: 3, positions: new Float32Array(9) }];
+    const meta = { nFrames: 1, timestepPs: 1, nAtoms: 3 };
+    const out = executeLoadStructure(
+      loader([{ op: "delete_atoms", atoms: [0] }]),
+      src,
+      frames,
+      meta,
+      "loader-1",
+    );
+    expect((out.get("particle") as ParticleData).source.nAtoms).toBe(2);
+    const traj = out.get("trajectory") as { meta: { nAtoms: number } };
+    expect(traj.meta.nAtoms).toBe(3);
   });
 
-  it("warns when the input atom count no longer matches sourceAtomCount", () => {
-    const warnings: string[] = [];
-    executeEdit(
-      params([{ op: "move_atoms", atoms: [0], delta: [1, 0, 0] }], 99),
-      inputs(particle(water())),
-      warnings,
+  it("tolerates a malformed edits field", () => {
+    const src = water();
+    const out = executeLoadStructure(
+      loader(null as unknown as EditOp[]),
+      src,
+      null,
+      null,
+      "loader-1",
     );
-    expect(warnings[0]).toContain("authored against 99 atoms");
-  });
-
-  it("tolerates a malformed ops field", () => {
-    const p = particle(water());
-    const out = executeEdit(
-      { type: "edit", ops: null as unknown as EditOp[], sourceAtomCount: null },
-      inputs(p),
-    );
-    expect(out.get("particle")).toBe(p);
+    expect((out.get("particle") as ParticleData).source).toBe(src);
   });
 });

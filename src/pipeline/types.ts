@@ -305,7 +305,6 @@ export type PipelineNodeType =
   | "symmetry"
   | "wrap"
   | "replicate"
-  | "edit"
   | "drawing_boundary"
   | "boundary_completion"
   | "color"
@@ -333,7 +332,6 @@ export const NODE_TYPE_LABELS: Record<PipelineNodeType, string> = {
   symmetry: "Symmetry",
   wrap: "Wrap / Unwrap",
   replicate: "Replicate",
-  edit: "Edit",
   drawing_boundary: "Drawing Boundary",
   boundary_completion: "Boundary Completion",
   color: "Color",
@@ -365,7 +363,6 @@ export const NODE_CATEGORY: Record<PipelineNodeType, NodeCategory> = {
   symmetry: "modify",
   wrap: "modify",
   replicate: "modify",
-  edit: "modify",
   drawing_boundary: "modify",
   boundary_completion: "modify",
   color: "modify",
@@ -487,19 +484,6 @@ export const NODE_PORTS: Record<PipelineNodeType, NodePortConfig> = {
       { name: "trajectory", dataType: "trajectory", label: "Trajectory" },
     ],
   },
-  // Structure editing: the op list rewrites atoms / bonds / cell, so the node
-  // emits a brand-new particle stream (and cell). Trajectories are not routed
-  // through it — an edited atom count no longer matches the frames.
-  edit: {
-    inputs: [
-      { name: "particle", dataType: "particle", label: "Particle" },
-      { name: "cell", dataType: "cell", label: "Cell" },
-    ],
-    outputs: [
-      { name: "particle", dataType: "particle", label: "Particle" },
-      { name: "cell", dataType: "cell", label: "Cell" },
-    ],
-  },
   drawing_boundary: {
     inputs: [{ name: "particle", dataType: "particle", label: "Particle" }],
     outputs: [{ name: "particle", dataType: "particle", label: "Particle" }],
@@ -582,6 +566,15 @@ export interface LoadStructureParams {
   /** Which output ports have data (determined by the loaded file). */
   hasTrajectory: boolean;
   hasCell: boolean;
+  /**
+   * Structure edits applied to the file as loaded, in order — the Build
+   * panel's history (add / delete / move atoms, change elements, add / delete
+   * bonds, place a fragment, set the cell). They belong to the *input*: the
+   * loader emits the edited structure, and the rest of the pipeline only
+   * describes how it is shown. Absent or empty when the file is used as-is.
+   * Cleared when a different file is loaded into the node.
+   */
+  edits?: EditOp[];
 }
 
 export interface LoadTrajectoryParams {
@@ -713,12 +706,12 @@ export interface ReplicateParams {
 }
 
 /**
- * Reference to an atom from inside an `edit` node's op list. A number is an
- * index into the node's *input* particle stream (the structure as loaded); a
- * string is the `id` of an atom created earlier in the same op list by an
- * `add_atom` op (its `id`) or an `add_fragment` op (`<fragmentId>:<k>` for the
- * k-th fragment atom). Ops are applied in order, so a ref must be created
- * before it is used.
+ * Reference to an atom from inside a `load_structure` node's edit list. A
+ * number is an index into the structure *as loaded from the file*; a string
+ * is the `id` of an atom created earlier in the same list by an `add_atom`
+ * op (its `id`) or an `add_fragment` op (`<fragmentId>:<k>` for the k-th
+ * fragment atom). Ops are applied in order, so a ref must be created before
+ * it is used.
  */
 export type EditAtomRef = number | string;
 
@@ -759,24 +752,6 @@ export type EditOp =
       /** Row-major 3×3 cell, or null to remove the cell. */
       box: number[] | null;
     };
-
-/**
- * Edit node parameters — the serializable record of every structure edit made
- * in the Build panel. The node re-applies `ops` to its input stream on every
- * execution and emits a new Snapshot, so an edit is undoable (drop the last
- * op), disable-able (toggle the node), shareable (it rides in the
- * `.megane.json`), and visible in the pipeline editor like any other modifier.
- */
-export interface EditParams {
-  type: "edit";
-  ops: EditOp[];
-  /**
-   * Atom count of the input structure the ops were authored against. Index refs
-   * only mean the same atoms on that structure, so a mismatch is surfaced as a
-   * node warning. `null` when unknown (e.g. a hand-written pipeline).
-   */
-  sourceAtomCount: number | null;
-}
 
 /** Inclusive fractional display range along the crystallographic axes. */
 export interface DrawingBoundaryParams {
@@ -938,7 +913,6 @@ export type PipelineNodeParams =
   | SymmetryParams
   | WrapParams
   | ReplicateParams
-  | EditParams
   | DrawingBoundaryParams
   | BoundaryCompletionParams
   | ColorParams
@@ -994,8 +968,6 @@ export function defaultParams(type: PipelineNodeType): PipelineNodeParams {
       return { type, mode: "none" };
     case "replicate":
       return { type, nx: 1, ny: 1, nz: 1 };
-    case "edit":
-      return { type, ops: [], sourceAtomCount: null };
     case "drawing_boundary":
       return {
         type,

@@ -2,7 +2,7 @@
  * Build panel tests. The panel is driven two ways: through its own chips
  * (tool / element / history / export) and through the pick / drag handlers it
  * installs in the build store for the Viewport. Both paths must end in ops on
- * the pipeline's `edit` node — the panel never touches atom arrays itself.
+ * the primary loader's edit list — the panel never touches atom arrays itself.
  */
 
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
@@ -17,9 +17,8 @@ vi.mock("@/export/structureExport", async (importOriginal) => {
 import { usePipelineStore } from "@/pipeline/store";
 import { usePipelineUIStore } from "@/stores/usePipelineUIStore";
 import { useBuildStore } from "@/stores/useBuildStore";
-import { BUILD_EDIT_NODE_ID } from "@/pipeline/editSync";
 import { BuildPanel, placeBondedAtom, describeOp, newAtomId } from "@/components/BuildPanel";
-import type { EditOp, EditParams } from "@/pipeline/types";
+import type { EditOp, LoadStructureParams } from "@/pipeline/types";
 import type { Snapshot } from "@/types";
 
 function water(box: Float32Array | null = null): Snapshot {
@@ -92,8 +91,8 @@ function loadPipeline(withReplicate = false) {
 }
 
 function ops(): EditOp[] {
-  const n = usePipelineStore.getState().nodes.find((x) => x.id === BUILD_EDIT_NODE_ID);
-  return n ? (n.data.params as EditParams).ops : [];
+  const n = usePipelineStore.getState().nodes.find((x) => x.id === "loader-1");
+  return (n?.data.params as LoadStructureParams | undefined)?.edits ?? [];
 }
 
 function handlers() {
@@ -122,6 +121,7 @@ function setTool(tool: string) {
 describe("BuildPanel", () => {
   beforeEach(() => {
     usePipelineUIStore.setState({ mode: "editor", buildOpen: true });
+    usePipelineStore.setState({ editsBypassed: false });
     useBuildStore.setState({
       tool: "select",
       element: 6,
@@ -371,12 +371,39 @@ describe("BuildPanel", () => {
     expect(handlers().dragStart(1)).toBe(false);
   });
 
-  it("surfaces edit-node warnings", () => {
+  it("surfaces the loader's edit warnings", () => {
     render(<BuildPanel />);
     act(() => {
       usePipelineStore.getState().pushEditOp({ op: "delete_atoms", atoms: [99] });
     });
     expect(screen.getByTestId("build-warnings").textContent).toContain("unknown atom 99");
+  });
+
+  it("Show original previews the file as loaded and pauses editing until turned off", () => {
+    render(<BuildPanel />);
+    const toggle = () => screen.getByTestId("build-show-original");
+    // Inert while there is nothing to hide.
+    fireEvent.click(toggle());
+    expect(usePipelineStore.getState().editsBypassed).toBe(false);
+
+    setTool("delete");
+    pick(1);
+    expect(usePipelineStore.getState().viewportState.particles[0].source.nAtoms).toBe(2);
+    fireEvent.click(toggle());
+    expect(usePipelineStore.getState().editsBypassed).toBe(true);
+    expect(toggle().getAttribute("aria-pressed")).toBe("true");
+    expect(usePipelineStore.getState().viewportState.particles[0].source.nAtoms).toBe(3);
+    expect(screen.getByTestId("build-provenance-warning").textContent).toContain("Show original");
+    // The history is untouched and clicks do not write ops while previewing.
+    expect(ops()).toHaveLength(1);
+    pick(0);
+    expect(ops()).toHaveLength(1);
+    expect(handlers().dragStart(0)).toBe(false);
+
+    fireEvent.click(toggle());
+    expect(usePipelineStore.getState().editsBypassed).toBe(false);
+    expect(screen.queryByTestId("build-provenance-warning")).toBeNull();
+    expect(usePipelineStore.getState().viewportState.particles[0].source.nAtoms).toBe(2);
   });
 });
 

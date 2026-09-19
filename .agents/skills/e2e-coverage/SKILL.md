@@ -130,7 +130,7 @@ npm run test:e2e:sidebar             # CollapsiblePanel (Pipeline panel) toggle 
 npm run test:e2e:widget-api          # programmatic frame_index / selected_atoms in JupyterLab
 npm run test:e2e:pipeline-editor     # seeded node kinds + Render button mounts modal (webapp / labext / vscode only — widget hosts intentionally do not mount the editor)
 npm run test:e2e:pipeline-file       # drag-drop .megane.json on webapp
-npm run test:e2e:build               # Build panel: click-driven structure edits land as ops on the edit node (webapp)
+npm run test:e2e:build               # Build panel: click-driven structure edits land on the load_structure node's edit list (webapp)
 npm run test:e2e:render-modal        # snapshot mode (GIF/MP4 gated by MEGANE_E2E_FFMPEG=1)
 npm run test:e2e:atom-bond-junction  # transparent ball-and-stick junction (stick trimmed at the ball surface)
 npm run test:e2e:templates           # the Templates dropdown entries that load more than one file (ESP cube + molecule; all-atom + coarse-grained overlay)

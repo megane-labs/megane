@@ -2,7 +2,15 @@
 
 ### load_structure
 Loads a molecular structure file. This is the primary data source.
-- Parameters: `{ type: "load_structure", fileName: string | null, hasTrajectory: boolean, hasCell: boolean }`
+- Parameters: `{ type: "load_structure", fileName: string | null, hasTrajectory: boolean, hasCell: boolean, edits: EditOp[] }`
+  - edits (optional): array of { op: "add_atom", id, element, position: [x,y,z], bondTo?, order? } |
+    { op: "delete_atoms", atoms } | { op: "move_atoms", atoms, delta: [dx,dy,dz] } |
+    { op: "set_element", atoms, element } | { op: "add_bond", a, b, order? } |
+    { op: "delete_bond", a, b } | { op: "set_cell", box: number[9] | null } |
+    { op: "add_fragment", id, elements, positions (flat), bonds: [[i,j],…], translate? }
+  - atoms / a / b / bondTo are atom refs: an index into the file's atoms (number) or the id of
+    an atom an earlier op in the same list created (string). element is an atomic number.
+    Edits change the structure itself; leave them out unless the user asks to edit atoms.
 - Outputs: `particle` (always), `trajectory` (if hasTrajectory), `cell` (if hasCell)
 - No inputs
 
@@ -110,25 +118,6 @@ to match. Requires a unit cell on the input.
     the a/b/c lattice vectors.
 - Inputs: `particle`, `cell`, `trajectory`
 - Outputs: `particle`, `cell`, `trajectory` (replicated)
-
-### edit
-Applies a list of structure edits — add / delete / move atoms, change elements,
-add / delete bonds, place a fragment, set the cell — and emits the edited
-structure as a new particle stream. This is the node the Build panel writes:
-every click there appends one op, so the edit history is undoable (drop the
-last op), disable-able (toggle the node) and saved with the pipeline.
-- Parameters: `{ type: "edit", ops: EditOp[], sourceAtomCount: number | null }`
-  - ops: array of { op: "add_atom", id, element, position: [x,y,z], bondTo?, order? } |
-    { op: "delete_atoms", atoms } | { op: "move_atoms", atoms, delta: [dx,dy,dz] } |
-    { op: "set_element", atoms, element } | { op: "add_bond", a, b, order? } |
-    { op: "delete_bond", a, b } | { op: "set_cell", box: number[9] | null } |
-    { op: "add_fragment", id, elements, positions (flat), bonds: [[i,j],…], translate? }
-  - atoms / a / b / bondTo are atom refs: an input atom index (number) or the id of an atom
-    an earlier op in the same list created (string). element is an atomic number.
-  - Place it directly after load_structure (before replicate / symmetry / wrap) so the
-    index refs address the atoms as loaded; keep sourceAtomCount null.
-- Inputs: `particle`, `cell`
-- Outputs: `particle`, `cell` (edited)
 
 ### drawing_boundary
 Generates periodic display atoms inside an inclusive fractional range.

@@ -17,7 +17,7 @@ import type {
   NodeError,
   FrameProvider,
   EditOp,
-  EditParams,
+  LoadStructureParams,
 } from "./types";
 import { defaultParams, DEFAULT_VIEWPORT_STATE, canConnect } from "./types";
 import { LazyFrameProvider } from "../stream/LazyFrameProvider";
@@ -29,7 +29,7 @@ import { PIPELINE_TEMPLATES } from "./templates";
 import { getLayoutedElements } from "./layout";
 import { performOpenFile, type OpenFileOptions } from "./openFile";
 import { reconcileInspectorLayers, isInspectorId, type InspectorLayer } from "./inspectorSync";
-import { ensureBuildEditNode, findBuildEditNode, findPrimaryLoader } from "./editSync";
+import { findPrimaryLoader, loaderEdits } from "./editHistory";
 import { registerTestStores, GLOBAL_BUNDLE_ID } from "../stores/testRegistry";
 
 let nextNodeId = 1;
@@ -128,25 +128,32 @@ export interface PipelineStore {
   // supercell effects are preserved. Non-Inspector nodes are left untouched.
   setInspectorLayers: (layers: InspectorLayer[]) => void;
 
-  // Build panel: the structure-edit history lives in a single `edit` node
-  // wired directly after the primary load_structure (see editSync.ts). These
-  // actions create that node on demand and append / pop ops on it; every one
-  // re-executes the pipeline so the 3D view reflects the edit immediately.
-  /** Append an op (creating the edit node if needed). Returns the edit node id. */
+  // Build panel: the structure-edit history is the primary load_structure
+  // node's `edits` list (see editHistory.ts) — part of the input, not a node
+  // in the graph. These actions append / pop ops on it; every one re-executes
+  // the pipeline so the 3D view reflects the edit immediately.
+  /** Append an op to the primary loader's edits. Returns the loader id ("" without one). */
   pushEditOp: (op: EditOp) => string;
   /** Replace the most recent op (used while a drag is in progress). */
   replaceLastEditOp: (op: EditOp) => void;
   /** Remove and return the most recent op, or null when there is none. */
   undoEditOp: () => EditOp | null;
-  /** Drop every op (the node stays so the graph shape is stable). */
+  /** Drop every op. */
   clearEditOps: () => void;
   /**
-   * Bumped whenever an `edit` node changes (ops pushed / undone / cleared,
-   * its params edited, or the node toggled). The viewer keeps the camera
-   * where it is on such re-executions: an edit reshapes the snapshot arrays,
-   * which would otherwise read as a new structure and re-fit the view.
+   * Bumped whenever a loader's edit list changes (ops pushed / undone /
+   * cleared, or the list edited directly) and when the original-structure
+   * preview is toggled. The viewer keeps the camera where it is on such
+   * re-executions: an edit reshapes the snapshot arrays, which would
+   * otherwise read as a new structure and re-fit the view.
    */
   editRevision: number;
+  /**
+   * Show every loader's file as loaded, ignoring its edits (the Build panel's
+   * "Show original"). Not serialized.
+   */
+  editsBypassed: boolean;
+  setEditsBypassed: (bypassed: boolean) => void;
 
   // Templates
   pendingTemplateId: string | null;
@@ -174,11 +181,6 @@ function getInitialPipeline() {
  * two viewers' initial graphs would be aliases of each other. The layout pass
  * is cheap (a handful of nodes) and runs once per viewer mount.
  */
-/** Whether `id` names an `edit` node in `nodes` (see `editRevision`). */
-function isEditNode(nodes: Node<PipelineNodeData>[], id: string): boolean {
-  return nodes.some((n) => n.id === id && n.type === "edit");
-}
-
 function createInitialGraph(): { nodes: Node<PipelineNodeData>[]; edges: Edge[] } {
   const raw = getInitialPipeline();
   return getLayoutedElements(raw.nodes, raw.edges);
@@ -211,6 +213,7 @@ export const pipelineStateCreator: StateCreator<PipelineStore> = (set, get, api)
   viewportState: { ...DEFAULT_VIEWPORT_STATE },
   nodeErrors: {},
   editRevision: 0,
+  editsBypassed: false,
   snapshot: null,
   atomLabels: null,
   structureFrames: null,
@@ -440,15 +443,21 @@ export const pipelineStateCreator: StateCreator<PipelineStore> = (set, get, api)
     set((state) => ({
       nodes: state.nodes.map((n) => {
         if (n.id !== id) return n;
-        return {
-          ...n,
-          data: {
-            ...n.data,
-            params: { ...n.data.params, ...params },
-          },
-        };
+        const next = { ...n.data.params, ...params } as typeof n.data.params;
+        // The edit history belongs to the file it was authored against:
+        // loading a different file into the loader starts it fresh.
+        if (
+          n.type === "load_structure" &&
+          "fileName" in params &&
+          params.fileName !== (n.data.params as LoadStructureParams).fileName &&
+          (n.data.params as LoadStructureParams).edits?.length
+        ) {
+          (next as LoadStructureParams).edits = [];
+        }
+        return { ...n, data: { ...n.data, params: next } };
       }),
-      editRevision: state.editRevision + (isEditNode(state.nodes, id) ? 1 : 0),
+      // Rewriting a loader's edit list is a structure edit (see editRevision).
+      editRevision: state.editRevision + ("edits" in params ? 1 : 0),
     }));
     get().execute();
   },
@@ -462,7 +471,6 @@ export const pipelineStateCreator: StateCreator<PipelineStore> = (set, get, api)
           data: { ...n.data, enabled: !n.data.enabled },
         };
       }),
-      editRevision: state.editRevision + (isEditNode(state.nodes, id) ? 1 : 0),
     }));
     get().execute();
   },
@@ -496,6 +504,7 @@ export const pipelineStateCreator: StateCreator<PipelineStore> = (set, get, api)
       fileVectors,
       nodeSnapshots,
       nodeStreamingData,
+      editsBypassed: get().editsBypassed,
     };
 
     // Run validation and execution
@@ -595,56 +604,39 @@ export const pipelineStateCreator: StateCreator<PipelineStore> = (set, get, api)
   },
 
   pushEditOp: (op) => {
-    const { nodes, edges, nodeSnapshots, snapshot } = get();
-    const loader = findPrimaryLoader(nodes);
+    const loader = findPrimaryLoader(get().nodes);
     if (!loader) return "";
-    const inputSnapshot = nodeSnapshots[loader.id]?.snapshot ?? snapshot;
-    const ensured = ensureBuildEditNode(nodes, edges, loader.id, inputSnapshot?.nAtoms ?? null);
-    const nextNodes = ensured.nodes.map((n) => {
-      if (n.id !== ensured.editId) return n;
-      const params = n.data.params as EditParams;
-      const ops = Array.isArray(params.ops) ? params.ops : [];
-      return {
-        ...n,
-        data: {
-          ...n.data,
-          params: {
-            ...params,
-            ops: [...ops, op],
-            sourceAtomCount: params.sourceAtomCount ?? inputSnapshot?.nAtoms ?? null,
-          },
-        },
-      };
-    });
-    set({ nodes: nextNodes, edges: ensured.edges, editRevision: get().editRevision + 1 });
-    get().execute();
-    return ensured.editId;
+    get().updateNodeParams(loader.id, { edits: [...loaderEdits(loader), op] });
+    return loader.id;
   },
 
   replaceLastEditOp: (op) => {
-    const editNode = findBuildEditNode(get().nodes);
-    if (!editNode) return;
-    const params = editNode.data.params as EditParams;
-    const ops = Array.isArray(params.ops) ? params.ops : [];
-    if (ops.length === 0) return;
-    get().updateNodeParams(editNode.id, { ops: [...ops.slice(0, -1), op] });
+    const loader = findPrimaryLoader(get().nodes);
+    const edits = loaderEdits(loader);
+    if (!loader || edits.length === 0) return;
+    get().updateNodeParams(loader.id, { edits: [...edits.slice(0, -1), op] });
   },
 
   undoEditOp: () => {
-    const editNode = findBuildEditNode(get().nodes);
-    if (!editNode) return null;
-    const params = editNode.data.params as EditParams;
-    const ops = Array.isArray(params.ops) ? params.ops : [];
-    if (ops.length === 0) return null;
-    const last = ops[ops.length - 1];
-    get().updateNodeParams(editNode.id, { ops: ops.slice(0, -1) });
+    const loader = findPrimaryLoader(get().nodes);
+    const edits = loaderEdits(loader);
+    if (!loader || edits.length === 0) return null;
+    const last = edits[edits.length - 1];
+    get().updateNodeParams(loader.id, { edits: edits.slice(0, -1) });
     return last;
   },
 
   clearEditOps: () => {
-    const editNode = findBuildEditNode(get().nodes);
-    if (!editNode) return;
-    get().updateNodeParams(editNode.id, { ops: [] });
+    const loader = findPrimaryLoader(get().nodes);
+    if (!loader || loaderEdits(loader).length === 0) return;
+    get().updateNodeParams(loader.id, { edits: [] });
+  },
+
+  setEditsBypassed: (bypassed) => {
+    if (get().editsBypassed === bypassed) return;
+    // The preview swaps the rendered arrays like an edit does: keep the camera.
+    set((state) => ({ editsBypassed: bypassed, editRevision: state.editRevision + 1 }));
+    get().execute();
   },
 
   pendingTemplateId: null,

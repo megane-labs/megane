@@ -20,7 +20,6 @@ import type {
   SymmetryParams,
   WrapParams,
   ReplicateParams,
-  EditParams,
   DrawingBoundaryParams,
   BoundaryCompletionParams,
   CoordinationGeneratorParams,
@@ -50,7 +49,6 @@ import { executeModify } from "./executors/modify";
 import { executeSymmetry } from "./executors/symmetry";
 import { executeWrap } from "./executors/wrap";
 import { executeReplicate } from "./executors/replicate";
-import { executeEdit } from "./executors/edit";
 import { executeDrawingBoundary } from "./executors/drawingBoundary";
 import { executeBoundaryCompletion } from "./executors/boundaryCompletion";
 import { executeCoordinationGenerator } from "./executors/coordinationGenerator";
@@ -102,6 +100,11 @@ export interface PipelineExecutionContext {
   nodeSnapshots?: Record<string, NodeSnapshotData>;
   /** Per-node streaming data keyed by streaming node ID. */
   nodeStreamingData?: Record<string, NodeStreamingData>;
+  /**
+   * Show every `load_structure` node's file as loaded, ignoring its edit
+   * list (the Build panel's "Show original" preview). Not persisted.
+   */
+  editsBypassed?: boolean;
 }
 
 export interface PipelineExecutionResult {
@@ -193,6 +196,7 @@ export function executePipeline(
         // A lazy structure provider applies only when this node has no eager
         // frames of its own (mirrors executeLoadTrajectory's provider precedence).
         const provider = nodeData?.frames ? null : (ctx.structureProvider ?? null);
+        const editWarnings: string[] = [];
         const outputs = executeLoadStructure(
           data.params as LoadStructureParams,
           snapshot,
@@ -200,10 +204,14 @@ export function executePipeline(
           meta,
           id,
           provider,
+          { editsBypassed: ctx.editsBypassed, warnings: editWarnings },
         );
         edgeOutputs.set(id, outputs);
         if (!snapshot) {
           addError(id, { message: "No structure data available", severity: "warning" });
+        }
+        for (const message of editWarnings) {
+          addError(id, { message, severity: "warning" });
         }
         break;
       }
@@ -346,18 +354,6 @@ export function executePipeline(
           addError(id, { message: "No input data (check upstream nodes)", severity: "warning" });
         } else if (wantsReplication && !particleIn.source.box) {
           addError(id, { message: "Replicate requires a unit cell", severity: "warning" });
-        }
-        break;
-      }
-      case "edit": {
-        const editWarnings: string[] = [];
-        const outputs = executeEdit(data.params as EditParams, inputs, editWarnings);
-        edgeOutputs.set(id, outputs);
-        if (!inputs.get("particle")?.length) {
-          addError(id, { message: "No input data (check upstream nodes)", severity: "warning" });
-        }
-        for (const message of editWarnings) {
-          addError(id, { message, severity: "warning" });
         }
         break;
       }

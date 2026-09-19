@@ -3,10 +3,10 @@
  *
  * Verifies the Build panel (a separate panel stacked under the Pipeline
  * panel, launched from its header): picking tools, editing through the 3D
- * view's click handlers, and — crucially — that every edit lands as an op on
- * a real `edit` pipeline node that is visible in the Editor tab and changes
- * the rendered atom count. Asserts DOM and store state rather than pixels to
- * stay robust against font/GL drift.
+ * view's click handlers, and — crucially — that every edit lands as an op in
+ * the `load_structure` node's edit list (the graph gains no node; the loader
+ * shows a count) and changes the rendered atom count. Asserts DOM and store
+ * state rather than pixels to stay robust against font/GL drift.
  */
 
 import { test, expect } from "playwright/test";
@@ -15,13 +15,14 @@ import { alignCamera, getCameraState } from "./lib/render-utils";
 
 const ATOM_COUNT_CAFFEINE = 3024;
 
-interface EditNodeInfo {
+interface LoaderInfo {
   id: string;
-  ops: { op: string }[];
-  sourceAtomCount: number | null;
+  edits: { op: string }[];
+  nodeTypes: string[];
 }
 
-async function editNode(page: import("playwright/test").Page): Promise<EditNodeInfo | null> {
+/** The primary loader's edit list plus the node types in the graph. */
+async function loaderInfo(page: import("playwright/test").Page): Promise<LoaderInfo | null> {
   return await page.evaluate(() => {
     const store = (
       window as unknown as {
@@ -32,12 +33,13 @@ async function editNode(page: import("playwright/test").Page): Promise<EditNodeI
         };
       }
     ).__megane_test_pipeline_store;
-    const node = store?.getState().nodes.find((n) => n.type === "edit");
+    const nodes = store?.getState().nodes ?? [];
+    const node = nodes.find((n) => n.type === "load_structure");
     if (!node) return null;
     return {
       id: node.id,
-      ops: node.data.params.ops as { op: string }[],
-      sourceAtomCount: node.data.params.sourceAtomCount as number | null,
+      edits: (node.data.params.edits as { op: string }[] | undefined) ?? [],
+      nodeTypes: nodes.map((n) => n.type ?? ""),
     };
   });
 }
@@ -78,9 +80,12 @@ test.describe("build: webapp", () => {
     await waitForReady(page);
   });
 
-  test("edits from the Build tab become ops on an edit node and change the rendered structure", async ({
+  test("edits from the Build panel land on the loader and change the rendered structure", async ({
     page,
   }) => {
+    // Several pipeline re-executions on a 3k-atom structure plus a tab switch
+    // that mounts the node graph: comfortably past the default budget.
+    test.slow();
     await openBuild(page);
     await expect(page.locator('[data-testid="build-op-count"]')).toHaveText("0 edits");
 
@@ -100,10 +105,11 @@ test.describe("build: webapp", () => {
     await expect(page.locator('[data-testid="build-op-count"]')).toHaveText("2 edits");
     await expect(viewer).toHaveAttribute("data-atom-count", String(ATOM_COUNT_CAFFEINE));
 
-    let node = await editNode(page);
-    expect(node).not.toBeNull();
-    expect(node!.ops.map((o) => o.op)).toEqual(["delete_atoms", "add_atom"]);
-    expect(node!.sourceAtomCount).toBe(ATOM_COUNT_CAFFEINE);
+    let info = await loaderInfo(page);
+    expect(info).not.toBeNull();
+    expect(info!.edits.map((o) => o.op)).toEqual(["delete_atoms", "add_atom"]);
+    // The history is input data, not a node: the graph gained nothing.
+    expect(info!.nodeTypes).not.toContain("edit");
 
     // Undo pops the last op and Redo restores it.
     await page.locator('[data-testid="build-undo"]').click();
@@ -112,11 +118,12 @@ test.describe("build: webapp", () => {
     await page.locator('[data-testid="build-redo"]').click();
     await expect(page.locator('[data-testid="build-op-count"]')).toHaveText("2 edits");
 
-    // Reflection: the Editor tab shows the edit node — and the Build panel
-    // stays open beside it, since it is its own panel rather than a tab.
+    // Reflection: the Editor tab's loader node shows the count — and the Build
+    // panel stays open beside it, since it is its own panel rather than a tab.
     await page.locator('[data-testid="pipeline-editor-tab-editor"]').click();
-    await expect(page.locator('[data-testid="pipeline-node-edit"]').first()).toBeVisible();
-    await expect(page.locator('[data-testid="edit-node-count"]').first()).toHaveText("2 ops");
+    await expect(page.locator('[data-testid="load-structure-edits"]').first()).toHaveText(
+      /2 edits/,
+    );
     await expect(page.locator('[data-testid="build-panel"]')).toBeVisible();
 
     // Clearing the history (the same store action the node's Clear button
@@ -131,9 +138,9 @@ test.describe("build: webapp", () => {
       store.getState().clearEditOps();
     });
     await expect(viewer).toHaveAttribute("data-atom-count", String(ATOM_COUNT_CAFFEINE));
-    await expect(page.locator('[data-testid="edit-node-count"]').first()).toHaveText("0 ops");
-    node = await editNode(page);
-    expect(node!.ops).toHaveLength(0);
+    await expect(page.locator('[data-testid="load-structure-edits"]')).toHaveCount(0);
+    info = await loaderInfo(page);
+    expect(info!.edits).toHaveLength(0);
 
     // Closing the panel from its header leaves the view in normal mode.
     await page.locator('[data-testid="panel-build-toggle"]').click();
@@ -179,20 +186,20 @@ test.describe("build: webapp", () => {
         window as unknown as {
           __megane_test_pipeline_store?: {
             getState: () => {
-              serialize: () => { nodes: { type: string; ops?: unknown[] }[] };
+              serialize: () => { nodes: { type: string; edits?: unknown[] }[] };
               deserialize: (p: unknown) => void;
             };
           };
         }
       ).__megane_test_pipeline_store!;
       const json = store.getState().serialize();
-      const serialized = json.nodes.find((n) => n.type === "edit")!;
+      const serialized = json.nodes.find((n) => n.type === "load_structure")!;
       store.getState().deserialize(json);
       const after = store
         .getState()
         .serialize()
-        .nodes.find((n) => n.type === "edit")!;
-      return { before: serialized.ops, after: after.ops };
+        .nodes.find((n) => n.type === "load_structure")!;
+      return { before: serialized.edits, after: after.edits };
     });
     expect(ops.before).toEqual([{ op: "delete_atoms", atoms: [5] }]);
     expect(ops.after).toEqual(ops.before);

@@ -24,24 +24,34 @@ as a separate repository and not inside a simulation engine:
 The division of labour is: megane builds and repairs the structure *before* it
 is simulated; a simulation backend only needs a way to accept a new structure.
 
-## The edit node (rule #11 in `AGENTS.md`)
+## The edit list lives on the loader (rule #11 in `AGENTS.md`)
 
-Anything that changes what the user sees is a pipeline node's job, so edits are
-not applied to the loaded `Snapshot`. Instead the **`edit` node** carries an
-ordered list of operations (`EditOp` in `src/pipeline/types.ts`) and its
-executor (`src/pipeline/executors/edit.ts`) replays them on every run,
-emitting a brand-new immutable `Snapshot` exactly like `replicate` does. This
-gives undo (drop the last op), disable (toggle the node), sharing (ops ride in
-the `.megane.json`) and LLM authoring (the node is in `NODE_CATALOG` with
-`inPrompt: true`) without any new persistence path.
+Parsers read files as-is, so edits are never applied inside a parser. They are
+also not a node of the view pipeline: the graph describes how a structure is
+*shown*, while an edit changes what it *is*. The two are kept apart by storing
+the ordered operation list (`EditOp` in `src/pipeline/types.ts`) on the primary
+`load_structure` node (`LoadStructureParams.edits`, helpers in
+`src/pipeline/editHistory.ts`). The loader executor
+(`src/pipeline/executors/loadStructure.ts`) replays the list on the loaded
+`Snapshot` through `applyEditOps` (`src/pipeline/executors/edit.ts`) and emits
+the edited structure as a brand-new immutable `Snapshot`, so every downstream
+node only ever sees the edited atoms and the graph gains no node. This gives
+undo (drop the last op), preview (`editsBypassed` in the pipeline store, the
+panel's "Show original"), sharing (the list rides in the `.megane.json` with the
+loader) and LLM authoring (`edits` is documented on `load_structure` in
+`NODE_CATALOG`) without any new persistence path.
+
+An earlier iteration made the history a standalone `edit` node spliced after
+the loader. It worked, but it put "what the molecule is" and "how it looks" in
+the same graph, and the node had to be placed and re-wired by the panel; the
+loader-level list removes both problems.
 
 ### Atom identity
 
 Ops never refer to atoms by their position in the *current* array, which would
 shift on every deletion. An `EditAtomRef` is either
 
-- a **number** — an index into the node's *input* stream (the structure as the
-  file declares it), or
+- a **number** — an index into the structure as the file declares it, or
 - a **string** — the id assigned by an earlier `add_atom` (`id`) or
   `add_fragment` (`<fragmentId>:<k>`) op in the same list.
 
@@ -51,14 +61,13 @@ after deletions, and materialises indices only when it builds the output
 (`EditResult.outputRefs`); the Build panel uses that to translate a click on
 rendered atom *i* into the ref an op must name.
 
-Because refs address the *input* stream, the node is placed **directly after
-`load_structure`** (`src/pipeline/editSync.ts` splices it in and re-sources the
-loader's `particle` / `cell` consumers). Nodes that change the atom count
-(`replicate`, `symmetry`) come after it; if such a node is active the panel
-cannot map rendered indices back and pauses with a notice rather than writing
-ops against the wrong atoms. `sourceAtomCount` records the atom count the ops
-were authored against so a different file under the same history produces a
-node warning instead of silent misapplication.
+Because refs address the file's atoms, the list is replayed *before* anything
+else runs. Nodes that change the atom count (`replicate`, `symmetry`) come
+after; if such a node is active the panel cannot map rendered indices back and
+pauses with a notice rather than writing ops against the wrong atoms. The
+history belongs to the file it was authored against: `updateNodeParams` clears
+a loader's `edits` when its `fileName` changes, and an op that no longer
+applies is skipped with a warning on the loader.
 
 ### What the executor guarantees
 
@@ -67,10 +76,11 @@ node warning instead of silent misapplication.
   warning; one bad op never blanks the structure.
 - Complete: chain ids, B-factors and the Cα backbone arrays are carried and
   remapped; `nFileBonds` is set to the full bond count because every surviving
-  bond is now asserted by the edit; per-atom overrides and selections on the
-  incoming `ParticleData` are remapped, and new atoms get neutral values.
-- Cell-aware: `set_cell` replaces or removes the box and the node re-emits the
-  `cell` stream.
+  bond is now asserted by the edit. Nothing upstream carries per-atom
+  overrides or selections (the loader is the source), so none need remapping.
+- Cell-aware: `set_cell` replaces or removes the box and the loader emits the
+  edited `cell` stream. The `trajectory` output follows the file: its frames
+  index the atoms as loaded.
 
 ## Build panel and the 3D view
 
@@ -80,8 +90,8 @@ column (same width, the Pipeline panel's bottom edge is raised to make room)
 and the Pipeline panel header carries the launcher. Two reasons. Editing the
 molecule is a different activity from authoring the pipeline, so it should
 not compete with Editor / Inspector / Chat for the same tab strip; and the
-pipeline *is* the edit history, so the Editor must stay visible while the
-`edit` node grows. Whether the 3D view is in edit mode follows one flag
+loader node in the Editor reflects the history (its edit count), so the graph
+should stay visible while building. Whether the 3D view is in edit mode follows one flag
 (`buildOpen` in `usePipelineUIStore`), never which tab happens to be in front.
 The flag is not persisted: an open panel changes what a click means, so every
 session starts with it closed.
@@ -129,8 +139,8 @@ save dialog.
   an optional dependency), not in the TypeScript panel.
 - **Fragment library** — `add_fragment` exists in the op set; a picker UI does
   not yet.
-- **Trajectory editing** — the `edit` node does not route trajectories; an
-  edited atom count no longer matches the frames.
+- **Trajectory editing** — the loader's trajectory output follows the file;
+  an edited atom count no longer matches the frames.
 - **Save in place** — VS Code's editor is a `CustomReadonlyEditorProvider` and
   JupyterLab's document widget never calls `context.save()`; both stay
   save-as / download for now.

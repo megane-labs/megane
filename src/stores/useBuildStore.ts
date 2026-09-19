@@ -3,8 +3,8 @@
  * new atom or bond gets, the atoms currently selected in the 3D view, the
  * first atom of an in-progress bond, and the redo stack.
  *
- * The edit *history* is not here — it lives in the `edit` node's params
- * inside the pipeline store (see `pipeline/editSync.ts`), so it is saved with
+ * The edit *history* is not here — it lives on the primary `load_structure`
+ * node's params inside the pipeline store (see `pipeline/editHistory.ts`), so it is saved with
  * the pipeline. This store only holds what the panel needs between clicks.
  * Atom indices here are indices into the *rendered* structure (the edit
  * node's output); `BuildPanel` translates them to op refs.
