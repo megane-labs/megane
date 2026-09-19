@@ -80,6 +80,21 @@ interface CollapsiblePanelProps {
   top?: number;
   /** Right offset in pixels (default: 12). Use to side-by-side panels. */
   right?: number;
+  /**
+   * Bottom offset (default: 60, clear of the Timeline). The expanded panel
+   * stretches from `top` to `bottom` unless `height` is given, in which case
+   * it is anchored at `bottom` with that height and `top` is ignored (a
+   * panel stacked under another one). The collapsed stub follows the same
+   * anchor: top-right by default, bottom-right when `height` is given.
+   */
+  bottom?: number | string;
+  height?: number | string;
+  /**
+   * Where the collapsed stub sits (default: top-right, or bottom-right when
+   * `height` is given). "bottom" pins it to the bottom-right even for a panel
+   * that stretches the full column when expanded.
+   */
+  stubAnchor?: "top" | "bottom";
   /** Extra header content (buttons etc.) placed before the collapse button. */
   headerExtra?: ReactNode;
   /** Extra elements prepended inside the panel container (e.g. resize handle). */
@@ -98,16 +113,24 @@ export function CollapsiblePanel({
   width = 220,
   top = 12,
   right = 12,
+  bottom = 60,
+  height,
+  stubAnchor,
   headerExtra,
   containerExtra,
   children,
 }: CollapsiblePanelProps) {
   const panelTestId = `panel-${title.replace(/\s+/g, "-").toLowerCase()}`;
+  const placement: CSSProperties =
+    height !== undefined ? { top: "auto", bottom, height } : { top, bottom };
+  const stubAtBottom =
+    stubAnchor === "bottom" || (stubAnchor === undefined && height !== undefined);
+  const stubPlacement: CSSProperties = stubAtBottom ? { bottom, right } : { top, right };
 
   if (collapsed) {
     return (
       <div
-        style={{ position: "absolute", top, right, zIndex: 10 }}
+        style={{ position: "absolute", zIndex: 10, ...stubPlacement }}
         data-testid={panelTestId}
         data-collapsed="true"
       >
@@ -130,7 +153,7 @@ export function CollapsiblePanel({
 
   return (
     <div
-      style={{ ...panelContainerStyle, width, top, right }}
+      style={{ ...panelContainerStyle, width, right, ...placement }}
       data-testid={panelTestId}
       data-collapsed="false"
     >

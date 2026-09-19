@@ -92,6 +92,25 @@ pub fn symbol_to_atomic_num(sym: &str) -> u8 {
     }
 }
 
+/// Element symbols indexed by atomic number (`SYMBOLS[0]` is the empty
+/// string for unknown / virtual atoms). Covers Z = 1..=118.
+const SYMBOLS: [&str; 119] = [
+    "", "H", "He", "Li", "Be", "B", "C", "N", "O", "F", "Ne", "Na", "Mg", "Al", "Si", "P", "S",
+    "Cl", "Ar", "K", "Ca", "Sc", "Ti", "V", "Cr", "Mn", "Fe", "Co", "Ni", "Cu", "Zn", "Ga", "Ge",
+    "As", "Se", "Br", "Kr", "Rb", "Sr", "Y", "Zr", "Nb", "Mo", "Tc", "Ru", "Rh", "Pd", "Ag", "Cd",
+    "In", "Sn", "Sb", "Te", "I", "Xe", "Cs", "Ba", "La", "Ce", "Pr", "Nd", "Pm", "Sm", "Eu", "Gd",
+    "Tb", "Dy", "Ho", "Er", "Tm", "Yb", "Lu", "Hf", "Ta", "W", "Re", "Os", "Ir", "Pt", "Au", "Hg",
+    "Tl", "Pb", "Bi", "Po", "At", "Rn", "Fr", "Ra", "Ac", "Th", "Pa", "U", "Np", "Pu", "Am", "Cm",
+    "Bk", "Cf", "Es", "Fm", "Md", "No", "Lr", "Rf", "Db", "Sg", "Bh", "Hs", "Mt", "Ds", "Rg", "Cn",
+    "Nh", "Fl", "Mc", "Lv", "Ts", "Og",
+];
+
+/// Inverse of [`symbol_to_atomic_num`]: the element symbol for an atomic
+/// number, or `""` for `0` and anything past Og (118).
+pub fn atomic_num_to_symbol(atomic_num: u8) -> &'static str {
+    SYMBOLS.get(atomic_num as usize).copied().unwrap_or("")
+}
+
 // ── String utilities ──────────────────────────────────────────────────────
 
 /// Capitalize a string: first character uppercase, rest lowercase.
@@ -332,6 +351,23 @@ pub(crate) fn element_from_atom_name(name: &str) -> u8 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_atomic_num_to_symbol_round_trip() {
+        assert_eq!(atomic_num_to_symbol(0), "");
+        assert_eq!(atomic_num_to_symbol(1), "H");
+        assert_eq!(atomic_num_to_symbol(26), "Fe");
+        assert_eq!(atomic_num_to_symbol(118), "Og");
+        assert_eq!(atomic_num_to_symbol(119), "");
+        // Every symbol the forward table knows maps back to the same Z.
+        for z in 1..=118u8 {
+            let sym = atomic_num_to_symbol(z);
+            let back = symbol_to_atomic_num(sym);
+            if back != 0 {
+                assert_eq!(back, z, "round trip failed for {sym}");
+            }
+        }
+    }
 
     #[test]
     fn test_symbol_to_atomic_num_common() {

@@ -550,6 +550,7 @@ function PipelineEditorInner({
   collapsed,
   onToggleCollapse,
   onWidthChange,
+  bottom,
   rendererRef,
   totalFrames,
   currentFrame,
@@ -558,6 +559,8 @@ function PipelineEditorInner({
   collapsed: boolean;
   onToggleCollapse: () => void;
   onWidthChange?: (width: number) => void;
+  /** Bottom offset of the panel (default: clear of the Timeline). */
+  bottom?: number | string;
   rendererRef: React.RefObject<MoleculeRenderer | null>;
   totalFrames: number;
   currentFrame: number;
@@ -1026,6 +1029,7 @@ function PipelineEditorInner({
       collapsed={collapsed}
       onToggleCollapse={onToggleCollapse}
       width={panelWidth}
+      bottom={bottom}
       headerExtra={headerExtra}
       containerExtra={resizeHandle}
     >
@@ -1167,6 +1171,7 @@ export function PipelineEditor({
   collapsed,
   onToggleCollapse,
   onWidthChange,
+  bottom,
   rendererRef,
   totalFrames = 0,
   currentFrame = 0,
@@ -1175,6 +1180,8 @@ export function PipelineEditor({
   collapsed: boolean;
   onToggleCollapse: () => void;
   onWidthChange?: (width: number) => void;
+  /** Bottom offset of the panel (default: clear of the Timeline). */
+  bottom?: number | string;
   rendererRef: React.RefObject<MoleculeRenderer | null>;
   totalFrames?: number;
   currentFrame?: number;
@@ -1187,6 +1194,7 @@ export function PipelineEditor({
         collapsed={collapsed}
         onToggleCollapse={onToggleCollapse}
         onWidthChange={onWidthChange}
+        bottom={bottom}
         rendererRef={rendererRef}
         totalFrames={totalFrames}
         currentFrame={currentFrame}

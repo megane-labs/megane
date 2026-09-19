@@ -96,6 +96,7 @@ import type { MeganeCameraState } from "@/renderer/MoleculeRenderer";
 /** testid rendered by each switchable tool, keyed by its `ui` option. */
 const TOOL_TESTIDS: Record<keyof MeganeViewerUiOptions, string[]> = {
   pipelineEditor: ["mock-pipeline-editor"],
+  // Collapsed by default, but its stub is in the DOM whenever the tool is on.
   resetView: ["reset-view-btn"],
   viewAxes: ["view-axis-controls"],
   perfHud: ["perf-hud"],
@@ -222,9 +223,12 @@ describe("MeganeViewer ui options", () => {
     expect(rendererStub.setViewInsets).not.toHaveBeenCalledWith(0, 492);
   });
 
-  it("stretches the tour anchor across the full width without the pipeline panel", () => {
+  it("stretches the tour anchor across the full width without the right column", () => {
     const { container } = render(
-      <MeganeViewer onUploadStructure={() => {}} ui={{ pipelineEditor: false, timeline: false }} />,
+      <MeganeViewer
+        onUploadStructure={() => {}}
+        ui={{ pipelineEditor: false, build: false, timeline: false }}
+      />,
     );
     const anchor = container.querySelector<HTMLElement>('[data-tour-anchor="viewport"]');
     expect(anchor).not.toBeNull();

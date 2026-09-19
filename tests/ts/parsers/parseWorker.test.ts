@@ -89,6 +89,7 @@ const { wasmMock } = vi.hoisted(() => {
     parse_psf_bonds: () => new Uint32Array(),
     parse_pdb_bonds: () => new Uint32Array(),
     extract_labels: () => "",
+    write_structure: () => "",
     XtcDecoder: class {
       n_atoms = 4;
       n_frames = 2;

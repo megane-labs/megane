@@ -619,6 +619,37 @@ class TestPipelineSerialization:
         assert isinstance(rebuilt, Replicate)
         assert (rebuilt.nx, rebuilt.ny, rebuilt.nz) == (2, 1, 3)
 
+    def test_load_structure_edits_serialization(self):
+        ops = [
+            {"op": "add_atom", "id": "h1", "element": 1, "position": [1.0, 0.0, 0.0], "bondTo": 0},
+            {"op": "delete_atoms", "atoms": [2]},
+        ]
+        pipe = Pipeline()
+        s = pipe.add_node(LoadStructure(str(FIXTURES / "1crn.pdb"), edits=ops))
+        result = pipe.to_dict()
+
+        assert not any(n["type"] == "edit" for n in result["nodes"])
+        loader = next(n for n in result["nodes"] if n["id"] == s._id)
+        assert loader["edits"] == ops
+        # The list is copied, not shared with the caller.
+        ops.append({"op": "set_cell", "box": None})
+        assert len(s.edits) == 2
+
+    def test_load_structure_without_edits_omits_the_field(self):
+        pipe = Pipeline()
+        s = pipe.add_node(LoadStructure(str(FIXTURES / "1crn.pdb")))
+        assert s.edits == []
+        loader = next(n for n in pipe.to_dict()["nodes"] if n["id"] == s._id)
+        assert "edits" not in loader
+
+    def test_load_structure_edits_round_trip(self):
+        pipe = Pipeline()
+        s = pipe.add_node(LoadStructure(str(FIXTURES / "1crn.pdb"), edits=[{"op": "set_cell", "box": None}]))
+        pipe2 = Pipeline.from_dict(pipe.to_dict())
+        rebuilt = pipe2._nodes[s._id][0]
+        assert isinstance(rebuilt, LoadStructure)
+        assert rebuilt.edits == [{"op": "set_cell", "box": None}]
+
     def test_symmetry_serialization(self):
         pipe = Pipeline()
         s = pipe.add_node(LoadStructure(str(FIXTURES / "1crn.pdb")))

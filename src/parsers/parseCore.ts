@@ -240,6 +240,16 @@ interface WasmModule {
   parse_psf_bonds: (text: string, n_atoms: number) => Uint32Array;
   parse_pdb_bonds: (text: string, n_atoms: number) => Uint32Array;
   extract_labels: (text: string, format: string) => string;
+  write_structure: (
+    format: string,
+    positions: Float32Array,
+    elements: Uint8Array,
+    bonds: Uint32Array,
+    bond_orders: Uint8Array,
+    box_matrix: Float32Array,
+    atom_labels: string,
+    chain_ids: Uint8Array,
+  ) => string;
 }
 
 /**
@@ -296,6 +306,7 @@ export async function ensureInit(wasmUrl?: string): Promise<void> {
         parse_psf_bonds: wasm.parse_psf_bonds,
         parse_pdb_bonds: wasm.parse_pdb_bonds,
         extract_labels: wasm.extract_labels,
+        write_structure: wasm.write_structure,
       };
     })();
   }
@@ -924,4 +935,38 @@ export async function extractLabelsFromFile(file: File, nAtoms: number): Promise
     labels.push("");
   }
   return labels;
+}
+
+/** Output formats the Rust structure writer supports. */
+export type StructureWriteFormat = "xyz" | "pdb" | "mol";
+
+/**
+ * Serialize a structure as XYZ / PDB / MOL text through the Rust writer
+ * (`megane_core::writer`, the same code the Python `write_structure` uses).
+ * Optional channels are passed as empty arrays / strings when absent.
+ * Main-thread.
+ */
+export async function writeStructure(
+  format: StructureWriteFormat,
+  positions: Float32Array,
+  elements: Uint8Array,
+  bonds: Uint32Array,
+  opts: {
+    bondOrders?: Uint8Array | null;
+    box?: Float32Array | null;
+    atomLabels?: string[] | null;
+    chainIds?: Uint8Array | null;
+  } = {},
+): Promise<string> {
+  await ensureInit();
+  return wasmModule!.write_structure(
+    format,
+    positions,
+    elements,
+    bonds,
+    opts.bondOrders ?? new Uint8Array(0),
+    opts.box ?? new Float32Array(0),
+    opts.atomLabels && opts.atomLabels.length > 0 ? opts.atomLabels.join("\n") : "",
+    opts.chainIds ?? new Uint8Array(0),
+  );
 }

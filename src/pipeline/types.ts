@@ -566,6 +566,15 @@ export interface LoadStructureParams {
   /** Which output ports have data (determined by the loaded file). */
   hasTrajectory: boolean;
   hasCell: boolean;
+  /**
+   * Structure edits applied to the file as loaded, in order — the Build
+   * panel's history (add / delete / move atoms, change elements, add / delete
+   * bonds, place a fragment, set the cell). They belong to the *input*: the
+   * loader emits the edited structure, and the rest of the pipeline only
+   * describes how it is shown. Absent or empty when the file is used as-is.
+   * Cleared when a different file is loaded into the node.
+   */
+  edits?: EditOp[];
 }
 
 export interface LoadTrajectoryParams {
@@ -695,6 +704,54 @@ export interface ReplicateParams {
   /** Number of cell images along the c (z) lattice vector (>= 1). */
   nz: number;
 }
+
+/**
+ * Reference to an atom from inside a `load_structure` node's edit list. A
+ * number is an index into the structure *as loaded from the file*; a string
+ * is the `id` of an atom created earlier in the same list by an `add_atom`
+ * op (its `id`) or an `add_fragment` op (`<fragmentId>:<k>` for the k-th
+ * fragment atom). Ops are applied in order, so a ref must be created before
+ * it is used.
+ */
+export type EditAtomRef = number | string;
+
+/** One structure edit, as authored by megane Builder (or by hand / the LLM). */
+export type EditOp =
+  | {
+      op: "add_atom";
+      /** Stable id later ops use to refer to this atom. */
+      id: string;
+      element: number;
+      /** Absolute Å position. */
+      position: [number, number, number];
+      /** Optionally bond the new atom to an existing one in the same op. */
+      bondTo?: EditAtomRef;
+      /** Bond order for `bondTo` (1..4, default 1). */
+      order?: number;
+    }
+  | { op: "delete_atoms"; atoms: EditAtomRef[] }
+  | { op: "move_atoms"; atoms: EditAtomRef[]; delta: [number, number, number] }
+  | { op: "set_element"; atoms: EditAtomRef[]; element: number }
+  | { op: "add_bond"; a: EditAtomRef; b: EditAtomRef; order?: number }
+  | { op: "delete_bond"; a: EditAtomRef; b: EditAtomRef }
+  | {
+      op: "add_fragment";
+      /** Stable id prefix for the fragment's atoms (`<id>:<k>`). */
+      id: string;
+      elements: number[];
+      /** Flat `[x0,y0,z0, x1,y1,z1, …]` in Å, fragment-local. */
+      positions: number[];
+      /** Intra-fragment bonds as local atom index pairs. */
+      bonds: [number, number][];
+      bondOrders?: number[];
+      /** Translation applied to every fragment atom (default none). */
+      translate?: [number, number, number];
+    }
+  | {
+      op: "set_cell";
+      /** Row-major 3×3 cell, or null to remove the cell. */
+      box: number[] | null;
+    };
 
 /** Inclusive fractional display range along the crystallographic axes. */
 export interface DrawingBoundaryParams {

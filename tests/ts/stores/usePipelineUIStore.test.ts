@@ -83,6 +83,12 @@ describe("usePipelineUIStore initial load", () => {
     vi.restoreAllMocks();
   });
 
+  it("treats a stale 'build' tab from an earlier build as unset", async () => {
+    sessionStorage.setItem(STORAGE_KEY, JSON.stringify({ mode: "build" }));
+    const mod = await import("@/stores/usePipelineUIStore");
+    expect(mod.usePipelineUIStore.getState().mode).toBe("chat");
+  });
+
   it("hydrates the mode from sessionStorage when a valid value is stored", async () => {
     sessionStorage.setItem(STORAGE_KEY, JSON.stringify({ mode: "editor" }));
     const mod = await import("@/stores/usePipelineUIStore");

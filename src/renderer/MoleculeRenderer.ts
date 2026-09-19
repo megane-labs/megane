@@ -41,7 +41,14 @@ import {
   LICORICE_RADIUS,
   SPACEFILL_ATOM_SCALE,
 } from "../constants";
-import { pickAtPixel, projectToScreen, atomsInRect, type ClientRect } from "./Picking";
+import {
+  pickAtPixel,
+  projectToScreen,
+  atomsInRect,
+  screenToWorldOnPlane,
+  screenDragToWorldDelta,
+  type ClientRect,
+} from "./Picking";
 import { computeMeasurement } from "./Selection";
 import { FpsCounter } from "./FpsCounter";
 import { perfMark, perfMeasure, perfPushFrame, perfRendererReady } from "../perf";
@@ -1964,6 +1971,40 @@ export class MoleculeRenderer {
       this.currentDrawingBoundary,
       this.currentBondPeriodicImages,
     );
+  }
+
+  /**
+   * World displacement of a screen drag in the camera-facing plane through
+   * atom `atomIndex` (at its current position). Null when nothing is loaded.
+   */
+  dragDeltaForAtom(
+    atomIndex: number,
+    fromX: number,
+    fromY: number,
+    toX: number,
+    toY: number,
+  ): [number, number, number] | null {
+    if (!this.container || !this.snapshot || atomIndex < 0 || atomIndex >= this.snapshot.nAtoms) {
+      return null;
+    }
+    const pos = this.getCurrentPositions();
+    const anchor: [number, number, number] = [
+      pos[atomIndex * 3],
+      pos[atomIndex * 3 + 1],
+      pos[atomIndex * 3 + 2],
+    ];
+    return screenDragToWorldDelta(this.camera, this.container, anchor, fromX, fromY, toX, toY);
+  }
+
+  /**
+   * World point under a client pixel on the camera-facing plane through the
+   * current rotation pivot (the structure's center by default). Used to place
+   * a new atom on empty space. Null when nothing is mounted.
+   */
+  screenToWorldAtPivot(clientX: number, clientY: number): [number, number, number] | null {
+    if (!this.container || !this.controls) return null;
+    const t = this.controls.target;
+    return screenToWorldOnPlane(this.camera, this.container, [t.x, t.y, t.z], clientX, clientY);
   }
 
   /** Enable/disable camera controls (used to suspend camera rotation during a box drag). */

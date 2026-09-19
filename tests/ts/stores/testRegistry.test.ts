@@ -10,7 +10,11 @@ interface TestWindow {
   __MEGANE_TEST__?: boolean;
   __megane_test_pipeline_store?: unknown;
   __megane_test_playback_store?: unknown;
-  __megane_test_store_bundles?: Record<string, { pipeline?: unknown; playback?: unknown }>;
+  __megane_test_builder_store?: unknown;
+  __megane_test_store_bundles?: Record<
+    string,
+    { pipeline?: unknown; playback?: unknown; builder?: unknown }
+  >;
 }
 
 const w = window as unknown as TestWindow;

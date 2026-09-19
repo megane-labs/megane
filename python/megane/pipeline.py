@@ -100,8 +100,28 @@ class LoadStructure(PipelineNode):
     opened standalone as a multi-frame structure (frame-0 topology, integer
     atom `type` ids used as element proxies).
 
+    Args:
+        path: Structure file to load.
+        edits: Structure edits replayed on the file as loaded — the Build
+            panel's history. Each is a dict like the panel would have
+            produced::
+
+                LoadStructure("water.pdb", edits=[
+                    {"op": "add_atom", "id": "h1", "element": 1,
+                     "position": [1.0, 0.0, 0.0], "bondTo": 0},
+                    {"op": "delete_atoms", "atoms": [5, 6]},
+                    {"op": "move_atoms", "atoms": ["h1"], "delta": [0.0, 0.5, 0.0]},
+                    {"op": "add_bond", "a": 0, "b": 1, "order": 2},
+                ])
+
+            Atom references are indices into the file's atoms (``int``) or
+            the ``id`` of an atom an earlier op created (``str``; fragment
+            atoms are ``"<id>:<k>"``). The node then emits the edited
+            structure; the rest of the pipeline only describes how it is
+            shown.
+
     Ports:
-        out.particle — atom data
+        out.particle — atom data (edited when ``edits`` is set)
         out.traj     — trajectory channel
         out.cell     — simulation cell
     """
@@ -110,9 +130,10 @@ class LoadStructure(PipelineNode):
     _out_ports = {"particle": "particle", "traj": "trajectory", "cell": "cell"}
     _inp_ports: dict[str, str] = {}
 
-    def __init__(self, path: str) -> None:
+    def __init__(self, path: str, *, edits: list[dict] | None = None) -> None:
         super().__init__()
         self.path = path
+        self.edits = list(edits) if edits else []
 
 
 class LoadTrajectory(PipelineNode):
@@ -936,7 +957,7 @@ class Pipeline:
         """Instantiate the correct PipelineNode subclass from a v3 node dict."""
         ntype = nd.get("type")
         if ntype == "load_structure":
-            return LoadStructure(nd.get("fileName") or "")
+            return LoadStructure(nd.get("fileName") or "", edits=nd.get("edits"))
         elif ntype == "load_trajectory":
             import pathlib
 
@@ -1148,6 +1169,8 @@ class Pipeline:
             base["fileName"] = node.path
             base["hasTrajectory"] = False
             base["hasCell"] = has_cell
+            if node.edits:
+                base["edits"] = [dict(op) for op in node.edits]
         elif isinstance(node, LoadTrajectory):
             base["fileName"] = node.xtc or node.dcd or node.nc or node.traj or node.xyz or node.lammpstrj
         elif isinstance(node, Streaming):

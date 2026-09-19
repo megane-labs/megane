@@ -88,6 +88,27 @@ export const NODE_CATALOG: Record<PipelineNodeType, NodeCatalogEntry> = {
         default: "false",
         doc: "Whether the file carries a unit cell.",
       },
+      {
+        jsonKey: "edits",
+        tsType: "EditOp[]",
+        default: "[]",
+        doc:
+          "Structure edits replayed on the file as loaded, in order — megane Builder's history format " +
+          "(add / delete / move atoms, change elements, add / delete bonds, place a fragment, set " +
+          "the cell). Atom refs are indices into the file's atoms (numbers) or ids of atoms created " +
+          "by an earlier `add_atom` / `add_fragment` op (strings). The node emits the edited " +
+          "structure; omit when the file is used as-is.",
+      },
+    ],
+    promptNotes: [
+      'edits (optional): array of { op: "add_atom", id, element, position: [x,y,z], bondTo?, order? } |\n' +
+        '    { op: "delete_atoms", atoms } | { op: "move_atoms", atoms, delta: [dx,dy,dz] } |\n' +
+        '    { op: "set_element", atoms, element } | { op: "add_bond", a, b, order? } |\n' +
+        '    { op: "delete_bond", a, b } | { op: "set_cell", box: number[9] | null } |\n' +
+        '    { op: "add_fragment", id, elements, positions (flat), bonds: [[i,j],…], translate? }',
+      "atoms / a / b / bondTo are atom refs: an index into the file's atoms (number) or the id of\n" +
+        "    an atom an earlier op in the same list created (string). element is an atomic number.\n" +
+        "    Edits change the structure itself; leave them out unless the user asks to edit atoms.",
     ],
     promptOutputs: "`particle` (always), `trajectory` (if hasTrajectory), `cell` (if hasCell)",
     inPrompt: true,

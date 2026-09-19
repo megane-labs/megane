@@ -33,6 +33,7 @@ const sidebars: SidebarsConfig = {
         { type: "doc", id: "guide/cli", label: "Standalone web app" },
         { type: "doc", id: "guide/vscode", label: "VS Code extension" },
         { type: "doc", id: "guide/jupyterlab", label: "JupyterLab extension" },
+        { type: "doc", id: "guide/builder", label: "Builder (structure editor)" },
       ],
     },
     {
@@ -71,6 +72,7 @@ const sidebars: SidebarsConfig = {
   developSidebar: [
     { type: "doc", id: "dev/architecture", label: "Architecture" },
     { type: "doc", id: "dev/custom-nodes", label: "Custom Nodes" },
+    { type: "doc", id: "dev/editor-design", label: "Structure Editor Design" },
     { type: "doc", id: "dev/molstar-illustrative-parity", label: "Mol* Illustrative Parity" },
   ],
 

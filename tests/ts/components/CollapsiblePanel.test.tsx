@@ -7,6 +7,26 @@ afterEach(() => {
 });
 
 describe("CollapsiblePanel", () => {
+  it("stretches from top to the given bottom offset and puts the stub at the top", () => {
+    const { rerender } = render(
+      <CollapsiblePanel title="Pipeline" collapsed={false} onToggleCollapse={() => {}} bottom={72}>
+        <div />
+      </CollapsiblePanel>,
+    );
+    let root = screen.getByTestId("panel-pipeline");
+    expect(root.style.top).toBe("12px");
+    expect(root.style.bottom).toBe("72px");
+    rerender(
+      <CollapsiblePanel title="Pipeline" collapsed={true} onToggleCollapse={() => {}} bottom={72}>
+        <div />
+      </CollapsiblePanel>,
+    );
+    root = screen.getByTestId("panel-pipeline");
+    expect(root.getAttribute("data-collapsed")).toBe("true");
+    expect(root.style.top).toBe("12px");
+    expect(root.style.bottom).toBe("");
+  });
+
   it("renders the collapsed toggle button when collapsed", () => {
     const onToggle = vi.fn();
     render(

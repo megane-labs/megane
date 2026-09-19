@@ -19,6 +19,7 @@ import {
   VectorOverlay,
   Viewport,
 } from "@/pipeline/builder";
+import { deserializePipeline } from "@/pipeline/serialize";
 
 // ─── NodePort ─────────────────────────────────────────────────────────
 
@@ -178,6 +179,40 @@ describe("Modify", () => {
   it("accepts custom values", () => {
     const node = new Modify({ scale: 1.5, opacity: 0.3 });
     expect(node._toSerializedParams()).toMatchObject({ scale: 1.5, opacity: 0.3 });
+  });
+});
+
+describe("LoadStructure edits", () => {
+  it("serializes without an edits field when there are none", () => {
+    expect(new LoadStructure("water.xyz")._toSerializedParams()).not.toHaveProperty("edits");
+  });
+
+  it("carries the edit list verbatim on the loader", () => {
+    const edits = [
+      {
+        op: "add_atom" as const,
+        id: "h1",
+        element: 1,
+        position: [1, 0, 0] as [number, number, number],
+        bondTo: 0,
+      },
+    ];
+    const node = new LoadStructure("water.xyz", { edits });
+    expect(node._toSerializedParams()).toMatchObject({ type: "load_structure", edits });
+  });
+
+  it("round-trips through a Pipeline with no edit node in the graph", () => {
+    const pipe = new Pipeline();
+    pipe.addNode(new LoadStructure("water.xyz", { edits: [{ op: "delete_atoms", atoms: [0] }] }));
+    const json = pipe.toObject();
+    expect(json.nodes.some((n) => n.type === "edit")).toBe(false);
+    const loader = json.nodes.find((n) => n.type === "load_structure") as { edits: unknown[] };
+    expect(loader.edits).toEqual([{ op: "delete_atoms", atoms: [0] }]);
+    const { nodes } = deserializePipeline(json);
+    const rebuilt = nodes.find((n) => n.type === "load_structure")!;
+    expect((rebuilt.data.params as { edits?: unknown[] }).edits).toEqual([
+      { op: "delete_atoms", atoms: [0] },
+    ]);
   });
 });
 

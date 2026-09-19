@@ -27,12 +27,15 @@
 export interface TestStoreBundle {
   pipeline?: unknown;
   playback?: unknown;
+  /** Builder app state; lets specs drive its pick/drag handlers. */
+  builder?: unknown;
 }
 
 interface TestWindow {
   __MEGANE_TEST__?: boolean;
   __megane_test_pipeline_store?: unknown;
   __megane_test_playback_store?: unknown;
+  __megane_test_builder_store?: unknown;
   __megane_test_store_bundles?: Record<string, TestStoreBundle>;
 }
 
@@ -100,6 +103,7 @@ function syncPrimary(): void {
   // mode, not a missing one.
   w.__megane_test_pipeline_store = resolveStore("pipeline");
   w.__megane_test_playback_store = resolveStore("playback");
+  w.__megane_test_builder_store = resolveStore("builder");
 }
 
 /**
@@ -138,5 +142,6 @@ export function _resetTestRegistry(): void {
   if (!w) return;
   delete w.__megane_test_pipeline_store;
   delete w.__megane_test_playback_store;
+  delete w.__megane_test_builder_store;
   delete w.__megane_test_store_bundles;
 }

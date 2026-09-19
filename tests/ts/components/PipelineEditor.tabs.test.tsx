@@ -116,6 +116,21 @@ describe("PipelineEditor — tab switching", () => {
     expect(row.style.flexShrink).toBe("0");
   });
 
+  it("offers neither a Build tab nor a Build launcher: the Build panel is a peer of this one", () => {
+    render(<PipelineEditor collapsed={false} onToggleCollapse={() => {}} />);
+    // Editing the molecule is not a pipeline concern: the Build panel is its
+    // own CollapsiblePanel (MeganeViewer stacks it under this one) with its
+    // own stub, so nothing here toggles it or mounts it.
+    expect(screen.queryByTestId("pipeline-editor-tab-build")).toBeNull();
+    expect(screen.queryByTestId("pipeline-editor-build")).toBeNull();
+    expect(screen.queryByTestId("build-panel")).toBeNull();
+    expect(screen.getAllByRole("tab").map((t) => t.textContent)).toEqual([
+      "Editor",
+      "Inspector",
+      "Chat",
+    ]);
+  });
+
   it("hides Pipeline-tab-only buttons (Templates) when the chat tab is active", () => {
     render(<PipelineEditor collapsed={false} onToggleCollapse={() => {}} />);
 

@@ -2,7 +2,15 @@
 
 ### load_structure
 Loads a molecular structure file. This is the primary data source.
-- Parameters: `{ type: "load_structure", fileName: string | null, hasTrajectory: boolean, hasCell: boolean }`
+- Parameters: `{ type: "load_structure", fileName: string | null, hasTrajectory: boolean, hasCell: boolean, edits: EditOp[] }`
+  - edits (optional): array of { op: "add_atom", id, element, position: [x,y,z], bondTo?, order? } |
+    { op: "delete_atoms", atoms } | { op: "move_atoms", atoms, delta: [dx,dy,dz] } |
+    { op: "set_element", atoms, element } | { op: "add_bond", a, b, order? } |
+    { op: "delete_bond", a, b } | { op: "set_cell", box: number[9] | null } |
+    { op: "add_fragment", id, elements, positions (flat), bonds: [[i,j],…], translate? }
+  - atoms / a / b / bondTo are atom refs: an index into the file's atoms (number) or the id of
+    an atom an earlier op in the same list created (string). element is an atomic number.
+    Edits change the structure itself; leave them out unless the user asks to edit atoms.
 - Outputs: `particle` (always), `trajectory` (if hasTrajectory), `cell` (if hasCell)
 - No inputs
 

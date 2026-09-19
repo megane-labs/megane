@@ -445,6 +445,37 @@ export function computeFrameDistanceBonds(
   return processPbcBonds(pairs, null, framePositions, elements, nAtoms, box);
 }
 
+/**
+ * Bond stream for exactly the bonds a snapshot carries — file bonds, parser
+ * inferred bonds, and bonds asserted by edit ops alike — regardless of
+ * `nFileBonds`. megane Builder's view (see `builder/view.ts`)
+ * draws the loader's output with these rather than re-inferring anything, so
+ * what the user drew is what they see. PBC half-bonds get their ghost atoms
+ * as in the "structure" source of `executeAddBond`.
+ */
+export function bondDataFromSnapshotBonds(particle: ParticleData): BondData | null {
+  const snapshot = particle.source;
+  if (snapshot.nBonds === 0 || snapshot.bonds.length === 0) return null;
+  const topology = topologyFromPairs(snapshot.bonds, snapshot.bondOrders, particle);
+  const rendered = renderPeriodicTopology(particle, topology);
+  return {
+    type: "bond",
+    sourceNodeId: particle.sourceNodeId,
+    bondIndices: rendered.bondIndices,
+    bondOrders: rendered.bondOrders,
+    nBonds: rendered.nBonds,
+    scale: 1,
+    opacity: 1,
+    positions: rendered.positions,
+    elements: rendered.elements,
+    nAtoms: rendered.nAtoms,
+    atomElements: snapshot.elements,
+    selectedBondIndices: null,
+    bondOpacityOverrides: null,
+    periodicTopology: topology,
+  };
+}
+
 export function executeAddBond(
   params: AddBondParams,
   inputs: Map<string, PipelineData[]>,

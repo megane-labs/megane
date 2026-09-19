@@ -82,6 +82,7 @@ export function LoadStructureNode({ id, data }: NodeProps<Node<PipelineNodeData>
   const loadHandlers = useLoadHandlers();
   const params = data.params as LoadStructureParams;
   const inputRef = useRef<HTMLInputElement>(null);
+  const editCount = Array.isArray(params.edits) ? params.edits.length : 0;
 
   const handleFile = useCallback(
     (file: File) => {
@@ -131,6 +132,17 @@ export function LoadStructureNode({ id, data }: NodeProps<Node<PipelineNodeData>
             style={{ fontSize: 20, color: "#94a3b8", fontStyle: "italic" }}
           >
             No structure loaded
+          </div>
+        )}
+        {/* An edit history (from the Builder, the chat, or a builder script)
+            rides on this node: it edits the input, not the view, so the graph
+            shows only a count. */}
+        {editCount > 0 && (
+          <div
+            data-testid="load-structure-edits"
+            style={{ marginTop: 4, fontSize: 12, color: "#047857" }}
+          >
+            {editCount} edit{editCount === 1 ? "" : "s"}
           </div>
         )}
         <button

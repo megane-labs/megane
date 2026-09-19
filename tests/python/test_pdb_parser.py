@@ -70,3 +70,16 @@ def test_box():
         assert abs(s.box[0, 0] - 40.96) < 0.1
         # Second vector y component ~ 18.65
         assert abs(s.box[1, 1] - 18.65) < 0.1
+
+
+def test_empty_box_fixture_is_a_cell_without_atoms():
+    """The Build panel's "Empty Box" template file: a CRYST1 record and nothing else."""
+    s = load_pdb(str(FIXTURES / "empty_box.pdb"))
+
+    assert s.n_atoms == 0
+    assert s.positions.shape == (0, 3)
+    assert len(s.bonds) == 0
+    assert s.box.shape == (3, 3)
+    assert abs(s.box[0, 0] - 10.0) < 1e-4
+    assert abs(s.box[1, 1] - 10.0) < 1e-4
+    assert abs(s.box[2, 2] - 10.0) < 1e-4

@@ -16,6 +16,8 @@ import type {
   SerializedPipeline,
   NodeError,
   FrameProvider,
+  EditOp,
+  LoadStructureParams,
 } from "./types";
 import { defaultParams, DEFAULT_VIEWPORT_STATE, canConnect } from "./types";
 import { LazyFrameProvider } from "../stream/LazyFrameProvider";
@@ -27,6 +29,7 @@ import { PIPELINE_TEMPLATES } from "./templates";
 import { getLayoutedElements } from "./layout";
 import { performOpenFile, type OpenFileOptions } from "./openFile";
 import { reconcileInspectorLayers, isInspectorId, type InspectorLayer } from "./inspectorSync";
+import { findPrimaryLoader, loaderEdits } from "./editHistory";
 import { registerTestStores, GLOBAL_BUNDLE_ID } from "../stores/testRegistry";
 
 let nextNodeId = 1;
@@ -125,6 +128,27 @@ export interface PipelineStore {
   // supercell effects are preserved. Non-Inspector nodes are left untouched.
   setInspectorLayers: (layers: InspectorLayer[]) => void;
 
+  // Structure editing: the edit history is the primary load_structure
+  // node's `edits` list (see editHistory.ts) — part of the input, not a node
+  // in the graph. These actions append / pop ops on it; every one re-executes
+  // the pipeline so the 3D view reflects the edit immediately.
+  /** Append an op to the primary loader's edits. Returns the loader id ("" without one). */
+  pushEditOp: (op: EditOp) => string;
+  /** Replace the most recent op (used while a drag is in progress). */
+  replaceLastEditOp: (op: EditOp) => void;
+  /** Remove and return the most recent op, or null when there is none. */
+  undoEditOp: () => EditOp | null;
+  /** Drop every op. */
+  clearEditOps: () => void;
+  /**
+   * Bumped whenever a loader's edit list changes (ops pushed / undone /
+   * cleared, or the list edited directly) and when the original-structure
+   * preview is toggled. The viewer keeps the camera where it is on such
+   * re-executions: an edit reshapes the snapshot arrays, which would
+   * otherwise read as a new structure and re-fit the view.
+   */
+  editRevision: number;
+
   // Templates
   pendingTemplateId: string | null;
   applyTemplate: (templateId: string) => void;
@@ -182,6 +206,7 @@ export const pipelineStateCreator: StateCreator<PipelineStore> = (set, get, api)
   ...createInitialGraph(),
   viewportState: { ...DEFAULT_VIEWPORT_STATE },
   nodeErrors: {},
+  editRevision: 0,
   snapshot: null,
   atomLabels: null,
   structureFrames: null,
@@ -411,14 +436,21 @@ export const pipelineStateCreator: StateCreator<PipelineStore> = (set, get, api)
     set((state) => ({
       nodes: state.nodes.map((n) => {
         if (n.id !== id) return n;
-        return {
-          ...n,
-          data: {
-            ...n.data,
-            params: { ...n.data.params, ...params },
-          },
-        };
+        const next = { ...n.data.params, ...params } as typeof n.data.params;
+        // The edit history belongs to the file it was authored against:
+        // loading a different file into the loader starts it fresh.
+        if (
+          n.type === "load_structure" &&
+          "fileName" in params &&
+          params.fileName !== (n.data.params as LoadStructureParams).fileName &&
+          (n.data.params as LoadStructureParams).edits?.length
+        ) {
+          (next as LoadStructureParams).edits = [];
+        }
+        return { ...n, data: { ...n.data, params: next } };
       }),
+      // Rewriting a loader's edit list is a structure edit (see editRevision).
+      editRevision: state.editRevision + ("edits" in params ? 1 : 0),
     }));
     get().execute();
   },
@@ -561,6 +593,35 @@ export const pipelineStateCreator: StateCreator<PipelineStore> = (set, get, api)
     const next = reconcileInspectorLayers(nodes, edges, layers, source, viewport.id);
     set({ nodes: next.nodes, edges: next.edges });
     get().execute();
+  },
+
+  pushEditOp: (op) => {
+    const loader = findPrimaryLoader(get().nodes);
+    if (!loader) return "";
+    get().updateNodeParams(loader.id, { edits: [...loaderEdits(loader), op] });
+    return loader.id;
+  },
+
+  replaceLastEditOp: (op) => {
+    const loader = findPrimaryLoader(get().nodes);
+    const edits = loaderEdits(loader);
+    if (!loader || edits.length === 0) return;
+    get().updateNodeParams(loader.id, { edits: [...edits.slice(0, -1), op] });
+  },
+
+  undoEditOp: () => {
+    const loader = findPrimaryLoader(get().nodes);
+    const edits = loaderEdits(loader);
+    if (!loader || edits.length === 0) return null;
+    const last = edits[edits.length - 1];
+    get().updateNodeParams(loader.id, { edits: edits.slice(0, -1) });
+    return last;
+  },
+
+  clearEditOps: () => {
+    const loader = findPrimaryLoader(get().nodes);
+    if (!loader || loaderEdits(loader).length === 0) return;
+    get().updateNodeParams(loader.id, { edits: [] });
   },
 
   pendingTemplateId: null,

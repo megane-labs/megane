@@ -24,5 +24,13 @@ export default defineConfig({
   build: {
     outDir: "docs/public/app",
     emptyOutDir: true,
+    // Same entries as vite.config.ts minus the E2E harness: the viewer at
+    // /app/ and megane Builder at /app/builder.html.
+    rollupOptions: {
+      input: {
+        main: path.resolve(__dirname, "index.html"),
+        builder: path.resolve(__dirname, "builder.html"),
+      },
+    },
   },
 });

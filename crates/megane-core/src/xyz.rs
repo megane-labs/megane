@@ -190,7 +190,7 @@ fn record_channels(
 
 pub fn parse(text: &str) -> Result<crate::parser::ParsedStructure, String> {
     let lines: Vec<&str> = text.lines().collect();
-    if lines.len() < 3 {
+    if lines.len() < 2 {
         return Err("XYZ file too short".into());
     }
 
@@ -811,6 +811,26 @@ H   0.000000  -0.757200  -0.469200  H2   0.417
         // No Properties declaration → no channels, label join only.
         assert!(s.vector_channels.is_empty());
         assert!(s.scalar_channels.is_empty());
+    }
+
+    /// The Build panel's "Empty Box" template starts from an extended-XYZ file
+    /// with zero atoms and only a `Lattice=` header: the parser must return the
+    /// cell without complaining that there is nothing in it.
+    #[test]
+    fn parses_an_empty_frame_with_a_lattice() {
+        let text = "0\nLattice=\"10.0 0.0 0.0 0.0 10.0 0.0 0.0 0.0 10.0\" Properties=species:S:1:pos:R:3 empty\n";
+        let s = parse(text).expect("a zero-atom frame is a valid structure");
+        assert_eq!(s.n_atoms, 0);
+        assert!(s.positions.is_empty());
+        assert!(s.elements.is_empty());
+        assert!(s.bonds.is_empty());
+        let cell = s
+            .box_matrix
+            .expect("the lattice header survives without atoms");
+        assert!((cell[0] - 10.0).abs() < 1e-6);
+        assert!((cell[4] - 10.0).abs() < 1e-6);
+        assert!((cell[8] - 10.0).abs() < 1e-6);
+        assert_eq!(s.extra_frame_count(), 0);
     }
 
     #[test]

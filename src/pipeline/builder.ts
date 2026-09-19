@@ -25,7 +25,7 @@
  *   const json = pipe.toJSON()
  */
 
-import type { SerializedPipeline } from "./types";
+import type { SerializedPipeline, EditOp } from "./types";
 
 // ─── Port Objects ────────────────────────────────────────────────────
 
@@ -113,8 +113,21 @@ export class LoadStructure extends PipelineNode {
   protected readonly _outPorts = { particle: "particle", traj: "trajectory", cell: "cell" };
   protected readonly _inpPorts: Record<string, string> = {};
 
-  constructor(public path: string) {
+  /**
+   * Structure edits replayed on the file as loaded (megane Builder's
+   * history): add / delete / move atoms, change elements, add / delete bonds,
+   * place a fragment, set the cell. Atom refs are indices into the file's
+   * atoms (numbers) or ids of atoms an earlier op created (strings). The node
+   * then emits the edited structure.
+   */
+  public edits: EditOp[];
+
+  constructor(
+    public path: string,
+    { edits = [] }: { edits?: EditOp[] } = {},
+  ) {
     super();
+    this.edits = edits;
   }
 
   _toSerializedParams() {
@@ -124,6 +137,7 @@ export class LoadStructure extends PipelineNode {
       fileUrl: this.path,
       hasTrajectory: false,
       hasCell: false,
+      ...(this.edits.length > 0 ? { edits: this.edits } : {}),
     };
   }
 }

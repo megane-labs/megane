@@ -47,6 +47,7 @@ from megane.pipeline import (
     view_traj,
 )
 from megane.widget import MolecularViewer
+from megane.writers import save_structure, write_structure
 
 __all__ = [
     "AddBonds",
@@ -92,7 +93,9 @@ __all__ = [
     "load_xsf",
     "load_vasp",
     "load_xyz_trajectory",
+    "save_structure",
     "view",
     "view_traj",
+    "write_structure",
 ]
 __version__ = "0.15.0"

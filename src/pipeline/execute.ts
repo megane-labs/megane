@@ -100,6 +100,11 @@ export interface PipelineExecutionContext {
   nodeSnapshots?: Record<string, NodeSnapshotData>;
   /** Per-node streaming data keyed by streaming node ID. */
   nodeStreamingData?: Record<string, NodeStreamingData>;
+  /**
+   * Show every `load_structure` node's file as loaded, ignoring its edit
+   * list (a "show original" preview). Not persisted.
+   */
+  editsBypassed?: boolean;
 }
 
 export interface PipelineExecutionResult {
@@ -191,6 +196,7 @@ export function executePipeline(
         // A lazy structure provider applies only when this node has no eager
         // frames of its own (mirrors executeLoadTrajectory's provider precedence).
         const provider = nodeData?.frames ? null : (ctx.structureProvider ?? null);
+        const editWarnings: string[] = [];
         const outputs = executeLoadStructure(
           data.params as LoadStructureParams,
           snapshot,
@@ -198,10 +204,14 @@ export function executePipeline(
           meta,
           id,
           provider,
+          { editsBypassed: ctx.editsBypassed, warnings: editWarnings },
         );
         edgeOutputs.set(id, outputs);
         if (!snapshot) {
           addError(id, { message: "No structure data available", severity: "warning" });
+        }
+        for (const message of editWarnings) {
+          addError(id, { message, severity: "warning" });
         }
         break;
       }
@@ -249,9 +259,12 @@ export function executePipeline(
       case "add_bond": {
         const outputs = executeAddBond(data.params as AddBondParams, inputs);
         edgeOutputs.set(id, outputs);
-        if (inputs.get("particle")?.length && !outputs.has("bond")) {
+        const bondInput = inputs.get("particle")?.[0] as ParticleData | undefined;
+        // An atom-less structure (an empty cell to build into) has no bonds to
+        // find; warning about it would only flag the starting point as broken.
+        if (bondInput && bondInput.source.nAtoms > 0 && !outputs.has("bond")) {
           addError(id, { message: "No bonds found", severity: "warning" });
-        } else if (!inputs.get("particle")?.length) {
+        } else if (!bondInput) {
           addError(id, { message: "No input data (check upstream nodes)", severity: "warning" });
         }
         break;

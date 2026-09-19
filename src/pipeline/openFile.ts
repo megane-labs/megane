@@ -139,7 +139,20 @@ export function syncAddBondSourceForLoader(
   loaderId: string,
   filename: string,
 ): void {
-  const desired = defaultBondSourceForFile(filename);
+  syncAddBondSource(state, loaderId, defaultBondSourceForFile(filename));
+}
+
+/**
+ * Set every AddBond node fed (directly or through particle pass-through
+ * nodes) by `loaderId` to `desired`. `syncAddBondSourceForLoader` derives
+ * `desired` from a file name; a blank cell to build into has no file and
+ * asks for `"structure"` outright so the bonds the user draws are shown.
+ */
+export function syncAddBondSource(
+  state: PipelineStore,
+  loaderId: string,
+  desired: "structure" | "distance",
+): void {
   const targets = new Set<string>();
   // Walk forward along particle-carrying edges. AddBond may sit downstream of
   // particle pass-through nodes (symmetry / wrap / replicate / filter / modify /

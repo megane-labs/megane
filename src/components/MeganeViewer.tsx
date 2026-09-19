@@ -104,6 +104,9 @@ export const DEFAULT_MEGANE_VIEWER_UI: Readonly<MeganeViewerUiOptions> = Object.
   measurement: true,
 });
 
+/** Bottom offset of the Pipeline panel (clear of the Timeline). */
+const PANEL_BOTTOM = 60;
+
 interface MeganeViewerProps {
   playing?: boolean;
   fps?: number;
@@ -219,10 +222,10 @@ export function MeganeViewer({
   const showTooltip = ui?.tooltip ?? DEFAULT_MEGANE_VIEWER_UI.tooltip;
   const showMeasurement = ui?.measurement ?? DEFAULT_MEGANE_VIEWER_UI.measurement;
 
-  // Right-edge inset the orthographic frustum leaves free for the pipeline
-  // panel: zero when the panel is collapsed *or* switched off entirely.
+  // Right-edge inset the orthographic frustum leaves free for the Pipeline
+  // panel: zero when it is collapsed or switched off entirely.
   //
-  // Depends on `showPipelineEditor` for real rather than reading it through a
+  // Depends on the `show*` flag for real rather than reading it through a
   // ref: with a ref the callback never changes identity, which makes every dep
   // array listing it decorative and leaves correctness resting on hand-added
   // deps that exhaustive-deps cannot defend. Consumers only re-run on a
@@ -259,6 +262,11 @@ export function MeganeViewer({
   const boxSelectActive = useScopedInspectorStore((s) => s.boxSelectActive);
   const publishBoxResult = useScopedInspectorStore((s) => s.publishBoxResult);
   const publishPickedAtom = useScopedInspectorStore((s) => s.publishPickedAtom);
+
+  // Every change to a loader's edit list bumps this; the Viewport keeps the
+  // camera in place for the snapshot that follows (see
+  // `Viewport.preserveCameraKey`).
+  const editRevision = useScopedPipelineStore((s) => s.editRevision);
 
   const handleInspectorPick = useCallback(
     (atomIndex: number) => {
@@ -623,6 +631,7 @@ export function MeganeViewer({
         onBoxSelect={publishBoxResult}
         onInspectorPick={handleInspectorPick}
         inspectorActive={inspectorActive}
+        preserveCameraKey={editRevision}
       />
       <div
         ref={tourAnchorRef}
@@ -695,6 +704,7 @@ export function MeganeViewer({
           collapsed={pipelineCollapsed}
           onToggleCollapse={handleTogglePipeline}
           onWidthChange={handlePipelineWidthChange}
+          bottom={PANEL_BOTTOM}
           rendererRef={rendererRef}
           totalFrames={totalFrames}
           currentFrame={currentFrame}

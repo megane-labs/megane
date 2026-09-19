@@ -272,3 +272,47 @@ export function atomsInRect(
   }
   return result;
 }
+
+/**
+ * Convert a client-pixel position to a world point on the camera-facing
+ * plane through `anchor` (a world point). Used by megane Builder: dragging
+ * an atom moves it in the plane parallel to the screen at the atom's own
+ * depth, and placing a new atom on empty space lands it at the depth of the
+ * structure's pivot. Works for both camera kinds because it unprojects the
+ * NDC point at the anchor's projected depth.
+ */
+export function screenToWorldOnPlane(
+  camera: THREE.OrthographicCamera | THREE.PerspectiveCamera,
+  container: HTMLElement,
+  anchor: [number, number, number],
+  clientX: number,
+  clientY: number,
+): [number, number, number] {
+  const rect = container.getBoundingClientRect();
+  const w = rect.width;
+  const h = rect.height;
+  // Anchor → NDC to learn its depth in clip space.
+  const ndcAnchor = new THREE.Vector3(anchor[0], anchor[1], anchor[2]).project(camera);
+  const nx = ((clientX - rect.left) / w) * 2 - 1;
+  const ny = -(((clientY - rect.top) / h) * 2 - 1);
+  const world = new THREE.Vector3(nx, ny, ndcAnchor.z).unproject(camera);
+  return [world.x, world.y, world.z];
+}
+
+/**
+ * World-space displacement produced by dragging from one client-pixel
+ * position to another in the camera-facing plane through `anchor`.
+ */
+export function screenDragToWorldDelta(
+  camera: THREE.OrthographicCamera | THREE.PerspectiveCamera,
+  container: HTMLElement,
+  anchor: [number, number, number],
+  fromX: number,
+  fromY: number,
+  toX: number,
+  toY: number,
+): [number, number, number] {
+  const a = screenToWorldOnPlane(camera, container, anchor, fromX, fromY);
+  const b = screenToWorldOnPlane(camera, container, anchor, toX, toY);
+  return [b[0] - a[0], b[1] - a[1], b[2] - a[2]];
+}
