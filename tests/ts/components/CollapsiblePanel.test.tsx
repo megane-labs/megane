@@ -40,6 +40,31 @@ describe("CollapsiblePanel", () => {
     const toggle = screen.getByTestId("panel-build-toggle");
     expect(toggle.getAttribute("aria-label")).toBe("Close Build panel");
     expect(toggle.getAttribute("title")).toBe("Close Build panel");
+
+    // The collapsed stub follows the same anchor.
+    rerender(
+      <CollapsiblePanel
+        title="Build"
+        collapsed={true}
+        onToggleCollapse={() => {}}
+        bottom={72}
+        height="min(440px, 55%)"
+      >
+        <div />
+      </CollapsiblePanel>,
+    );
+    root = screen.getByTestId("panel-build");
+    expect(root.getAttribute("data-collapsed")).toBe("true");
+    expect(root.style.bottom).toBe("72px");
+    expect(root.style.top).toBe("");
+    rerender(
+      <CollapsiblePanel title="Build" collapsed={true} onToggleCollapse={() => {}}>
+        <div />
+      </CollapsiblePanel>,
+    );
+    root = screen.getByTestId("panel-build");
+    expect(root.style.top).toBe("12px");
+    expect(root.style.bottom).toBe("");
   });
 
   it("renders the collapsed toggle button when collapsed", () => {

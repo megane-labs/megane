@@ -84,14 +84,15 @@ applies is skipped with a warning on the loader.
 
 ## Build panel and the 3D view
 
-The panel is its own surface, not a tab of the Pipeline panel: `MeganeViewer`
-stacks a second `CollapsiblePanel` under the Pipeline panel in the same
-column (same width, the Pipeline panel's bottom edge is raised to make room)
-and the Pipeline panel header carries the launcher. Two reasons. Editing the
-molecule is a different activity from authoring the pipeline, so it should
-not compete with Editor / Inspector / Chat for the same tab strip; and the
+The panel is a peer of the Pipeline panel, not a tab or a launcher inside it:
+`MeganeViewer` stacks a second `CollapsiblePanel` under the Pipeline panel in
+the same column (same width, the Pipeline panel's bottom edge is raised to
+make room for the panel or its collapsed "◀ Build" stub), switched by its own
+`ui.build` option. Two reasons. Editing the molecule is a different activity
+from authoring the pipeline, so it should not compete with Editor / Inspector
+/ Chat for the same tab strip or depend on that panel being open; and the
 loader node in the Editor reflects the history (its edit count), so the graph
-should stay visible while building. Whether the 3D view is in edit mode follows one flag
+can stay visible while building. Whether the 3D view is in edit mode follows one flag
 (`buildOpen` in `usePipelineUIStore`), never which tab happens to be in front.
 The flag is not persisted: an open panel changes what a click means, so every
 session starts with it closed.

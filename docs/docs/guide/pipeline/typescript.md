@@ -151,6 +151,7 @@ under the table.
 | Key | Default | Hides |
 |------|---------|-------|
 | `pipelineEditor` | `true` | Pipeline editor panel on the right (toolbar, node graph, share/render dialogs, **and the viewer's only file-open UI**) |
+| `build` | `true` | Build panel (structure editing) under the Pipeline panel, with its own collapsed stub — independent of `pipelineEditor` |
 | `resetView` | `true` | "Reset View" button in the top-left corner |
 | `perfHud` | `true` | Atoms / Bonds / Draws / FPS readout |
 | `timeline` | `true` | Playback timeline along the bottom |

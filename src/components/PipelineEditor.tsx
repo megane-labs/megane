@@ -155,17 +155,6 @@ const IconRender = (
   </svg>
 );
 
-/* Two bonded atoms with a "+" — the Build panel launcher. */
-const IconBuild = (
-  <svg {...iconProps}>
-    <circle cx="7" cy="15" r="3" />
-    <circle cx="17" cy="9" r="3" />
-    <line x1="9.5" y1="13.5" x2="14.5" y2="10.5" />
-    <line x1="17" y1="16" x2="17" y2="22" />
-    <line x1="14" y1="19" x2="20" y2="19" />
-  </svg>
-);
-
 const IconLayout = (
   <svg {...iconProps}>
     <rect x="3" y="3" width="7" height="7" rx="1" />
@@ -456,19 +445,6 @@ const guideBtnStyle: React.CSSProperties = {
   color: "#64748b",
 };
 
-const buildBtnStyle: React.CSSProperties = {
-  ...textBtnBase,
-  background: "rgba(16, 185, 129, 0.08)",
-  border: "1px solid rgba(16, 185, 129, 0.3)",
-  color: "#047857",
-};
-
-const buildBtnActiveStyle: React.CSSProperties = {
-  ...buildBtnStyle,
-  background: "rgba(16, 185, 129, 0.22)",
-  border: "1px solid rgba(16, 185, 129, 0.6)",
-};
-
 const tutorialBtnStyle: React.CSSProperties = {
   ...textBtnBase,
   background: "rgba(59, 130, 246, 0.08)",
@@ -633,8 +609,6 @@ function PipelineEditorInner({
 
   const mode = useScopedPipelineUIStore((s) => s.mode);
   const setMode = useScopedPipelineUIStore((s) => s.setMode);
-  const buildOpen = useScopedPipelineUIStore((s) => s.buildOpen);
-  const setBuildOpen = useScopedPipelineUIStore((s) => s.setBuildOpen);
   const pendingNotice = useScopedPipelineUIStore((s) => s.pendingNotice);
   const dismissNotice = useScopedPipelineUIStore((s) => s.dismissNotice);
 
@@ -980,25 +954,6 @@ function PipelineEditorInner({
           title="Render"
         >
           {IconRender} Render
-        </button>
-      </div>
-      {/* Structure: opens the Build panel, a separate panel stacked under this
-          one (see MeganeViewer) — editing the molecule is not a pipeline tab.
-          Its history lives on the load_structure node, so the graph above
-          only ever describes how the (edited) structure is shown. */}
-      <div style={toolbarRowStyle} data-testid="pipeline-editor-structure-row">
-        <span style={toolbarCategoryLabelStyle}>Structure</span>
-        <button
-          data-testid="pipeline-editor-build"
-          onClick={() => setBuildOpen(!buildOpen)}
-          style={buildOpen ? buildBtnActiveStyle : buildBtnStyle}
-          title={
-            buildOpen ? "Close the Build panel" : "Open the Build panel (edit atoms and bonds)"
-          }
-          aria-label="Build panel"
-          aria-pressed={buildOpen}
-        >
-          {IconBuild} Build
         </button>
       </div>
       {/* Others: editor-side help & appearance. Hidden on the Chat tab so the

@@ -96,6 +96,8 @@ import type { MeganeCameraState } from "@/renderer/MoleculeRenderer";
 /** testid rendered by each switchable tool, keyed by its `ui` option. */
 const TOOL_TESTIDS: Record<keyof MeganeViewerUiOptions, string[]> = {
   pipelineEditor: ["mock-pipeline-editor"],
+  // Collapsed by default, but its stub is in the DOM whenever the tool is on.
+  build: ["panel-build"],
   resetView: ["reset-view-btn"],
   viewAxes: ["view-axis-controls"],
   perfHud: ["perf-hud"],
@@ -133,24 +135,30 @@ describe("MeganeViewer ui options", () => {
     usePipelineUIStore.setState({ mode: "chat", buildOpen: false });
   });
 
-  // The Build panel is a separate surface stacked under the Pipeline panel in
-  // the same column (the pipeline is the edit history, so it must stay
-  // visible while editing). It is launched from that panel's header, so it
-  // follows `pipelineEditor` rather than having a `ui` key of its own.
+  // The Build panel is a peer of the Pipeline panel: its own CollapsiblePanel
+  // with its own collapsed stub, stacked under the pipeline in the same
+  // column, switched by its own `ui.build` key. Nothing inside the Pipeline
+  // panel launches it.
   describe("Build panel", () => {
-    it("is closed by default and puts nothing in edit mode", () => {
+    it("starts as a collapsed stub under the pipeline panel, with nothing in edit mode", () => {
       render(<MeganeViewer onUploadStructure={() => {}} />);
-      expect(screen.queryByTestId("panel-build")).toBeNull();
+      const stub = screen.getByTestId("panel-build");
+      expect(stub.getAttribute("data-collapsed")).toBe("true");
+      // The stub is anchored at the bottom of the column, and the pipeline
+      // panel stops above it.
+      expect(stub.style.bottom).toBe("60px");
+      expect(stub.style.top).toBe("");
+      expect(pipelineEditorProps.current?.bottom).toBe(108);
+      expect(screen.queryByTestId("build-panel")).toBeNull();
       expect(viewportProps.current?.buildActive).toBe(false);
-      expect(pipelineEditorProps.current?.bottom).toBe(60);
     });
 
-    it("stacks under the pipeline panel when open and hands the Viewport edit mode", () => {
+    it("opens from its own stub, stacks under the pipeline panel, and hands the Viewport edit mode", () => {
       render(<MeganeViewer onUploadStructure={() => {}} />);
-      act(() => {
-        usePipelineUIStore.getState().setBuildOpen(true);
-      });
+      fireEvent.click(screen.getByTestId("panel-build-toggle"));
+      expect(usePipelineUIStore.getState().buildOpen).toBe(true);
       const panel = screen.getByTestId("panel-build");
+      expect(panel.getAttribute("data-collapsed")).toBe("false");
       expect(panel.style.bottom).toBe("60px");
       expect(panel.style.height).toBe("min(440px, 55%)");
       // Same column: the panel takes the pipeline panel's width and the
@@ -175,23 +183,32 @@ describe("MeganeViewer ui options", () => {
       expect(screen.getByTestId("panel-build").style.width).toBe("560px");
     });
 
-    it("closes from its own header and drops the Viewport out of edit mode", () => {
+    it("collapses from its own header back to the stub and drops the Viewport out of edit mode", () => {
       render(<MeganeViewer onUploadStructure={() => {}} />);
       act(() => {
         usePipelineUIStore.getState().setBuildOpen(true);
       });
       fireEvent.click(screen.getByTestId("panel-build-toggle"));
       expect(usePipelineUIStore.getState().buildOpen).toBe(false);
+      expect(screen.getByTestId("panel-build").getAttribute("data-collapsed")).toBe("true");
+      expect(viewportProps.current?.buildActive).toBe(false);
+      expect(pipelineEditorProps.current?.bottom).toBe(108);
+    });
+
+    it("is independent of the pipeline editor: open without it, it still reserves the column", () => {
+      usePipelineUIStore.setState({ buildOpen: true });
+      render(<MeganeViewer onUploadStructure={() => {}} ui={{ pipelineEditor: false }} />);
+      expect(screen.getByTestId("panel-build").getAttribute("data-collapsed")).toBe("false");
+      expect(viewportProps.current?.buildActive).toBe(true);
+      expect(rendererStub.setViewInsets).toHaveBeenLastCalledWith(0, 492);
+    });
+
+    it("leaves the pipeline panel at full height when switched off", () => {
+      usePipelineUIStore.setState({ buildOpen: true });
+      render(<MeganeViewer onUploadStructure={() => {}} ui={{ build: false }} />);
       expect(screen.queryByTestId("panel-build")).toBeNull();
       expect(viewportProps.current?.buildActive).toBe(false);
       expect(pipelineEditorProps.current?.bottom).toBe(60);
-    });
-
-    it("is unavailable without the pipeline editor, even when flagged open", () => {
-      usePipelineUIStore.setState({ buildOpen: true });
-      render(<MeganeViewer onUploadStructure={() => {}} ui={{ pipelineEditor: false }} />);
-      expect(screen.queryByTestId("panel-build")).toBeNull();
-      expect(viewportProps.current?.buildActive).toBe(false);
     });
   });
 
@@ -204,6 +221,7 @@ describe("MeganeViewer ui options", () => {
   it("defaults every tool to visible", () => {
     expect(DEFAULT_MEGANE_VIEWER_UI).toEqual({
       pipelineEditor: true,
+      build: true,
       resetView: true,
       viewAxes: true,
       perfHud: true,
@@ -284,14 +302,25 @@ describe("MeganeViewer ui options", () => {
     expect(rendererStub.setViewInsets).not.toHaveBeenCalledWith(0, 492);
   });
 
-  it("stretches the tour anchor across the full width without the pipeline panel", () => {
+  it("stretches the tour anchor across the full width without the right column", () => {
     const { container } = render(
-      <MeganeViewer onUploadStructure={() => {}} ui={{ pipelineEditor: false, timeline: false }} />,
+      <MeganeViewer
+        onUploadStructure={() => {}}
+        ui={{ pipelineEditor: false, build: false, timeline: false }}
+      />,
     );
     const anchor = container.querySelector<HTMLElement>('[data-tour-anchor="viewport"]');
     expect(anchor).not.toBeNull();
     expect(anchor!.style.right).toBe("24px");
     expect(anchor!.style.bottom).toBe("24px");
+  });
+
+  it("keeps the tour anchor clear of the Build stub when only the pipeline panel is off", () => {
+    const { container } = render(
+      <MeganeViewer onUploadStructure={() => {}} ui={{ pipelineEditor: false, timeline: false }} />,
+    );
+    const anchor = container.querySelector<HTMLElement>('[data-tour-anchor="viewport"]');
+    expect(anchor!.style.right).toBe("60px");
   });
 
   it("keeps the tour anchor clear of the pipeline panel and timeline by default", () => {

@@ -1,8 +1,8 @@
 /**
  * Build panel E2E (webapp).
  *
- * Verifies the Build panel (a separate panel stacked under the Pipeline
- * panel, launched from its header): picking tools, editing through the 3D
+ * Verifies the Build panel (a peer of the Pipeline panel, stacked under it
+ * with its own collapsed stub): picking tools, editing through the 3D
  * view's click handlers, and — crucially — that every edit lands as an op in
  * the `load_structure` node's edit list (the graph gains no node; the loader
  * shows a count) and changes the rendered atom count. Asserts DOM and store
@@ -44,10 +44,12 @@ async function loaderInfo(page: import("playwright/test").Page): Promise<LoaderI
   });
 }
 
-/** Open the Build panel from the Pipeline panel header. */
+/** Expand the Build panel from its own collapsed stub under the Pipeline panel. */
 async function openBuild(page: import("playwright/test").Page) {
-  await page.locator('[data-testid="pipeline-editor-build"]').click();
-  await expect(page.locator('[data-testid="panel-build"]')).toBeVisible();
+  const panel = page.locator('[data-testid="panel-build"]');
+  await expect(panel).toHaveAttribute("data-collapsed", "true");
+  await page.locator('[data-testid="panel-build-toggle"]').click();
+  await expect(panel).toHaveAttribute("data-collapsed", "false");
   await expect(page.locator('[data-testid="build-panel"]')).toBeVisible();
 }
 
@@ -142,13 +144,13 @@ test.describe("build: webapp", () => {
     info = await loaderInfo(page);
     expect(info!.edits).toHaveLength(0);
 
-    // Closing the panel from its header leaves the view in normal mode.
+    // Collapsing the panel from its header leaves the stub and normal view mode.
     await page.locator('[data-testid="panel-build-toggle"]').click();
-    await expect(page.locator('[data-testid="panel-build"]')).toHaveCount(0);
-    await expect(page.locator('[data-testid="pipeline-editor-build"]')).toHaveAttribute(
-      "aria-pressed",
-      "false",
+    await expect(page.locator('[data-testid="panel-build"]')).toHaveAttribute(
+      "data-collapsed",
+      "true",
     );
+    await expect(page.locator('[data-testid="build-panel"]')).toHaveCount(0);
   });
 
   test("editing keeps the camera where the user left it", async ({ page }) => {

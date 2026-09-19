@@ -84,7 +84,8 @@ interface CollapsiblePanelProps {
    * Bottom offset (default: 60, clear of the Timeline). The expanded panel
    * stretches from `top` to `bottom` unless `height` is given, in which case
    * it is anchored at `bottom` with that height and `top` is ignored (a
-   * panel stacked under another one).
+   * panel stacked under another one). The collapsed stub follows the same
+   * anchor: top-right by default, bottom-right when `height` is given.
    */
   bottom?: number | string;
   height?: number | string;
@@ -121,11 +122,12 @@ export function CollapsiblePanel({
   const panelTestId = `panel-${title.replace(/\s+/g, "-").toLowerCase()}`;
   const placement: CSSProperties =
     height !== undefined ? { top: "auto", bottom, height } : { top, bottom };
+  const stubPlacement: CSSProperties = height !== undefined ? { bottom, right } : { top, right };
 
   if (collapsed) {
     return (
       <div
-        style={{ position: "absolute", top, right, zIndex: 10 }}
+        style={{ position: "absolute", zIndex: 10, ...stubPlacement }}
         data-testid={panelTestId}
         data-collapsed="true"
       >
