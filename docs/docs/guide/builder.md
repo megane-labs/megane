@@ -54,6 +54,52 @@ every operation (and across Undo / Redo / Clear all). Only opening a file or
 starting a new cell re-fits the view. *Reset View* and the axis buttons
 (±x / ±y / ±z, and ±a / ±b / ±c while there is a cell) work as in the viewer.
 
+## Library
+
+The **Library** section of the sidebar keeps molecules ready to drop into the
+document. It starts with a set of presets — water, ammonia, methane, carbon
+dioxide, methanol, ethanol, benzene, H₂, N₂, O₂ — with real 3D geometries,
+and grows with your own molecules:
+
+- **Sketch…** opens [Ketcher](https://lifescience.opensource.epam.com/ketcher/),
+  the open-source 2D structure editor, in a dialog (it runs entirely in the
+  browser with its standalone Indigo engine, so it loads on first use and
+  needs no server). Draw the molecule, give it a name (the formula is used
+  when you leave it blank), and press **Add to library**. The sketch is read
+  back as a molfile and parsed by the same MOL parser every megane host uses;
+  its unit-length drawing is rescaled to ångström (bond lengths from covalent
+  radii) and centred, and nothing else is invented. A sketch is therefore
+  *flat* — the list marks it so — and carries exactly the atoms you drew:
+  use Ketcher's *Add explicit hydrogens* button before adding if you want the
+  hydrogens. **Paste MOL** in the dialog takes a molfile from elsewhere
+  instead of drawing; it is also what the dialog falls back to if Ketcher
+  cannot load.
+- **From file…** imports any structure file megane reads as a molecule (3D
+  coordinates are kept as they are).
+- **Save selection** keeps the selected atoms, with the bonds between them,
+  as a molecule — a quick way to lift a 3D fragment out of an opened file.
+- **Edit** (on a sketched molecule) reopens the sketch in Ketcher; adding the
+  result makes a new library entry. **×** removes a molecule you added.
+
+Your molecules are stored in the browser (`localStorage`), so they are there
+after a reload; the presets are always listed first and cannot be removed.
+
+Each molecule has two ways into the document:
+
+- **Add** drops it beside the structure: past the structure's bounding box
+  along +x, level with its centre (or at the cell centre when the cell is
+  still empty). The new atoms are selected, so switching to *Move* and
+  dragging one of them carries the whole molecule to where you want it.
+- **Place** chooses it for the **Place** tool: every click on empty space in
+  the 3D view stamps a copy with its centre at that point (at the depth of
+  the rotation pivot, like *Add atom*). Clicking an atom does nothing, so a
+  molecule never lands on top of one. Press *Place* again on the same
+  molecule to turn the tool off.
+
+Either way the molecule enters the history as one `add_fragment` operation
+(named after the molecule, e.g. `Add water-3 (3 atoms)`), so Undo removes it
+whole and the fragment's atoms can be addressed by later operations.
+
 ## History
 
 The **History** section lists every operation in order and offers **Undo**,
@@ -72,8 +118,9 @@ That is why deleting an atom never breaks a later operation.
 
 Editing the cell vectors themselves (only *New empty cell* sets a cell),
 saving the document as a project file (the source plus its operations),
-keyboard shortcuts, valence-aware hydrogen addition, and a fragment picker are
-deliberately not in this first version; nor is the Builder shipped inside the
+keyboard shortcuts, valence-aware hydrogen addition, and 3D embedding of a
+flat sketch (a drawn molecule stays planar until you move its atoms) are
+deliberately not in this version; nor is the Builder shipped inside the
 JupyterLab or VS Code hosts yet. The full design, including how a Builder
 document is meant to travel into the viewer, is in
 [Structure editing design](../dev/editor-design.md).

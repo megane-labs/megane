@@ -21,3 +21,10 @@ declare module "*?worker&inline" {
   const WorkerFactory: new () => Worker;
   export default WorkerFactory;
 }
+
+// ketcher-standalone's `binaryWasm` build ships the Indigo engine as a
+// separate `.wasm` asset instead of a base64 string inside the JS, but its
+// package exports carry no `types` condition for the sub-path.
+declare module "ketcher-standalone/dist/binaryWasm" {
+  export { StandaloneStructServiceProvider } from "ketcher-standalone";
+}

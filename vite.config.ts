@@ -2,9 +2,10 @@ import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 import wasm from "vite-plugin-wasm";
 import path from "path";
+import { ketcherAlias, ketcherDefine, ketcherRaphaelRequire } from "./vite.ketcher";
 
 export default defineConfig({
-  plugins: [react(), wasm()],
+  plugins: [react(), wasm(), ketcherRaphaelRequire()],
   // The parse worker (src/parsers/parse.worker.ts) imports the WASM module, so
   // its sub-build needs vite-plugin-wasm too.
   worker: {
@@ -12,9 +13,12 @@ export default defineConfig({
     plugins: () => [wasm()],
   },
   assetsInclude: ["**/*.xtc"],
+  // Ketcher (megane Builder's sketcher) needs a few Node shims; see vite.ketcher.ts.
+  define: ketcherDefine,
   resolve: {
     alias: {
       "@": path.resolve(__dirname, "src"),
+      ...ketcherAlias,
     },
   },
   server: {
