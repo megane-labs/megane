@@ -78,7 +78,7 @@ describe("describeOp", () => {
         positions: [0, 0, 0, 1, 0, 0],
         bonds: [],
       }),
-    ).toBe('Add fragment "f" (2 atoms)');
+    ).toBe("Add f (2 atoms)");
     expect(describeOp({ op: "set_cell", box: null })).toBe("Remove cell");
     expect(describeOp({ op: "set_cell", box: [1, 0, 0, 0, 1, 0, 0, 0, 1] })).toBe("Set cell");
     expect(describeOp({ op: "bogus" } as never)).toBe("bogus");

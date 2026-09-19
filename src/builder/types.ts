@@ -5,7 +5,11 @@
  * only calls the handlers the app installs, so the contract lives here.
  */
 
-export type BuildTool = "select" | "add" | "bond" | "delete" | "move" | "element";
+/**
+ * `place` stamps the library molecule chosen in the sidebar
+ * (`BuilderStore.placeSource`) wherever the user clicks empty space.
+ */
+export type BuildTool = "select" | "add" | "bond" | "delete" | "move" | "element" | "place";
 
 /** What the Viewport reports for a left click while building. */
 export interface BuildPickInfo {

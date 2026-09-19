@@ -12,52 +12,10 @@ import type { EditAtomRef } from "../pipeline/types";
 import { getElementSymbol } from "../constants";
 import { STRUCTURE_EXPORT_FORMATS, exportSnapshot } from "../export/structureExport";
 import type { StructureWriteFormat } from "../parsers/parseCore";
+import { LibrarySection } from "./library/LibrarySection";
+import { sectionStyle, sectionTitleStyle, hintStyle, inputStyle, chipStyle } from "./styles";
 
-export const sectionStyle: React.CSSProperties = {
-  border: "1px solid var(--megane-border-solid, #e2e8f0)",
-  borderRadius: 8,
-  padding: 10,
-  display: "flex",
-  flexDirection: "column",
-  gap: 8,
-  background: "var(--megane-surface-solid, #fff)",
-};
-
-const sectionTitleStyle: React.CSSProperties = {
-  fontSize: 11,
-  fontWeight: 700,
-  letterSpacing: 0.4,
-  textTransform: "uppercase",
-  color: "var(--megane-text-secondary, #64748b)",
-};
-
-export const hintStyle: React.CSSProperties = {
-  fontSize: 12,
-  color: "var(--megane-text-secondary, #64748b)",
-};
-
-export const inputStyle: React.CSSProperties = {
-  fontSize: 13,
-  color: "var(--megane-text, #334155)",
-  background: "var(--megane-surface-solid, #f1f5f9)",
-  border: "1px solid var(--megane-border-solid, #cbd5e1)",
-  borderRadius: 4,
-  padding: "3px 6px",
-};
-
-export function chipStyle(active: boolean, disabled = false): React.CSSProperties {
-  return {
-    fontSize: 12,
-    padding: "3px 9px",
-    borderRadius: 999,
-    cursor: disabled ? "default" : "pointer",
-    border: active ? "1px solid #2563eb" : "1px solid var(--megane-border-solid, #cbd5e1)",
-    background: active ? "#2563eb" : "var(--megane-surface-solid, #f1f5f9)",
-    color: active ? "#fff" : disabled ? "#94a3b8" : "var(--megane-text, #334155)",
-    userSelect: "none",
-    opacity: disabled ? 0.6 : 1,
-  };
-}
+export { sectionStyle, sectionTitleStyle, hintStyle, inputStyle, chipStyle } from "./styles";
 
 const TOOLS: { value: BuildTool; label: string; hint: string }[] = [
   { value: "select", label: "Select", hint: "Click atoms to select them (Shift adds)." },
@@ -74,6 +32,11 @@ const TOOLS: { value: BuildTool; label: string; hint: string }[] = [
   { value: "delete", label: "Delete", hint: "Click an atom to remove it with its bonds." },
   { value: "move", label: "Move", hint: "Drag an atom in the screen plane." },
   { value: "element", label: "Element", hint: "Click an atom to change it to the chosen element." },
+  {
+    value: "place",
+    label: "Place",
+    hint: "Click empty space to drop the library molecule chosen below there.",
+  },
 ];
 
 /** Elements offered as quick chips; anything else via the number input. */
@@ -102,6 +65,7 @@ export function BuilderSidebar() {
   const bondOrder = useBuilderStore((s) => s.bondOrder);
   const selected = useBuilderStore((s) => s.selected);
   const pendingBondAtom = useBuilderStore((s) => s.pendingBondAtom);
+  const placeSource = useBuilderStore((s) => s.placeSource);
   const setTool = useBuilderStore((s) => s.setTool);
   const setElement = useBuilderStore((s) => s.setElement);
   const setBondOrder = useBuilderStore((s) => s.setBondOrder);
@@ -185,6 +149,8 @@ export function BuilderSidebar() {
         <div style={hintStyle} data-testid="builder-tool-hint">
           {activeTool.hint}
           {tool === "bond" && pendingBondAtom !== null && ` First atom: #${pendingBondAtom}.`}
+          {tool === "place" &&
+            (placeSource ? ` Placing ${placeSource.name}.` : " Choose a molecule in the library.")}
         </div>
       </div>
 
@@ -270,6 +236,8 @@ export function BuilderSidebar() {
           </span>
         </div>
       </div>
+
+      <LibrarySection />
 
       <NewCellSection onCreate={newCell} />
 

@@ -102,6 +102,7 @@ beforeEach(() => {
     selected: [],
     pendingBondAtom: null,
     handlers: null,
+    placeSource: null,
   });
   applyViewportState.mockClear();
   exportSnapshot.mockClear();
@@ -234,6 +235,37 @@ describe("BuilderApp — editing", () => {
     tool("move");
     pick(0);
     expect(useBuilderStore.getState().selected).toEqual([0]);
+  });
+
+  it("Place stamps the chosen library molecule on empty space only", () => {
+    render(<BuilderApp />);
+    tool("place");
+    expect(screen.getByTestId("builder-tool-hint").textContent).toContain("Choose a molecule");
+    pick(null, { world: [5, 5, 5] });
+    expect(edits()).toEqual([]);
+    // Choose a preset from the library: the tool stays Place and the hint names it.
+    fireEvent.click(
+      screen
+        .getByTestId("builder-library-item-preset:water")
+        .querySelector('[data-testid="builder-library-place"]')!,
+    );
+    expect(useBuilderStore.getState().tool).toBe("place");
+    expect(screen.getByTestId("builder-tool-hint").textContent).toContain("Placing Water");
+    pick(0);
+    expect(edits()).toEqual([]);
+    pick(null, { world: [5, 5, 5] });
+    expect(edits()).toHaveLength(1);
+    expect(edits()[0]).toMatchObject({ op: "add_fragment", translate: [5, 5, 5] });
+    expect(shownAtoms()).toBe(6);
+    expect(useBuilderStore.getState().selected).toEqual([3, 4, 5]);
+    expect(screen.getByTestId("builder-op-list").textContent).toMatch(/Add water-\d+ \(3 atoms\)/);
+    // Choosing the same molecule again turns Place off.
+    fireEvent.click(
+      screen
+        .getByTestId("builder-library-item-preset:water")
+        .querySelector('[data-testid="builder-library-place"]')!,
+    );
+    expect(useBuilderStore.getState().tool).toBe("select");
   });
 
   it("Undo / Redo / Clear all from the sidebar and the top bar", () => {

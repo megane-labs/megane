@@ -207,3 +207,72 @@ describe("createBuilderStore / emptyCellSnapshot", () => {
     expect(emptyCellSnapshot(-5).box![4]).toBeGreaterThan(0);
   });
 });
+
+describe("useBuilderStore — library placement", () => {
+  const molecule = {
+    id: "preset:test",
+    name: "Test mol",
+    formula: "C2",
+    origin: "preset" as const,
+    elements: [6, 6],
+    positions: [-0.7, 0, 0, 0.7, 0, 0],
+    bonds: [[0, 1]] as [number, number][],
+    bondOrders: [3],
+  };
+
+  beforeEach(() => {
+    useBuilderStore.setState({
+      source: null,
+      result: null,
+      edits: [],
+      redoStack: [],
+      showOriginal: false,
+      tool: "select",
+      selected: [],
+      pendingBondAtom: null,
+      placeSource: null,
+    });
+  });
+
+  it("choosing a place source switches to the Place tool; clearing it falls back to Select", () => {
+    s().setPendingBondAtom(2);
+    s().setPlaceSource(molecule);
+    expect(s().tool).toBe("place");
+    expect(s().placeSource).toBe(molecule);
+    expect(s().pendingBondAtom).toBeNull();
+    s().setPlaceSource(null);
+    expect(s().tool).toBe("select");
+    expect(s().placeSource).toBeNull();
+    s().setTool("add");
+    s().setPlaceSource(molecule);
+    s().setTool("bond");
+    s().setPlaceSource(null);
+    expect(s().tool).toBe("bond");
+  });
+
+  it("addFragment appends one add_fragment op with the centroid at the point and selects the new atoms", () => {
+    expect(s().addFragment(molecule, [1, 2, 3])).toBeNull();
+    s().openStructure(water(), null, "w.xyz");
+    const id = s().addFragment(molecule, [10, 0, 0]);
+    expect(id).toMatch(/^test-mol-\d+$/);
+    expect(s().edits).toHaveLength(1);
+    expect(s().edits[0]).toMatchObject({
+      op: "add_fragment",
+      id,
+      elements: [6, 6],
+      bonds: [[0, 1]],
+      bondOrders: [3],
+      translate: [10, 0, 0],
+    });
+    const shown = shownSnapshot(s())!;
+    expect(shown.nAtoms).toBe(5);
+    expect(shown.nBonds).toBe(3);
+    expect(shown.positions[9]).toBeCloseTo(9.3);
+    expect(shown.positions[12]).toBeCloseTo(10.7);
+    expect(s().selected).toEqual([3, 4]);
+    // Not editable under the preview.
+    s().setShowOriginal(true);
+    expect(s().addFragment(molecule, [0, 0, 0])).toBeNull();
+    expect(s().edits).toHaveLength(1);
+  });
+});
