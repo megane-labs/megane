@@ -87,7 +87,7 @@ import { MeganeViewer, usePipelineStore } from "megane-viewer/lib";
 | Key | Default | Hides |
 |------|---------|-------|
 | `pipelineEditor` | `true` | Pipeline editor panel on the right, including the viewer's only file-open UI |
-| `build` | `true` | Build panel (structure editing) under the Pipeline panel, with its own collapsed stub |
+| `build` | `true` | Build panel (structure editing), with its own collapsed stub under the Pipeline panel; the column shows one of the two at a time |
 | `resetView` | `true` | "Reset View" button in the top-left corner (re-fits the structure in the standard orientation) |
 | `viewAxes` | `true` | Axis-alignment buttons under Reset View: ±a / ±b / ±c while a cell is loaded, ±x / ±y / ±z always |
 | `perfHud` | `true` | Atoms / Bonds / Draws / FPS readout |

@@ -85,17 +85,19 @@ applies is skipped with a warning on the loader.
 ## Build panel and the 3D view
 
 The panel is a peer of the Pipeline panel, not a tab or a launcher inside it:
-`MeganeViewer` stacks a second `CollapsiblePanel` under the Pipeline panel in
-the same column (same width, the Pipeline panel's bottom edge is raised to
-make room for the panel or its collapsed "◀ Build" stub), switched by its own
-`ui.build` option. Two reasons. Editing the molecule is a different activity
-from authoring the pipeline, so it should not compete with Editor / Inspector
-/ Chat for the same tab strip or depend on that panel being open; and the
-loader node in the Editor reflects the history (its edit count), so the graph
-can stay visible while building. Whether the 3D view is in edit mode follows one flag
-(`buildOpen` in `usePipelineUIStore`), never which tab happens to be in front.
-The flag is not persisted: an open panel changes what a click means, so every
-session starts with it closed.
+`MeganeViewer` renders a second `CollapsiblePanel` in the same column (same
+width; its collapsed "◀ Build" stub sits at the bottom, under the Pipeline
+panel, whose bottom edge is raised to make room for it), switched by its own
+`ui.build` option. The two are exclusive — the column shows the pipeline
+(view) or Build (edit), never both: opening Build collapses the Pipeline
+panel, expanding the Pipeline panel closes Build, and closing Build from its
+header restores the Pipeline panel to the state it had before. Editing the
+molecule is a different activity from authoring the pipeline, so it should not
+compete with Editor / Inspector / Chat for the same tab strip, and showing the
+graph beside an edit view that ignores it only confused people. Whether the 3D
+view is in edit mode follows one flag (`buildOpen` in `usePipelineUIStore`),
+never which tab happens to be in front. The flag is not persisted: an open
+panel changes what a click means, so every session starts with it closed.
 
 An open panel is also **edit mode** for the pipeline store (`editMode`,
 mirrored from `buildOpen` by `MeganeViewer`). In edit mode `execute()` still

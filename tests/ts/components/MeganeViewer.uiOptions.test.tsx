@@ -154,22 +154,66 @@ describe("MeganeViewer ui options", () => {
       expect(viewportProps.current?.buildActive).toBe(false);
     });
 
-    it("opens from its own stub, stacks under the pipeline panel, and hands the Viewport edit mode", () => {
+    it("opens from its own stub, takes the column from the pipeline panel, and hands the Viewport edit mode", () => {
       render(<MeganeViewer onUploadStructure={() => {}} />);
+      expect(pipelineEditorProps.current?.collapsed).toBe(false);
       fireEvent.click(screen.getByTestId("panel-build-toggle"));
       expect(usePipelineUIStore.getState().buildOpen).toBe(true);
       const panel = screen.getByTestId("panel-build");
       expect(panel.getAttribute("data-collapsed")).toBe("false");
+      // The panel fills the column the pipeline panel had, leaving the
+      // pipeline stub reachable above it…
+      expect(panel.style.top).toBe("60px");
       expect(panel.style.bottom).toBe("60px");
-      expect(panel.style.height).toBe("min(440px, 55%)");
-      // Same column: the panel takes the pipeline panel's width and the
-      // pipeline panel is raised to sit above it.
+      expect(panel.style.height).toBe("");
       expect(panel.style.width).toBe("480px");
-      expect(pipelineEditorProps.current?.bottom).toBe("calc(72px + min(440px, 55%))");
+      // …and the pipeline panel collapsed to its stub: one of the two at a time.
+      expect(pipelineEditorProps.current?.collapsed).toBe(true);
       expect(screen.getByTestId("build-panel")).toBeTruthy();
       expect(viewportProps.current?.buildActive).toBe(true);
-      // The frustum inset is unchanged: no extra column was added.
+      // The frustum inset is unchanged: the column is still one panel wide.
       expect(rendererStub.setViewInsets).toHaveBeenLastCalledWith(0, 492);
+    });
+
+    it("gives the column to Build however it is opened (the loader node's Open Build, a host)", () => {
+      render(<MeganeViewer onUploadStructure={() => {}} />);
+      act(() => {
+        usePipelineUIStore.getState().setBuildOpen(true);
+      });
+      expect(pipelineEditorProps.current?.collapsed).toBe(true);
+      expect(screen.getByTestId("panel-build").getAttribute("data-collapsed")).toBe("false");
+    });
+
+    it("expanding the pipeline panel closes Build", () => {
+      render(<MeganeViewer onUploadStructure={() => {}} />);
+      fireEvent.click(screen.getByTestId("panel-build-toggle"));
+      expect(pipelineEditorProps.current?.collapsed).toBe(true);
+      act(() => {
+        (pipelineEditorProps.current?.onToggleCollapse as () => void)();
+      });
+      expect(pipelineEditorProps.current?.collapsed).toBe(false);
+      expect(usePipelineUIStore.getState().buildOpen).toBe(false);
+      expect(screen.getByTestId("panel-build").getAttribute("data-collapsed")).toBe("true");
+      expect(viewportProps.current?.buildActive).toBe(false);
+      expect(usePipelineStore.getState().editMode).toBe(false);
+    });
+
+    it("closing Build from its header brings the pipeline panel back as it was", () => {
+      render(<MeganeViewer onUploadStructure={() => {}} />);
+      // Pipeline was expanded: it is expanded again afterwards.
+      fireEvent.click(screen.getByTestId("panel-build-toggle"));
+      fireEvent.click(screen.getByTestId("panel-build-toggle"));
+      expect(usePipelineUIStore.getState().buildOpen).toBe(false);
+      expect(pipelineEditorProps.current?.collapsed).toBe(false);
+      // Pipeline was collapsed: it stays collapsed.
+      act(() => {
+        (pipelineEditorProps.current?.onToggleCollapse as () => void)();
+      });
+      expect(pipelineEditorProps.current?.collapsed).toBe(true);
+      fireEvent.click(screen.getByTestId("panel-build-toggle"));
+      fireEvent.click(screen.getByTestId("panel-build-toggle"));
+      expect(usePipelineUIStore.getState().buildOpen).toBe(false);
+      expect(pipelineEditorProps.current?.collapsed).toBe(true);
     });
 
     it("puts the pipeline store into edit mode while open, and out of it on close or unmount", () => {
@@ -212,6 +256,7 @@ describe("MeganeViewer ui options", () => {
       expect(usePipelineUIStore.getState().buildOpen).toBe(false);
       expect(screen.getByTestId("panel-build").getAttribute("data-collapsed")).toBe("true");
       expect(viewportProps.current?.buildActive).toBe(false);
+      // The pipeline panel keeps its stub-clearing bottom whether Build is open or not.
       expect(pipelineEditorProps.current?.bottom).toBe(108);
     });
 
@@ -219,6 +264,8 @@ describe("MeganeViewer ui options", () => {
       usePipelineUIStore.setState({ buildOpen: true });
       render(<MeganeViewer onUploadStructure={() => {}} ui={{ pipelineEditor: false }} />);
       expect(screen.getByTestId("panel-build").getAttribute("data-collapsed")).toBe("false");
+      // No pipeline stub to keep clear of: the panel takes the full column.
+      expect(screen.getByTestId("panel-build").style.top).toBe("12px");
       expect(viewportProps.current?.buildActive).toBe(true);
       expect(rendererStub.setViewInsets).toHaveBeenLastCalledWith(0, 492);
     });

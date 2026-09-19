@@ -89,6 +89,12 @@ interface CollapsiblePanelProps {
    */
   bottom?: number | string;
   height?: number | string;
+  /**
+   * Where the collapsed stub sits (default: top-right, or bottom-right when
+   * `height` is given). "bottom" pins it to the bottom-right even for a panel
+   * that stretches the full column when expanded.
+   */
+  stubAnchor?: "top" | "bottom";
   /** Title of the collapse button on the expanded panel (default: "Collapse panel"). */
   collapseLabel?: string;
   /** Ref to the expanded panel's container (e.g. to resize it imperatively). */
@@ -113,6 +119,7 @@ export function CollapsiblePanel({
   right = 12,
   bottom = 60,
   height,
+  stubAnchor,
   collapseLabel = "Collapse panel",
   containerRef,
   headerExtra,
@@ -122,7 +129,9 @@ export function CollapsiblePanel({
   const panelTestId = `panel-${title.replace(/\s+/g, "-").toLowerCase()}`;
   const placement: CSSProperties =
     height !== undefined ? { top: "auto", bottom, height } : { top, bottom };
-  const stubPlacement: CSSProperties = height !== undefined ? { bottom, right } : { top, right };
+  const stubAtBottom =
+    stubAnchor === "bottom" || (stubAnchor === undefined && height !== undefined);
+  const stubPlacement: CSSProperties = stubAtBottom ? { bottom, right } : { top, right };
 
   if (collapsed) {
     return (

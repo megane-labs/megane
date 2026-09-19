@@ -4,14 +4,16 @@ The **Build** panel lets you edit the loaded structure by clicking in the 3D
 view: add atoms, delete them, drag them around, change elements, and draw or
 remove bonds. When you are done, save the result as XYZ, PDB, or MOL.
 
-It is a panel of its own, on the same footing as the Pipeline panel: its
-collapsed **◀ Build** stub sits under the Pipeline panel at the bottom of the
-right column, and expanding it opens the panel there (the Pipeline panel
-shrinks to make room; *Open Build* on the `load_structure` node does the
-same). While it is open, the viewer is in **edit mode** (below) and clicks in
-the 3D view edit atoms; collapse it with the ▶ button in its header to get the
-pipeline's view and the usual pick and measure behaviour back. Hosts can hide
-it with the `build: false` UI option.
+It is a panel of its own, on the same footing as the Pipeline panel, and the
+right column shows one of the two at a time: the pipeline (how the structure
+is *shown*) or Build (what the structure *is*). Its collapsed **◀ Build** stub
+sits at the bottom of the column; expanding it (or *Open Build* on the
+`load_structure` node) collapses the Pipeline panel to its stub and gives the
+column to Build. While it is open, the viewer is in **edit mode** (below) and
+clicks in the 3D view edit atoms. Close it with the ▶ button in its header —
+the Pipeline panel comes back as it was — or expand the Pipeline panel from
+its own stub, which closes Build. Hosts can hide Build with the `build: false`
+UI option.
 
 Building and the pipeline are kept apart on purpose. The pipeline describes
 how a structure is *shown* (bonds, filters, colours, supercells); the Build

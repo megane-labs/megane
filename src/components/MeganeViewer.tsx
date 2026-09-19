@@ -116,20 +116,21 @@ export const DEFAULT_MEGANE_VIEWER_UI: Readonly<MeganeViewerUiOptions> = Object.
 
 /** Bottom offset shared by the right-column panels (clear of the Timeline). */
 const PANEL_BOTTOM = 60;
-/** Gap between the stacked Pipeline and Build panels. */
+/** Gap between the Pipeline panel and the Build stub under it. */
 const PANEL_GAP = 12;
-/**
- * Height of the Build panel, stacked under the Pipeline panel in the same
- * column: enough for its tools, history and export rows without dwarfing the
- * node graph above it on a short window.
- */
-const BUILD_PANEL_HEIGHT = "min(440px, 55%)";
 /** Height reserved for the Build panel's collapsed stub (the "◀ Build" button). */
 const BUILD_STUB_HEIGHT = 36;
-/** Where the Pipeline panel ends while the Build panel is open under it. */
-const PIPELINE_BOTTOM_WITH_BUILD = `calc(${PANEL_BOTTOM + PANEL_GAP}px + ${BUILD_PANEL_HEIGHT})`;
-/** Where the Pipeline panel ends while only the Build stub sits under it. */
+/** Where the Pipeline panel ends while the Build stub sits under it. */
 const PIPELINE_BOTTOM_WITH_STUB = PANEL_BOTTOM + PANEL_GAP + BUILD_STUB_HEIGHT;
+/** Top offset shared by the right-column panels. */
+const PANEL_TOP = 12;
+/** Height of the Pipeline panel's collapsed stub (the "◀ Pipeline" button). */
+const PIPELINE_STUB_HEIGHT = 36;
+/**
+ * Where the Build panel starts while the Pipeline stub sits above it: the two
+ * panels are exclusive, and each leaves the other's stub reachable.
+ */
+const BUILD_TOP_WITH_STUB = PANEL_TOP + PIPELINE_STUB_HEIGHT + PANEL_GAP;
 
 interface MeganeViewerProps {
   playing?: boolean;
@@ -297,14 +298,33 @@ export function MeganeViewer({
   // handlers in the build store; the Viewport receives them only while the
   // panel is open so the view otherwise keeps its pick / measure semantics.
   // The panel is a peer of the Pipeline panel — its own CollapsiblePanel with
-  // its own stub, stacked under the pipeline in the same column — not a tab
-  // or a launcher inside it.
+  // its own stub in the same column — and the two are exclusive: the column
+  // shows the pipeline (view) or the Build panel (edit), never both. Opening
+  // one collapses the other; closing Build from its header brings the
+  // pipeline back to where it was.
   const buildOpen = useScopedPipelineUIStore((s) => s.buildOpen);
   const setBuildOpen = useScopedPipelineUIStore((s) => s.setBuildOpen);
   const buildActive = showBuild && buildOpen;
   const buildHandlers = useScopedBuildStore((s) => s.handlers);
   const buildPanelRef = useRef<HTMLDivElement | null>(null);
-  const handleToggleBuild = useCallback(() => setBuildOpen(!buildOpen), [setBuildOpen, buildOpen]);
+  // Whether the pipeline panel was expanded when Build took the column.
+  const pipelineBeforeBuildRef = useRef<boolean | null>(null);
+  useEffect(() => {
+    if (!buildActive) return;
+    // Whatever opened Build (its stub, the loader node's "Open Build", a host
+    // setting the flag): the pipeline panel gives way.
+    pipelineBeforeBuildRef.current = pipelineCollapsedRef.current;
+    setPipelineCollapsed(true);
+  }, [buildActive]);
+  const handleToggleBuild = useCallback(() => {
+    if (buildOpen) {
+      setBuildOpen(false);
+      if (pipelineBeforeBuildRef.current === false) setPipelineCollapsed(false);
+      pipelineBeforeBuildRef.current = null;
+    } else {
+      setBuildOpen(true);
+    }
+  }, [setBuildOpen, buildOpen]);
   // An open Build panel is edit mode: the pipeline store then shows the
   // loader's output (file + edits) instead of the graph's (editView.ts), and
   // re-applies the graph when the panel closes or the host hides it.
@@ -583,8 +603,13 @@ export function MeganeViewer({
   }, [showTooltip]);
 
   const handleTogglePipeline = useCallback(() => {
+    // Expanding the pipeline takes the column back from the Build panel.
+    if (pipelineCollapsedRef.current) {
+      pipelineBeforeBuildRef.current = null;
+      setBuildOpen(false);
+    }
     setPipelineCollapsed((prev) => !prev);
-  }, []);
+  }, [setBuildOpen]);
 
   // Tour anchor — invisible rectangle the guide tour highlights when it
   // points to the Viewport. Sized to fill the visible 3D canvas region,
@@ -768,13 +793,7 @@ export function MeganeViewer({
           collapsed={pipelineCollapsed}
           onToggleCollapse={handleTogglePipeline}
           onWidthChange={handlePipelineWidthChange}
-          bottom={
-            !showBuild
-              ? PANEL_BOTTOM
-              : buildOpen
-                ? PIPELINE_BOTTOM_WITH_BUILD
-                : PIPELINE_BOTTOM_WITH_STUB
-          }
+          bottom={showBuild ? PIPELINE_BOTTOM_WITH_STUB : PANEL_BOTTOM}
           rendererRef={rendererRef}
           totalFrames={totalFrames}
           currentFrame={currentFrame}
@@ -786,10 +805,11 @@ export function MeganeViewer({
           title="Build"
           collapsed={!buildOpen}
           onToggleCollapse={handleToggleBuild}
-          collapseLabel="Collapse Build panel"
+          collapseLabel="Close Build panel"
           width={pipelineWidthRef.current}
-          height={BUILD_PANEL_HEIGHT}
+          top={showPipelineEditor ? BUILD_TOP_WITH_STUB : PANEL_TOP}
           bottom={PANEL_BOTTOM}
+          stubAnchor="bottom"
           containerRef={buildPanelRef}
         >
           <BuildPanel />

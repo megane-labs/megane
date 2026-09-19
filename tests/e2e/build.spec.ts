@@ -46,13 +46,21 @@ async function loaderInfo(page: import("playwright/test").Page): Promise<LoaderI
   });
 }
 
-/** Expand the Build panel from its own collapsed stub under the Pipeline panel. */
+/**
+ * Expand the Build panel from its own collapsed stub under the Pipeline panel.
+ * The two panels are exclusive: Build takes the column and the pipeline
+ * panel collapses to its stub.
+ */
 async function openBuild(page: import("playwright/test").Page) {
   const panel = page.locator('[data-testid="panel-build"]');
   await expect(panel).toHaveAttribute("data-collapsed", "true");
   await page.locator('[data-testid="panel-build-toggle"]').click();
   await expect(panel).toHaveAttribute("data-collapsed", "false");
   await expect(page.locator('[data-testid="build-panel"]')).toBeVisible();
+  await expect(page.locator('[data-testid="panel-pipeline"]')).toHaveAttribute(
+    "data-collapsed",
+    "true",
+  );
 }
 
 /**
@@ -122,13 +130,22 @@ test.describe("build: webapp", () => {
     await page.locator('[data-testid="build-redo"]').click();
     await expect(page.locator('[data-testid="build-op-count"]')).toHaveText("2 edits");
 
-    // Reflection: the Editor tab's loader node shows the count — and the Build
-    // panel stays open beside it, since it is its own panel rather than a tab.
+    // Reflection: expanding the pipeline panel takes the column back (Build
+    // closes, edit mode ends) and the Editor tab's loader node shows the count.
+    await page.locator('[data-testid="panel-pipeline-toggle"]').click();
+    await expect(page.locator('[data-testid="panel-pipeline"]')).toHaveAttribute(
+      "data-collapsed",
+      "false",
+    );
+    await expect(page.locator('[data-testid="panel-build"]')).toHaveAttribute(
+      "data-collapsed",
+      "true",
+    );
+    await expect(page.locator('[data-testid="build-panel"]')).toHaveCount(0);
     await page.locator('[data-testid="pipeline-editor-tab-editor"]').click();
     await expect(page.locator('[data-testid="load-structure-edits"]').first()).toHaveText(
       /2 edits/,
     );
-    await expect(page.locator('[data-testid="build-panel"]')).toBeVisible();
 
     // Clearing the history (the same store action the node's Clear button
     // calls; driven through the store because React Flow's canvas overlays
@@ -146,13 +163,19 @@ test.describe("build: webapp", () => {
     info = await loaderInfo(page);
     expect(info!.edits).toHaveLength(0);
 
-    // Collapsing the panel from its header leaves the stub and normal view mode.
+    // Reopening Build from its stub collapses the pipeline again; closing it
+    // from its header brings the pipeline panel back as it was.
+    await openBuild(page);
     await page.locator('[data-testid="panel-build-toggle"]').click();
     await expect(page.locator('[data-testid="panel-build"]')).toHaveAttribute(
       "data-collapsed",
       "true",
     );
     await expect(page.locator('[data-testid="build-panel"]')).toHaveCount(0);
+    await expect(page.locator('[data-testid="panel-pipeline"]')).toHaveAttribute(
+      "data-collapsed",
+      "false",
+    );
   });
 
   test("editing keeps the camera where the user left it", async ({ page }) => {

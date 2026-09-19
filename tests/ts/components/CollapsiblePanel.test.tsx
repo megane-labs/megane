@@ -128,3 +128,55 @@ describe("CollapsiblePanel", () => {
     expect(screen.getByTestId("panel-render-settings")).toBeTruthy();
   });
 });
+
+describe("CollapsiblePanel stubAnchor", () => {
+  it("pins the stub to the bottom while the expanded panel still fills the column", () => {
+    const { rerender } = render(
+      <CollapsiblePanel
+        title="Build"
+        collapsed={false}
+        onToggleCollapse={() => {}}
+        bottom={60}
+        stubAnchor="bottom"
+      >
+        <div />
+      </CollapsiblePanel>,
+    );
+    let root = screen.getByTestId("panel-build");
+    expect(root.style.top).toBe("12px");
+    expect(root.style.bottom).toBe("60px");
+    expect(root.style.height).toBe("");
+    rerender(
+      <CollapsiblePanel
+        title="Build"
+        collapsed={true}
+        onToggleCollapse={() => {}}
+        bottom={60}
+        stubAnchor="bottom"
+      >
+        <div />
+      </CollapsiblePanel>,
+    );
+    root = screen.getByTestId("panel-build");
+    expect(root.style.bottom).toBe("60px");
+    expect(root.style.top).toBe("");
+  });
+
+  it("keeps a height-anchored panel's stub at the top when asked to", () => {
+    render(
+      <CollapsiblePanel
+        title="Build"
+        collapsed={true}
+        onToggleCollapse={() => {}}
+        bottom={60}
+        height={200}
+        stubAnchor="top"
+      >
+        <div />
+      </CollapsiblePanel>,
+    );
+    const root = screen.getByTestId("panel-build");
+    expect(root.style.top).toBe("12px");
+    expect(root.style.bottom).toBe("");
+  });
+});
