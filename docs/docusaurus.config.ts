@@ -92,6 +92,11 @@ const config: Config = {
           position: "left",
         },
         {
+          href: "https://megane-labs.github.io/megane/app/builder.html",
+          label: "Builder",
+          position: "left",
+        },
+        {
           type: "docSidebar",
           sidebarId: "apiSidebar",
           position: "left",
