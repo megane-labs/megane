@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { render, screen, fireEvent, cleanup } from "@testing-library/react";
 import { usePipelineStore } from "@/pipeline/store";
+import { usePipelineUIStore } from "@/stores/usePipelineUIStore";
 import { LoadStructureNode, setStructureLoadHandler } from "@/components/nodes/LoadStructureNode";
 import type { LoadStructureParams } from "@/pipeline/types";
 import { seedPipelineStore } from "./_helpers";
@@ -201,5 +202,44 @@ describe("LoadStructureNode", () => {
     render(<LoadStructureNode {...nodeProps("ls1", seeded.data.params as LoadStructureParams)} />);
     const trajectoryHandle = screen.getByTestId("handle-source-trajectory");
     expect(trajectoryHandle.style.background).not.toBe("rgb(203, 213, 225)");
+  });
+
+  // The Build panel's history rides on this node; the graph shows only a
+  // count and a way back to the panel (the ops themselves live in the panel).
+  it("shows no edit badge without edits, and the count plus Open Build with them", () => {
+    usePipelineUIStore.setState({ buildOpen: false });
+    const plain = seedPipelineStore("load_structure", { id: "ls1", params: { fileName: "a.xyz" } });
+    const { unmount } = render(
+      <LoadStructureNode {...nodeProps("ls1", plain.data.params as LoadStructureParams)} />,
+    );
+    expect(screen.queryByTestId("load-structure-edits")).toBeNull();
+    unmount();
+
+    const one = seedPipelineStore("load_structure", {
+      id: "ls2",
+      params: { fileName: "a.xyz", edits: [{ op: "delete_atoms", atoms: [0] }] },
+    });
+    const { unmount: unmount2 } = render(
+      <LoadStructureNode {...nodeProps("ls2", one.data.params as LoadStructureParams)} />,
+    );
+    expect(screen.getByTestId("load-structure-edits").textContent).toContain("1 edit");
+    expect(screen.getByTestId("load-structure-edits").textContent).not.toContain("1 edits");
+    fireEvent.click(screen.getByTestId("load-structure-open-build"));
+    expect(usePipelineUIStore.getState().buildOpen).toBe(true);
+    unmount2();
+
+    const many = seedPipelineStore("load_structure", {
+      id: "ls3",
+      params: {
+        fileName: "a.xyz",
+        edits: [
+          { op: "delete_atoms", atoms: [0] },
+          { op: "set_cell", box: null },
+        ],
+      },
+    });
+    render(<LoadStructureNode {...nodeProps("ls3", many.data.params as LoadStructureParams)} />);
+    expect(screen.getByTestId("load-structure-edits").textContent).toContain("2 edits");
+    usePipelineUIStore.setState({ buildOpen: false });
   });
 });
