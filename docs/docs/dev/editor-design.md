@@ -97,6 +97,31 @@ can stay visible while building. Whether the 3D view is in edit mode follows one
 The flag is not persisted: an open panel changes what a click means, so every
 session starts with it closed.
 
+An open panel is also **edit mode** for the pipeline store (`editMode`,
+mirrored from `buildOpen` by `MeganeViewer`). In edit mode `execute()` still
+runs the graph — the editor keeps its node errors — but replaces the
+`ViewportState` with `buildEditViewportState()` (`src/pipeline/editView.ts`):
+the primary loader's output (file plus edits, or the file alone under *Show
+original*), its own bonds drawn straight from the snapshot regardless of any
+AddBond node (`bondDataFromSnapshotBonds`), its cell, no trajectory, no
+overlays, ball-and-stick. This is Blender's Object / Edit Mode split: the view
+pipeline is the modifier stack, the edit list edits the base structure, and
+the stack is re-applied when the panel closes. It is what makes the rendered
+index → op ref translation trivial (one rendered atom per loaded atom) — a
+Replicate or Symmetry node in the graph no longer pauses editing — and it
+keeps the pipeline's own concerns (filters, colours, representations) out of
+the editing loop. Entering or leaving edit mode bumps `editRevision`, so the
+camera stays put across the switch.
+
+"New empty cell" (`newEmptyCell(edge)` in the store) is how building starts
+from nothing. It replaces only the primary loader's data — an atom-less
+snapshot with a cubic cell, file name `untitled`, an empty edit list — drops
+the old structure's trajectories, and sets the AddBond nodes fed by the loader
+to `"structure"`; the graph is left as the user built it (a minimal loader →
+viewport graph is installed only when there is no loader at all). It is
+deliberately not a Templates entry: templates describe how a structure is
+shown, and applying one replaces the whole graph.
+
 `src/components/BuildPanel.tsx` owns no atom data. It holds UI state in
 `useBuildStore` (tool, element, bond order, selection, pending bond atom, redo
 stack) and installs four callbacks (`pick`, `dragStart`, `dragMove`,

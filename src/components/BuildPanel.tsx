@@ -13,7 +13,7 @@
  * the edit list's output provenance before an op is written.
  */
 
-import { useCallback, useEffect, useMemo, useRef } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   useScopedPipelineStore,
   useScopedPipelineUIStore,
@@ -182,6 +182,8 @@ export function BuildPanel() {
   const clearEditOps = useScopedPipelineStore((s) => s.clearEditOps);
   const editsBypassed = useScopedPipelineStore((s) => s.editsBypassed);
   const setEditsBypassed = useScopedPipelineStore((s) => s.setEditsBypassed);
+  const editMode = useScopedPipelineStore((s) => s.editMode);
+  const newEmptyCell = useScopedPipelineStore((s) => s.newEmptyCell);
   const setMode = useScopedPipelineUIStore((s) => s.setMode);
 
   const tool = useScopedBuildStore((s) => s.tool);
@@ -395,10 +397,23 @@ export function BuildPanel() {
     await exportSnapshot(rendered, format, fileName, atomLabels);
   };
 
+  const newCellSection = (
+    <NewCellSection
+      onCreate={(edge) => {
+        clearSelected();
+        clearRedo();
+        newEmptyCell(edge);
+      }}
+    />
+  );
+
   if (!rendered) {
     return (
       <div style={panelStyle} data-testid="build-panel">
-        <div style={hintStyle}>Load a structure to start building.</div>
+        <div style={hintStyle}>
+          Load a structure to start building, or start from an empty cell.
+        </div>
+        {newCellSection}
       </div>
     );
   }
@@ -407,6 +422,12 @@ export function BuildPanel() {
 
   return (
     <div style={panelStyle} data-testid="build-panel">
+      {editMode && (
+        <div data-testid="build-edit-mode-note" style={hintStyle}>
+          Edit mode: the view shows the structure as loaded plus your edits — every atom, its bonds
+          and its cell as ball-and-stick. The pipeline's view comes back when this panel is closed.
+        </div>
+      )}
       {!provenanceOk && (
         <div
           data-testid="build-provenance-warning"
@@ -419,7 +440,7 @@ export function BuildPanel() {
         >
           {editsBypassed
             ? 'Editing is paused while the original structure is shown. Turn off "Show original" to continue editing.'
-            : "Editing is paused: a node in the pipeline changes the atom count (Replicate or Symmetry expansion), so clicks cannot be mapped back to the loaded atoms. Set those nodes to 1×1×1 / none while building."}
+            : "Editing is paused: the view is not showing the loaded structure (a node in the pipeline changes the atom count), so clicks cannot be mapped back to the loaded atoms."}
         </div>
       )}
 
@@ -615,6 +636,8 @@ export function BuildPanel() {
         )}
       </div>
 
+      {newCellSection}
+
       <div style={sectionStyle}>
         <span style={sectionTitleStyle}>Export</span>
         <div style={hintStyle}>
@@ -661,4 +684,47 @@ export function describeOp(op: EditOp): string {
     default:
       return String((op as { op: unknown }).op);
   }
+}
+
+/** Default edge of the blank cell, in Å. */
+const DEFAULT_NEW_CELL_EDGE = 10;
+
+/**
+ * "New empty cell": replace the loaded structure with an empty cubic cell to
+ * build into. Offered even before anything is loaded — it is the way to start
+ * from nothing — and it keeps the pipeline graph as it is.
+ */
+function NewCellSection({ onCreate }: { onCreate: (edge: number) => void }) {
+  const [edge, setEdge] = useState(DEFAULT_NEW_CELL_EDGE);
+  const valid = Number.isFinite(edge) && edge > 0;
+  return (
+    <div style={sectionStyle}>
+      <span style={sectionTitleStyle}>New</span>
+      <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+        <label style={{ display: "flex", alignItems: "center", gap: 4 }}>
+          Cubic cell
+          <input
+            type="number"
+            min={0.1}
+            step={1}
+            value={edge}
+            data-testid="build-new-cell-edge"
+            onChange={(e) => setEdge(Number(e.target.value))}
+            style={{ ...selectStyle, width: 64 }}
+          />
+          Å
+        </label>
+        <span
+          role="button"
+          data-testid="build-new-cell"
+          style={chipStyle(false, !valid)}
+          onClick={valid ? () => onCreate(edge) : undefined}
+          title="Replace the loaded structure with an empty cell and start building"
+        >
+          New empty cell
+        </span>
+      </div>
+      <div style={hintStyle}>Replaces the loaded structure; the pipeline is kept.</div>
+    </div>
+  );
 }

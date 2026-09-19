@@ -90,6 +90,7 @@ import { MeganeViewer, DEFAULT_MEGANE_VIEWER_UI } from "@/components/MeganeViewe
 import type { MeganeViewerUiOptions } from "@/components/MeganeViewer";
 import { useViewStateStore } from "@/stores/useViewStateStore";
 import { usePipelineUIStore } from "@/stores/usePipelineUIStore";
+import { usePipelineStore } from "@/pipeline/store";
 import { usePlaybackStore } from "@/stores/usePlaybackStore";
 import type { MeganeCameraState } from "@/renderer/MoleculeRenderer";
 
@@ -169,6 +170,25 @@ describe("MeganeViewer ui options", () => {
       expect(viewportProps.current?.buildActive).toBe(true);
       // The frustum inset is unchanged: no extra column was added.
       expect(rendererStub.setViewInsets).toHaveBeenLastCalledWith(0, 492);
+    });
+
+    it("puts the pipeline store into edit mode while open, and out of it on close or unmount", () => {
+      const { unmount } = render(<MeganeViewer onUploadStructure={() => {}} />);
+      expect(usePipelineStore.getState().editMode).toBe(false);
+      fireEvent.click(screen.getByTestId("panel-build-toggle"));
+      expect(usePipelineStore.getState().editMode).toBe(true);
+      fireEvent.click(screen.getByTestId("panel-build-toggle"));
+      expect(usePipelineStore.getState().editMode).toBe(false);
+      fireEvent.click(screen.getByTestId("panel-build-toggle"));
+      expect(usePipelineStore.getState().editMode).toBe(true);
+      unmount();
+      expect(usePipelineStore.getState().editMode).toBe(false);
+    });
+
+    it("is never in edit mode when the host hides the Build panel", () => {
+      usePipelineUIStore.setState({ buildOpen: true });
+      render(<MeganeViewer onUploadStructure={() => {}} ui={{ build: false }} />);
+      expect(usePipelineStore.getState().editMode).toBe(false);
     });
 
     it("follows the pipeline panel's width without a re-render", () => {

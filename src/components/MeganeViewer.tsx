@@ -305,6 +305,13 @@ export function MeganeViewer({
   const buildHandlers = useScopedBuildStore((s) => s.handlers);
   const buildPanelRef = useRef<HTMLDivElement | null>(null);
   const handleToggleBuild = useCallback(() => setBuildOpen(!buildOpen), [setBuildOpen, buildOpen]);
+  // An open Build panel is edit mode: the pipeline store then shows the
+  // loader's output (file + edits) instead of the graph's (editView.ts), and
+  // re-applies the graph when the panel closes or the host hides it.
+  useEffect(() => {
+    pipelineApi.getState().setEditMode(buildActive);
+    return () => pipelineApi.getState().setEditMode(false);
+  }, [pipelineApi, buildActive]);
   // Every change to the edit node bumps this; the Viewport keeps the camera
   // in place for the snapshot that follows (see `Viewport.preserveCameraKey`).
   const editRevision = useScopedPipelineStore((s) => s.editRevision);

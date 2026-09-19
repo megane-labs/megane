@@ -121,7 +121,7 @@ function setTool(tool: string) {
 describe("BuildPanel", () => {
   beforeEach(() => {
     usePipelineUIStore.setState({ mode: "editor", buildOpen: true });
-    usePipelineStore.setState({ editsBypassed: false });
+    usePipelineStore.setState({ editsBypassed: false, editMode: false });
     useBuildStore.setState({
       tool: "select",
       element: 6,
@@ -359,6 +359,81 @@ describe("BuildPanel", () => {
     render(<BuildPanel />);
     fireEvent.click(screen.getByTestId("build-open-editor"));
     expect(usePipelineUIStore.getState().mode).toBe("editor");
+  });
+
+  it("explains edit mode while the store is in it", () => {
+    render(<BuildPanel />);
+    expect(screen.queryByTestId("build-edit-mode-note")).toBeNull();
+    act(() => {
+      usePipelineStore.getState().setEditMode(true);
+    });
+    expect(screen.getByTestId("build-edit-mode-note").textContent).toContain("Edit mode");
+    act(() => {
+      usePipelineStore.getState().setEditMode(false);
+    });
+    expect(screen.queryByTestId("build-edit-mode-note")).toBeNull();
+  });
+
+  it("does not pause editing in edit mode even when the graph changes the atom count", () => {
+    loadPipeline(true);
+    act(() => {
+      usePipelineStore.getState().setEditMode(true);
+    });
+    render(<BuildPanel />);
+    expect(screen.queryByTestId("build-provenance-warning")).toBeNull();
+    setTool("delete");
+    pick(1);
+    expect(ops()).toEqual([{ op: "delete_atoms", atoms: [1] }]);
+  });
+
+  it("New empty cell replaces the structure with an empty cell of the chosen edge", () => {
+    render(<BuildPanel />);
+    setTool("delete");
+    pick(1);
+    expect(ops()).toHaveLength(1);
+    fireEvent.change(screen.getByTestId("build-new-cell-edge"), { target: { value: "15" } });
+    fireEvent.click(screen.getByTestId("build-new-cell"));
+    const snap = usePipelineStore.getState().nodeSnapshots["loader-1"].snapshot;
+    expect(snap.nAtoms).toBe(0);
+    expect(snap.box![0]).toBe(15);
+    expect(ops()).toEqual([]);
+    expect(screen.getByTestId("build-op-count").textContent).toBe("0 edits");
+    expect(useBuildStore.getState().redoStack).toEqual([]);
+    // Building into it works like any other structure.
+    setTool("add");
+    pick(null, { world: [7, 7, 7] });
+    expect(ops()).toHaveLength(1);
+    expect(screen.getByTestId("build-panel").textContent).toContain("1 atoms, 0 bonds");
+  });
+
+  it("offers New empty cell before anything is loaded", () => {
+    usePipelineStore.getState().deserialize({
+      version: 3,
+      nodes: [
+        {
+          type: "viewport",
+          id: "viewport-1",
+          position: { x: 0, y: 0 },
+          perspective: false,
+          cellAxesVisible: true,
+          enabled: true,
+        },
+      ],
+      edges: [],
+    });
+    render(<BuildPanel />);
+    expect(screen.getByText(/start from an empty cell/)).toBeTruthy();
+    fireEvent.click(screen.getByTestId("build-new-cell"));
+    const state = usePipelineStore.getState();
+    expect(state.nodes.some((n) => n.type === "load_structure")).toBe(true);
+    expect(screen.getByTestId("build-op-count").textContent).toBe("0 edits");
+  });
+
+  it("rejects a non-positive cell edge", () => {
+    render(<BuildPanel />);
+    fireEvent.change(screen.getByTestId("build-new-cell-edge"), { target: { value: "0" } });
+    fireEvent.click(screen.getByTestId("build-new-cell"));
+    expect(usePipelineStore.getState().nodeSnapshots["loader-1"].snapshot.nAtoms).toBe(3);
   });
 
   it("pauses editing when a downstream node changes the atom count", () => {

@@ -8,9 +8,10 @@ It is a panel of its own, on the same footing as the Pipeline panel: its
 collapsed **◀ Build** stub sits under the Pipeline panel at the bottom of the
 right column, and expanding it opens the panel there (the Pipeline panel
 shrinks to make room; *Open Build* on the `load_structure` node does the
-same). While it is open, clicks in the 3D view edit atoms; collapse it with
-the ▶ button in its header to get the usual pick and measure behaviour back.
-Hosts can hide it with the `build: false` UI option.
+same). While it is open, the viewer is in **edit mode** (below) and clicks in
+the 3D view edit atoms; collapse it with the ▶ button in its header to get the
+pipeline's view and the usual pick and measure behaviour back. Hosts can hide
+it with the `build: false` UI option.
 
 Building and the pipeline are kept apart on purpose. The pipeline describes
 how a structure is *shown* (bonds, filters, colours, supercells); the Build
@@ -31,19 +32,33 @@ Think of the edit list as the *recipe* of what you did and the exported
 XYZ / PDB / MOL file as the *result*. For day-to-day work: click to edit, then
 **Save** — the history is recorded in the background.
 
+## Edit mode
+
+While the Build panel is open the 3D view shows the structure you are editing,
+not the pipeline's view of it: the `load_structure` node's output — the file
+as loaded plus your edits — drawn as ball-and-stick with every atom, its own
+bonds (from the file, or the ones you drew) and its cell. Filters, colours,
+representations, supercells and trajectories from the rest of the pipeline are
+not applied while the panel is open, and come back the moment you close it,
+now acting on the edited structure. This is the same split as Blender's Edit
+Mode: you edit the base mesh, and the modifier stack is re-applied on the way
+out. It is what makes every click unambiguous — there is exactly one rendered
+atom per loaded atom — so editing never has to pause because a `replicate` or
+`symmetry` node is in the graph.
+
 ## Starting from nothing
 
-To build a structure from scratch rather than edit a file, pick **Empty Box**
-from the Pipeline panel's **Templates** dropdown. It loads `empty_box.pdb` — a
-PDB file that is only a `CRYST1` record, a 10 Å cubic cell with no atoms — into
-the standard `LoadStructure → AddBond → Viewport` graph and opens the Build
-panel. The AddBond node stays on its *structure* source, so the bonds you draw
-are exactly the bonds shown (an XYZ start would switch it to distance
-inference and second-guess them). The cell
-is what the camera frames and what the *Add atom* tool places free atoms
-against (a click on empty space lands at the depth of the rotation pivot, the
-cell centre), so the first click already puts an atom in the box. Everything
-you add is an edit on that loader, like any other file, and saves the same way.
+To build a structure from scratch, use **New empty cell** in the panel's *New*
+section (it is offered before anything is loaded, too). Enter the edge of the
+cubic cell in Å and click the button: the loaded structure is replaced by an
+empty cell with an empty edit history, the pipeline graph is kept as it is,
+any trajectory of the old structure is dropped, and the `add_bond` nodes fed by
+the loader are set to their *structure* source so the bonds you draw are the
+bonds shown. The cell is what the camera frames and what the *Add atom* tool
+places free atoms against (a click on empty space lands at the depth of the
+rotation pivot, the cell centre), so the first click already puts an atom in
+the box. Everything you add is an edit on that loader, like any other file, and
+saves the same way; the loader shows the structure as `untitled`.
 
 ## Tools
 
@@ -76,10 +91,9 @@ loaded structure, and atoms you created by an id the operation assigned. That is
 why deleting an atom never breaks a later operation, and why the same history
 replays correctly after a reload.
 
-If a node in the pipeline changes the atom count (a `replicate` supercell, or a
-`symmetry` expansion), clicks in the 3D view can no longer be mapped back to
-the loaded atoms and the panel pauses editing with a notice. Set those nodes to
-`1×1×1` / `none` while building, then turn them back on.
+Because edit mode always shows the loaded atoms themselves, a `replicate`
+supercell or a `symmetry` expansion in the pipeline never gets in the way of
+editing; you see their effect again as soon as the panel is closed.
 
 The history belongs to the file it was made against: loading a different file
 into the `load_structure` node starts with an empty history. An operation that

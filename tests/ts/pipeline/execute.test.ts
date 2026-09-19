@@ -481,7 +481,7 @@ describe("executePipeline", () => {
 
   describe("AddBond node", () => {
     it("does not warn about missing bonds on an atom-less structure", () => {
-      // The Empty Box template: a cell and nothing in it yet.
+      // The Build panel's new empty cell: a cell and nothing in it yet.
       const emptyCell = makeSnapshot({
         nAtoms: 0,
         positions: [],

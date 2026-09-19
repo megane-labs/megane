@@ -611,7 +611,6 @@ function PipelineEditorInner({
   const setMode = useScopedPipelineUIStore((s) => s.setMode);
   const pendingNotice = useScopedPipelineUIStore((s) => s.pendingNotice);
   const dismissNotice = useScopedPipelineUIStore((s) => s.dismissNotice);
-  const setBuildOpen = useScopedPipelineUIStore((s) => s.setBuildOpen);
 
   // When the panel switches back to the editor (e.g. after the chat assistant
   // applies a generated pipeline) the ReactFlow viewport may have just been
@@ -731,13 +730,8 @@ function PipelineEditorInner({
     (templateId: string) => {
       applyTemplate(templateId);
       setShowTemplateMenu(false);
-      // A template meant to be edited (Empty Box) opens the Build panel so
-      // the first click in the 3D view already places an atom.
-      if (PIPELINE_TEMPLATES.find((t) => t.id === templateId)?.opensBuild) {
-        setBuildOpen(true);
-      }
     },
-    [applyTemplate, setBuildOpen],
+    [applyTemplate],
   );
 
   const handleAutoLayout = useCallback(() => {
