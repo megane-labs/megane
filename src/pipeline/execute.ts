@@ -259,9 +259,12 @@ export function executePipeline(
       case "add_bond": {
         const outputs = executeAddBond(data.params as AddBondParams, inputs);
         edgeOutputs.set(id, outputs);
-        if (inputs.get("particle")?.length && !outputs.has("bond")) {
+        const bondInput = inputs.get("particle")?.[0] as ParticleData | undefined;
+        // An atom-less structure (the Empty Box template) has no bonds to
+        // find; warning about it would only flag the starting point as broken.
+        if (bondInput && bondInput.source.nAtoms > 0 && !outputs.has("bond")) {
           addError(id, { message: "No bonds found", severity: "warning" });
-        } else if (!inputs.get("particle")?.length) {
+        } else if (!bondInput) {
           addError(id, { message: "No input data (check upstream nodes)", severity: "warning" });
         }
         break;

@@ -12,6 +12,12 @@ export interface PipelineTemplate {
   label: string;
   description: string;
   create: () => { nodes: Node<PipelineNodeData>[]; edges: Edge[] };
+  /**
+   * Open the Build panel when the template is applied. Set on templates whose
+   * point is to be edited (an empty cell to build a structure into) rather
+   * than looked at.
+   */
+  opensBuild?: boolean;
 }
 
 /**
@@ -1431,6 +1437,102 @@ function createCoarseGrainedTemplate(): {
   };
 }
 
+/**
+ * Empty Box template: a 10 Å cubic cell with no atoms, for building a
+ * structure from scratch in the Build panel.
+ *
+ *   LoadStructure ─┬─ AddBond → Viewport (bond)
+ *                  └──────────→ Viewport (particle + cell)
+ *
+ * The loader reads `empty_box.pdb` — a PDB whose only record is `CRYST1` —
+ * so the Build panel's edits land on an ordinary `load_structure` node and
+ * the pipeline stays the standard shape. A PDB rather than an XYZ because
+ * opening a file re-syncs AddBond to the format's default bond source
+ * (`syncAddBondSourceForLoader`): PDB keeps "structure", so the bonds the
+ * user draws are the bonds shown, whereas XYZ would flip it to distance
+ * inference and ignore them. The cell gives the camera something to frame and
+ * the "Add atom" tool a pivot depth to place free atoms at.
+ */
+function createEmptyBoxTemplate(): {
+  nodes: Node<PipelineNodeData>[];
+  edges: Edge[];
+} {
+  return {
+    nodes: [
+      {
+        id: "loader-1",
+        type: "load_structure",
+        position: { x: 425, y: 0 },
+        data: {
+          params: {
+            type: "load_structure",
+            fileName: "empty_box.pdb",
+            hasTrajectory: false,
+            hasCell: true,
+          },
+          enabled: true,
+        },
+      },
+      {
+        id: "addbond-1",
+        type: "add_bond",
+        position: { x: 425, y: 155 },
+        data: {
+          params: {
+            type: "add_bond",
+            bondSource: "structure",
+          },
+          enabled: true,
+        },
+      },
+      {
+        id: "viewport-1",
+        type: "viewport",
+        position: { x: 425, y: 310 },
+        data: {
+          params: {
+            type: "viewport",
+            perspective: false,
+            cellAxesVisible: true,
+            pivotMarkerVisible: true,
+          },
+          enabled: true,
+        },
+      },
+    ],
+    edges: [
+      {
+        id: "e1",
+        source: "loader-1",
+        target: "addbond-1",
+        sourceHandle: "particle",
+        targetHandle: "particle",
+      },
+      {
+        id: "e2",
+        source: "loader-1",
+        target: "viewport-1",
+        sourceHandle: "particle",
+        targetHandle: "particle",
+      },
+      {
+        id: "e3",
+        source: "addbond-1",
+        target: "viewport-1",
+        sourceHandle: "bond",
+        targetHandle: "bond",
+      },
+      {
+        id: "e4",
+        source: "loader-1",
+        target: "viewport-1",
+        sourceHandle: "cell",
+        targetHandle: "cell",
+      },
+    ],
+  };
+}
+
 export const PIPELINE_TEMPLATES: PipelineTemplate[] = [
   {
     id: "molecule",
@@ -1479,5 +1581,12 @@ export const PIPELINE_TEMPLATES: PipelineTemplate[] = [
     label: "Streaming",
     description: "WebSocket streaming with bonds",
     create: createStreamingTemplate,
+  },
+  {
+    id: "empty_box",
+    label: "Empty Box",
+    description: "An empty 10 Å cell to build a structure from scratch in the Build panel",
+    create: createEmptyBoxTemplate,
+    opensBuild: true,
   },
 ];

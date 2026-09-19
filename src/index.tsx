@@ -29,6 +29,7 @@ import ubiquitinPDB from "../tests/fixtures/1ubq.pdb?raw";
 import ubiquitinCgPDB from "../tests/fixtures/1ubq_cg.pdb?raw";
 import glycineCIF from "../tests/fixtures/glycine_csd.cif?raw";
 import caffeineSDF from "../tests/fixtures/caffeine.sdf?raw";
+import emptyBoxPDB from "../tests/fixtures/empty_box.pdb?raw";
 // The ESP grid is fetched rather than inlined: ~150 kB of text belongs in an
 // emitted asset, not in the entry bundle every visitor downloads.
 import caffeineEspCubeUrl from "../tests/fixtures/caffeine_esp.cube?url";
@@ -115,6 +116,8 @@ function App() {
         await ds.local.loadText(quartzXYZ, "quartz_sio2_2x2x2.xyz");
       } else if (pendingTemplateId === "protein") {
         await ds.local.loadText(ubiquitinPDB, "1ubq.pdb");
+      } else if (pendingTemplateId === "empty_box") {
+        await ds.local.loadText(emptyBoxPDB, "empty_box.pdb");
       } else if (pendingTemplateId === "streaming") {
         // Load via ds.local so ds.snapshot updates → Viewport.loadSnapshot uses caffeine atoms
         const result = await ds.local.loadText(defaultPDB, "caffeine_water.pdb");

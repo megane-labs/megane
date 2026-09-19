@@ -52,6 +52,7 @@ vi.mock("@/pipeline/shareLink", async () => {
 import { PipelineEditor } from "@/components/PipelineEditor";
 import { useThemeStore } from "@/stores/useThemeStore";
 import { usePipelineUIStore } from "@/stores/usePipelineUIStore";
+import { usePipelineStore } from "@/pipeline/store";
 
 beforeEach(() => {
   // The editor toolbar (theme button, dropdowns) is hidden on the Chat tab,
@@ -201,5 +202,35 @@ describe("PipelineEditor — Share button opens dialog", () => {
     expect(alertSpy.mock.calls[0][0]).toContain("Share failed");
     expect(screen.queryByTestId("share-dialog")).toBeNull();
     expect(consoleErrorSpy).toHaveBeenCalled();
+  });
+});
+
+describe("PipelineEditor — Templates dropdown", () => {
+  afterEach(() => {
+    usePipelineUIStore.setState({ buildOpen: false });
+  });
+
+  it("opens the Build panel when a template asks for it (Empty Box)", () => {
+    usePipelineUIStore.setState({ buildOpen: false });
+    render(<PipelineEditor collapsed={false} onToggleCollapse={() => {}} />);
+
+    fireEvent.click(screen.getByTestId("pipeline-editor-templates"));
+    fireEvent.click(screen.getByTestId("pipeline-template-empty_box"));
+
+    expect(usePipelineUIStore.getState().buildOpen).toBe(true);
+    expect(usePipelineStore.getState().pendingTemplateId).toBe("empty_box");
+    // The dropdown closes after a pick.
+    expect(screen.queryByTestId("pipeline-template-empty_box")).toBeNull();
+  });
+
+  it("leaves the Build panel alone for a template that only shows a structure", () => {
+    usePipelineUIStore.setState({ buildOpen: false });
+    render(<PipelineEditor collapsed={false} onToggleCollapse={() => {}} />);
+
+    fireEvent.click(screen.getByTestId("pipeline-editor-templates"));
+    fireEvent.click(screen.getByTestId("pipeline-template-molecule"));
+
+    expect(usePipelineUIStore.getState().buildOpen).toBe(false);
+    expect(usePipelineStore.getState().pendingTemplateId).toBe("molecule");
   });
 });

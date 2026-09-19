@@ -5,7 +5,8 @@
  * with its own collapsed stub): picking tools, editing through the 3D
  * view's click handlers, and — crucially — that every edit lands as an op in
  * the `load_structure` node's edit list (the graph gains no node; the loader
- * shows a count) and changes the rendered atom count. Asserts DOM and store
+ * shows a count) and changes the rendered atom count. Also covers the Empty
+ * Box template, the one scene with a cell and no atoms. Asserts DOM and store
  * state rather than pixels to stay robust against font/GL drift.
  */
 
@@ -175,6 +176,87 @@ test.describe("build: webapp", () => {
     expect(after!.target).toEqual(before!.target);
     expect(after!.zoom).toBe(before!.zoom);
     expect(after!.up).toEqual(before!.up);
+  });
+
+  test("the Empty Box template opens Build on an atom-less cell and takes the first atom", async ({
+    page,
+  }) => {
+    // Apply the template from the Editor tab's Templates dropdown.
+    await page.locator('[data-testid="pipeline-editor-tab-editor"]').click();
+    await page.locator('[data-testid="pipeline-editor-templates"]').click();
+    await page.locator('[data-testid="pipeline-template-empty_box"]').click();
+
+    // The template opens the Build panel by itself — no stub click needed.
+    const panel = page.locator('[data-testid="panel-build"]');
+    await expect(panel).toHaveAttribute("data-collapsed", "false");
+    await expect(page.locator('[data-testid="build-panel"]')).toBeVisible();
+
+    // An atom-less structure with a cell is a valid scene: the viewer reports
+    // zero atoms and the loader holds the template's file and its box.
+    const viewer = page.locator('[data-testid="megane-viewer"]').first();
+    await expect(viewer).toHaveAttribute("data-atom-count", "0");
+    await expect
+      .poll(async () =>
+        page.evaluate(() => {
+          const store = (
+            window as unknown as {
+              __megane_test_pipeline_store?: {
+                getState: () => {
+                  nodes: { id: string; type?: string; data: { params: { fileName?: string } } }[];
+                  nodeSnapshots: Record<string, { snapshot: { nAtoms: number; box: unknown } }>;
+                };
+              };
+            }
+          ).__megane_test_pipeline_store!;
+          const state = store.getState();
+          const loader = state.nodes.find((n) => n.type === "load_structure");
+          const snap = loader ? state.nodeSnapshots[loader.id]?.snapshot : undefined;
+          return {
+            fileName: loader?.data.params.fileName ?? null,
+            nAtoms: snap?.nAtoms ?? null,
+            hasBox: !!snap?.box,
+          };
+        }),
+      )
+      .toEqual({ fileName: "empty_box.pdb", nAtoms: 0, hasBox: true });
+    expect((await loaderInfo(page))!.edits).toEqual([]);
+    await expect(page.locator('[data-testid="build-op-count"]')).toHaveText("0 edits");
+
+    // A real click on empty space: with no atoms the camera framed the cell,
+    // so the pivot sits at its centre and the atom lands there.
+    await page.locator('[data-testid="build-tool-add"]').click();
+    const box = (await viewer.boundingBox())!;
+    await page.mouse.click(box.x + box.width * 0.35, box.y + box.height / 2);
+    await expect(viewer).toHaveAttribute("data-atom-count", "1");
+    await expect(page.locator('[data-testid="build-op-count"]')).toHaveText("1 edit");
+    const first = (await loaderInfo(page))!.edits[0] as {
+      op: string;
+      position: [number, number, number];
+    };
+    expect(first.op).toBe("add_atom");
+    // Somewhere inside the 10 Å cell, at the pivot's depth.
+    for (const c of first.position) {
+      expect(c).toBeGreaterThan(-1);
+      expect(c).toBeLessThan(11);
+    }
+
+    // A second atom attached to the first: bonded at covalent length.
+    await pickAtom(page, 0);
+    await expect(viewer).toHaveAttribute("data-atom-count", "2");
+    const bonds = await page.evaluate(() => {
+      const store = (
+        window as unknown as {
+          __megane_test_pipeline_store?: {
+            getState: () => { viewportState: { bonds: { nBonds: number }[] } };
+          };
+        }
+      ).__megane_test_pipeline_store!;
+      return store.getState().viewportState.bonds.reduce((n, b) => n + b.nBonds, 0);
+    });
+    expect(bonds).toBe(1);
+    await expect((await loaderInfo(page))!.nodeTypes.sort()).toEqual(
+      ["add_bond", "load_structure", "viewport"].sort(),
+    );
   });
 
   test("the edit history survives a pipeline export / import round trip", async ({ page }) => {

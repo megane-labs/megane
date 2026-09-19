@@ -480,6 +480,54 @@ describe("executePipeline", () => {
   });
 
   describe("AddBond node", () => {
+    it("does not warn about missing bonds on an atom-less structure", () => {
+      // The Empty Box template: a cell and nothing in it yet.
+      const emptyCell = makeSnapshot({
+        nAtoms: 0,
+        positions: [],
+        elements: [],
+        box: [10, 0, 0, 0, 10, 0, 0, 0, 10],
+      });
+      const nodes = [
+        makeNode("ls", "load_structure", { fileName: null, hasTrajectory: false, hasCell: true }),
+        makeNode("ab", "add_bond", { bondSource: "structure" }),
+        makeNode("vp", "viewport", { perspective: false, cellAxesVisible: true }),
+      ];
+      const edges = [
+        makeEdge("ls", "particle", "ab", "particle"),
+        makeEdge("ls", "particle", "vp", "particle"),
+        makeEdge("ab", "bond", "vp", "bond"),
+        makeEdge("ls", "cell", "vp", "cell"),
+      ];
+
+      const { viewportState, nodeErrors } = executePipeline(nodes, edges, { snapshot: emptyCell });
+      expect(nodeErrors.get("ab")).toBeUndefined();
+      expect(viewportState.bonds).toHaveLength(0);
+      expect(viewportState.particles).toHaveLength(1);
+      expect(viewportState.particles[0].source.nAtoms).toBe(0);
+      expect(viewportState.cells).toHaveLength(1);
+    });
+
+    it("warns about missing bonds when there are atoms but no bonds", () => {
+      const lonelyAtoms = makeSnapshot({
+        nAtoms: 2,
+        positions: [0, 0, 0, 5, 0, 0],
+        elements: [6, 6],
+      });
+      const nodes = [
+        makeNode("ls", "load_structure", { fileName: null, hasTrajectory: false, hasCell: false }),
+        makeNode("ab", "add_bond", { bondSource: "structure" }),
+        makeNode("vp", "viewport", { perspective: false, cellAxesVisible: true }),
+      ];
+      const edges = [
+        makeEdge("ls", "particle", "ab", "particle"),
+        makeEdge("ab", "bond", "vp", "bond"),
+      ];
+
+      const { nodeErrors } = executePipeline(nodes, edges, { snapshot: lonelyAtoms });
+      expect(nodeErrors.get("ab")).toEqual([{ message: "No bonds found", severity: "warning" }]);
+    });
+
     it("uses structure bonds when bondSource is 'structure'", () => {
       const nodes = [
         makeNode("ls", "load_structure", { fileName: null, hasTrajectory: false, hasCell: false }),

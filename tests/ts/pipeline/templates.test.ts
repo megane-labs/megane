@@ -12,7 +12,9 @@ import type {
   SurfaceMeshParams,
   BoundaryCompletionParams,
   WrapParams,
+  PipelineNodeType,
 } from "@/pipeline/types";
+import { canConnect } from "@/pipeline/types";
 
 describe("PIPELINE_TEMPLATES", () => {
   it("is non-empty", () => {
@@ -48,6 +50,24 @@ describe("PIPELINE_TEMPLATES", () => {
         expect(
           ids.has(e.target),
           `template "${t.id}": edge target "${e.target}" not in nodes`,
+        ).toBe(true);
+      }
+    }
+  });
+
+  it("wires every edge between ports that exist and accept each other", () => {
+    for (const t of PIPELINE_TEMPLATES) {
+      const { nodes, edges } = t.create();
+      const typeOf = new Map(nodes.map((n) => [n.id, n.type as PipelineNodeType]));
+      for (const e of edges) {
+        expect(
+          canConnect(
+            typeOf.get(e.source)!,
+            e.sourceHandle ?? null,
+            typeOf.get(e.target)!,
+            e.targetHandle ?? null,
+          ),
+          `template "${t.id}": edge ${e.source}.${e.sourceHandle} → ${e.target}.${e.targetHandle} is not a valid connection`,
         ).toBe(true);
       }
     }
@@ -537,5 +557,50 @@ describe("PIPELINE_TEMPLATES symmetry expansion", () => {
         `template "${id}" must wire symmetry→wrap`,
       ).toBe(true);
     }
+  });
+});
+
+describe("PIPELINE_TEMPLATES empty_box", () => {
+  const emptyBox = PIPELINE_TEMPLATES.find((t) => t.id === "empty_box");
+
+  it("is registered and opens the Build panel", () => {
+    expect(emptyBox).toBeDefined();
+    expect(emptyBox!.label).toBe("Empty Box");
+    expect(emptyBox!.opensBuild).toBe(true);
+  });
+
+  it("is the only template that opens the Build panel", () => {
+    expect(PIPELINE_TEMPLATES.filter((t) => t.opensBuild).map((t) => t.id)).toEqual(["empty_box"]);
+  });
+
+  it("loads the atom-less cell file into the standard loader → add_bond → viewport graph", () => {
+    const { nodes, edges } = emptyBox!.create();
+    expect(nodes.map((n) => n.type)).toEqual(["load_structure", "add_bond", "viewport"]);
+
+    const loader = nodes.find((n) => n.type === "load_structure")!;
+    const params = loader.data.params as LoadStructureParams;
+    expect(params.fileName).toBe("empty_box.pdb");
+    expect(params.hasCell).toBe(true);
+    expect(params.hasTrajectory).toBe(false);
+    // No edits baked in: the history starts empty and the user writes it.
+    expect(params.edits).toBeUndefined();
+
+    const addBond = nodes.find((n) => n.type === "add_bond")!;
+    expect((addBond.data.params as AddBondParams).bondSource).toBe("structure");
+
+    const has = (source: string, target: string, handle: string) =>
+      edges.some(
+        (e) =>
+          e.source === source &&
+          e.target === target &&
+          e.sourceHandle === handle &&
+          e.targetHandle === handle,
+      );
+    expect(has("loader-1", "addbond-1", "particle")).toBe(true);
+    // add_bond emits bonds only; the atoms reach the viewport from the loader.
+    expect(has("loader-1", "viewport-1", "particle")).toBe(true);
+    expect(has("addbond-1", "viewport-1", "bond")).toBe(true);
+    expect(has("loader-1", "viewport-1", "cell")).toBe(true);
+    expect(edges).toHaveLength(4);
   });
 });

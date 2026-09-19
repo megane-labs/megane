@@ -546,7 +546,16 @@ fn parse_impl(text: &str, frame0_only: bool) -> Result<ParsedStructure, String> 
     }
 
     if all_models.is_empty() || all_models[0].is_empty() {
-        return Err("PDB file contains no ATOM or HETATM records".to_string());
+        // A CRYST1 with no atoms is an empty cell — the Build panel's "Empty
+        // Box" starting point — not a broken file. Anything without atoms or
+        // a cell carries nothing to show and stays an error.
+        if box_matrix.is_none() {
+            return Err("PDB file contains no ATOM or HETATM records".to_string());
+        }
+        all_models = vec![Vec::new()];
+        first_model_labels = Vec::new();
+        first_model_chain_ids = Vec::new();
+        first_model_bfactors = Vec::new();
     }
 
     let first_model = &all_models[0];
@@ -874,6 +883,33 @@ pub fn decode_model_at(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The Build panel's "Empty Box" template starts from a PDB that is only a
+    /// `CRYST1` record: no atoms, just the cell to build into.
+    #[test]
+    fn parses_a_cryst1_only_file_as_an_empty_cell() {
+        let text = "REMARK   empty box\nCRYST1   10.000   10.000   10.000  90.00  90.00  90.00 P 1           1\nEND\n";
+        let s = parse(text).expect("a cell without atoms is a valid structure");
+        assert_eq!(s.n_atoms, 0);
+        assert!(s.positions.is_empty());
+        assert!(s.elements.is_empty());
+        assert!(s.bonds.is_empty());
+        assert_eq!(s.n_file_bonds, 0);
+        let cell = s.box_matrix.expect("CRYST1 survives without atoms");
+        assert!((cell[0] - 10.0).abs() < 1e-4);
+        assert!((cell[4] - 10.0).abs() < 1e-4);
+        assert!((cell[8] - 10.0).abs() < 1e-4);
+        assert_eq!(s.extra_frame_count(), 0);
+        assert!(s.atom_labels.is_none());
+    }
+
+    #[test]
+    fn a_file_with_neither_atoms_nor_a_cell_is_still_an_error() {
+        match parse("REMARK   nothing here\nEND\n") {
+            Err(err) => assert!(err.contains("no ATOM or HETATM"), "{err}"),
+            Ok(_) => panic!("a file with neither atoms nor a cell must not parse"),
+        }
+    }
 
     #[test]
     fn test_parse_minimal_pdb() {

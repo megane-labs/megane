@@ -31,6 +31,20 @@ Think of the edit list as the *recipe* of what you did and the exported
 XYZ / PDB / MOL file as the *result*. For day-to-day work: click to edit, then
 **Save** — the history is recorded in the background.
 
+## Starting from nothing
+
+To build a structure from scratch rather than edit a file, pick **Empty Box**
+from the Pipeline panel's **Templates** dropdown. It loads `empty_box.pdb` — a
+PDB file that is only a `CRYST1` record, a 10 Å cubic cell with no atoms — into
+the standard `LoadStructure → AddBond → Viewport` graph and opens the Build
+panel. The AddBond node stays on its *structure* source, so the bonds you draw
+are exactly the bonds shown (an XYZ start would switch it to distance
+inference and second-guess them). The cell
+is what the camera frames and what the *Add atom* tool places free atoms
+against (a click on empty space lands at the depth of the rotation pivot, the
+cell centre), so the first click already puts an atom in the box. Everything
+you add is an edit on that loader, like any other file, and saves the same way.
+
 ## Tools
 
 | Tool | What a click in the 3D view does |
