@@ -2,12 +2,16 @@
  * Turning what the user drew, opened or selected into a library molecule.
  *
  * A Ketcher sketch arrives as a molfile: flat, unit bond lengths, and
- * without the hydrogens a chemist leaves implicit. It is parsed by the same
- * MOL parser every host uses, rescaled to Å (bond lengths from covalent
- * radii), completed with the hydrogens its valences call for (see
- * `hydrogens.ts`; the user can turn this off) and centred. The heavy-atom
- * skeleton is exactly what the user drew and stays planar until they move
- * it; only the added hydrogens leave the drawing plane.
+ * without the hydrogens a chemist leaves implicit. By default it is embedded
+ * in 3D by RDKit (`embed.ts`: ETKDG conformer generation, the implicit
+ * hydrogens added, then an MMFF94s / UFF minimisation) and the resulting mol
+ * block is parsed by the same MOL parser every host uses and centred. With
+ * embedding off — or as the fallback when RDKit cannot run — the sketch is
+ * parsed as drawn, rescaled to Å (bond lengths from covalent radii),
+ * completed with the hydrogens its valences call for (see `hydrogens.ts`;
+ * the user can turn this off) and centred; the heavy-atom skeleton then stays
+ * planar until the user moves it, and only the added hydrogens leave the
+ * drawing plane.
  */
 
 import { parseStructureFile, parseStructureText } from "../../parsers/structure";
@@ -20,6 +24,7 @@ import {
   isPlanar,
   scaleBondsToCovalent,
 } from "./fragment";
+import { embedSketch, type EmbedSketchOptions } from "./embed";
 import { addHydrogens } from "./hydrogens";
 import type { LibraryMoleculeDraft, LibraryOrigin } from "./types";
 
@@ -76,23 +81,53 @@ export function draftFromSnapshot(
   return draft;
 }
 
+export interface MolfileDraftOptions {
+  /** Add the hydrogens the sketch leaves implicit (default true). */
+  addHydrogens?: boolean;
+  /**
+   * Embed the sketch in 3D with RDKit (default false; the dialog turns it
+   * on). Off, the sketch is kept flat and its hydrogens placed by valence.
+   */
+  embed3D?: boolean;
+  /** Force field for the RDKit minimisation; see `EmbedSketchOptions`. */
+  forceField?: EmbedSketchOptions["forceField"];
+  /** The embedding function, replaceable for tests. */
+  embed?: typeof embedSketch;
+}
+
 /**
- * Parse a molfile (Ketcher's output, or pasted text) into a draft. The
- * hydrogens the sketch leaves implicit are added unless `addHydrogens` is
- * false; the molfile itself is kept as drawn so the sketch can be re-edited.
+ * Parse a molfile (Ketcher's output, or pasted text) into a draft. With
+ * `embed3D` the molecule is first embedded in 3D by RDKit, hydrogens
+ * included unless `addHydrogens` is false; otherwise it is read as drawn and
+ * the hydrogens the sketch leaves implicit are added by valence. The molfile
+ * itself is kept as drawn so the sketch can be re-edited.
  */
 export async function draftFromMolfile(
   molfile: string,
   name: string,
-  { addHydrogens: withHydrogens = true }: { addHydrogens?: boolean } = {},
+  {
+    addHydrogens: withHydrogens = true,
+    embed3D = false,
+    forceField,
+    embed = embedSketch,
+  }: MolfileDraftOptions = {},
 ): Promise<LibraryMoleculeDraft> {
   const text = molfile.trim();
   if (!text) throw new Error("The sketch is empty.");
-  const parsed = await parseStructureText(molfile, "sketch.mol");
-  const draft = draftFromSnapshot(parsed.snapshot, name, "sketch", undefined, {
-    addHydrogens: withHydrogens,
-    formalCharges: formalChargesOf(parsed),
-  });
+  let draft: LibraryMoleculeDraft;
+  if (embed3D) {
+    const embedded = await embed(molfile, { addHydrogens: withHydrogens, forceField });
+    const parsed = await parseStructureText(embedded.molblock, "sketch.mol");
+    // RDKit already added the hydrogens (or was told not to); the geometry
+    // is 3D, so the flat-sketch rescaling and valence hydrogens do not apply.
+    draft = draftFromSnapshot(parsed.snapshot, name, "sketch");
+  } else {
+    const parsed = await parseStructureText(molfile, "sketch.mol");
+    draft = draftFromSnapshot(parsed.snapshot, name, "sketch", undefined, {
+      addHydrogens: withHydrogens,
+      formalCharges: formalChargesOf(parsed),
+    });
+  }
   draft.molfile = molfile;
   return draft;
 }

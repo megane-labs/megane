@@ -6,6 +6,8 @@ const { parseStructureText, parseStructureFile } = vi.hoisted(() => ({
   parseStructureFile: vi.fn(),
 }));
 vi.mock("@/parsers/structure", () => ({ parseStructureText, parseStructureFile }));
+const { embedSketch } = vi.hoisted(() => ({ embedSketch: vi.fn() }));
+vi.mock("@/builder/library/embed", () => ({ embedSketch, canEmbed: () => true }));
 
 import {
   draftFromMolfile,
@@ -43,6 +45,7 @@ const parsed = (s: Snapshot) => ({
 beforeEach(() => {
   parseStructureText.mockReset();
   parseStructureFile.mockReset();
+  embedSketch.mockReset();
 });
 
 describe("draftFromSnapshot", () => {
@@ -142,6 +145,71 @@ describe("draftFromMolfile / draftFromFile", () => {
     });
     // Atom 1 (O⁻, one H) and atom 2 (C⁺, three H).
     expect(d.formula).toBe("CH4O");
+  });
+
+  it("embeds through RDKit when asked, parses its mol block and keeps the sketch as drawn", async () => {
+    // RDKit hands back ethanol in 3D with every hydrogen; nothing is rescaled or added.
+    const embedded = snapshot(
+      [0, 0, 0, 1.52, 0, 0, 2.0, 1.35, 0, -0.4, 1.0, 0.3, -0.4, -0.5, -0.9, 1.9, -0.5, -0.9],
+      [6, 6, 8, 1, 1, 1],
+      [0, 1, 1, 2, 0, 3, 0, 4, 1, 5],
+    );
+    embedSketch.mockResolvedValue({
+      molblock: "MOLBLOCK-3D",
+      energy: -1,
+      converged: true,
+      forceField: "MMFF94s",
+      warnings: [],
+      rdkitVersion: "2026.03.6",
+    });
+    parseStructureText.mockResolvedValue(parsed(embedded));
+    const d = await draftFromMolfile("KETCHER-MOL", "Ethanol", {
+      embed3D: true,
+      addHydrogens: false,
+      forceField: "UFF",
+    });
+    expect(embedSketch).toHaveBeenCalledWith("KETCHER-MOL", {
+      addHydrogens: false,
+      forceField: "UFF",
+    });
+    expect(parseStructureText).toHaveBeenCalledWith("MOLBLOCK-3D", "sketch.mol");
+    expect(d.molfile).toBe("KETCHER-MOL");
+    expect(d.origin).toBe("sketch");
+    expect(d.planar).toBeUndefined();
+    expect(d.elements).toEqual([6, 6, 8, 1, 1, 1]);
+    expect(d.bonds).toHaveLength(5);
+    // Centred, with the C–C distance exactly as RDKit placed it.
+    expect(d.positions[3] - d.positions[0]).toBeCloseTo(1.52, 6);
+    const zs = d.positions.filter((_, k) => k % 3 === 2);
+    expect(zs.reduce((a, b) => a + b, 0)).toBeCloseTo(0, 6);
+    expect(Math.max(...zs.map(Math.abs))).toBeGreaterThan(0.5);
+  });
+
+  it("passes hydrogens on to RDKit by default, takes an injected embedder and surfaces its error", async () => {
+    embedSketch.mockRejectedValue(new Error("Could not sanitize"));
+    await expect(draftFromMolfile("bad", "", { embed3D: true })).rejects.toThrow(
+      "Could not sanitize",
+    );
+    expect(embedSketch).toHaveBeenCalledWith("bad", { addHydrogens: true, forceField: undefined });
+    expect(parseStructureText).not.toHaveBeenCalled();
+
+    const custom = vi.fn(async () => ({
+      molblock: "CUSTOM",
+      energy: null,
+      converged: false,
+      forceField: "none" as const,
+      warnings: [],
+      rdkitVersion: "v",
+    }));
+    parseStructureText.mockResolvedValue(parsed(snapshot([0, 0, 0, 0, 0, 1.1], [6, 8], [0, 1])));
+    const d = await draftFromMolfile("mol", "", { embed3D: true, embed: custom });
+    expect(custom).toHaveBeenCalledTimes(1);
+    expect(embedSketch).toHaveBeenCalledTimes(1);
+    expect(parseStructureText).toHaveBeenLastCalledWith("CUSTOM", "sketch.mol");
+    expect(d.formula).toBe("CO");
+    // An empty sketch is rejected before RDKit is asked.
+    await expect(draftFromMolfile(" \n ", "x", { embed3D: true })).rejects.toThrow(/empty/);
+    expect(custom).toHaveBeenCalledTimes(1);
   });
 
   it("names a file import after the file", async () => {

@@ -1,9 +1,12 @@
 /**
  * The "Sketch a molecule" dialog: Ketcher in a modal, a name field, and an
  * *Add to library* button that reads the sketch back as a molfile and turns
- * it into a library molecule (`draftFromMolfile`). The hydrogens a sketch
- * leaves implicit are added by default; *Add hydrogens* turns that off for
- * a bare skeleton.
+ * it into a library molecule (`draftFromMolfile`). By default the sketch is
+ * embedded in 3D by RDKit (`megane-rdkit`, in a worker) with the hydrogens
+ * it leaves implicit; *3D (RDKit)* turns the embedding off to keep the
+ * drawing flat, and *Add hydrogens* turns the hydrogens off for a bare
+ * skeleton. When RDKit cannot run at all (the worker or its WASM fails to
+ * load) the dialog says so and offers the flat sketch instead.
  *
  * Ketcher is loaded on demand. While it loads, and if it cannot load at all
  * (offline bundle, blocked WASM), the dialog falls back to a plain molfile
@@ -16,6 +19,7 @@ import { createPortal } from "react-dom";
 import type { Ketcher } from "ketcher-core";
 import { isE2ETestMode } from "../../testMode";
 import { chipStyle, hintStyle, inputStyle } from "../styles";
+import { canEmbed } from "./embed";
 import { draftFromMolfile } from "./sketch";
 import type { LibraryMoleculeDraft } from "./types";
 
@@ -48,6 +52,7 @@ export function SketchModal({ initialMolfile, initialName, onAdd, onClose }: Ske
   const [pasteMode, setPasteMode] = useState(false);
   const [molText, setMolText] = useState(initialMolfile ?? "");
   const [withHydrogens, setWithHydrogens] = useState(true);
+  const [embed3D, setEmbed3D] = useState(() => canEmbed());
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [ready, setReady] = useState(false);
@@ -75,14 +80,22 @@ export function SketchModal({ initialMolfile, initialName, onAdd, onClose }: Ske
         if (!ketcher) throw new Error("The sketcher is still loading.");
         molfile = await ketcher.getMolfile("v2000");
       }
-      const draft = await draftFromMolfile(molfile, name, { addHydrogens: withHydrogens });
+      const draft = await draftFromMolfile(molfile, name, {
+        addHydrogens: withHydrogens,
+        embed3D,
+      });
       onAdd(draft);
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+      const message = err instanceof Error ? err.message : String(err);
+      setError(
+        embed3D
+          ? `RDKit could not embed the sketch in 3D: ${message} Untick "3D (RDKit)" to add the flat sketch instead.`
+          : message,
+      );
     } finally {
       setBusy(false);
     }
-  }, [molText, pasteMode, name, withHydrogens, onAdd]);
+  }, [molText, pasteMode, name, withHydrogens, embed3D, onAdd]);
 
   const canAdd = !busy && (pasteMode ? molText.trim().length > 0 : ready);
 
@@ -168,9 +181,28 @@ export function SketchModal({ initialMolfile, initialName, onAdd, onClose }: Ske
             />
             Add hydrogens
           </label>
+          <label
+            style={{ display: "flex", alignItems: "center", gap: 4, ...hintStyle }}
+            title={
+              canEmbed()
+                ? "Generate a 3D conformer with RDKit (ETKDG + MMFF94s / UFF)"
+                : "3D embedding needs Web Workers, which this host lacks"
+            }
+          >
+            <input
+              type="checkbox"
+              data-testid="sketch-embed"
+              checked={embed3D}
+              disabled={!canEmbed()}
+              onChange={(e) => setEmbed3D(e.target.checked)}
+            />
+            3D (RDKit)
+          </label>
           <span style={{ flex: 1 }} />
-          <span style={hintStyle}>
-            Sketches stay flat; missing hydrogens are added from valence and placed in 3D.
+          <span data-testid="sketch-mode-hint" style={hintStyle}>
+            {embed3D
+              ? "RDKit embeds the sketch in 3D (ETKDG, then MMFF94s / UFF) with its missing hydrogens."
+              : "The sketch stays flat; missing hydrogens are added from valence and placed in 3D."}
           </span>
         </div>
         <div
@@ -245,7 +277,7 @@ export function SketchModal({ initialMolfile, initialName, onAdd, onClose }: Ske
             style={chipStyle(canAdd, !canAdd)}
             onClick={canAdd ? () => void handleAdd() : undefined}
           >
-            {busy ? "Adding…" : "Add to library"}
+            {busy ? (embed3D ? "Embedding…" : "Adding…") : "Add to library"}
           </span>
         </div>
       </div>

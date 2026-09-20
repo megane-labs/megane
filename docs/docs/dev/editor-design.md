@@ -159,6 +159,33 @@ write one `move_atoms` op at press time and rewrite its delta while the
 pointer moves, so the history gains a single op; a drag that ends with a zero
 delta is removed again without touching the redo stack.
 
+## Sketch embedding (RDKit)
+
+A Ketcher sketch is a flat molfile; the library turns it into a 3D molecule
+with RDKit rather than inventing a conformer in TypeScript. RDKit runs in the
+browser as [`megane-rdkit`](https://github.com/hodakamori/megane-rdkit), an
+Emscripten build of an unmodified RDKit release that exposes exactly one
+call today — `embed(molfile, options)`: ETKDG embedding with the implicit
+hydrogens added, then MMFF94s (UFF fallback) minimisation, returning a V2000
+mol block. The build lives in its own repository because it needs emsdk,
+Boost and a C++ toolchain nothing else in megane touches; megane depends on
+the published npm package and Vite ships its `.wasm` (~3.5 MB, ~1 MB gzipped)
+as an asset that is fetched only when the sketch dialog first embeds.
+
+`src/builder/library/embed.ts` is the main-thread client: one lazily created
+Web Worker (`embed.worker.ts`) holds the module, requests carry the `.wasm`
+URL resolved on the main thread (the worker cannot know the page's base), and
+a crashed or silent worker is torn down so the next request starts a fresh
+one. `draftFromMolfile` in `sketch.ts` takes `embed3D`: on, RDKit's mol block
+goes through the shared MOL parser and is centred (nothing else is touched —
+the geometry is RDKit's); off, the sketch is read as drawn, rescaled to Å and
+completed with the valence-rule hydrogens of `hydrogens.ts` placed by steric
+number, and the entry is marked *flat*. The dialog defaults to embedding
+wherever Web Workers exist and leaves the flat path as the user's opt-out and
+the fallback for a drawing RDKit cannot sanitise. Either way the Ketcher
+molfile is kept on the library entry so *Edit* reopens the drawing, not the
+conformer.
+
 ## Writers
 
 megane had no structure writer before this feature. `crates/megane-core/src/writer.rs`
@@ -174,13 +201,6 @@ save dialog.
 - **Bake to file** — collapsing a long history into a re-loaded file. The
   writer makes this possible; it needs a host-specific "replace the loaded
   file" flow.
-- **3D embedding of sketches** — the library keeps a Ketcher sketch's heavy
-  atoms flat (rescaled to Å, centred); generating a conformer belongs with
-  the other chemistry in Python (RDKit), not in the TypeScript app. The one
-  piece of chemistry the library does carry is the valence-rule hydrogen
-  addition in `hydrogens.ts` (implicit hydrogens of a sketch, placed by
-  steric number), because a sketch without its hydrogens is not the molecule
-  the user drew.
 - **Trajectory editing** — the loader's trajectory output follows the file;
   an edited atom count no longer matches the frames.
 - **Save in place** — VS Code's editor is a `CustomReadonlyEditorProvider` and
