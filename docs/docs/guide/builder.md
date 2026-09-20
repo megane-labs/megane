@@ -66,24 +66,30 @@ and grows with your own molecules:
   browser with its standalone Indigo engine, so it loads on first use and
   needs no server). Draw the molecule, give it a name (the formula is used
   when you leave it blank), and press **Add to library**. The sketch is read
-  back as a molfile and parsed by the same MOL parser every megane host uses;
-  its unit-length drawing is rescaled to ångström (bond lengths from covalent
-  radii), completed with the hydrogens you left implicit, and centred. The
-  hydrogens follow the usual valence rules (carbon fills to four bonds,
-  nitrogen to three, oxygen to two, …; formal charges and the hypervalent S /
-  P states are honoured, and an aromatic bond counts one and a half) and are
-  placed in 3D from the atom's steric number — a CH₃ gets a tetrahedral cone,
-  a CH₂ its pair above and below the drawing, a vinyl or aromatic CH stays in
-  the plane. Untick **Add hydrogens** to keep the bare skeleton you drew
-  (hydrogens you drew explicitly in Ketcher are always kept and never
-  doubled). The heavy atoms themselves are exactly where you drew them, so a
-  sketch is *flat* — the list marks it so — until you move its atoms.
+  back as a molfile and embedded in 3D by [RDKit](https://www.rdkit.org/) —
+  the [`megane-rdkit`](https://github.com/hodakamori/megane-rdkit)
+  WebAssembly build, loaded on first use and run in a Web Worker: ETKDG
+  conformer generation, the hydrogens you left implicit added first, then an
+  MMFF94s minimisation (UFF when MMFF has no parameters for the molecule).
+  Wedge bonds in the drawing set the stereochemistry of the conformer, and
+  the same sketch always embeds to the same geometry. The result goes
+  through the same MOL parser every megane host uses and is centred; the
+  molecule is a real 3D structure, with tetrahedral carbons and force-field
+  bond lengths, not a flat drawing. Untick **Add hydrogens** to embed the
+  bare skeleton you drew (hydrogens you drew explicitly in Ketcher are
+  always kept). RDKit is the only way a sketch becomes 3D: if it cannot run
+  (a browser without Web Workers, or a drawing it cannot sanitise) the
+  dialog reports the error and nothing is added.
   **Paste MOL** in the dialog takes a molfile from elsewhere instead of
-  drawing; it is also what the dialog falls back to if Ketcher cannot load.
+  drawing (it is embedded the same way); it is also what the dialog falls
+  back to if Ketcher cannot load.
 - **From file…** imports any structure file megane reads as a molecule (3D
   coordinates are kept as they are).
 - **Save selection** keeps the selected atoms, with the bonds between them,
   as a molecule — a quick way to lift a 3D fragment out of an opened file.
+  A flat 2D file (a molfile without z coordinates) is only rescaled to
+  ångström and marked *flat* in the list; the Builder never invents a
+  conformer for it.
 - **Edit** (on a sketched molecule) reopens the sketch in Ketcher; adding the
   result makes a new library entry. **×** removes a molecule you added.
 
@@ -124,9 +130,7 @@ That is why deleting an atom never breaks a later operation.
 
 Editing the cell vectors themselves (only *New empty cell* sets a cell),
 saving the document as a project file (the source plus its operations),
-keyboard shortcuts, and 3D embedding of a flat sketch (a drawn molecule's
-heavy atoms stay planar until you move them; only the added hydrogens leave
-the plane) are deliberately not in this version; nor is the Builder shipped inside the
-JupyterLab or VS Code hosts yet. The full design, including how a Builder
+and keyboard shortcuts are deliberately not in this version; nor is the
+Builder shipped inside the JupyterLab or VS Code hosts yet. The full design, including how a Builder
 document is meant to travel into the viewer, is in
 [Structure editing design](../dev/editor-design.md).

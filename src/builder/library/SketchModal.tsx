@@ -1,9 +1,12 @@
 /**
  * The "Sketch a molecule" dialog: Ketcher in a modal, a name field, and an
  * *Add to library* button that reads the sketch back as a molfile and turns
- * it into a library molecule (`draftFromMolfile`). The hydrogens a sketch
- * leaves implicit are added by default; *Add hydrogens* turns that off for
- * a bare skeleton.
+ * it into a library molecule (`draftFromMolfile`): RDKit (`megane-rdkit`,
+ * in a worker) embeds it in 3D with the hydrogens it leaves implicit;
+ * *Add hydrogens* turns those off for a bare skeleton. RDKit is the only
+ * way a sketch becomes 3D, so when it cannot run (no Web Workers, the WASM
+ * blocked, a drawing it cannot sanitise) the dialog reports the error and
+ * nothing is added.
  *
  * Ketcher is loaded on demand. While it loads, and if it cannot load at all
  * (offline bundle, blocked WASM), the dialog falls back to a plain molfile
@@ -16,6 +19,7 @@ import { createPortal } from "react-dom";
 import type { Ketcher } from "ketcher-core";
 import { isE2ETestMode } from "../../testMode";
 import { chipStyle, hintStyle, inputStyle } from "../styles";
+import { canEmbed } from "./embed";
 import { draftFromMolfile } from "./sketch";
 import type { LibraryMoleculeDraft } from "./types";
 
@@ -78,13 +82,14 @@ export function SketchModal({ initialMolfile, initialName, onAdd, onClose }: Ske
       const draft = await draftFromMolfile(molfile, name, { addHydrogens: withHydrogens });
       onAdd(draft);
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+      const message = err instanceof Error ? err.message : String(err);
+      setError(`RDKit could not embed the sketch in 3D: ${message}`);
     } finally {
       setBusy(false);
     }
   }, [molText, pasteMode, name, withHydrogens, onAdd]);
 
-  const canAdd = !busy && (pasteMode ? molText.trim().length > 0 : ready);
+  const canAdd = !busy && canEmbed() && (pasteMode ? molText.trim().length > 0 : ready);
 
   const pasteField = (
     <textarea
@@ -169,8 +174,10 @@ export function SketchModal({ initialMolfile, initialName, onAdd, onClose }: Ske
             Add hydrogens
           </label>
           <span style={{ flex: 1 }} />
-          <span style={hintStyle}>
-            Sketches stay flat; missing hydrogens are added from valence and placed in 3D.
+          <span data-testid="sketch-mode-hint" style={hintStyle}>
+            {canEmbed()
+              ? "RDKit embeds the sketch in 3D (ETKDG, then MMFF94s / UFF) with its missing hydrogens."
+              : "3D embedding needs Web Workers, which this host lacks."}
           </span>
         </div>
         <div
@@ -245,7 +252,7 @@ export function SketchModal({ initialMolfile, initialName, onAdd, onClose }: Ske
             style={chipStyle(canAdd, !canAdd)}
             onClick={canAdd ? () => void handleAdd() : undefined}
           >
-            {busy ? "Adding…" : "Add to library"}
+            {busy ? "Embedding…" : "Add to library"}
           </span>
         </div>
       </div>

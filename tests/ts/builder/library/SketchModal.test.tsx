@@ -1,21 +1,28 @@
 /**
- * The sketch dialog: Ketcher (stubbed) hands back a molfile, the paste field
- * takes one directly, and a failed Ketcher load falls back to pasting.
+ * The sketch dialog: Ketcher (stubbed) hands back a molfile, which RDKit
+ * (stubbed) embeds in 3D; the paste field takes a molfile directly, and a
+ * failed Ketcher load falls back to pasting.
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, fireEvent, cleanup, waitFor, act } from "@testing-library/react";
 import type { Snapshot } from "@/types";
 
-const { parseStructureText, editorMode, ketcher } = vi.hoisted(() => ({
+const { parseStructureText, editorMode, ketcher, embedSketch, embedAvailable } = vi.hoisted(() => ({
   parseStructureText: vi.fn(),
   editorMode: { current: "ok" as "ok" | "throw" },
+  embedSketch: vi.fn(),
+  embedAvailable: { current: true },
   ketcher: {
     getMolfile: vi.fn(async () => "KETCHER-MOL"),
     setMolecule: vi.fn(async () => undefined),
   },
 }));
 vi.mock("@/parsers/structure", () => ({ parseStructureText, parseStructureFile: vi.fn() }));
+vi.mock("@/builder/library/embed", () => ({
+  embedSketch,
+  canEmbed: () => embedAvailable.current,
+}));
 vi.mock("@/builder/library/KetcherEditor", async () => {
   const React = await import("react");
   return {
@@ -29,14 +36,18 @@ vi.mock("@/builder/library/KetcherEditor", async () => {
 
 import { SketchModal } from "@/builder/library/SketchModal";
 
-function ethanolLike(): Snapshot {
+/** What RDKit hands back for ethanol: every hydrogen explicit, 3D coordinates. */
+function ethanol3D(): Snapshot {
   return {
-    nAtoms: 3,
-    nBonds: 2,
-    nFileBonds: 2,
-    positions: new Float32Array([0, 0, 0, 1, 0, 0, 2, 0, 0]),
-    elements: new Uint8Array([6, 6, 8]),
-    bonds: new Uint32Array([0, 1, 1, 2]),
+    nAtoms: 9,
+    nBonds: 8,
+    nFileBonds: 8,
+    positions: new Float32Array([
+      0, 0, 0, 1.52, 0, 0, 2.0, 1.35, 0, -0.4, 1.0, 0.3, -0.4, -0.5, -0.9, -0.4, -0.5, 0.9, 1.9,
+      -0.5, -0.9, 1.9, -0.5, 0.9, 2.95, 1.3, 0.1,
+    ]),
+    elements: new Uint8Array([6, 6, 8, 1, 1, 1, 1, 1, 1]),
+    bonds: new Uint32Array([0, 1, 1, 2, 0, 3, 0, 4, 0, 5, 1, 6, 1, 7, 2, 8]),
     bondOrders: null,
     box: null,
     boxOrigin: null,
@@ -44,6 +55,14 @@ function ethanolLike(): Snapshot {
     atomBFactors: null,
   };
 }
+const embedded = {
+  molblock: "MOLBLOCK-3D",
+  energy: -3.2,
+  converged: true,
+  forceField: "MMFF94s",
+  warnings: [],
+  rdkitVersion: "2026.03.6",
+};
 const parsed = (s: Snapshot) => ({
   snapshot: s,
   labels: null,
@@ -56,6 +75,9 @@ const parsed = (s: Snapshot) => ({
 
 beforeEach(() => {
   parseStructureText.mockReset();
+  embedSketch.mockReset();
+  embedSketch.mockResolvedValue(embedded);
+  embedAvailable.current = true;
   ketcher.getMolfile.mockClear();
   ketcher.setMolecule.mockClear();
   editorMode.current = "ok";
@@ -68,14 +90,15 @@ afterEach(() => {
 });
 
 describe("SketchModal", () => {
-  it("renders into the body, loads Ketcher, and adds the sketch as a molecule", async () => {
-    parseStructureText.mockResolvedValue(parsed(ethanolLike()));
+  it("renders into the body, loads Ketcher, and adds the sketch embedded in 3D by RDKit", async () => {
+    parseStructureText.mockResolvedValue(parsed(ethanol3D()));
     const onAdd = vi.fn();
     const onClose = vi.fn();
     render(<SketchModal onAdd={onAdd} onClose={onClose} />);
     const modal = screen.getByTestId("sketch-modal");
     expect(modal.parentElement).toBe(document.body);
     expect(screen.getByTestId("sketch-add").getAttribute("aria-disabled")).toBe("true");
+    expect(screen.getByTestId("sketch-mode-hint").textContent).toContain("RDKit embeds");
     await waitFor(() => expect(screen.getByTestId("ketcher-stub")).toBeTruthy());
     await waitFor(() =>
       expect(screen.getByTestId("sketch-add").getAttribute("aria-disabled")).toBe("false"),
@@ -84,13 +107,17 @@ describe("SketchModal", () => {
     fireEvent.click(screen.getByTestId("sketch-add"));
     await waitFor(() => expect(onAdd).toHaveBeenCalledTimes(1));
     expect(ketcher.getMolfile).toHaveBeenCalledWith("v2000");
-    expect(parseStructureText).toHaveBeenCalledWith("KETCHER-MOL", "sketch.mol");
+    // Ketcher's molfile goes to RDKit with hydrogens on; RDKit's mol block is what gets parsed.
+    expect(embedSketch).toHaveBeenCalledWith("KETCHER-MOL", {
+      addHydrogens: true,
+      forceField: undefined,
+    });
+    expect(parseStructureText).toHaveBeenCalledWith("MOLBLOCK-3D", "sketch.mol");
     const draft = onAdd.mock.calls[0][0];
     expect(draft.name).toBe("Ethanol-ish");
-    // The implicit hydrogens are added by default.
     expect(draft.formula).toBe("C2H6O");
     expect(draft.molfile).toBe("KETCHER-MOL");
-    expect(draft.planar).toBe(true);
+    expect(draft.planar).toBeUndefined();
     // Clicking the backdrop closes; clicking inside does not.
     fireEvent.click(screen.getByTestId("sketch-name"));
     expect(onClose).not.toHaveBeenCalled();
@@ -100,8 +127,19 @@ describe("SketchModal", () => {
     expect(onClose).toHaveBeenCalledTimes(2);
   });
 
-  it("keeps the sketch bare when Add hydrogens is unticked", async () => {
-    parseStructureText.mockResolvedValue(parsed(ethanolLike()));
+  it("passes Add hydrogens off to RDKit", async () => {
+    const bare = ethanol3D();
+    parseStructureText.mockResolvedValue(
+      parsed({
+        ...bare,
+        nAtoms: 3,
+        nBonds: 2,
+        nFileBonds: 2,
+        positions: bare.positions.slice(0, 9),
+        elements: bare.elements.slice(0, 3),
+        bonds: bare.bonds.slice(0, 4),
+      }),
+    );
     const onAdd = vi.fn();
     render(<SketchModal onAdd={onAdd} onClose={vi.fn()} />);
     const box = screen.getByTestId("sketch-hydrogens") as HTMLInputElement;
@@ -113,7 +151,46 @@ describe("SketchModal", () => {
     );
     fireEvent.click(screen.getByTestId("sketch-add"));
     await waitFor(() => expect(onAdd).toHaveBeenCalledTimes(1));
+    expect(embedSketch).toHaveBeenCalledWith("KETCHER-MOL", {
+      addHydrogens: false,
+      forceField: undefined,
+    });
     expect(onAdd.mock.calls[0][0].formula).toBe("C2O");
+  });
+
+  it("reports an RDKit failure and shows the busy label while embedding", async () => {
+    let release!: () => void;
+    embedSketch.mockReturnValueOnce(
+      new Promise<never>((_, reject) => {
+        release = () => reject(new Error("Could not sanitize molecule"));
+      }),
+    );
+    const onAdd = vi.fn();
+    render(<SketchModal onAdd={onAdd} onClose={vi.fn()} />);
+    await waitFor(() =>
+      expect(screen.getByTestId("sketch-add").getAttribute("aria-disabled")).toBe("false"),
+    );
+    fireEvent.click(screen.getByTestId("sketch-add"));
+    await waitFor(() => expect(screen.getByTestId("sketch-add").textContent).toBe("Embedding…"));
+    await act(async () => release());
+    await waitFor(() => expect(screen.getByTestId("sketch-error")).toBeTruthy());
+    expect(screen.getByTestId("sketch-error").textContent).toBe(
+      "RDKit could not embed the sketch in 3D: Could not sanitize molecule",
+    );
+    expect(onAdd).not.toHaveBeenCalled();
+    expect(screen.getByTestId("sketch-add").textContent).toBe("Add to library");
+  });
+
+  it("cannot add where Web Workers are missing, and says why", async () => {
+    embedAvailable.current = false;
+    const onAdd = vi.fn();
+    render(<SketchModal onAdd={onAdd} onClose={vi.fn()} />);
+    expect(screen.getByTestId("sketch-mode-hint").textContent).toContain("needs Web Workers");
+    await waitFor(() => expect(screen.getByTestId("ketcher-stub")).toBeTruthy());
+    expect(screen.getByTestId("sketch-add").getAttribute("aria-disabled")).toBe("true");
+    fireEvent.click(screen.getByTestId("sketch-add"));
+    expect(embedSketch).not.toHaveBeenCalled();
+    expect(onAdd).not.toHaveBeenCalled();
   });
 
   it("exposes the instance in test mode and seeds an initial molfile", async () => {
@@ -128,7 +205,7 @@ describe("SketchModal", () => {
     expect((screen.getByTestId("sketch-name") as HTMLInputElement).value).toBe("Seeded");
   });
 
-  it("Paste MOL takes a molfile directly and reports parse errors", async () => {
+  it("Paste MOL takes a molfile directly, embeds it, and reports parse errors", async () => {
     parseStructureText.mockRejectedValueOnce(new Error("no atoms"));
     const onAdd = vi.fn();
     render(<SketchModal onAdd={onAdd} onClose={vi.fn()} />);
@@ -141,10 +218,15 @@ describe("SketchModal", () => {
       expect(screen.getByTestId("sketch-error").textContent).toContain("no atoms"),
     );
     expect(onAdd).not.toHaveBeenCalled();
-    parseStructureText.mockResolvedValueOnce(parsed(ethanolLike()));
+    parseStructureText.mockResolvedValueOnce(parsed(ethanol3D()));
     fireEvent.click(screen.getByTestId("sketch-add"));
     await waitFor(() => expect(onAdd).toHaveBeenCalledTimes(1));
-    expect(parseStructureText).toHaveBeenLastCalledWith("MOLTEXT", "sketch.mol");
+    // The pasted text is what RDKit embeds; its mol block is what the parser sees.
+    expect(embedSketch).toHaveBeenLastCalledWith("MOLTEXT", {
+      addHydrogens: true,
+      forceField: undefined,
+    });
+    expect(parseStructureText).toHaveBeenLastCalledWith("MOLBLOCK-3D", "sketch.mol");
     expect(onAdd.mock.calls[0][0].name).toBe("C2H6O");
     // Back to the sketcher.
     fireEvent.click(screen.getByTestId("sketch-paste-toggle"));

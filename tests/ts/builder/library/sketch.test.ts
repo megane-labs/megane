@@ -6,6 +6,8 @@ const { parseStructureText, parseStructureFile } = vi.hoisted(() => ({
   parseStructureFile: vi.fn(),
 }));
 vi.mock("@/parsers/structure", () => ({ parseStructureText, parseStructureFile }));
+const { embedSketch } = vi.hoisted(() => ({ embedSketch: vi.fn() }));
+vi.mock("@/builder/library/embed", () => ({ embedSketch, canEmbed: () => true }));
 
 import {
   draftFromMolfile,
@@ -43,6 +45,7 @@ const parsed = (s: Snapshot) => ({
 beforeEach(() => {
   parseStructureText.mockReset();
   parseStructureFile.mockReset();
+  embedSketch.mockReset();
 });
 
 describe("draftFromSnapshot", () => {
@@ -81,67 +84,69 @@ describe("draftFromSnapshot", () => {
 });
 
 describe("draftFromMolfile / draftFromFile", () => {
-  it("parses the molfile through the MOL parser, adds the implicit hydrogens and keeps the text", async () => {
-    parseStructureText.mockResolvedValue(parsed(snapshot([0, 0, 0, 1, 0, 0], [8, 1], [0, 1])));
-    const d = await draftFromMolfile("\n\n\nmol", "");
-    expect(parseStructureText).toHaveBeenCalledWith("\n\n\nmol", "sketch.mol");
-    expect(d.molfile).toBe("\n\n\nmol");
-    expect(d.origin).toBe("sketch");
-    // O–H drawn: the oxygen gets its second hydrogen, the sketch stays marked flat.
-    expect(d.formula).toBe("H2O");
-    expect(d.elements).toEqual([8, 1, 1]);
-    expect(d.bonds).toEqual([
-      [0, 1],
-      [0, 2],
-    ]);
-    expect(d.planar).toBe(true);
-    await expect(draftFromMolfile("   ", "x")).rejects.toThrow(/empty/);
-  });
+  const embedded = {
+    molblock: "MOLBLOCK-3D",
+    energy: -1,
+    converged: true,
+    forceField: "MMFF94s" as const,
+    warnings: [],
+    rdkitVersion: "2026.03.6",
+  };
 
-  it("completes a flat ethanol sketch to C2H6O, centred, with the skeleton untouched", async () => {
+  it("embeds through RDKit, parses its mol block, centres it and keeps the sketch as drawn", async () => {
+    // RDKit hands back ethanol in 3D with every hydrogen; nothing is rescaled or added.
+    embedSketch.mockResolvedValue(embedded);
     parseStructureText.mockResolvedValue(
-      parsed(snapshot([0, 0, 0, 0.866, 0.5, 0, 1.732, 0, 0], [6, 6, 8], [0, 1, 1, 2])),
+      parsed(
+        snapshot(
+          [0, 0, 0, 1.52, 0, 0, 2.0, 1.35, 0, -0.4, 1.0, 0.3, -0.4, -0.5, -0.9, 1.9, -0.5, -0.9],
+          [6, 6, 8, 1, 1, 1],
+          [0, 1, 1, 2, 0, 3, 0, 4, 1, 5],
+        ),
+      ),
     );
-    const d = await draftFromMolfile("mol", "");
-    expect(d.formula).toBe("C2H6O");
-    expect(d.elements).toEqual([6, 6, 8, 1, 1, 1, 1, 1, 1]);
-    expect(d.bonds).toHaveLength(8);
-    // Heavy atoms keep z = 0 (rescaled and centred only); the CH2 pair leaves the plane.
-    for (let i = 0; i < 3; i++) expect(d.positions[i * 3 + 2]).toBeCloseTo(0, 6);
-    expect(d.positions.some((v, k) => k % 3 === 2 && Math.abs(v) > 0.5)).toBe(true);
-    const [cx, cy, cz] = [0, 1, 2].map(
-      (k) => d.positions.filter((_, i) => i % 3 === k).reduce((a, b) => a + b, 0) / 9,
-    );
-    expect(cx).toBeCloseTo(0, 6);
-    expect(cy).toBeCloseTo(0, 6);
-    expect(cz).toBeCloseTo(0, 6);
-    expect(d.positions[3] - d.positions[0]).toBeCloseTo((2 * getCovalentRadius(6) * 0.866) / 1, 1);
-  });
-
-  it("can leave the sketch as drawn, and reads formal charges from the parser", async () => {
-    parseStructureText.mockResolvedValue(parsed(snapshot([0, 0, 0, 1, 0, 0], [6, 8], [0, 1])));
-    const bare = await draftFromMolfile("mol", "", { addHydrogens: false });
-    expect(bare.formula).toBe("CO");
-    expect(bare.elements).toEqual([6, 8]);
-
-    const charged = parsed(snapshot([0, 0, 0, 1, 0, 0], [6, 8], [0, 1]));
-    charged.scalarChannels = [
-      { name: "formal_charge", frames: [{ frame: 0, values: new Float32Array([0, -1]) }] },
-    ];
-    parseStructureText.mockResolvedValue(charged);
-    const alkoxide = await draftFromMolfile("mol", "");
-    // Methoxide: the O⁻ takes no hydrogen, the carbon its three.
-    expect(alkoxide.formula).toBe("CH3O");
-  });
-
-  it("maps formal charges through a selection subset", () => {
-    const s = snapshot([0, 0, 0, 5, 0, 0, 9, 0, 0], [6, 8, 6], []);
-    const d = draftFromSnapshot(s, "", "selection", [2, 1], {
+    const d = await draftFromMolfile("KETCHER-MOL", "Ethanol");
+    expect(embedSketch).toHaveBeenCalledWith("KETCHER-MOL", {
       addHydrogens: true,
-      formalCharges: [0, -1, 1],
+      forceField: undefined,
     });
-    // Atom 1 (O⁻, one H) and atom 2 (C⁺, three H).
-    expect(d.formula).toBe("CH4O");
+    expect(parseStructureText).toHaveBeenCalledWith("MOLBLOCK-3D", "sketch.mol");
+    expect(d.molfile).toBe("KETCHER-MOL");
+    expect(d.origin).toBe("sketch");
+    expect(d.name).toBe("Ethanol");
+    expect(d.planar).toBeUndefined();
+    expect(d.elements).toEqual([6, 6, 8, 1, 1, 1]);
+    expect(d.bonds).toHaveLength(5);
+    // Centred, with the C–C distance exactly as RDKit placed it.
+    expect(d.positions[3] - d.positions[0]).toBeCloseTo(1.52, 6);
+    const zs = d.positions.filter((_, k) => k % 3 === 2);
+    expect(zs.reduce((a, b) => a + b, 0)).toBeCloseTo(0, 6);
+    expect(Math.max(...zs.map(Math.abs))).toBeGreaterThan(0.5);
+  });
+
+  it("forwards Add hydrogens off and the force field to RDKit, and names the draft after the formula", async () => {
+    embedSketch.mockResolvedValue(embedded);
+    parseStructureText.mockResolvedValue(parsed(snapshot([0, 0, 0, 0, 0, 1.1], [6, 8], [0, 1])));
+    const d = await draftFromMolfile("mol", "  ", { addHydrogens: false, forceField: "UFF" });
+    expect(embedSketch).toHaveBeenCalledWith("mol", { addHydrogens: false, forceField: "UFF" });
+    expect(d.formula).toBe("CO");
+    expect(d.name).toBe("CO");
+  });
+
+  it("takes an injected embedder, surfaces RDKit's error and rejects an empty sketch first", async () => {
+    embedSketch.mockRejectedValue(new Error("Could not sanitize"));
+    await expect(draftFromMolfile("bad", "")).rejects.toThrow("Could not sanitize");
+    expect(parseStructureText).not.toHaveBeenCalled();
+
+    const custom = vi.fn(async () => ({ ...embedded, molblock: "CUSTOM" }));
+    parseStructureText.mockResolvedValue(parsed(snapshot([0, 0, 0, 0, 0, 1.1], [6, 8], [0, 1])));
+    const d = await draftFromMolfile("mol", "", { embed: custom });
+    expect(custom).toHaveBeenCalledTimes(1);
+    expect(embedSketch).toHaveBeenCalledTimes(1);
+    expect(parseStructureText).toHaveBeenLastCalledWith("CUSTOM", "sketch.mol");
+    expect(d.formula).toBe("CO");
+    await expect(draftFromMolfile(" \n ", "x", { embed: custom })).rejects.toThrow(/empty/);
+    expect(custom).toHaveBeenCalledTimes(1);
   });
 
   it("names a file import after the file", async () => {
