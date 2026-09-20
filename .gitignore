@@ -79,7 +79,3 @@ python/megane/static/widget.js
 # Perf harness run artifacts (scripts/profile-*.mjs → savePerfJson)
 tests/e2e/perf_*.json
 
-# rdkit-wasm (Emscripten build of RDKit embedding): toolchain, build tree, outputs
-rdkit-wasm/.deps/
-rdkit-wasm/build/
-rdkit-wasm/dist/
