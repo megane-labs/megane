@@ -194,7 +194,7 @@ Rules for keeping the two hosts in sync:
 - Python source: `python/megane/`
 - Rust crates: `crates/{megane-core,megane-python,megane-wasm}/`
 - VSCode extension workspace: `vscode-megane/` (extension code + `vite.webview.config.ts` for the webview bundle)
-- RDKit WebAssembly toolchain: lives in its own repository, [hodakamori/rdkit-wasm](https://github.com/hodakamori/rdkit-wasm) (Emscripten build of RDKit's ETKDG embedding + MMFF/UFF for Builder's 3D conformer generation). It was split out of this repo's former `rdkit-wasm/` directory; megane consumes the `rdkit-embed-wasm-<RDKIT_TAG>` artifact its CI builds rather than compiling RDKit itself
+- RDKit WebAssembly toolchain: lives in its own repository, [hodakamori/megane-rdkit](https://github.com/hodakamori/megane-rdkit) (npm package `megane-rdkit`; Emscripten build of RDKit, currently ETKDG embedding + MMFF/UFF for Builder's 3D conformer generation). It was split out of this repo's former `rdkit-wasm/` directory; megane consumes the `megane-rdkit-<RDKIT_TAG>` artifact its CI builds rather than compiling RDKit itself
 - JupyterLab labextension source: `jupyterlab-megane/` (built with `@jupyterlab/builder` / webpack, imports the shared `src/` viewer via webpack alias `@megane/*`)
 - Vite configs at repo root:
   - `vite.config.ts` — webapp (three entries: `index.html` the viewer, `builder.html` megane Builder — the standalone structure editor, `multi-instance.html` the two-viewer E2E harness)
