@@ -194,6 +194,7 @@ Rules for keeping the two hosts in sync:
 - Python source: `python/megane/`
 - Rust crates: `crates/{megane-core,megane-python,megane-wasm}/`
 - VSCode extension workspace: `vscode-megane/` (extension code + `vite.webview.config.ts` for the webview bundle)
+- RDKit WebAssembly toolchain: `rdkit-wasm/` (Emscripten build of RDKit's ETKDG embedding + MMFF/UFF for Builder's 3D conformer generation; self-contained with its own build script, smoke test and `.github/workflows/rdkit-wasm.yml`, built artifacts are not committed — see its README)
 - JupyterLab labextension source: `jupyterlab-megane/` (built with `@jupyterlab/builder` / webpack, imports the shared `src/` viewer via webpack alias `@megane/*`)
 - Vite configs at repo root:
   - `vite.config.ts` — webapp (three entries: `index.html` the viewer, `builder.html` megane Builder — the standalone structure editor, `multi-instance.html` the two-viewer E2E harness)
