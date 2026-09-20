@@ -63,7 +63,9 @@ jobs:
         run: node rdkit-wasm/test/smoke.mjs
 
       - name: Report size
-        run: ls -la rdkit-wasm/dist && gzip -c rdkit-wasm/dist/rdkit-embed.wasm | wc -c | xargs -I{} echo "rdkit-embed.wasm gzipped: {} bytes"
+        run: |
+          ls -la rdkit-wasm/dist
+          echo "rdkit-embed.wasm gzipped bytes: $(gzip -c rdkit-wasm/dist/rdkit-embed.wasm | wc -c)"
 
       - uses: actions/upload-artifact@v4
         with:
