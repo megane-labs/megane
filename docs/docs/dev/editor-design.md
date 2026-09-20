@@ -162,29 +162,28 @@ delta is removed again without touching the redo stack.
 ## Sketch embedding (RDKit)
 
 A Ketcher sketch is a flat molfile; the library turns it into a 3D molecule
-with RDKit rather than inventing a conformer in TypeScript. RDKit runs in the
-browser as [`megane-rdkit`](https://github.com/hodakamori/megane-rdkit), an
-Emscripten build of an unmodified RDKit release that exposes exactly one
-call today — `embed(molfile, options)`: ETKDG embedding with the implicit
-hydrogens added, then MMFF94s (UFF fallback) minimisation, returning a V2000
-mol block. The build lives in its own repository because it needs emsdk,
-Boost and a C++ toolchain nothing else in megane touches; megane depends on
-the published npm package and Vite ships its `.wasm` (~3.5 MB, ~1 MB gzipped)
-as an asset that is fetched only when the sketch dialog first embeds.
+with RDKit and with nothing else — no conformer, and no hydrogen placement,
+is ever invented in TypeScript. RDKit runs in the browser as
+[`megane-rdkit`](https://github.com/hodakamori/megane-rdkit), an Emscripten
+build of an unmodified RDKit release that exposes exactly one call today —
+`embed(molfile, options)`: ETKDG embedding with the implicit hydrogens
+added, then MMFF94s (UFF fallback) minimisation, returning a V2000 mol
+block. The build lives in its own repository because it needs emsdk, Boost
+and a C++ toolchain nothing else in megane touches; megane depends on the
+published npm package and Vite ships its `.wasm` (~3.5 MB, ~1 MB gzipped) as
+an asset that is fetched only when the sketch dialog first embeds.
 
 `src/builder/library/embed.ts` is the main-thread client: one lazily created
 Web Worker (`embed.worker.ts`) holds the module, requests carry the `.wasm`
 URL resolved on the main thread (the worker cannot know the page's base), and
 a crashed or silent worker is torn down so the next request starts a fresh
-one. `draftFromMolfile` in `sketch.ts` takes `embed3D`: on, RDKit's mol block
-goes through the shared MOL parser and is centred (nothing else is touched —
-the geometry is RDKit's); off, the sketch is read as drawn, rescaled to Å and
-completed with the valence-rule hydrogens of `hydrogens.ts` placed by steric
-number, and the entry is marked *flat*. The dialog defaults to embedding
-wherever Web Workers exist and leaves the flat path as the user's opt-out and
-the fallback for a drawing RDKit cannot sanitise. Either way the Ketcher
-molfile is kept on the library entry so *Edit* reopens the drawing, not the
-conformer.
+one. `draftFromMolfile` in `sketch.ts` sends the molfile to RDKit, runs the
+mol block it returns through the shared MOL parser and centres it; the
+Ketcher molfile is kept on the library entry so *Edit* reopens the drawing,
+not the conformer. Where RDKit cannot run (no Web Workers, a drawing it
+cannot sanitise) the dialog reports the error and adds nothing. The *flat*
+mark on a library entry is reserved for imported 2D files, which are only
+rescaled to Å.
 
 ## Writers
 

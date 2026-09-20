@@ -241,7 +241,6 @@ test.describe("builder: webapp", () => {
     // megane-rdkit WASM build, in a worker) with its implicit hydrogens.
     await page.locator('[data-testid="builder-library-sketch"]').click();
     await expect(page.locator('[data-testid="sketch-modal"]')).toBeVisible();
-    await expect(page.locator('[data-testid="sketch-embed"]')).toBeChecked();
     await page.waitForFunction(
       () => !!(window as unknown as { __megane_test_ketcher?: unknown }).__megane_test_ketcher,
       null,
@@ -318,8 +317,8 @@ test.describe("builder: webapp", () => {
     expect(Math.max(...heights)).toBeGreaterThan(0.5);
     expect(Math.min(...heights)).toBeLessThan(-0.5);
 
-    // Edit reopens the sketch; with 3D (RDKit) unticked the drawing is kept
-    // flat, Å-scaled, with its hydrogens placed by valence.
+    // Edit reopens the original drawing, not the conformer, and adding it
+    // again embeds it again to the same geometry (RDKit's fixed seed).
     await row.locator('[data-testid="builder-library-edit"]').click();
     await expect(page.locator('[data-testid="sketch-modal"]')).toBeVisible();
     await page.waitForFunction(
@@ -328,38 +327,24 @@ test.describe("builder: webapp", () => {
       { timeout: 60_000 },
     );
     await expect(page.locator('[data-testid="sketch-name"]')).toHaveValue("Ethanol sketch");
-    await page.locator('[data-testid="sketch-embed"]').uncheck();
-    await page.locator('[data-testid="sketch-name"]').fill("Ethanol flat");
+    await page.locator('[data-testid="sketch-name"]').fill("Ethanol again");
     await page.locator('[data-testid="sketch-add"]').click();
-    await expect(page.locator('[data-testid="sketch-modal"]')).toHaveCount(0);
+    await expect(page.locator('[data-testid="sketch-modal"]')).toHaveCount(0, { timeout: 60_000 });
     await expect(page.locator('[data-testid="builder-library-count"]')).toHaveText("12 molecules");
-    const flatRow = page.locator('[data-testid^="builder-library-item-user:"]', {
-      hasText: "Ethanol flat",
+    const againRow = page.locator('[data-testid^="builder-library-item-user:"]', {
+      hasText: "Ethanol again",
     });
-    await expect(flatRow).toContainText("C2H6O");
-    await expect(flatRow).toContainText("flat");
-    await flatRow.locator('[data-testid="builder-library-add"]').click();
+    await expect(againRow).toContainText("C2H6O");
+    await expect(againRow).not.toContainText("flat");
+    await againRow.locator('[data-testid="builder-library-add"]').click();
     await expect(root).toHaveAttribute("data-atom-count", "38");
     await expect(root).toHaveAttribute("data-bond-count", "34");
     state = await builderState(page);
-    const flatOp = state.edits[4] as {
-      elements: number[];
-      positions: number[];
-      bonds: [number, number][];
-    };
-    expect(flatOp.elements).toEqual([6, 6, 8, 1, 1, 1, 1, 1, 1]);
-    // Ketcher draws unit bonds; the library rescaled C–C to ~1.5 Å.
-    const [a, b] = flatOp.bonds[0];
-    const cc = Math.hypot(
-      flatOp.positions[a * 3] - flatOp.positions[b * 3],
-      flatOp.positions[a * 3 + 1] - flatOp.positions[b * 3 + 1],
-    );
-    expect(cc).toBeGreaterThan(1.3);
-    expect(cc).toBeLessThan(1.7);
-    // The heavy atoms stay in the drawing plane; the CH2 hydrogens leave it.
-    for (let i = 0; i < 3; i++) expect(Math.abs(flatOp.positions[i * 3 + 2])).toBeLessThan(0.05);
-    const zs = flatOp.positions.filter((_, k) => k % 3 === 2);
-    expect(Math.max(...zs.map(Math.abs))).toBeGreaterThan(0.5);
+    const againOp = state.edits[4] as { positions: number[] };
+    expect(againOp.positions.length).toBe(sketchOp.positions.length);
+    for (let k = 0; k < againOp.positions.length; k++) {
+      expect(Math.abs(againOp.positions[k] - sketchOp.positions[k])).toBeLessThan(1e-3);
+    }
 
     // The user library survives a reload (localStorage); presets do not duplicate.
     await page.reload({ waitUntil: "domcontentloaded" });
@@ -367,7 +352,7 @@ test.describe("builder: webapp", () => {
     await expect(sketched).toHaveCount(1);
     await row.locator('[data-testid="builder-library-remove"]').click();
     await expect(page.locator('[data-testid="builder-library-count"]')).toHaveText("11 molecules");
-    await flatRow.locator('[data-testid="builder-library-remove"]').click();
+    await againRow.locator('[data-testid="builder-library-remove"]').click();
     await expect(page.locator('[data-testid="builder-library-count"]')).toHaveText("10 molecules");
   });
 });
