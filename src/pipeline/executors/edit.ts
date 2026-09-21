@@ -1,5 +1,8 @@
 import type { Snapshot } from "../../types";
 import type { EditOp, EditAtomRef } from "../types";
+import { cartToFrac, fracToCart, inverse3 } from "../../crystal/cell";
+import { buildSlab, centerSnapshot, makeSupercell, wrapSnapshot } from "../../crystal/transform";
+import { expandSymmetry } from "./symmetry";
 
 /**
  * Structure edits — replays a `load_structure` node's edit list on the
@@ -11,6 +14,12 @@ import type { EditOp, EditAtomRef } from "../types";
  * the id that op assigned. Deleting an atom therefore never shifts the meaning
  * of a later op, which is what makes the op list a safe undo history (the
  * Builder undoes by dropping the last op and replaying the rest).
+ *
+ * The whole-structure ops (`supercell`, `slab`, `expand_symmetry`) replace
+ * every atom: their result is re-keyed as `<id>:<k>` for the k-th output
+ * atom, so refs written before such an op no longer resolve after it (the
+ * Builder always addresses the structure it currently shows). `wrap`,
+ * `center` and a scaling `set_cell` only move atoms and keep every ref.
  *
  * The result is a brand-new immutable Snapshot; the renderer keys on Snapshot
  * identity, so a re-run after a new op is a real reload.
@@ -61,8 +70,8 @@ export function applyEditOps(src: Snapshot, ops: EditOp[]): EditResult {
   const refs: EditAtomRef[] = [];
   const pos: number[] = [];
   const elem: number[] = [];
-  const chain: number[] | null = src.atomChainIds ? [] : null;
-  const bfac: number[] | null = src.atomBFactors ? [] : null;
+  let chain: number[] | null = src.atomChainIds ? [] : null;
+  let bfac: number[] | null = src.atomBFactors ? [] : null;
   for (let i = 0; i < src.nAtoms; i++) {
     refs.push(i);
     pos.push(src.positions[i * 3], src.positions[i * 3 + 1], src.positions[i * 3 + 2]);
@@ -85,6 +94,10 @@ export function applyEditOps(src: Snapshot, ops: EditOp[]): EditResult {
   }
   let box: number[] | null = src.box ? Array.from(src.box) : null;
   let cellTouched = false;
+  // Set once a whole-structure op consumed the file's space-group operations
+  // (or changed the cell they describe), so the viewer's Symmetry node does
+  // not expand the result a second time.
+  let symmetryConsumed = false;
 
   const rebuildByRef = () => {
     byRef = new Map(refs.map((r, i) => [r, i]));
@@ -141,6 +154,68 @@ export function applyEditOps(src: Snapshot, ops: EditOp[]): EditResult {
     bonds.length = w;
     bondIndex.clear();
     bonds.forEach((bd, i) => bondIndex.set(bondKey(bd.a, bd.b), i));
+  };
+
+  /** The working structure as a Snapshot (bonds by current index), for the whole-structure ops. */
+  const materialize = (): Snapshot => {
+    const b = new Uint32Array(bonds.length * 2);
+    const o = hasOrders ? new Uint8Array(bonds.length) : null;
+    bonds.forEach((bd, i) => {
+      b[i * 2] = byRef.get(bd.a)!;
+      b[i * 2 + 1] = byRef.get(bd.b)!;
+      if (o) o[i] = bd.order;
+    });
+    return {
+      nAtoms: refs.length,
+      nBonds: bonds.length,
+      nFileBonds: bonds.length,
+      positions: new Float32Array(pos),
+      elements: new Uint8Array(elem),
+      bonds: b,
+      bondOrders: o,
+      box: box ? new Float32Array(box) : null,
+      boxOrigin: cellTouched ? null : src.boxOrigin,
+      atomChainIds: chain ? new Uint8Array(chain) : null,
+      atomBFactors: bfac ? new Float32Array(bfac) : null,
+      symmetryOps: symmetryConsumed ? undefined : src.symmetryOps,
+    };
+  };
+
+  /** Replace the working structure with `snap`, re-keying its atoms as `<id>:<k>`. */
+  const rebuildFrom = (snap: Snapshot, id: string) => {
+    refs.length = 0;
+    pos.length = 0;
+    elem.length = 0;
+    chain = snap.atomChainIds ? [] : null;
+    bfac = snap.atomBFactors ? [] : null;
+    for (let i = 0; i < snap.nAtoms; i++) {
+      refs.push(fragmentAtomRef(id, i));
+      pos.push(snap.positions[i * 3], snap.positions[i * 3 + 1], snap.positions[i * 3 + 2]);
+      elem.push(snap.elements[i]);
+      if (chain) chain.push(snap.atomChainIds![i]);
+      if (bfac) bfac.push(snap.atomBFactors![i]);
+    }
+    rebuildByRef();
+    bonds.length = 0;
+    bondIndex.clear();
+    hasOrders = snap.bondOrders !== null;
+    for (let b = 0; b < snap.nBonds; b++) {
+      const a = refs[snap.bonds[b * 2]];
+      const c = refs[snap.bonds[b * 2 + 1]];
+      const key = bondKey(a, c);
+      if (bondIndex.has(key)) continue;
+      bondIndex.set(key, bonds.length);
+      bonds.push({ a, b: c, order: snap.bondOrders ? snap.bondOrders[b] : 1 });
+    }
+    box = snap.box ? Array.from(snap.box) : null;
+    cellTouched = true;
+    symmetryConsumed = true;
+  };
+
+  /** Take only the positions (and cell) of `snap`: the atoms and their refs are unchanged. */
+  const adoptPositions = (snap: Snapshot) => {
+    for (let i = 0; i < snap.nAtoms * 3; i++) pos[i] = snap.positions[i];
+    box = snap.box ? Array.from(snap.box) : null;
   };
 
   for (const op of ops) {
@@ -258,8 +333,90 @@ export function applyEditOps(src: Snapshot, ops: EditOp[]): EditResult {
           warnings.push("set_cell: box must have 9 values (skipped)");
           break;
         }
+        if (op.scaleAtoms && op.box !== null && box !== null) {
+          const oldInv = inverse3(box);
+          if (oldInv) {
+            const cart = fracToCart(cartToFrac(pos, oldInv), op.box);
+            for (let i = 0; i < cart.length; i++) pos[i] = cart[i];
+          } else {
+            warnings.push("set_cell: the current cell is singular, atoms were not scaled");
+          }
+        }
         box = op.box === null ? null : [...op.box];
         cellTouched = true;
+        symmetryConsumed = true;
+        break;
+      }
+      case "supercell": {
+        if (box === null) {
+          warnings.push(`supercell "${op.id}": the structure has no cell (skipped)`);
+          break;
+        }
+        const out = makeSupercell(materialize(), op.matrix);
+        if (!out) {
+          warnings.push(
+            `supercell "${op.id}": matrix must be 9 integers with a non-zero determinant (skipped)`,
+          );
+          break;
+        }
+        rebuildFrom(out, op.id);
+        break;
+      }
+      case "slab": {
+        if (box === null) {
+          warnings.push(`slab "${op.id}": the structure has no cell (skipped)`);
+          break;
+        }
+        const out = buildSlab(materialize(), {
+          miller: op.miller,
+          layers: op.layers,
+          vacuum: op.vacuum,
+          shift: op.shift,
+        });
+        if (!out) {
+          warnings.push(`slab "${op.id}": Miller indices must be integers, not all zero (skipped)`);
+          break;
+        }
+        rebuildFrom(out, op.id);
+        break;
+      }
+      case "expand_symmetry": {
+        const cur = materialize();
+        if (!cur.symmetryOps?.length) {
+          warnings.push(`expand_symmetry "${op.id}": no symmetry operations to apply (skipped)`);
+          break;
+        }
+        if (!cur.box) {
+          warnings.push(`expand_symmetry "${op.id}": the structure has no cell (skipped)`);
+          break;
+        }
+        const out = expandSymmetry(cur, cur.box, cur.symmetryOps);
+        // Identity-only operations: nothing to expand, but they are consumed.
+        if (out) rebuildFrom(out, op.id);
+        symmetryConsumed = true;
+        break;
+      }
+      case "wrap": {
+        const out = box === null ? null : wrapSnapshot(materialize());
+        if (!out) {
+          warnings.push("wrap: the structure has no usable cell (skipped)");
+          break;
+        }
+        adoptPositions(out);
+        break;
+      }
+      case "center": {
+        const axes = op.axes ?? [0, 1, 2];
+        const out = box === null ? null : centerSnapshot(materialize(), axes, op.vacuum);
+        if (!out) {
+          warnings.push("center: the structure has no usable cell (skipped)");
+          break;
+        }
+        adoptPositions(out);
+        if (op.vacuum !== null && op.vacuum !== undefined) {
+          cellTouched = true;
+          symmetryConsumed = true;
+        }
         break;
       }
       default: {
@@ -322,7 +479,7 @@ export function applyEditOps(src: Snapshot, ops: EditOp[]): EditResult {
     caChainIds,
     caResNums,
     caSsType,
-    symmetryOps: src.symmetryOps,
+    symmetryOps: symmetryConsumed ? undefined : src.symmetryOps,
   };
 
   return { snapshot, outputRefs: refs, warnings };

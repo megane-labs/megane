@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { newAtomId, placeBondedAtom, describeOp } from "@/builder/placement";
+import { adsorptionSite, describeOp, newAtomId, placeBondedAtom } from "@/builder/placement";
 import { getCovalentRadius } from "@/constants";
 import type { Snapshot } from "@/types";
 
@@ -55,7 +55,56 @@ describe("newAtomId", () => {
   });
 });
 
+describe("adsorptionSite", () => {
+  const snap = (box: Float32Array | null): Snapshot => ({
+    nAtoms: 1,
+    nBonds: 0,
+    nFileBonds: 0,
+    positions: new Float32Array([1, 2, 3]),
+    elements: new Uint8Array([29]),
+    bonds: new Uint32Array(0),
+    bondOrders: null,
+    box,
+    boxOrigin: null,
+    atomChainIds: null,
+    atomBFactors: null,
+  });
+  it("goes up the cell's c axis, or +z without a cell", () => {
+    expect(adsorptionSite(snap(new Float32Array([4, 0, 0, 0, 4, 0, 0, 3, 4])), 0, 5)).toEqual([
+      1,
+      2 + 3,
+      3 + 4,
+    ]);
+    expect(adsorptionSite(snap(null), 0, 2)).toEqual([1, 2, 5]);
+    expect(adsorptionSite(snap(new Float32Array(9)), 0, 2)).toEqual([1, 2, 5]);
+  });
+});
+
 describe("describeOp", () => {
+  it("reads the crystal ops in one line", () => {
+    expect(describeOp({ op: "set_cell", box: [1, 0, 0, 0, 1, 0, 0, 0, 1], scaleAtoms: true })).toBe(
+      "Set cell (atoms scaled)",
+    );
+    expect(describeOp({ op: "supercell", id: "s", matrix: [2, 0, 0, 0, 3, 0, 0, 0, 1] })).toBe(
+      "Supercell 2×3×1",
+    );
+    expect(describeOp({ op: "supercell", id: "s", matrix: [1, 1, 0, -1, 1, 0, 0, 0, 1] })).toBe(
+      "Supercell [1 1 0 -1 1 0 0 0 1]",
+    );
+    expect(describeOp({ op: "slab", id: "s", miller: [1, 1, 1], layers: 1, vacuum: 10 })).toBe(
+      "Slab (1 1 1), 1 layer, 10 Å vacuum",
+    );
+    expect(
+      describeOp({ op: "slab", id: "s", miller: [1, 0, 0], layers: 3, vacuum: 0, shift: 0.5 }),
+    ).toBe("Slab (1 0 0), 3 layers, 0 Å vacuum, shift 0.5");
+    expect(describeOp({ op: "expand_symmetry", id: "e" })).toBe("Expand symmetry");
+    expect(describeOp({ op: "wrap" })).toBe("Wrap atoms into cell");
+    expect(describeOp({ op: "center" })).toBe("Center along abc");
+    expect(describeOp({ op: "center", axes: [2], vacuum: 5 })).toBe(
+      "Center along c with 5 Å vacuum",
+    );
+  });
+
   it("reads each op in one line", () => {
     expect(describeOp({ op: "add_atom", id: "a", element: 6, position: [0, 0, 0] })).toBe("Add C");
     expect(

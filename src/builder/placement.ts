@@ -64,6 +64,35 @@ export function placeBondedAtom(
   return [ax + ux * length, ay + uy * length, az + uz * length];
 }
 
+/**
+ * Where an adsorbate's centroid goes for a click on surface atom `site`:
+ * `height` Å above it along the cell's c axis (the slab normal), or along +z
+ * when there is no cell.
+ */
+export function adsorptionSite(
+  snapshot: Snapshot,
+  site: number,
+  height: number,
+): [number, number, number] {
+  let nx = 0;
+  let ny = 0;
+  let nz = 1;
+  const b = snapshot.box;
+  if (b) {
+    const len = Math.hypot(b[6], b[7], b[8]);
+    if (len > 1e-6) {
+      nx = b[6] / len;
+      ny = b[7] / len;
+      nz = b[8] / len;
+    }
+  }
+  return [
+    snapshot.positions[site * 3] + nx * height,
+    snapshot.positions[site * 3 + 1] + ny * height,
+    snapshot.positions[site * 3 + 2] + nz * height,
+  ];
+}
+
 /** One-line description of an op for the history list. */
 export function describeOp(op: EditOp): string {
   const ref = (r: EditAtomRef) => (typeof r === "number" ? `#${r}` : r);
@@ -83,7 +112,22 @@ export function describeOp(op: EditOp): string {
     case "add_fragment":
       return `Add ${op.id} (${op.elements.length} atom${op.elements.length === 1 ? "" : "s"})`;
     case "set_cell":
-      return op.box ? "Set cell" : "Remove cell";
+      return op.box ? (op.scaleAtoms ? "Set cell (atoms scaled)" : "Set cell") : "Remove cell";
+    case "supercell": {
+      const m = op.matrix;
+      const diagonal = m.length === 9 && [1, 2, 3, 5, 6, 7].every((k) => m[k] === 0);
+      return diagonal ? `Supercell ${m[0]}×${m[4]}×${m[8]}` : `Supercell [${m.join(" ")}]`;
+    }
+    case "slab":
+      return `Slab (${op.miller.join(" ")}), ${op.layers} layer${op.layers === 1 ? "" : "s"}, ${op.vacuum} Å vacuum${op.shift ? `, shift ${op.shift}` : ""}`;
+    case "expand_symmetry":
+      return "Expand symmetry";
+    case "wrap":
+      return "Wrap atoms into cell";
+    case "center": {
+      const axes = (op.axes ?? [0, 1, 2]).map((a) => "abc"[a] ?? "?").join("");
+      return `Center along ${axes}${op.vacuum !== null && op.vacuum !== undefined ? ` with ${op.vacuum} Å vacuum` : ""}`;
+    }
     default:
       return String((op as { op: unknown }).op);
   }

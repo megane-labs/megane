@@ -7,12 +7,15 @@
 
 import { useCallback, useRef, useState, type ChangeEvent } from "react";
 import { useBuilderStore, canEdit, shownSnapshot } from "../store";
-import { chipStyle, hintStyle, sectionStyle, sectionTitleStyle } from "../styles";
+import { chipStyle, hintStyle, inputStyle, sectionStyle, sectionTitleStyle } from "../styles";
 import { autoPlacement } from "./fragment";
 import { SketchModal } from "./SketchModal";
 import { draftFromFile, draftFromSnapshot } from "./sketch";
 import { allMolecules, isUserMolecule, useLibraryStore } from "./store";
 import type { LibraryMolecule, LibraryMoleculeDraft } from "./types";
+
+/** Default height of an adsorbate above the clicked surface atom, Å. */
+export const DEFAULT_ADSORB_HEIGHT = 2;
 
 const rowStyle: React.CSSProperties = {
   display: "flex",
@@ -36,6 +39,9 @@ export function LibrarySection() {
   const tool = useBuilderStore((s) => s.tool);
   const addFragment = useBuilderStore((s) => s.addFragment);
   const setPlaceSource = useBuilderStore((s) => s.setPlaceSource);
+  const adsorbHeight = useBuilderStore((s) => s.adsorbHeight);
+  const setAdsorbHeight = useBuilderStore((s) => s.setAdsorbHeight);
+  const [adsorbDraft, setAdsorbDraft] = useState(DEFAULT_ADSORB_HEIGHT);
   const user = useLibraryStore((s) => s.user);
   const addMolecule = useLibraryStore((s) => s.addMolecule);
   const removeMolecule = useLibraryStore((s) => s.removeMolecule);
@@ -146,6 +152,29 @@ export function LibrarySection() {
       <div style={hintStyle}>
         <b>Add</b> drops a molecule beside the structure; <b>Place</b> stamps it where you click.
       </div>
+      <label style={{ ...hintStyle, display: "flex", alignItems: "center", gap: 6 }}>
+        <input
+          type="checkbox"
+          data-testid="builder-adsorb-toggle"
+          checked={adsorbHeight !== null}
+          onChange={(e) => setAdsorbHeight(e.target.checked ? adsorbDraft : null)}
+        />
+        Place on atoms:
+        <input
+          type="number"
+          data-testid="builder-adsorb-height"
+          step={0.1}
+          value={adsorbDraft}
+          onChange={(e) => {
+            const v = Number(e.target.value);
+            setAdsorbDraft(v);
+            if (adsorbHeight !== null) setAdsorbHeight(v);
+          }}
+          style={{ ...inputStyle, width: 56 }}
+          title="Height above the clicked atom along the cell's c axis (an adsorbate on a surface site)"
+        />
+        Å above along c
+      </label>
       <ul
         data-testid="builder-library-list"
         style={{ listStyle: "none", margin: 0, padding: 0, maxHeight: 220, overflowY: "auto" }}

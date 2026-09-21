@@ -1,5 +1,6 @@
 /**
- * The Builder's side panel: tool, element, selection, cell, history, export.
+ * The Builder's side panel: tool, element, selection, library, crystal
+ * (bulk / cell / supercell / slab), new cell, history, export.
  * Pure UI over `useBuilderStore`; every edit goes through the store's actions
  * and the handlers installed by `useBuilderHandlers`.
  */
@@ -13,6 +14,7 @@ import { getElementSymbol } from "../constants";
 import { STRUCTURE_EXPORT_FORMATS, exportSnapshot } from "../export/structureExport";
 import type { StructureWriteFormat } from "../parsers/parseCore";
 import { LibrarySection } from "./library/LibrarySection";
+import { CrystalSection } from "./crystal/CrystalSection";
 import { sectionStyle, sectionTitleStyle, hintStyle, inputStyle, chipStyle } from "./styles";
 
 export { sectionStyle, sectionTitleStyle, hintStyle, inputStyle, chipStyle } from "./styles";
@@ -238,6 +240,8 @@ export function BuilderSidebar() {
       </div>
 
       <LibrarySection />
+
+      <CrystalSection />
 
       <NewCellSection onCreate={newCell} />
 

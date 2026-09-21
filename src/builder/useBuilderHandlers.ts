@@ -10,7 +10,7 @@ import { useCallback, useEffect, useMemo, useRef } from "react";
 import type { StoreApi } from "zustand";
 import type { EditAtomRef } from "../pipeline/types";
 import { canEdit, shownSnapshot, type BuilderStore } from "./store";
-import { newAtomId, placeBondedAtom } from "./placement";
+import { adsorptionSite, newAtomId, placeBondedAtom } from "./placement";
 import type { BuildHandlers, BuildPickInfo } from "./types";
 
 /** Build the handlers for `api` and install them in the store while mounted. */
@@ -88,9 +88,20 @@ export function useBuilderHandlers(api: StoreApi<BuilderStore>): BuildHandlers {
           if (atomIndex !== null) state.setSelected([atomIndex]);
           return;
         case "place": {
-          // Stamp the chosen library molecule at the clicked point; a click
-          // on an atom is ignored so a molecule never lands on top of one.
-          if (atomIndex !== null || !info.world || !state.placeSource) return;
+          // Stamp the chosen library molecule at the clicked point. A click on
+          // an atom is ignored so a molecule never lands on top of one —
+          // unless an adsorption height is set, in which case the molecule
+          // goes that far above the atom along the surface normal.
+          if (!state.placeSource) return;
+          if (atomIndex !== null) {
+            if (state.adsorbHeight === null) return;
+            state.addFragment(
+              state.placeSource,
+              adsorptionSite(snapshot, atomIndex, state.adsorbHeight),
+            );
+            return;
+          }
+          if (!info.world) return;
           state.addFragment(state.placeSource, info.world);
           return;
         }

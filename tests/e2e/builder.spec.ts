@@ -355,4 +355,115 @@ test.describe("builder: webapp", () => {
     await againRow.locator('[data-testid="builder-library-remove"]').click();
     await expect(page.locator('[data-testid="builder-library-count"]')).toHaveText("10 molecules");
   });
+  test("builds a bulk crystal, a supercell and a slab, then adsorbs a molecule on it", async ({
+    page,
+  }) => {
+    const root = page.locator('[data-testid="megane-builder"]');
+    const crystal = page.locator('[data-testid="builder-crystal"]');
+    await expect(crystal).toBeVisible();
+    await expect(page.locator('[data-testid="builder-crystal-cell-summary"]')).toHaveText(
+      "No cell",
+    );
+
+    // Bulk: the Cu fcc example in its conventional cell.
+    await page.locator('[data-testid="builder-bulk-example"]').selectOption("Cu (fcc)");
+    await page.locator('[data-testid="builder-bulk-create"]').click();
+    await waitForReady(page);
+    await expect(root).toHaveAttribute("data-atom-count", "4");
+    await expect(page.locator('[data-testid="builder-file-name"]')).toHaveText("Cu-fcc");
+    await expect(page.locator('[data-testid="builder-crystal-cell-summary"]')).toHaveText(
+      "3.61 × 3.61 × 3.61 Å",
+    );
+    await expect(page.locator('[data-testid="builder-statusbar"]')).toContainText("Cell");
+
+    // Supercell 2×2×1: the preview announces the count before the op is written.
+    await page.locator('[data-testid="builder-crystal-tab-supercell"]').click();
+    await page.locator('[data-testid="builder-supercell-nc"]').fill("1");
+    await expect(page.locator('[data-testid="builder-supercell-preview"]')).toHaveText(
+      "4 images → 16 atoms",
+    );
+    await page.locator('[data-testid="builder-supercell-apply"]').click();
+    await expect(root).toHaveAttribute("data-atom-count", "16");
+    await expect(page.locator('[data-testid="builder-op-list"]')).toContainText("Supercell 2×2×1");
+    await expect(page.locator('[data-testid="builder-crystal-cell-summary"]')).toHaveText(
+      "7.22 × 7.22 × 3.61 Å",
+    );
+
+    // Undo the supercell, cut a (111) slab from the unit cell instead.
+    await page.locator('[data-testid="builder-topbar-undo"]').click();
+    await expect(root).toHaveAttribute("data-atom-count", "4");
+    await page.locator('[data-testid="builder-crystal-tab-slab"]').click();
+    await page.locator('[data-testid="builder-slab-layers"]').fill("3");
+    await page.locator('[data-testid="builder-slab-vacuum"]').fill("10");
+    await expect(page.locator('[data-testid="builder-slab-preview"]')).toContainText("12 atoms");
+    await page.locator('[data-testid="builder-slab-apply"]').click();
+    await expect(root).toHaveAttribute("data-atom-count", "12");
+    await expect(page.locator('[data-testid="builder-op-list"]')).toContainText(
+      "Slab (1 1 1), 3 layers, 10 Å vacuum",
+    );
+    let state = await builderState(page);
+    expect(state.edits.map((e) => e.op)).toEqual(["slab"]);
+    // The slab cell: a1 along x, the normal along z with the vacuum added.
+    const slabBox = await page.evaluate(() => {
+      const store = (
+        window as unknown as {
+          __megane_test_builder_store: {
+            getState: () => { result: { snapshot: { box: Float32Array } } };
+          };
+        }
+      ).__megane_test_builder_store;
+      return Array.from(store.getState().result.snapshot.box);
+    });
+    // The (111) surface vector of the conventional cell is a face diagonal, a√2.
+    expect(slabBox[0]).toBeCloseTo(3.61 * Math.SQRT2, 3);
+    expect(slabBox[1]).toBeCloseTo(0, 5);
+    expect(slabBox[8]).toBeGreaterThan(20);
+
+    // Adsorb water 2 Å above a surface atom with the Place tool.
+    await page
+      .locator('[data-testid="builder-library-item-preset:water"]')
+      .locator('[data-testid="builder-library-place"]')
+      .click();
+    await page.locator('[data-testid="builder-adsorb-toggle"]').check();
+    await pickAtom(page, 11);
+    await expect(root).toHaveAttribute("data-atom-count", "15");
+    state = await builderState(page);
+    expect(state.edits.map((e) => e.op)).toEqual(["slab", "add_fragment"]);
+    const placed = state.edits[1] as { translate: [number, number, number] };
+    const site = await page.evaluate(() => {
+      const store = (
+        window as unknown as {
+          __megane_test_builder_store: {
+            getState: () => {
+              source: { positions: Float32Array };
+              result: { snapshot: { positions: Float32Array } };
+            };
+          };
+        }
+      ).__megane_test_builder_store;
+      // The slab atoms come first in the shown structure; atom 11 is the last of them.
+      return Array.from(store.getState().result.snapshot.positions.slice(33, 36));
+    });
+    expect(placed.translate[0]).toBeCloseTo(site[0], 3);
+    expect(placed.translate[1]).toBeCloseTo(site[1], 3);
+    // (Water was placed with its centroid at the site + 2 Å, so the atoms are ~2 Å above.)
+    expect(placed.translate[2]).toBeCloseTo(site[2] + 2, 3);
+
+    // Cell tab: the fields show the slab cell and setting a cell records the op.
+    await page.locator('[data-testid="builder-crystal-tab-cell"]').click();
+    await expect(page.locator('[data-testid="builder-cell-c"]')).toHaveValue(String(slabBox[8]));
+    await page.locator('[data-testid="builder-cell-scale-atoms"]').uncheck();
+    await page.locator('[data-testid="builder-cell-c"]').fill("30");
+    await page.locator('[data-testid="builder-cell-apply"]').click();
+    await expect(page.locator('[data-testid="builder-crystal-cell-summary"]')).toContainText(
+      "× 30.00 Å",
+    );
+    await expect(root).toHaveAttribute("data-edit-count", "3");
+    await expect(root).toHaveAttribute("data-atom-count", "15");
+
+    // Save keeps working on the built structure.
+    const download = page.waitForEvent("download");
+    await page.locator('[data-testid="builder-save-xyz"]').click();
+    expect((await download).suggestedFilename()).toBe("Cu-fcc.xyz");
+  });
 });
