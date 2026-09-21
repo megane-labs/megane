@@ -253,7 +253,7 @@ describe("buildSlab", () => {
       positions: new Float32Array([0, 0, 0, 1, 0, 0]),
       elements: new Uint8Array([6, 6]),
       bonds: new Uint32Array([0, 1]),
-      bondOrders: null,
+      bondOrders: new Uint8Array([2]),
       atomChainIds: null,
       atomBFactors: null,
       box: new Float32Array([10, 0, 0, 0, 10, 0, 0, 0, 1e-4]),
@@ -261,6 +261,7 @@ describe("buildSlab", () => {
     const out = makeSupercell(thin, [1, 0, 0, 0, 1, 0, 0, 0, 2])!;
     expect(out.nAtoms).toBe(4);
     expect(out.nBonds).toBe(4);
+    expect(Array.from(out.bondOrders!)).toEqual([2, 2, 2, 2]);
   });
 });
 
