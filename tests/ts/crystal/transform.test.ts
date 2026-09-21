@@ -3,6 +3,8 @@ import {
   buildSlab,
   centerSnapshot,
   makeSupercell,
+  repeatedBondPairs,
+  slabPreview,
   surfaceBasis,
   wrapSnapshot,
 } from "@/crystal/transform";
@@ -201,6 +203,126 @@ describe("buildSlab", () => {
       buildSlab({ ...cu(), box: null }, { miller: [1, 1, 1], layers: 1, vacuum: 1 }),
     ).toBeNull();
     expect(buildSlab(cu(), { miller: [0, 0, 0], layers: 1, vacuum: 1 })).toBeNull();
+  });
+
+  it("an atom bonded only to itself draws no bond (its images never sit at a zero vector)", () => {
+    const self: Snapshot = {
+      nAtoms: 1,
+      nBonds: 1,
+      nFileBonds: 1,
+      positions: new Float32Array([0, 0, 0]),
+      elements: new Uint8Array([6]),
+      bonds: new Uint32Array([0, 0]),
+      bondOrders: null,
+      box: new Float32Array([3, 0, 0, 0, 3, 0, 0, 0, 3]),
+      boxOrigin: null,
+      atomChainIds: null,
+      atomBFactors: null,
+    };
+    const out = buildSlab(self, { miller: [0, 0, 1], layers: 3, vacuum: 0 })!;
+    expect(out.nAtoms).toBe(3);
+    expect(out.nBonds).toBe(0);
+  });
+
+  it("a source bond listed twice in the same orientation is drawn once", () => {
+    const src = water();
+    const twice = {
+      ...src,
+      nBonds: 3,
+      nFileBonds: 3,
+      bonds: new Uint32Array([0, 1, 0, 2, 0, 1]),
+      bondOrders: new Uint8Array([1, 2, 3]),
+    };
+    const out = makeSupercell(twice, [2, 0, 0, 0, 1, 0, 0, 0, 1])!;
+    const pairs = new Set<string>();
+    for (let b = 0; b < out.nBonds; b++) pairs.add(`${out.bonds[b * 2]}-${out.bonds[b * 2 + 1]}`);
+    expect(out.nBonds).toBe(4);
+    expect(pairs).toEqual(new Set(["0-1", "3-4", "0-5", "2-3"]));
+    // The first listing wins, orders included.
+    expect(Array.from(out.bondOrders!)).toEqual([1, 1, 2, 2]);
+  });
+
+  it("keeps every bond when a degenerate cell puts images within the match tolerance", () => {
+    // Two images along a 1e-4 Å third vector both sit "at" the bond vector,
+    // so a source bond yields more output bonds than images of its atom.
+    const thin: Snapshot = {
+      ...water(),
+      nAtoms: 2,
+      nBonds: 1,
+      nFileBonds: 1,
+      positions: new Float32Array([0, 0, 0, 1, 0, 0]),
+      elements: new Uint8Array([6, 6]),
+      bonds: new Uint32Array([0, 1]),
+      bondOrders: new Uint8Array([2]),
+      atomChainIds: null,
+      atomBFactors: null,
+      box: new Float32Array([10, 0, 0, 0, 10, 0, 0, 0, 1e-4]),
+    };
+    const out = makeSupercell(thin, [1, 0, 0, 0, 1, 0, 0, 0, 2])!;
+    expect(out.nAtoms).toBe(4);
+    expect(out.nBonds).toBe(4);
+    expect(Array.from(out.bondOrders!)).toEqual([2, 2, 2, 2]);
+  });
+});
+
+describe("slabPreview", () => {
+  const cu = () => bulkSnapshot({ structure: "fcc", elements: [29], a: 3.61, cubic: true });
+  const thickness = (s: Snapshot) => {
+    let lo = Infinity;
+    let hi = -Infinity;
+    for (let i = 0; i < s.nAtoms; i++) {
+      lo = Math.min(lo, s.positions[i * 3 + 2]);
+      hi = Math.max(hi, s.positions[i * 3 + 2]);
+    }
+    return hi - lo;
+  };
+
+  it("reports the atom count and thickness buildSlab would produce", () => {
+    const specs = [
+      { miller: [1, 1, 1] as Vec3, layers: 4, vacuum: 10 },
+      { miller: [1, 0, 0] as Vec3, layers: 2, vacuum: 5, shift: 0.25 },
+      { miller: [2, 1, 0] as Vec3, layers: 3, vacuum: 0 },
+      { miller: [1, 1, 0] as Vec3, layers: 1, vacuum: 7.5 },
+      { miller: [3, -1, 2] as Vec3, layers: 5, vacuum: 0, shift: 0.7 },
+    ];
+    for (const src of [cu(), water()]) {
+      for (const spec of specs) {
+        const full = buildSlab(src, spec)!;
+        const preview = slabPreview(src, spec)!;
+        expect(preview.nAtoms).toBe(full.nAtoms);
+        expect(preview.thickness).toBeCloseTo(thickness(full), 3);
+      }
+    }
+  });
+
+  it("is null exactly when buildSlab is, and empty for an empty cell", () => {
+    expect(slabPreview({ ...cu(), box: null }, { miller: [1, 1, 1], layers: 1, vacuum: 1 })).toBe(
+      null,
+    );
+    expect(slabPreview(cu(), { miller: [0, 0, 0], layers: 1, vacuum: 1 })).toBeNull();
+    const empty: Snapshot = {
+      ...cu(),
+      nAtoms: 0,
+      positions: new Float32Array(0),
+      elements: new Uint8Array(0),
+    };
+    expect(slabPreview(empty, { miller: [1, 1, 1], layers: 3, vacuum: 1 })).toEqual({
+      nAtoms: 0,
+      thickness: 0,
+    });
+  });
+});
+
+describe("repeatedBondPairs", () => {
+  it("is null when every pair is unique", () => {
+    expect(repeatedBondPairs([0, 1, 0, 2, 1, 2], 3, 3)).toBeNull();
+    expect(repeatedBondPairs([], 0, 3)).toBeNull();
+  });
+
+  it("marks the first listing of a repeated pair with 1 and the later ones with 2", () => {
+    // (0,1) three times in both orientations, (0,2) once, (1,2) twice.
+    const mask = repeatedBondPairs([0, 1, 0, 2, 1, 0, 1, 2, 0, 1, 2, 1], 6, 3)!;
+    expect(Array.from(mask)).toEqual([1, 0, 2, 1, 2, 2]);
   });
 });
 

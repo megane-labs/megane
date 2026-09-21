@@ -5,7 +5,7 @@
 
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { render, screen, fireEvent, cleanup, act } from "@testing-library/react";
-import { CrystalSection } from "@/builder/crystal/CrystalSection";
+import { CrystalSection, MAX_ATOMS } from "@/builder/crystal/CrystalSection";
 import { useBuilderStore } from "@/builder/store";
 import { bulkSnapshot } from "@/crystal/bulk";
 import type { Snapshot } from "@/types";
@@ -193,6 +193,25 @@ describe("CrystalSection — supercell", () => {
     click("builder-supercell-apply");
     expect(edits()).toHaveLength(1);
   });
+
+  it("refuses a supercell beyond the atom limit", () => {
+    s().newBulk({ structure: "fcc", elements: [29], a: 4, cubic: true });
+    render(<CrystalSection />);
+    click("builder-crystal-tab-supercell");
+    type("builder-supercell-na", "500");
+    type("builder-supercell-nb", "500");
+    type("builder-supercell-nc", "2");
+    // 4 atoms × 500 000 images.
+    expect(screen.getByTestId("builder-supercell-preview").textContent).toBe(
+      `2,000,000 atoms would exceed the ${MAX_ATOMS.toLocaleString("en-US")}-atom limit`,
+    );
+    click("builder-supercell-apply");
+    expect(edits()).toHaveLength(0);
+    type("builder-supercell-nc", "1");
+    expect(screen.getByTestId("builder-supercell-preview").textContent).toBe(
+      "250000 images → 1000000 atoms",
+    );
+  });
 });
 
 describe("CrystalSection — slab", () => {
@@ -225,6 +244,32 @@ describe("CrystalSection — slab", () => {
     fireEvent.change(screen.getByTestId("builder-slab-shift"), { target: { value: "0.25" } });
     click("builder-slab-apply");
     expect(edits()[1]).toMatchObject({ op: "slab", miller: [0, 0, 1], shift: 0.25 });
+  });
+
+  it("previews the thickness the cut would have and refuses a slab beyond the atom limit", () => {
+    s().newBulk({ structure: "fcc", elements: [29], a: 3.61, cubic: true });
+    render(<CrystalSection />);
+    click("builder-crystal-tab-slab");
+    type("builder-slab-layers", "3");
+    type("builder-slab-vacuum", "10");
+    // Each (111) repeat of the conventional cell is one 4-atom plane, so three
+    // layers are 12 atoms spanning two interplanar spacings of a/√3.
+    expect(screen.getByTestId("builder-slab-preview").textContent).toBe(
+      `12 atoms, ${((2 * 3.61) / Math.sqrt(3)).toFixed(1)} Å thick`,
+    );
+    // Cutting the slab again stacks the whole structure: the count multiplies.
+    click("builder-slab-apply");
+    expect(shown().nAtoms).toBe(12);
+    expect(screen.getByTestId("builder-slab-preview").textContent).toMatch(/^36 atoms, /);
+    type("builder-slab-layers", "300000");
+    expect(screen.getByTestId("builder-slab-preview").textContent).toBe(
+      `3,600,000 atoms would exceed the ${MAX_ATOMS.toLocaleString("en-US")}-atom limit`,
+    );
+    click("builder-slab-apply");
+    expect(edits()).toHaveLength(1);
+    type("builder-slab-layers", "2");
+    click("builder-slab-apply");
+    expect(shown().nAtoms).toBe(24);
   });
 });
 

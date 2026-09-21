@@ -81,7 +81,8 @@ export function BuilderSidebar() {
 
   const editable = canEdit({ source, result, showOriginal });
   const shown = shownSnapshot({ source, result, showOriginal });
-  const refFor = (i: number): EditAtomRef | null => result?.outputRefs[i] ?? null;
+  const refFor = (i: number): EditAtomRef | null =>
+    result && i >= 0 && i < result.snapshot.nAtoms ? result.refAt(i) : null;
   const activeTool = TOOLS.find((t) => t.value === tool)!;
 
   const handleDeleteSelected = () => {

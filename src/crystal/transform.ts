@@ -16,6 +16,11 @@
  * bond (a boundary bond now reaches into the neighbouring image, as the
  * viewer's Replicate node does), while a slab drops the bonds that would have
  * crossed into the vacuum.
+ *
+ * The transforms multiply the atom count (a slab of a slab stacks the whole
+ * structure again), so everything per atom or per bond lives in typed arrays:
+ * no object, string or small array is allocated per image, and the hot loops
+ * inline the 3×3 products instead of calling `mulVec`.
  */
 
 import type { Snapshot } from "../types";
@@ -41,16 +46,14 @@ import {
 /** Numerical tolerance for "is this fractional coordinate inside the cell". */
 const TOL = 1e-8;
 
-/** An atom of a transformed structure: where it is and which source atom it copies. */
-interface ImageAtom {
-  src: number;
-  x: number;
-  y: number;
-  z: number;
-}
-
+/** The image atoms of a transformed structure, struct-of-arrays. */
 interface Transformed {
-  atoms: ImageAtom[];
+  /** Number of image atoms. */
+  n: number;
+  /** Source atom each image copies. */
+  src: Uint32Array;
+  /** Image positions, Cartesian, flat (`n * 3`). */
+  pos: Float64Array;
   box: Mat3;
   /** Which axes of `box` are periodic (bond images may cross them). */
   periodic: [boolean, boolean, boolean];
@@ -93,22 +96,54 @@ export function makeSupercell(src: Snapshot, matrix: ArrayLike<number>): Snapsho
       hi[k] = Math.max(hi[k], corner[k]);
     }
   }
-  const atoms: ImageAtom[] = [];
-  for (let i = Math.floor(lo[0]) - 1; i <= Math.ceil(hi[0]); i++) {
-    for (let j = Math.floor(lo[1]) - 1; j <= Math.ceil(hi[1]); j++) {
-      for (let k = Math.floor(lo[2]) - 1; k <= Math.ceil(hi[2]); k++) {
-        for (let a = 0; a < src.nAtoms; a++) {
-          const f = mulVec([frac[a * 3] + i, frac[a * 3 + 1] + j, frac[a * 3 + 2] + k], mInv);
-          if (f[0] < -TOL || f[0] >= 1 - TOL) continue;
-          if (f[1] < -TOL || f[1] >= 1 - TOL) continue;
-          if (f[2] < -TOL || f[2] >= 1 - TOL) continue;
-          const p = mulVec([wrapFrac(f[0], TOL), wrapFrac(f[1], TOL), wrapFrac(f[2], TOL)], newBox);
-          atoms.push({ src: a, x: p[0], y: p[1], z: p[2] });
+  const n = src.nAtoms;
+  const [q0, q1, q2, q3, q4, q5, q6, q7, q8] = mInv;
+  const [b0, b1, b2, b3, b4, b5, b6, b7, b8] = newBox;
+  // One enumeration, run twice: once to count the images, once to write them,
+  // so the output arrays are allocated exactly once at their final size.
+  const enumerate = (outSrc: Uint32Array | null, outPos: Float64Array | null): number => {
+    let count = 0;
+    for (let i = Math.floor(lo[0]) - 1; i <= Math.ceil(hi[0]); i++) {
+      for (let j = Math.floor(lo[1]) - 1; j <= Math.ceil(hi[1]); j++) {
+        for (let k = Math.floor(lo[2]) - 1; k <= Math.ceil(hi[2]); k++) {
+          for (let a = 0; a < n; a++) {
+            const x = frac[a * 3] + i;
+            const y = frac[a * 3 + 1] + j;
+            const z = frac[a * 3 + 2] + k;
+            const f0 = x * q0 + y * q3 + z * q6;
+            if (f0 < -TOL || f0 >= 1 - TOL) continue;
+            const f1 = x * q1 + y * q4 + z * q7;
+            if (f1 < -TOL || f1 >= 1 - TOL) continue;
+            const f2 = x * q2 + y * q5 + z * q8;
+            if (f2 < -TOL || f2 >= 1 - TOL) continue;
+            if (outSrc && outPos) {
+              const w0 = wrapFrac(f0, TOL);
+              const w1 = wrapFrac(f1, TOL);
+              const w2 = wrapFrac(f2, TOL);
+              outSrc[count] = a;
+              outPos[count * 3] = w0 * b0 + w1 * b3 + w2 * b6;
+              outPos[count * 3 + 1] = w0 * b1 + w1 * b4 + w2 * b7;
+              outPos[count * 3 + 2] = w0 * b2 + w1 * b5 + w2 * b8;
+            }
+            count++;
+          }
         }
       }
     }
-  }
-  return assemble(src, { atoms, box: newBox, periodic: [true, true, true], rotation: null });
+    return count;
+  };
+  const total = enumerate(null, null);
+  const srcIdx = new Uint32Array(total);
+  const pos = new Float64Array(total * 3);
+  enumerate(srcIdx, pos);
+  return assemble(src, {
+    n: total,
+    src: srcIdx,
+    pos,
+    box: newBox,
+    periodic: [true, true, true],
+    rotation: null,
+  });
 }
 
 /** Parameters of `buildSlab`. */
@@ -182,14 +217,28 @@ export function surfaceBasis(box: ArrayLike<number>, miller: Vec3): Mat3 | null 
 }
 
 /**
- * A slab of `src` exposing the (h k l) surface — a port of ASE's
- * `ase.build.surface(lattice, indices, layers, vacuum)`: the surface unit
- * cell is cut with `surfaceBasis`, repeated `layers` times along its third
- * vector, its cell is made orthogonal to the surface with the first lattice
- * vector along x and the normal along z, atoms are wrapped in-plane, and the
- * slab is centred in its vacuum. Returns null without a usable cell.
+ * Everything `buildSlab` derives from the source and the spec before the
+ * layers are stacked: the atoms in the surface unit cell and the frame that
+ * turns stacked layers into the standard-orientation slab cell. Shared with
+ * `slabPreview`, which needs the same numbers but no output atoms.
  */
-export function buildSlab(src: Snapshot, spec: SlabSpec): Snapshot | null {
+interface SlabFrame {
+  n: number;
+  layers: number;
+  /** Source atoms in the surface cell (Cartesian, wrapped, shifted along the normal). */
+  posSurf: Float64Array;
+  /** Third surface vector: the step between stacked layers. */
+  c: Vec3;
+  /** Slab cell in standard orientation (a along x, normal along z). */
+  cellStd: Mat3;
+  /** Rigid map from the surface-cell frame into `cellStd`. */
+  rotation: Mat3;
+  stdInv: Mat3;
+  /** Whether the result stays periodic along the normal (no vacuum). */
+  periodicC: boolean;
+}
+
+function slabFrame(src: Snapshot, spec: SlabSpec): SlabFrame | null {
   if (!src.box) return null;
   const box = Array.from(src.box);
   const boxInv = inverse3(box);
@@ -206,28 +255,19 @@ export function buildSlab(src: Snapshot, spec: SlabSpec): Snapshot | null {
   for (let i = 0; i < fracOld.length; i++) fracOld[i] = wrapFrac(fracOld[i], TOL);
   const n = src.nAtoms;
   const fracSurf = new Float64Array(n * 3);
+  const [g0, g1, g2, g3, g4, g5, g6, g7, g8] = basisInv;
   for (let a = 0; a < n; a++) {
-    const f = mulVec([fracOld[a * 3], fracOld[a * 3 + 1], fracOld[a * 3 + 2]], basisInv);
-    fracSurf[a * 3] = wrapFrac(f[0], TOL);
-    fracSurf[a * 3 + 1] = wrapFrac(f[1], TOL);
-    fracSurf[a * 3 + 2] = wrapFrac(f[2] - shift, TOL);
+    const x = fracOld[a * 3];
+    const y = fracOld[a * 3 + 1];
+    const z = fracOld[a * 3 + 2];
+    fracSurf[a * 3] = wrapFrac(x * g0 + y * g3 + z * g6, TOL);
+    fracSurf[a * 3 + 1] = wrapFrac(x * g1 + y * g4 + z * g7, TOL);
+    fracSurf[a * 3 + 2] = wrapFrac(x * g2 + y * g5 + z * g8 - shift, TOL);
   }
   const surfCell = mul3(basis, box);
   const posSurf = fracToCart(fracSurf, surfCell);
 
-  // Stack the layers along the third vector (image-major, atoms inner).
   const c = row(surfCell, 2);
-  const stacked: ImageAtom[] = [];
-  for (let layer = 0; layer < layers; layer++) {
-    for (let a = 0; a < n; a++) {
-      stacked.push({
-        src: a,
-        x: posSurf[a * 3] + layer * c[0],
-        y: posSurf[a * 3 + 1] + layer * c[1],
-        z: posSurf[a * 3 + 2] + layer * c[2],
-      });
-    }
-  }
   const v1 = row(surfCell, 0);
   const v2 = row(surfCell, 1);
   const v3: Vec3 = [layers * c[0], layers * c[1], layers * c[2]];
@@ -258,18 +298,102 @@ export function buildSlab(src: Snapshot, spec: SlabSpec): Snapshot | null {
   if (!cellNormalInv || l3 < 1e-12) return null;
   const rotation = mul3(cellNormalInv, cellStd);
   const stdInv = inverse3(cellStd)!;
-  const atoms: ImageAtom[] = stacked.map((at) => {
-    const p = mulVec([at.x, at.y, at.z], rotation);
-    // Wrap in-plane only, like ASE; the tolerance absorbs the float32 noise
-    // of atoms sitting exactly on the far face (ASE's float64 lands on 0).
-    const f = mulVec(p, stdInv);
-    const q = mulVec([wrapFrac(f[0], 1e-6), wrapFrac(f[1], 1e-6), f[2]], cellStd);
-    return { src: at.src, x: q[0], y: q[1], z: q[2] };
-  });
+  return {
+    n,
+    layers,
+    posSurf,
+    c,
+    cellStd,
+    rotation,
+    stdInv,
+    periodicC: !(spec.vacuum > 0),
+  };
+}
 
-  const periodicC = !(spec.vacuum > 0);
-  const out = assemble(src, { atoms, box: cellStd, periodic: [true, true, periodicC], rotation });
-  return periodicC ? out : centerSnapshot(out, [2], spec.vacuum);
+/**
+ * A slab of `src` exposing the (h k l) surface — a port of ASE's
+ * `ase.build.surface(lattice, indices, layers, vacuum)`: the surface unit
+ * cell is cut with `surfaceBasis`, repeated `layers` times along its third
+ * vector, its cell is made orthogonal to the surface with the first lattice
+ * vector along x and the normal along z, atoms are wrapped in-plane, and the
+ * slab is centred in its vacuum. Returns null without a usable cell.
+ */
+export function buildSlab(src: Snapshot, spec: SlabSpec): Snapshot | null {
+  const f = slabFrame(src, spec);
+  if (!f) return null;
+  const { n, layers, posSurf, c, cellStd, rotation, stdInv } = f;
+  const total = n * layers;
+  const srcIdx = new Uint32Array(total);
+  const pos = new Float64Array(total * 3);
+  const [r0, r1, r2, r3, r4, r5, r6, r7, r8] = rotation;
+  const [s0, s1, s2, s3, s4, s5, s6, s7, s8] = stdInv;
+  const [c0, c1, c2, c3, c4, c5, c6, c7, c8] = cellStd;
+  // Stack the layers along the third vector (image-major, atoms inner), then
+  // rotate into the standard cell and wrap in-plane only, like ASE; the
+  // tolerance absorbs the float32 noise of atoms sitting exactly on the far
+  // face (ASE's float64 lands on 0).
+  let o = 0;
+  for (let layer = 0; layer < layers; layer++) {
+    for (let a = 0; a < n; a++) {
+      const x = posSurf[a * 3] + layer * c[0];
+      const y = posSurf[a * 3 + 1] + layer * c[1];
+      const z = posSurf[a * 3 + 2] + layer * c[2];
+      const px = x * r0 + y * r3 + z * r6;
+      const py = x * r1 + y * r4 + z * r7;
+      const pz = x * r2 + y * r5 + z * r8;
+      const w0 = wrapFrac(px * s0 + py * s3 + pz * s6, 1e-6);
+      const w1 = wrapFrac(px * s1 + py * s4 + pz * s7, 1e-6);
+      const w2 = px * s2 + py * s5 + pz * s8;
+      srcIdx[o] = a;
+      pos[o * 3] = w0 * c0 + w1 * c3 + w2 * c6;
+      pos[o * 3 + 1] = w0 * c1 + w1 * c4 + w2 * c7;
+      pos[o * 3 + 2] = w0 * c2 + w1 * c5 + w2 * c8;
+      o++;
+    }
+  }
+  const out = assemble(src, {
+    n: total,
+    src: srcIdx,
+    pos,
+    box: cellStd,
+    periodic: [true, true, f.periodicC],
+    rotation,
+  });
+  return f.periodicC ? out : centerSnapshot(out, [2], spec.vacuum);
+}
+
+/** What `buildSlab` would produce, without producing it. */
+export interface SlabPreview {
+  nAtoms: number;
+  /** Extent of the atoms along the surface normal, Å. */
+  thickness: number;
+}
+
+/**
+ * The atom count and thickness of `buildSlab(src, spec)`, computed from the
+ * source atoms alone: every source atom yields one image per layer, and the
+ * height of an image along the normal is fixed by its source atom and its
+ * layer (the in-plane wrap and the centring never change it). Costs one pass
+ * over the source atoms instead of building the slab and its bonds, which is
+ * what the Builder's summary line needs on every keystroke. Null exactly when
+ * `buildSlab` returns null.
+ */
+export function slabPreview(src: Snapshot, spec: SlabSpec): SlabPreview | null {
+  const f = slabFrame(src, spec);
+  if (!f) return null;
+  const { n, layers, posSurf, c, rotation } = f;
+  if (n === 0) return { nAtoms: 0, thickness: 0 };
+  // z after the rotation is p · (r2, r5, r8): the normal is mapped onto z.
+  const [, , r2, , , r5, , , r8] = rotation;
+  let lo = Infinity;
+  let hi = -Infinity;
+  for (let a = 0; a < n; a++) {
+    const z = posSurf[a * 3] * r2 + posSurf[a * 3 + 1] * r5 + posSurf[a * 3 + 2] * r8;
+    if (z < lo) lo = z;
+    if (z > hi) hi = z;
+  }
+  const rise = Math.abs(c[0] * r2 + c[1] * r5 + c[2] * r8);
+  return { nAtoms: n * layers, thickness: hi - lo + (layers - 1) * rise };
 }
 
 /** Every atom folded into the home cell (fractional `[0, 1)`); bonds unchanged. */
@@ -368,19 +492,17 @@ export function centerSnapshot(
  * (see the module comment).
  */
 function assemble(src: Snapshot, t: Transformed): Snapshot {
-  const nAtoms = t.atoms.length;
-  const positions = new Float32Array(nAtoms * 3);
+  const nAtoms = t.n;
+  const positions = new Float32Array(t.pos);
   const elements = new Uint8Array(nAtoms);
   const atomChainIds = src.atomChainIds ? new Uint8Array(nAtoms) : null;
   const atomBFactors = src.atomBFactors ? new Float32Array(nAtoms) : null;
-  t.atoms.forEach((at, i) => {
-    positions[i * 3] = at.x;
-    positions[i * 3 + 1] = at.y;
-    positions[i * 3 + 2] = at.z;
-    elements[i] = src.elements[at.src];
-    if (atomChainIds) atomChainIds[i] = src.atomChainIds![at.src];
-    if (atomBFactors) atomBFactors[i] = src.atomBFactors![at.src];
-  });
+  for (let i = 0; i < nAtoms; i++) {
+    const a = t.src[i];
+    elements[i] = src.elements[a];
+    if (atomChainIds) atomChainIds[i] = src.atomChainIds![a];
+    if (atomBFactors) atomBFactors[i] = src.atomBFactors![a];
+  }
   const { bonds, bondOrders } = retileBonds(src, t);
   return {
     nAtoms,
@@ -400,88 +522,187 @@ function assemble(src: Snapshot, t: Transformed): Snapshot {
 }
 
 /**
+ * Which of `bonds` (flat pairs, `nBonds` of them) share their unordered pair
+ * with another entry: `1` at the first listing of a repeated pair, `2` at
+ * every later one, `0` elsewhere — or null when every pair is unique. Linear
+ * in the bonds times the largest degree, with three typed arrays and no
+ * per-bond key.
+ */
+export function repeatedBondPairs(
+  bonds: ArrayLike<number>,
+  nBonds: number,
+  nAtoms: number,
+): Uint8Array | null {
+  // Bonds grouped by their lower index, in bond order.
+  const off = new Uint32Array(nAtoms + 1);
+  for (let b = 0; b < nBonds; b++) off[Math.min(bonds[b * 2], bonds[b * 2 + 1]) + 1]++;
+  for (let a = 0; a < nAtoms; a++) off[a + 1] += off[a];
+  const cursor = off.slice(0, nAtoms);
+  const other = new Uint32Array(nBonds);
+  const slot = new Uint32Array(nBonds);
+  for (let b = 0; b < nBonds; b++) {
+    const i = bonds[b * 2];
+    const j = bonds[b * 2 + 1];
+    const p = cursor[Math.min(i, j)]++;
+    other[p] = Math.max(i, j);
+    slot[p] = b;
+  }
+  let mask: Uint8Array | null = null;
+  for (let a = 0; a < nAtoms; a++) {
+    const start = off[a];
+    const end = off[a + 1];
+    for (let p = start + 1; p < end; p++) {
+      for (let q = start; q < p; q++) {
+        if (other[q] === other[p]) {
+          if (!mask) mask = new Uint8Array(nBonds);
+          mask[slot[p]] = 2;
+          if (mask[slot[q]] === 0) mask[slot[q]] = 1;
+          break;
+        }
+      }
+    }
+  }
+  return mask;
+}
+
+/**
  * Re-draw the source bonds on the transformed atoms. Each source bond is the
  * minimum-image vector between its atoms (in the source cell); for every
  * image of the first atom, the bond is kept when an image of the second atom
  * sits at that vector, modulo the periodic axes of the new cell.
+ *
+ * Images are distinct points of the new cell, so a source bond between two
+ * different atoms yields at most one output bond per image of its first atom
+ * and never the same pair twice, and two source bonds on different pairs
+ * never draw the same output pair. Only two kinds of bond can repeat an
+ * output pair: an atom bonded to its own periodic image (the images chain
+ * around a periodic axis and may close on themselves) and a pair the source
+ * lists more than once (the same bond in both orientations, or two distinct
+ * bonds between the same atoms across different images — orientation picks
+ * the minimum image when the atoms sit half a cell apart). Those, and only
+ * those, go through a set of seen pairs; everything else is emitted directly.
  */
 function retileBonds(
   src: Snapshot,
   t: Transformed,
 ): { bonds: Uint32Array; bondOrders: Uint8Array | null } {
   const nBondsSrc = src.nBonds;
-  if (nBondsSrc === 0 || t.atoms.length === 0) {
+  const n = t.n;
+  if (nBondsSrc === 0 || n === 0) {
     return { bonds: new Uint32Array(0), bondOrders: null };
   }
   const srcBox = src.box ? Array.from(src.box) : null;
   const srcInv = srcBox ? inverse3(srcBox) : null;
   const newInv = inverse3(t.box);
   if (!newInv) return { bonds: new Uint32Array(0), bondOrders: null };
+  const [v0, v1, v2, v3, v4, v5, v6, v7, v8] = newInv;
+  const pos = t.pos;
 
-  // New atoms in fractional coordinates, grouped by source atom.
-  const bySrc = new Map<number, number[]>();
-  const frac = new Float64Array(t.atoms.length * 3);
-  t.atoms.forEach((at, i) => {
-    const f = mulVec([at.x, at.y, at.z], newInv);
-    frac[i * 3] = f[0];
-    frac[i * 3 + 1] = f[1];
-    frac[i * 3 + 2] = f[2];
-    const list = bySrc.get(at.src);
-    if (list) list.push(i);
-    else bySrc.set(at.src, [i]);
-  });
+  // New atoms in fractional coordinates.
+  const frac = new Float64Array(n * 3);
+  for (let i = 0; i < n; i++) {
+    const x = pos[i * 3];
+    const y = pos[i * 3 + 1];
+    const z = pos[i * 3 + 2];
+    frac[i * 3] = x * v0 + y * v3 + z * v6;
+    frac[i * 3 + 1] = x * v1 + y * v4 + z * v7;
+    frac[i * 3 + 2] = x * v2 + y * v5 + z * v8;
+  }
+  // Images grouped by source atom (CSR: `imgs[off[a] .. off[a + 1])`).
+  const nSrc = src.nAtoms;
+  const off = new Uint32Array(nSrc + 1);
+  for (let i = 0; i < n; i++) off[t.src[i] + 1]++;
+  for (let a = 0; a < nSrc; a++) off[a + 1] += off[a];
+  const cursor = off.slice(0, nSrc);
+  const imgs = new Uint32Array(n);
+  for (let i = 0; i < n; i++) imgs[cursor[t.src[i]]++] = i;
+  let maxImages = 0;
+  for (let a = 0; a < nSrc; a++) maxImages = Math.max(maxImages, off[a + 1] - off[a]);
 
-  const minImage = (i: number, j: number): Vec3 => {
-    let d: Vec3 = [
-      src.positions[j * 3] - src.positions[i * 3],
-      src.positions[j * 3 + 1] - src.positions[i * 3 + 1],
-      src.positions[j * 3 + 2] - src.positions[i * 3 + 2],
-    ];
-    if (srcBox && srcInv) {
-      const f = mulVec(d, srcInv);
-      const g = mulVec([Math.round(f[0]), Math.round(f[1]), Math.round(f[2])], srcBox);
-      d = [d[0] - g[0], d[1] - g[1], d[2] - g[2]];
-    }
-    return t.rotation ? mulVec(d, t.rotation) : d;
-  };
-
-  const out: number[] = [];
-  const orders: number[] = [];
+  const repeated = repeatedBondPairs(src.bonds, nBondsSrc, nSrc);
   const seen = new Set<number>();
+  const rot = t.rotation;
+  const len0 = norm(row(t.box, 0));
+  const len1 = norm(row(t.box, 1));
+  const len2 = norm(row(t.box, 2));
+  const [per0, per1, per2] = t.periodic;
   const matchTol = 1e-3;
+
+  // At most one output bond per (source bond, image of its first atom).
+  let cap = nBondsSrc * maxImages;
+  let out = new Uint32Array(cap * 2);
+  let orders = src.bondOrders ? new Uint8Array(cap) : null;
+  let count = 0;
   for (let b = 0; b < nBondsSrc; b++) {
     const i = src.bonds[b * 2];
     const j = src.bonds[b * 2 + 1];
-    const d = minImage(i, j);
+    const canRepeat = i === j || (repeated !== null && repeated[b] !== 0);
+    // Minimum-image bond vector in the source cell, carried into the new frame.
+    let dx = src.positions[j * 3] - src.positions[i * 3];
+    let dy = src.positions[j * 3 + 1] - src.positions[i * 3 + 1];
+    let dz = src.positions[j * 3 + 2] - src.positions[i * 3 + 2];
+    if (srcBox && srcInv) {
+      const f = mulVec([dx, dy, dz], srcInv);
+      const g = mulVec([Math.round(f[0]), Math.round(f[1]), Math.round(f[2])], srcBox);
+      dx -= g[0];
+      dy -= g[1];
+      dz -= g[2];
+    }
+    if (rot) {
+      const d = mulVec([dx, dy, dz], rot);
+      dx = d[0];
+      dy = d[1];
+      dz = d[2];
+    }
     const order = src.bondOrders ? src.bondOrders[b] : 1;
-    const candidates = bySrc.get(j);
-    if (!candidates) continue;
-    for (const ai of bySrc.get(i) ?? []) {
-      const target = mulVec(
-        [t.atoms[ai].x + d[0], t.atoms[ai].y + d[1], t.atoms[ai].z + d[2]],
-        newInv,
-      );
-      for (const aj of candidates) {
+    for (let p = off[i]; p < off[i + 1]; p++) {
+      const ai = imgs[p];
+      const tx = pos[ai * 3] + dx;
+      const ty = pos[ai * 3 + 1] + dy;
+      const tz = pos[ai * 3 + 2] + dz;
+      const t0 = tx * v0 + ty * v3 + tz * v6;
+      const t1 = tx * v1 + ty * v4 + tz * v7;
+      const t2 = tx * v2 + ty * v5 + tz * v8;
+      for (let q = off[j]; q < off[j + 1]; q++) {
+        const aj = imgs[q];
         if (aj === ai) continue;
-        let ok = true;
-        for (let k = 0; k < 3 && ok; k++) {
-          let diff = frac[aj * 3 + k] - target[k];
-          if (t.periodic[k]) diff -= Math.round(diff);
-          // Compare in Å along that lattice vector so the tolerance is physical.
-          if (Math.abs(diff) * norm(row(t.box, k)) > matchTol) ok = false;
-        }
-        if (!ok) continue;
+        let d0 = frac[aj * 3] - t0;
+        if (per0) d0 -= Math.round(d0);
+        // Compare in Å along that lattice vector so the tolerance is physical.
+        if (Math.abs(d0) * len0 > matchTol) continue;
+        let d1 = frac[aj * 3 + 1] - t1;
+        if (per1) d1 -= Math.round(d1);
+        if (Math.abs(d1) * len1 > matchTol) continue;
+        let d2 = frac[aj * 3 + 2] - t2;
+        if (per2) d2 -= Math.round(d2);
+        if (Math.abs(d2) * len2 > matchTol) continue;
         const lo = Math.min(ai, aj);
         const hi = Math.max(ai, aj);
-        const key = lo * t.atoms.length + hi;
-        if (seen.has(key)) continue;
-        seen.add(key);
-        out.push(lo, hi);
-        orders.push(order);
+        if (canRepeat) {
+          const key = lo * n + hi;
+          if (seen.has(key)) continue;
+          seen.add(key);
+        }
+        if (count === cap) {
+          cap *= 2;
+          const grown = new Uint32Array(cap * 2);
+          grown.set(out);
+          out = grown;
+          if (orders) {
+            const grownOrders = new Uint8Array(cap);
+            grownOrders.set(orders);
+            orders = grownOrders;
+          }
+        }
+        out[count * 2] = lo;
+        out[count * 2 + 1] = hi;
+        if (orders) orders[count] = order;
+        count++;
       }
     }
   }
-  const bonds = new Uint32Array(out);
-  const bondOrders = src.bondOrders ? new Uint8Array(orders) : null;
-  return { bonds, bondOrders };
+  return {
+    bonds: out.slice(0, count * 2),
+    bondOrders: orders ? orders.slice(0, count) : null,
+  };
 }

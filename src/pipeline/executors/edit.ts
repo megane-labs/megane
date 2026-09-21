@@ -1,7 +1,13 @@
 import type { Snapshot } from "../../types";
 import type { EditOp, EditAtomRef } from "../types";
 import { cartToFrac, fracToCart, inverse3 } from "../../crystal/cell";
-import { buildSlab, centerSnapshot, makeSupercell, wrapSnapshot } from "../../crystal/transform";
+import {
+  buildSlab,
+  centerSnapshot,
+  repeatedBondPairs,
+  makeSupercell,
+  wrapSnapshot,
+} from "../../crystal/transform";
 import { expandSymmetry } from "./symmetry";
 
 /**
@@ -21,6 +27,12 @@ import { expandSymmetry } from "./symmetry";
  * Builder always addresses the structure it currently shows). `wrap`,
  * `center` and a scaling `set_cell` only move atoms and keep every ref.
  *
+ * Those ops multiply the atom count (a slab of a slab stacks the whole
+ * structure again), so the working copy is kept in typed arrays and the refs
+ * implicitly (`RefTable`): no string per atom, no key string per bond, and a
+ * pair lookup goes through a compact adjacency index built only when an op
+ * needs one. That is what keeps a few repeated cuts from exhausting the tab.
+ *
  * The result is a brand-new immutable Snapshot; the renderer keys on Snapshot
  * identity, so a re-run after a new op is a real reload.
  */
@@ -28,24 +40,19 @@ import { expandSymmetry } from "./symmetry";
 /** Outcome of `applyEditOps`: the edited snapshot plus provenance. */
 export interface EditResult {
   snapshot: Snapshot;
-  /** For each output atom, the ref it is addressed by inside the op list. */
-  outputRefs: EditAtomRef[];
+  /** The ref output atom `i` is addressed by inside the op list. */
+  refAt: (i: number) => EditAtomRef;
+  /**
+   * For each output atom, the ref it is addressed by inside the op list.
+   * Materialized (one string per atom) on first access; prefer `refAt` for a
+   * few atoms of a large structure.
+   */
+  readonly outputRefs: EditAtomRef[];
   /** Ops that could not be applied (unknown ref, …) are skipped and reported. */
   warnings: string[];
 }
 
-interface WorkingBond {
-  a: EditAtomRef;
-  b: EditAtomRef;
-  order: number;
-}
-
-/** Canonical key so (a,b) and (b,a) name the same bond. */
-function bondKey(a: EditAtomRef, b: EditAtomRef): string {
-  const ka = typeof a === "number" ? `#${a}` : `@${a}`;
-  const kb = typeof b === "number" ? `#${b}` : `@${b}`;
-  return ka < kb ? `${ka}|${kb}` : `${kb}|${ka}`;
-}
+const NONE = 0xffffffff;
 
 function describeRef(ref: EditAtomRef): string {
   return typeof ref === "number" ? `atom ${ref}` : `atom "${ref}"`;
@@ -54,6 +61,142 @@ function describeRef(ref: EditAtomRef): string {
 /** Fragment atom ids are `<fragmentId>:<k>`. */
 export function fragmentAtomRef(fragmentId: string, k: number): string {
   return `${fragmentId}:${k}`;
+}
+
+function grow32(a: Uint32Array, n: number): Uint32Array {
+  const out = new Uint32Array(Math.max(n, a.length * 2, 16));
+  out.set(a);
+  return out;
+}
+
+function grow8(a: Uint8Array, n: number): Uint8Array {
+  const out = new Uint8Array(Math.max(n, a.length * 2, 16));
+  out.set(a);
+  return out;
+}
+
+function grow64(a: Float64Array, n: number): Float64Array {
+  const out = new Float64Array(Math.max(n, a.length * 2, 16));
+  out.set(a);
+  return out;
+}
+
+function growF32(a: Float32Array, n: number): Float32Array {
+  const out = new Float32Array(Math.max(n, a.length * 2, 16));
+  out.set(a);
+  return out;
+}
+
+/**
+ * The refs of the working atoms without one string per atom. Atoms that came
+ * from the *base* structure — the file, or the last whole-structure op, whose
+ * id is `base` — are addressed as `k` (file) or `<base>:<k>`, and only `k` is
+ * stored; the inverse map `k → index` is rebuilt lazily after a deletion.
+ * Atoms an `add_atom` / `add_fragment` created keep their explicit ref in a
+ * side map that only ever holds those few.
+ */
+class RefTable {
+  private base: string | null = null;
+  /** Base index of working atom i, or NONE for an added atom. */
+  private k: Uint32Array = new Uint32Array(0);
+  /** Refs of the added atoms, by working index. */
+  private extra = new Map<number, EditAtomRef>();
+  private extraIndex = new Map<EditAtomRef, number>();
+  /** k → working index (NONE once deleted); null until needed. */
+  private kIndex: Uint32Array | null = null;
+  private nBase = 0;
+  n = 0;
+
+  /** Every atom is the base atom of the same index; `base` null means file atoms. */
+  reset(base: string | null, n: number): void {
+    this.base = base;
+    this.nBase = n;
+    this.n = n;
+    this.k = new Uint32Array(Math.max(n, 16));
+    for (let i = 0; i < n; i++) this.k[i] = i;
+    this.kIndex = null;
+    this.extra.clear();
+    this.extraIndex.clear();
+  }
+
+  refAt(i: number): EditAtomRef {
+    const k = this.k[i];
+    if (k !== NONE) return this.base === null ? k : `${this.base}:${k}`;
+    return this.extra.get(i)!;
+  }
+
+  indexOf(ref: EditAtomRef): number | undefined {
+    if (typeof ref === "number") {
+      if (this.base === null && Number.isInteger(ref) && ref >= 0 && ref < this.nBase) {
+        const i = this.byK()[ref];
+        if (i !== NONE) return i;
+      }
+    } else if (this.base !== null && ref.startsWith(`${this.base}:`)) {
+      const rest = ref.slice(this.base.length + 1);
+      const k = Number(rest);
+      if (Number.isInteger(k) && k >= 0 && k < this.nBase && String(k) === rest) {
+        const i = this.byK()[k];
+        if (i !== NONE) return i;
+      }
+    }
+    return this.extraIndex.get(ref);
+  }
+
+  has(ref: EditAtomRef): boolean {
+    return this.indexOf(ref) !== undefined;
+  }
+
+  /** Append an added atom with an explicit ref (the caller checked it is new). */
+  push(ref: EditAtomRef): void {
+    if (this.n === this.k.length) this.k = grow32(this.k, this.n + 1);
+    this.k[this.n] = NONE;
+    this.extra.set(this.n, ref);
+    this.extraIndex.set(ref, this.n);
+    this.n++;
+  }
+
+  /**
+   * Drop every atom whose `keep[i]` is 0, preserving order; returns the map
+   * from old to new index (NONE for a dropped atom).
+   */
+  compact(keep: Uint8Array): Uint32Array {
+    const map = new Uint32Array(this.n).fill(NONE);
+    const extra = new Map<number, EditAtomRef>();
+    this.extraIndex.clear();
+    let w = 0;
+    for (let i = 0; i < this.n; i++) {
+      if (!keep[i]) continue;
+      map[i] = w;
+      this.k[w] = this.k[i];
+      if (this.k[i] === NONE) {
+        const ref = this.extra.get(i)!;
+        extra.set(w, ref);
+        this.extraIndex.set(ref, w);
+      }
+      w++;
+    }
+    this.n = w;
+    this.extra = extra;
+    this.kIndex = null;
+    return map;
+  }
+
+  toArray(): EditAtomRef[] {
+    const out = new Array<EditAtomRef>(this.n);
+    for (let i = 0; i < this.n; i++) out[i] = this.refAt(i);
+    return out;
+  }
+
+  private byK(): Uint32Array {
+    if (!this.kIndex) {
+      this.kIndex = new Uint32Array(this.nBase).fill(NONE);
+      for (let i = 0; i < this.n; i++) {
+        const k = this.k[i];
+        if (k !== NONE) this.kIndex[k] = i;
+      }
+    }
+    return this.kIndex;
+  }
 }
 
 /**
@@ -65,33 +208,29 @@ export function fragmentAtomRef(fragmentId: string, k: number): string {
 export function applyEditOps(src: Snapshot, ops: EditOp[]): EditResult {
   const warnings: string[] = [];
 
-  // Working copy. `refs[i]` is the reference of working atom i; `byRef` is its
-  // inverse and is rebuilt after every deletion.
-  const refs: EditAtomRef[] = [];
-  const pos: number[] = [];
-  const elem: number[] = [];
-  let chain: number[] | null = src.atomChainIds ? [] : null;
-  let bfac: number[] | null = src.atomBFactors ? [] : null;
-  for (let i = 0; i < src.nAtoms; i++) {
-    refs.push(i);
-    pos.push(src.positions[i * 3], src.positions[i * 3 + 1], src.positions[i * 3 + 2]);
-    elem.push(src.elements[i]);
-    if (chain) chain.push(src.atomChainIds![i]);
-    if (bfac) bfac.push(src.atomBFactors![i]);
-  }
-  let byRef = new Map<EditAtomRef, number>(refs.map((r, i) => [r, i]));
+  // ── Working atoms: `refs.n` of them, channels in typed arrays with slack. ──
+  const refs = new RefTable();
+  let pos: Float64Array = new Float64Array(0);
+  let elem: Uint8Array = new Uint8Array(0);
+  // (Assigned inside `load`, which TypeScript's narrowing does not see.)
+  let chain = null as Uint8Array | null;
+  let bfac = null as Float32Array | null;
 
-  const bonds: WorkingBond[] = [];
-  const bondIndex = new Map<string, number>();
-  let hasOrders = src.bondOrders !== null;
-  for (let b = 0; b < src.nBonds; b++) {
-    const a = src.bonds[b * 2];
-    const c = src.bonds[b * 2 + 1];
-    const key = bondKey(a, c);
-    if (bondIndex.has(key)) continue;
-    bondIndex.set(key, bonds.length);
-    bonds.push({ a, b: c, order: src.bondOrders ? src.bondOrders[b] : 1 });
-  }
+  // ── Working bonds by current atom index; a deleted bond is a dead slot. ──
+  let bondA: Uint32Array = new Uint32Array(0);
+  let bondB: Uint32Array = new Uint32Array(0);
+  let bondOrd: Uint8Array = new Uint8Array(0);
+  let bondDead: Uint8Array = new Uint8Array(0);
+  let nBonds = 0;
+  let nDeadBonds = 0;
+  let hasOrders = false;
+  // Pair lookup: a CSR adjacency over bonds `[0, adjCount)`, built on first
+  // use and rebuilt once the bonds appended since (scanned linearly) pile up.
+  let adjOff: Uint32Array | null = null;
+  let adjOther: Uint32Array = new Uint32Array(0);
+  let adjSlot: Uint32Array = new Uint32Array(0);
+  let adjCount = 0;
+
   let box: number[] | null = src.box ? Array.from(src.box) : null;
   let cellTouched = false;
   // Set once a whole-structure op consumed the file's space-group operations
@@ -99,12 +238,46 @@ export function applyEditOps(src: Snapshot, ops: EditOp[]): EditResult {
   // not expand the result a second time.
   let symmetryConsumed = false;
 
-  const rebuildByRef = () => {
-    byRef = new Map(refs.map((r, i) => [r, i]));
+  /** Replace the working atoms and bonds with `snap`'s, refs keyed by `base`. */
+  const load = (snap: Snapshot, base: string | null, uniqueBonds: boolean) => {
+    const n = snap.nAtoms;
+    refs.reset(base, n);
+    pos = new Float64Array(Math.max(n, 16) * 3);
+    pos.set(snap.positions.subarray(0, n * 3));
+    elem = new Uint8Array(Math.max(n, 16));
+    elem.set(snap.elements.subarray(0, n));
+    chain = null;
+    bfac = null;
+    if (snap.atomChainIds) {
+      chain = new Uint8Array(Math.max(n, 16));
+      chain.set(snap.atomChainIds.subarray(0, n));
+    }
+    if (snap.atomBFactors) {
+      bfac = new Float32Array(Math.max(n, 16));
+      bfac.set(snap.atomBFactors.subarray(0, n));
+    }
+    const nb = snap.nBonds;
+    // A pair the file lists twice keeps its first entry.
+    const repeats = uniqueBonds ? null : repeatedBondPairs(snap.bonds, nb, n);
+    bondA = new Uint32Array(Math.max(nb, 16));
+    bondB = new Uint32Array(Math.max(nb, 16));
+    bondOrd = new Uint8Array(Math.max(nb, 16));
+    bondDead = new Uint8Array(Math.max(nb, 16));
+    nBonds = 0;
+    nDeadBonds = 0;
+    hasOrders = snap.bondOrders !== null;
+    for (let b = 0; b < nb; b++) {
+      if (repeats && repeats[b] === 2) continue;
+      bondA[nBonds] = snap.bonds[b * 2];
+      bondB[nBonds] = snap.bonds[b * 2 + 1];
+      bondOrd[nBonds] = snap.bondOrders ? snap.bondOrders[b] : 1;
+      nBonds++;
+    }
+    adjOff = null;
   };
 
   const resolve = (ref: EditAtomRef, opName: string): number | null => {
-    const idx = byRef.get(ref);
+    const idx = refs.indexOf(ref);
     if (idx === undefined) {
       warnings.push(`${opName}: unknown ${describeRef(ref)} (skipped)`);
       return null;
@@ -113,17 +286,69 @@ export function applyEditOps(src: Snapshot, ops: EditOp[]): EditResult {
   };
 
   const addAtom = (ref: EditAtomRef, element: number, x: number, y: number, z: number) => {
-    if (byRef.has(ref)) {
+    if (refs.has(ref)) {
       warnings.push(`add_atom: ${describeRef(ref)} already exists (skipped)`);
       return false;
     }
-    byRef.set(ref, refs.length);
+    const i = refs.n;
     refs.push(ref);
-    pos.push(x, y, z);
-    elem.push(clampElement(element));
-    if (chain) chain.push(0);
-    if (bfac) bfac.push(0);
+    if ((i + 1) * 3 > pos.length) pos = grow64(pos, (i + 1) * 3);
+    if (i + 1 > elem.length) elem = grow8(elem, i + 1);
+    if (chain && i + 1 > chain.length) chain = grow8(chain, i + 1);
+    if (bfac && i + 1 > bfac.length) bfac = growF32(bfac, i + 1);
+    pos[i * 3] = x;
+    pos[i * 3 + 1] = y;
+    pos[i * 3 + 2] = z;
+    elem[i] = clampElement(element);
+    if (chain) chain[i] = 0;
+    if (bfac) bfac[i] = 0;
     return true;
+  };
+
+  const buildAdjacency = () => {
+    const n = refs.n;
+    const off = new Uint32Array(n + 1);
+    for (let s = 0; s < nBonds; s++) {
+      if (bondDead[s]) continue;
+      off[bondA[s] + 1]++;
+      off[bondB[s] + 1]++;
+    }
+    for (let a = 0; a < n; a++) off[a + 1] += off[a];
+    const cursor = off.slice(0, n);
+    const other = new Uint32Array(off[n]);
+    const slot = new Uint32Array(off[n]);
+    for (let s = 0; s < nBonds; s++) {
+      if (bondDead[s]) continue;
+      const a = bondA[s];
+      const b = bondB[s];
+      let p = cursor[a]++;
+      other[p] = b;
+      slot[p] = s;
+      p = cursor[b]++;
+      other[p] = a;
+      slot[p] = s;
+    }
+    adjOff = off;
+    adjOther = other;
+    adjSlot = slot;
+    adjCount = nBonds;
+  };
+
+  /** Slot of the live bond between atoms `i` and `j`, or -1. */
+  const findBond = (i: number, j: number): number => {
+    if (!adjOff || nBonds - adjCount > 64 + (adjCount >> 4)) buildAdjacency();
+    // An atom added since the index was built has no entry; its bonds are
+    // all newer than the index and are found by the scan below.
+    if (i + 1 < adjOff!.length) {
+      for (let p = adjOff![i]; p < adjOff![i + 1]; p++) {
+        if (adjOther[p] === j && !bondDead[adjSlot[p]]) return adjSlot[p];
+      }
+    }
+    for (let s = adjCount; s < nBonds; s++) {
+      if (bondDead[s]) continue;
+      if ((bondA[s] === i && bondB[s] === j) || (bondA[s] === j && bondB[s] === i)) return s;
+    }
+    return -1;
   };
 
   const addBond = (a: EditAtomRef, b: EditAtomRef, order: number | undefined, opName: string) => {
@@ -131,82 +356,73 @@ export function applyEditOps(src: Snapshot, ops: EditOp[]): EditResult {
       warnings.push(`${opName}: cannot bond ${describeRef(a)} to itself (skipped)`);
       return;
     }
-    if (resolve(a, opName) === null || resolve(b, opName) === null) return;
-    const key = bondKey(a, b);
+    const i = resolve(a, opName);
+    if (i === null) return;
+    const j = resolve(b, opName);
+    if (j === null) return;
     const ord = clampOrder(order);
     if (order !== undefined) hasOrders = true;
-    const existing = bondIndex.get(key);
-    if (existing !== undefined) {
-      bonds[existing].order = ord;
+    const existing = findBond(i, j);
+    if (existing >= 0) {
+      bondOrd[existing] = ord;
       return;
     }
-    bondIndex.set(key, bonds.length);
-    bonds.push({ a, b, order: ord });
+    if (nBonds === bondA.length) {
+      bondA = grow32(bondA, nBonds + 1);
+      bondB = grow32(bondB, nBonds + 1);
+      bondOrd = grow8(bondOrd, nBonds + 1);
+      bondDead = grow8(bondDead, nBonds + 1);
+    }
+    bondA[nBonds] = i;
+    bondB[nBonds] = j;
+    bondOrd[nBonds] = ord;
+    bondDead[nBonds] = 0;
+    nBonds++;
   };
 
-  const removeBondsTouching = (dead: Set<EditAtomRef>) => {
+  /** The live bonds as a Snapshot's `bonds` (each pair low index first) and orders. */
+  const liveBonds = (): { bonds: Uint32Array; orders: Uint8Array | null } => {
+    const live = nBonds - nDeadBonds;
+    const bonds = new Uint32Array(live * 2);
+    const orders = hasOrders ? new Uint8Array(live) : null;
     let w = 0;
-    for (let i = 0; i < bonds.length; i++) {
-      const bd = bonds[i];
-      if (dead.has(bd.a) || dead.has(bd.b)) continue;
-      bonds[w++] = bd;
+    for (let s = 0; s < nBonds; s++) {
+      if (bondDead[s]) continue;
+      bonds[w * 2] = Math.min(bondA[s], bondB[s]);
+      bonds[w * 2 + 1] = Math.max(bondA[s], bondB[s]);
+      if (orders) orders[w] = bondOrd[s];
+      w++;
     }
-    bonds.length = w;
-    bondIndex.clear();
-    bonds.forEach((bd, i) => bondIndex.set(bondKey(bd.a, bd.b), i));
+    return { bonds, orders };
   };
 
   /** The working structure as a Snapshot (bonds by current index), for the whole-structure ops. */
   const materialize = (): Snapshot => {
-    const b = new Uint32Array(bonds.length * 2);
-    const o = hasOrders ? new Uint8Array(bonds.length) : null;
-    bonds.forEach((bd, i) => {
-      b[i * 2] = byRef.get(bd.a)!;
-      b[i * 2 + 1] = byRef.get(bd.b)!;
-      if (o) o[i] = bd.order;
-    });
+    const n = refs.n;
+    const { bonds, orders } = liveBonds();
     return {
-      nAtoms: refs.length,
-      nBonds: bonds.length,
-      nFileBonds: bonds.length,
-      positions: new Float32Array(pos),
-      elements: new Uint8Array(elem),
-      bonds: b,
-      bondOrders: o,
+      nAtoms: n,
+      nBonds: bonds.length / 2,
+      nFileBonds: bonds.length / 2,
+      positions: new Float32Array(pos.subarray(0, n * 3)),
+      elements: elem.slice(0, n),
+      bonds,
+      bondOrders: orders,
       box: box ? new Float32Array(box) : null,
       boxOrigin: cellTouched ? null : src.boxOrigin,
-      atomChainIds: chain ? new Uint8Array(chain) : null,
-      atomBFactors: bfac ? new Float32Array(bfac) : null,
+      atomChainIds: chain ? chain.slice(0, n) : null,
+      atomBFactors: bfac ? bfac.slice(0, n) : null,
       symmetryOps: symmetryConsumed ? undefined : src.symmetryOps,
     };
   };
 
-  /** Replace the working structure with `snap`, re-keying its atoms as `<id>:<k>`. */
+  /**
+   * Replace the working structure with `snap`, re-keying its atoms as
+   * `<id>:<k>`. The transforms never list a bond twice, so their bonds are
+   * taken as they are.
+   */
   const rebuildFrom = (snap: Snapshot, id: string) => {
-    refs.length = 0;
-    pos.length = 0;
-    elem.length = 0;
-    chain = snap.atomChainIds ? [] : null;
-    bfac = snap.atomBFactors ? [] : null;
-    for (let i = 0; i < snap.nAtoms; i++) {
-      refs.push(fragmentAtomRef(id, i));
-      pos.push(snap.positions[i * 3], snap.positions[i * 3 + 1], snap.positions[i * 3 + 2]);
-      elem.push(snap.elements[i]);
-      if (chain) chain.push(snap.atomChainIds![i]);
-      if (bfac) bfac.push(snap.atomBFactors![i]);
-    }
-    rebuildByRef();
-    bonds.length = 0;
-    bondIndex.clear();
-    hasOrders = snap.bondOrders !== null;
-    for (let b = 0; b < snap.nBonds; b++) {
-      const a = refs[snap.bonds[b * 2]];
-      const c = refs[snap.bonds[b * 2 + 1]];
-      const key = bondKey(a, c);
-      if (bondIndex.has(key)) continue;
-      bondIndex.set(key, bonds.length);
-      bonds.push({ a, b: c, order: snap.bondOrders ? snap.bondOrders[b] : 1 });
-    }
+    load(snap, id, true);
     box = snap.box ? Array.from(snap.box) : null;
     cellTouched = true;
     symmetryConsumed = true;
@@ -214,9 +430,11 @@ export function applyEditOps(src: Snapshot, ops: EditOp[]): EditResult {
 
   /** Take only the positions (and cell) of `snap`: the atoms and their refs are unchanged. */
   const adoptPositions = (snap: Snapshot) => {
-    for (let i = 0; i < snap.nAtoms * 3; i++) pos[i] = snap.positions[i];
+    pos.set(snap.positions.subarray(0, snap.nAtoms * 3));
     box = snap.box ? Array.from(snap.box) : null;
   };
+
+  load(src, null, false);
 
   for (const op of ops) {
     switch (op.op) {
@@ -265,15 +483,20 @@ export function applyEditOps(src: Snapshot, ops: EditOp[]): EditResult {
         break;
       }
       case "delete_atoms": {
-        const dead = new Set<EditAtomRef>();
+        const keep = new Uint8Array(refs.n).fill(1);
+        let any = false;
         for (const ref of op.atoms) {
-          if (resolve(ref, "delete_atoms") !== null) dead.add(ref);
+          const i = resolve(ref, "delete_atoms");
+          if (i !== null) {
+            keep[i] = 0;
+            any = true;
+          }
         }
-        if (dead.size === 0) break;
+        if (!any) break;
+        const map = refs.compact(keep);
         let w = 0;
-        for (let i = 0; i < refs.length; i++) {
-          if (dead.has(refs[i])) continue;
-          refs[w] = refs[i];
+        for (let i = 0; i < map.length; i++) {
+          if (map[i] === NONE) continue;
           pos[w * 3] = pos[i * 3];
           pos[w * 3 + 1] = pos[i * 3 + 1];
           pos[w * 3 + 2] = pos[i * 3 + 2];
@@ -282,13 +505,22 @@ export function applyEditOps(src: Snapshot, ops: EditOp[]): EditResult {
           if (bfac) bfac[w] = bfac[i];
           w++;
         }
-        refs.length = w;
-        pos.length = w * 3;
-        elem.length = w;
-        if (chain) chain.length = w;
-        if (bfac) bfac.length = w;
-        rebuildByRef();
-        removeBondsTouching(dead);
+        // Bonds: drop the ones touching a deleted atom, renumber the rest.
+        let wb = 0;
+        for (let s = 0; s < nBonds; s++) {
+          if (bondDead[s]) continue;
+          const a = map[bondA[s]];
+          const b = map[bondB[s]];
+          if (a === NONE || b === NONE) continue;
+          bondA[wb] = a;
+          bondB[wb] = b;
+          bondOrd[wb] = bondOrd[s];
+          bondDead[wb] = 0;
+          wb++;
+        }
+        nBonds = wb;
+        nDeadBonds = 0;
+        adjOff = null;
         break;
       }
       case "move_atoms": {
@@ -314,18 +546,18 @@ export function applyEditOps(src: Snapshot, ops: EditOp[]): EditResult {
         addBond(op.a, op.b, op.order, "add_bond");
         break;
       case "delete_bond": {
-        if (resolve(op.a, "delete_bond") === null || resolve(op.b, "delete_bond") === null) break;
-        const key = bondKey(op.a, op.b);
-        const idx = bondIndex.get(key);
-        if (idx === undefined) {
+        const i = resolve(op.a, "delete_bond");
+        const j = i === null ? null : resolve(op.b, "delete_bond");
+        if (i === null || j === null) break;
+        const slot = findBond(i, j);
+        if (slot < 0) {
           warnings.push(
             `delete_bond: no bond between ${describeRef(op.a)} and ${describeRef(op.b)} (skipped)`,
           );
           break;
         }
-        bonds.splice(idx, 1);
-        bondIndex.clear();
-        bonds.forEach((bd, i) => bondIndex.set(bondKey(bd.a, bd.b), i));
+        bondDead[slot] = 1;
+        nDeadBonds++;
         break;
       }
       case "set_cell": {
@@ -336,8 +568,9 @@ export function applyEditOps(src: Snapshot, ops: EditOp[]): EditResult {
         if (op.scaleAtoms && op.box !== null && box !== null) {
           const oldInv = inverse3(box);
           if (oldInv) {
-            const cart = fracToCart(cartToFrac(pos, oldInv), op.box);
-            for (let i = 0; i < cart.length; i++) pos[i] = cart[i];
+            const n = refs.n;
+            const cart = fracToCart(cartToFrac(pos.subarray(0, n * 3), oldInv), op.box);
+            pos.set(cart);
           } else {
             warnings.push("set_cell: the current cell is singular, atoms were not scaled");
           }
@@ -427,18 +660,8 @@ export function applyEditOps(src: Snapshot, ops: EditOp[]): EditResult {
   }
 
   // Materialize the Snapshot.
-  const nAtoms = refs.length;
-  const nBonds = bonds.length;
-  const bondsOut = new Uint32Array(nBonds * 2);
-  const ordersOut = hasOrders ? new Uint8Array(nBonds) : null;
-  for (let i = 0; i < nBonds; i++) {
-    const bd = bonds[i];
-    const ia = byRef.get(bd.a)!;
-    const ib = byRef.get(bd.b)!;
-    bondsOut[i * 2] = Math.min(ia, ib);
-    bondsOut[i * 2 + 1] = Math.max(ia, ib);
-    if (ordersOut) ordersOut[i] = bd.order;
-  }
+  const nAtoms = refs.n;
+  const { bonds: bondsOut, orders: ordersOut } = liveBonds();
 
   // Cα backbone: keep the entries whose atom survived, remapped to new indices.
   let caIndices: Uint32Array | undefined;
@@ -449,7 +672,7 @@ export function applyEditOps(src: Snapshot, ops: EditOp[]): EditResult {
     const keep: number[] = [];
     const mapped: number[] = [];
     for (let c = 0; c < src.caIndices.length; c++) {
-      const ni = byRef.get(src.caIndices[c]);
+      const ni = refs.indexOf(src.caIndices[c]);
       if (ni !== undefined) {
         keep.push(c);
         mapped.push(ni);
@@ -463,18 +686,18 @@ export function applyEditOps(src: Snapshot, ops: EditOp[]): EditResult {
 
   const snapshot: Snapshot = {
     nAtoms,
-    nBonds,
+    nBonds: bondsOut.length / 2,
     // Every surviving bond is now asserted by the edit, so downstream code
     // treats the whole set as declared (not distance-inferred) connectivity.
-    nFileBonds: nBonds,
-    positions: new Float32Array(pos),
-    elements: new Uint8Array(elem),
+    nFileBonds: bondsOut.length / 2,
+    positions: new Float32Array(pos.subarray(0, nAtoms * 3)),
+    elements: elem.slice(0, nAtoms),
     bonds: bondsOut,
     bondOrders: ordersOut,
     box: box ? new Float32Array(box) : null,
     boxOrigin: cellTouched ? null : src.boxOrigin,
-    atomChainIds: chain ? new Uint8Array(chain) : null,
-    atomBFactors: bfac ? new Float32Array(bfac) : null,
+    atomChainIds: chain ? chain.slice(0, nAtoms) : null,
+    atomBFactors: bfac ? bfac.slice(0, nAtoms) : null,
     caIndices,
     caChainIds,
     caResNums,
@@ -482,7 +705,15 @@ export function applyEditOps(src: Snapshot, ops: EditOp[]): EditResult {
     symmetryOps: symmetryConsumed ? undefined : src.symmetryOps,
   };
 
-  return { snapshot, outputRefs: refs, warnings };
+  let materializedRefs: EditAtomRef[] | null = null;
+  return {
+    snapshot,
+    refAt: (i) => refs.refAt(i),
+    get outputRefs() {
+      return (materializedRefs ??= refs.toArray());
+    },
+    warnings,
+  };
 }
 
 function clampElement(z: number): number {
@@ -497,8 +728,3 @@ function clampOrder(order: number | undefined): number {
   if (!Number.isFinite(v) || v < 1) return 1;
   return Math.min(4, v);
 }
-
-/**
- * Remap a per-atom float array (`channels` values per atom) from input atom
- * indices to output atoms. Atoms created by the edit get `fill`.
- */

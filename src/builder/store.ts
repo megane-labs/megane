@@ -12,7 +12,7 @@
  * document travel into the viewer later.
  *
  * Atom indices in `selected` / `pendingBondAtom` and in the Viewport's
- * callbacks address the *rendered* structure; `result.outputRefs` translates
+ * callbacks address the *rendered* structure; `result.refAt` translates
  * them to op refs before an op is written.
  */
 

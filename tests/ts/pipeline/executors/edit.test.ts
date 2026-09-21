@@ -345,6 +345,129 @@ describe("applyEditOps — crystal ops", () => {
   });
 });
 
+describe("applyEditOps — refs after a whole-structure op", () => {
+  const slab = (): EditOp => ({ op: "slab", id: "sl", miller: [0, 0, 1], layers: 2, vacuum: 5 });
+
+  it("refAt agrees with outputRefs, and base refs keep resolving after deletions", () => {
+    const { snapshot, refAt, outputRefs, warnings } = applyEditOps(water(), [
+      slab(),
+      { op: "delete_atoms", atoms: ["sl:1"] },
+      // Ref "sl:3" still names the original fourth slab atom, now at index 2.
+      { op: "set_element", atoms: ["sl:3"], element: 9 },
+      { op: "add_atom", id: "extra", element: 6, position: [1, 1, 1], bondTo: "sl:5" },
+    ]);
+    expect(warnings).toEqual([]);
+    expect(snapshot.nAtoms).toBe(6);
+    expect(outputRefs).toEqual(["sl:0", "sl:2", "sl:3", "sl:4", "sl:5", "extra"]);
+    for (let i = 0; i < snapshot.nAtoms; i++) expect(refAt(i)).toBe(outputRefs[i]);
+    expect(snapshot.elements[2]).toBe(9);
+    expect(bondSet(snapshot).has("4-5")).toBe(true);
+  });
+
+  it("only exact <id>:<k> strings name base atoms; a colliding add_atom id is refused", () => {
+    const { snapshot, warnings } = applyEditOps(water(), [
+      slab(),
+      {
+        op: "set_element",
+        atoms: ["sl:01", "sl:1e0", "sl:-1", "sl:6", "sl:", 1, "sl:1x"],
+        element: 7,
+      },
+      { op: "add_atom", id: "sl:0", element: 1, position: [0, 0, 0] },
+      { op: "set_element", atoms: ["sl:1"], element: 7 },
+    ]);
+    expect(warnings).toHaveLength(8);
+    expect(warnings[7]).toContain("already exists");
+    expect(Array.from(snapshot.elements).filter((z) => z === 7)).toHaveLength(1);
+    expect(snapshot.elements[1]).toBe(7);
+  });
+
+  it("added atoms survive a deletion before them and can be deleted themselves", () => {
+    const { snapshot, outputRefs, warnings } = applyEditOps(water(), [
+      slab(),
+      {
+        op: "add_fragment",
+        id: "f",
+        elements: [7, 7],
+        positions: [0, 0, 0, 1, 0, 0],
+        bonds: [[0, 1]],
+      },
+      { op: "add_bond", a: "f:0", b: "sl:0" },
+      { op: "delete_atoms", atoms: ["sl:0", "sl:2"] },
+      { op: "set_element", atoms: ["f:1"], element: 8 },
+      { op: "delete_atoms", atoms: ["f:0"] },
+      { op: "add_atom", id: "f:0", element: 1, position: [2, 2, 2] },
+    ]);
+    expect(warnings).toEqual([]);
+    expect(outputRefs).toEqual(["sl:1", "sl:3", "sl:4", "sl:5", "f:1", "f:0"]);
+    expect(snapshot.elements[4]).toBe(8);
+    // Only the second layer's O–H bonds are left: the first O (sl:0) took its
+    // bonds and the bond to f:0 with it, and f:0 took the fragment's own bond.
+    expect(bondSet(snapshot)).toEqual(new Set(["1-2", "1-3"]));
+  });
+
+  it("finds bonds after many appends and through deleted slots", () => {
+    // A chain long enough to outgrow the adjacency index built for the first lookup.
+    const ops: EditOp[] = [];
+    for (let k = 0; k < 200; k++) {
+      ops.push({
+        op: "add_atom",
+        id: `c${k}`,
+        element: 6,
+        position: [k, 0, 0],
+        bondTo: k === 0 ? 0 : `c${k - 1}`,
+      });
+    }
+    ops.push({ op: "delete_bond", a: "c10", b: "c11" });
+    ops.push({ op: "delete_bond", a: "c11", b: "c10" });
+    ops.push({ op: "add_bond", a: "c11", b: "c10", order: 2 });
+    ops.push({ op: "add_bond", a: "c150", b: "c151", order: 3 });
+    ops.push({ op: "delete_atoms", atoms: ["c100"] });
+    ops.push({ op: "add_bond", a: "c99", b: "c101" });
+    const { snapshot, warnings } = applyEditOps(water(), ops);
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]).toContain("no bond");
+    // 2 water + 200 chain bonds − 2 lost with c100 + 1 re-added.
+    expect(snapshot.nBonds).toBe(201);
+    const orders = new Map<string, number>();
+    for (let b = 0; b < snapshot.nBonds; b++) {
+      orders.set(`${snapshot.bonds[b * 2]}-${snapshot.bonds[b * 2 + 1]}`, snapshot.bondOrders![b]);
+    }
+    // c10 is atom 13, c11 atom 14 (3 water atoms first); c150/c151 were
+    // 153/154 and moved down by one when c100 (103) was deleted.
+    expect(orders.get("13-14")).toBe(2);
+    expect(orders.get("152-153")).toBe(3);
+    // c99 (102) now bonds straight to c101 (103, after c100 was removed).
+    expect(orders.get("102-103")).toBe(1);
+  });
+
+  it("stacks up under repeated cuts without per-atom bookkeeping blowing up", () => {
+    const cu = {
+      ...water(),
+      nAtoms: 4,
+      nBonds: 0,
+      nFileBonds: 0,
+      positions: new Float32Array([0, 0, 0, 0, 1.8, 1.8, 1.8, 0, 1.8, 1.8, 1.8, 0]),
+      elements: new Uint8Array([29, 29, 29, 29]),
+      bonds: new Uint32Array(0),
+      box: new Float32Array([3.6, 0, 0, 0, 3.6, 0, 0, 0, 3.6]),
+      atomChainIds: null,
+      atomBFactors: null,
+      caIndices: undefined,
+      caChainIds: undefined,
+      caResNums: undefined,
+      caSsType: undefined,
+    };
+    const ops: EditOp[] = [];
+    for (let k = 0; k < 6; k++) {
+      ops.push({ op: "slab", id: `s${k}`, miller: [1, 1, 1], layers: 4, vacuum: 10 });
+    }
+    const { snapshot, refAt } = applyEditOps(cu, ops);
+    expect(snapshot.nAtoms).toBe(4 * 4 ** 6);
+    expect(refAt(0)).toBe("s5:0");
+    expect(refAt(snapshot.nAtoms - 1)).toBe(`s5:${snapshot.nAtoms - 1}`);
+  });
+});
+
 describe("executeLoadStructure with edits", () => {
   it("emits the file as loaded when there are no edits (absent or empty)", () => {
     const src = water();

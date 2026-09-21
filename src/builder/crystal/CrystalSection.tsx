@@ -17,12 +17,26 @@ import {
   type BulkStructure,
 } from "../../crystal/bulk";
 import { boxToCellParams, cellParamsToBox, det3, type CellParams } from "../../crystal/cell";
-import { buildSlab } from "../../crystal/transform";
+import { slabPreview } from "../../crystal/transform";
 import { getElementSymbol } from "../../constants";
 import type { EditOp } from "../../pipeline/types";
 import { newFragmentId } from "../library/fragment";
 
 type Tab = "bulk" | "cell" | "supercell" | "slab";
+
+/**
+ * Most atoms a supercell or slab may produce. Each cut or repeat multiplies
+ * the whole structure (a slab of a 4-layer slab has 4× the atoms, and so on),
+ * and every op is replayed on each edit, so the Builder refuses a result the
+ * tab could not hold rather than let a few clicks crash it.
+ */
+export const MAX_ATOMS = 1_000_000;
+
+function overLimit(nAtoms: number): string {
+  return `${nAtoms.toLocaleString("en-US")} atoms would exceed the ${MAX_ATOMS.toLocaleString(
+    "en-US",
+  )}-atom limit`;
+}
 
 const TABS: { value: Tab; label: string }[] = [
   { value: "bulk", label: "Bulk" },
@@ -529,7 +543,9 @@ function SupercellTab({
   const [matrix, setMatrix] = useState([1, 0, 0, 0, 1, 0, 0, 0, 1]);
   const effective = advanced ? matrix : [n[0], 0, 0, 0, n[1], 0, 0, 0, n[2]];
   const images = effective.every(Number.isInteger) ? Math.round(Math.abs(det3(effective))) : 0;
-  const valid = images >= 1;
+  const total = nAtoms * images;
+  const tooMany = total > MAX_ATOMS;
+  const valid = images >= 1 && !tooMany;
 
   return (
     <div
@@ -592,8 +608,10 @@ function SupercellTab({
         </span>
         <span style={hintStyle} data-testid="builder-supercell-preview">
           {valid
-            ? `${images} image${images === 1 ? "" : "s"} → ${nAtoms * images} atoms`
-            : "Invalid matrix"}
+            ? `${images} image${images === 1 ? "" : "s"} → ${total} atoms`
+            : tooMany
+              ? overLimit(total)
+              : "Invalid matrix"}
         </span>
       </div>
     </div>
@@ -620,19 +638,22 @@ function SlabTab({
   const millerValid = miller.every(Number.isInteger) && miller.some((v) => v !== 0);
   const valid = millerValid && layers >= 1 && vacuum >= 0;
 
-  // What the cut would produce, for the summary line.
+  // What the cut would produce, for the summary line: the count and the
+  // thickness alone, without building the slab (and its bonds) on every
+  // keystroke — the result is `layers` times the structure.
   const preview = useMemo(() => {
     if (!source?.box || !valid || !editable) return null;
-    return buildSlab(source, {
+    return slabPreview(source, {
       miller: miller as [number, number, number],
       layers,
       vacuum,
       shift,
     });
   }, [source, miller, layers, vacuum, shift, valid, editable]);
+  const tooMany = preview !== null && preview.nAtoms > MAX_ATOMS;
 
   const create = () => {
-    if (!valid) return;
+    if (!valid || tooMany) return;
     if (!preview) {
       onError("Could not build a slab from this cell.");
       return;
@@ -697,14 +718,16 @@ function SlabTab({
         <span
           role="button"
           data-testid="builder-slab-apply"
-          style={chipStyle(false, !editable || !valid)}
-          onClick={editable && valid ? create : undefined}
+          style={chipStyle(false, !editable || !valid || tooMany)}
+          onClick={editable && valid && !tooMany ? create : undefined}
         >
           Cut slab
         </span>
         <span style={hintStyle} data-testid="builder-slab-preview">
           {preview
-            ? `${preview.nAtoms} atoms, ${slabThickness(preview).toFixed(1)} Å thick`
+            ? tooMany
+              ? overLimit(preview.nAtoms)
+              : `${preview.nAtoms} atoms, ${preview.thickness.toFixed(1)} Å thick`
             : millerValid
               ? ""
               : "Miller indices must be integers, not all zero"}
@@ -712,15 +735,4 @@ function SlabTab({
       </div>
     </div>
   );
-}
-
-function slabThickness(snap: { nAtoms: number; positions: Float32Array }): number {
-  let lo = Infinity;
-  let hi = -Infinity;
-  for (let i = 0; i < snap.nAtoms; i++) {
-    const zc = snap.positions[i * 3 + 2];
-    if (zc < lo) lo = zc;
-    if (zc > hi) hi = zc;
-  }
-  return snap.nAtoms > 0 ? hi - lo : 0;
 }
