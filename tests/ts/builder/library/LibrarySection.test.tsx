@@ -61,6 +61,7 @@ beforeEach(() => {
     selected: [],
     pendingBondAtom: null,
     placeSource: null,
+    notice: null,
   });
   parseStructureFile.mockReset();
   sketchModalProps.current = null;
@@ -127,7 +128,11 @@ describe("LibrarySection", () => {
     fireEvent.click(screen.getByTestId("builder-library-import"));
     expect(click).toHaveBeenCalled();
     fireEvent.change(input, { target: { files: [new File(["x"], "solvent.pdb")] } });
-    await waitFor(() => expect(screen.getByTestId("builder-library-notice")).toBeTruthy());
+    await waitFor(() => expect(useBuilderStore.getState().notice).toBeTruthy());
+    expect(useBuilderStore.getState().notice).toEqual({
+      level: "info",
+      text: "Added solvent to the library.",
+    });
     const user = useLibraryStore.getState().user;
     expect(user).toHaveLength(1);
     expect(user[0].name).toBe("solvent");
@@ -146,8 +151,8 @@ describe("LibrarySection", () => {
     // A file that does not parse is reported.
     parseStructureFile.mockRejectedValue(new Error("no atoms"));
     fireEvent.change(input, { target: { files: [new File(["x"], "bad.pdb")] } });
-    await waitFor(() => expect(screen.getByTestId("builder-library-error")).toBeTruthy());
-    expect(screen.getByTestId("builder-library-error").textContent).toContain("bad.pdb");
+    await waitFor(() => expect(useBuilderStore.getState().notice?.level).toBe("error"));
+    expect(useBuilderStore.getState().notice?.text).toContain("bad.pdb");
     // An empty change is ignored.
     fireEvent.change(input, { target: { files: [] } });
     expect(parseStructureFile).toHaveBeenCalledTimes(2);

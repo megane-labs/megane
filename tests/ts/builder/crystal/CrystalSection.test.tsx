@@ -1,11 +1,13 @@
 /**
- * The sidebar's Crystal section: bulk crystals, cell editing, wrap / centre,
- * supercells, slabs and symmetry expansion, all as store actions or edit ops.
+ * The sidebar's Crystal section: cell editing, wrap / centre, supercells,
+ * slabs and symmetry expansion, all as edit ops on the open structure.
+ * (Starting a bulk crystal is a new document and lives in the New structure
+ * dialog, covered by its own test.)
  */
 
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { render, screen, fireEvent, cleanup, act } from "@testing-library/react";
-import { CrystalSection, MAX_ATOMS } from "@/builder/crystal/CrystalSection";
+import { CrystalSection, MAX_ATOMS, cellSummary } from "@/builder/crystal/CrystalSection";
 import { useBuilderStore } from "@/builder/store";
 import { bulkSnapshot } from "@/crystal/bulk";
 import type { Snapshot } from "@/types";
@@ -25,6 +27,7 @@ function cif(): Snapshot {
 }
 
 beforeEach(() => {
+  localStorage.clear();
   useBuilderStore.setState({
     source: null,
     sourceLabels: null,
@@ -39,62 +42,26 @@ beforeEach(() => {
     pendingBondAtom: null,
     placeSource: null,
     adsorbHeight: null,
+    notice: null,
   });
 });
 afterEach(cleanup);
 
-describe("CrystalSection — bulk", () => {
-  it("creates a bulk crystal from the fields and from an example", () => {
+describe("CrystalSection — shell", () => {
+  it("summarises the cell and asks for a document first", () => {
     render(<CrystalSection />);
     expect(screen.getByTestId("builder-crystal-cell-summary").textContent).toBe("No cell");
-    click("builder-bulk-create");
-    expect(s().fileName).toBe("Cu-fcc");
-    expect(shown().nAtoms).toBe(4);
+    expect(screen.getByTestId("builder-crystal-no-document")).toBeTruthy();
+    act(() => s().newBulk({ structure: "fcc", elements: [29], a: 3.61, cubic: true }));
     expect(screen.getByTestId("builder-crystal-cell-summary").textContent).toBe(
       "3.61 × 3.61 × 3.61 Å",
     );
-    // Primitive cell, other element and constant.
-    click("builder-bulk-cubic");
-    type("builder-bulk-element-0", "au");
-    type("builder-bulk-a", "4.08");
-    click("builder-bulk-create");
-    expect(s().fileName).toBe("Au-fcc");
-    expect(shown().nAtoms).toBe(1);
-    expect(shown().box![1]).toBeCloseTo(2.04, 5);
-    // An example fills every field, including c/a for hcp.
-    fireEvent.change(screen.getByTestId("builder-bulk-example"), { target: { value: "Mg (hcp)" } });
-    expect((screen.getByTestId("builder-bulk-structure") as HTMLSelectElement).value).toBe("hcp");
-    expect((screen.getByTestId("builder-bulk-covera") as HTMLInputElement).value).toBe("1.624");
-    expect(screen.queryByTestId("builder-bulk-cubic")).toBeNull();
-    click("builder-bulk-create");
-    expect(s().fileName).toBe("Mg-hcp");
-    expect(shown().nAtoms).toBe(2);
-    expect(screen.getByTestId("builder-crystal-cell-summary").textContent).toContain("120.00°");
-    // An unknown example name is ignored.
-    fireEvent.change(screen.getByTestId("builder-bulk-example"), { target: { value: "" } });
-    expect(s().fileName).toBe("Mg-hcp");
+    expect(screen.queryByTestId("builder-crystal-no-document")).toBeNull();
   });
 
-  it("shows the species the prototype needs and reports a bad element", () => {
-    render(<CrystalSection />);
-    fireEvent.change(screen.getByTestId("builder-bulk-structure"), {
-      target: { value: "perovskite" },
-    });
-    expect(screen.getByTestId("builder-bulk-element-2")).toBeTruthy();
-    type("builder-bulk-element-0", "Sr");
-    type("builder-bulk-element-1", "Ti");
-    type("builder-bulk-element-2", "Zz");
-    click("builder-bulk-create");
-    expect(screen.getByTestId("builder-crystal-error").textContent).toContain('Species X: "Zz"');
-    expect(s().source).toBeNull();
-    type("builder-bulk-element-2", "O");
-    click("builder-bulk-create");
-    expect(screen.queryByTestId("builder-crystal-error")).toBeNull();
-    expect(shown().nAtoms).toBe(5);
-    // A bad lattice constant is reported from the generator.
-    type("builder-bulk-a", "0");
-    click("builder-bulk-create");
-    expect(screen.getByTestId("builder-crystal-error").textContent).toContain("positive");
+  it("names the angles of a cell that is not orthogonal", () => {
+    const box = bulkSnapshot({ structure: "hcp", elements: [12], a: 3.21, covera: 1.624 }).box!;
+    expect(cellSummary(box)).toContain("120.00°");
   });
 });
 
@@ -102,7 +69,6 @@ describe("CrystalSection — cell", () => {
   it("edits the cell parameters, scales atoms, wraps, centres and removes the cell", () => {
     s().newBulk({ structure: "fcc", elements: [29], a: 4, cubic: true });
     render(<CrystalSection />);
-    click("builder-crystal-tab-cell");
     expect((screen.getByTestId("builder-cell-a") as HTMLInputElement).value).toBe("4");
     type("builder-cell-a", "8");
     click("builder-cell-apply");
@@ -139,7 +105,7 @@ describe("CrystalSection — cell", () => {
     expect(edits()[4]).toEqual({ op: "set_cell", box: null });
     expect(screen.getByTestId("builder-crystal-no-cell").textContent).toContain("no cell yet");
     expect(screen.getByTestId("builder-crystal-cell-summary").textContent).toBe("No cell");
-    // With no cell the wrap / remove chips are inert and the fields show a default cell.
+    // With no cell the wrap / remove buttons are inert and the fields show a default cell.
     click("builder-cell-wrap");
     click("builder-cell-remove");
     expect(edits()).toHaveLength(5);
@@ -151,7 +117,6 @@ describe("CrystalSection — cell", () => {
     s().pushOp({ op: "wrap" });
     s().setShowOriginal(true);
     render(<CrystalSection />);
-    click("builder-crystal-tab-cell");
     click("builder-cell-apply");
     click("builder-cell-wrap");
     expect(edits()).toHaveLength(1);
@@ -190,8 +155,7 @@ describe("CrystalSection — supercell", () => {
     render(<CrystalSection />);
     click("builder-crystal-tab-supercell");
     expect(screen.getByTestId("builder-crystal-no-cell").textContent).toContain("needs a cell");
-    click("builder-supercell-apply");
-    expect(edits()).toHaveLength(1);
+    expect(screen.queryByTestId("builder-supercell-apply")).toBeNull();
   });
 
   it("refuses a supercell beyond the atom limit", () => {

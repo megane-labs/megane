@@ -75,6 +75,18 @@ async function pickAtom(page: Page, atomIndex: number | null) {
   }, atomIndex);
 }
 
+/** Start an empty cell through the New structure dialog. */
+async function newEmptyCell(page: Page) {
+  await page.locator('[data-testid="builder-welcome-new"]').click();
+  await page.locator('[data-testid="builder-new-cell"]').click();
+}
+
+/** Pick a format from the top bar's Save menu. */
+async function saveAs(page: Page, format: string) {
+  await page.locator('[data-testid="builder-save"]').click();
+  await page.locator(`[data-testid="builder-save-${format}"]`).click();
+}
+
 test.describe("builder: webapp", () => {
   test.beforeEach(async ({ page }) => {
     await page.addInitScript(() => {
@@ -94,7 +106,7 @@ test.describe("builder: webapp", () => {
     await expect(page.locator('[data-testid="builder-welcome"]')).toBeVisible();
     await expect(page.locator('[data-testid="builder-file-name"]')).toHaveText("No structure");
 
-    await page.locator('[data-testid="builder-welcome-new"]').click();
+    await newEmptyCell(page);
     await expect(page.locator('[data-testid="builder-welcome"]')).toHaveCount(0);
     await waitForReady(page);
     expect(await builderState(page)).toMatchObject({ fileName: "untitled", nAtoms: 0, edge: 10 });
@@ -168,7 +180,7 @@ test.describe("builder: webapp", () => {
 
     // Save bakes the edited structure; the file takes the document's name.
     const download = page.waitForEvent("download");
-    await page.locator('[data-testid="builder-save-xyz"]').click();
+    await saveAs(page, "xyz");
     const file = await download;
     expect(file.suggestedFilename()).toBe("caffeine.xyz");
     const text = await (await file.createReadStream())
@@ -190,7 +202,7 @@ test.describe("builder: webapp", () => {
     // Add is inert without a document; with an empty cell it lands at the centre.
     await water.locator('[data-testid="builder-library-add"]').click();
     await expect(root).toHaveAttribute("data-atom-count", "0");
-    await page.locator('[data-testid="builder-welcome-new"]').click();
+    await newEmptyCell(page);
     await waitForReady(page);
     await water.locator('[data-testid="builder-library-add"]').click();
     await expect(root).toHaveAttribute("data-atom-count", "3");
@@ -365,7 +377,9 @@ test.describe("builder: webapp", () => {
       "No cell",
     );
 
-    // Bulk: the Cu fcc example in its conventional cell.
+    // Bulk: the Cu fcc example in its conventional cell, from the New menu.
+    await page.locator('[data-testid="builder-new"]').click();
+    await page.locator('[data-testid="builder-new-bulk-item"]').click();
     await page.locator('[data-testid="builder-bulk-example"]').selectOption("Cu (fcc)");
     await page.locator('[data-testid="builder-bulk-create"]').click();
     await waitForReady(page);
@@ -463,7 +477,61 @@ test.describe("builder: webapp", () => {
 
     // Save keeps working on the built structure.
     const download = page.waitForEvent("download");
-    await page.locator('[data-testid="builder-save-xyz"]').click();
+    await saveAs(page, "xyz");
     expect((await download).suggestedFilename()).toBe("Cu-fcc.xyz");
+  });
+  test("keyboard shortcuts drive the tools and the history; sections remember their state", async ({
+    page,
+  }) => {
+    const root = page.locator('[data-testid="megane-builder"]');
+    await page.setInputFiles('[data-testid="builder-open-input"]', "tests/fixtures/caffeine.sdf");
+    await waitForReady(page);
+    await expect(root).toHaveAttribute("data-atom-count", "24");
+
+    // A key picks the tool; the status bar says which one is active.
+    await page.keyboard.press("d");
+    await expect(page.locator('[data-testid="builder-tool-delete"]')).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+    await expect(page.locator('[data-testid="builder-status-tool"]')).toContainText("Delete (D)");
+    await pickAtom(page, 0);
+    await expect(root).toHaveAttribute("data-atom-count", "23");
+
+    // Undo / redo without touching the buttons.
+    await page.keyboard.press("Control+z");
+    await expect(root).toHaveAttribute("data-atom-count", "24");
+    await page.keyboard.press("Control+Shift+z");
+    await expect(root).toHaveAttribute("data-atom-count", "23");
+
+    // Select, then Delete removes the selection; Escape clears it.
+    await page.keyboard.press("s");
+    await pickAtom(page, 1);
+    await pickAtom(page, 2);
+    await expect(page.locator('[data-testid="builder-status-selection"]')).toHaveText("1 selected");
+    await page.keyboard.press("Escape");
+    await expect(page.locator('[data-testid="builder-status-selection"]')).toHaveCount(0);
+    await pickAtom(page, 1);
+    await page.keyboard.press("Delete");
+    await expect(root).toHaveAttribute("data-atom-count", "22");
+    await expect(root).toHaveAttribute("data-edit-count", "2");
+
+    // Typing in a field is never a shortcut.
+    await page.locator('[data-testid="builder-tool-add"]').click();
+    await page.locator('[data-testid="builder-element-z"]').fill("8");
+    await expect(page.locator('[data-testid="builder-tool-add"]')).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+
+    // A collapsed section stays collapsed across a reload.
+    await expect(page.locator('[data-testid="builder-crystal"]')).toBeVisible();
+    await page.locator('[data-testid="builder-section-crystal-toggle"]').click();
+    await expect(page.locator('[data-testid="builder-crystal"]')).toHaveCount(0);
+    await page.reload({ waitUntil: "domcontentloaded" });
+    await expect(page.locator('[data-testid="builder-sidebar"]')).toBeVisible();
+    await expect(page.locator('[data-testid="builder-crystal"]')).toHaveCount(0);
+    await page.locator('[data-testid="builder-section-crystal-toggle"]').click();
+    await expect(page.locator('[data-testid="builder-crystal"]')).toBeVisible();
   });
 });

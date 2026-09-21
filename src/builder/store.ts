@@ -48,6 +48,16 @@ export function emptyCellSnapshot(edge: number): Snapshot {
 /** File name the Builder gives a document that started from a blank cell. */
 export const UNTITLED = "untitled";
 
+/**
+ * The one message the app shows at a time (an open error, a library import,
+ * a refused crystal spec): every panel reports through it instead of keeping
+ * its own error line, so feedback always appears in the same place.
+ */
+export interface BuilderNotice {
+  level: "info" | "error";
+  text: string;
+}
+
 export interface BuilderStore {
   // ── Document ──
   /** The structure as loaded (or the blank cell); never mutated. */
@@ -89,6 +99,8 @@ export interface BuilderStore {
    * cell) — an adsorbate on a surface site. Null keeps clicks on atoms inert.
    */
   adsorbHeight: number | null;
+  /** The message on screen, if any; see `BuilderNotice`. */
+  notice: BuilderNotice | null;
 
   // ── Document actions ──
   /** Start a document from a parsed structure. Replaces everything. */
@@ -119,6 +131,12 @@ export interface BuilderStore {
   /** Choose the molecule the Place tool stamps (and switch to that tool), or clear it. */
   setPlaceSource: (molecule: LibraryMolecule | null) => void;
   setAdsorbHeight: (height: number | null) => void;
+  /** Show a message (replacing the current one), or clear it with null. */
+  setNotice: (notice: BuilderNotice | null) => void;
+  /** Shorthand for an error notice. */
+  reportError: (text: string) => void;
+  /** Shorthand for an informational notice. */
+  reportInfo: (text: string) => void;
   /**
    * Drop a library molecule into the document with its centroid at `at`, as
    * one `add_fragment` op, and select the new atoms so a Move drag carries
@@ -161,6 +179,7 @@ export const builderStateCreator: StateCreator<BuilderStore> = (set, get) => ({
   handlers: null,
   placeSource: null,
   adsorbHeight: null,
+  notice: null,
 
   openStructure: (snapshot, labels, fileName) =>
     set({
@@ -173,6 +192,7 @@ export const builderStateCreator: StateCreator<BuilderStore> = (set, get) => ({
       result: compute(snapshot, []),
       selected: [],
       pendingBondAtom: null,
+      notice: null,
     }),
 
   newCell: (edge) => get().openStructure(emptyCellSnapshot(edge), null, UNTITLED),
@@ -268,6 +288,9 @@ export const builderStateCreator: StateCreator<BuilderStore> = (set, get) => ({
     ),
   setAdsorbHeight: (height) =>
     set({ adsorbHeight: height !== null && Number.isFinite(height) ? height : null }),
+  setNotice: (notice) => set({ notice }),
+  reportError: (text) => set({ notice: { level: "error", text } }),
+  reportInfo: (text) => set({ notice: { level: "info", text } }),
   addFragment: (molecule, at) => {
     const s = get();
     if (!canEdit(s)) return null;
