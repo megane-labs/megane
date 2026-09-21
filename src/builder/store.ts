@@ -25,6 +25,7 @@ import { registerTestStores, GLOBAL_BUNDLE_ID } from "../stores/testRegistry";
 import type { BuildHandlers, BuildTool } from "./types";
 import { fragmentOp, newFragmentId } from "./library/fragment";
 import type { LibraryMolecule } from "./library/types";
+import { bulkName, bulkSnapshot, type BulkSpec } from "../crystal/bulk";
 
 /** A structure with no atoms and a cubic cell of edge `edge` Å: the blank sheet. */
 export function emptyCellSnapshot(edge: number): Snapshot {
@@ -82,12 +83,20 @@ export interface BuilderStore {
   handlers: BuildHandlers | null;
   /** The library molecule the Place tool stamps; null until one is chosen. */
   placeSource: LibraryMolecule | null;
+  /**
+   * When set, the Place tool also accepts a click *on* an atom and stamps the
+   * molecule this many Å above it along the cell's c axis (or +z without a
+   * cell) — an adsorbate on a surface site. Null keeps clicks on atoms inert.
+   */
+  adsorbHeight: number | null;
 
   // ── Document actions ──
   /** Start a document from a parsed structure. Replaces everything. */
   openStructure: (snapshot: Snapshot, labels: string[] | null, fileName: string) => void;
   /** Start a document from an empty cubic cell of edge `edge` Å. */
   newCell: (edge: number) => void;
+  /** Start a document from a bulk crystal (`bulkSnapshot`). Throws on a bad spec. */
+  newBulk: (spec: BulkSpec) => void;
   pushOp: (op: EditOp) => void;
   /** Replace the most recent op (a drag in progress). */
   replaceLastOp: (op: EditOp) => void;
@@ -109,6 +118,7 @@ export interface BuilderStore {
   setHandlers: (handlers: BuildHandlers | null) => void;
   /** Choose the molecule the Place tool stamps (and switch to that tool), or clear it. */
   setPlaceSource: (molecule: LibraryMolecule | null) => void;
+  setAdsorbHeight: (height: number | null) => void;
   /**
    * Drop a library molecule into the document with its centroid at `at`, as
    * one `add_fragment` op, and select the new atoms so a Move drag carries
@@ -150,6 +160,7 @@ export const builderStateCreator: StateCreator<BuilderStore> = (set, get) => ({
   pendingBondAtom: null,
   handlers: null,
   placeSource: null,
+  adsorbHeight: null,
 
   openStructure: (snapshot, labels, fileName) =>
     set({
@@ -165,6 +176,7 @@ export const builderStateCreator: StateCreator<BuilderStore> = (set, get) => ({
     }),
 
   newCell: (edge) => get().openStructure(emptyCellSnapshot(edge), null, UNTITLED),
+  newBulk: (spec) => get().openStructure(bulkSnapshot(spec), null, bulkName(spec)),
 
   pushOp: (op) =>
     set((s) => {
@@ -254,6 +266,8 @@ export const builderStateCreator: StateCreator<BuilderStore> = (set, get) => ({
         ? { placeSource: molecule, tool: "place", pendingBondAtom: null }
         : { placeSource: null, tool: s.tool === "place" ? "select" : s.tool },
     ),
+  setAdsorbHeight: (height) =>
+    set({ adsorbHeight: height !== null && Number.isFinite(height) ? height : null }),
   addFragment: (molecule, at) => {
     const s = get();
     if (!canEdit(s)) return null;

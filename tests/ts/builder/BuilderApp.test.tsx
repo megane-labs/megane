@@ -103,6 +103,7 @@ beforeEach(() => {
     pendingBondAtom: null,
     handlers: null,
     placeSource: null,
+    adsorbHeight: null,
   });
   applyViewportState.mockClear();
   exportSnapshot.mockClear();
@@ -266,6 +267,32 @@ describe("BuilderApp — editing", () => {
         .querySelector('[data-testid="builder-library-place"]')!,
     );
     expect(useBuilderStore.getState().tool).toBe("select");
+  });
+
+  it("Place on atoms stamps the molecule above the clicked atom when an adsorption height is set", () => {
+    render(<BuilderApp />);
+    fireEvent.click(
+      screen
+        .getByTestId("builder-library-item-preset:water")
+        .querySelector('[data-testid="builder-library-place"]')!,
+    );
+    fireEvent.change(screen.getByTestId("builder-adsorb-height"), { target: { value: "3" } });
+    fireEvent.click(screen.getByTestId("builder-adsorb-toggle"));
+    expect(useBuilderStore.getState().adsorbHeight).toBe(3);
+    pick(0);
+    expect(edits()).toHaveLength(1);
+    const src = useBuilderStore.getState().source!;
+    expect(edits()[0]).toMatchObject({
+      op: "add_fragment",
+      translate: [src.positions[0], src.positions[1], src.positions[2] + 3],
+    });
+    // Changing the height while on updates the store; turning it off restores inert atom clicks.
+    fireEvent.change(screen.getByTestId("builder-adsorb-height"), { target: { value: "1.5" } });
+    expect(useBuilderStore.getState().adsorbHeight).toBe(1.5);
+    fireEvent.click(screen.getByTestId("builder-adsorb-toggle"));
+    expect(useBuilderStore.getState().adsorbHeight).toBeNull();
+    pick(0);
+    expect(edits()).toHaveLength(1);
   });
 
   it("Undo / Redo / Clear all from the sidebar and the top bar", () => {

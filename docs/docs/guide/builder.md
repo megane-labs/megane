@@ -112,6 +112,63 @@ Either way the molecule enters the history as one `add_fragment` operation
 (named after the molecule, e.g. `Add water-3 (3 atoms)`), so Undo removes it
 whole and the fragment's atoms can be addressed by later operations.
 
+To put a molecule *on* a surface, tick **Place on atoms** and give a height:
+the Place tool then also accepts a click on an atom and stamps the molecule
+that many Å above it along the cell's c axis (the slab normal; +z without a
+cell) — an adsorbate on the site you clicked. Leave it unticked and clicks on
+atoms stay inert.
+
+## Crystal
+
+The **Crystal** section builds solids. Its four tabs, plus the symmetry offer
+that appears for CIF files, cover the ASE-style workflow of bulk → supercell
+→ slab → adsorbate without leaving the browser; the geometry is computed in
+TypeScript and pinned to what ASE produces by the tests
+(`tests/fixtures/crystal/ase-oracle.json`).
+
+- **Bulk** starts a new document from a prototype structure: simple cubic,
+  fcc, bcc, hcp, diamond, zincblende, rocksalt, CsCl, fluorite, wurtzite or
+  perovskite, with the element(s), the lattice constant `a`, `c/a` for the
+  hexagonal ones, and *conventional cell* for the cubic ones (the primitive
+  cell otherwise, exactly as `ase.build.bulk`). The **Examples…** list fills
+  the fields with reference lattice constants (Cu, Al, Fe, Mg, Si, NaCl, GaAs,
+  SrTiO₃, …). The document is named after the crystal (`Cu-fcc`) and, like
+  *New empty cell*, replaces whatever is open.
+- **Cell** edits the cell as `a b c α β γ`. With *move atoms with the cell*
+  on, the atoms keep their fractional coordinates (ASE's `scale_atoms`);
+  off, they stay where they are. **Wrap atoms** folds every atom back into
+  the cell; **Center + vacuum** centres the atoms along the chosen axes and
+  resizes those cell vectors to leave the given vacuum on each side
+  (`Atoms.center`). **Remove cell** drops the cell.
+- **Supercell** repeats the cell `na × nb × nc` — or, with **Matrix**, by any
+  integer 3×3 transformation whose rows are the new lattice vectors in units
+  of the old ones (`make_supercell`; `[1 1 0 / −1 1 0 / 0 0 1]` is the √2×√2
+  R45° cell, `[−1 1 1 / 1 −1 1 / 1 1 −1]` turns a primitive fcc cell into the
+  conventional one). The line beside the button says how many atoms the
+  result will have. Bonds are carried along: a bond that crossed the cell
+  face now reaches the neighbouring image, as the viewer's Replicate node
+  draws it.
+- **Slab** cuts the (h k l) surface out of the current cell
+  (`ase.build.surface`): the surface unit cell is repeated *layers* times
+  along the normal, rotated so the first surface vector lies along x and
+  the normal along z, and centred in *vacuum* Å of empty space on each side
+  (0 keeps the slab periodic). The **termination** slider slides the cut
+  along the normal so a different plane ends up on top. The line beside the
+  button previews the atom count and thickness before you commit. Bonds that
+  would have crossed into the vacuum are dropped; in-plane periodic ones are
+  kept.
+- **Expand symmetry** appears when the opened file (a CIF) lists space-group
+  operations for its asymmetric unit, and fills the unit cell with the
+  symmetry-equivalent atoms the way the viewer's Symmetry node does. Do it
+  before cutting a supercell or slab; the offer goes away once the cell has
+  been changed, because the operations no longer apply.
+
+Each action is one operation in the history (`Supercell 2×2×1`,
+`Slab (1 1 1), 4 layers, 10 Å vacuum`, `Expand symmetry`, …), so Undo takes
+it back whole. Supercell, slab and symmetry expansion replace every atom;
+atoms you had selected are deselected and later operations address the new
+structure.
+
 ## History
 
 The **History** section lists every operation in order and offers **Undo**,
@@ -128,9 +185,10 @@ That is why deleting an atom never breaks a later operation.
 
 ## Not yet
 
-Editing the cell vectors themselves (only *New empty cell* sets a cell),
-saving the document as a project file (the source plus its operations),
-and keyboard shortcuts are deliberately not in this version; nor is the
-Builder shipped inside the JupyterLab or VS Code hosts yet. The full design, including how a Builder
+Saving the document as a project file (the source plus its operations),
+keyboard shortcuts, building a crystal from a space-group number and
+Wyckoff positions, and enumerating the distinct terminations of a slab
+(pymatgen's `SlabGenerator`) are deliberately not in this version; nor is
+the Builder shipped inside the JupyterLab or VS Code hosts yet. The full design, including how a Builder
 document is meant to travel into the viewer, is in
 [Structure editing design](../dev/editor-design.md).

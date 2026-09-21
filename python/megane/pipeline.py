@@ -120,6 +120,18 @@ class LoadStructure(PipelineNode):
             structure; the rest of the pipeline only describes how it is
             shown.
 
+            The Builder's crystal tools write whole-structure ops that
+            replace every atom (re-keyed as ``"<id>:<k>"``)::
+
+                {"op": "supercell", "id": "sc", "matrix": [2, 0, 0, 0, 2, 0, 0, 0, 1]}
+                {"op": "slab", "id": "sl", "miller": [1, 1, 1], "layers": 4, "vacuum": 10.0}
+                {"op": "expand_symmetry", "id": "sym"}
+
+            plus ``{"op": "wrap"}``, ``{"op": "center", "axes": [2], "vacuum": 5.0}``
+            and ``set_cell`` with ``"scaleAtoms": True``. They reproduce
+            ASE's ``make_supercell``, ``ase.build.surface`` and
+            ``Atoms.center``.
+
     Ports:
         out.particle — atom data (edited when ``edits`` is set)
         out.traj     — trajectory channel

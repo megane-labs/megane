@@ -709,9 +709,11 @@ export interface ReplicateParams {
  * Reference to an atom from inside a `load_structure` node's edit list. A
  * number is an index into the structure *as loaded from the file*; a string
  * is the `id` of an atom created earlier in the same list by an `add_atom`
- * op (its `id`) or an `add_fragment` op (`<fragmentId>:<k>` for the k-th
- * fragment atom). Ops are applied in order, so a ref must be created before
- * it is used.
+ * op (its `id`), an `add_fragment` op (`<fragmentId>:<k>` for the k-th
+ * fragment atom), or one of the whole-structure ops (`supercell`, `slab`,
+ * `expand_symmetry`: `<id>:<k>` for the k-th atom of their result, which
+ * replaces every earlier ref). Ops are applied in order, so a ref must be
+ * created before it is used.
  */
 export type EditAtomRef = number | string;
 
@@ -751,6 +753,48 @@ export type EditOp =
       op: "set_cell";
       /** Row-major 3×3 cell, or null to remove the cell. */
       box: number[] | null;
+      /**
+       * Keep every atom's fractional coordinates, i.e. move the atoms with the
+       * cell (ASE's `scale_atoms`). Ignored when either cell is missing.
+       */
+      scaleAtoms?: boolean;
+    }
+  | {
+      op: "supercell";
+      /** Stable id prefix for the resulting atoms (`<id>:<k>`). */
+      id: string;
+      /**
+       * Integer row-major 3×3: rows are the new lattice vectors in units of
+       * the old ones (ASE `make_supercell`). `[2,0,0, 0,2,0, 0,0,1]` is a
+       * 2×2×1 repeat.
+       */
+      matrix: number[];
+    }
+  | {
+      op: "slab";
+      /** Stable id prefix for the resulting atoms (`<id>:<k>`). */
+      id: string;
+      /** Miller indices (h k l) of the exposed surface. */
+      miller: [number, number, number];
+      /** Repeats of the surface unit cell along the normal (≥ 1). */
+      layers: number;
+      /** Vacuum on each side along the normal, Å; 0 keeps the slab periodic. */
+      vacuum: number;
+      /** Fractional offset along the normal before the cut (termination), default 0. */
+      shift?: number;
+    }
+  | {
+      op: "expand_symmetry";
+      /** Stable id prefix for the resulting atoms (`<id>:<k>`). */
+      id: string;
+    }
+  | { op: "wrap" }
+  | {
+      op: "center";
+      /** Cell axes to centre along (0 = a, 1 = b, 2 = c); all three when omitted. */
+      axes?: number[];
+      /** Vacuum to leave on each side along those axes, Å; the cell is resized. Omit to keep the cell. */
+      vacuum?: number | null;
     };
 
 /** Inclusive fractional display range along the crystallographic axes. */

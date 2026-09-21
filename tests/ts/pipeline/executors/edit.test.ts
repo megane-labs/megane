@@ -206,6 +206,145 @@ describe("applyEditOps", () => {
   });
 });
 
+describe("applyEditOps — crystal ops", () => {
+  const sym = (extra: Partial<Snapshot> = {}) =>
+    water({
+      nBonds: 0,
+      nFileBonds: 0,
+      bonds: new Uint32Array(0),
+      symmetryOps: ["x,y,z", "-x,-y,-z"],
+      ...extra,
+    });
+
+  it("set_cell with scaleAtoms keeps fractional coordinates", () => {
+    const { snapshot } = applyEditOps(water(), [
+      { op: "set_cell", box: [20, 0, 0, 0, 10, 0, 0, 0, 10], scaleAtoms: true },
+    ]);
+    expect(snapshot.positions[3]).toBeCloseTo(0.757 * 2, 5);
+    expect(snapshot.positions[4]).toBeCloseTo(0.586, 5);
+    // Without a previous cell the flag is ignored.
+    const noCell = applyEditOps(water({ box: null }), [
+      { op: "set_cell", box: [20, 0, 0, 0, 10, 0, 0, 0, 10], scaleAtoms: true },
+    ]).snapshot;
+    expect(noCell.positions[3]).toBeCloseTo(0.757, 5);
+    // A singular current cell cannot be scaled from; warn and set the cell anyway.
+    const singular = applyEditOps(water({ box: new Float32Array(9) }), [
+      { op: "set_cell", box: [20, 0, 0, 0, 10, 0, 0, 0, 10], scaleAtoms: true },
+    ]);
+    expect(singular.warnings[0]).toContain("singular");
+    expect(singular.snapshot.box![0]).toBe(20);
+  });
+
+  it("supercell replaces the atoms with <id>:<k> refs, tiles bonds and drops symmetry ops", () => {
+    const { snapshot, outputRefs, warnings } = applyEditOps(
+      sym({ nBonds: 2, bonds: new Uint32Array([0, 1, 0, 2]) }),
+      [{ op: "supercell", id: "sc", matrix: [2, 0, 0, 0, 1, 0, 0, 0, 1] }],
+    );
+    expect(warnings).toEqual([]);
+    expect(snapshot.nAtoms).toBe(6);
+    expect(snapshot.nBonds).toBe(4);
+    expect(outputRefs).toEqual(["sc:0", "sc:1", "sc:2", "sc:3", "sc:4", "sc:5"]);
+    expect(Array.from(snapshot.box!)).toEqual([20, 0, 0, 0, 10, 0, 0, 0, 10]);
+    expect(snapshot.symmetryOps).toBeUndefined();
+    expect(Array.from(snapshot.atomChainIds!)).toEqual([65, 65, 65, 65, 65, 65]);
+    // Later ops address the new refs; the old numeric refs are gone.
+    const next = applyEditOps(water(), [
+      { op: "supercell", id: "sc", matrix: [2, 0, 0, 0, 1, 0, 0, 0, 1] },
+      { op: "set_element", atoms: ["sc:3"], element: 7 },
+      { op: "delete_atoms", atoms: [0] },
+    ]);
+    expect(next.snapshot.elements[3]).toBe(7);
+    expect(next.warnings).toHaveLength(1);
+    expect(next.warnings[0]).toContain("unknown atom 0");
+  });
+
+  it("supercell warns without a cell or with a bad matrix", () => {
+    const noCell = applyEditOps(water({ box: null }), [
+      { op: "supercell", id: "sc", matrix: [2, 0, 0, 0, 1, 0, 0, 0, 1] },
+    ]);
+    expect(noCell.snapshot.nAtoms).toBe(3);
+    expect(noCell.warnings[0]).toContain("no cell");
+    const bad = applyEditOps(water(), [
+      { op: "supercell", id: "sc", matrix: [0, 0, 0, 0, 0, 0, 0, 0, 0] },
+    ]);
+    expect(bad.snapshot.nAtoms).toBe(3);
+    expect(bad.warnings[0]).toContain("determinant");
+  });
+
+  it("slab cuts a surface with vacuum and re-keys the atoms", () => {
+    const { snapshot, outputRefs, warnings } = applyEditOps(water(), [
+      { op: "slab", id: "sl", miller: [0, 0, 1], layers: 2, vacuum: 5, shift: 0.5 },
+    ]);
+    expect(warnings).toEqual([]);
+    expect(snapshot.nAtoms).toBe(6);
+    expect(outputRefs[5]).toBe("sl:5");
+    // Thickness: atoms span one repeat (10 Å) plus 2 × 5 Å vacuum.
+    expect(snapshot.box![8]).toBeCloseTo(20, 4);
+    expect(snapshot.symmetryOps).toBeUndefined();
+    const noCell = applyEditOps(water({ box: null }), [
+      { op: "slab", id: "sl", miller: [1, 1, 1], layers: 1, vacuum: 0 },
+    ]);
+    expect(noCell.warnings[0]).toContain("no cell");
+    const bad = applyEditOps(water(), [
+      { op: "slab", id: "sl", miller: [0, 0, 0], layers: 1, vacuum: 0 },
+    ]);
+    expect(bad.warnings[0]).toContain("Miller");
+    expect(bad.snapshot.nAtoms).toBe(3);
+  });
+
+  it("expand_symmetry fills the cell once and consumes the operations", () => {
+    const { snapshot, outputRefs, warnings } = applyEditOps(sym(), [
+      { op: "expand_symmetry", id: "ex" },
+    ]);
+    expect(warnings).toEqual([]);
+    expect(snapshot.nAtoms).toBe(6);
+    expect(outputRefs[0]).toBe("ex:0");
+    expect(snapshot.symmetryOps).toBeUndefined();
+    // A second expansion has nothing to apply.
+    const twice = applyEditOps(sym(), [
+      { op: "expand_symmetry", id: "ex" },
+      { op: "expand_symmetry", id: "ex2" },
+    ]);
+    expect(twice.snapshot.nAtoms).toBe(6);
+    expect(twice.warnings[0]).toContain("no symmetry operations");
+    // Identity-only operations: nothing to expand, but they are consumed.
+    const identity = applyEditOps(sym({ symmetryOps: ["x,y,z"] }), [
+      { op: "expand_symmetry", id: "ex" },
+    ]);
+    expect(identity.snapshot.nAtoms).toBe(3);
+    expect(identity.snapshot.symmetryOps).toBeUndefined();
+    expect(identity.warnings).toEqual([]);
+    const noOps = applyEditOps(water(), [{ op: "expand_symmetry", id: "ex" }]);
+    expect(noOps.warnings[0]).toContain("no symmetry operations");
+    const noCell = applyEditOps(sym({ box: null }), [{ op: "expand_symmetry", id: "ex" }]);
+    expect(noCell.warnings[0]).toContain("no cell");
+  });
+
+  it("wrap folds atoms into the cell and keeps refs; center pads with vacuum", () => {
+    const src = water();
+    src.positions[0] = -1;
+    const wrapped = applyEditOps(src, [{ op: "wrap" }]);
+    expect(wrapped.snapshot.positions[0]).toBeCloseTo(9, 5);
+    expect(wrapped.outputRefs).toEqual([0, 1, 2]);
+    expect(wrapped.snapshot.symmetryOps).toBe(src.symmetryOps);
+    expect(applyEditOps(water({ box: null }), [{ op: "wrap" }]).warnings[0]).toContain(
+      "no usable cell",
+    );
+
+    const centered = applyEditOps(water(), [{ op: "center", axes: [2], vacuum: 4 }]);
+    expect(centered.snapshot.box![8]).toBeCloseTo(8, 5);
+    expect(centered.snapshot.positions[2]).toBeCloseTo(4, 5);
+    expect(centered.outputRefs).toEqual([0, 1, 2]);
+    // Without a vacuum the cell is kept and only the atoms move.
+    const only = applyEditOps(water(), [{ op: "center" }]);
+    expect(Array.from(only.snapshot.box!)).toEqual([10, 0, 0, 0, 10, 0, 0, 0, 10]);
+    expect(only.snapshot.positions[2]).toBeCloseTo(5, 5);
+    expect(applyEditOps(water({ box: null }), [{ op: "center" }]).warnings[0]).toContain(
+      "no usable cell",
+    );
+  });
+});
+
 describe("executeLoadStructure with edits", () => {
   it("emits the file as loaded when there are no edits (absent or empty)", () => {
     const src = water();

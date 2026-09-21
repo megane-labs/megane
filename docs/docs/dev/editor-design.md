@@ -81,9 +81,46 @@ applies is skipped with a warning on the loader.
   remapped; `nFileBonds` is set to the full bond count because every surviving
   bond is now asserted by the edit. Nothing upstream carries per-atom
   overrides or selections (the loader is the source), so none need remapping.
-- Cell-aware: `set_cell` replaces or removes the box and the loader emits the
-  edited `cell` stream. The `trajectory` output follows the file: its frames
-  index the atoms as loaded.
+- Cell-aware: `set_cell` replaces or removes the box (and, with `scaleAtoms`,
+  keeps the atoms' fractional coordinates) and the loader emits the edited
+  `cell` stream. The `trajectory` output follows the file: its frames index
+  the atoms as loaded.
+
+### Whole-structure ops (crystal tools)
+
+`supercell`, `slab` and `expand_symmetry` do not edit atoms one by one: they
+replace the working structure. The executor materialises the working copy
+as a Snapshot, runs the transform (`src/crystal/transform.ts` —
+`makeSupercell`, `buildSlab` — or the Symmetry node's own `expandSymmetry`),
+and rebuilds the working copy from the result with every atom re-keyed as
+`<id>:<k>`. Refs written before such an op therefore stop resolving after
+it (a later `delete_atoms: [0]` is skipped with a warning), which is
+intended: the Builder always addresses the structure it currently shows, and
+the alternative — tracking each source atom through a supercell so that
+"atom 3" means eight atoms — would make later ops ambiguous. `wrap` and
+`center` only move atoms (and, with a vacuum, resize the cell) and keep
+every ref. All of them mark the file's space-group operations as consumed
+(`symmetryOps` is dropped from the output), so the viewer's Symmetry node
+does not expand an already expanded or re-celled structure a second time.
+
+The transforms live in `src/crystal/` because they are pure Snapshot →
+Snapshot functions with no Builder or pipeline dependency: `cell.ts`
+(parameters ⇄ vectors, fractional ⇄ Cartesian, the integer helpers),
+`bulk.ts` (the prototype structures behind *New bulk crystal*) and
+`transform.ts`. They are TypeScript ports of ASE — `bulk`, `make_supercell`,
+`ase.build.surface` (the `general_surface` construction, extended Euclid
+included, so slabs come out identical), `Atoms.wrap`, `Atoms.center` — and
+ASE is the *test oracle*, never a runtime dependency:
+`scripts/gen-crystal-fixtures.py` records what ASE produces for a fixed set
+of inputs into `tests/fixtures/crystal/ase-oracle.json`, and
+`tests/ts/crystal/` compares atom for atom (modulo lattice translations for
+atoms that sit exactly on a cell face, where float32 and float64 wrap to
+different sides). Bonds survive a transform by geometry rather than by index
+bookkeeping: every source bond is a minimum-image vector, and it is re-drawn
+wherever an image of its first atom has an image of its second atom at that
+vector modulo the periodic axes of the result — so a supercell keeps every
+bond (boundary bonds reach into the neighbouring image, as the Replicate
+node draws them) and a slab drops the ones that would cross the vacuum.
 
 ## The Builder app and the 3D view
 
@@ -135,6 +172,16 @@ the Inspector's box select:
   (`screenDragToWorldDelta` in `Picking.ts`);
 - otherwise a press that barely moves is a click, reported to `pick` with the
   atom index or, on empty space, the world point at the pivot's depth.
+
+**Crystal.** `src/builder/crystal/CrystalSection.tsx` is the sidebar's
+Crystal section: *Bulk* calls `BuilderStore.newBulk` (a new document, like
+*New empty cell*); *Cell*, *Supercell*, *Slab* and *Expand symmetry* each
+push one op. The slab tab runs `buildSlab` on the shown structure to
+preview the atom count and thickness before the op is written. The Place
+tool's *Place on atoms* option (`adsorbHeight` on the store,
+`adsorptionSite` in `placement.ts`) stamps a library molecule a given
+height above a clicked atom along the cell's c axis, which with a slab is
+the surface normal — an adsorbate as one `add_fragment` op.
 
 **Library.** `src/builder/library/` holds the molecule library the sidebar
 offers: `presets.ts` (small molecules with 3D geometries), a persisted
@@ -197,6 +244,12 @@ save dialog.
 
 ## Deliberately not in this iteration
 
+- **Space-group generation and termination enumeration** — building a bulk
+  from a space-group number plus Wyckoff positions (`ase.spacegroup.crystal`)
+  needs the 230 groups' operation tables embedded; listing the distinct
+  terminations of a slab (pymatgen's `SlabGenerator.get_slabs`) and
+  primitive / conventional cell detection need spglib, which would go into
+  the `megane-rdkit` Emscripten build as a second module.
 - **Bake to file** — collapsing a long history into a re-loaded file. The
   writer makes this possible; it needs a host-specific "replace the loaded
   file" flow.

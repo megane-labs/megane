@@ -156,9 +156,14 @@ function isIdentity(op: Symop): boolean {
  * Apply the space-group operations to the asymmetric unit, filling one unit
  * cell. Returns `null` when there is nothing to do (no usable operations, only
  * the identity, no atoms, or a singular cell) so the caller passes the
- * original stream through.
+ * original stream through. Also the engine behind the Builder's
+ * `expand_symmetry` edit op.
  */
-function expandSymmetry(src: Snapshot, box: Float32Array, symops: string[]): Snapshot | null {
+export function expandSymmetry(
+  src: Snapshot,
+  box: Float32Array,
+  symops: string[],
+): Snapshot | null {
   const ops = symops.map(parseSymop).filter((op): op is Symop => op !== null);
   if (ops.length === 0 || (ops.length === 1 && isIdentity(ops[0]))) return null;
   const boxInv = invert3x3(box);

@@ -234,6 +234,25 @@ describe("useBuilderStore — library placement", () => {
     });
   });
 
+  it("newBulk starts a bulk crystal document named after it; a bad spec throws and keeps the document", () => {
+    s().newBulk({ structure: "fcc", elements: [29], a: 3.61, cubic: true });
+    expect(s().fileName).toBe("Cu-fcc");
+    expect(s().result!.snapshot.nAtoms).toBe(4);
+    expect(s().edits).toEqual([]);
+    expect(() => s().newBulk({ structure: "fcc", elements: [29], a: -1 })).toThrow();
+    expect(s().fileName).toBe("Cu-fcc");
+  });
+
+  it("setAdsorbHeight keeps only finite heights", () => {
+    s().setAdsorbHeight(2.5);
+    expect(s().adsorbHeight).toBe(2.5);
+    s().setAdsorbHeight(Number.NaN);
+    expect(s().adsorbHeight).toBeNull();
+    s().setAdsorbHeight(1);
+    s().setAdsorbHeight(null);
+    expect(s().adsorbHeight).toBeNull();
+  });
+
   it("choosing a place source switches to the Place tool; clearing it falls back to Select", () => {
     s().setPendingBondAtom(2);
     s().setPlaceSource(molecule);
