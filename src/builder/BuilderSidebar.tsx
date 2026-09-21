@@ -7,28 +7,13 @@
  *   History   — the operation list, undo / redo / clear, "show original"
  *
  * Document-level actions (open, new, save) live in the top bar, not here, so
- * each control appears exactly once. Built from Mantine components over
- * `useBuilderStore`; every edit goes through the store's actions and the
- * handlers installed by `useBuilderHandlers`.
+ * each control appears exactly once. Pure UI over `useBuilderStore`; every
+ * edit goes through the store's actions and the handlers installed by
+ * `useBuilderHandlers`.
  */
 
 import { useState } from "react";
-import {
-  Alert,
-  Button,
-  Checkbox,
-  Divider,
-  Group,
-  List,
-  NativeSelect,
-  NumberInput,
-  Paper,
-  ScrollArea,
-  Stack,
-  Text,
-  Tooltip,
-} from "@mantine/core";
-import { useBuilderStore, canEdit } from "./store";
+import { useBuilderStore, canEdit, shownSnapshot } from "./store";
 import { describeOp } from "./placement";
 import { Section } from "./Section";
 import { TOOL_KEYS } from "./shortcuts";
@@ -37,6 +22,27 @@ import type { EditAtomRef } from "../pipeline/types";
 import { getElementSymbol } from "../constants";
 import { LibrarySection, DEFAULT_ADSORB_HEIGHT } from "./library/LibrarySection";
 import { CrystalSection } from "./crystal/CrystalSection";
+import {
+  buttonStyle,
+  chipStyle,
+  hintStyle,
+  inputStyle,
+  rowStyle,
+  sectionStyle,
+  sectionTitleStyle,
+  segmentGroupStyle,
+  segmentStyle,
+  toggleStyle,
+} from "./styles";
+
+export {
+  sectionStyle,
+  sectionTitleStyle,
+  hintStyle,
+  inputStyle,
+  chipStyle,
+  buttonStyle,
+} from "./styles";
 
 export interface ToolInfo {
   value: BuildTool;
@@ -89,11 +95,11 @@ export const TOOLS: ToolInfo[] = [
 /** Elements offered as quick chips; anything else via the number input. */
 const QUICK_ELEMENTS = [1, 6, 7, 8, 9, 15, 16, 17, 35, 14];
 
-const BOND_ORDERS = [
-  { value: "1", label: "Single" },
-  { value: "2", label: "Double" },
-  { value: "3", label: "Triple" },
-  { value: "4", label: "Aromatic" },
+const BOND_ORDERS: { value: number; label: string }[] = [
+  { value: 1, label: "Single" },
+  { value: 2, label: "Double" },
+  { value: 3, label: "Triple" },
+  { value: 4, label: "Aromatic" },
 ];
 
 export function BuilderSidebar() {
@@ -106,36 +112,53 @@ export function BuilderSidebar() {
   const editable = canEdit({ source, result, showOriginal });
 
   return (
-    <ScrollArea h="100%" type="auto">
-      <Stack gap="sm" p="sm" data-testid="builder-sidebar">
-        {!source && (
-          <Text size="xs" c="dimmed" data-testid="builder-empty-hint">
-            Open a structure file, or start a new one from the top bar.
-          </Text>
-        )}
-        {source && showOriginal && (
-          <Alert color="yellow" variant="light" p="xs" data-testid="builder-paused">
-            <Stack gap={6}>
-              <Text size="xs">Showing the structure as loaded. Editing is paused.</Text>
-              <Group>
-                <Button
-                  variant="default"
-                  data-testid="builder-resume-editing"
-                  onClick={() => setShowOriginal(false)}
-                >
-                  Back to the edited structure
-                </Button>
-              </Group>
-            </Stack>
-          </Alert>
-        )}
+    <div
+      data-testid="builder-sidebar"
+      style={{
+        display: "flex",
+        flexDirection: "column",
+        gap: 12,
+        padding: 12,
+        overflowY: "auto",
+        fontSize: 13,
+        color: "var(--megane-text, #1e293b)",
+      }}
+    >
+      {!source && (
+        <div style={hintStyle} data-testid="builder-empty-hint">
+          Open a structure file, or start a new one from the top bar.
+        </div>
+      )}
+      {source && showOriginal && (
+        <div
+          data-testid="builder-paused"
+          style={{
+            ...sectionStyle,
+            gap: 6,
+            background: "rgba(245, 158, 11, 0.12)",
+            color: "#92400e",
+            fontSize: 12,
+          }}
+        >
+          <span>Showing the structure as loaded. Editing is paused.</span>
+          <div>
+            <button
+              type="button"
+              data-testid="builder-resume-editing"
+              style={buttonStyle()}
+              onClick={() => setShowOriginal(false)}
+            >
+              Back to the edited structure
+            </button>
+          </div>
+        </div>
+      )}
 
-        <ToolPanel editable={editable} />
-        <LibrarySection />
-        <CrystalSection />
-        <HistorySection defaultOpen={edits.length > 0} />
-      </Stack>
-    </ScrollArea>
+      <ToolPanel editable={editable} />
+      <LibrarySection />
+      <CrystalSection />
+      <HistorySection defaultOpen={edits.length > 0} />
+    </div>
   );
 }
 
@@ -157,99 +180,91 @@ function ToolPanel({ editable }: { editable: boolean }) {
   const active = TOOLS.find((t) => t.value === tool)!;
 
   return (
-    <Paper withBorder radius="md" p="sm" data-testid="builder-tools">
-      <Stack gap="xs">
-        <Text size="xs" fw={700} tt="uppercase" c="dimmed" style={{ letterSpacing: 0.4 }}>
-          Tool
-        </Text>
-        <Group gap={4} role="radiogroup" aria-label="Tool">
-          {TOOLS.map((t) => (
-            <Tooltip key={t.value} label={`${t.label} (${TOOL_KEYS[t.value]})`} openDelay={400}>
-              <Button
-                variant={tool === t.value ? "filled" : "default"}
-                size="compact-xs"
-                role="radio"
-                aria-checked={tool === t.value}
-                aria-pressed={tool === t.value}
-                data-testid={`builder-tool-${t.value}`}
-                onClick={() => setTool(t.value)}
+    <div style={sectionStyle} data-testid="builder-tools">
+      <span style={sectionTitleStyle}>Tool</span>
+      <div style={segmentGroupStyle} role="radiogroup" aria-label="Tool">
+        {TOOLS.map((t) => (
+          <span
+            key={t.value}
+            role="radio"
+            data-testid={`builder-tool-${t.value}`}
+            aria-checked={tool === t.value}
+            aria-pressed={tool === t.value}
+            title={`${t.label} (${TOOL_KEYS[t.value]})`}
+            style={segmentStyle(tool === t.value)}
+            onClick={() => setTool(t.value)}
+          >
+            {t.label}
+          </span>
+        ))}
+      </div>
+      <div style={hintStyle} data-testid="builder-tool-hint">
+        {active.hint}
+        {tool === "bond" && pendingBondAtom !== null && ` First atom: #${pendingBondAtom}.`}
+        {tool === "place" &&
+          (placeSource ? ` Placing ${placeSource.name}.` : " Choose a molecule in the library.")}
+      </div>
+
+      {active.needs.includes("element") && (
+        <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+          <span style={hintStyle}>Element</span>
+          <div style={rowStyle}>
+            {QUICK_ELEMENTS.map((z) => (
+              <span
+                key={z}
+                role="button"
+                data-testid={`builder-element-${getElementSymbol(z)}`}
+                aria-pressed={element === z}
+                style={chipStyle(element === z)}
+                onClick={() => setElement(z)}
               >
-                {t.label}
-              </Button>
-            </Tooltip>
-          ))}
-        </Group>
-        <Text size="xs" c="dimmed" data-testid="builder-tool-hint">
-          {active.hint}
-          {tool === "bond" && pendingBondAtom !== null && ` First atom: #${pendingBondAtom}.`}
-          {tool === "place" &&
-            (placeSource ? ` Placing ${placeSource.name}.` : " Choose a molecule in the library.")}
-        </Text>
+                {getElementSymbol(z)}
+              </span>
+            ))}
+            <label style={{ ...hintStyle, display: "flex", alignItems: "center", gap: 4 }}>
+              Z
+              <input
+                data-testid="builder-element-z"
+                type="number"
+                min={1}
+                max={118}
+                value={element}
+                onChange={(e) => {
+                  const v = parseInt(e.target.value, 10);
+                  if (Number.isFinite(v) && v >= 1 && v <= 118) setElement(v);
+                }}
+                style={{ ...inputStyle, width: 56 }}
+              />
+            </label>
+            <span style={hintStyle}>= {getElementSymbol(element)}</span>
+          </div>
+        </div>
+      )}
 
-        {active.needs.includes("element") && (
-          <Stack gap={6}>
-            <Text size="xs" c="dimmed">
-              Element
-            </Text>
-            <Group gap={4}>
-              {QUICK_ELEMENTS.map((z) => (
-                <Button
-                  key={z}
-                  size="compact-xs"
-                  radius="xl"
-                  variant={element === z ? "filled" : "default"}
-                  aria-pressed={element === z}
-                  data-testid={`builder-element-${getElementSymbol(z)}`}
-                  onClick={() => setElement(z)}
-                >
-                  {getElementSymbol(z)}
-                </Button>
-              ))}
-              <Group gap={4} wrap="nowrap">
-                <Text size="xs" c="dimmed">
-                  Z
-                </Text>
-                <NumberInput
-                  data-testid="builder-element-z"
-                  min={1}
-                  max={118}
-                  w={64}
-                  hideControls
-                  value={element}
-                  onChange={(v) => {
-                    const n = typeof v === "number" ? v : parseInt(String(v), 10);
-                    if (Number.isFinite(n) && n >= 1 && n <= 118) setElement(n);
-                  }}
-                />
-                <Text size="xs" c="dimmed">
-                  = {getElementSymbol(element)}
-                </Text>
-              </Group>
-            </Group>
-          </Stack>
-        )}
+      {active.needs.includes("bondOrder") && (
+        <label style={rowStyle}>
+          <span style={hintStyle}>Bond order</span>
+          <select
+            data-testid="builder-bond-order"
+            value={bondOrder}
+            onChange={(e) => setBondOrder(parseInt(e.target.value, 10))}
+            style={inputStyle}
+          >
+            {BOND_ORDERS.map((o) => (
+              <option key={o.value} value={o.value}>
+                {o.label}
+              </option>
+            ))}
+          </select>
+        </label>
+      )}
 
-        {active.needs.includes("bondOrder") && (
-          <Group gap={6} wrap="nowrap">
-            <Text size="xs" c="dimmed">
-              Bond order
-            </Text>
-            <NativeSelect
-              data-testid="builder-bond-order"
-              value={String(bondOrder)}
-              onChange={(e) => setBondOrder(parseInt(e.currentTarget.value, 10))}
-              data={BOND_ORDERS}
-            />
-          </Group>
-        )}
+      {active.needs.includes("place") && (
+        <AdsorbOption height={adsorbHeight} onChange={setAdsorbHeight} />
+      )}
 
-        {active.needs.includes("place") && (
-          <AdsorbOption height={adsorbHeight} onChange={setAdsorbHeight} />
-        )}
-
-        {selected.length > 0 && <SelectionActions editable={editable} />}
-      </Stack>
-    </Paper>
+      {selected.length > 0 && <SelectionActions editable={editable} />}
+    </div>
   );
 }
 
@@ -268,30 +283,29 @@ function AdsorbOption({
   // on uses it again rather than the default.
   const [draft, setDraft] = useState(height ?? DEFAULT_ADSORB_HEIGHT);
   return (
-    <Group gap={6} wrap="nowrap">
-      <Checkbox
+    <label style={{ ...rowStyle, ...hintStyle }}>
+      <input
+        type="checkbox"
         data-testid="builder-adsorb-toggle"
         checked={height !== null}
-        onChange={(e) => onChange(e.currentTarget.checked ? draft : null)}
-        label="Place on atoms:"
+        onChange={(e) => onChange(e.target.checked ? draft : null)}
       />
-      <NumberInput
+      Place on atoms:
+      <input
+        type="number"
         data-testid="builder-adsorb-height"
         step={0.1}
-        w={64}
-        hideControls
         value={draft}
-        onChange={(v) => {
-          const n = typeof v === "number" ? v : Number(v);
-          setDraft(n);
-          if (height !== null) onChange(n);
+        onChange={(e) => {
+          const v = Number(e.target.value);
+          setDraft(v);
+          if (height !== null) onChange(v);
         }}
+        style={{ ...inputStyle, width: 56 }}
         title="Height above the clicked atom along the cell's c axis (an adsorbate on a surface site)"
       />
-      <Text size="xs" c="dimmed">
-        Å above along c
-      </Text>
-    </Group>
+      Å above along c
+    </label>
   );
 }
 
@@ -321,34 +335,48 @@ function SelectionActions({ editable }: { editable: boolean }) {
   };
 
   return (
-    <Stack gap={6} data-testid="builder-selection">
-      <Divider />
-      <Text size="xs" c="dimmed" data-testid="builder-selected-count">
+    <div
+      style={{
+        display: "flex",
+        flexDirection: "column",
+        gap: 6,
+        paddingTop: 8,
+        borderTop: "1px solid var(--megane-border-solid, #e2e8f0)",
+      }}
+      data-testid="builder-selection"
+    >
+      <span style={hintStyle} data-testid="builder-selected-count">
         {selected.length} atom{selected.length === 1 ? "" : "s"} selected.
-      </Text>
-      <Group gap="xs">
-        <Button
-          color="red"
-          variant="outline"
+      </span>
+      <div style={rowStyle}>
+        <button
+          type="button"
           data-testid="builder-delete-selected"
+          style={buttonStyle("danger", !editable)}
           disabled={!editable}
           onClick={handleDelete}
         >
           Delete
-        </Button>
-        <Button
-          variant="default"
+        </button>
+        <button
+          type="button"
           data-testid="builder-set-element-selected"
+          style={buttonStyle("default", !editable)}
           disabled={!editable}
           onClick={handleSetElement}
         >
           Set to {getElementSymbol(element)}
-        </Button>
-        <Button variant="default" data-testid="builder-clear-selection" onClick={clearSelected}>
+        </button>
+        <button
+          type="button"
+          data-testid="builder-clear-selection"
+          style={buttonStyle()}
+          onClick={clearSelected}
+        >
           Clear
-        </Button>
-      </Group>
-    </Stack>
+        </button>
+      </div>
+    </div>
   );
 }
 
@@ -376,63 +404,73 @@ function HistorySection({ defaultOpen }: { defaultOpen: boolean }) {
         </span>
       }
     >
-      <Stack gap="xs">
-        <Group gap="xs">
-          <Button
-            variant="default"
-            data-testid="builder-undo"
-            disabled={edits.length === 0}
-            onClick={() => undo()}
-          >
-            Undo
-          </Button>
-          <Button
-            variant="default"
-            data-testid="builder-redo"
-            disabled={redoStack.length === 0}
-            onClick={() => redo()}
-          >
-            Redo
-          </Button>
-          <Button
-            variant="outline"
-            color="red"
-            data-testid="builder-clear-ops"
-            disabled={edits.length === 0}
-            onClick={clearOps}
-          >
-            Clear all
-          </Button>
-          <Button
-            variant={showOriginal ? "light" : "default"}
-            aria-pressed={showOriginal}
-            data-testid="builder-show-original"
-            disabled={!source || (edits.length === 0 && !showOriginal)}
-            onClick={() => setShowOriginal(!showOriginal)}
-            title="Preview the structure as loaded, without the edits"
-          >
-            Show original
-          </Button>
-        </Group>
-        {edits.length > 0 && (
-          <ScrollArea.Autosize mah={160}>
-            <List type="ordered" size="xs" c="dimmed" data-testid="builder-op-list" withPadding>
-              {edits.map((op, i) => (
-                <List.Item key={i}>{describeOp(op)}</List.Item>
-              ))}
-            </List>
-          </ScrollArea.Autosize>
-        )}
-        {result && result.warnings.length > 0 && (
-          <Stack gap={2} data-testid="builder-warnings">
-            {result.warnings.map((w, i) => (
-              <Text key={i} size="xs" c="orange.7">
-                {w}
-              </Text>
-            ))}
-          </Stack>
-        )}
-      </Stack>
+      <div style={rowStyle}>
+        <button
+          type="button"
+          data-testid="builder-undo"
+          style={buttonStyle("default", edits.length === 0)}
+          disabled={edits.length === 0}
+          onClick={() => undo()}
+        >
+          Undo
+        </button>
+        <button
+          type="button"
+          data-testid="builder-redo"
+          style={buttonStyle("default", redoStack.length === 0)}
+          disabled={redoStack.length === 0}
+          onClick={() => redo()}
+        >
+          Redo
+        </button>
+        <button
+          type="button"
+          data-testid="builder-clear-ops"
+          style={buttonStyle("danger", edits.length === 0)}
+          disabled={edits.length === 0}
+          onClick={clearOps}
+        >
+          Clear all
+        </button>
+        <span
+          role="button"
+          data-testid="builder-show-original"
+          aria-pressed={showOriginal}
+          style={toggleStyle(showOriginal, !source || (edits.length === 0 && !showOriginal))}
+          onClick={
+            source && (edits.length > 0 || showOriginal)
+              ? () => setShowOriginal(!showOriginal)
+              : undefined
+          }
+          title="Preview the structure as loaded, without the edits"
+        >
+          Show original
+        </span>
+      </div>
+      {edits.length > 0 && (
+        <ol
+          data-testid="builder-op-list"
+          style={{
+            margin: 0,
+            paddingLeft: 18,
+            fontSize: 12,
+            color: "var(--megane-text-secondary, #475569)",
+            maxHeight: 160,
+            overflowY: "auto",
+          }}
+        >
+          {edits.map((op, i) => (
+            <li key={i}>{describeOp(op)}</li>
+          ))}
+        </ol>
+      )}
+      {result && result.warnings.length > 0 && (
+        <div data-testid="builder-warnings" style={{ ...hintStyle, color: "#b45309" }}>
+          {result.warnings.map((w, i) => (
+            <div key={i}>{w}</div>
+          ))}
+        </div>
+      )}
     </Section>
   );
 }

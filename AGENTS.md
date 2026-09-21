@@ -194,7 +194,6 @@ Rules for keeping the two hosts in sync:
 - Python source: `python/megane/`
 - Rust crates: `crates/{megane-core,megane-python,megane-wasm}/`
 - VSCode extension workspace: `vscode-megane/` (extension code + `vite.webview.config.ts` for the webview bundle)
-- UI toolkit: the **standalone Builder only** (`src/builder/`, the `builder.html` entry) is built from [Mantine](https://mantine.dev) (`@mantine/core` + `@mantine/hooks`, stylesheet imported in `src/builder/index.tsx`). Its single `MantineProvider` is `src/builder/providers.tsx`, forced to `useThemeStore`'s resolved colour scheme; a Builder panel rendered on its own in a test must go through `tests/ts/builder/util.tsx` or Mantine throws. The viewer, the Jupyter widget, the labextension and the VSCode webview keep their own inline styles — do not import `@mantine/core` outside `src/builder/`
 - RDKit WebAssembly toolchain: lives in its own repository, [hodakamori/megane-rdkit](https://github.com/hodakamori/megane-rdkit) (npm package `megane-rdkit`; Emscripten build of RDKit, currently ETKDG embedding + MMFF/UFF for Builder's 3D conformer generation). It was split out of this repo's former `rdkit-wasm/` directory; megane consumes the `megane-rdkit-<RDKIT_TAG>` artifact its CI builds rather than compiling RDKit itself
 - JupyterLab labextension source: `jupyterlab-megane/` (built with `@jupyterlab/builder` / webpack, imports the shared `src/` viewer via webpack alias `@megane/*`)
 - Vite configs at repo root:

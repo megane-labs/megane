@@ -5,7 +5,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { render, screen, fireEvent, cleanup } from "./util";
+import { render, screen, fireEvent, cleanup } from "@testing-library/react";
 import { NewStructureDialog, DEFAULT_NEW_CELL_EDGE } from "@/builder/NewStructureDialog";
 
 const click = (id: string) => fireEvent.click(screen.getByTestId(id));
@@ -56,12 +56,14 @@ describe("NewStructureDialog — empty cell", () => {
     expect(onNewCell).not.toHaveBeenCalled();
   });
 
-  it("closes on Escape and on Close", () => {
+  it("closes on Escape, on the backdrop and on Close", () => {
     open();
-    fireEvent.keyDown(screen.getByTestId("builder-new-dialog"), { key: "Escape" });
+    fireEvent.keyDown(window, { key: "Escape" });
     expect(onClose).toHaveBeenCalledTimes(1);
     click("builder-new-close");
     expect(onClose).toHaveBeenCalledTimes(2);
+    fireEvent.click(screen.getByTestId("builder-new-dialog"));
+    expect(onClose).toHaveBeenCalledTimes(3);
   });
 });
 

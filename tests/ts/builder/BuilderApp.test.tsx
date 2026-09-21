@@ -11,7 +11,6 @@ const { rendererStub, viewportProps, applyViewportState, exportSnapshot, parseSt
   vi.hoisted(() => ({
     rendererStub: {
       setViewInsets: vi.fn(),
-      setBackgroundColor: vi.fn(),
       resetCamera: vi.fn(),
       alignCameraToAxis: vi.fn(),
     },
@@ -45,7 +44,6 @@ vi.mock("@/parsers/structure", () => ({ parseStructureFile }));
 
 import { BuilderApp } from "@/builder/BuilderApp";
 import { useBuilderStore } from "@/builder/store";
-import { useThemeStore } from "@/stores/useThemeStore";
 import type { BuildHandlers } from "@/builder/types";
 import type { Snapshot } from "@/types";
 
@@ -88,16 +86,11 @@ const tool = (t: string) => fireEvent.click(screen.getByTestId(`builder-tool-${t
 const edits = () => useBuilderStore.getState().edits;
 const shownAtoms = () =>
   Number(screen.getByTestId("megane-builder").getAttribute("data-atom-count"));
-/** Click a Mantine menu's target, then its item (the dropdown mounts async). */
-async function pickFromMenu(target: string, item: string) {
-  fireEvent.click(screen.getByTestId(target));
-  fireEvent.click(await screen.findByTestId(item));
-}
 /** Open the top bar's Save menu and pick a format. */
-const save = (format: string) => pickFromMenu("builder-save", `builder-save-${format}`);
-/** Open the top bar's New menu and pick one of its two dialogs. */
-const newStructure = (kind: "cell" | "bulk") =>
-  pickFromMenu("builder-new", `builder-new-${kind}-item`);
+const save = (format: string) => {
+  fireEvent.click(screen.getByTestId("builder-save"));
+  fireEvent.click(screen.getByTestId(`builder-save-${format}`));
+};
 
 beforeEach(() => {
   localStorage.clear();
@@ -124,7 +117,6 @@ beforeEach(() => {
   exportSnapshot.mockClear();
   parseStructureFile.mockReset();
   rendererStub.setViewInsets.mockClear();
-  rendererStub.setBackgroundColor.mockClear();
   rendererStub.resetCamera.mockClear();
 });
 
@@ -153,26 +145,28 @@ describe("BuilderApp — empty state", () => {
     expect(edits()).toEqual([]);
   });
 
-  it("the welcome card starts an empty cell through the New dialog", async () => {
+  it("the welcome card starts an empty cell through the New dialog", () => {
     render(<BuilderApp />);
     fireEvent.click(screen.getByTestId("builder-welcome-new"));
-    fireEvent.click(await screen.findByTestId("builder-new-cell"));
+    fireEvent.click(screen.getByTestId("builder-new-cell"));
+    expect(screen.queryByTestId("builder-new-dialog")).toBeNull();
     expect(screen.queryByTestId("builder-welcome")).toBeNull();
     expect(useBuilderStore.getState().source!.box![0]).toBe(10);
     expect(screen.getByTestId("builder-file-name").textContent).toContain("untitled");
     expect(applyViewportState).toHaveBeenCalled();
   });
 
-  it("the welcome card and the top bar both reach the bulk form", async () => {
+  it("the welcome card and the top bar both reach the bulk form", () => {
     render(<BuilderApp />);
     fireEvent.click(screen.getByTestId("builder-welcome-bulk"));
-    fireEvent.click(await screen.findByTestId("builder-bulk-create"));
+    fireEvent.click(screen.getByTestId("builder-bulk-create"));
     expect(useBuilderStore.getState().fileName).toBe("Cu-fcc");
     expect(shownAtoms()).toBe(4);
-    await newStructure("bulk");
-    expect(await screen.findByTestId("builder-new-replaces")).toBeTruthy();
+    fireEvent.click(screen.getByTestId("builder-new"));
+    fireEvent.click(screen.getByTestId("builder-new-bulk-item"));
+    expect(screen.getByTestId("builder-new-replaces")).toBeTruthy();
     fireEvent.click(screen.getByTestId("builder-new-close"));
-    await waitFor(() => expect(screen.queryByTestId("builder-new-replaces")).toBeNull());
+    expect(screen.queryByTestId("builder-new-dialog")).toBeNull();
   });
 });
 
@@ -399,25 +393,24 @@ describe("BuilderApp — editing", () => {
     render(<BuilderApp />);
     tool("delete");
     pick(2);
-    await save("pdb");
+    save("pdb");
     await waitFor(() => expect(exportSnapshot).toHaveBeenCalledTimes(1));
     const [snapshot, format, name, labels] = exportSnapshot.mock.calls[0] as unknown[];
     expect((snapshot as Snapshot).nAtoms).toBe(2);
     expect(format).toBe("pdb");
     expect(name).toBe("water.pdb");
     expect(labels).toEqual(["HOH", "HOH", "HOH"]);
-    await save("xyz");
+    save("xyz");
     await waitFor(() => expect(exportSnapshot).toHaveBeenCalledTimes(2));
   });
 
-  it("New from the top bar replaces the document", async () => {
+  it("New from the top bar replaces the document", () => {
     render(<BuilderApp />);
     tool("delete");
     pick(2);
-    await newStructure("cell");
-    fireEvent.change(await screen.findByTestId("builder-new-cell-edge"), {
-      target: { value: "15" },
-    });
+    fireEvent.click(screen.getByTestId("builder-new"));
+    fireEvent.click(screen.getByTestId("builder-new-cell-item"));
+    fireEvent.change(screen.getByTestId("builder-new-cell-edge"), { target: { value: "15" } });
     fireEvent.click(screen.getByTestId("builder-new-cell"));
     expect(useBuilderStore.getState().source!.box![0]).toBe(15);
     expect(edits()).toEqual([]);
@@ -430,16 +423,6 @@ describe("BuilderApp — editing", () => {
     expect(rendererStub.resetCamera).toHaveBeenCalledTimes(1);
     fireEvent.click(screen.getByTestId("view-axis-+x"));
     expect(rendererStub.alignCameraToAxis).toHaveBeenCalledWith("+x");
-  });
-
-  it("paints the 3D background from the theme, like the viewer", () => {
-    render(<BuilderApp />);
-    // White while the resolved theme is light …
-    expect(rendererStub.setBackgroundColor).toHaveBeenLastCalledWith(0xffffff);
-    act(() => useThemeStore.getState().setTheme("dark"));
-    expect(rendererStub.setBackgroundColor).toHaveBeenLastCalledWith(0x0f172a);
-    act(() => useThemeStore.getState().setTheme("light"));
-    expect(rendererStub.setBackgroundColor).toHaveBeenLastCalledWith(0xffffff);
   });
 });
 
@@ -468,15 +451,15 @@ describe("BuilderApp — keyboard", () => {
     expect(rendererStub.resetCamera).toHaveBeenCalled();
   });
 
-  it("ignores keys typed into a field or while a dialog is open", async () => {
+  it("ignores keys typed into a field or while a dialog is open", () => {
     render(<BuilderApp />);
     tool("add");
     const z = screen.getByTestId("builder-element-z");
     fireEvent.keyDown(z, { key: "b" });
     expect(useBuilderStore.getState().tool).toBe("add");
     // A dialog owns the keyboard: the tool keys stay inert while it is open.
-    await newStructure("cell");
-    await screen.findByTestId("builder-new-cell-edge");
+    fireEvent.click(screen.getByTestId("builder-new"));
+    fireEvent.click(screen.getByTestId("builder-new-cell-item"));
     fireEvent.keyDown(window, { key: "b" });
     expect(useBuilderStore.getState().tool).toBe("add");
   });

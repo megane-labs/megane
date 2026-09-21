@@ -199,8 +199,8 @@ test.describe("builder: webapp", () => {
     await expect(page.locator('[data-testid="builder-library-count"]')).toHaveText("10 molecules");
     const water = page.locator('[data-testid="builder-library-item-preset:water"]');
 
-    // Add is offered only once a document is open; then it lands at the centre.
-    await expect(water.locator('[data-testid="builder-library-add"]')).toBeDisabled();
+    // Add is inert without a document; with an empty cell it lands at the centre.
+    await water.locator('[data-testid="builder-library-add"]').click();
     await expect(root).toHaveAttribute("data-atom-count", "0");
     await newEmptyCell(page);
     await waitForReady(page);
@@ -527,10 +527,10 @@ test.describe("builder: webapp", () => {
     // A collapsed section stays collapsed across a reload.
     await expect(page.locator('[data-testid="builder-crystal"]')).toBeVisible();
     await page.locator('[data-testid="builder-section-crystal-toggle"]').click();
-    await expect(page.locator('[data-testid="builder-crystal"]')).toBeHidden();
+    await expect(page.locator('[data-testid="builder-crystal"]')).toHaveCount(0);
     await page.reload({ waitUntil: "domcontentloaded" });
     await expect(page.locator('[data-testid="builder-sidebar"]')).toBeVisible();
-    await expect(page.locator('[data-testid="builder-crystal"]')).toBeHidden();
+    await expect(page.locator('[data-testid="builder-crystal"]')).toHaveCount(0);
     await page.locator('[data-testid="builder-section-crystal-toggle"]').click();
     await expect(page.locator('[data-testid="builder-crystal"]')).toBeVisible();
   });

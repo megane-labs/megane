@@ -8,9 +8,6 @@ import { createRoot } from "react-dom/client";
 import { BuilderApp } from "./BuilderApp";
 import { ErrorBoundary } from "../components/ErrorBoundary";
 import { useThemeStore } from "../stores/useThemeStore";
-// Mantine's stylesheet backs every control of the Builder's chrome; megane.css
-// keeps the shared `--megane-*` variables the renderer and the viewer use.
-import "@mantine/core/styles.css";
 import "../styles/megane.css";
 
 /** Applies data-theme attribute to <html> and listens for OS preference changes. */

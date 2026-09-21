@@ -5,7 +5,7 @@
  */
 
 import { useState } from "react";
-import { Button, Checkbox, Group, NativeSelect, Stack, Text, TextInput } from "@mantine/core";
+import { buttonStyle, hintStyle, inputStyle, rowStyle } from "../styles";
 import {
   BULK_EXAMPLES,
   BULK_STRUCTURES,
@@ -71,41 +71,47 @@ export function BulkForm({
   };
 
   return (
-    <Stack gap="xs" data-testid="builder-bulk">
-      <Group gap="xs">
-        <NativeSelect
+    <div style={{ display: "flex", flexDirection: "column", gap: 8 }} data-testid="builder-bulk">
+      <div style={rowStyle}>
+        <select
           data-testid="builder-bulk-example"
           value=""
-          onChange={(e) => loadExample(e.currentTarget.value)}
+          onChange={(e) => loadExample(e.target.value)}
+          style={inputStyle}
           title="Fill the fields from a reference structure"
-          data={[
-            { value: "", label: "Examples…" },
-            ...BULK_EXAMPLES.map((ex) => ({ value: ex.name, label: ex.name })),
-          ]}
-        />
-        <NativeSelect
+        >
+          <option value="">Examples…</option>
+          {BULK_EXAMPLES.map((ex) => (
+            <option key={ex.name} value={ex.name}>
+              {ex.name}
+            </option>
+          ))}
+        </select>
+        <select
           data-testid="builder-bulk-structure"
           value={structure}
-          onChange={(e) => setStructure(e.currentTarget.value as BulkStructure)}
-          data={BULK_STRUCTURES.map((s) => ({ value: s.value, label: s.label }))}
-        />
-      </Group>
-      <Group gap="xs">
+          onChange={(e) => setStructure(e.target.value as BulkStructure)}
+          style={inputStyle}
+        >
+          {BULK_STRUCTURES.map((s) => (
+            <option key={s.value} value={s.value}>
+              {s.label}
+            </option>
+          ))}
+        </select>
+      </div>
+      <div style={rowStyle}>
         {Array.from({ length: info.species }, (_, k) => (
-          <Group key={k} gap={4} wrap="nowrap">
-            <Text size="xs" c="dimmed">
-              {"ABX"[k]}
-            </Text>
-            <TextInput
+          <label key={k} style={{ display: "flex", alignItems: "center", gap: 3 }}>
+            <span style={hintStyle}>{"ABX"[k]}</span>
+            <input
               data-testid={`builder-bulk-element-${k}`}
               value={symbols[k]}
-              onChange={(e) =>
-                setSymbols(symbols.map((s, i) => (i === k ? e.currentTarget.value : s)))
-              }
-              w={48}
+              onChange={(e) => setSymbols(symbols.map((s, i) => (i === k ? e.target.value : s)))}
+              style={{ ...inputStyle, width: 40 }}
               placeholder="El"
             />
-          </Group>
+          </label>
         ))}
         <NumberField
           label="a"
@@ -128,23 +134,28 @@ export function BulkForm({
           />
         )}
         {info.cubic && (
-          <Checkbox
-            data-testid="builder-bulk-cubic"
-            checked={cubic}
-            onChange={(e) => setCubic(e.currentTarget.checked)}
-            label="conventional cell"
-          />
+          <label style={{ ...hintStyle, display: "flex", alignItems: "center", gap: 4 }}>
+            <input
+              type="checkbox"
+              data-testid="builder-bulk-cubic"
+              checked={cubic}
+              onChange={(e) => setCubic(e.target.checked)}
+            />
+            conventional cell
+          </label>
         )}
-      </Group>
-      <Group>
-        <Button
+      </div>
+      <div style={rowStyle}>
+        <button
+          type="button"
           data-testid="builder-bulk-create"
+          style={buttonStyle("primary")}
           onClick={create}
           title="Start from this bulk crystal (replaces the open structure)"
         >
           {createLabel}
-        </Button>
-      </Group>
-    </Stack>
+        </button>
+      </div>
+    </div>
   );
 }

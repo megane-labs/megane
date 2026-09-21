@@ -9,8 +9,8 @@
  */
 
 import { useCallback, useRef, useState, type ChangeEvent } from "react";
-import { Button, Group, ScrollArea, Stack, Text } from "@mantine/core";
 import { useBuilderStore, canEdit, shownSnapshot } from "../store";
+import { buttonStyle, chipStyle, hintStyle, rowStyle } from "../styles";
 import { Section } from "../Section";
 import { autoPlacement } from "./fragment";
 import { SketchModal } from "./SketchModal";
@@ -20,6 +20,19 @@ import type { LibraryMolecule, LibraryMoleculeDraft } from "./types";
 
 /** Default height of an adsorbate above the clicked surface atom, Å. */
 export const DEFAULT_ADSORB_HEIGHT = 2;
+
+const itemRowStyle: React.CSSProperties = {
+  display: "flex",
+  alignItems: "center",
+  gap: 4,
+  padding: "3px 4px",
+};
+
+const smallChip = (active: boolean, disabled = false): React.CSSProperties => ({
+  ...chipStyle(active, disabled),
+  fontSize: 11,
+  padding: "2px 7px",
+});
 
 export function LibrarySection() {
   const source = useBuilderStore((s) => s.source);
@@ -102,24 +115,29 @@ export function LibrarySection() {
         </span>
       }
     >
-      <Stack gap="xs" data-testid="builder-library">
-        <Group gap="xs">
-          <Button
-            variant="default"
+      <div
+        data-testid="builder-library"
+        style={{ display: "flex", flexDirection: "column", gap: 8 }}
+      >
+        <div style={rowStyle}>
+          <button
+            type="button"
             data-testid="builder-library-sketch"
+            style={buttonStyle()}
             onClick={() => setSketchOpen({})}
             title="Draw a molecule in Ketcher and add it to the library"
           >
             Sketch…
-          </Button>
-          <Button
-            variant="default"
+          </button>
+          <button
+            type="button"
             data-testid="builder-library-import"
+            style={buttonStyle()}
             onClick={() => fileRef.current?.click()}
             title="Add a molecule from a structure file"
           >
             From file…
-          </Button>
+          </button>
           <input
             ref={fileRef}
             data-testid="builder-library-import-input"
@@ -127,97 +145,93 @@ export function LibrarySection() {
             style={{ display: "none" }}
             onChange={(e) => void handleFileChange(e)}
           />
-          <Button
-            variant="default"
+          <button
+            type="button"
             data-testid="builder-library-save-selection"
+            style={buttonStyle("default", selected.length === 0 || !shown)}
             disabled={selected.length === 0 || !shown}
             onClick={handleSaveSelection}
             title="Keep the selected atoms (and the bonds between them) as a library molecule"
           >
             Save selection
-          </Button>
-        </Group>
-        <Text size="xs" c="dimmed">
+          </button>
+        </div>
+        <div style={hintStyle}>
           <b>Add</b> drops a molecule beside the structure; <b>Place</b> stamps it where you click.
-        </Text>
-        <ScrollArea.Autosize mah={220} type="auto">
-          <Stack gap={2} data-testid="builder-library-list">
-            {molecules.map((m) => {
-              const placing = tool === "place" && placeSource?.id === m.id;
-              return (
-                <Group
-                  key={m.id}
-                  gap={4}
-                  wrap="nowrap"
-                  px={4}
-                  py={2}
-                  data-testid={`builder-library-item-${m.id}`}
-                  data-placing={placing ? "true" : undefined}
-                  style={{
-                    borderRadius: 4,
-                    background: placing ? "var(--mantine-color-blue-light)" : undefined,
-                  }}
+        </div>
+        <ul
+          data-testid="builder-library-list"
+          style={{ listStyle: "none", margin: 0, padding: 0, maxHeight: 220, overflowY: "auto" }}
+        >
+          {molecules.map((m) => {
+            const placing = tool === "place" && placeSource?.id === m.id;
+            return (
+              <li
+                key={m.id}
+                data-testid={`builder-library-item-${m.id}`}
+                data-placing={placing ? "true" : undefined}
+                style={{
+                  ...itemRowStyle,
+                  background: placing ? "rgba(37, 99, 235, 0.08)" : undefined,
+                  borderRadius: 4,
+                }}
+              >
+                <span
+                  style={{ flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis" }}
                 >
-                  <Text size="sm" truncate style={{ flex: 1, minWidth: 0 }}>
-                    <span data-testid="builder-library-item-name">{m.name}</span>{" "}
-                    <Text span size="xs" c="dimmed">
-                      {m.formula}
-                      {m.planar ? " · flat" : ""}
-                    </Text>
-                  </Text>
-                  <Button
-                    size="compact-xs"
-                    radius="xl"
-                    variant="default"
-                    data-testid="builder-library-add"
-                    disabled={!editable}
-                    onClick={() => handleAdd(m)}
-                    title="Add beside the structure"
-                  >
-                    Add
-                  </Button>
-                  <Button
-                    size="compact-xs"
-                    radius="xl"
-                    variant={placing ? "filled" : "default"}
-                    aria-pressed={placing}
-                    data-testid="builder-library-place"
-                    onClick={() => handlePlace(m)}
-                    title="Place where the next click lands"
-                  >
-                    Place
-                  </Button>
-                  {isUserMolecule(m.id) && (
-                    <>
-                      {m.molfile && (
-                        <Button
-                          size="compact-xs"
-                          radius="xl"
-                          variant="default"
-                          data-testid="builder-library-edit"
-                          onClick={() => setSketchOpen({ molfile: m.molfile, name: m.name })}
-                          title="Open the sketch in Ketcher (adds the result as a new molecule)"
-                        >
-                          Edit
-                        </Button>
-                      )}
-                      <Button
-                        size="compact-xs"
-                        radius="xl"
-                        variant="default"
-                        data-testid="builder-library-remove"
-                        onClick={() => handleRemove(m)}
-                        title="Remove from the library"
+                  <span data-testid="builder-library-item-name">{m.name}</span>{" "}
+                  <span style={hintStyle}>
+                    {m.formula}
+                    {m.planar ? " · flat" : ""}
+                  </span>
+                </span>
+                <span
+                  role="button"
+                  data-testid="builder-library-add"
+                  style={smallChip(false, !editable)}
+                  onClick={editable ? () => handleAdd(m) : undefined}
+                  title="Add beside the structure"
+                >
+                  Add
+                </span>
+                <span
+                  role="button"
+                  data-testid="builder-library-place"
+                  aria-pressed={placing}
+                  style={smallChip(placing)}
+                  onClick={() => handlePlace(m)}
+                  title="Place where the next click lands"
+                >
+                  Place
+                </span>
+                {isUserMolecule(m.id) && (
+                  <>
+                    {m.molfile && (
+                      <span
+                        role="button"
+                        data-testid="builder-library-edit"
+                        style={smallChip(false)}
+                        onClick={() => setSketchOpen({ molfile: m.molfile, name: m.name })}
+                        title="Open the sketch in Ketcher (adds the result as a new molecule)"
                       >
-                        ×
-                      </Button>
-                    </>
-                  )}
-                </Group>
-              );
-            })}
-          </Stack>
-        </ScrollArea.Autosize>
+                        Edit
+                      </span>
+                    )}
+                    <span
+                      role="button"
+                      data-testid="builder-library-remove"
+                      style={smallChip(false)}
+                      onClick={() => handleRemove(m)}
+                      title="Remove from the library"
+                    >
+                      ×
+                    </span>
+                  </>
+                )}
+              </li>
+            );
+          })}
+        </ul>
         {sketchOpen && (
           <SketchModal
             initialMolfile={sketchOpen.molfile}
@@ -226,7 +240,7 @@ export function LibrarySection() {
             onClose={() => setSketchOpen(null)}
           />
         )}
-      </Stack>
+      </div>
     </Section>
   );
 }

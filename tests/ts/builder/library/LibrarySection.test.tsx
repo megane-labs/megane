@@ -4,7 +4,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { render, screen, fireEvent, cleanup, waitFor, within, act } from "../util";
+import { render, screen, fireEvent, cleanup, waitFor, within, act } from "@testing-library/react";
 import type { Snapshot } from "@/types";
 
 const { parseStructureFile, sketchModalProps } = vi.hoisted(() => ({

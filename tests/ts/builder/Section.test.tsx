@@ -3,9 +3,9 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { render, screen, fireEvent, cleanup, waitFor } from "./util";
+import { render, screen, fireEvent, cleanup } from "@testing-library/react";
 import { Section, SECTIONS_STORAGE_KEY, useSectionOpen } from "@/builder/Section";
-import { renderHook, act } from "./util";
+import { renderHook, act } from "@testing-library/react";
 
 beforeEach(() => localStorage.clear());
 afterEach(cleanup);
@@ -23,21 +23,20 @@ describe("Section", () => {
       "true",
     );
     fireEvent.click(screen.getByTestId("builder-section-library-toggle"));
-    expect(screen.getByTestId("body")).not.toBeVisible();
+    expect(screen.queryByTestId("body")).toBeNull();
     // The summary stays visible while collapsed.
     expect(screen.getByTestId("builder-section-library-summary")).toBeTruthy();
   });
 
-  it("starts closed when asked, and remembers a toggle across mounts", async () => {
+  it("starts closed when asked, and remembers a toggle across mounts", () => {
     const { unmount } = render(
       <Section id="history" title="History" defaultOpen={false}>
         <div data-testid="body">contents</div>
       </Section>,
     );
-    expect(screen.getByTestId("body")).not.toBeVisible();
+    expect(screen.queryByTestId("body")).toBeNull();
     fireEvent.click(screen.getByTestId("builder-section-history-toggle"));
-    // Opening animates, so the body becomes visible on the next frame.
-    await waitFor(() => expect(screen.getByTestId("body")).toBeVisible());
+    expect(screen.getByTestId("body")).toBeTruthy();
     expect(JSON.parse(localStorage.getItem(SECTIONS_STORAGE_KEY)!)).toEqual({ history: true });
     unmount();
     // A later mount follows the stored choice, not the default.
@@ -46,7 +45,7 @@ describe("Section", () => {
         <div data-testid="body">contents</div>
       </Section>,
     );
-    await waitFor(() => expect(screen.getByTestId("body")).toBeVisible());
+    expect(screen.getByTestId("body")).toBeTruthy();
   });
 
   it("renders without a summary", () => {

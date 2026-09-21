@@ -14,10 +14,9 @@
  * a single **notice** line carries every message. Keyboard shortcuts are in
  * `shortcuts.ts`.
  *
- * The chrome is Mantine (`BuilderProviders`); the 3D view is the viewer's own
- * renderer (`Viewport` + `MoleculeRenderer`, driven through
- * `applyViewportState`), and the parsers, writers and edit engine are shared
- * too. Nothing in the viewer imports this app.
+ * Reuses the viewer's renderer (`Viewport` + `MoleculeRenderer`, driven through
+ * `applyViewportState`), parsers, writers and the edit engine; nothing in the
+ * viewer imports this app.
  */
 
 import {
@@ -29,9 +28,8 @@ import {
   type ChangeEvent,
   type DragEvent,
 } from "react";
-import { Alert, Box, Button, Group, Menu, Paper, Stack, Text, Tooltip } from "@mantine/core";
 import { Viewport } from "../components/Viewport";
-import { Tooltip as HoverTooltip } from "../components/Tooltip";
+import { Tooltip } from "../components/Tooltip";
 import { ViewAxisControls } from "../components/ViewAxisControls";
 import { OVERLAY_INSET } from "../components/overlayLayout";
 import type { MoleculeRenderer } from "../renderer/MoleculeRenderer";
@@ -41,15 +39,16 @@ import type { ViewportState } from "../pipeline/types";
 import { parseStructureFile } from "../parsers/structure";
 import { STRUCTURE_EXPORT_FORMATS, exportSnapshot } from "../export/structureExport";
 import type { StructureWriteFormat } from "../parsers/parseCore";
-import { useThemeStore, themeToHex, type Theme } from "../stores/useThemeStore";
+import { useThemeStore, type Theme } from "../stores/useThemeStore";
 import type { HoverInfo } from "../types";
 import { useBuilderStore, shownSnapshot } from "./store";
 import { builderViewportState, BUILDER_SOURCE_ID } from "./view";
 import { useBuilderHandlers } from "./useBuilderHandlers";
 import { useBuilderShortcuts, TOOL_KEYS } from "./shortcuts";
 import { BuilderSidebar, TOOLS } from "./BuilderSidebar";
+import { Menu } from "./Menu";
 import { NewStructureDialog, type NewStructureKind } from "./NewStructureDialog";
-import { BuilderProviders } from "./providers";
+import { buttonStyle, hintStyle } from "./styles";
 
 const SIDEBAR_WIDTH = 320;
 
@@ -63,14 +62,6 @@ function modKeyLabel(): string {
 }
 
 export function BuilderApp() {
-  return (
-    <BuilderProviders>
-      <BuilderShell />
-    </BuilderProviders>
-  );
-}
-
-function BuilderShell() {
   const api = useBuilderStore;
   const source = useBuilderStore((s) => s.source);
   const result = useBuilderStore((s) => s.result);
@@ -125,7 +116,6 @@ function BuilderShell() {
     (renderer: MoleculeRenderer) => {
       rendererRef.current = renderer;
       renderer.setViewInsets(0, SIDEBAR_WIDTH + OVERLAY_INSET);
-      renderer.setBackgroundColor(themeToHex(useThemeStore.getState().resolvedTheme));
       applyState(renderer, viewportState);
     },
     // Only the first state matters here; later ones arrive through the effect.
@@ -200,13 +190,7 @@ function BuilderShell() {
   const mod = modKeyLabel();
 
   const theme = useThemeStore((s) => s.theme);
-  const resolvedTheme = useThemeStore((s) => s.resolvedTheme);
   const setTheme = useThemeStore((s) => s.setTheme);
-  // The 3D view is not a Mantine surface, so it follows the theme itself —
-  // as the viewer's own canvas does.
-  useEffect(() => {
-    rendererRef.current?.setBackgroundColor(themeToHex(resolvedTheme));
-  }, [resolvedTheme]);
   const cycleTheme = useCallback(() => {
     setTheme(THEME_ORDER[(THEME_ORDER.indexOf(theme) + 1) % THEME_ORDER.length]);
   }, [theme, setTheme]);
@@ -220,124 +204,118 @@ function BuilderShell() {
   const activeTool = TOOLS.find((t) => t.value === tool)!;
 
   return (
-    <Box
+    <div
       data-testid="megane-builder"
       data-atom-count={shown?.nAtoms ?? 0}
       data-bond-count={shown?.nBonds ?? 0}
       data-edit-count={edits.length}
-      w="100%"
-      h="100%"
-      display="flex"
-      bg="var(--mantine-color-body)"
-      style={{ flexDirection: "column" }}
+      style={{
+        width: "100%",
+        height: "100%",
+        display: "flex",
+        flexDirection: "column",
+        background: "var(--megane-bg, #fff)",
+        color: "var(--megane-text, #1e293b)",
+      }}
     >
-      <Paper
+      <div
         data-testid="builder-topbar"
-        radius={0}
-        withBorder
-        px="sm"
-        py={6}
-        style={{ borderWidth: "0 0 1px 0" }}
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: 8,
+          padding: "8px 12px",
+          borderBottom: "1px solid var(--megane-border-solid, #e2e8f0)",
+          background: "var(--megane-surface-solid, #f8f9fb)",
+          flexWrap: "wrap",
+        }}
       >
-        <Group gap="xs">
-          <Text fw={700} size="md" style={{ letterSpacing: "-0.02em" }}>
-            megane Builder
-          </Text>
-          <Text size="xs" c="dimmed" mr="xs" data-testid="builder-file-name">
-            {fileName ?? "No structure"}
-            {edits.length > 0 && ` · ${edits.length} edit${edits.length === 1 ? "" : "s"}`}
-          </Text>
-          <Tooltip label={`Open a structure file (${mod}+O)`} openDelay={400}>
-            <Button
-              variant="default"
-              data-testid="builder-open"
-              onClick={() => inputRef.current?.click()}
-            >
-              Open…
-            </Button>
-          </Tooltip>
-          <input
-            ref={inputRef}
-            data-testid="builder-open-input"
-            type="file"
-            style={{ display: "none" }}
-            onChange={(e) => void handleOpenChange(e)}
-          />
-          <Menu position="bottom-start" withinPortal>
-            <Menu.Target>
-              <Button
-                variant="default"
-                data-testid="builder-new"
-                title="Start a new structure (replaces the open one)"
-              >
-                New ▾
-              </Button>
-            </Menu.Target>
-            <Menu.Dropdown data-testid="builder-new-menu">
-              <Menu.Item data-testid="builder-new-cell-item" onClick={() => setNewDialog("cell")}>
-                Empty cell…
-              </Menu.Item>
-              <Menu.Item data-testid="builder-new-bulk-item" onClick={() => setNewDialog("bulk")}>
-                Bulk crystal…
-              </Menu.Item>
-            </Menu.Dropdown>
-          </Menu>
-          <Tooltip label={`Undo (${mod}+Z)`} openDelay={400}>
-            <Button
-              variant="default"
-              data-testid="builder-topbar-undo"
-              disabled={edits.length === 0}
-              onClick={() => undo()}
-            >
-              Undo
-            </Button>
-          </Tooltip>
-          <Tooltip label={`Redo (${mod}+Shift+Z)`} openDelay={400}>
-            <Button
-              variant="default"
-              data-testid="builder-topbar-redo"
-              disabled={redoStack.length === 0}
-              onClick={() => redo()}
-            >
-              Redo
-            </Button>
-          </Tooltip>
-          <div style={{ flex: 1 }} />
-          <Menu position="bottom-end" withinPortal>
-            <Menu.Target>
-              <Button
-                data-testid="builder-save"
-                disabled={!shown}
-                title={`Save the edited structure (${mod}+S saves XYZ)`}
-              >
-                Save ▾
-              </Button>
-            </Menu.Target>
-            <Menu.Dropdown data-testid="builder-save-menu">
-              {STRUCTURE_EXPORT_FORMATS.map((f) => (
-                <Menu.Item
-                  key={f.value}
-                  data-testid={`builder-save-${f.value}`}
-                  onClick={() => void handleExport(f.value)}
-                >
-                  Save {f.label}
-                </Menu.Item>
-              ))}
-            </Menu.Dropdown>
-          </Menu>
-          <Button
-            variant="default"
-            data-testid="builder-theme"
-            onClick={cycleTheme}
-            title={`Theme: ${THEME_LABELS[theme]} (click to cycle)`}
-          >
-            {THEME_LABELS[theme]}
-          </Button>
-        </Group>
-      </Paper>
+        <span style={{ fontWeight: 700, fontSize: 14, letterSpacing: "-0.02em" }}>
+          megane Builder
+        </span>
+        <span style={{ ...hintStyle, marginRight: 8 }} data-testid="builder-file-name">
+          {fileName ?? "No structure"}
+          {edits.length > 0 && ` · ${edits.length} edit${edits.length === 1 ? "" : "s"}`}
+        </span>
+        <button
+          type="button"
+          data-testid="builder-open"
+          style={buttonStyle()}
+          onClick={() => inputRef.current?.click()}
+          title={`Open a structure file (${mod}+O)`}
+        >
+          Open…
+        </button>
+        <input
+          ref={inputRef}
+          data-testid="builder-open-input"
+          type="file"
+          style={{ display: "none" }}
+          onChange={(e) => void handleOpenChange(e)}
+        />
+        <Menu
+          testId="builder-new"
+          label="New"
+          title="Start a new structure (replaces the open one)"
+          items={[
+            {
+              label: "Empty cell…",
+              testId: "builder-new-cell-item",
+              onSelect: () => setNewDialog("cell"),
+            },
+            {
+              label: "Bulk crystal…",
+              testId: "builder-new-bulk-item",
+              onSelect: () => setNewDialog("bulk"),
+            },
+          ]}
+        />
+        <button
+          type="button"
+          data-testid="builder-topbar-undo"
+          style={buttonStyle("default", edits.length === 0)}
+          disabled={edits.length === 0}
+          title={`Undo (${mod}+Z)`}
+          onClick={() => undo()}
+        >
+          Undo
+        </button>
+        <button
+          type="button"
+          data-testid="builder-topbar-redo"
+          style={buttonStyle("default", redoStack.length === 0)}
+          disabled={redoStack.length === 0}
+          title={`Redo (${mod}+Shift+Z)`}
+          onClick={() => redo()}
+        >
+          Redo
+        </button>
+        <span style={{ flex: 1 }} />
+        <Menu
+          testId="builder-save"
+          label="Save"
+          variant="primary"
+          disabled={!shown}
+          title={`Save the edited structure (${mod}+S saves XYZ)`}
+          items={STRUCTURE_EXPORT_FORMATS.map((f) => ({
+            label: `Save ${f.label}`,
+            testId: `builder-save-${f.value}`,
+            onSelect: () => void handleExport(f.value),
+          }))}
+        />
+        <button
+          type="button"
+          data-testid="builder-theme"
+          style={buttonStyle()}
+          onClick={cycleTheme}
+          title={`Theme: ${THEME_LABELS[theme]} (click to cycle)`}
+        >
+          {THEME_LABELS[theme]}
+        </button>
+      </div>
 
-      <Box style={{ flex: 1, display: "flex", minHeight: 0 }}>
-        <Box
+      <div style={{ flex: 1, display: "flex", minHeight: 0 }}>
+        <div
           style={{ flex: 1, position: "relative", minWidth: 0 }}
           onDragOver={(e) => {
             e.preventDefault();
@@ -396,7 +374,7 @@ function BuilderShell() {
             <ViewAxisControls hasCell={hasCell} onAlign={handleAlignView} />
           </div>
           {!source && (
-            <Box
+            <div
               data-testid="builder-welcome"
               style={{
                 position: "absolute",
@@ -407,138 +385,144 @@ function BuilderShell() {
                 pointerEvents: "none",
               }}
             >
-              <Paper
-                withBorder
-                shadow="md"
-                radius="md"
-                p="lg"
-                style={{ pointerEvents: "auto", maxWidth: 460 }}
+              <div
+                style={{
+                  pointerEvents: "auto",
+                  display: "flex",
+                  flexDirection: "column",
+                  alignItems: "center",
+                  gap: 10,
+                  padding: 24,
+                  borderRadius: 12,
+                  background: "var(--megane-surface, rgba(255,255,255,0.92))",
+                  border: "1px solid var(--megane-border-solid, #e2e8f0)",
+                  boxShadow: "0 4px 24px var(--megane-shadow, rgba(0,0,0,0.06))",
+                }}
               >
-                <Stack gap="sm" align="center">
-                  <Text fw={600}>Build a structure</Text>
-                  <Text size="xs" c="dimmed" ta="center">
-                    Open a file (PDB, XYZ, MOL, CIF, …) — or drop one here — or start from scratch.
-                  </Text>
-                  <Group gap="xs" justify="center">
-                    <Button
-                      data-testid="builder-welcome-open"
-                      onClick={() => inputRef.current?.click()}
-                    >
-                      Open…
-                    </Button>
-                    <Button
-                      variant="default"
-                      data-testid="builder-welcome-new"
-                      onClick={() => setNewDialog("cell")}
-                    >
-                      New empty cell…
-                    </Button>
-                    <Button
-                      variant="default"
-                      data-testid="builder-welcome-bulk"
-                      onClick={() => setNewDialog("bulk")}
-                    >
-                      New bulk crystal…
-                    </Button>
-                  </Group>
-                </Stack>
-              </Paper>
-            </Box>
+                <div style={{ fontWeight: 600 }}>Build a structure</div>
+                <div style={hintStyle}>
+                  Open a file (PDB, XYZ, MOL, CIF, …) — or drop one here — or start from scratch.
+                </div>
+                <div
+                  style={{ display: "flex", gap: 8, flexWrap: "wrap", justifyContent: "center" }}
+                >
+                  <button
+                    type="button"
+                    data-testid="builder-welcome-open"
+                    style={buttonStyle("primary")}
+                    onClick={() => inputRef.current?.click()}
+                  >
+                    Open…
+                  </button>
+                  <button
+                    type="button"
+                    data-testid="builder-welcome-new"
+                    style={buttonStyle()}
+                    onClick={() => setNewDialog("cell")}
+                  >
+                    New empty cell…
+                  </button>
+                  <button
+                    type="button"
+                    data-testid="builder-welcome-bulk"
+                    style={buttonStyle()}
+                    onClick={() => setNewDialog("bulk")}
+                  >
+                    New bulk crystal…
+                  </button>
+                </div>
+              </div>
+            </div>
           )}
           {dropActive && (
-            <Box
+            <div
               data-testid="builder-drop-overlay"
               style={{
                 position: "absolute",
                 inset: 8,
                 borderRadius: 10,
-                border: "2px dashed var(--mantine-color-blue-filled)",
-                background: "var(--mantine-color-blue-light)",
+                border: "2px dashed #2563eb",
+                background: "rgba(37, 99, 235, 0.08)",
                 display: "flex",
                 alignItems: "center",
                 justifyContent: "center",
+                fontWeight: 600,
+                color: "#1d4ed8",
                 pointerEvents: "none",
               }}
             >
-              <Text fw={600} c="blue">
-                Drop a structure file to open it
-              </Text>
-            </Box>
+              Drop a structure file to open it
+            </div>
           )}
-          <HoverTooltip info={hoverInfo} />
-        </Box>
-        <Box
-          w={SIDEBAR_WIDTH}
+          <Tooltip info={hoverInfo} />
+        </div>
+        <div
           style={{
-            borderLeft: "1px solid var(--mantine-color-default-border)",
+            width: SIDEBAR_WIDTH,
+            borderLeft: "1px solid var(--megane-border-solid, #e2e8f0)",
+            background: "var(--megane-surface-solid, #f8f9fb)",
             overflow: "hidden",
             display: "flex",
             flexDirection: "column",
           }}
         >
           <BuilderSidebar />
-        </Box>
-      </Box>
+        </div>
+      </div>
 
       {notice && (
-        <Alert
+        <div
           data-testid="builder-notice"
           data-level={notice.level}
-          color={notice.level === "error" ? "red" : "blue"}
-          variant="light"
-          radius={0}
-          py={6}
-          px="sm"
-          withCloseButton={false}
+          role={notice.level === "error" ? "alert" : "status"}
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: 8,
+            padding: "6px 12px",
+            fontSize: 12,
+            borderTop: "1px solid var(--megane-border-solid, #e2e8f0)",
+            background:
+              notice.level === "error" ? "rgba(220, 38, 38, 0.1)" : "rgba(37, 99, 235, 0.08)",
+            color: notice.level === "error" ? "#991b1b" : "var(--megane-text, #1e293b)",
+          }}
         >
-          <Group gap="xs" wrap="nowrap">
-            <Text size="xs" style={{ flex: 1 }}>
-              {notice.text}
-            </Text>
-            <Button
-              variant="default"
-              data-testid="builder-notice-dismiss"
-              onClick={() => setNotice(null)}
-            >
-              Dismiss
-            </Button>
-          </Group>
-        </Alert>
+          <span style={{ flex: 1 }}>{notice.text}</span>
+          <button
+            type="button"
+            data-testid="builder-notice-dismiss"
+            style={buttonStyle()}
+            onClick={() => setNotice(null)}
+          >
+            Dismiss
+          </button>
+        </div>
       )}
 
-      <Paper
+      <div
         data-testid="builder-statusbar"
-        radius={0}
-        withBorder
-        px="sm"
-        py={4}
-        style={{ borderWidth: "1px 0 0 0" }}
+        style={{
+          display: "flex",
+          gap: 16,
+          padding: "4px 12px",
+          borderTop: "1px solid var(--megane-border-solid, #e2e8f0)",
+          background: "var(--megane-surface-solid, #f8f9fb)",
+          ...hintStyle,
+        }}
       >
-        <Group gap="md">
-          <Text size="xs" c="dimmed" data-testid="builder-status-atoms">
-            {shown ? `${shown.nAtoms} atoms · ${shown.nBonds} bonds` : "No structure"}
-          </Text>
-          {hasCell && (
-            <Text size="xs" c="dimmed" data-testid="builder-status-cell">
-              Cell
-            </Text>
-          )}
-          {selected.length > 0 && (
-            <Text size="xs" c="dimmed" data-testid="builder-status-selection">
-              {selected.length} selected
-            </Text>
-          )}
-          <div style={{ flex: 1 }} />
-          <Text size="xs" c="dimmed" data-testid="builder-status-tool" truncate>
-            {activeTool.label} ({TOOL_KEYS[activeTool.value]}) · {activeTool.hint}
-          </Text>
-          {showOriginal && (
-            <Text size="xs" c="dimmed">
-              Showing original
-            </Text>
-          )}
-        </Group>
-      </Paper>
+        <span data-testid="builder-status-atoms">
+          {shown ? `${shown.nAtoms} atoms · ${shown.nBonds} bonds` : "No structure"}
+        </span>
+        {hasCell && <span data-testid="builder-status-cell">Cell</span>}
+        {selected.length > 0 && (
+          <span data-testid="builder-status-selection">{selected.length} selected</span>
+        )}
+        <span style={{ flex: 1 }} />
+        <span data-testid="builder-status-tool">
+          {activeTool.label} ({TOOL_KEYS[activeTool.value]}) · {activeTool.hint}
+        </span>
+        {showOriginal && <span>Showing original</span>}
+      </div>
 
       {newDialog && (
         <NewStructureDialog
@@ -549,6 +533,6 @@ function BuilderShell() {
           onClose={() => setNewDialog(null)}
         />
       )}
-    </Box>
+    </div>
   );
 }
