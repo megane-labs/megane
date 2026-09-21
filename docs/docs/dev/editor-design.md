@@ -60,8 +60,13 @@ shift on every deletion. An `EditAtomRef` is either
 
 The executor keeps a working copy keyed by ref, rebuilds the ref → index map
 after deletions, and materialises indices only when it builds the output
-`Snapshot`. It also reports, per output atom, which ref it came from
-(`EditResult.outputRefs`); the Builder uses that to translate a click on
+`Snapshot`. The working copy is typed arrays plus an implicit ref table (the
+atoms of the file, or of the last whole-structure op, are addressed by their
+index in it; only atoms an `add_atom` / `add_fragment` created carry an
+explicit ref), so a supercell or a slab of a million atoms costs bytes per
+atom rather than a string and a map entry each. It also reports, per output
+atom, which ref it came from (`EditResult.refAt(i)`, or the materialised
+`EditResult.outputRefs` list); the Builder uses that to translate a click on
 rendered atom *i* into the ref an op must name.
 
 Because refs address the file's atoms, the list is replayed *before* anything
@@ -200,7 +205,7 @@ where the *Place* tool's click landed (`BuildHandlers.pick` with
 `placeSource` set); the new atoms are selected so a Move drag carries them
 together.
 
-Rendered atom indices are translated to op refs through `result.outputRefs`
+Rendered atom indices are translated to op refs through `result.refAt`
 before an op is written, so an op always names the atom the user saw. Drags
 write one `move_atoms` op at press time and rewrite its delta while the
 pointer moves, so the history gains a single op; a drag that ends with a zero

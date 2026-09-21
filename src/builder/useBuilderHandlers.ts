@@ -3,7 +3,7 @@
  *
  * Every click becomes one `EditOp` on the store (or a selection change). The
  * Viewport reports rendered atom indices; they are translated to op refs
- * through `result.outputRefs` so an op always names the atom the user saw.
+ * through `result.refAt` so an op always names the atom the user saw.
  */
 
 import { useCallback, useEffect, useMemo, useRef } from "react";
@@ -16,8 +16,11 @@ import type { BuildHandlers, BuildPickInfo } from "./types";
 /** Build the handlers for `api` and install them in the store while mounted. */
 export function useBuilderHandlers(api: StoreApi<BuilderStore>): BuildHandlers {
   const refFor = useCallback(
-    (renderedIndex: number): EditAtomRef | null =>
-      api.getState().result?.outputRefs[renderedIndex] ?? null,
+    (renderedIndex: number): EditAtomRef | null => {
+      const result = api.getState().result;
+      if (!result || renderedIndex < 0 || renderedIndex >= result.snapshot.nAtoms) return null;
+      return result.refAt(renderedIndex);
+    },
     [api],
   );
 
