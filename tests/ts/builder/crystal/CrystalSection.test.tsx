@@ -6,7 +6,7 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { render, screen, fireEvent, cleanup, act } from "@testing-library/react";
+import { render, screen, fireEvent, cleanup, act } from "../util";
 import { CrystalSection, MAX_ATOMS, cellSummary } from "@/builder/crystal/CrystalSection";
 import { useBuilderStore } from "@/builder/store";
 import { bulkSnapshot } from "@/crystal/bulk";
@@ -205,9 +205,11 @@ describe("CrystalSection — slab", () => {
     click("builder-slab-apply");
     expect(edits()).toHaveLength(1);
     type("builder-slab-l", "1");
-    fireEvent.change(screen.getByTestId("builder-slab-shift"), { target: { value: "0.25" } });
+    // The termination slider is a Mantine Slider: its thumb takes the keyboard.
+    fireEvent.keyDown(screen.getByRole("slider"), { key: "ArrowRight" });
+    expect(screen.getByTestId("builder-slab-shift-value").textContent).toBe("0.01");
     click("builder-slab-apply");
-    expect(edits()[1]).toMatchObject({ op: "slab", miller: [0, 0, 1], shift: 0.25 });
+    expect(edits()[1]).toMatchObject({ op: "slab", miller: [0, 0, 1], shift: 0.01 });
   });
 
   it("previews the thickness the cut would have and refuses a slab beyond the atom limit", () => {

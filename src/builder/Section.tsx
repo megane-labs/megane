@@ -1,11 +1,11 @@
 /**
- * A collapsible sidebar section. Its open / closed state is remembered per
- * section id in `localStorage`, so the sidebar comes back the way it was
- * left; a blocked storage leaves it in memory only.
+ * A collapsible sidebar section (Mantine `Paper` + `Collapse`). Its open /
+ * closed state is remembered per section id in `localStorage`, so the sidebar
+ * comes back the way it was left; a blocked storage leaves it in memory only.
  */
 
 import { useCallback, useEffect, useState, type ReactNode } from "react";
-import { sectionStyle, sectionTitleStyle, hintStyle } from "./styles";
+import { Collapse, Group, Paper, Text, UnstyledButton } from "@mantine/core";
 
 export const SECTIONS_STORAGE_KEY = "megane.builder.sections.v1";
 
@@ -76,42 +76,40 @@ export interface SectionProps {
 export function Section({ id, title, summary, defaultOpen = true, children }: SectionProps) {
   const [open, toggle] = useSectionOpen(id, defaultOpen);
   return (
-    <div style={{ ...sectionStyle, gap: open ? 8 : 0 }} data-testid={`builder-section-${id}`}>
-      <div
-        role="button"
+    <Paper withBorder radius="md" p="sm" data-testid={`builder-section-${id}`}>
+      <UnstyledButton
+        onClick={toggle}
         aria-expanded={open}
         data-testid={`builder-section-${id}-toggle`}
-        onClick={toggle}
-        style={{
-          display: "flex",
-          alignItems: "center",
-          gap: 6,
-          cursor: "pointer",
-          userSelect: "none",
-        }}
+        w="100%"
       >
-        <span
-          aria-hidden="true"
-          style={{
-            display: "inline-block",
-            width: 10,
-            fontSize: 10,
-            color: "var(--megane-text-secondary, #64748b)",
-            transform: open ? "rotate(90deg)" : "none",
-            transition: "transform 120ms",
-          }}
-        >
-          ▶
-        </span>
-        <span style={sectionTitleStyle}>{title}</span>
-        <span style={{ flex: 1 }} />
-        {summary !== undefined && summary !== null && (
-          <span style={hintStyle} data-testid={`builder-section-${id}-summary`}>
-            {summary}
-          </span>
-        )}
-      </div>
-      {open && children}
-    </div>
+        <Group gap={6} wrap="nowrap">
+          <Text
+            size="xs"
+            c="dimmed"
+            aria-hidden="true"
+            style={{
+              width: 10,
+              transform: open ? "rotate(90deg)" : undefined,
+              transition: "transform 120ms",
+            }}
+          >
+            ▶
+          </Text>
+          <Text size="xs" fw={700} tt="uppercase" c="dimmed" style={{ letterSpacing: 0.4 }}>
+            {title}
+          </Text>
+          <div style={{ flex: 1 }} />
+          {summary !== undefined && summary !== null && (
+            <Text size="xs" c="dimmed" data-testid={`builder-section-${id}-summary`} ta="right">
+              {summary}
+            </Text>
+          )}
+        </Group>
+      </UnstyledButton>
+      <Collapse in={open}>
+        <div style={{ paddingTop: 8 }}>{children}</div>
+      </Collapse>
+    </Paper>
   );
 }

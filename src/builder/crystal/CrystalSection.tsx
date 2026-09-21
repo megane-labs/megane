@@ -7,16 +7,19 @@
  */
 
 import { useEffect, useMemo, useState } from "react";
-import { useBuilderStore, canEdit, shownSnapshot } from "../store";
 import {
-  buttonStyle,
-  hintStyle,
-  inputStyle,
-  rowStyle,
-  segmentGroupStyle,
-  segmentStyle,
-  toggleStyle,
-} from "../styles";
+  Alert,
+  Button,
+  Checkbox,
+  Chip,
+  Group,
+  NumberInput,
+  SegmentedControl,
+  Slider,
+  Stack,
+  Text,
+} from "@mantine/core";
+import { useBuilderStore, canEdit, shownSnapshot } from "../store";
 import { boxToCellParams, cellParamsToBox, det3, type CellParams } from "../../crystal/cell";
 import { slabPreview } from "../../crystal/transform";
 import type { EditOp } from "../../pipeline/types";
@@ -45,8 +48,6 @@ const TABS: { value: Tab; label: string }[] = [
   { value: "supercell", label: "Supercell" },
   { value: "slab", label: "Slab" },
 ];
-
-const numStyle: React.CSSProperties = { ...inputStyle, width: 58 };
 
 /** `a × b × c Å`, with the angles when the cell is not orthogonal. */
 export function cellSummary(box: Float32Array): string {
@@ -101,54 +102,46 @@ export function CrystalSection() {
         </span>
       }
     >
-      <div
-        data-testid="builder-crystal"
-        style={{ display: "flex", flexDirection: "column", gap: 8 }}
-      >
+      <Stack gap="xs" data-testid="builder-crystal">
         {symOps > 0 && !symmetryConsumed && (
-          <div
-            style={{
-              ...rowStyle,
-              padding: "6px 8px",
-              borderRadius: 6,
-              background: "rgba(37, 99, 235, 0.08)",
-            }}
+          <Alert
+            variant="light"
+            color="blue"
+            p="xs"
             data-testid="builder-crystal-symmetry"
+            title={null}
           >
-            <span style={hintStyle}>
-              This file lists {symOps} symmetry operation{symOps === 1 ? "" : "s"} for its
-              asymmetric unit.
-            </span>
-            <button
-              type="button"
-              data-testid="builder-crystal-expand-symmetry"
-              style={buttonStyle("primary", !editable)}
-              disabled={!editable}
-              onClick={() => apply({ op: "expand_symmetry", id: newFragmentId("symmetry") })}
-              title="Fill the unit cell with the symmetry-equivalent atoms (as the viewer's Symmetry node does)"
-            >
-              Expand symmetry
-            </button>
-          </div>
+            <Stack gap={6}>
+              <Text size="xs">
+                This file lists {symOps} symmetry operation{symOps === 1 ? "" : "s"} for its
+                asymmetric unit.
+              </Text>
+              <Group>
+                <Button
+                  data-testid="builder-crystal-expand-symmetry"
+                  disabled={!editable}
+                  onClick={() => apply({ op: "expand_symmetry", id: newFragmentId("symmetry") })}
+                  title="Fill the unit cell with the symmetry-equivalent atoms (as the viewer's Symmetry node does)"
+                >
+                  Expand symmetry
+                </Button>
+              </Group>
+            </Stack>
+          </Alert>
         )}
-        <div style={segmentGroupStyle} role="tablist">
-          {TABS.map((t) => (
-            <span
-              key={t.value}
-              role="tab"
-              data-testid={`builder-crystal-tab-${t.value}`}
-              aria-selected={tab === t.value}
-              style={segmentStyle(tab === t.value)}
-              onClick={() => setTab(t.value)}
-            >
-              {t.label}
-            </span>
-          ))}
-        </div>
+        <SegmentedControl
+          fullWidth
+          value={tab}
+          onChange={(v) => setTab(v as Tab)}
+          data={TABS.map((t) => ({
+            value: t.value,
+            label: <span data-testid={`builder-crystal-tab-${t.value}`}>{t.label}</span>,
+          }))}
+        />
         {!shown && (
-          <div style={hintStyle} data-testid="builder-crystal-no-document">
+          <Text size="xs" c="dimmed" data-testid="builder-crystal-no-document">
             Open or create a structure first.
-          </div>
+          </Text>
         )}
         {shown && tab === "cell" && (
           <CellTab
@@ -166,13 +159,13 @@ export function CrystalSection() {
           <SlabTab editable={editable} source={shown} onApply={apply} onError={reportError} />
         )}
         {shown && !hasCell && (
-          <div style={hintStyle} data-testid="builder-crystal-no-cell">
+          <Text size="xs" c="dimmed" data-testid="builder-crystal-no-cell">
             {tab === "cell"
               ? "The structure has no cell yet; set one above."
               : "This needs a cell: set one in the Cell tab, or start from a bulk crystal (New…)."}
-          </div>
+          </Text>
         )}
-      </div>
+      </Stack>
     </Section>
   );
 }
@@ -202,7 +195,7 @@ function CellTab({
   const [params, setParams] = useState<CellParams>(current);
   const [scaleAtoms, setScaleAtoms] = useState(true);
   const [vacuum, setVacuum] = useState(10);
-  const [axes, setAxes] = useState<boolean[]>([false, false, true]);
+  const [axes, setAxes] = useState<string[]>(["c"]);
   // Follow the document: a new structure or an undone edit refreshes the fields.
   useEffect(() => setParams(current), [current]);
 
@@ -221,11 +214,13 @@ function CellTab({
     if (!valid) return;
     onApply({ op: "set_cell", box: cellParamsToBox(params), scaleAtoms: scaleAtoms && hasCell });
   };
-  const chosenAxes = axes.map((on, i) => (on ? i : -1)).filter((i) => i >= 0);
+  const chosenAxes = ["a", "b", "c"]
+    .map((n, i) => (axes.includes(n) ? i : -1))
+    .filter((i) => i >= 0);
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 6 }} data-testid="builder-cell">
-      <div style={rowStyle}>
+    <Stack gap="xs" data-testid="builder-cell">
+      <Group gap="xs">
         <NumberField
           label="a"
           value={params.a}
@@ -250,8 +245,8 @@ function CellTab({
           step={0.01}
           min={0.01}
         />
-      </div>
-      <div style={rowStyle}>
+      </Group>
+      <Group gap="xs">
         <NumberField
           label="α"
           value={params.alpha}
@@ -273,60 +268,49 @@ function CellTab({
           testId="builder-cell-gamma"
           step={0.1}
         />
-      </div>
-      <div style={rowStyle}>
-        <button
-          type="button"
-          data-testid="builder-cell-apply"
-          style={buttonStyle("primary", !editable || !valid)}
-          disabled={!editable || !valid}
-          onClick={applyCell}
-        >
+      </Group>
+      <Group gap="xs">
+        <Button data-testid="builder-cell-apply" disabled={!editable || !valid} onClick={applyCell}>
           Set cell
-        </button>
-        <label style={{ ...hintStyle, display: "flex", alignItems: "center", gap: 4 }}>
-          <input
-            type="checkbox"
-            data-testid="builder-cell-scale-atoms"
-            checked={scaleAtoms}
-            onChange={(e) => setScaleAtoms(e.target.checked)}
-            disabled={!hasCell}
-          />
-          move atoms with the cell
-        </label>
-      </div>
-      <div style={rowStyle}>
-        <button
-          type="button"
+        </Button>
+        <Checkbox
+          data-testid="builder-cell-scale-atoms"
+          checked={scaleAtoms}
+          onChange={(e) => setScaleAtoms(e.currentTarget.checked)}
+          disabled={!hasCell}
+          label="move atoms with the cell"
+        />
+      </Group>
+      <Group gap="xs">
+        <Button
+          variant="default"
           data-testid="builder-cell-wrap"
-          style={buttonStyle("default", !editable || !hasCell || nAtoms === 0)}
           disabled={!editable || !hasCell || nAtoms === 0}
           onClick={() => onApply({ op: "wrap" })}
           title="Fold every atom back into the cell"
         >
           Wrap atoms
-        </button>
-        <button
-          type="button"
+        </Button>
+        <Button
+          variant="outline"
+          color="red"
           data-testid="builder-cell-remove"
-          style={buttonStyle("danger", !editable || !hasCell)}
           disabled={!editable || !hasCell}
           onClick={() => onApply({ op: "set_cell", box: null })}
         >
           Remove cell
-        </button>
-      </div>
-      <div style={rowStyle}>
-        <button
-          type="button"
+        </Button>
+      </Group>
+      <Group gap="xs">
+        <Button
+          variant="default"
           data-testid="builder-cell-center"
-          style={buttonStyle("default", !editable || !hasCell || chosenAxes.length === 0)}
           disabled={!editable || !hasCell || chosenAxes.length === 0}
           onClick={() => onApply({ op: "center", axes: chosenAxes, vacuum })}
           title="Centre the atoms and resize the chosen cell vectors to leave this much vacuum on each side"
         >
           Center + vacuum
-        </button>
+        </Button>
         <NumberField
           label=""
           value={vacuum}
@@ -335,22 +319,22 @@ function CellTab({
           step={0.5}
           min={0}
           title="Vacuum on each side, Å"
+          width={54}
         />
-        <span style={hintStyle}>Å along</span>
-        {["a", "b", "c"].map((name, i) => (
-          <span
-            key={name}
-            role="button"
-            data-testid={`builder-cell-axis-${name}`}
-            aria-pressed={axes[i]}
-            style={toggleStyle(axes[i])}
-            onClick={() => setAxes(axes.map((on, k) => (k === i ? !on : on)))}
-          >
-            {name}
-          </span>
-        ))}
-      </div>
-    </div>
+        <Text size="xs" c="dimmed">
+          Å along
+        </Text>
+        <Chip.Group multiple value={axes} onChange={setAxes}>
+          <Group gap={4}>
+            {["a", "b", "c"].map((name) => (
+              <Chip key={name} value={name} size="xs" variant="outline">
+                <span data-testid={`builder-cell-axis-${name}`}>{name}</span>
+              </Chip>
+            ))}
+          </Group>
+        </Chip.Group>
+      </Group>
+    </Stack>
   );
 }
 
@@ -375,11 +359,8 @@ function SupercellTab({
   const valid = images >= 1 && !tooMany;
 
   return (
-    <div
-      style={{ display: "flex", flexDirection: "column", gap: 6 }}
-      data-testid="builder-supercell"
-    >
-      <div style={rowStyle}>
+    <Stack gap="xs" data-testid="builder-supercell">
+      <Group gap="xs">
         {!advanced ? (
           ["a", "b", "c"].map((name, i) => (
             <NumberField
@@ -393,53 +374,53 @@ function SupercellTab({
             />
           ))
         ) : (
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 50px)", gap: 4 }}>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 56px)", gap: 4 }}>
             {matrix.map((v, k) => (
-              <input
+              <NumberInput
                 key={k}
-                type="number"
                 data-testid={`builder-supercell-m${k}`}
                 value={v}
-                onChange={(e) =>
-                  setMatrix(matrix.map((x, i) => (i === k ? Number(e.target.value) : x)))
+                hideControls
+                onChange={(next) =>
+                  setMatrix(
+                    matrix.map((x, i) =>
+                      i === k ? (typeof next === "number" ? next : Number(next)) : x,
+                    ),
+                  )
                 }
-                style={{ ...numStyle, width: 50 }}
               />
             ))}
           </div>
         )}
-        <span
-          role="button"
-          data-testid="builder-supercell-advanced"
-          aria-pressed={advanced}
-          style={toggleStyle(advanced)}
-          onClick={() => setAdvanced(!advanced)}
+        <Chip
+          checked={advanced}
+          onChange={() => setAdvanced(!advanced)}
+          size="xs"
+          variant="outline"
           title="Integer transformation matrix: rows are the new lattice vectors in units of the old ones"
         >
-          Matrix
-        </span>
-      </div>
-      <div style={rowStyle}>
-        <button
-          type="button"
+          <span data-testid="builder-supercell-advanced">Matrix</span>
+        </Chip>
+      </Group>
+      <Group gap="xs">
+        <Button
           data-testid="builder-supercell-apply"
-          style={buttonStyle("primary", !editable || !valid)}
           disabled={!editable || !valid}
           onClick={() =>
             onApply({ op: "supercell", id: newFragmentId("supercell"), matrix: effective })
           }
         >
           Make supercell
-        </button>
-        <span style={hintStyle} data-testid="builder-supercell-preview">
+        </Button>
+        <Text size="xs" c="dimmed" data-testid="builder-supercell-preview">
           {valid
             ? `${images} image${images === 1 ? "" : "s"} → ${total} atoms`
             : tooMany
               ? overLimit(total)
               : "Invalid matrix"}
-        </span>
-      </div>
-    </div>
+        </Text>
+      </Group>
+    </Stack>
   );
 }
 
@@ -494,8 +475,8 @@ function SlabTab({
   };
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 6 }} data-testid="builder-slab">
-      <div style={rowStyle}>
+    <Stack gap="xs" data-testid="builder-slab">
+      <Group gap="xs">
         {["h", "k", "l"].map((name, i) => (
           <NumberField
             key={name}
@@ -512,7 +493,7 @@ function SlabTab({
           onChange={setLayers}
           testId="builder-slab-layers"
           min={1}
-          width={50}
+          width={54}
         />
         <NumberField
           label="vacuum"
@@ -522,34 +503,37 @@ function SlabTab({
           step={0.5}
           min={0}
           title="Vacuum on each side along the normal, Å; 0 keeps the slab periodic"
+          width={54}
         />
-      </div>
-      <label style={{ ...rowStyle, ...hintStyle, flexWrap: "nowrap" }}>
-        termination
-        <input
-          type="range"
+      </Group>
+      <Group gap="xs" wrap="nowrap">
+        <Text size="xs" c="dimmed">
+          termination
+        </Text>
+        <Slider
           data-testid="builder-slab-shift"
           min={0}
           max={0.99}
           step={0.01}
           value={shift}
-          onChange={(e) => setShift(Number(e.target.value))}
+          onChange={setShift}
+          label={(v) => v.toFixed(2)}
           style={{ flex: 1 }}
           title="Slide the cut along the surface normal to choose the termination"
         />
-        {shift.toFixed(2)}
-      </label>
-      <div style={rowStyle}>
-        <button
-          type="button"
+        <Text size="xs" c="dimmed" data-testid="builder-slab-shift-value">
+          {shift.toFixed(2)}
+        </Text>
+      </Group>
+      <Group gap="xs">
+        <Button
           data-testid="builder-slab-apply"
-          style={buttonStyle("primary", !editable || !valid || tooMany)}
           disabled={!editable || !valid || tooMany}
           onClick={create}
         >
           Cut slab
-        </button>
-        <span style={hintStyle} data-testid="builder-slab-preview">
+        </Button>
+        <Text size="xs" c="dimmed" data-testid="builder-slab-preview">
           {preview
             ? tooMany
               ? overLimit(preview.nAtoms)
@@ -557,8 +541,8 @@ function SlabTab({
             : millerValid
               ? ""
               : "Miller indices must be integers, not all zero"}
-        </span>
-      </div>
-    </div>
+        </Text>
+      </Group>
+    </Stack>
   );
 }

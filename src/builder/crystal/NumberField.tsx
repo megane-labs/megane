@@ -1,19 +1,12 @@
-/** A labelled numeric input for the crystal forms. */
+/**
+ * A compact labelled number input for the crystal forms: Mantine's
+ * `NumberInput` with the label beside it rather than above, so a row of three
+ * cell lengths still fits the 320 px sidebar.
+ */
 
-import { hintStyle, inputStyle } from "../styles";
+import { Group, NumberInput, Text } from "@mantine/core";
 
-const numStyle: React.CSSProperties = { ...inputStyle, width: 58 };
-
-export function NumberField({
-  label,
-  value,
-  onChange,
-  testId,
-  step = 1,
-  min,
-  width,
-  title,
-}: {
+export interface NumberFieldProps {
   label: string;
   value: number;
   onChange: (v: number) => void;
@@ -22,19 +15,35 @@ export function NumberField({
   min?: number;
   width?: number;
   title?: string;
-}) {
+}
+
+export function NumberField({
+  label,
+  value,
+  onChange,
+  testId,
+  step = 1,
+  min,
+  width = 58,
+  title,
+}: NumberFieldProps) {
   return (
-    <label style={{ display: "flex", alignItems: "center", gap: 3 }} title={title}>
-      {label && <span style={hintStyle}>{label}</span>}
-      <input
-        type="number"
+    <Group gap={4} wrap="nowrap" title={title}>
+      {label && (
+        <Text size="xs" c="dimmed">
+          {label}
+        </Text>
+      )}
+      <NumberInput
         data-testid={testId}
         value={Number.isFinite(value) ? value : ""}
         step={step}
         min={min}
-        onChange={(e) => onChange(Number(e.target.value))}
-        style={width ? { ...numStyle, width } : numStyle}
+        hideControls
+        allowDecimal
+        w={width}
+        onChange={(v) => onChange(typeof v === "number" ? v : Number(v))}
       />
-    </label>
+    </Group>
   );
 }

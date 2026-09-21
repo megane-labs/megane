@@ -148,7 +148,36 @@ remembers each one in `localStorage`; `shortcuts.ts` holds the key table
 (`resolveShortcut`) and applies it to the store (`runShortcut`), ignoring keys
 aimed at a text field or a dialog. Starting a document — an empty cell or a
 bulk crystal — is one dialog (`NewStructureDialog`), because both replace
-what is open. Nothing in the viewer imports the Builder; the Builder reuses
+what is open.
+
+**The chrome is Mantine.** Every control of the Builder — buttons, the
+segmented controls, number and text inputs, checkboxes, chips, the
+termination slider, the menus, the two dialogs, the alerts and the
+collapsible sections — is a [Mantine](https://mantine.dev) component
+(`@mantine/core`, `@mantine/hooks`), so the panels get one visual language,
+keyboard and focus handling, and a dark theme for free instead of the inline
+styles this app started with. Three things follow from that:
+
+- `BuilderProviders` (`src/builder/providers.tsx`) is the single
+  `MantineProvider`. `BuilderApp` wraps itself in it, and a panel rendered on
+  its own — every section test — goes through `tests/ts/builder/util.tsx`,
+  whose `render` applies the same wrapper. A Mantine component without a
+  provider throws.
+- The colour scheme is *not* Mantine's own. megane already resolves light /
+  dark / system in `useThemeStore` (it drives `data-theme` and the
+  `--megane-*` variables the renderer and the viewer share), so the provider
+  runs with `forceColorScheme={resolvedTheme}` and the 3D canvas keeps
+  following the same store through `setBackgroundColor(themeToHex(...))`.
+- Only the Builder uses Mantine. The viewer, the widget and the labextension
+  keep their inline styles, and nothing outside `src/builder/` imports
+  `@mantine/core`, so `builder.html` is the only bundle that carries it
+  (`@mantine/core/styles.css` is imported in `src/builder/index.tsx`).
+
+Two component choices are deliberate, both so the panels stay testable from
+the DOM: selects are `NativeSelect` (a real `<select>`, which Playwright's
+`selectOption` and a `change` event drive), and the tool and element chips
+are compact `Button`s rather than `SegmentedControl` items, so each one keeps
+its own `data-testid` and `aria-pressed`. Nothing in the viewer imports the Builder; the Builder reuses
 the viewer's renderer, parsers, writers and edit engine. Bringing a Builder
 document into the viewer is the planned integration, and the shared history
 format (below) is its seam.

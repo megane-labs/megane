@@ -3,9 +3,9 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { render, screen, fireEvent, cleanup } from "@testing-library/react";
+import { render, screen, fireEvent, cleanup, waitFor } from "./util";
 import { Section, SECTIONS_STORAGE_KEY, useSectionOpen } from "@/builder/Section";
-import { renderHook, act } from "@testing-library/react";
+import { renderHook, act } from "./util";
 
 beforeEach(() => localStorage.clear());
 afterEach(cleanup);
@@ -23,20 +23,21 @@ describe("Section", () => {
       "true",
     );
     fireEvent.click(screen.getByTestId("builder-section-library-toggle"));
-    expect(screen.queryByTestId("body")).toBeNull();
+    expect(screen.getByTestId("body")).not.toBeVisible();
     // The summary stays visible while collapsed.
     expect(screen.getByTestId("builder-section-library-summary")).toBeTruthy();
   });
 
-  it("starts closed when asked, and remembers a toggle across mounts", () => {
+  it("starts closed when asked, and remembers a toggle across mounts", async () => {
     const { unmount } = render(
       <Section id="history" title="History" defaultOpen={false}>
         <div data-testid="body">contents</div>
       </Section>,
     );
-    expect(screen.queryByTestId("body")).toBeNull();
+    expect(screen.getByTestId("body")).not.toBeVisible();
     fireEvent.click(screen.getByTestId("builder-section-history-toggle"));
-    expect(screen.getByTestId("body")).toBeTruthy();
+    // Opening animates, so the body becomes visible on the next frame.
+    await waitFor(() => expect(screen.getByTestId("body")).toBeVisible());
     expect(JSON.parse(localStorage.getItem(SECTIONS_STORAGE_KEY)!)).toEqual({ history: true });
     unmount();
     // A later mount follows the stored choice, not the default.
@@ -45,7 +46,7 @@ describe("Section", () => {
         <div data-testid="body">contents</div>
       </Section>,
     );
-    expect(screen.getByTestId("body")).toBeTruthy();
+    await waitFor(() => expect(screen.getByTestId("body")).toBeVisible());
   });
 
   it("renders without a summary", () => {

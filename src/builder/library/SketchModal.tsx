@@ -15,10 +15,9 @@
  */
 
 import { Component, lazy, Suspense, useCallback, useRef, useState, type ReactNode } from "react";
-import { createPortal } from "react-dom";
+import { Box, Button, Checkbox, Group, Modal, Text, TextInput, Textarea } from "@mantine/core";
 import type { Ketcher } from "ketcher-core";
 import { isE2ETestMode } from "../../testMode";
-import { chipStyle, hintStyle, inputStyle } from "../styles";
 import { canEmbed } from "./embed";
 import { draftFromMolfile } from "./sketch";
 import type { LibraryMoleculeDraft } from "./types";
@@ -92,171 +91,127 @@ export function SketchModal({ initialMolfile, initialName, onAdd, onClose }: Ske
   const canAdd = !busy && canEmbed() && (pasteMode ? molText.trim().length > 0 : ready);
 
   const pasteField = (
-    <textarea
+    <Textarea
       data-testid="sketch-molfile"
       value={molText}
-      onChange={(e) => setMolText(e.target.value)}
+      onChange={(e) => setMolText(e.currentTarget.value)}
       placeholder="Paste a MOL / SDF file here"
       spellCheck={false}
-      style={{
-        ...inputStyle,
-        flex: 1,
-        minHeight: 240,
-        fontFamily: "ui-monospace, monospace",
-        resize: "none",
+      styles={{
+        root: { flex: 1, display: "flex" },
+        wrapper: { flex: 1, display: "flex" },
+        input: { flex: 1, minHeight: 240, fontFamily: "ui-monospace, monospace", resize: "none" },
       }}
     />
   );
 
-  return createPortal(
-    <div
-      data-testid="sketch-modal"
-      role="dialog"
-      aria-modal="true"
-      aria-label="Sketch a molecule"
-      style={{
-        position: "fixed",
-        inset: 0,
-        zIndex: 1000,
-        background: "rgba(15, 23, 42, 0.45)",
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
-      }}
-      onClick={(e) => {
-        if (e.target === e.currentTarget) onClose();
-      }}
-    >
-      <div
-        style={{
-          width: "min(960px, 94vw)",
-          height: "min(720px, 92vh)",
-          display: "flex",
-          flexDirection: "column",
-          gap: 8,
-          padding: 12,
-          borderRadius: 10,
-          background: "var(--megane-surface-solid, #fff)",
-          color: "var(--megane-text, #1e293b)",
-          border: "1px solid var(--megane-border-solid, #e2e8f0)",
-          boxShadow: "0 12px 40px rgba(0,0,0,0.25)",
-          fontSize: 13,
-        }}
-      >
-        <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-          <span style={{ fontWeight: 700 }}>Sketch a molecule</span>
-          <label style={{ display: "flex", alignItems: "center", gap: 4, ...hintStyle }}>
-            Name
-            <input
+  return (
+    <Modal.Root opened onClose={onClose} size="min(960px, 94vw)" centered>
+      <Modal.Overlay />
+      <Modal.Content data-testid="sketch-modal">
+        <Modal.Header>
+          <Modal.Title fw={700}>Sketch a molecule</Modal.Title>
+          <Modal.CloseButton />
+        </Modal.Header>
+        <Modal.Body
+          style={{ height: "min(70vh, 640px)", display: "flex", flexDirection: "column" }}
+        >
+          <Group gap="xs" mb="xs">
+            <TextInput
               data-testid="sketch-name"
+              label={null}
               value={name}
-              onChange={(e) => setName(e.target.value)}
-              placeholder="(formula)"
-              style={{ ...inputStyle, width: 160 }}
+              onChange={(e) => setName(e.currentTarget.value)}
+              placeholder="Name (formula)"
+              w={180}
             />
-          </label>
-          <span
-            role="button"
-            data-testid="sketch-paste-toggle"
-            aria-pressed={pasteMode}
-            style={chipStyle(pasteMode)}
-            onClick={() => setPasteMode((v) => !v)}
-          >
-            Paste MOL
-          </span>
-          <label style={{ display: "flex", alignItems: "center", gap: 4, ...hintStyle }}>
-            <input
-              type="checkbox"
+            <Button
+              variant={pasteMode ? "filled" : "default"}
+              aria-pressed={pasteMode}
+              data-testid="sketch-paste-toggle"
+              onClick={() => setPasteMode((v) => !v)}
+            >
+              Paste MOL
+            </Button>
+            <Checkbox
               data-testid="sketch-hydrogens"
               checked={withHydrogens}
-              onChange={(e) => setWithHydrogens(e.target.checked)}
+              onChange={(e) => setWithHydrogens(e.currentTarget.checked)}
+              label="Add hydrogens"
             />
-            Add hydrogens
-          </label>
-          <span style={{ flex: 1 }} />
-          <span data-testid="sketch-mode-hint" style={hintStyle}>
+          </Group>
+          <Text size="xs" c="dimmed" data-testid="sketch-mode-hint" mb="xs">
             {canEmbed()
               ? "RDKit embeds the sketch in 3D (ETKDG, then MMFF94s / UFF) with its missing hydrogens."
               : "3D embedding needs Web Workers, which this host lacks."}
-          </span>
-        </div>
-        <div
-          data-testid="sketch-editor"
-          style={{
-            flex: 1,
-            minHeight: 0,
-            display: "flex",
-            border: "1px solid var(--megane-border-solid, #e2e8f0)",
-            borderRadius: 6,
-            overflow: "hidden",
-            // Ketcher's toolbars are light-themed; keep its surface white in dark mode.
-            background: "#fff",
-            colorScheme: "light",
-          }}
-        >
-          {pasteMode ? (
-            pasteField
-          ) : (
-            <LoadBoundary
-              fallback={(err) => (
-                <div
-                  data-testid="sketch-fallback"
-                  style={{ flex: 1, display: "flex", flexDirection: "column", gap: 8, padding: 8 }}
-                >
-                  <div style={{ ...hintStyle, color: "#b45309" }}>
-                    Ketcher could not be loaded ({err.message}). Paste a MOL file instead.
-                  </div>
-                  <span
-                    role="button"
-                    data-testid="sketch-fallback-paste"
-                    style={{ ...chipStyle(false), alignSelf: "flex-start" }}
-                    onClick={() => setPasteMode(true)}
-                  >
-                    Paste MOL
-                  </span>
-                </div>
-              )}
-            >
-              <Suspense
-                fallback={
-                  <div data-testid="sketch-loading" style={{ ...hintStyle, padding: 12 }}>
-                    Loading Ketcher…
-                  </div>
-                }
+          </Text>
+          <Box
+            data-testid="sketch-editor"
+            style={{
+              flex: 1,
+              minHeight: 0,
+              display: "flex",
+              border: "1px solid var(--mantine-color-default-border)",
+              borderRadius: 6,
+              overflow: "hidden",
+              // Ketcher's toolbars are light-themed; keep its surface white in dark mode.
+              background: "#fff",
+              colorScheme: "light",
+            }}
+          >
+            {pasteMode ? (
+              pasteField
+            ) : (
+              <LoadBoundary
+                fallback={(err) => (
+                  <Box data-testid="sketch-fallback" p="sm" style={{ flex: 1 }}>
+                    <Text size="xs" c="orange.7" mb="xs">
+                      Ketcher could not be loaded ({err.message}). Paste a MOL file instead.
+                    </Text>
+                    <Button
+                      variant="default"
+                      data-testid="sketch-fallback-paste"
+                      onClick={() => setPasteMode(true)}
+                    >
+                      Paste MOL
+                    </Button>
+                  </Box>
+                )}
               >
-                <div style={{ flex: 1, minHeight: 0, position: "relative" }}>
-                  <KetcherEditor onInit={handleInit} onError={(m) => setError(m)} />
-                </div>
-              </Suspense>
-            </LoadBoundary>
+                <Suspense
+                  fallback={
+                    <Text size="xs" c="dimmed" p="sm" data-testid="sketch-loading">
+                      Loading Ketcher…
+                    </Text>
+                  }
+                >
+                  <div style={{ flex: 1, minHeight: 0, position: "relative" }}>
+                    <KetcherEditor onInit={handleInit} onError={(m) => setError(m)} />
+                  </div>
+                </Suspense>
+              </LoadBoundary>
+            )}
+          </Box>
+          {error && (
+            <Text size="xs" c="red.7" role="alert" data-testid="sketch-error" mt="xs">
+              {error}
+            </Text>
           )}
-        </div>
-        {error && (
-          <div data-testid="sketch-error" role="alert" style={{ ...hintStyle, color: "#991b1b" }}>
-            {error}
-          </div>
-        )}
-        <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
-          <span
-            role="button"
-            data-testid="sketch-cancel"
-            style={chipStyle(false)}
-            onClick={onClose}
-          >
-            Cancel
-          </span>
-          <span
-            role="button"
-            data-testid="sketch-add"
-            aria-disabled={!canAdd}
-            style={chipStyle(canAdd, !canAdd)}
-            onClick={canAdd ? () => void handleAdd() : undefined}
-          >
-            {busy ? "Embedding…" : "Add to library"}
-          </span>
-        </div>
-      </div>
-    </div>,
-    document.body,
+          <Group justify="flex-end" mt="sm">
+            <Button variant="default" data-testid="sketch-cancel" onClick={onClose}>
+              Cancel
+            </Button>
+            <Button
+              data-testid="sketch-add"
+              disabled={!canAdd}
+              aria-disabled={!canAdd}
+              onClick={() => void handleAdd()}
+            >
+              {busy ? "Embedding…" : "Add to library"}
+            </Button>
+          </Group>
+        </Modal.Body>
+      </Modal.Content>
+    </Modal.Root>
   );
 }

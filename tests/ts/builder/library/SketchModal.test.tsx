@@ -5,7 +5,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { render, screen, fireEvent, cleanup, waitFor, act } from "@testing-library/react";
+import { render, screen, fireEvent, cleanup, waitFor, act } from "../util";
 import type { Snapshot } from "@/types";
 
 const { parseStructureText, editorMode, ketcher, embedSketch, embedAvailable } = vi.hoisted(() => ({
@@ -96,7 +96,8 @@ describe("SketchModal", () => {
     const onClose = vi.fn();
     render(<SketchModal onAdd={onAdd} onClose={onClose} />);
     const modal = screen.getByTestId("sketch-modal");
-    expect(modal.parentElement).toBe(document.body);
+    // The dialog is portalled out of the panel that opened it.
+    expect(document.body.contains(modal)).toBe(true);
     expect(screen.getByTestId("sketch-add").getAttribute("aria-disabled")).toBe("true");
     expect(screen.getByTestId("sketch-mode-hint").textContent).toContain("RDKit embeds");
     await waitFor(() => expect(screen.getByTestId("ketcher-stub")).toBeTruthy());
@@ -118,10 +119,10 @@ describe("SketchModal", () => {
     expect(draft.formula).toBe("C2H6O");
     expect(draft.molfile).toBe("KETCHER-MOL");
     expect(draft.planar).toBeUndefined();
-    // Clicking the backdrop closes; clicking inside does not.
+    // Clicking inside does not close; Escape and Cancel do.
     fireEvent.click(screen.getByTestId("sketch-name"));
     expect(onClose).not.toHaveBeenCalled();
-    fireEvent.click(modal);
+    fireEvent.keyDown(modal, { key: "Escape" });
     expect(onClose).toHaveBeenCalledTimes(1);
     fireEvent.click(screen.getByTestId("sketch-cancel"));
     expect(onClose).toHaveBeenCalledTimes(2);
