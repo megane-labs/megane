@@ -1,6 +1,7 @@
 /**
- * megane Builder app shell: the top bar, the sidebar, the welcome card, and
- * the click / drag handlers it installs for the (mocked) 3D view.
+ * megane Builder app shell: the top bar, the sidebar, the welcome card, the
+ * notice line, the keyboard shortcuts, and the click / drag handlers it
+ * installs for the (mocked) 3D view.
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
@@ -85,8 +86,14 @@ const tool = (t: string) => fireEvent.click(screen.getByTestId(`builder-tool-${t
 const edits = () => useBuilderStore.getState().edits;
 const shownAtoms = () =>
   Number(screen.getByTestId("megane-builder").getAttribute("data-atom-count"));
+/** Open the top bar's Save menu and pick a format. */
+const save = (format: string) => {
+  fireEvent.click(screen.getByTestId("builder-save"));
+  fireEvent.click(screen.getByTestId(`builder-save-${format}`));
+};
 
 beforeEach(() => {
+  localStorage.clear();
   useBuilderStore.setState({
     source: null,
     sourceLabels: null,
@@ -104,6 +111,7 @@ beforeEach(() => {
     handlers: null,
     placeSource: null,
     adsorbHeight: null,
+    notice: null,
   });
   applyViewportState.mockClear();
   exportSnapshot.mockClear();
@@ -127,7 +135,7 @@ describe("BuilderApp — empty state", () => {
     expect(viewportProps.current?.buildActive).toBe(true);
     expect(viewportProps.current?.buildHandlers).toBe(useBuilderStore.getState().handlers);
     // Nothing to save yet.
-    expect((screen.getByTestId("builder-save-xyz") as HTMLButtonElement).disabled).toBe(true);
+    expect((screen.getByTestId("builder-save") as HTMLButtonElement).disabled).toBe(true);
   });
 
   it("clicks on the empty view do nothing", () => {
@@ -137,13 +145,28 @@ describe("BuilderApp — empty state", () => {
     expect(edits()).toEqual([]);
   });
 
-  it("New starts a 10 Å cell and the welcome card goes away", () => {
+  it("the welcome card starts an empty cell through the New dialog", () => {
     render(<BuilderApp />);
     fireEvent.click(screen.getByTestId("builder-welcome-new"));
+    fireEvent.click(screen.getByTestId("builder-new-cell"));
+    expect(screen.queryByTestId("builder-new-dialog")).toBeNull();
     expect(screen.queryByTestId("builder-welcome")).toBeNull();
     expect(useBuilderStore.getState().source!.box![0]).toBe(10);
     expect(screen.getByTestId("builder-file-name").textContent).toContain("untitled");
     expect(applyViewportState).toHaveBeenCalled();
+  });
+
+  it("the welcome card and the top bar both reach the bulk form", () => {
+    render(<BuilderApp />);
+    fireEvent.click(screen.getByTestId("builder-welcome-bulk"));
+    fireEvent.click(screen.getByTestId("builder-bulk-create"));
+    expect(useBuilderStore.getState().fileName).toBe("Cu-fcc");
+    expect(shownAtoms()).toBe(4);
+    fireEvent.click(screen.getByTestId("builder-new"));
+    fireEvent.click(screen.getByTestId("builder-new-bulk-item"));
+    expect(screen.getByTestId("builder-new-replaces")).toBeTruthy();
+    fireEvent.click(screen.getByTestId("builder-new-close"));
+    expect(screen.queryByTestId("builder-new-dialog")).toBeNull();
   });
 });
 
@@ -165,6 +188,29 @@ describe("BuilderApp — editing", () => {
     expect(shownAtoms()).toBe(5);
     expect(screen.getByTestId("builder-op-count").textContent).toBe("2 edits");
     expect(screen.getByTestId("builder-file-name").textContent).toContain("2 edits");
+  });
+
+  it("shows only the settings the current tool uses", () => {
+    render(<BuilderApp />);
+    // Select needs neither an element nor a bond order.
+    expect(screen.queryByTestId("builder-element-z")).toBeNull();
+    expect(screen.queryByTestId("builder-bond-order")).toBeNull();
+    expect(screen.queryByTestId("builder-adsorb-toggle")).toBeNull();
+    tool("add");
+    expect(screen.getByTestId("builder-element-z")).toBeTruthy();
+    expect(screen.getByTestId("builder-bond-order")).toBeTruthy();
+    tool("bond");
+    expect(screen.queryByTestId("builder-element-z")).toBeNull();
+    expect(screen.getByTestId("builder-bond-order")).toBeTruthy();
+    tool("element");
+    expect(screen.getByTestId("builder-element-z")).toBeTruthy();
+    expect(screen.queryByTestId("builder-bond-order")).toBeNull();
+    tool("place");
+    expect(screen.getByTestId("builder-adsorb-toggle")).toBeTruthy();
+    tool("delete");
+    expect(screen.queryByTestId("builder-element-z")).toBeNull();
+    // The status bar always names the tool.
+    expect(screen.getByTestId("builder-status-tool").textContent).toContain("Delete (D)");
   });
 
   it("Delete removes the clicked atom; Element changes it; Bond joins two", () => {
@@ -191,18 +237,20 @@ describe("BuilderApp — editing", () => {
     expect(edits()).toHaveLength(3);
   });
 
-  it("Select and the selection actions", () => {
+  it("Select and the selection actions, which appear only with a selection", () => {
     render(<BuilderApp />);
+    expect(screen.queryByTestId("builder-selection")).toBeNull();
     pick(1);
     pick(2, { shiftKey: true });
     expect(screen.getByTestId("builder-selected-count").textContent).toBe("2 atoms selected.");
+    expect(screen.getByTestId("builder-status-selection").textContent).toBe("2 selected");
     expect(viewportProps.current?.previewIndices).toEqual([1, 2]);
     fireEvent.click(screen.getByTestId("builder-set-element-selected"));
     expect(edits()[0]).toEqual({ op: "set_element", atoms: [1, 2], element: 6 });
     fireEvent.click(screen.getByTestId("builder-delete-selected"));
     expect(edits()[1]).toEqual({ op: "delete_atoms", atoms: [1, 2] });
     expect(shownAtoms()).toBe(1);
-    expect(screen.getByTestId("builder-selected-count").textContent).toBe("No atoms selected.");
+    expect(screen.queryByTestId("builder-selection")).toBeNull();
     pick(0);
     pick(null);
     expect(useBuilderStore.getState().selected).toEqual([]);
@@ -276,7 +324,11 @@ describe("BuilderApp — editing", () => {
         .getByTestId("builder-library-item-preset:water")
         .querySelector('[data-testid="builder-library-place"]')!,
     );
+    // Typing a height while the option is off leaves atom clicks inert.
     fireEvent.change(screen.getByTestId("builder-adsorb-height"), { target: { value: "3" } });
+    expect(useBuilderStore.getState().adsorbHeight).toBeNull();
+    pick(0);
+    expect(edits()).toHaveLength(0);
     fireEvent.click(screen.getByTestId("builder-adsorb-toggle"));
     expect(useBuilderStore.getState().adsorbHeight).toBe(3);
     pick(0);
@@ -286,13 +338,13 @@ describe("BuilderApp — editing", () => {
       op: "add_fragment",
       translate: [src.positions[0], src.positions[1], src.positions[2] + 3],
     });
-    // Changing the height while on updates the store; turning it off restores inert atom clicks.
-    fireEvent.change(screen.getByTestId("builder-adsorb-height"), { target: { value: "1.5" } });
-    expect(useBuilderStore.getState().adsorbHeight).toBe(1.5);
+    // Unticking restores inert atom clicks; ticking again restores the height.
     fireEvent.click(screen.getByTestId("builder-adsorb-toggle"));
     expect(useBuilderStore.getState().adsorbHeight).toBeNull();
     pick(0);
     expect(edits()).toHaveLength(1);
+    fireEvent.click(screen.getByTestId("builder-adsorb-toggle"));
+    expect(useBuilderStore.getState().adsorbHeight).toBe(3);
   });
 
   it("Undo / Redo / Clear all from the sidebar and the top bar", () => {
@@ -324,7 +376,7 @@ describe("BuilderApp — editing", () => {
     pick(1);
     expect(edits()).toHaveLength(1);
     expect(handlers().dragStart(0)).toBe(false);
-    fireEvent.click(screen.getByTestId("builder-show-original"));
+    fireEvent.click(screen.getByTestId("builder-resume-editing"));
     expect(shownAtoms()).toBe(2);
     expect(screen.queryByTestId("builder-paused")).toBeNull();
   });
@@ -341,29 +393,28 @@ describe("BuilderApp — editing", () => {
     render(<BuilderApp />);
     tool("delete");
     pick(2);
-    fireEvent.click(screen.getByTestId("builder-save-pdb"));
+    save("pdb");
     await waitFor(() => expect(exportSnapshot).toHaveBeenCalledTimes(1));
     const [snapshot, format, name, labels] = exportSnapshot.mock.calls[0] as unknown[];
     expect((snapshot as Snapshot).nAtoms).toBe(2);
     expect(format).toBe("pdb");
     expect(name).toBe("water.pdb");
     expect(labels).toEqual(["HOH", "HOH", "HOH"]);
-    fireEvent.click(screen.getByTestId("builder-export-xyz"));
+    save("xyz");
     await waitFor(() => expect(exportSnapshot).toHaveBeenCalledTimes(2));
   });
 
-  it("New empty cell from the sidebar replaces the document", () => {
+  it("New from the top bar replaces the document", () => {
     render(<BuilderApp />);
     tool("delete");
     pick(2);
+    fireEvent.click(screen.getByTestId("builder-new"));
+    fireEvent.click(screen.getByTestId("builder-new-cell-item"));
     fireEvent.change(screen.getByTestId("builder-new-cell-edge"), { target: { value: "15" } });
     fireEvent.click(screen.getByTestId("builder-new-cell"));
     expect(useBuilderStore.getState().source!.box![0]).toBe(15);
     expect(edits()).toEqual([]);
     expect(shownAtoms()).toBe(0);
-    fireEvent.change(screen.getByTestId("builder-new-cell-edge"), { target: { value: "0" } });
-    fireEvent.click(screen.getByTestId("builder-new-cell"));
-    expect(useBuilderStore.getState().source!.box![0]).toBe(15);
   });
 
   it("Reset View and the axis buttons drive the renderer", () => {
@@ -372,6 +423,56 @@ describe("BuilderApp — editing", () => {
     expect(rendererStub.resetCamera).toHaveBeenCalledTimes(1);
     fireEvent.click(screen.getByTestId("view-axis-+x"));
     expect(rendererStub.alignCameraToAxis).toHaveBeenCalledWith("+x");
+  });
+});
+
+describe("BuilderApp — keyboard", () => {
+  beforeEach(() => {
+    useBuilderStore.getState().openStructure(water(), null, "water.pdb");
+  });
+
+  it("picks tools, undoes, deletes the selection and clears it", () => {
+    render(<BuilderApp />);
+    fireEvent.keyDown(window, { key: "b" });
+    expect(useBuilderStore.getState().tool).toBe("bond");
+    fireEvent.keyDown(window, { key: "s" });
+    expect(useBuilderStore.getState().tool).toBe("select");
+    pick(1);
+    fireEvent.keyDown(window, { key: "Delete" });
+    expect(edits()).toEqual([{ op: "delete_atoms", atoms: [1] }]);
+    fireEvent.keyDown(window, { key: "z", ctrlKey: true });
+    expect(edits()).toEqual([]);
+    fireEvent.keyDown(window, { key: "z", ctrlKey: true, shiftKey: true });
+    expect(edits()).toHaveLength(1);
+    pick(0);
+    fireEvent.keyDown(window, { key: "Escape" });
+    expect(useBuilderStore.getState().selected).toEqual([]);
+    fireEvent.keyDown(window, { key: "r" });
+    expect(rendererStub.resetCamera).toHaveBeenCalled();
+  });
+
+  it("ignores keys typed into a field or while a dialog is open", () => {
+    render(<BuilderApp />);
+    tool("add");
+    const z = screen.getByTestId("builder-element-z");
+    fireEvent.keyDown(z, { key: "b" });
+    expect(useBuilderStore.getState().tool).toBe("add");
+    // A dialog owns the keyboard: the tool keys stay inert while it is open.
+    fireEvent.click(screen.getByTestId("builder-new"));
+    fireEvent.click(screen.getByTestId("builder-new-cell-item"));
+    fireEvent.keyDown(window, { key: "b" });
+    expect(useBuilderStore.getState().tool).toBe("add");
+  });
+
+  it("Ctrl+O opens the file picker and Ctrl+S saves XYZ", async () => {
+    render(<BuilderApp />);
+    const input = screen.getByTestId("builder-open-input") as HTMLInputElement;
+    const click = vi.spyOn(input, "click");
+    fireEvent.keyDown(window, { key: "o", ctrlKey: true });
+    expect(click).toHaveBeenCalledTimes(1);
+    fireEvent.keyDown(window, { key: "s", ctrlKey: true });
+    await waitFor(() => expect(exportSnapshot).toHaveBeenCalledTimes(1));
+    expect(exportSnapshot.mock.calls[0][1]).toBe("xyz");
   });
 });
 
@@ -398,18 +499,49 @@ describe("BuilderApp — Open", () => {
     expect(screen.queryByTestId("builder-welcome")).toBeNull();
   });
 
-  it("reports a file that does not parse and keeps the document", async () => {
+  it("opens a file dropped on the view", async () => {
+    parseStructureFile.mockResolvedValue({
+      snapshot: water(),
+      labels: null,
+      frames: [],
+      meta: null,
+      vectorChannels: [],
+      scalarChannels: [],
+      warnings: [],
+    });
+    render(<BuilderApp />);
+    const zone = screen.getByTestId("builder-dropzone");
+    fireEvent.dragOver(zone);
+    expect(screen.getByTestId("builder-drop-overlay")).toBeTruthy();
+    fireEvent.dragLeave(zone);
+    expect(screen.queryByTestId("builder-drop-overlay")).toBeNull();
+    const file = new File(["x"], "dropped.xyz");
+    fireEvent.drop(zone, { dataTransfer: { files: [file] } });
+    await waitFor(() =>
+      expect(screen.getByTestId("builder-file-name").textContent).toBe("dropped.xyz"),
+    );
+    // A drop with no file is ignored.
+    fireEvent.drop(zone, { dataTransfer: { files: [] } });
+    expect(parseStructureFile).toHaveBeenCalledTimes(1);
+  });
+
+  it("reports a file that does not parse in the notice line and keeps the document", async () => {
     parseStructureFile.mockRejectedValue(new Error("no atoms"));
     useBuilderStore.getState().newCell(10);
     render(<BuilderApp />);
     fireEvent.change(screen.getByTestId("builder-open-input"), {
       target: { files: [new File(["x"], "broken.pdb")] },
     });
-    await waitFor(() => expect(screen.getByTestId("builder-open-error")).toBeTruthy());
-    expect(screen.getByTestId("builder-open-error").textContent).toContain("broken.pdb");
+    await waitFor(() => expect(screen.getByTestId("builder-notice")).toBeTruthy());
+    const notice = screen.getByTestId("builder-notice");
+    expect(notice.getAttribute("data-level")).toBe("error");
+    expect(notice.textContent).toContain("broken.pdb");
     expect(useBuilderStore.getState().fileName).toBe("untitled");
-    fireEvent.click(screen.getByText("Dismiss"));
-    expect(screen.queryByTestId("builder-open-error")).toBeNull();
+    fireEvent.click(screen.getByTestId("builder-notice-dismiss"));
+    expect(screen.queryByTestId("builder-notice")).toBeNull();
+    // An empty change is ignored.
+    fireEvent.change(screen.getByTestId("builder-open-input"), { target: { files: [] } });
+    expect(parseStructureFile).toHaveBeenCalledTimes(1);
   });
 
   it("the Open buttons forward to the hidden file input", () => {

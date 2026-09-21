@@ -1,43 +1,94 @@
 /**
- * The Builder's side panel: tool, element, selection, library, crystal
- * (bulk / cell / supercell / slab), new cell, history, export.
- * Pure UI over `useBuilderStore`; every edit goes through the store's actions
- * and the handlers installed by `useBuilderHandlers`.
+ * The Builder's side panel, in four layers:
+ *
+ *   Tool      — the tool, and *only* the settings that tool uses
+ *   Library   — molecules to drop into the document
+ *   Crystal   — cell, supercell, slab, symmetry (edits of the open structure)
+ *   History   — the operation list, undo / redo / clear, "show original"
+ *
+ * Document-level actions (open, new, save) live in the top bar, not here, so
+ * each control appears exactly once. Pure UI over `useBuilderStore`; every
+ * edit goes through the store's actions and the handlers installed by
+ * `useBuilderHandlers`.
  */
 
 import { useState } from "react";
 import { useBuilderStore, canEdit, shownSnapshot } from "./store";
 import { describeOp } from "./placement";
+import { Section } from "./Section";
+import { TOOL_KEYS } from "./shortcuts";
 import type { BuildTool } from "./types";
 import type { EditAtomRef } from "../pipeline/types";
 import { getElementSymbol } from "../constants";
-import { STRUCTURE_EXPORT_FORMATS, exportSnapshot } from "../export/structureExport";
-import type { StructureWriteFormat } from "../parsers/parseCore";
-import { LibrarySection } from "./library/LibrarySection";
+import { LibrarySection, DEFAULT_ADSORB_HEIGHT } from "./library/LibrarySection";
 import { CrystalSection } from "./crystal/CrystalSection";
-import { sectionStyle, sectionTitleStyle, hintStyle, inputStyle, chipStyle } from "./styles";
+import {
+  buttonStyle,
+  chipStyle,
+  hintStyle,
+  inputStyle,
+  rowStyle,
+  sectionStyle,
+  sectionTitleStyle,
+  segmentGroupStyle,
+  segmentStyle,
+  toggleStyle,
+} from "./styles";
 
-export { sectionStyle, sectionTitleStyle, hintStyle, inputStyle, chipStyle } from "./styles";
+export {
+  sectionStyle,
+  sectionTitleStyle,
+  hintStyle,
+  inputStyle,
+  chipStyle,
+  buttonStyle,
+} from "./styles";
 
-const TOOLS: { value: BuildTool; label: string; hint: string }[] = [
-  { value: "select", label: "Select", hint: "Click atoms to select them (Shift adds)." },
+export interface ToolInfo {
+  value: BuildTool;
+  label: string;
+  hint: string;
+  /** Which contextual settings the tool panel shows for it. */
+  needs: ("element" | "bondOrder" | "place")[];
+}
+
+export const TOOLS: ToolInfo[] = [
+  {
+    value: "select",
+    label: "Select",
+    hint: "Click atoms to select them (Shift adds).",
+    needs: [],
+  },
   {
     value: "add",
     label: "Add atom",
     hint: "Click an atom to attach a new one at bond length; click empty space to place it free.",
+    needs: ["element", "bondOrder"],
   },
   {
     value: "bond",
     label: "Bond",
     hint: "Click two atoms to bond them (or change the bond order).",
+    needs: ["bondOrder"],
   },
-  { value: "delete", label: "Delete", hint: "Click an atom to remove it with its bonds." },
-  { value: "move", label: "Move", hint: "Drag an atom in the screen plane." },
-  { value: "element", label: "Element", hint: "Click an atom to change it to the chosen element." },
+  {
+    value: "delete",
+    label: "Delete",
+    hint: "Click an atom to remove it with its bonds.",
+    needs: [],
+  },
+  { value: "move", label: "Move", hint: "Drag an atom in the screen plane.", needs: [] },
+  {
+    value: "element",
+    label: "Element",
+    hint: "Click an atom to change it to the chosen element.",
+    needs: ["element"],
+  },
   {
     value: "place",
     label: "Place",
     hint: "Click empty space to drop the library molecule chosen below there.",
+    needs: ["place"],
   },
 ];
 
@@ -51,55 +102,14 @@ const BOND_ORDERS: { value: number; label: string }[] = [
   { value: 4, label: "Aromatic" },
 ];
 
-/** Default edge of a new cell, in Å. */
-export const DEFAULT_NEW_CELL_EDGE = 10;
-
 export function BuilderSidebar() {
   const source = useBuilderStore((s) => s.source);
   const result = useBuilderStore((s) => s.result);
   const showOriginal = useBuilderStore((s) => s.showOriginal);
   const edits = useBuilderStore((s) => s.edits);
-  const redoStack = useBuilderStore((s) => s.redoStack);
-  const fileName = useBuilderStore((s) => s.fileName);
-  const sourceLabels = useBuilderStore((s) => s.sourceLabels);
-  const tool = useBuilderStore((s) => s.tool);
-  const element = useBuilderStore((s) => s.element);
-  const bondOrder = useBuilderStore((s) => s.bondOrder);
-  const selected = useBuilderStore((s) => s.selected);
-  const pendingBondAtom = useBuilderStore((s) => s.pendingBondAtom);
-  const placeSource = useBuilderStore((s) => s.placeSource);
-  const setTool = useBuilderStore((s) => s.setTool);
-  const setElement = useBuilderStore((s) => s.setElement);
-  const setBondOrder = useBuilderStore((s) => s.setBondOrder);
-  const clearSelected = useBuilderStore((s) => s.clearSelected);
-  const pushOp = useBuilderStore((s) => s.pushOp);
-  const undo = useBuilderStore((s) => s.undo);
-  const redo = useBuilderStore((s) => s.redo);
-  const clearOps = useBuilderStore((s) => s.clearOps);
   const setShowOriginal = useBuilderStore((s) => s.setShowOriginal);
-  const newCell = useBuilderStore((s) => s.newCell);
 
   const editable = canEdit({ source, result, showOriginal });
-  const shown = shownSnapshot({ source, result, showOriginal });
-  const refFor = (i: number): EditAtomRef | null =>
-    result && i >= 0 && i < result.snapshot.nAtoms ? result.refAt(i) : null;
-  const activeTool = TOOLS.find((t) => t.value === tool)!;
-
-  const handleDeleteSelected = () => {
-    const refs = selected.map(refFor).filter((r): r is EditAtomRef => r !== null);
-    if (refs.length === 0) return;
-    clearSelected();
-    pushOp({ op: "delete_atoms", atoms: refs });
-  };
-  const handleSetElementSelected = () => {
-    const refs = selected.map(refFor).filter((r): r is EditAtomRef => r !== null);
-    if (refs.length === 0) return;
-    pushOp({ op: "set_element", atoms: refs, element });
-  };
-  const handleExport = async (format: StructureWriteFormat) => {
-    if (!shown) return;
-    await exportSnapshot(shown, format, fileName, sourceLabels);
-  };
 
   return (
     <div
@@ -116,7 +126,7 @@ export function BuilderSidebar() {
     >
       {!source && (
         <div style={hintStyle} data-testid="builder-empty-hint">
-          Open a structure file or start from an empty cell.
+          Open a structure file, or start a new one from the top bar.
         </div>
       )}
       {source && showOriginal && (
@@ -124,71 +134,115 @@ export function BuilderSidebar() {
           data-testid="builder-paused"
           style={{
             ...sectionStyle,
+            gap: 6,
             background: "rgba(245, 158, 11, 0.12)",
             color: "#92400e",
             fontSize: 12,
           }}
         >
-          Showing the structure as loaded. Turn off &quot;Show original&quot; to continue editing.
+          <span>Showing the structure as loaded. Editing is paused.</span>
+          <div>
+            <button
+              type="button"
+              data-testid="builder-resume-editing"
+              style={buttonStyle()}
+              onClick={() => setShowOriginal(false)}
+            >
+              Back to the edited structure
+            </button>
+          </div>
         </div>
       )}
 
-      <div style={sectionStyle}>
-        <span style={sectionTitleStyle}>Tool</span>
-        <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
-          {TOOLS.map((t) => (
-            <span
-              key={t.value}
-              role="button"
-              data-testid={`builder-tool-${t.value}`}
-              aria-pressed={tool === t.value}
-              style={chipStyle(tool === t.value)}
-              onClick={() => setTool(t.value)}
-            >
-              {t.label}
-            </span>
-          ))}
-        </div>
-        <div style={hintStyle} data-testid="builder-tool-hint">
-          {activeTool.hint}
-          {tool === "bond" && pendingBondAtom !== null && ` First atom: #${pendingBondAtom}.`}
-          {tool === "place" &&
-            (placeSource ? ` Placing ${placeSource.name}.` : " Choose a molecule in the library.")}
-        </div>
+      <ToolPanel editable={editable} />
+      <LibrarySection />
+      <CrystalSection />
+      <HistorySection defaultOpen={edits.length > 0} />
+    </div>
+  );
+}
+
+// ── Tool ──
+
+function ToolPanel({ editable }: { editable: boolean }) {
+  const tool = useBuilderStore((s) => s.tool);
+  const element = useBuilderStore((s) => s.element);
+  const bondOrder = useBuilderStore((s) => s.bondOrder);
+  const selected = useBuilderStore((s) => s.selected);
+  const pendingBondAtom = useBuilderStore((s) => s.pendingBondAtom);
+  const placeSource = useBuilderStore((s) => s.placeSource);
+  const adsorbHeight = useBuilderStore((s) => s.adsorbHeight);
+  const setTool = useBuilderStore((s) => s.setTool);
+  const setElement = useBuilderStore((s) => s.setElement);
+  const setBondOrder = useBuilderStore((s) => s.setBondOrder);
+  const setAdsorbHeight = useBuilderStore((s) => s.setAdsorbHeight);
+
+  const active = TOOLS.find((t) => t.value === tool)!;
+
+  return (
+    <div style={sectionStyle} data-testid="builder-tools">
+      <span style={sectionTitleStyle}>Tool</span>
+      <div style={segmentGroupStyle} role="radiogroup" aria-label="Tool">
+        {TOOLS.map((t) => (
+          <span
+            key={t.value}
+            role="radio"
+            data-testid={`builder-tool-${t.value}`}
+            aria-checked={tool === t.value}
+            aria-pressed={tool === t.value}
+            title={`${t.label} (${TOOL_KEYS[t.value]})`}
+            style={segmentStyle(tool === t.value)}
+            onClick={() => setTool(t.value)}
+          >
+            {t.label}
+          </span>
+        ))}
+      </div>
+      <div style={hintStyle} data-testid="builder-tool-hint">
+        {active.hint}
+        {tool === "bond" && pendingBondAtom !== null && ` First atom: #${pendingBondAtom}.`}
+        {tool === "place" &&
+          (placeSource ? ` Placing ${placeSource.name}.` : " Choose a molecule in the library.")}
       </div>
 
-      <div style={sectionStyle}>
-        <span style={sectionTitleStyle}>Element</span>
-        <div style={{ display: "flex", flexWrap: "wrap", gap: 6, alignItems: "center" }}>
-          {QUICK_ELEMENTS.map((z) => (
-            <span
-              key={z}
-              role="button"
-              data-testid={`builder-element-${getElementSymbol(z)}`}
-              style={chipStyle(element === z)}
-              onClick={() => setElement(z)}
-            >
-              {getElementSymbol(z)}
-            </span>
-          ))}
-          <label style={{ ...hintStyle, display: "flex", alignItems: "center", gap: 4 }}>
-            Z
-            <input
-              data-testid="builder-element-z"
-              type="number"
-              min={1}
-              max={118}
-              value={element}
-              onChange={(e) => {
-                const v = parseInt(e.target.value, 10);
-                if (Number.isFinite(v) && v >= 1 && v <= 118) setElement(v);
-              }}
-              style={{ ...inputStyle, width: 56 }}
-            />
-          </label>
-          <span style={hintStyle}>= {getElementSymbol(element)}</span>
+      {active.needs.includes("element") && (
+        <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+          <span style={hintStyle}>Element</span>
+          <div style={rowStyle}>
+            {QUICK_ELEMENTS.map((z) => (
+              <span
+                key={z}
+                role="button"
+                data-testid={`builder-element-${getElementSymbol(z)}`}
+                aria-pressed={element === z}
+                style={chipStyle(element === z)}
+                onClick={() => setElement(z)}
+              >
+                {getElementSymbol(z)}
+              </span>
+            ))}
+            <label style={{ ...hintStyle, display: "flex", alignItems: "center", gap: 4 }}>
+              Z
+              <input
+                data-testid="builder-element-z"
+                type="number"
+                min={1}
+                max={118}
+                value={element}
+                onChange={(e) => {
+                  const v = parseInt(e.target.value, 10);
+                  if (Number.isFinite(v) && v >= 1 && v <= 118) setElement(v);
+                }}
+                style={{ ...inputStyle, width: 56 }}
+              />
+            </label>
+            <span style={hintStyle}>= {getElementSymbol(element)}</span>
+          </div>
         </div>
-        <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+      )}
+
+      {active.needs.includes("bondOrder") && (
+        <label style={rowStyle}>
           <span style={hintStyle}>Bond order</span>
           <select
             data-testid="builder-bond-order"
@@ -202,182 +256,221 @@ export function BuilderSidebar() {
               </option>
             ))}
           </select>
-        </div>
-      </div>
+        </label>
+      )}
 
-      <div style={sectionStyle}>
-        <span style={sectionTitleStyle}>Selection</span>
-        <div style={hintStyle} data-testid="builder-selected-count">
-          {selected.length === 0
-            ? "No atoms selected."
-            : `${selected.length} atom${selected.length === 1 ? "" : "s"} selected.`}
-        </div>
-        <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
-          <span
-            role="button"
-            data-testid="builder-delete-selected"
-            style={chipStyle(false, selected.length === 0 || !editable)}
-            onClick={selected.length > 0 && editable ? handleDeleteSelected : undefined}
-          >
-            Delete selected
-          </span>
-          <span
-            role="button"
-            data-testid="builder-set-element-selected"
-            style={chipStyle(false, selected.length === 0 || !editable)}
-            onClick={selected.length > 0 && editable ? handleSetElementSelected : undefined}
-          >
-            Set to {getElementSymbol(element)}
-          </span>
-          <span
-            role="button"
-            data-testid="builder-clear-selection"
-            style={chipStyle(false, selected.length === 0)}
-            onClick={selected.length > 0 ? clearSelected : undefined}
-          >
-            Clear
-          </span>
-        </div>
-      </div>
+      {active.needs.includes("place") && (
+        <AdsorbOption height={adsorbHeight} onChange={setAdsorbHeight} />
+      )}
 
-      <LibrarySection />
-
-      <CrystalSection />
-
-      <NewCellSection onCreate={newCell} />
-
-      <div style={sectionStyle}>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-          <span style={sectionTitleStyle}>History</span>
-          <span style={hintStyle} data-testid="builder-op-count">
-            {edits.length} edit{edits.length === 1 ? "" : "s"}
-          </span>
-        </div>
-        <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
-          <span
-            role="button"
-            data-testid="builder-undo"
-            style={chipStyle(false, edits.length === 0)}
-            onClick={edits.length > 0 ? () => undo() : undefined}
-          >
-            Undo
-          </span>
-          <span
-            role="button"
-            data-testid="builder-redo"
-            style={chipStyle(false, redoStack.length === 0)}
-            onClick={redoStack.length > 0 ? () => redo() : undefined}
-          >
-            Redo
-          </span>
-          <span
-            role="button"
-            data-testid="builder-clear-ops"
-            style={chipStyle(false, edits.length === 0)}
-            onClick={edits.length > 0 ? clearOps : undefined}
-          >
-            Clear all
-          </span>
-          <span
-            role="button"
-            data-testid="builder-show-original"
-            aria-pressed={showOriginal}
-            style={chipStyle(showOriginal, !source || (edits.length === 0 && !showOriginal))}
-            onClick={
-              source && (edits.length > 0 || showOriginal)
-                ? () => setShowOriginal(!showOriginal)
-                : undefined
-            }
-            title="Preview the structure as loaded, without the edits"
-          >
-            Show original
-          </span>
-        </div>
-        {edits.length > 0 && (
-          <ol
-            data-testid="builder-op-list"
-            style={{
-              margin: 0,
-              paddingLeft: 18,
-              fontSize: 12,
-              color: "var(--megane-text-secondary, #475569)",
-              maxHeight: 160,
-              overflowY: "auto",
-            }}
-          >
-            {edits.map((op, i) => (
-              <li key={i}>{describeOp(op)}</li>
-            ))}
-          </ol>
-        )}
-        {result && result.warnings.length > 0 && (
-          <div data-testid="builder-warnings" style={{ ...hintStyle, color: "#b45309" }}>
-            {result.warnings.map((w, i) => (
-              <div key={i}>{w}</div>
-            ))}
-          </div>
-        )}
-      </div>
-
-      <div style={sectionStyle}>
-        <span style={sectionTitleStyle}>Export</span>
-        <div style={hintStyle} data-testid="builder-export-summary">
-          {shown
-            ? `${shown.nAtoms} atoms, ${shown.nBonds} bonds as shown.`
-            : "Nothing to save yet."}
-        </div>
-        <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
-          {STRUCTURE_EXPORT_FORMATS.map((f) => (
-            <span
-              key={f.value}
-              role="button"
-              data-testid={`builder-export-${f.value}`}
-              style={chipStyle(false, !shown)}
-              onClick={shown ? () => void handleExport(f.value) : undefined}
-            >
-              Save {f.label}
-            </span>
-          ))}
-        </div>
-      </div>
+      {selected.length > 0 && <SelectionActions editable={editable} />}
     </div>
   );
 }
 
 /**
- * "New empty cell": start a document from an empty cubic cell to build into.
- * Replaces whatever is open.
+ * "Place on atoms": with a height set, the Place tool also accepts a click on
+ * an atom and stamps the molecule that far above it — an adsorbate on a site.
  */
-function NewCellSection({ onCreate }: { onCreate: (edge: number) => void }) {
-  const [edge, setEdge] = useState(DEFAULT_NEW_CELL_EDGE);
-  const valid = Number.isFinite(edge) && edge > 0;
+function AdsorbOption({
+  height,
+  onChange,
+}: {
+  height: number | null;
+  onChange: (h: number | null) => void;
+}) {
+  // The typed height survives unticking the box, so turning the option back
+  // on uses it again rather than the default.
+  const [draft, setDraft] = useState(height ?? DEFAULT_ADSORB_HEIGHT);
   return (
-    <div style={sectionStyle}>
-      <span style={sectionTitleStyle}>New</span>
-      <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-        <label style={{ display: "flex", alignItems: "center", gap: 4 }}>
-          Cubic cell
-          <input
-            type="number"
-            min={0.1}
-            step={1}
-            value={edge}
-            data-testid="builder-new-cell-edge"
-            onChange={(e) => setEdge(Number(e.target.value))}
-            style={{ ...inputStyle, width: 64 }}
-          />
-          Å
-        </label>
-        <span
-          role="button"
-          data-testid="builder-new-cell"
-          style={chipStyle(false, !valid)}
-          onClick={valid ? () => onCreate(edge) : undefined}
-          title="Start from an empty cell (replaces the open structure)"
+    <label style={{ ...rowStyle, ...hintStyle }}>
+      <input
+        type="checkbox"
+        data-testid="builder-adsorb-toggle"
+        checked={height !== null}
+        onChange={(e) => onChange(e.target.checked ? draft : null)}
+      />
+      Place on atoms:
+      <input
+        type="number"
+        data-testid="builder-adsorb-height"
+        step={0.1}
+        value={draft}
+        onChange={(e) => {
+          const v = Number(e.target.value);
+          setDraft(v);
+          if (height !== null) onChange(v);
+        }}
+        style={{ ...inputStyle, width: 56 }}
+        title="Height above the clicked atom along the cell's c axis (an adsorbate on a surface site)"
+      />
+      Å above along c
+    </label>
+  );
+}
+
+/** What can be done with the current selection, shown only while there is one. */
+function SelectionActions({ editable }: { editable: boolean }) {
+  const result = useBuilderStore((s) => s.result);
+  const selected = useBuilderStore((s) => s.selected);
+  const element = useBuilderStore((s) => s.element);
+  const clearSelected = useBuilderStore((s) => s.clearSelected);
+  const pushOp = useBuilderStore((s) => s.pushOp);
+
+  const refs = (): EditAtomRef[] =>
+    selected
+      .map((i) => (result && i >= 0 && i < result.snapshot.nAtoms ? result.refAt(i) : null))
+      .filter((r): r is EditAtomRef => r !== null);
+
+  const handleDelete = () => {
+    const atoms = refs();
+    if (atoms.length === 0) return;
+    clearSelected();
+    pushOp({ op: "delete_atoms", atoms });
+  };
+  const handleSetElement = () => {
+    const atoms = refs();
+    if (atoms.length === 0) return;
+    pushOp({ op: "set_element", atoms, element });
+  };
+
+  return (
+    <div
+      style={{
+        display: "flex",
+        flexDirection: "column",
+        gap: 6,
+        paddingTop: 8,
+        borderTop: "1px solid var(--megane-border-solid, #e2e8f0)",
+      }}
+      data-testid="builder-selection"
+    >
+      <span style={hintStyle} data-testid="builder-selected-count">
+        {selected.length} atom{selected.length === 1 ? "" : "s"} selected.
+      </span>
+      <div style={rowStyle}>
+        <button
+          type="button"
+          data-testid="builder-delete-selected"
+          style={buttonStyle("danger", !editable)}
+          disabled={!editable}
+          onClick={handleDelete}
         >
-          New empty cell
-        </span>
+          Delete
+        </button>
+        <button
+          type="button"
+          data-testid="builder-set-element-selected"
+          style={buttonStyle("default", !editable)}
+          disabled={!editable}
+          onClick={handleSetElement}
+        >
+          Set to {getElementSymbol(element)}
+        </button>
+        <button
+          type="button"
+          data-testid="builder-clear-selection"
+          style={buttonStyle()}
+          onClick={clearSelected}
+        >
+          Clear
+        </button>
       </div>
     </div>
+  );
+}
+
+// ── History ──
+
+function HistorySection({ defaultOpen }: { defaultOpen: boolean }) {
+  const source = useBuilderStore((s) => s.source);
+  const edits = useBuilderStore((s) => s.edits);
+  const redoStack = useBuilderStore((s) => s.redoStack);
+  const result = useBuilderStore((s) => s.result);
+  const showOriginal = useBuilderStore((s) => s.showOriginal);
+  const undo = useBuilderStore((s) => s.undo);
+  const redo = useBuilderStore((s) => s.redo);
+  const clearOps = useBuilderStore((s) => s.clearOps);
+  const setShowOriginal = useBuilderStore((s) => s.setShowOriginal);
+
+  return (
+    <Section
+      id="history"
+      title="History"
+      defaultOpen={defaultOpen}
+      summary={
+        <span data-testid="builder-op-count">
+          {edits.length} edit{edits.length === 1 ? "" : "s"}
+        </span>
+      }
+    >
+      <div style={rowStyle}>
+        <button
+          type="button"
+          data-testid="builder-undo"
+          style={buttonStyle("default", edits.length === 0)}
+          disabled={edits.length === 0}
+          onClick={() => undo()}
+        >
+          Undo
+        </button>
+        <button
+          type="button"
+          data-testid="builder-redo"
+          style={buttonStyle("default", redoStack.length === 0)}
+          disabled={redoStack.length === 0}
+          onClick={() => redo()}
+        >
+          Redo
+        </button>
+        <button
+          type="button"
+          data-testid="builder-clear-ops"
+          style={buttonStyle("danger", edits.length === 0)}
+          disabled={edits.length === 0}
+          onClick={clearOps}
+        >
+          Clear all
+        </button>
+        <span
+          role="button"
+          data-testid="builder-show-original"
+          aria-pressed={showOriginal}
+          style={toggleStyle(showOriginal, !source || (edits.length === 0 && !showOriginal))}
+          onClick={
+            source && (edits.length > 0 || showOriginal)
+              ? () => setShowOriginal(!showOriginal)
+              : undefined
+          }
+          title="Preview the structure as loaded, without the edits"
+        >
+          Show original
+        </span>
+      </div>
+      {edits.length > 0 && (
+        <ol
+          data-testid="builder-op-list"
+          style={{
+            margin: 0,
+            paddingLeft: 18,
+            fontSize: 12,
+            color: "var(--megane-text-secondary, #475569)",
+            maxHeight: 160,
+            overflowY: "auto",
+          }}
+        >
+          {edits.map((op, i) => (
+            <li key={i}>{describeOp(op)}</li>
+          ))}
+        </ol>
+      )}
+      {result && result.warnings.length > 0 && (
+        <div data-testid="builder-warnings" style={{ ...hintStyle, color: "#b45309" }}>
+          {result.warnings.map((w, i) => (
+            <div key={i}>{w}</div>
+          ))}
+        </div>
+      )}
+    </Section>
   );
 }

@@ -1,28 +1,30 @@
 /**
- * The sidebar's Crystal section: start a bulk crystal, edit the cell (and
- * wrap / centre in it), build a supercell, cut a slab, and expand a CIF's
- * symmetry. Every action is either a new document (`newBulk`) or one edit op
- * pushed on the store, so it is undoable and travels with the history.
+ * The sidebar's Crystal section: edit the cell (and wrap / centre in it),
+ * build a supercell, cut a slab, and expand a CIF's symmetry. Every action is
+ * one edit op pushed on the store, so it is undoable and travels with the
+ * history. (Starting a bulk crystal is a new document and lives in the
+ * "New structure" dialog.)
  */
 
 import { useEffect, useMemo, useState } from "react";
 import { useBuilderStore, canEdit, shownSnapshot } from "../store";
-import { chipStyle, hintStyle, inputStyle, sectionStyle, sectionTitleStyle } from "../styles";
 import {
-  BULK_EXAMPLES,
-  BULK_STRUCTURES,
-  bulkStructureInfo,
-  elementFromSymbol,
-  type BulkSpec,
-  type BulkStructure,
-} from "../../crystal/bulk";
+  buttonStyle,
+  hintStyle,
+  inputStyle,
+  rowStyle,
+  segmentGroupStyle,
+  segmentStyle,
+  toggleStyle,
+} from "../styles";
 import { boxToCellParams, cellParamsToBox, det3, type CellParams } from "../../crystal/cell";
 import { slabPreview } from "../../crystal/transform";
-import { getElementSymbol } from "../../constants";
 import type { EditOp } from "../../pipeline/types";
 import { newFragmentId } from "../library/fragment";
+import { Section } from "../Section";
+import { NumberField } from "./NumberField";
 
-type Tab = "bulk" | "cell" | "supercell" | "slab";
+type Tab = "cell" | "supercell" | "slab";
 
 /**
  * Most atoms a supercell or slab may produce. Each cut or repeat multiplies
@@ -39,54 +41,22 @@ function overLimit(nAtoms: number): string {
 }
 
 const TABS: { value: Tab; label: string }[] = [
-  { value: "bulk", label: "Bulk" },
   { value: "cell", label: "Cell" },
   { value: "supercell", label: "Supercell" },
   { value: "slab", label: "Slab" },
 ];
 
-const rowStyle: React.CSSProperties = {
-  display: "flex",
-  alignItems: "center",
-  gap: 6,
-  flexWrap: "wrap",
-};
-
 const numStyle: React.CSSProperties = { ...inputStyle, width: 58 };
 
-function NumberField({
-  label,
-  value,
-  onChange,
-  testId,
-  step = 1,
-  min,
-  width,
-  title,
-}: {
-  label: string;
-  value: number;
-  onChange: (v: number) => void;
-  testId: string;
-  step?: number;
-  min?: number;
-  width?: number;
-  title?: string;
-}) {
-  return (
-    <label style={{ display: "flex", alignItems: "center", gap: 3 }} title={title}>
-      <span style={hintStyle}>{label}</span>
-      <input
-        type="number"
-        data-testid={testId}
-        value={Number.isFinite(value) ? value : ""}
-        step={step}
-        min={min}
-        onChange={(e) => onChange(Number(e.target.value))}
-        style={width ? { ...numStyle, width } : numStyle}
-      />
-    </label>
-  );
+/** `a × b × c Å`, with the angles when the cell is not orthogonal. */
+export function cellSummary(box: Float32Array): string {
+  const p = boxToCellParams(box);
+  const f = (v: number) => v.toFixed(2);
+  const angles =
+    Math.abs(p.alpha - 90) < 0.05 && Math.abs(p.beta - 90) < 0.05 && Math.abs(p.gamma - 90) < 0.05
+      ? ""
+      : ` · ${f(p.alpha)}° ${f(p.beta)}° ${f(p.gamma)}°`;
+  return `${f(p.a)} × ${f(p.b)} × ${f(p.c)} Å${angles}`;
 }
 
 export function CrystalSection() {
@@ -95,17 +65,15 @@ export function CrystalSection() {
   const showOriginal = useBuilderStore((s) => s.showOriginal);
   const edits = useBuilderStore((s) => s.edits);
   const pushOp = useBuilderStore((s) => s.pushOp);
-  const newBulk = useBuilderStore((s) => s.newBulk);
+  const reportError = useBuilderStore((s) => s.reportError);
 
   const editable = canEdit({ source, result, showOriginal });
   const shown = shownSnapshot({ source, result, showOriginal });
   const hasCell = !!shown?.box && Math.abs(det3(shown.box)) > 1e-9;
-  const [tab, setTab] = useState<Tab>("bulk");
-  const [error, setError] = useState<string | null>(null);
+  const [tab, setTab] = useState<Tab>("cell");
 
   const apply = (op: EditOp) => {
     if (!editable) return;
-    setError(null);
     pushOp(op);
   };
 
@@ -124,231 +92,88 @@ export function CrystalSection() {
     );
 
   return (
-    <div style={sectionStyle} data-testid="builder-crystal">
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-        <span style={sectionTitleStyle}>Crystal</span>
-        <span style={hintStyle} data-testid="builder-crystal-cell-summary">
+    <Section
+      id="crystal"
+      title="Crystal"
+      summary={
+        <span data-testid="builder-crystal-cell-summary">
           {shown && hasCell ? cellSummary(shown.box!) : "No cell"}
         </span>
-      </div>
-      <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
-        {TABS.map((t) => (
-          <span
-            key={t.value}
-            role="button"
-            data-testid={`builder-crystal-tab-${t.value}`}
-            aria-pressed={tab === t.value}
-            style={chipStyle(tab === t.value)}
-            onClick={() => {
-              setTab(t.value);
-              setError(null);
-            }}
-          >
-            {t.label}
-          </span>
-        ))}
-      </div>
-      {symOps > 0 && !symmetryConsumed && (
-        <div style={rowStyle} data-testid="builder-crystal-symmetry">
-          <span style={hintStyle}>
-            This file lists {symOps} symmetry operation{symOps === 1 ? "" : "s"} for its asymmetric
-            unit.
-          </span>
-          <span
-            role="button"
-            data-testid="builder-crystal-expand-symmetry"
-            style={chipStyle(false, !editable)}
-            onClick={
-              editable
-                ? () => apply({ op: "expand_symmetry", id: newFragmentId("symmetry") })
-                : undefined
-            }
-            title="Fill the unit cell with the symmetry-equivalent atoms (as the viewer's Symmetry node does)"
-          >
-            Expand symmetry
-          </span>
-        </div>
-      )}
-      {tab === "bulk" && <BulkTab onCreate={newBulk} onError={setError} />}
-      {tab === "cell" && (
-        <CellTab
-          box={shown?.box ?? null}
-          hasCell={hasCell}
-          nAtoms={shown?.nAtoms ?? 0}
-          editable={editable}
-          onApply={apply}
-        />
-      )}
-      {tab === "supercell" && (
-        <SupercellTab editable={editable && hasCell} nAtoms={shown?.nAtoms ?? 0} onApply={apply} />
-      )}
-      {tab === "slab" && (
-        <SlabTab editable={editable && hasCell} source={shown} onApply={apply} onError={setError} />
-      )}
-      {!hasCell && tab !== "bulk" && shown && (
-        <div style={hintStyle} data-testid="builder-crystal-no-cell">
-          {tab === "cell"
-            ? "The structure has no cell yet; set one below."
-            : "This needs a cell: set one in the Cell tab or start from a bulk crystal."}
-        </div>
-      )}
-      {error && (
-        <div data-testid="builder-crystal-error" style={{ ...hintStyle, color: "#b91c1c" }}>
-          {error}
-        </div>
-      )}
-    </div>
-  );
-}
-
-function cellSummary(box: Float32Array): string {
-  const p = boxToCellParams(box);
-  const f = (v: number) => v.toFixed(2);
-  const angles =
-    Math.abs(p.alpha - 90) < 0.05 && Math.abs(p.beta - 90) < 0.05 && Math.abs(p.gamma - 90) < 0.05
-      ? ""
-      : ` · ${f(p.alpha)}° ${f(p.beta)}° ${f(p.gamma)}°`;
-  return `${f(p.a)} × ${f(p.b)} × ${f(p.c)} Å${angles}`;
-}
-
-// ── Bulk ──
-
-function BulkTab({
-  onCreate,
-  onError,
-}: {
-  onCreate: (spec: BulkSpec) => void;
-  onError: (msg: string | null) => void;
-}) {
-  const [structure, setStructure] = useState<BulkStructure>("fcc");
-  const [symbols, setSymbols] = useState(["Cu", "", ""]);
-  const [a, setA] = useState(3.61);
-  const [covera, setCovera] = useState(Math.sqrt(8 / 3));
-  const [cubic, setCubic] = useState(true);
-  const info = bulkStructureInfo(structure);
-
-  const loadExample = (name: string) => {
-    const ex = BULK_EXAMPLES.find((e) => e.name === name);
-    if (!ex) return;
-    const exInfo = bulkStructureInfo(ex.spec.structure);
-    setStructure(ex.spec.structure);
-    setSymbols(
-      [0, 1, 2].map((k) => (k < exInfo.species ? getElementSymbol(ex.spec.elements[k]) : "")),
-    );
-    setA(ex.spec.a);
-    if (ex.spec.covera !== undefined) setCovera(ex.spec.covera);
-    setCubic(ex.spec.cubic ?? false);
-  };
-
-  const create = () => {
-    const elements: number[] = [];
-    for (let k = 0; k < info.species; k++) {
-      const z = elementFromSymbol(symbols[k]);
-      if (z === null) {
-        onError(`Species ${"ABX"[k]}: "${symbols[k]}" is not an element symbol.`);
-        return;
       }
-      elements.push(z);
-    }
-    const spec: BulkSpec = { structure, elements, a };
-    if (info.hexagonal) spec.covera = covera;
-    if (info.cubic) spec.cubic = cubic;
-    try {
-      onCreate(spec);
-      onError(null);
-    } catch (err) {
-      onError(err instanceof Error ? err.message : String(err));
-    }
-  };
-
-  return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 6 }} data-testid="builder-bulk">
-      <div style={rowStyle}>
-        <select
-          data-testid="builder-bulk-example"
-          value=""
-          onChange={(e) => loadExample(e.target.value)}
-          style={inputStyle}
-          title="Fill the fields from a reference structure"
-        >
-          <option value="">Examples…</option>
-          {BULK_EXAMPLES.map((ex) => (
-            <option key={ex.name} value={ex.name}>
-              {ex.name}
-            </option>
+    >
+      <div
+        data-testid="builder-crystal"
+        style={{ display: "flex", flexDirection: "column", gap: 8 }}
+      >
+        {symOps > 0 && !symmetryConsumed && (
+          <div
+            style={{
+              ...rowStyle,
+              padding: "6px 8px",
+              borderRadius: 6,
+              background: "rgba(37, 99, 235, 0.08)",
+            }}
+            data-testid="builder-crystal-symmetry"
+          >
+            <span style={hintStyle}>
+              This file lists {symOps} symmetry operation{symOps === 1 ? "" : "s"} for its
+              asymmetric unit.
+            </span>
+            <button
+              type="button"
+              data-testid="builder-crystal-expand-symmetry"
+              style={buttonStyle("primary", !editable)}
+              disabled={!editable}
+              onClick={() => apply({ op: "expand_symmetry", id: newFragmentId("symmetry") })}
+              title="Fill the unit cell with the symmetry-equivalent atoms (as the viewer's Symmetry node does)"
+            >
+              Expand symmetry
+            </button>
+          </div>
+        )}
+        <div style={segmentGroupStyle} role="tablist">
+          {TABS.map((t) => (
+            <span
+              key={t.value}
+              role="tab"
+              data-testid={`builder-crystal-tab-${t.value}`}
+              aria-selected={tab === t.value}
+              style={segmentStyle(tab === t.value)}
+              onClick={() => setTab(t.value)}
+            >
+              {t.label}
+            </span>
           ))}
-        </select>
-        <select
-          data-testid="builder-bulk-structure"
-          value={structure}
-          onChange={(e) => setStructure(e.target.value as BulkStructure)}
-          style={inputStyle}
-        >
-          {BULK_STRUCTURES.map((s) => (
-            <option key={s.value} value={s.value}>
-              {s.label}
-            </option>
-          ))}
-        </select>
-      </div>
-      <div style={rowStyle}>
-        {Array.from({ length: info.species }, (_, k) => (
-          <label key={k} style={{ display: "flex", alignItems: "center", gap: 3 }}>
-            <span style={hintStyle}>{"ABX"[k]}</span>
-            <input
-              data-testid={`builder-bulk-element-${k}`}
-              value={symbols[k]}
-              onChange={(e) => setSymbols(symbols.map((s, i) => (i === k ? e.target.value : s)))}
-              style={{ ...inputStyle, width: 40 }}
-              placeholder="El"
-            />
-          </label>
-        ))}
-        <NumberField
-          label="a"
-          value={a}
-          onChange={setA}
-          testId="builder-bulk-a"
-          step={0.01}
-          min={0.1}
-          title="Lattice constant, Å"
-        />
-        {info.hexagonal && (
-          <NumberField
-            label="c/a"
-            value={covera}
-            onChange={setCovera}
-            testId="builder-bulk-covera"
-            step={0.001}
-            min={0.1}
-            width={66}
+        </div>
+        {!shown && (
+          <div style={hintStyle} data-testid="builder-crystal-no-document">
+            Open or create a structure first.
+          </div>
+        )}
+        {shown && tab === "cell" && (
+          <CellTab
+            box={shown.box ?? null}
+            hasCell={hasCell}
+            nAtoms={shown.nAtoms}
+            editable={editable}
+            onApply={apply}
           />
         )}
-        {info.cubic && (
-          <label style={{ ...hintStyle, display: "flex", alignItems: "center", gap: 4 }}>
-            <input
-              type="checkbox"
-              data-testid="builder-bulk-cubic"
-              checked={cubic}
-              onChange={(e) => setCubic(e.target.checked)}
-            />
-            conventional cell
-          </label>
+        {shown && tab === "supercell" && hasCell && (
+          <SupercellTab editable={editable} nAtoms={shown.nAtoms} onApply={apply} />
+        )}
+        {shown && tab === "slab" && hasCell && (
+          <SlabTab editable={editable} source={shown} onApply={apply} onError={reportError} />
+        )}
+        {shown && !hasCell && (
+          <div style={hintStyle} data-testid="builder-crystal-no-cell">
+            {tab === "cell"
+              ? "The structure has no cell yet; set one above."
+              : "This needs a cell: set one in the Cell tab, or start from a bulk crystal (New…)."}
+          </div>
         )}
       </div>
-      <div style={rowStyle}>
-        <span
-          role="button"
-          data-testid="builder-bulk-create"
-          style={chipStyle(false)}
-          onClick={create}
-          title="Start from this bulk crystal (replaces the open structure)"
-        >
-          New bulk crystal
-        </span>
-        <span style={hintStyle}>Replaces the open structure.</span>
-      </div>
-    </div>
+    </Section>
   );
 }
 
@@ -450,14 +275,15 @@ function CellTab({
         />
       </div>
       <div style={rowStyle}>
-        <span
-          role="button"
+        <button
+          type="button"
           data-testid="builder-cell-apply"
-          style={chipStyle(false, !editable || !valid)}
-          onClick={editable && valid ? applyCell : undefined}
+          style={buttonStyle("primary", !editable || !valid)}
+          disabled={!editable || !valid}
+          onClick={applyCell}
         >
           Set cell
-        </span>
+        </button>
         <label style={{ ...hintStyle, display: "flex", alignItems: "center", gap: 4 }}>
           <input
             type="checkbox"
@@ -468,38 +294,39 @@ function CellTab({
           />
           move atoms with the cell
         </label>
-        <span
-          role="button"
-          data-testid="builder-cell-remove"
-          style={chipStyle(false, !editable || !hasCell)}
-          onClick={editable && hasCell ? () => onApply({ op: "set_cell", box: null }) : undefined}
-        >
-          Remove cell
-        </span>
       </div>
       <div style={rowStyle}>
-        <span
-          role="button"
+        <button
+          type="button"
           data-testid="builder-cell-wrap"
-          style={chipStyle(false, !editable || !hasCell || nAtoms === 0)}
-          onClick={editable && hasCell && nAtoms > 0 ? () => onApply({ op: "wrap" }) : undefined}
+          style={buttonStyle("default", !editable || !hasCell || nAtoms === 0)}
+          disabled={!editable || !hasCell || nAtoms === 0}
+          onClick={() => onApply({ op: "wrap" })}
           title="Fold every atom back into the cell"
         >
           Wrap atoms
-        </span>
-        <span
-          role="button"
+        </button>
+        <button
+          type="button"
+          data-testid="builder-cell-remove"
+          style={buttonStyle("danger", !editable || !hasCell)}
+          disabled={!editable || !hasCell}
+          onClick={() => onApply({ op: "set_cell", box: null })}
+        >
+          Remove cell
+        </button>
+      </div>
+      <div style={rowStyle}>
+        <button
+          type="button"
           data-testid="builder-cell-center"
-          style={chipStyle(false, !editable || !hasCell || chosenAxes.length === 0)}
-          onClick={
-            editable && hasCell && chosenAxes.length > 0
-              ? () => onApply({ op: "center", axes: chosenAxes, vacuum })
-              : undefined
-          }
+          style={buttonStyle("default", !editable || !hasCell || chosenAxes.length === 0)}
+          disabled={!editable || !hasCell || chosenAxes.length === 0}
+          onClick={() => onApply({ op: "center", axes: chosenAxes, vacuum })}
           title="Centre the atoms and resize the chosen cell vectors to leave this much vacuum on each side"
         >
           Center + vacuum
-        </span>
+        </button>
         <NumberField
           label=""
           value={vacuum}
@@ -516,7 +343,7 @@ function CellTab({
             role="button"
             data-testid={`builder-cell-axis-${name}`}
             aria-pressed={axes[i]}
-            style={chipStyle(axes[i])}
+            style={toggleStyle(axes[i])}
             onClick={() => setAxes(axes.map((on, k) => (k === i ? !on : on)))}
           >
             {name}
@@ -552,9 +379,9 @@ function SupercellTab({
       style={{ display: "flex", flexDirection: "column", gap: 6 }}
       data-testid="builder-supercell"
     >
-      {!advanced ? (
-        <div style={rowStyle}>
-          {["a", "b", "c"].map((name, i) => (
+      <div style={rowStyle}>
+        {!advanced ? (
+          ["a", "b", "c"].map((name, i) => (
             <NumberField
               key={name}
               label={`n${name}`}
@@ -564,48 +391,46 @@ function SupercellTab({
               min={1}
               width={50}
             />
-          ))}
-        </div>
-      ) : (
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 50px)", gap: 4 }}>
-          {matrix.map((v, k) => (
-            <input
-              key={k}
-              type="number"
-              data-testid={`builder-supercell-m${k}`}
-              value={v}
-              onChange={(e) =>
-                setMatrix(matrix.map((x, i) => (i === k ? Number(e.target.value) : x)))
-              }
-              style={{ ...numStyle, width: 50 }}
-            />
-          ))}
-        </div>
-      )}
-      <div style={rowStyle}>
-        <span
-          role="button"
-          data-testid="builder-supercell-apply"
-          style={chipStyle(false, !editable || !valid)}
-          onClick={
-            editable && valid
-              ? () =>
-                  onApply({ op: "supercell", id: newFragmentId("supercell"), matrix: effective })
-              : undefined
-          }
-        >
-          Make supercell
-        </span>
+          ))
+        ) : (
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 50px)", gap: 4 }}>
+            {matrix.map((v, k) => (
+              <input
+                key={k}
+                type="number"
+                data-testid={`builder-supercell-m${k}`}
+                value={v}
+                onChange={(e) =>
+                  setMatrix(matrix.map((x, i) => (i === k ? Number(e.target.value) : x)))
+                }
+                style={{ ...numStyle, width: 50 }}
+              />
+            ))}
+          </div>
+        )}
         <span
           role="button"
           data-testid="builder-supercell-advanced"
           aria-pressed={advanced}
-          style={chipStyle(advanced)}
+          style={toggleStyle(advanced)}
           onClick={() => setAdvanced(!advanced)}
           title="Integer transformation matrix: rows are the new lattice vectors in units of the old ones"
         >
           Matrix
         </span>
+      </div>
+      <div style={rowStyle}>
+        <button
+          type="button"
+          data-testid="builder-supercell-apply"
+          style={buttonStyle("primary", !editable || !valid)}
+          disabled={!editable || !valid}
+          onClick={() =>
+            onApply({ op: "supercell", id: newFragmentId("supercell"), matrix: effective })
+          }
+        >
+          Make supercell
+        </button>
         <span style={hintStyle} data-testid="builder-supercell-preview">
           {valid
             ? `${images} image${images === 1 ? "" : "s"} → ${total} atoms`
@@ -629,7 +454,7 @@ function SlabTab({
   editable: boolean;
   source: ReturnType<typeof shownSnapshot>;
   onApply: (op: EditOp) => void;
-  onError: (msg: string | null) => void;
+  onError: (msg: string) => void;
 }) {
   const [miller, setMiller] = useState([1, 1, 1]);
   const [layers, setLayers] = useState(4);
@@ -699,7 +524,7 @@ function SlabTab({
           title="Vacuum on each side along the normal, Å; 0 keeps the slab periodic"
         />
       </div>
-      <label style={{ ...rowStyle, ...hintStyle }}>
+      <label style={{ ...rowStyle, ...hintStyle, flexWrap: "nowrap" }}>
         termination
         <input
           type="range"
@@ -715,14 +540,15 @@ function SlabTab({
         {shift.toFixed(2)}
       </label>
       <div style={rowStyle}>
-        <span
-          role="button"
+        <button
+          type="button"
           data-testid="builder-slab-apply"
-          style={chipStyle(false, !editable || !valid || tooMany)}
-          onClick={editable && valid && !tooMany ? create : undefined}
+          style={buttonStyle("primary", !editable || !valid || tooMany)}
+          disabled={!editable || !valid || tooMany}
+          onClick={create}
         >
           Cut slab
-        </span>
+        </button>
         <span style={hintStyle} data-testid="builder-slab-preview">
           {preview
             ? tooMany

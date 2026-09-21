@@ -7,12 +7,27 @@
  * (`BuilderStore`) as ball-and-stick with every atom, its bonds and its cell,
  * and every click is an edit.
  *
+ * The shell is in four places and each control appears in exactly one of
+ * them: the **top bar** owns the document (open, new, undo / redo, save),
+ * the **sidebar** owns the tools and the structure's own edits, the
+ * **status bar** says what is on screen and what the current tool does, and
+ * a single **notice** line carries every message. Keyboard shortcuts are in
+ * `shortcuts.ts`.
+ *
  * Reuses the viewer's renderer (`Viewport` + `MoleculeRenderer`, driven through
  * `applyViewportState`), parsers, writers and the edit engine; nothing in the
  * viewer imports this app.
  */
 
-import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ChangeEvent,
+  type DragEvent,
+} from "react";
 import { Viewport } from "../components/Viewport";
 import { Tooltip } from "../components/Tooltip";
 import { ViewAxisControls } from "../components/ViewAxisControls";
@@ -29,29 +44,21 @@ import type { HoverInfo } from "../types";
 import { useBuilderStore, shownSnapshot } from "./store";
 import { builderViewportState, BUILDER_SOURCE_ID } from "./view";
 import { useBuilderHandlers } from "./useBuilderHandlers";
-import { BuilderSidebar, DEFAULT_NEW_CELL_EDGE, chipStyle, hintStyle } from "./BuilderSidebar";
+import { useBuilderShortcuts, TOOL_KEYS } from "./shortcuts";
+import { BuilderSidebar, TOOLS } from "./BuilderSidebar";
+import { Menu } from "./Menu";
+import { NewStructureDialog, type NewStructureKind } from "./NewStructureDialog";
+import { buttonStyle, hintStyle } from "./styles";
 
 const SIDEBAR_WIDTH = 320;
 
 const THEME_LABELS: Record<Theme, string> = { light: "Light", dark: "Dark", system: "System" };
 const THEME_ORDER: Theme[] = ["system", "light", "dark"];
 
-const barButtonStyle: React.CSSProperties = {
-  fontSize: 12,
-  padding: "4px 10px",
-  borderRadius: 6,
-  border: "1px solid var(--megane-border-solid, #cbd5e1)",
-  background: "var(--megane-surface-solid, #f8f9fb)",
-  color: "var(--megane-text, #1e293b)",
-  cursor: "pointer",
-};
-
-function barButton(disabled: boolean): React.CSSProperties {
-  return {
-    ...barButtonStyle,
-    opacity: disabled ? 0.5 : 1,
-    cursor: disabled ? "default" : "pointer",
-  };
+/** ⌘ on a Mac, Ctrl elsewhere, for the shortcut hints in the tooltips. */
+function modKeyLabel(): string {
+  if (typeof navigator === "undefined") return "Ctrl";
+  return /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent) ? "⌘" : "Ctrl";
 }
 
 export function BuilderApp() {
@@ -65,11 +72,16 @@ export function BuilderApp() {
   const redoStack = useBuilderStore((s) => s.redoStack);
   const revision = useBuilderStore((s) => s.revision);
   const selected = useBuilderStore((s) => s.selected);
+  const tool = useBuilderStore((s) => s.tool);
   const pendingBondAtom = useBuilderStore((s) => s.pendingBondAtom);
+  const notice = useBuilderStore((s) => s.notice);
   const undo = useBuilderStore((s) => s.undo);
   const redo = useBuilderStore((s) => s.redo);
   const newCell = useBuilderStore((s) => s.newCell);
+  const newBulk = useBuilderStore((s) => s.newBulk);
   const openStructure = useBuilderStore((s) => s.openStructure);
+  const setNotice = useBuilderStore((s) => s.setNotice);
+  const reportError = useBuilderStore((s) => s.reportError);
 
   const shown = useMemo(
     () => shownSnapshot({ source, result, showOriginal }),
@@ -83,7 +95,8 @@ export function BuilderApp() {
   const rendererRef = useRef<MoleculeRenderer | null>(null);
   const prevViewportStateRef = useRef<ViewportState | null>(null);
   const [hoverInfo, setHoverInfo] = useState<HoverInfo>(null);
-  const [openError, setOpenError] = useState<string | null>(null);
+  const [newDialog, setNewDialog] = useState<NewStructureKind | null>(null);
+  const [dropActive, setDropActive] = useState(false);
 
   const applyState = useCallback(
     (renderer: MoleculeRenderer, vs: ViewportState) => {
@@ -117,22 +130,35 @@ export function BuilderApp() {
 
   // ── Open ──
   const inputRef = useRef<HTMLInputElement>(null);
-  const handleOpenChange = useCallback(
-    async (e: ChangeEvent<HTMLInputElement>) => {
-      const file = e.target.files?.[0];
-      e.target.value = "";
-      if (!file) return;
+  const openFile = useCallback(
+    async (file: File) => {
       try {
         const parsed = await parseStructureFile(file);
         openStructure(parsed.snapshot, parsed.labels, file.name);
-        setOpenError(null);
       } catch (err) {
-        setOpenError(
+        reportError(
           `Could not open ${file.name}: ${err instanceof Error ? err.message : String(err)}`,
         );
       }
     },
-    [openStructure],
+    [openStructure, reportError],
+  );
+  const handleOpenChange = useCallback(
+    async (e: ChangeEvent<HTMLInputElement>) => {
+      const file = e.target.files?.[0];
+      e.target.value = "";
+      if (file) await openFile(file);
+    },
+    [openFile],
+  );
+  const handleDrop = useCallback(
+    (e: DragEvent) => {
+      e.preventDefault();
+      setDropActive(false);
+      const file = e.dataTransfer?.files?.[0];
+      if (file) void openFile(file);
+    },
+    [openFile],
   );
 
   const handleExport = useCallback(
@@ -151,6 +177,18 @@ export function BuilderApp() {
   );
   const hasCell = latticeVectors(shown?.box) !== null;
 
+  // ── Keyboard ──
+  const shortcutHost = useMemo(
+    () => ({
+      open: () => inputRef.current?.click(),
+      save: () => void handleExport(STRUCTURE_EXPORT_FORMATS[0].value),
+      resetView: () => rendererRef.current?.resetCamera(),
+    }),
+    [handleExport],
+  );
+  useBuilderShortcuts(api, shortcutHost);
+  const mod = modKeyLabel();
+
   const theme = useThemeStore((s) => s.theme);
   const setTheme = useThemeStore((s) => s.setTheme);
   const cycleTheme = useCallback(() => {
@@ -162,6 +200,8 @@ export function BuilderApp() {
     if (pendingBondAtom !== null) set.add(pendingBondAtom);
     return set.size > 0 ? [...set] : null;
   }, [selected, pendingBondAtom]);
+
+  const activeTool = TOOLS.find((t) => t.value === tool)!;
 
   return (
     <div
@@ -198,10 +238,11 @@ export function BuilderApp() {
           {edits.length > 0 && ` · ${edits.length} edit${edits.length === 1 ? "" : "s"}`}
         </span>
         <button
+          type="button"
           data-testid="builder-open"
-          style={barButtonStyle}
+          style={buttonStyle()}
           onClick={() => inputRef.current?.click()}
-          title="Open a structure file"
+          title={`Open a structure file (${mod}+O)`}
         >
           Open…
         </button>
@@ -212,45 +253,60 @@ export function BuilderApp() {
           style={{ display: "none" }}
           onChange={(e) => void handleOpenChange(e)}
         />
+        <Menu
+          testId="builder-new"
+          label="New"
+          title="Start a new structure (replaces the open one)"
+          items={[
+            {
+              label: "Empty cell…",
+              testId: "builder-new-cell-item",
+              onSelect: () => setNewDialog("cell"),
+            },
+            {
+              label: "Bulk crystal…",
+              testId: "builder-new-bulk-item",
+              onSelect: () => setNewDialog("bulk"),
+            },
+          ]}
+        />
         <button
-          data-testid="builder-new"
-          style={barButtonStyle}
-          onClick={() => newCell(DEFAULT_NEW_CELL_EDGE)}
-          title={`Start from an empty ${DEFAULT_NEW_CELL_EDGE} Å cell`}
-        >
-          New
-        </button>
-        <button
+          type="button"
           data-testid="builder-topbar-undo"
-          style={barButton(edits.length === 0)}
+          style={buttonStyle("default", edits.length === 0)}
           disabled={edits.length === 0}
+          title={`Undo (${mod}+Z)`}
           onClick={() => undo()}
         >
           Undo
         </button>
         <button
+          type="button"
           data-testid="builder-topbar-redo"
-          style={barButton(redoStack.length === 0)}
+          style={buttonStyle("default", redoStack.length === 0)}
           disabled={redoStack.length === 0}
+          title={`Redo (${mod}+Shift+Z)`}
           onClick={() => redo()}
         >
           Redo
         </button>
         <span style={{ flex: 1 }} />
-        {STRUCTURE_EXPORT_FORMATS.map((f) => (
-          <button
-            key={f.value}
-            data-testid={`builder-save-${f.value}`}
-            style={barButton(!shown)}
-            disabled={!shown}
-            onClick={() => void handleExport(f.value)}
-          >
-            Save {f.label}
-          </button>
-        ))}
+        <Menu
+          testId="builder-save"
+          label="Save"
+          variant="primary"
+          disabled={!shown}
+          title={`Save the edited structure (${mod}+S saves XYZ)`}
+          items={STRUCTURE_EXPORT_FORMATS.map((f) => ({
+            label: `Save ${f.label}`,
+            testId: `builder-save-${f.value}`,
+            onSelect: () => void handleExport(f.value),
+          }))}
+        />
         <button
+          type="button"
           data-testid="builder-theme"
-          style={barButtonStyle}
+          style={buttonStyle()}
           onClick={cycleTheme}
           title={`Theme: ${THEME_LABELS[theme]} (click to cycle)`}
         >
@@ -259,7 +315,18 @@ export function BuilderApp() {
       </div>
 
       <div style={{ flex: 1, display: "flex", minHeight: 0 }}>
-        <div style={{ flex: 1, position: "relative", minWidth: 0 }}>
+        <div
+          style={{ flex: 1, position: "relative", minWidth: 0 }}
+          onDragOver={(e) => {
+            e.preventDefault();
+            setDropActive(true);
+          }}
+          onDragLeave={(e) => {
+            if (e.currentTarget === e.target) setDropActive(false);
+          }}
+          onDrop={handleDrop}
+          data-testid="builder-dropzone"
+        >
           <Viewport
             snapshot={shown}
             frame={null}
@@ -287,7 +354,7 @@ export function BuilderApp() {
           >
             <button
               data-testid="reset-view-btn"
-              title="Reset view (fit to structure, standard orientation)"
+              title="Reset view (fit to structure, standard orientation) — R"
               onClick={handleResetView}
               style={{
                 padding: "4px 8px",
@@ -334,52 +401,57 @@ export function BuilderApp() {
               >
                 <div style={{ fontWeight: 600 }}>Build a structure</div>
                 <div style={hintStyle}>
-                  Open a file (PDB, XYZ, MOL, CIF, …) or start from an empty cell.
+                  Open a file (PDB, XYZ, MOL, CIF, …) — or drop one here — or start from scratch.
                 </div>
-                <div style={{ display: "flex", gap: 8 }}>
-                  <span
-                    role="button"
+                <div
+                  style={{ display: "flex", gap: 8, flexWrap: "wrap", justifyContent: "center" }}
+                >
+                  <button
+                    type="button"
                     data-testid="builder-welcome-open"
-                    style={chipStyle(true)}
+                    style={buttonStyle("primary")}
                     onClick={() => inputRef.current?.click()}
                   >
                     Open…
-                  </span>
-                  <span
-                    role="button"
+                  </button>
+                  <button
+                    type="button"
                     data-testid="builder-welcome-new"
-                    style={chipStyle(false)}
-                    onClick={() => newCell(DEFAULT_NEW_CELL_EDGE)}
+                    style={buttonStyle()}
+                    onClick={() => setNewDialog("cell")}
                   >
-                    New empty cell ({DEFAULT_NEW_CELL_EDGE} Å)
-                  </span>
+                    New empty cell…
+                  </button>
+                  <button
+                    type="button"
+                    data-testid="builder-welcome-bulk"
+                    style={buttonStyle()}
+                    onClick={() => setNewDialog("bulk")}
+                  >
+                    New bulk crystal…
+                  </button>
                 </div>
               </div>
             </div>
           )}
-          {openError && (
+          {dropActive && (
             <div
-              data-testid="builder-open-error"
-              role="alert"
+              data-testid="builder-drop-overlay"
               style={{
                 position: "absolute",
-                left: OVERLAY_INSET,
-                bottom: OVERLAY_INSET,
-                padding: "6px 10px",
-                borderRadius: 6,
-                background: "rgba(220, 38, 38, 0.1)",
-                color: "#991b1b",
-                fontSize: 12,
-                maxWidth: "60%",
+                inset: 8,
+                borderRadius: 10,
+                border: "2px dashed #2563eb",
+                background: "rgba(37, 99, 235, 0.08)",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                fontWeight: 600,
+                color: "#1d4ed8",
+                pointerEvents: "none",
               }}
             >
-              {openError}
-              <button
-                style={{ ...barButtonStyle, marginLeft: 8, padding: "2px 6px" }}
-                onClick={() => setOpenError(null)}
-              >
-                Dismiss
-              </button>
+              Drop a structure file to open it
             </div>
           )}
           <Tooltip info={hoverInfo} />
@@ -398,6 +470,35 @@ export function BuilderApp() {
         </div>
       </div>
 
+      {notice && (
+        <div
+          data-testid="builder-notice"
+          data-level={notice.level}
+          role={notice.level === "error" ? "alert" : "status"}
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: 8,
+            padding: "6px 12px",
+            fontSize: 12,
+            borderTop: "1px solid var(--megane-border-solid, #e2e8f0)",
+            background:
+              notice.level === "error" ? "rgba(220, 38, 38, 0.1)" : "rgba(37, 99, 235, 0.08)",
+            color: notice.level === "error" ? "#991b1b" : "var(--megane-text, #1e293b)",
+          }}
+        >
+          <span style={{ flex: 1 }}>{notice.text}</span>
+          <button
+            type="button"
+            data-testid="builder-notice-dismiss"
+            style={buttonStyle()}
+            onClick={() => setNotice(null)}
+          >
+            Dismiss
+          </button>
+        </div>
+      )}
+
       <div
         data-testid="builder-statusbar"
         style={{
@@ -412,9 +513,26 @@ export function BuilderApp() {
         <span data-testid="builder-status-atoms">
           {shown ? `${shown.nAtoms} atoms · ${shown.nBonds} bonds` : "No structure"}
         </span>
-        {hasCell && <span>Cell</span>}
+        {hasCell && <span data-testid="builder-status-cell">Cell</span>}
+        {selected.length > 0 && (
+          <span data-testid="builder-status-selection">{selected.length} selected</span>
+        )}
+        <span style={{ flex: 1 }} />
+        <span data-testid="builder-status-tool">
+          {activeTool.label} ({TOOL_KEYS[activeTool.value]}) · {activeTool.hint}
+        </span>
         {showOriginal && <span>Showing original</span>}
       </div>
+
+      {newDialog && (
+        <NewStructureDialog
+          initialKind={newDialog}
+          hasDocument={!!source}
+          onNewCell={newCell}
+          onNewBulk={newBulk}
+          onClose={() => setNewDialog(null)}
+        />
+      )}
     </div>
   );
 }

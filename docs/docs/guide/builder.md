@@ -18,40 +18,75 @@ document into the viewer is a planned follow-up; the two already share the
 same edit-history format (the `load_structure` node's `edits` list), so
 nothing has to be re-encoded when they meet.
 
+## The window
+
+The top bar owns the **document**: *Open…*, *New* (an empty cell or a bulk
+crystal), *Undo* / *Redo*, *Save*, and the theme. The sidebar owns the
+**structure**: the tool and the settings that tool uses, the molecule library,
+the crystal tools, and the history. The bar along the bottom says what is on
+screen (atoms, bonds, cell, selection) and what the current tool does, and any
+message — a file that would not parse, a molecule added to the library —
+appears on one line just above it until you dismiss it.
+
+The sidebar's *Library*, *Crystal* and *History* sections fold away; each one
+remembers whether you left it open. Their headers keep the summary visible
+while they are closed (the number of molecules, the cell, the number of edits).
+
 ## Getting started
 
 - **Open…** loads a structure file. Any format the viewer reads works
   (PDB, XYZ, MOL / SDF, MOL2, CIF, GRO, LAMMPS data, …). Only the structure
-  is taken; trajectory frames are ignored.
-- **New** (or *New empty cell* in the sidebar, with an edge length in Å)
-  starts from an atom-less cubic cell. The cell is what the camera frames and
-  what the *Add atom* tool places free atoms against, so the first click
-  already puts an atom in the box. The document is called `untitled` until
-  you save it.
+  is taken; trajectory frames are ignored. Dropping a file anywhere on the 3D
+  view opens it too.
+- **New** starts a document from scratch, in a dialog with two tabs:
+  *Empty cell* — an atom-less cubic cell of the edge you give in Å; the cell
+  is what the camera frames and what the *Add atom* tool places free atoms
+  against, so the first click already puts an atom in the box, and the
+  document is called `untitled` until you save it — and *Bulk crystal*, a
+  prototype structure (see [Crystal](#crystal)). Either replaces whatever is
+  open, which the dialog says when there is something to replace.
 - **Save XYZ / PDB / MOL** bakes the edited structure into a file named after
   the document (`caffeine.sdf` → `caffeine.xyz`). XYZ becomes extended XYZ
   with a `Lattice="…"` header when there is a cell; PDB carries `CRYST1`,
   residue labels and `CONECT` records; MOL is V2000 with bond orders.
-- **Undo / Redo** in the top bar and in the sidebar's *History* section.
+- **Undo / Redo** in the top bar, in the sidebar's *History* section, or with
+  the keys below.
 
 ## Tools
 
-| Tool | What a click in the 3D view does |
-|---|---|
-| **Select** | Selects the atom (Shift-click adds to the selection; clicking empty space clears it). The selection feeds *Delete selected* / *Set to element* in the sidebar and lets *Move* drag several atoms at once. |
-| **Add atom** | On an atom: attaches a new atom of the chosen element at bond length (sum of covalent radii), pointing away from the atom's existing neighbours, and bonds it with the chosen bond order. On empty space: places a free atom at that point, at the depth of the rotation pivot. |
-| **Bond** | Click two atoms to bond them. Clicking an already bonded pair changes the bond order to the one chosen in the sidebar. |
-| **Delete** | Removes the atom and every bond it had. |
-| **Move** | Drag an atom in the screen plane (the plane through the atom facing the camera). If the atom is part of the current selection, the whole selection moves. Dragging empty space still orbits the camera. |
-| **Element** | Changes the clicked atom to the chosen element. |
+| Tool | Key | What a click in the 3D view does |
+|---|---|---|
+| **Select** | S | Selects the atom (Shift-click adds to the selection; clicking empty space clears it). The selection feeds *Delete* / *Set to element* / *Save selection* and lets *Move* drag several atoms at once. |
+| **Add atom** | A | On an atom: attaches a new atom of the chosen element at bond length (sum of covalent radii), pointing away from the atom's existing neighbours, and bonds it with the chosen bond order. On empty space: places a free atom at that point, at the depth of the rotation pivot. |
+| **Bond** | B | Click two atoms to bond them. Clicking an already bonded pair changes the bond order to the one chosen in the sidebar. |
+| **Delete** | D | Removes the atom and every bond it had. |
+| **Move** | M | Drag an atom in the screen plane (the plane through the atom facing the camera). If the atom is part of the current selection, the whole selection moves. Dragging empty space still orbits the camera. |
+| **Element** | E | Changes the clicked atom to the chosen element. |
+| **Place** | P | Stamps the library molecule chosen below (see [Library](#library)). |
 
-The **Element** section picks the element for *Add* and *Element* (quick chips
-for the common ones, or any atomic number), and the **bond order** used by
-*Add* and *Bond*.
+The *Tool* panel shows **only the settings the current tool uses**: the element
+(quick chips for the common ones, or any atomic number) for *Add atom* and
+*Element*, the bond order for *Add atom* and *Bond*, and *Place on atoms* for
+*Place*. Whenever atoms are selected, the actions for that selection appear
+under the tool as well.
+
+## Keyboard
+
+| Key | What it does |
+|---|---|
+| S A B D M E P | Pick the tool of that letter |
+| Ctrl/⌘ + Z, Ctrl/⌘ + Shift + Z (or Ctrl + Y) | Undo, redo |
+| Delete, Backspace | Delete the selected atoms |
+| Esc | Drop the pending bond, then the selection, then the *Place* molecule |
+| Ctrl/⌘ + O, Ctrl/⌘ + S | Open a file, save XYZ |
+| R | Reset the view |
+
+Keys are ignored while a text field or a dialog has the keyboard, so typing a
+lattice constant never switches tools.
 
 Editing never moves the camera: the view keeps its zoom and orientation across
 every operation (and across Undo / Redo / Clear all). Only opening a file or
-starting a new cell re-fits the view. *Reset View* and the axis buttons
+starting a new document re-fits the view. *Reset View* and the axis buttons
 (±x / ±y / ±z, and ±a / ±b / ±c while there is a cell) work as in the viewer.
 
 ## Library
@@ -112,7 +147,8 @@ Either way the molecule enters the history as one `add_fragment` operation
 (named after the molecule, e.g. `Add water-3 (3 atoms)`), so Undo removes it
 whole and the fragment's atoms can be addressed by later operations.
 
-To put a molecule *on* a surface, tick **Place on atoms** and give a height:
+To put a molecule *on* a surface, tick **Place on atoms** in the *Place*
+tool's settings and give a height:
 the Place tool then also accepts a click on an atom and stamps the molecule
 that many Å above it along the cell's c axis (the slab normal; +z without a
 cell) — an adsorbate on the site you clicked. Leave it unticked and clicks on
@@ -120,20 +156,21 @@ atoms stay inert.
 
 ## Crystal
 
-The **Crystal** section builds solids. Its four tabs, plus the symmetry offer
-that appears for CIF files, cover the ASE-style workflow of bulk → supercell
-→ slab → adsorbate without leaving the browser; the geometry is computed in
-TypeScript and pinned to what ASE produces by the tests
-(`tests/fixtures/crystal/ase-oracle.json`).
+The **Crystal** section edits the solid the document holds. Its three tabs,
+plus the symmetry offer that appears for CIF files, cover the ASE-style
+workflow of bulk → supercell → slab → adsorbate without leaving the browser;
+the geometry is computed in TypeScript and pinned to what ASE produces by the
+tests (`tests/fixtures/crystal/ase-oracle.json`).
 
-- **Bulk** starts a new document from a prototype structure: simple cubic,
+- **Bulk crystal** is a *new document*, so it lives in the top bar's *New*
+  dialog rather than in this section: a prototype structure — simple cubic,
   fcc, bcc, hcp, diamond, zincblende, rocksalt, CsCl, fluorite, wurtzite or
   perovskite, with the element(s), the lattice constant `a`, `c/a` for the
   hexagonal ones, and *conventional cell* for the cubic ones (the primitive
   cell otherwise, exactly as `ase.build.bulk`). The **Examples…** list fills
   the fields with reference lattice constants (Cu, Al, Fe, Mg, Si, NaCl, GaAs,
   SrTiO₃, …). The document is named after the crystal (`Cu-fcc`) and, like
-  *New empty cell*, replaces whatever is open.
+  an empty cell, replaces whatever is open.
 - **Cell** edits the cell as `a b c α β γ`. With *move atoms with the cell*
   on, the atoms keep their fractional coordinates (ASE's `scale_atoms`);
   off, they stay where they are. **Wrap atoms** folds every atom back into
@@ -173,7 +210,8 @@ structure.
 
 The **History** section lists every operation in order and offers **Undo**,
 **Redo**, **Clear all**, and **Show original** (a preview of the structure as
-opened; editing is paused while it is on). The history is the document: the
+opened; editing is paused while it is on, and a banner at the top of the
+sidebar offers the way back). The history is the document: the
 structure you opened is never changed, and what you see is always that
 structure with the operations replayed on it. An operation that no longer
 applies is skipped and reported as a warning in the section rather than
@@ -186,7 +224,7 @@ That is why deleting an atom never breaks a later operation.
 ## Not yet
 
 Saving the document as a project file (the source plus its operations),
-keyboard shortcuts, building a crystal from a space-group number and
+building a crystal from a space-group number and
 Wyckoff positions, and enumerating the distinct terminations of a slab
 (pymatgen's `SlabGenerator`) are deliberately not in this version; nor is
 the Builder shipped inside the JupyterLab or VS Code hosts yet. The full design, including how a Builder

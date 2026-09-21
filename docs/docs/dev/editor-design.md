@@ -136,9 +136,19 @@ structure is *shown*, and every attempt to host editing inside the viewer
 swapped the view) ended up with the two competing for the same column and
 users unsure which of them the picture reflected. So `src/builder/` mounts
 its own page (`builder.html`, a Vite entry beside `index.html` and the
-multi-instance harness) with a top bar (Open / New / Undo / Redo / Save), the
-3D view, a sidebar (tools, element, selection, new cell, history, export) and
-a status bar. Nothing in the viewer imports the Builder; the Builder reuses
+multi-instance harness), laid out so that each control has exactly one home:
+a top bar for the **document** (Open, New, Undo / Redo, Save, theme), the 3D
+view, a sidebar for the **structure** (the tool and only the settings that
+tool uses, library, crystal, history), a status bar for what is on screen and
+what the tool does, and one notice line for every message the app has to
+show (`BuilderStore.notice`, written through `reportError` / `reportInfo` so
+no panel keeps an error line of its own). `Section` (`src/builder/Section.tsx`)
+makes the sidebar's library, crystal and history sections collapsible and
+remembers each one in `localStorage`; `shortcuts.ts` holds the key table
+(`resolveShortcut`) and applies it to the store (`runShortcut`), ignoring keys
+aimed at a text field or a dialog. Starting a document — an empty cell or a
+bulk crystal — is one dialog (`NewStructureDialog`), because both replace
+what is open. Nothing in the viewer imports the Builder; the Builder reuses
 the viewer's renderer, parsers, writers and edit engine. Bringing a Builder
 document into the viewer is the planned integration, and the shared history
 format (below) is its seam.
@@ -179,9 +189,11 @@ the Inspector's box select:
   atom index or, on empty space, the world point at the pivot's depth.
 
 **Crystal.** `src/builder/crystal/CrystalSection.tsx` is the sidebar's
-Crystal section: *Bulk* calls `BuilderStore.newBulk` (a new document, like
-*New empty cell*); *Cell*, *Supercell*, *Slab* and *Expand symmetry* each
-push one op. The slab tab runs `buildSlab` on the shown structure to
+Crystal section: *Cell*, *Supercell*, *Slab* and *Expand symmetry* each
+push one op. The bulk-crystal form (`crystal/BulkForm.tsx`) is not a tab of
+it, because `BuilderStore.newBulk` starts a *new document* rather than
+editing the open one; it lives in the New structure dialog beside the empty
+cell. The slab tab runs `buildSlab` on the shown structure to
 preview the atom count and thickness before the op is written. The Place
 tool's *Place on atoms* option (`adsorbHeight` on the store,
 `adsorptionSite` in `placement.ts`) stamps a library molecule a given
