@@ -110,6 +110,8 @@ export interface BuilderStore {
   /** Start a document from a bulk crystal (`bulkSnapshot`). Throws on a bad spec. */
   newBulk: (spec: BulkSpec) => void;
   pushOp: (op: EditOp) => void;
+  /** Append several ops as one user action: a single Undo / Redo step. */
+  pushOps: (ops: EditOp[]) => void;
   /** Replace the most recent op (a drag in progress). */
   replaceLastOp: (op: EditOp) => void;
   /** Pop the most recent op onto the redo stack; returns it, or null. */
@@ -156,6 +158,14 @@ export function shownSnapshot(state: Pick<BuilderStore, "source" | "result" | "s
 export function canEdit(state: Pick<BuilderStore, "source" | "result" | "showOriginal">) {
   return !!state.source && !!state.result && !state.showOriginal;
 }
+
+/**
+ * Ops pushed as the tail of a `pushOps` group. Undo keeps popping while it
+ * pops one of these, and Redo keeps re-applying while the next one is, so a
+ * multi-op action (an atom plus its hydrogens) moves as one step. Keyed by op
+ * identity, so the op list itself stays plain `EditOp`s.
+ */
+const continuations = new WeakSet<EditOp>();
 
 function compute(source: Snapshot | null, edits: EditOp[]): EditResult | null {
   return source ? applyEditOps(source, edits) : null;
@@ -209,6 +219,20 @@ export const builderStateCreator: StateCreator<BuilderStore> = (set, get) => ({
       };
     }),
 
+  pushOps: (ops) => {
+    if (ops.length === 0) return;
+    ops.slice(1).forEach((op) => continuations.add(op));
+    set((s) => {
+      const edits = [...s.edits, ...ops];
+      return {
+        edits,
+        redoStack: [],
+        result: compute(s.source, edits),
+        revision: s.revision + 1,
+      };
+    });
+  },
+
   replaceLastOp: (op) =>
     set((s) => {
       if (s.edits.length === 0) return {};
@@ -219,11 +243,16 @@ export const builderStateCreator: StateCreator<BuilderStore> = (set, get) => ({
   undo: () => {
     const s = get();
     if (s.edits.length === 0) return null;
-    const op = s.edits[s.edits.length - 1];
-    const edits = s.edits.slice(0, -1);
+    const edits = s.edits.slice();
+    const redoStack = s.redoStack.slice();
+    let op: EditOp;
+    do {
+      op = edits.pop()!;
+      redoStack.push(op);
+    } while (continuations.has(op) && edits.length > 0);
     set({
       edits,
-      redoStack: [...s.redoStack, op],
+      redoStack,
       result: compute(s.source, edits),
       revision: s.revision + 1,
       selected: [],
@@ -235,11 +264,15 @@ export const builderStateCreator: StateCreator<BuilderStore> = (set, get) => ({
   redo: () => {
     const s = get();
     if (s.redoStack.length === 0) return null;
-    const op = s.redoStack[s.redoStack.length - 1];
+    const redoStack = s.redoStack.slice();
+    const op = redoStack.pop()!;
     const edits = [...s.edits, op];
+    while (redoStack.length > 0 && continuations.has(redoStack[redoStack.length - 1])) {
+      edits.push(redoStack.pop()!);
+    }
     set({
       edits,
-      redoStack: s.redoStack.slice(0, -1),
+      redoStack,
       result: compute(s.source, edits),
       revision: s.revision + 1,
     });

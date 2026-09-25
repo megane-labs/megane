@@ -163,20 +163,28 @@ test.describe("builder: webapp", () => {
     await page.locator('[data-testid="builder-tool-element"]').click();
     await page.locator('[data-testid="builder-element-N"]').click();
     await pickAtom(page, 0);
+    // Caffeine carries explicit hydrogens, so the C=O oxygen turned N gains
+    // the H its valence leaves room for, in the same step.
+    await expect(root).toHaveAttribute("data-atom-count", "24");
     await page.locator('[data-testid="builder-tool-bond"]').click();
     await pickAtom(page, 0);
     await expect(page.locator('[data-testid="builder-tool-hint"]')).toContainText("First atom: #0");
     await pickAtom(page, 5);
     const edited = await builderState(page);
-    expect(edited.edits.map((e) => e.op)).toEqual(["delete_atoms", "set_element", "add_bond"]);
-    await expect(page.locator('[data-testid="builder-op-list"] li')).toHaveCount(3);
+    expect(edited.edits.map((e) => e.op)).toEqual([
+      "delete_atoms",
+      "set_element",
+      "add_atom",
+      "add_bond",
+    ]);
+    await expect(page.locator('[data-testid="builder-op-list"] li')).toHaveCount(4);
 
     // Show original previews the file as opened and pauses editing.
     await page.locator('[data-testid="builder-show-original"]').click();
     await expect(root).toHaveAttribute("data-atom-count", "24");
     await expect(page.locator('[data-testid="builder-paused"]')).toBeVisible();
     await page.locator('[data-testid="builder-show-original"]').click();
-    await expect(root).toHaveAttribute("data-atom-count", "23");
+    await expect(root).toHaveAttribute("data-atom-count", "24");
 
     // Save bakes the edited structure; the file takes the document's name.
     const download = page.waitForEvent("download");
@@ -186,7 +194,7 @@ test.describe("builder: webapp", () => {
     const text = await (await file.createReadStream())
       .toArray()
       .then((chunks) => Buffer.concat(chunks as Buffer[]).toString("utf8"));
-    expect(text.split("\n")[0].trim()).toBe("23");
+    expect(text.split("\n")[0].trim()).toBe("24");
   });
 
   test("adds library presets, places one with the Place tool, and keeps a Ketcher sketch", async ({

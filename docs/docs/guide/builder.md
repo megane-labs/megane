@@ -61,8 +61,26 @@ while they are closed (the number of molecules, the cell, the number of edits).
 | **Bond** | B | Click two atoms to bond them. Clicking an already bonded pair changes the bond order to the one chosen in the sidebar. |
 | **Delete** | D | Removes the atom and every bond it had. |
 | **Move** | M | Drag an atom in the screen plane (the plane through the atom facing the camera). If the atom is part of the current selection, the whole selection moves. Dragging empty space still orbits the camera. |
-| **Element** | E | Changes the clicked atom to the chosen element. |
+| **Element** | E | Changes the clicked atom to the chosen element (and rebalances its hydrogens, see below). |
 | **Place** | P | Stamps the library molecule chosen below (see [Library](#library)). |
+
+**Hydrogens are kept balanced.** When the structure already carries explicit
+hydrogens, *Add atom* and *Element* edit it the way a chemist expects:
+
+- *Add atom* on a **hydrogen replaces it** with the chosen element, which is
+  moved out to the right bond length. Clicking an H of methane with C gives
+  ethane (C–C), not C–H–C. On a heavy atom that has no free valence left,
+  one of its hydrogens is replaced the same way.
+- The new or changed atom gets as many hydrogens as its usual valence leaves
+  room for (C 4, N 3, O 2, halogens 1, …), in a tetrahedral / trigonal /
+  linear geometry depending on its bond orders, and surplus ones are removed.
+  Setting propane's middle C to O gives CH₃–O–CH₃; replacing the H of an
+  ethanol OH with C gives CH₃–CH₂–O–CH₃. A double bond also trims the
+  neighbour's extra hydrogen.
+- Each click, hydrogens included, is **one Undo step**.
+
+A bare skeleton (no hydrogen anywhere) is left bare, as are elements with no
+single usual valence (metals); add hydrogens yourself in that case.
 
 The *Tool* panel shows **only the settings the current tool uses**: the element
 (quick chips for the common ones, or any atomic number) for *Add atom* and

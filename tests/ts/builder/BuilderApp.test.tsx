@@ -47,6 +47,11 @@ import { useBuilderStore } from "@/builder/store";
 import type { BuildHandlers } from "@/builder/types";
 import type { Snapshot } from "@/types";
 
+/** Water's shape with no hydrogens: O bonded to two C. */
+function skeleton(): Snapshot {
+  return { ...water(), elements: new Uint8Array([8, 6, 6]) };
+}
+
 function water(): Snapshot {
   return {
     nAtoms: 3,
@@ -176,6 +181,8 @@ describe("BuilderApp — editing", () => {
   });
 
   it("Add places a free atom on empty space and a bonded one on an atom", () => {
+    // A bare skeleton: no hydrogens to keep balanced.
+    useBuilderStore.getState().openStructure(skeleton(), null, "skeleton.xyz");
     render(<BuilderApp />);
     tool("add");
     pick(null, { world: [5, 5, 5] });
@@ -214,6 +221,7 @@ describe("BuilderApp — editing", () => {
   });
 
   it("Delete removes the clicked atom; Element changes it; Bond joins two", () => {
+    useBuilderStore.getState().openStructure(skeleton(), null, "skeleton.xyz");
     render(<BuilderApp />);
     tool("delete");
     pick(2);
@@ -235,6 +243,32 @@ describe("BuilderApp — editing", () => {
     tool("delete");
     pick(null);
     expect(edits()).toHaveLength(3);
+  });
+
+  it("Add on a hydrogen replaces it and Element rebalances hydrogens, each one undo step", () => {
+    render(<BuilderApp />);
+    tool("add");
+    // Water's H becomes a C with three H of its own: methanol.
+    pick(1);
+    const methanol = useBuilderStore.getState().result!.snapshot;
+    expect(Array.from(methanol.elements).sort()).toEqual([1, 1, 1, 1, 6, 8]);
+    // Setting that C to O leaves a peroxide H–O–O–H.
+    tool("element");
+    fireEvent.click(screen.getByTestId("builder-element-O"));
+    pick(1);
+    expect(Array.from(useBuilderStore.getState().result!.snapshot.elements).sort()).toEqual([
+      1, 1, 8, 8,
+    ]);
+    // One Undo per click, and Redo restores the whole click.
+    fireEvent.click(screen.getByTestId("builder-undo"));
+    expect(shownAtoms()).toBe(6);
+    fireEvent.click(screen.getByTestId("builder-undo"));
+    expect(shownAtoms()).toBe(3);
+    expect(edits()).toHaveLength(0);
+    act(() => {
+      useBuilderStore.getState().redo();
+    });
+    expect(shownAtoms()).toBe(6);
   });
 
   it("Select and the selection actions, which appear only with a selection", () => {
