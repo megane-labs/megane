@@ -12,6 +12,7 @@ import type { FilterParams } from "../../pipeline/types";
 import { useScopedPipelineStore } from "../../stores/MeganeProvider";
 import { validateQuery, validateBondQuery } from "../../pipeline/selection";
 import { NodeShell } from "./NodeShell";
+import { isImeComposing } from "../../utils/ime";
 
 const inputStyle: React.CSSProperties = {
   width: "100%",
@@ -76,14 +77,14 @@ export function FilterNode({ id, data }: NodeProps<Node<PipelineNodeData>>) {
 
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent) => {
-      if (e.key === "Enter") handleCommit();
+      if (e.key === "Enter" && !isImeComposing(e)) handleCommit();
     },
     [handleCommit],
   );
 
   const handleBondKeyDown = useCallback(
     (e: React.KeyboardEvent) => {
-      if (e.key === "Enter") handleBondCommit();
+      if (e.key === "Enter" && !isImeComposing(e)) handleBondCommit();
     },
     [handleBondCommit],
   );
