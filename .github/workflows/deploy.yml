@@ -44,13 +44,16 @@ jobs:
       # Inject the demo LLM proxy URL so the built app enables the free
       # "demo" provider (isDemoProviderAvailable() in src/ai/config.ts keys
       # off this) instead of falling back to BYOK. Same repo variable the
-      # docs demo build uses.
-      # VITE_BUILDER_TOOLS_URL: Builder's "Python tools" connect on load to the
-      # public megane-builder-tools App Runner service, which only answers this
-      # site's origin (hodakamori/megane-builder-tools, deploy/).
+      # docs demo build uses. GA_MEASUREMENT_ID turns on Google Analytics for
+      # the hosted viewer and Builder (src/analytics.ts); left unset, the
+      # build contains no tracking. VITE_BUILDER_TOOLS_URL: Builder's "Python
+      # tools" connect on load to the public megane-builder-tools App Runner
+      # service, which only answers this site's origin
+      # (hodakamori/megane-builder-tools, deploy/).
       - run: npm run build:app
         env:
           VITE_LLM_PROXY_URL: ${{ vars.LLM_PROXY_URL }}
+          VITE_GA_MEASUREMENT_ID: ${{ vars.GA_MEASUREMENT_ID }}
           VITE_BUILDER_TOOLS_URL: ${{ vars.BUILDER_TOOLS_URL || 'https://xt2vdpjpsh.ap-northeast-1.awsapprunner.com/mcp' }}
 
       - name: Verify build artifacts

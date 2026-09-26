@@ -200,6 +200,26 @@ describe("PipelineChatBox — submission", () => {
     expect(generatePipeline).not.toHaveBeenCalled();
   });
 
+  it("does not submit on the Enter that confirms an IME conversion", () => {
+    vi.stubEnv("VITE_LLM_PROXY_URL", "https://proxy.example.com/chat");
+    useAIConfigStore.setState({
+      provider: "anthropic",
+      model: "claude-sonnet-4-20250514",
+      apiKey: "",
+      useOwnKey: false,
+    });
+    render(<PipelineChatBox />);
+    const textarea = screen.getByPlaceholderText("Describe the pipeline you want...");
+    fireEvent.change(textarea, { target: { value: "水分子を表示" } });
+
+    fireEvent.keyDown(textarea, { key: "Enter", isComposing: true });
+    fireEvent.keyDown(textarea, { key: "Enter", keyCode: 229 });
+    expect(generatePipeline).not.toHaveBeenCalled();
+
+    fireEvent.keyDown(textarea, { key: "Enter", keyCode: 13 });
+    expect(generatePipeline).toHaveBeenCalledTimes(1);
+  });
+
   it("submits without requiring an API key when using the free demo", () => {
     vi.stubEnv("VITE_LLM_PROXY_URL", "https://proxy.example.com/chat");
     useAIConfigStore.setState({

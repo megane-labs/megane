@@ -8,6 +8,7 @@ import { createRoot } from "react-dom/client";
 import { BuilderApp } from "./BuilderApp";
 import { ErrorBoundary } from "../components/ErrorBoundary";
 import { useThemeStore } from "../stores/useThemeStore";
+import { initAnalytics } from "../analytics";
 import "../styles/megane.css";
 
 /** Applies data-theme attribute to <html> and listens for OS preference changes. */
@@ -27,6 +28,8 @@ function ThemeSync() {
 
   return null;
 }
+
+initAnalytics("builder");
 
 createRoot(document.getElementById("root")!).render(
   <StrictMode>

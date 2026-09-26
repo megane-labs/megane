@@ -7,6 +7,7 @@ import { useScopedMeasurementStore } from "../stores/MeganeProvider";
 import { MEASUREMENT_BOTTOM_DEFAULT } from "./overlayLayout";
 import { exportToCSV, exportToJSON, downloadFile } from "../utils/measurementExport";
 import { getElementSymbol } from "../constants";
+import { isImeComposing } from "../utils/ime";
 
 const TYPE_ICON: Record<string, string> = {
   distance: "↔",
@@ -70,7 +71,7 @@ function MeasurementRow({ id, name, type, label, atoms, hidden, elements }: RowP
             onChange={(e) => setDraft(e.target.value)}
             onBlur={commitRename}
             onKeyDown={(e) => {
-              if (e.key === "Enter") commitRename();
+              if (e.key === "Enter" && !isImeComposing(e)) commitRename();
               if (e.key === "Escape") {
                 setDraft(name);
                 setEditing(false);

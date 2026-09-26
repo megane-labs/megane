@@ -20,6 +20,7 @@ import type { SelfCheckContext } from "../ai/selfCheck";
 import type { NodeSnapshotData } from "../pipeline/execute";
 import type { LoadStructureParams, SerializedPipeline } from "../pipeline/types";
 import type { Frame, Snapshot, TrajectoryMeta } from "../types";
+import { isImeComposing } from "../utils/ime";
 import {
   useScopedPipelineStore,
   usePipelineStoreApi,
@@ -479,7 +480,7 @@ export function PipelineChatBox({ onPipelineApplied }: { onPipelineApplied?: () 
 
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent) => {
-      if (e.key === "Enter" && !e.shiftKey) {
+      if (e.key === "Enter" && !e.shiftKey && !isImeComposing(e)) {
         e.preventDefault();
         handleSubmit();
       }
