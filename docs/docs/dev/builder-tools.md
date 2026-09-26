@@ -149,7 +149,15 @@ needs more must still validate on the server, but Builder shows it with a
 `title` labels the control, `description` becomes its help text, `default`
 pre-fills it, `required` marks it mandatory. `oneOf` / `anyOf` / `if` / `$ref`
 to external URIs are not supported for form generation (local `$ref` into
-`$defs` is).
+`$defs` is). A property with a widget is exempt: its control comes from the
+widget, not from its schema.
+
+Every required property without a `default` **should** carry JSON Schema
+`examples`. The conformance checker (§10) calls each tool with the first
+example (else the default, else a generic value) of every property, and LLM
+clients read them as hints. For `liquid_box` that is `"examples": [100]` on a
+component's count; without it, the generic count of 1 builds a box too small
+to pack and the check cannot run the tool.
 
 ### 4.2 Shared value types and widgets
 
@@ -181,9 +189,13 @@ is what LLM clients will usually send; a server that cannot embed a SMILES
 returns a tool error saying so. A server **must not** re-embed or re-optimise a
 3D `molblock` it was given: the user chose that conformer.
 
-A planar library molecule (an imported 2D file) is sent as is; servers that
-need 3D input return a tool error for a planar mol block rather than guessing a
-conformer.
+Whether a mol block is 3D is stated by the **dimension code** in its header
+(columns 21–22 of the second line, `3D` or `2D`), never guessed from the
+coordinates: a flat molecule is a valid 3D geometry (Builder's benzene preset
+has z = 0 for every atom). Builder writes `3D` for library molecules and `2D`
+for the ones marked planar (imported 2D files). Servers that need 3D input
+return a tool error for a `2D` mol block rather than guessing a conformer, and
+treat a missing code as 3D.
 
 **`x-megane-widget: "atom"` — one atom of a molecule argument.** Used, for
 example, for the head and tail atoms of a polymer monomer. The value is a
@@ -333,6 +345,9 @@ as `<fragmentId>:<k>`, and the document replays without the server.
   arrives after cancellation.
 - Timeout: `max(60 s, 5 × expectedSeconds)`, and at most 30 minutes. Hitting it
   behaves like *Cancel* and reports a timeout.
+- A stdio server writes nothing but MCP messages to stdout. Libraries that
+  print (RadonPy does) must be silenced or redirected to stderr, or the
+  bridge loses the connection.
 - Failures a user can fix (invalid combination of parameters, packmol did not
   converge, a planar molecule where 3D is required) are **tool errors**:
   `isError: true` with a one-line, actionable message in the first text content
@@ -421,22 +436,33 @@ sampling. Hosts that get a bridge must be listed in
 - **This contract lives in megane** (this page), because megane is the client
   that has to implement it and it is versioned with Builder.
 - **The reference server lives in its own repository**,
-  `megane-labs/megane-builder-tools`, published to PyPI. It is split out for
-  the same reasons as `megane-rdkit`: its dependencies (packmol, RDKit, ASE,
-  polymer tooling, their licences) and release cadence have nothing to do with
-  megane's wheel and CI. It contains:
-  - `megane_builder_tools.sdk` — the `Structure` / `BuilderResult` models and
-    widget schemas of this page, a `@builder_tool(...)` decorator on top of the
-    official MCP Python SDK that fills `_meta`, `outputSchema` and the text
-    summary, and `Structure` converters from/to ASE `Atoms` and RDKit `Mol`;
-  - the reference tools (§12);
+  [`hodakamori/megane-builder-tools`](https://github.com/hodakamori/megane-builder-tools),
+  published to PyPI as `megane-builder-tools`. It is split out for the same
+  reasons as `megane-rdkit`: its dependencies (packmol, RadonPy, RDKit, their
+  licences) and release cadence have nothing to do with megane's wheel and CI.
+  It contains:
+  - `megane_builder_tools.sdk` — the `Structure` / `BuilderResult` /
+    `Molecule` models, the widget and unit annotations of this page
+    (`MoleculeInput`, `DocumentInput`, `OptionalDocumentInput`,
+    `atom_of(...)`, `Seed`, `Cell`, `Selection`, `Length`, `Density`, …), a
+    `@builder_tool(...)` decorator on top of the official MCP Python SDK
+    (`MCPServer`) that fills `_meta`, `outputSchema`, the text summary and
+    `provenance`, runs synchronous tools in a worker thread and passes a
+    `Progress` reporter, and converters from/to ASE `Atoms` and RDKit `Mol`;
+  - the reference tools (§12) and the `megane-builder-tools` server (stdio,
+    or Streamable HTTP on loopback with `Origin` checks and a bearer token);
   - `megane-builder-conformance`, a checker that connects to any server
-    and verifies §3–§6: markers and contract version, form-generation subset,
-    widget schemas, `seed` on stochastic tools, `outputSchema`, result
-    validity (lengths, bonds complete, bond orders), tool errors on invalid
-    input, and cancellation. Third-party servers are expected to pass it.
+    (a stdio command or an HTTP URL) and verifies §3–§6: markers and contract
+    version, the form-generation subset, widget schemas, `seed` on stochastic
+    tools, document rules, `outputSchema`; then calls every tool with sample
+    arguments (§4.1) and validates the result (lengths, complete bonds, bond
+    orders, an `insert` result that does not repeat the document), that the
+    same seed reproduces the structure, and that a call without the required
+    arguments is refused. Cancellation is not checked yet. Third-party servers
+    are expected to pass it.
 - megane's own tests use recorded `tools/list` / `tools/call` fixtures from the
-  reference server, so megane CI never needs Python tool dependencies.
+  reference server (`make fixtures` there), so megane CI never needs Python
+  tool dependencies.
 
 ## 11. Versioning
 
@@ -454,8 +480,8 @@ position encoding for very large results.
 
 ## 12. Worked examples
 
-These three reference tools cover both apply modes and every widget. They are
-the first tools `megane-builder-tools` ships.
+These are the three tools `megane-builder-tools` ships. Together they cover
+both apply modes and the `molecule`, `atom`, `seed` and `document` widgets.
 
 ### 12.1 Liquid box — `new_document`
 
@@ -475,7 +501,7 @@ the first tools `megane-builder-tools` ships.
           "type": "object",
           "properties": {
             "molecule": { "$ref": "#/$defs/Molecule", "x-megane-widget": "molecule", "title": "Molecule" },
-            "count": { "type": "integer", "minimum": 1, "title": "Count", "x-megane-unit": "count" }
+            "count": { "type": "integer", "minimum": 1, "title": "Count", "examples": [100], "x-megane-unit": "count" }
           },
           "required": ["molecule", "count"]
         }
@@ -499,42 +525,51 @@ the first tools `megane-builder-tools` ships.
 ```
 
 Result: `cell` is the box, `molecules` / `residueNames` identify each copy
-(residue name from the molecule `name`, truncated), all intramolecular bonds
-and orders are copied from the input mol blocks. packmol not reaching the
+(residue name from the molecule `name`, truncated to 4 characters), all
+intramolecular bonds and orders are copied from the input mol blocks. packmol not reaching the
 tolerance is a warning; packmol failing outright is a tool error.
 
 ### 12.2 Polymer chain — `new_document`
+
+Built with [RadonPy](https://github.com/RadonPy/RadonPy)'s random-walk
+polymerisation (`radonpy.core.poly.polymerize_rw`, MMFF94 optimisation after
+every step). RadonPy marks the junctions of a monomer with two linker atoms;
+the tool turns the hydrogen the head atom gives up and the one the tail atom
+gives up into those linkers, and the two linkers left at the chain ends back
+into hydrogens. Tacticity is neither controlled nor checked: every unit keeps
+the monomer's stereochemistry.
 
 ```json
 {
   "name": "polymer_chain",
   "title": "Polymer chain",
-  "description": "Build a linear homopolymer by repeating a monomer between its head and tail atoms. The head and tail atoms are the ones that bond to the neighbouring units; one hydrogen on each is removed at every junction.",
+  "description": "Build a linear homopolymer with RadonPy's random-walk polymerisation. The head and tail atoms are the ones that bond to the neighbouring units; each gives up one hydrogen at every junction, so the chain ends keep theirs. …",
   "inputSchema": {
     "type": "object",
     "properties": {
-      "monomer": { "$ref": "#/$defs/Molecule", "x-megane-widget": "molecule", "title": "Monomer" },
-      "head": { "type": "integer", "minimum": 0, "x-megane-widget": "atom", "x-megane-of": "monomer", "title": "Head atom" },
-      "tail": { "type": "integer", "minimum": 0, "x-megane-widget": "atom", "x-megane-of": "monomer", "title": "Tail atom" },
-      "length": { "type": "integer", "minimum": 1, "maximum": 1000, "default": 10, "title": "Repeat units", "x-megane-unit": "count" },
-      "tacticity": { "type": "string", "enum": ["isotactic", "syndiotactic", "atactic"], "default": "atactic", "title": "Tacticity" },
-      "relax": { "type": "boolean", "default": true, "title": "Relax the chain (force field)" },
-      "seed": { "type": "integer", "minimum": 0, "x-megane-widget": "seed", "title": "Seed" }
+      "monomer": { "$ref": "#/$defs/Molecule", "x-megane-widget": "molecule", "title": "Monomer", "examples": [{ "name": "ethylene", "smiles": "CC" }] },
+      "head": { "type": "integer", "minimum": 0, "x-megane-widget": "atom", "x-megane-of": "monomer", "title": "Head atom", "examples": [0] },
+      "tail": { "type": "integer", "minimum": 0, "x-megane-widget": "atom", "x-megane-of": "monomer", "title": "Tail atom", "examples": [1] },
+      "seed": { "type": "integer", "minimum": 0, "x-megane-widget": "seed", "title": "Seed" },
+      "length": { "type": "integer", "minimum": 1, "maximum": 200, "default": 10, "title": "Repeat units", "x-megane-unit": "count" }
     },
     "required": ["monomer", "head", "tail", "seed"]
   },
   "_meta": {
     "io.github.megane-labs/builder": {
       "contract": 1, "category": "polymer", "apply": "new_document",
-      "document": "none", "stochastic": true, "expectedSeconds": 10
+      "document": "none", "stochastic": true, "expectedSeconds": 60
     }
   }
 }
 ```
 
 Result: no cell (`null`); `residueIds` numbers the repeat units, so the viewer
-can colour or filter by unit. A head or tail atom without a hydrogen to remove
-is a tool error naming the atom.
+can colour or filter by unit. A head or tail atom without a hydrogen to give
+up, head equal to tail, or RadonPy giving up on the random walk are tool
+errors. Because RadonPy re-optimises the whole chain at every step, run time
+grows steeply: about 40 s for 100 ethylene units and 7 minutes for 200, hence
+the 200-unit maximum.
 
 ### 12.3 Solvate — `insert`
 
@@ -542,17 +577,15 @@ is a tool error naming the atom.
 {
   "name": "solvate",
   "title": "Solvate",
-  "description": "Fill the empty space of the open structure's cell with solvent molecules at a target density, keeping a minimum distance from existing atoms. Returns only the added solvent.",
+  "description": "Fill the empty space of the open structure's cell with solvent molecules. The number of solvent molecules gives the requested density in the part of the cell not taken by the existing atoms' van der Waals spheres. Only the added solvent is returned. …",
   "inputSchema": {
     "type": "object",
     "properties": {
       "document": { "$ref": "#/$defs/Structure", "x-megane-widget": "document" },
       "solvent": { "$ref": "#/$defs/Molecule", "x-megane-widget": "molecule", "title": "Solvent" },
+      "seed": { "type": "integer", "minimum": 0, "x-megane-widget": "seed", "title": "Seed" },
       "density": { "type": "number", "exclusiveMinimum": 0, "default": 1.0, "title": "Density", "x-megane-unit": "g/cm3" },
-      "only_selection_region": { "type": "boolean", "default": false, "title": "Only around the selection" },
-      "selection": { "type": "array", "items": { "type": "integer", "minimum": 0 }, "x-megane-widget": "selection", "title": "Selection" },
-      "tolerance": { "type": "number", "minimum": 1.0, "default": 2.0, "title": "Minimum distance", "x-megane-unit": "angstrom" },
-      "seed": { "type": "integer", "minimum": 0, "x-megane-widget": "seed", "title": "Seed" }
+      "tolerance": { "type": "number", "minimum": 1.0, "default": 2.0, "title": "Minimum distance", "x-megane-unit": "angstrom" }
     },
     "required": ["document", "solvent", "seed"]
   },
@@ -566,30 +599,39 @@ is a tool error naming the atom.
 ```
 
 Result: only the solvent atoms, with `cell` equal to the document's cell (so
-Builder pushes no `set_cell`). A document without a cell is a tool error
-("Solvate needs a periodic cell; set one in Crystal → Cell").
+Builder pushes no `set_cell`). packmol keeps the document's atoms fixed and
+every solvent atom at least `tolerance` from other atoms across periodic
+boundaries. A document without a cell, or with a non-orthorhombic cell, is a
+tool error ("Solvate needs a periodic cell; set one in Crystal → Cell").
 
-### 12.4 Server side (sketch)
+### 12.4 Server side
 
 With the reference SDK a tool is a typed Python function:
 
 ```python
-from typing import Literal
+from typing import Annotated, Literal
 
-from megane_builder_tools.sdk import BuilderResult, Component, Seed, Unit, builder_tool
+from pydantic import Field
+
+from megane_builder_tools.sdk import BuilderResult, Density, Length, Progress, Seed, builder_tool
+
 
 @builder_tool(title="Liquid box", category="bulk", apply="new_document", expected_seconds=20)
-def liquid_box(
-    components: list[Component],
+async def liquid_box(
+    components: Annotated[list[Component], Field(min_length=1, title="Components")],
     seed: Seed,
-    density: Unit[float, "g/cm3"] = 1.0,
-    shape: Literal["cubic", "orthorhombic"] = "cubic",
-    tolerance: Unit[float, "angstrom"] = 2.0,
+    density: Annotated[Density, Field(gt=0, title="Density")] = 1.0,
+    shape: Annotated[Literal["cubic", "orthorhombic"], Field(title="Box shape")] = "cubic",
+    tolerance: Annotated[Length, Field(ge=1.0, title="Minimum distance")] = 2.0,
+    progress: Progress = Progress(),
 ) -> BuilderResult:
     """Fill a periodic box with molecules at a target density using packmol. ..."""
     ...
 ```
 
 The decorator derives `inputSchema` (with the widget annotations), sets
-`outputSchema`, `_meta` and `stochastic` (from the `Seed` parameter), writes the
-text summary, and turns `ToolError` exceptions into `isError` results.
+`outputSchema`, `_meta` and `stochastic` (from the `Seed` parameter) and
+`document` (from a `DocumentInput` parameter), writes the text summary, fills
+`provenance` with the seed and the package version, hides the `Progress`
+parameter from the schema and connects it to MCP progress notifications, and
+turns `ToolError` exceptions into `isError` results.
