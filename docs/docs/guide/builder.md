@@ -4,7 +4,7 @@
 any format megane reads) or start from an empty cell, add and delete atoms,
 drag them around, change elements, draw or remove bonds, and save the result
 as XYZ, PDB, or MOL. It lives beside the viewer at `/builder.html` — on the
-hosted demo (<https://megane-labs.github.io/megane/app/builder.html>), in the
+hosted demo ([megane-labs.github.io/megane/app/builder.html](https://megane-labs.github.io/megane/app/builder.html)), in the
 web app that `megane serve` hosts, and in the Vite dev server (`npm run dev`,
 then open `http://localhost:5173/builder.html`).
 
