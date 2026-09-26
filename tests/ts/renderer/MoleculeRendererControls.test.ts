@@ -210,3 +210,25 @@ describe("MoleculeRenderer.setPerspective controls recreation", () => {
     expect(internals.controls).toBe(controls);
   });
 });
+
+describe("MoleculeRenderer.dispose after a failed mount", () => {
+  it("does not throw when mount() never created the WebGL renderer or controls", () => {
+    const r = new MoleculeRenderer();
+    expect(() => r.dispose()).not.toThrow();
+  });
+
+  it("does not throw when mount() threw after the canvas but before the controls", () => {
+    const r = new MoleculeRenderer();
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const internals = r as any;
+    const container = makeContainer();
+    const canvas = document.createElement("canvas");
+    container.appendChild(canvas);
+    const dispose = vi.fn();
+    internals.container = container;
+    internals.renderer = { domElement: canvas, dispose };
+    expect(() => r.dispose()).not.toThrow();
+    expect(dispose).toHaveBeenCalledTimes(1);
+    expect(canvas.parentNode).toBeNull();
+  });
+});

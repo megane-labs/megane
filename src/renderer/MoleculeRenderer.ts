@@ -2239,9 +2239,13 @@ export class MoleculeRenderer {
     }
     this.customPanCleanup?.();
     this.customPanCleanup = null;
-    this.controls.dispose();
-    this.renderer.dispose();
-    if (this.container && this.renderer.domElement.parentNode) {
+    // mount() can throw part-way (no WebGL context, a controls constructor
+    // failure), leaving these unset. dispose() still runs from the host's
+    // unmount cleanup, so it must not throw there: an exception in a React
+    // effect cleanup takes down the page being navigated to.
+    this.controls?.dispose();
+    this.renderer?.dispose();
+    if (this.container && this.renderer?.domElement.parentNode) {
       this.container.removeChild(this.renderer.domElement);
     }
     if (_activeRenderer === this) {
