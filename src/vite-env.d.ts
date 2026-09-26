@@ -3,6 +3,8 @@
 interface ImportMetaEnv {
   /** URL of the Cloudflare Worker that proxies free-tier demo chat requests. */
   readonly VITE_LLM_PROXY_URL?: string;
+  /** megane Builder's default tool server (MCP endpoint), connected on load. */
+  readonly VITE_BUILDER_TOOLS_URL?: string;
 }
 
 interface ImportMeta {

@@ -6,6 +6,7 @@ import {
   createToolsStore,
   readLaunchParams,
   readStoredUrl,
+  siteToolServerUrl,
   recordedArguments,
 } from "@/builder/tools/store";
 import { createBuilderStore } from "@/builder/store";
@@ -70,6 +71,23 @@ describe("storage and launch parameters", () => {
     expect(readStoredUrl(memoryStorage({ [TOOLS_STORAGE_KEY]: '{"url":"http://h/mcp"}' }))).toBe(
       "http://h/mcp",
     );
+  });
+
+  it("falls back to the site tool server when the build names one", () => {
+    expect(siteToolServerUrl({})).toBeNull();
+    expect(siteToolServerUrl({ VITE_BUILDER_TOOLS_URL: "  " })).toBeNull();
+    expect(siteToolServerUrl({ VITE_BUILDER_TOOLS_URL: " https://t.example/mcp " })).toBe(
+      "https://t.example/mcp",
+    );
+    expect(readStoredUrl(null, "https://t.example/mcp")).toBe("https://t.example/mcp");
+    vi.stubEnv("VITE_BUILDER_TOOLS_URL", "https://t.example/mcp");
+    try {
+      expect(siteToolServerUrl()).toBe("https://t.example/mcp");
+      expect(readStoredUrl(null)).toBe("https://t.example/mcp");
+    } finally {
+      vi.unstubAllEnvs();
+    }
+    expect(readStoredUrl(null)).toBe(DEFAULT_TOOL_SERVER_URL);
   });
 
   it("reads #tools=…&token=…", () => {

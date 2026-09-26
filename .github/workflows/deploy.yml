@@ -45,9 +45,13 @@ jobs:
       # "demo" provider (isDemoProviderAvailable() in src/ai/config.ts keys
       # off this) instead of falling back to BYOK. Same repo variable the
       # docs demo build uses.
+      # VITE_BUILDER_TOOLS_URL: Builder's "Python tools" connect on load to the
+      # public megane-builder-tools App Runner service, which only answers this
+      # site's origin (hodakamori/megane-builder-tools, deploy/).
       - run: npm run build:app
         env:
           VITE_LLM_PROXY_URL: ${{ vars.LLM_PROXY_URL }}
+          VITE_BUILDER_TOOLS_URL: ${{ vars.BUILDER_TOOLS_URL || 'https://xt2vdpjpsh.ap-northeast-1.awsapprunner.com/mcp' }}
 
       - name: Verify build artifacts
         run: test -f python/megane/static/app/index.html

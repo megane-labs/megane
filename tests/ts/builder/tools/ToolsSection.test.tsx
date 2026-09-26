@@ -53,7 +53,10 @@ beforeEach(() => {
   );
   window.history.replaceState(null, "", "/builder.html");
 });
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  vi.unstubAllEnvs();
+});
 
 async function connect() {
   render(<ToolsSection />);
@@ -111,6 +114,23 @@ describe("ToolsSection", () => {
     await screen.findByTestId("builder-tools-list");
     expect(mocks.connect).toHaveBeenCalledWith("http://h:1/mcp", "abc");
     expect(window.location.hash).toBe("");
+  });
+
+  it("connects to the site tool server on load while it is the chosen one", async () => {
+    vi.stubEnv("VITE_BUILDER_TOOLS_URL", "https://t.example/mcp");
+    useToolsStore.setState({ url: "https://t.example/mcp" });
+    render(<ToolsSection />);
+    await screen.findByTestId("builder-tools-list");
+    expect(mocks.connect).toHaveBeenCalledWith("https://t.example/mcp", "");
+  });
+
+  it("does not auto-connect to another server or without a site server", async () => {
+    render(<ToolsSection />);
+    cleanup();
+    vi.stubEnv("VITE_BUILDER_TOOLS_URL", "https://t.example/mcp");
+    render(<ToolsSection />);
+    await act(async () => undefined);
+    expect(mocks.connect).not.toHaveBeenCalled();
   });
 });
 

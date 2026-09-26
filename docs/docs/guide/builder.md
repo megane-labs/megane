@@ -252,6 +252,11 @@ server's progress and can be cancelled.
 - If the tool refuses (not enough room, a head atom without a hydrogen, …),
   its message is shown and the form stays open with your values.
 
+On the demo site, Builder is already connected to a hosted reference server,
+so the Python tools appear without starting anything; a call there is limited
+to 100 seconds, so build large systems with your own server, which replaces it
+once you connect to it (the URL is remembered).
+
 Opening Builder with `#tools=<url>&token=<token>` at the end of its address
 connects on load. Anyone can write a tool server with the
 [`megane-builder-tools` SDK](https://github.com/hodakamori/megane-builder-tools).

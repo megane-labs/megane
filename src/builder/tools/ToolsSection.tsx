@@ -6,14 +6,16 @@
  *
  * `#tools=<url>&token=<token>` in the page URL connects on load, which is
  * what a tool server can print as a ready-to-open link; the token is removed
- * from the address bar once read.
+ * from the address bar once read. A build with a site tool server
+ * (`VITE_BUILDER_TOOLS_URL`, the demo site) connects to it on load while it
+ * is the chosen server.
  */
 
 import { useEffect } from "react";
 import { Section } from "../Section";
 import { buttonStyle, hintStyle, inputStyle, rowStyle } from "../styles";
 import { CATEGORY_LABELS, type BuilderToolInfo, type ToolCategory } from "./contract";
-import { readLaunchParams, useToolsStore } from "./store";
+import { readLaunchParams, siteToolServerUrl, useToolsStore } from "./store";
 import { ToolDialog } from "./ToolDialog";
 
 function groupByCategory(tools: BuilderToolInfo[]): [ToolCategory, BuilderToolInfo[]][] {
@@ -42,8 +44,12 @@ export function ToolsSection() {
   useEffect(() => {
     if (typeof window === "undefined") return;
     const launch = readLaunchParams(window.location.hash);
-    if (!launch) return;
     const api = useToolsStore.getState();
+    if (!launch) {
+      const site = siteToolServerUrl();
+      if (site && api.url.trim() === site && api.status === "idle") void api.connect();
+      return;
+    }
     api.setUrl(launch.url);
     api.setToken(launch.token);
     try {

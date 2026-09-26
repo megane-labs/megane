@@ -408,6 +408,14 @@ load and removes the fragment from the address bar; a tool server can print
 such a link. The fragment is never sent to a web server, so the token does not
 end up in access logs.
 
+A build can name a default server with `VITE_BUILDER_TOOLS_URL`; Builder
+connects to it on load while it is the chosen server (no token). megane's demo
+site uses this for a hosted reference server running in public mode
+(`megane-builder-tools --public`): no token, since one embedded in a public page
+would be public too, and only requests whose `Origin` is the demo site are
+answered. That keeps other sites and crawlers out but is not authentication; the
+server bounds each call's time and the number of concurrent calls.
+
 | Host | Bridge | Config location | stdio | HTTP |
 | --- | --- | --- | --- | --- |
 | Any webapp page (hosted, local build, `megane serve`) — **implemented** | None: the page connects to HTTP servers directly | *Python tools* section; the URL is remembered in local storage, the token is not | no | CORS permitting |
@@ -435,6 +443,8 @@ sampling. Hosts that get a bridge must be listed in
 - **Loopback servers are an attack surface.** A server listening on localhost
   for the static webapp must check `Origin` and require a token, as the MCP
   Streamable HTTP transport requires; the reference server does both.
+  A public demo server without a token must still refuse requests whose
+  `Origin` is not its page, and must cap call time and concurrency.
 - **Everything a server sends is untrusted.** Titles, descriptions, names,
   warnings and error messages are rendered as plain text. Icons are rendered
   only from `data:` URIs of an allowed image type. Result sizes are capped

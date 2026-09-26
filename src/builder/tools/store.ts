@@ -18,6 +18,18 @@ import { insertOps, residueLabels, structureToSnapshot } from "./payload";
 export const TOOLS_STORAGE_KEY = "megane.builder.tools.v1";
 export const DEFAULT_TOOL_SERVER_URL = "http://127.0.0.1:8765/mcp";
 
+/**
+ * The tool server this build ships with (`VITE_BUILDER_TOOLS_URL`, set for the
+ * demo site), or null. Builder connects to it on load while it is the chosen
+ * server; such a server is public (no token) and accepts only the site's origin.
+ */
+export function siteToolServerUrl(
+  env: { VITE_BUILDER_TOOLS_URL?: string } = import.meta.env,
+): string | null {
+  const url = env.VITE_BUILDER_TOOLS_URL?.trim();
+  return url ? url : null;
+}
+
 export type ConnectionStatus = "idle" | "connecting" | "connected" | "error";
 
 /** One applied result, as §7 asks Builder to record it. */
@@ -74,7 +86,10 @@ function defaultStorage(): Storage | null {
   }
 }
 
-export function readStoredUrl(storage: Storage | null): string {
+export function readStoredUrl(
+  storage: Storage | null,
+  fallback: string = siteToolServerUrl() ?? DEFAULT_TOOL_SERVER_URL,
+): string {
   try {
     const raw = storage?.getItem(TOOLS_STORAGE_KEY);
     const parsed: unknown = raw ? JSON.parse(raw) : null;
@@ -88,7 +103,7 @@ export function readStoredUrl(storage: Storage | null): string {
   } catch {
     /* corrupt or blocked storage */
   }
-  return DEFAULT_TOOL_SERVER_URL;
+  return fallback;
 }
 
 function writeStoredUrl(storage: Storage | null, url: string) {
