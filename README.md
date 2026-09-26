@@ -34,6 +34,7 @@
 - **1M+ Atoms at 60fps** — Billboard impostor rendering scales from small molecules to massive complexes in real time. InstancedMesh for small systems auto-switches to GPU-accelerated billboard impostors for large systems. Stream XTC trajectories over WebSocket.
 - **Runs Everywhere** — Jupyter widget, standalone web app (`megane serve`), React component (npm), and VS Code extension. Rust-based parsers for 26 formats (PDB, GRO, XYZ, MOL/SDF, MOL2, CIF, mmCIF, CML, LAMMPS data, AMBER topology, GROMACS topology, CHARMM/NAMD PSF, XTC, DCD, ASE .traj, LAMMPS dump, AMBER NetCDF, VASP, Molden, XCrySDen XSF, JCAMP-DX, Chem3D XML, Odyssey, CASTEP magres, GAMESS output, CASTEP phonon) shared between Python (PyO3) and browser (WASM) — parse once, run anywhere.
 - **Visual Pipeline Editor** — Build visualization workflows by wiring nodes or let the AI generator build them from natural language. 19 node types with 9 typed data channels flowing through color-coded edges. Load multiple structures with layer-based rendering to compare systems side by side.
+- **megane Builder** — A structure editor next to the viewer (`/builder.html` in `megane serve`): add, delete, move and re-element atoms, draw bonds, sketch molecules in Ketcher (embedded in 3D by RDKit), and build bulk crystals, supercells and slabs. Save as XYZ / PDB / MOL — also available from Python as `megane.save_structure()`.
 - **Embed & Integrate** — Control the viewer from Plotly via ipywidgets events. Embed in MDX / Next.js docs. React to `frame_change`, `selection_change`, and `measurement` events. Use the framework-agnostic renderer from Vue, Svelte, or vanilla JS.
 
 ### Scale
@@ -123,7 +124,7 @@ docker build -t megane .
 docker run --rm -p 8080:8080 megane
 ```
 
-Open http://localhost:8080 in your browser.
+Open http://localhost:8080 in your browser. megane Builder, the structure editor, is at http://localhost:8080/builder.html.
 
 To view your own files, mount them into the container:
 
