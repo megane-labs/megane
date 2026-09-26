@@ -1,0 +1,1289 @@
+{
+  "tools": [
+    {
+      "name": "liquid_box",
+      "title": "Liquid box",
+      "description": "Fill a periodic box with molecules at a target density using packmol.\n\nGive each component and its number of copies; the box is sized so that the\nmixture has the requested density (g/cm\u00b3). Molecules are packed whole with\nat least the minimum distance between atoms of different molecules, and are\nreturned with their bonds, one residue per molecule.",
+      "inputSchema": {
+        "type": "object",
+        "$defs": {
+          "Component": {
+            "additionalProperties": false,
+            "description": "One species of the mixture and how many copies of it to pack.",
+            "properties": {
+              "molecule": {
+                "$ref": "#/$defs/Molecule",
+                "x-megane-widget": "molecule"
+              },
+              "count": {
+                "examples": [
+                  100
+                ],
+                "maximum": 500000,
+                "minimum": 1,
+                "title": "Count",
+                "type": "integer",
+                "x-megane-unit": "count"
+              }
+            },
+            "required": [
+              "molecule",
+              "count"
+            ],
+            "title": "Component",
+            "type": "object"
+          },
+          "Molecule": {
+            "additionalProperties": false,
+            "anyOf": [
+              {
+                "required": [
+                  "molblock"
+                ]
+              },
+              {
+                "required": [
+                  "smiles"
+                ]
+              }
+            ],
+            "description": "A molecule: a V2000 mol block with explicit hydrogens and 3D coordinates in \u00c5\n(header dimension code 3D), or a SMILES the server embeds in 3D.",
+            "properties": {
+              "name": {
+                "description": "Display name, e.g. 'water'.",
+                "maxLength": 128,
+                "minLength": 1,
+                "title": "Name",
+                "type": "string"
+              },
+              "molblock": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "description": "V2000 mol block, explicit H, 3D, \u00c5.",
+                "title": "Molblock"
+              },
+              "smiles": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "description": "SMILES; embedded in 3D by the server.",
+                "title": "Smiles"
+              }
+            },
+            "required": [
+              "name"
+            ],
+            "title": "Molecule",
+            "type": "object"
+          }
+        },
+        "properties": {
+          "components": {
+            "items": {
+              "$ref": "#/$defs/Component"
+            },
+            "maxItems": 8,
+            "minItems": 1,
+            "title": "Components",
+            "type": "array"
+          },
+          "seed": {
+            "description": "Random seed; the same seed gives the same result.",
+            "minimum": 0,
+            "title": "Seed",
+            "type": "integer",
+            "x-megane-widget": "seed"
+          },
+          "density": {
+            "default": 1.0,
+            "exclusiveMinimum": 0,
+            "maximum": 5,
+            "title": "Density",
+            "type": "number",
+            "x-megane-unit": "g/cm3"
+          },
+          "shape": {
+            "default": "cubic",
+            "enum": [
+              "cubic",
+              "orthorhombic"
+            ],
+            "title": "Box shape",
+            "type": "string"
+          },
+          "aspect": {
+            "default": [
+              1.0,
+              1.0,
+              1.0
+            ],
+            "description": "Used for orthorhombic boxes.",
+            "items": {
+              "exclusiveMinimum": 0,
+              "type": "number"
+            },
+            "maxItems": 3,
+            "minItems": 3,
+            "title": "Aspect ratio a:b:c",
+            "type": "array"
+          },
+          "tolerance": {
+            "default": 2.0,
+            "maximum": 4.0,
+            "minimum": 1.0,
+            "title": "Minimum distance",
+            "type": "number",
+            "x-megane-unit": "angstrom"
+          }
+        },
+        "required": [
+          "components",
+          "seed"
+        ],
+        "title": "liquid_boxArguments"
+      },
+      "outputSchema": {
+        "$defs": {
+          "Structure": {
+            "additionalProperties": false,
+            "description": "Atoms as parallel arrays: atomic numbers, Cartesian positions in \u00c5 (flat x,y,z),\nrow-major 3x3 cell in \u00c5 or null, and complete bonds as atom index pairs.",
+            "properties": {
+              "elements": {
+                "items": {
+                  "type": "integer"
+                },
+                "title": "Elements",
+                "type": "array"
+              },
+              "positions": {
+                "items": {
+                  "type": "number"
+                },
+                "title": "Positions",
+                "type": "array"
+              },
+              "cell": {
+                "anyOf": [
+                  {
+                    "items": {
+                      "type": "number"
+                    },
+                    "type": "array"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Cell"
+              },
+              "bonds": {
+                "items": {
+                  "maxItems": 2,
+                  "minItems": 2,
+                  "prefixItems": [
+                    {
+                      "type": "integer"
+                    },
+                    {
+                      "type": "integer"
+                    }
+                  ],
+                  "type": "array"
+                },
+                "title": "Bonds",
+                "type": "array"
+              },
+              "bondOrders": {
+                "anyOf": [
+                  {
+                    "items": {
+                      "type": "integer"
+                    },
+                    "type": "array"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Bondorders"
+              },
+              "molecules": {
+                "anyOf": [
+                  {
+                    "items": {
+                      "type": "integer"
+                    },
+                    "type": "array"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Molecules"
+              },
+              "residueNames": {
+                "anyOf": [
+                  {
+                    "items": {
+                      "type": "string"
+                    },
+                    "type": "array"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Residuenames"
+              },
+              "residueIds": {
+                "anyOf": [
+                  {
+                    "items": {
+                      "type": "integer"
+                    },
+                    "type": "array"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Residueids"
+              },
+              "atomNames": {
+                "anyOf": [
+                  {
+                    "items": {
+                      "type": "string"
+                    },
+                    "type": "array"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Atomnames"
+              },
+              "chainIds": {
+                "anyOf": [
+                  {
+                    "items": {
+                      "type": "string"
+                    },
+                    "type": "array"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Chainids"
+              },
+              "formalCharges": {
+                "anyOf": [
+                  {
+                    "items": {
+                      "type": "integer"
+                    },
+                    "type": "array"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Formalcharges"
+              },
+              "scalars": {
+                "anyOf": [
+                  {
+                    "additionalProperties": {
+                      "items": {
+                        "type": "number"
+                      },
+                      "type": "array"
+                    },
+                    "type": "object"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Scalars"
+              }
+            },
+            "required": [
+              "elements",
+              "positions",
+              "cell",
+              "bonds"
+            ],
+            "title": "Structure",
+            "type": "object"
+          }
+        },
+        "additionalProperties": false,
+        "description": "A structure built by a megane Builder tool, with warnings and provenance.",
+        "properties": {
+          "contract": {
+            "const": 1,
+            "default": 1,
+            "title": "Contract",
+            "type": "integer"
+          },
+          "name": {
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Name",
+            "type": "string"
+          },
+          "structure": {
+            "$ref": "#/$defs/Structure"
+          },
+          "warnings": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Warnings",
+            "type": "array"
+          },
+          "provenance": {
+            "additionalProperties": true,
+            "title": "Provenance",
+            "type": "object"
+          }
+        },
+        "required": [
+          "name",
+          "structure"
+        ],
+        "title": "BuilderResult",
+        "type": "object"
+      },
+      "annotations": {
+        "title": "Liquid box",
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "_meta": {
+        "io.github.megane-labs/builder": {
+          "contract": 1,
+          "category": "bulk",
+          "apply": "new_document",
+          "document": "none",
+          "stochastic": true,
+          "expectedSeconds": 20
+        }
+      }
+    },
+    {
+      "name": "polymer_chain",
+      "title": "Polymer chain",
+      "description": "Build a linear homopolymer with RadonPy's random-walk polymerisation.\n\nThe head and tail atoms (0-based indices into the monomer) are the atoms that\nbond to the neighbouring units; each gives up one hydrogen at every junction,\nso the chain ends keep theirs. Every unit keeps the monomer's stereochemistry\n(tacticity is not controlled). RadonPy relaxes the growing chain with MMFF94\nafter every step, so long chains are slow: about 40 s for 100 ethylene units\nand 7 minutes for 200. Every repeat unit is one residue.",
+      "inputSchema": {
+        "type": "object",
+        "$defs": {
+          "Molecule": {
+            "additionalProperties": false,
+            "anyOf": [
+              {
+                "required": [
+                  "molblock"
+                ]
+              },
+              {
+                "required": [
+                  "smiles"
+                ]
+              }
+            ],
+            "description": "A molecule: a V2000 mol block with explicit hydrogens and 3D coordinates in \u00c5\n(header dimension code 3D), or a SMILES the server embeds in 3D.",
+            "properties": {
+              "name": {
+                "description": "Display name, e.g. 'water'.",
+                "maxLength": 128,
+                "minLength": 1,
+                "title": "Name",
+                "type": "string"
+              },
+              "molblock": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "description": "V2000 mol block, explicit H, 3D, \u00c5.",
+                "title": "Molblock"
+              },
+              "smiles": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "description": "SMILES; embedded in 3D by the server.",
+                "title": "Smiles"
+              }
+            },
+            "required": [
+              "name"
+            ],
+            "title": "Molecule",
+            "type": "object"
+          }
+        },
+        "properties": {
+          "monomer": {
+            "$ref": "#/$defs/Molecule",
+            "examples": [
+              {
+                "name": "ethylene",
+                "smiles": "CC"
+              }
+            ],
+            "title": "Monomer",
+            "x-megane-widget": "molecule"
+          },
+          "head": {
+            "examples": [
+              0
+            ],
+            "minimum": 0,
+            "title": "Head atom",
+            "type": "integer",
+            "x-megane-of": "monomer",
+            "x-megane-widget": "atom"
+          },
+          "tail": {
+            "examples": [
+              1
+            ],
+            "minimum": 0,
+            "title": "Tail atom",
+            "type": "integer",
+            "x-megane-of": "monomer",
+            "x-megane-widget": "atom"
+          },
+          "seed": {
+            "description": "Random seed; the same seed gives the same result.",
+            "minimum": 0,
+            "title": "Seed",
+            "type": "integer",
+            "x-megane-widget": "seed"
+          },
+          "length": {
+            "default": 10,
+            "maximum": 200,
+            "minimum": 1,
+            "title": "Repeat units",
+            "type": "integer",
+            "x-megane-unit": "count"
+          }
+        },
+        "required": [
+          "monomer",
+          "head",
+          "tail",
+          "seed"
+        ],
+        "title": "polymer_chainArguments"
+      },
+      "outputSchema": {
+        "$defs": {
+          "Structure": {
+            "additionalProperties": false,
+            "description": "Atoms as parallel arrays: atomic numbers, Cartesian positions in \u00c5 (flat x,y,z),\nrow-major 3x3 cell in \u00c5 or null, and complete bonds as atom index pairs.",
+            "properties": {
+              "elements": {
+                "items": {
+                  "type": "integer"
+                },
+                "title": "Elements",
+                "type": "array"
+              },
+              "positions": {
+                "items": {
+                  "type": "number"
+                },
+                "title": "Positions",
+                "type": "array"
+              },
+              "cell": {
+                "anyOf": [
+                  {
+                    "items": {
+                      "type": "number"
+                    },
+                    "type": "array"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Cell"
+              },
+              "bonds": {
+                "items": {
+                  "maxItems": 2,
+                  "minItems": 2,
+                  "prefixItems": [
+                    {
+                      "type": "integer"
+                    },
+                    {
+                      "type": "integer"
+                    }
+                  ],
+                  "type": "array"
+                },
+                "title": "Bonds",
+                "type": "array"
+              },
+              "bondOrders": {
+                "anyOf": [
+                  {
+                    "items": {
+                      "type": "integer"
+                    },
+                    "type": "array"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Bondorders"
+              },
+              "molecules": {
+                "anyOf": [
+                  {
+                    "items": {
+                      "type": "integer"
+                    },
+                    "type": "array"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Molecules"
+              },
+              "residueNames": {
+                "anyOf": [
+                  {
+                    "items": {
+                      "type": "string"
+                    },
+                    "type": "array"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Residuenames"
+              },
+              "residueIds": {
+                "anyOf": [
+                  {
+                    "items": {
+                      "type": "integer"
+                    },
+                    "type": "array"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Residueids"
+              },
+              "atomNames": {
+                "anyOf": [
+                  {
+                    "items": {
+                      "type": "string"
+                    },
+                    "type": "array"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Atomnames"
+              },
+              "chainIds": {
+                "anyOf": [
+                  {
+                    "items": {
+                      "type": "string"
+                    },
+                    "type": "array"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Chainids"
+              },
+              "formalCharges": {
+                "anyOf": [
+                  {
+                    "items": {
+                      "type": "integer"
+                    },
+                    "type": "array"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Formalcharges"
+              },
+              "scalars": {
+                "anyOf": [
+                  {
+                    "additionalProperties": {
+                      "items": {
+                        "type": "number"
+                      },
+                      "type": "array"
+                    },
+                    "type": "object"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Scalars"
+              }
+            },
+            "required": [
+              "elements",
+              "positions",
+              "cell",
+              "bonds"
+            ],
+            "title": "Structure",
+            "type": "object"
+          }
+        },
+        "additionalProperties": false,
+        "description": "A structure built by a megane Builder tool, with warnings and provenance.",
+        "properties": {
+          "contract": {
+            "const": 1,
+            "default": 1,
+            "title": "Contract",
+            "type": "integer"
+          },
+          "name": {
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Name",
+            "type": "string"
+          },
+          "structure": {
+            "$ref": "#/$defs/Structure"
+          },
+          "warnings": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Warnings",
+            "type": "array"
+          },
+          "provenance": {
+            "additionalProperties": true,
+            "title": "Provenance",
+            "type": "object"
+          }
+        },
+        "required": [
+          "name",
+          "structure"
+        ],
+        "title": "BuilderResult",
+        "type": "object"
+      },
+      "annotations": {
+        "title": "Polymer chain",
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "_meta": {
+        "io.github.megane-labs/builder": {
+          "contract": 1,
+          "category": "polymer",
+          "apply": "new_document",
+          "document": "none",
+          "stochastic": true,
+          "expectedSeconds": 60
+        }
+      }
+    },
+    {
+      "name": "solvate",
+      "title": "Solvate",
+      "description": "Fill the empty space of the open structure's cell with solvent molecules.\n\nThe number of solvent molecules is chosen so that the solvent has the\nrequested density (g/cm\u00b3) in the part of the cell not taken by the existing\natoms' van der Waals spheres. packmol keeps every solvent atom at least the\nminimum distance from other atoms, across periodic boundaries. Only the\nadded solvent is returned; the open structure is not changed. Needs an\northorhombic cell.",
+      "inputSchema": {
+        "type": "object",
+        "$defs": {
+          "Molecule": {
+            "additionalProperties": false,
+            "anyOf": [
+              {
+                "required": [
+                  "molblock"
+                ]
+              },
+              {
+                "required": [
+                  "smiles"
+                ]
+              }
+            ],
+            "description": "A molecule: a V2000 mol block with explicit hydrogens and 3D coordinates in \u00c5\n(header dimension code 3D), or a SMILES the server embeds in 3D.",
+            "properties": {
+              "name": {
+                "description": "Display name, e.g. 'water'.",
+                "maxLength": 128,
+                "minLength": 1,
+                "title": "Name",
+                "type": "string"
+              },
+              "molblock": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "description": "V2000 mol block, explicit H, 3D, \u00c5.",
+                "title": "Molblock"
+              },
+              "smiles": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "description": "SMILES; embedded in 3D by the server.",
+                "title": "Smiles"
+              }
+            },
+            "required": [
+              "name"
+            ],
+            "title": "Molecule",
+            "type": "object"
+          },
+          "Structure": {
+            "additionalProperties": false,
+            "description": "Atoms as parallel arrays: atomic numbers, Cartesian positions in \u00c5 (flat x,y,z),\nrow-major 3x3 cell in \u00c5 or null, and complete bonds as atom index pairs.",
+            "properties": {
+              "elements": {
+                "items": {
+                  "type": "integer"
+                },
+                "title": "Elements",
+                "type": "array"
+              },
+              "positions": {
+                "items": {
+                  "type": "number"
+                },
+                "title": "Positions",
+                "type": "array"
+              },
+              "cell": {
+                "anyOf": [
+                  {
+                    "items": {
+                      "type": "number"
+                    },
+                    "type": "array"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Cell"
+              },
+              "bonds": {
+                "items": {
+                  "maxItems": 2,
+                  "minItems": 2,
+                  "prefixItems": [
+                    {
+                      "type": "integer"
+                    },
+                    {
+                      "type": "integer"
+                    }
+                  ],
+                  "type": "array"
+                },
+                "title": "Bonds",
+                "type": "array"
+              },
+              "bondOrders": {
+                "anyOf": [
+                  {
+                    "items": {
+                      "type": "integer"
+                    },
+                    "type": "array"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Bondorders"
+              },
+              "molecules": {
+                "anyOf": [
+                  {
+                    "items": {
+                      "type": "integer"
+                    },
+                    "type": "array"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Molecules"
+              },
+              "residueNames": {
+                "anyOf": [
+                  {
+                    "items": {
+                      "type": "string"
+                    },
+                    "type": "array"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Residuenames"
+              },
+              "residueIds": {
+                "anyOf": [
+                  {
+                    "items": {
+                      "type": "integer"
+                    },
+                    "type": "array"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Residueids"
+              },
+              "atomNames": {
+                "anyOf": [
+                  {
+                    "items": {
+                      "type": "string"
+                    },
+                    "type": "array"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Atomnames"
+              },
+              "chainIds": {
+                "anyOf": [
+                  {
+                    "items": {
+                      "type": "string"
+                    },
+                    "type": "array"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Chainids"
+              },
+              "formalCharges": {
+                "anyOf": [
+                  {
+                    "items": {
+                      "type": "integer"
+                    },
+                    "type": "array"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Formalcharges"
+              },
+              "scalars": {
+                "anyOf": [
+                  {
+                    "additionalProperties": {
+                      "items": {
+                        "type": "number"
+                      },
+                      "type": "array"
+                    },
+                    "type": "object"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Scalars"
+              }
+            },
+            "required": [
+              "elements",
+              "positions",
+              "cell",
+              "bonds"
+            ],
+            "title": "Structure",
+            "type": "object"
+          }
+        },
+        "properties": {
+          "document": {
+            "$ref": "#/$defs/Structure",
+            "x-megane-widget": "document"
+          },
+          "solvent": {
+            "$ref": "#/$defs/Molecule",
+            "title": "Solvent",
+            "x-megane-widget": "molecule"
+          },
+          "seed": {
+            "description": "Random seed; the same seed gives the same result.",
+            "minimum": 0,
+            "title": "Seed",
+            "type": "integer",
+            "x-megane-widget": "seed"
+          },
+          "density": {
+            "default": 1.0,
+            "exclusiveMinimum": 0,
+            "maximum": 5,
+            "title": "Density",
+            "type": "number",
+            "x-megane-unit": "g/cm3"
+          },
+          "tolerance": {
+            "default": 2.0,
+            "maximum": 4.0,
+            "minimum": 1.0,
+            "title": "Minimum distance",
+            "type": "number",
+            "x-megane-unit": "angstrom"
+          }
+        },
+        "required": [
+          "document",
+          "solvent",
+          "seed"
+        ],
+        "title": "solvateArguments"
+      },
+      "outputSchema": {
+        "$defs": {
+          "Structure": {
+            "additionalProperties": false,
+            "description": "Atoms as parallel arrays: atomic numbers, Cartesian positions in \u00c5 (flat x,y,z),\nrow-major 3x3 cell in \u00c5 or null, and complete bonds as atom index pairs.",
+            "properties": {
+              "elements": {
+                "items": {
+                  "type": "integer"
+                },
+                "title": "Elements",
+                "type": "array"
+              },
+              "positions": {
+                "items": {
+                  "type": "number"
+                },
+                "title": "Positions",
+                "type": "array"
+              },
+              "cell": {
+                "anyOf": [
+                  {
+                    "items": {
+                      "type": "number"
+                    },
+                    "type": "array"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Cell"
+              },
+              "bonds": {
+                "items": {
+                  "maxItems": 2,
+                  "minItems": 2,
+                  "prefixItems": [
+                    {
+                      "type": "integer"
+                    },
+                    {
+                      "type": "integer"
+                    }
+                  ],
+                  "type": "array"
+                },
+                "title": "Bonds",
+                "type": "array"
+              },
+              "bondOrders": {
+                "anyOf": [
+                  {
+                    "items": {
+                      "type": "integer"
+                    },
+                    "type": "array"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Bondorders"
+              },
+              "molecules": {
+                "anyOf": [
+                  {
+                    "items": {
+                      "type": "integer"
+                    },
+                    "type": "array"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Molecules"
+              },
+              "residueNames": {
+                "anyOf": [
+                  {
+                    "items": {
+                      "type": "string"
+                    },
+                    "type": "array"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Residuenames"
+              },
+              "residueIds": {
+                "anyOf": [
+                  {
+                    "items": {
+                      "type": "integer"
+                    },
+                    "type": "array"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Residueids"
+              },
+              "atomNames": {
+                "anyOf": [
+                  {
+                    "items": {
+                      "type": "string"
+                    },
+                    "type": "array"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Atomnames"
+              },
+              "chainIds": {
+                "anyOf": [
+                  {
+                    "items": {
+                      "type": "string"
+                    },
+                    "type": "array"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Chainids"
+              },
+              "formalCharges": {
+                "anyOf": [
+                  {
+                    "items": {
+                      "type": "integer"
+                    },
+                    "type": "array"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Formalcharges"
+              },
+              "scalars": {
+                "anyOf": [
+                  {
+                    "additionalProperties": {
+                      "items": {
+                        "type": "number"
+                      },
+                      "type": "array"
+                    },
+                    "type": "object"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Scalars"
+              }
+            },
+            "required": [
+              "elements",
+              "positions",
+              "cell",
+              "bonds"
+            ],
+            "title": "Structure",
+            "type": "object"
+          }
+        },
+        "additionalProperties": false,
+        "description": "A structure built by a megane Builder tool, with warnings and provenance.",
+        "properties": {
+          "contract": {
+            "const": 1,
+            "default": 1,
+            "title": "Contract",
+            "type": "integer"
+          },
+          "name": {
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Name",
+            "type": "string"
+          },
+          "structure": {
+            "$ref": "#/$defs/Structure"
+          },
+          "warnings": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Warnings",
+            "type": "array"
+          },
+          "provenance": {
+            "additionalProperties": true,
+            "title": "Provenance",
+            "type": "object"
+          }
+        },
+        "required": [
+          "name",
+          "structure"
+        ],
+        "title": "BuilderResult",
+        "type": "object"
+      },
+      "annotations": {
+        "title": "Solvate",
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "_meta": {
+        "io.github.megane-labs/builder": {
+          "contract": 1,
+          "category": "solvation",
+          "apply": "insert",
+          "document": "required",
+          "stochastic": true,
+          "expectedSeconds": 30
+        }
+      }
+    }
+  ]
+}
