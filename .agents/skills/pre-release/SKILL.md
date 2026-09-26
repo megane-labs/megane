@@ -49,7 +49,7 @@ uv tool run bump-my-version bump minor   # new features
 uv tool run bump-my-version bump major   # breaking changes
 ```
 
-### 1.2 Verify all 11 files are updated
+### 1.2 Verify all 12 files are updated
 The bumpversion config in `pyproject.toml` updates these files:
 - `pyproject.toml`
 - `package.json`, `package-lock.json`
@@ -59,6 +59,12 @@ The bumpversion config in `pyproject.toml` updates these files:
 - `python/megane/__init__.py`
 - `vscode-megane/package.json`, `vscode-megane/package-lock.json`
 - `jupyterlab-megane/package.json`, `jupyterlab-megane/package-lock.json`
+- `uv.lock` (the `megane` package entry only)
+
+The lockfile entries are anchored on the package's own `name` line, so a
+dependency that happens to share the old version number is never touched.
+Confirm with `git diff package-lock.json */package-lock.json uv.lock`: each
+file changes only megane's own version lines.
 
 Sanity-check no stale references remain (replace `0.6.2` with the previous
 version — output should be empty):
@@ -69,7 +75,8 @@ grep -rn "0\.6\.2" pyproject.toml package.json package-lock.json \
   crates/megane-wasm/Cargo.toml \
   python/megane/__init__.py \
   vscode-megane/package.json vscode-megane/package-lock.json \
-  jupyterlab-megane/package.json jupyterlab-megane/package-lock.json
+  jupyterlab-megane/package.json jupyterlab-megane/package-lock.json \
+  uv.lock
 ```
 `docs/scripts/prepare-notebooks.py` reads the version dynamically from
 `pyproject.toml`, so no manual update is required.
@@ -324,7 +331,7 @@ git add pyproject.toml package.json package-lock.json \
   python/megane/__init__.py \
   vscode-megane/package.json vscode-megane/package-lock.json \
   jupyterlab-megane/package.json jupyterlab-megane/package-lock.json \
-  CHANGELOG.md
+  uv.lock CHANGELOG.md
 git commit -m "chore: release vX.Y.Z"
 ```
 

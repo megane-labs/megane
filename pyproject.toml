@@ -126,6 +126,11 @@ search = 'version = "{current_version}"'
 replace = 'version = "{new_version}"'
 
 [[tool.bumpversion.files]]
+filename = "uv.lock"
+search = "name = \"megane\"\nversion = \"{current_version}\""
+replace = "name = \"megane\"\nversion = \"{new_version}\""
+
+[[tool.bumpversion.files]]
 filename = "python/megane/__init__.py"
 search = '__version__ = "{current_version}"'
 replace = '__version__ = "{new_version}"'
@@ -137,13 +142,23 @@ replace = '"version": "{new_version}"'
 
 [[tool.bumpversion.files]]
 filename = "package-lock.json"
-search = '"version": "{current_version}"'
-replace = '"version": "{new_version}"'
+search = "\"name\": \"megane-viewer\",\n  \"version\": \"{current_version}\""
+replace = "\"name\": \"megane-viewer\",\n  \"version\": \"{new_version}\""
+
+[[tool.bumpversion.files]]
+filename = "package-lock.json"
+search = "\"name\": \"megane-viewer\",\n      \"version\": \"{current_version}\""
+replace = "\"name\": \"megane-viewer\",\n      \"version\": \"{new_version}\""
 
 [[tool.bumpversion.files]]
 filename = "vscode-megane/package-lock.json"
-search = '"version": "{current_version}"'
-replace = '"version": "{new_version}"'
+search = "\"name\": \"vscode-megane\",\n  \"version\": \"{current_version}\""
+replace = "\"name\": \"vscode-megane\",\n  \"version\": \"{new_version}\""
+
+[[tool.bumpversion.files]]
+filename = "vscode-megane/package-lock.json"
+search = "\"name\": \"vscode-megane\",\n      \"version\": \"{current_version}\""
+replace = "\"name\": \"vscode-megane\",\n      \"version\": \"{new_version}\""
 
 [[tool.bumpversion.files]]
 filename = "jupyterlab-megane/package.json"
@@ -152,8 +167,13 @@ replace = '"version": "{new_version}"'
 
 [[tool.bumpversion.files]]
 filename = "jupyterlab-megane/package-lock.json"
-search = '"version": "{current_version}"'
-replace = '"version": "{new_version}"'
+search = "\"name\": \"megane-jupyterlab\",\n  \"version\": \"{current_version}\""
+replace = "\"name\": \"megane-jupyterlab\",\n  \"version\": \"{new_version}\""
+
+[[tool.bumpversion.files]]
+filename = "jupyterlab-megane/package-lock.json"
+search = "\"name\": \"megane-jupyterlab\",\n      \"version\": \"{current_version}\""
+replace = "\"name\": \"megane-jupyterlab\",\n      \"version\": \"{new_version}\""
 
 [dependency-groups]
 dev = [
