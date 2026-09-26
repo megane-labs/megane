@@ -10,7 +10,8 @@ import { useCallback, useEffect, useMemo, useRef } from "react";
 import type { StoreApi } from "zustand";
 import type { EditAtomRef } from "../pipeline/types";
 import { canEdit, shownSnapshot, type BuilderStore } from "./store";
-import { adsorptionSite, newAtomId, placeBondedAtom } from "./placement";
+import { adsorptionSite, newAtomId } from "./placement";
+import { addOnAtomOps, setElementOps } from "./hydrogens";
 import type { BuildHandlers, BuildPickInfo } from "./types";
 
 /** Build the handlers for `api` and install them in the store while mounted. */
@@ -41,20 +42,25 @@ export function useBuilderHandlers(api: StoreApi<BuilderStore>): BuildHandlers {
           return;
         }
         case "add": {
-          const id = newAtomId();
           if (atomIndex !== null) {
-            const ref = refFor(atomIndex);
-            if (ref === null) return;
+            // Explicit hydrogens are kept balanced: a click on an H replaces it.
+            if (refFor(atomIndex) === null) return;
+            state.pushOps(
+              addOnAtomOps(
+                snapshot,
+                state.result!.refAt,
+                atomIndex,
+                state.element,
+                state.bondOrder,
+              ),
+            );
+          } else if (info.world) {
             state.pushOp({
               op: "add_atom",
-              id,
+              id: newAtomId(),
               element: state.element,
-              position: placeBondedAtom(snapshot, atomIndex, state.element),
-              bondTo: ref,
-              order: state.bondOrder,
+              position: info.world,
             });
-          } else if (info.world) {
-            state.pushOp({ op: "add_atom", id, element: state.element, position: info.world });
           }
           return;
         }
@@ -80,10 +86,8 @@ export function useBuilderHandlers(api: StoreApi<BuilderStore>): BuildHandlers {
           return;
         }
         case "element": {
-          if (atomIndex === null) return;
-          const ref = refFor(atomIndex);
-          if (ref === null) return;
-          state.pushOp({ op: "set_element", atoms: [ref], element: state.element });
+          if (atomIndex === null || refFor(atomIndex) === null) return;
+          state.pushOps(setElementOps(snapshot, state.result!.refAt, atomIndex, state.element));
           return;
         }
         case "move":
