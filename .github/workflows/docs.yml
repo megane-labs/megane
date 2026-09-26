@@ -89,6 +89,8 @@ jobs:
 
       - name: Build docs
         working-directory: docs
+        env:
+          GA_MEASUREMENT_ID: ${{ vars.GA_MEASUREMENT_ID }}
         run: npx docusaurus build
 
       - if: ${{ !inputs.dry_run }}
