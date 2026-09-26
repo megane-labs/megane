@@ -2,8 +2,11 @@
 title: Builder Tool Contract (MCP)
 ---
 
-**Status: draft, contract version 1. Not implemented yet.** This page is the
-specification megane Builder and third-party structure tools implement. Change
+**Status: contract version 1.** Builder implements it over Streamable HTTP
+(`src/builder/tools/`, the *Python tools* section of the sidebar); the
+reference server is [megane-builder-tools](https://github.com/hodakamori/megane-builder-tools).
+This page is the specification megane Builder and third-party structure tools
+implement. Change
 it here first, then change the code; cite the section in the PR.
 
 megane Builder is a JavaScript application, while most structure-generation
@@ -391,15 +394,24 @@ works in LLM clients:
 ```
 
 Builder currently ships only in the standalone webapp (`/builder.html`, see
-`docs/docs/platform-support.md`), so the first bridge is the one in
-`megane serve`. The other rows describe where the bridge goes when Builder is
-brought to those hosts; they are part of this contract so that the page-side
-API does not change when it happens.
+`docs/docs/platform-support.md`). **What is implemented today is the direct
+path:** the page connects to a Streamable HTTP server itself (the *Python
+tools* section takes the server URL and bearer token), whether the page came
+from `megane serve`, a local build or the hosted docs. The server has to allow
+the page's origin (`megane-builder-tools --transport http --allow-origin
+<origin>`). stdio servers need a bridge that spawns them; the rows below say
+where each bridge goes, and they are part of this contract so that the
+page-side API does not change when one is added.
+
+A page opened with `#tools=<url>&token=<token>` in its address connects on
+load and removes the fragment from the address bar; a tool server can print
+such a link. The fragment is never sent to a web server, so the token does not
+end up in access logs.
 
 | Host | Bridge | Config location | stdio | HTTP |
 | --- | --- | --- | --- | --- |
-| Standalone webapp via `megane serve` (first) | FastAPI app spawns servers and relays over its WebSocket | `megane serve --mcp-config <file>` | yes | yes |
-| Static webapp (GitHub Pages, docs demo) | None: the page connects to HTTP servers directly | Builder settings (local storage) | no | CORS permitting |
+| Any webapp page (hosted, local build, `megane serve`) — **implemented** | None: the page connects to HTTP servers directly | *Python tools* section; the URL is remembered in local storage, the token is not | no | CORS permitting |
+| Standalone webapp via `megane serve` (planned) | FastAPI app spawns servers and relays over its WebSocket | `megane serve --mcp-config <file>` | yes | yes |
 | VS Code extension (when Builder is hosted there) | Extension host spawns servers and relays through `postMessage` | `megane.builder.mcpServers` setting | yes | yes |
 | JupyterLab labextension (when Builder is hosted there) | Jupyter server extension spawns servers and relays | `jupyter_server_config` | yes | yes |
 | Jupyter widget (`MolecularViewer`) | — | — | — | — (the widget does not mount Builder) |

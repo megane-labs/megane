@@ -224,6 +224,38 @@ it back whole. Supercell, slab and symmetry expansion replace every atom;
 atoms you had selected are deselected and later operations address the new
 structure.
 
+## Python tools
+
+Structure generators written in Python — packmol liquid boxes, RadonPy
+polymer chains, solvation — appear as buttons in the **Python tools**
+section. They run in a separate *tool server*, an
+[MCP](https://modelcontextprotocol.io/) server that follows the
+[Builder Tool Contract](../dev/builder-tools.md). Start the reference server
+with HTTP on your machine, allowing the page you opened Builder from:
+
+```bash
+uvx megane-builder-tools --transport http --port 8765 \
+    --allow-origin http://localhost:8080
+```
+
+It prints a bearer token. Paste the server URL (`http://127.0.0.1:8765/mcp`)
+and the token into the section and press **Connect**; the tools appear grouped
+by category. A button opens the tool's form: molecules are picked from the
+library, atoms (such as a monomer's head and tail) from a list of the chosen
+molecule's atoms, and the seed is filled in for you. **Run** shows the
+server's progress and can be cancelled.
+
+- Tools that build something new (*Liquid box*, *Polymer chain*) replace the
+  open document; the form warns you when that would discard edits.
+- Tools that add to the open structure (*Solvate*) add their atoms as one
+  operation in the history, so a single **Undo** removes them.
+- If the tool refuses (not enough room, a head atom without a hydrogen, …),
+  its message is shown and the form stays open with your values.
+
+Opening Builder with `#tools=<url>&token=<token>` at the end of its address
+connects on load. Anyone can write a tool server with the
+[`megane-builder-tools` SDK](https://github.com/hodakamori/megane-builder-tools).
+
 ## History
 
 The **History** section lists every operation in order and offers **Undo**,
