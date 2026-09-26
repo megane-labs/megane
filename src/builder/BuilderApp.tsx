@@ -49,6 +49,7 @@ import { BuilderSidebar, TOOLS } from "./BuilderSidebar";
 import { Menu } from "./Menu";
 import { NewStructureDialog, type NewStructureKind } from "./NewStructureDialog";
 import { buttonStyle, hintStyle } from "./styles";
+import { trackEvent, trackFileOpen } from "../analytics";
 
 const SIDEBAR_WIDTH = 320;
 
@@ -135,6 +136,7 @@ export function BuilderApp() {
       try {
         const parsed = await parseStructureFile(file);
         openStructure(parsed.snapshot, parsed.labels, file.name);
+        trackFileOpen("structure", file.name);
       } catch (err) {
         reportError(
           `Could not open ${file.name}: ${err instanceof Error ? err.message : String(err)}`,
@@ -165,6 +167,7 @@ export function BuilderApp() {
     async (format: StructureWriteFormat) => {
       if (!shown) return;
       await exportSnapshot(shown, format, fileName, sourceLabels);
+      trackEvent("export_structure", { file_format: format });
     },
     [shown, fileName, sourceLabels],
   );

@@ -3,6 +3,8 @@
 interface ImportMetaEnv {
   /** URL of the Cloudflare Worker that proxies free-tier demo chat requests. */
   readonly VITE_LLM_PROXY_URL?: string;
+  /** GA4 measurement ID (`G-…`); set only for the public deploys. See src/analytics.ts. */
+  readonly VITE_GA_MEASUREMENT_ID?: string;
 }
 
 interface ImportMeta {
