@@ -275,5 +275,9 @@ save dialog.
 - **Save in place** — VS Code's editor is a `CustomReadonlyEditorProvider` and
   JupyterLab's document widget never calls `context.save()`; both stay
   save-as / download for now.
+- **Python structure tools** — liquid boxes, polymer chains, solvation and
+  other generators that already exist in Python are meant to reach Builder as
+  buttons backed by MCP servers rather than as TypeScript ports; the draft
+  contract is [Builder Tool Contract (MCP)](/dev/builder-tools).
 - **Live-MD integration** — a "reload structure" command on the simulation side
   (stop → rebuild system → re-send topology), driven by megane's exporter.
