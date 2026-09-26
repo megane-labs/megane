@@ -44,10 +44,13 @@ jobs:
       # Inject the demo LLM proxy URL so the built app enables the free
       # "demo" provider (isDemoProviderAvailable() in src/ai/config.ts keys
       # off this) instead of falling back to BYOK. Same repo variable the
-      # docs demo build uses.
+      # docs demo build uses. GA_MEASUREMENT_ID turns on Google Analytics for
+      # the hosted viewer and Builder (src/analytics.ts); left unset, the
+      # build contains no tracking.
       - run: npm run build:app
         env:
           VITE_LLM_PROXY_URL: ${{ vars.LLM_PROXY_URL }}
+          VITE_GA_MEASUREMENT_ID: ${{ vars.GA_MEASUREMENT_ID }}
 
       - name: Verify build artifacts
         run: test -f python/megane/static/app/index.html

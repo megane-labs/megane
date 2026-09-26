@@ -3,8 +3,12 @@ import type * as Preset from "@docusaurus/preset-classic";
 import path from "path";
 import { fileURLToPath } from "url";
 import spectralTheme from "./src/prism/spectralTheme";
+import { gaMeasurementId, gaOptOutHeadTags, gtagPresetOptions } from "./analytics.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
+
+// Google Analytics: on only when docs.yml passes GA_MEASUREMENT_ID (see analytics.mjs).
+const GA_ID = gaMeasurementId(process.env.GA_MEASUREMENT_ID);
 
 const config: Config = {
   title: "megane",
@@ -43,6 +47,7 @@ const config: Config = {
         theme: {
           customCss: "./src/css/custom.css",
         },
+        gtag: gtagPresetOptions(GA_ID),
       } satisfies Preset.Options,
     ],
   ],
@@ -149,6 +154,14 @@ const config: Config = {
 
   plugins: [
     "docusaurus-plugin-image-zoom",
+    function gaOptOut() {
+      return {
+        name: "ga-opt-out",
+        injectHtmlTags() {
+          return { headTags: gaOptOutHeadTags(GA_ID) };
+        },
+      };
+    },
     function customWebpack() {
       return {
         name: "custom-webpack",

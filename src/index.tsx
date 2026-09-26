@@ -35,6 +35,7 @@ import caffeineEspCubeUrl from "../tests/fixtures/caffeine_esp.cube?url";
 import "./styles/megane.css";
 import { useThemeStore } from "./stores/useThemeStore";
 import { ErrorBoundary } from "./components/ErrorBoundary";
+import { initAnalytics, trackEvent, trackFileOpen } from "./analytics";
 
 import type { DataMode } from "./types";
 import type { StructureParseResult } from "./parsers/structure";
@@ -100,6 +101,7 @@ function App() {
 
   useEffect(() => {
     if (!pendingTemplateId) return;
+    trackEvent("apply_template", { template_id: pendingTemplateId });
     (async () => {
       if (pendingTemplateId === "molecule") {
         await ds.local.loadText(defaultPDB, "caffeine_water.pdb");
@@ -171,6 +173,7 @@ function App() {
   const handleUploadStructure = useCallback(
     (file: File, preParsed?: StructureParseResult) => {
       usePlaybackStore.getState().pause();
+      trackFileOpen("structure", file.name);
       ds.uploadStructure(file, preParsed);
     },
     [ds.uploadStructure],
@@ -179,6 +182,7 @@ function App() {
   const handleUploadTrajectory = useCallback(
     (file: File) => {
       usePlaybackStore.getState().pause();
+      trackFileOpen("trajectory", file.name);
       ds.uploadTrajectory(file);
     },
     [ds.uploadTrajectory],
@@ -194,6 +198,7 @@ function App() {
     const meganeFile = files.find((f) => f.name.endsWith(".megane.json"));
     if (meganeFile) {
       usePlaybackStore.getState().pause();
+      trackFileOpen("pipeline", meganeFile.name);
       const companions = files.filter((f) => f !== meganeFile);
       await usePipelineStore
         .getState()
@@ -225,6 +230,8 @@ function App() {
     </div>
   );
 }
+
+initAnalytics("viewer");
 
 createRoot(document.getElementById("root")!).render(
   <StrictMode>
