@@ -14,6 +14,7 @@ const { rendererStub, viewportProps, applyViewportState, exportSnapshot, parseSt
       resetCamera: vi.fn(),
       resetView: vi.fn(),
       alignCameraToAxis: vi.fn(),
+      setBackgroundColor: vi.fn(),
     },
     viewportProps: { current: null as Record<string, unknown> | null },
     applyViewportState: vi.fn(),
@@ -48,6 +49,7 @@ import { useBuilderStore } from "@/builder/store";
 import { useLibraryUi } from "@/builder/library/ui";
 import type { BuildHandlers } from "@/builder/types";
 import type { Snapshot } from "@/types";
+import { useThemeStore, themeToHex } from "@/stores/useThemeStore";
 
 /** Water's shape with no hydrogens: O bonded to two C. */
 function skeleton(): Snapshot {
@@ -95,7 +97,7 @@ const shownAtoms = () =>
   Number(screen.getByTestId("megane-builder").getAttribute("data-atom-count"));
 /** Open the top bar's Save menu and pick a format. */
 const save = (format: string) => {
-  fireEvent.click(screen.getByTestId("builder-save"));
+  fireEvent.click(screen.getByTestId("builder-file"));
   fireEvent.click(screen.getByTestId(`builder-save-${format}`));
 };
 
@@ -130,6 +132,7 @@ beforeEach(() => {
 
 afterEach(() => {
   cleanup();
+  useThemeStore.getState().setTheme("system");
 });
 
 describe("BuilderApp — empty state", () => {
@@ -143,7 +146,8 @@ describe("BuilderApp — empty state", () => {
     expect(viewportProps.current?.buildActive).toBe(true);
     expect(viewportProps.current?.buildHandlers).toBe(useBuilderStore.getState().handlers);
     // Nothing to save yet.
-    expect((screen.getByTestId("builder-save") as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.click(screen.getByTestId("builder-file"));
+    expect((screen.getByTestId("builder-save-xyz") as HTMLButtonElement).disabled).toBe(true);
   });
 
   it("clicks on the empty view do nothing", () => {
@@ -153,6 +157,31 @@ describe("BuilderApp — empty state", () => {
     expect(screen.queryByTestId("builder-context-bar")).toBeNull();
     pick(null);
     expect(edits()).toEqual([]);
+  });
+
+  it("Place works with nothing open: the gallery shows and the first click starts a document", () => {
+    render(<BuilderApp />);
+    fireEvent.click(screen.getByTestId("builder-insert"));
+    fireEvent.click(screen.getByTestId("builder-insert-molecule"));
+    expect(useBuilderStore.getState().tool).toBe("place");
+    // The gallery takes the welcome card's place.
+    expect(screen.getByTestId("builder-library")).toBeTruthy();
+    expect(screen.queryByTestId("builder-welcome")).toBeNull();
+    // Nothing chosen yet: a click does nothing.
+    pick(null);
+    expect(useBuilderStore.getState().source).toBeNull();
+    fireEvent.click(
+      screen
+        .getByTestId("builder-library-item-preset:water")
+        .querySelector('[data-testid="builder-library-place"]')!,
+    );
+    // A click on nothing without a point does nothing either.
+    act(() => handlers().pick({ atomIndex: null, world: null, shiftKey: false }));
+    expect(useBuilderStore.getState().source).toBeNull();
+    pick(null, { world: [1, 2, 3] });
+    expect(useBuilderStore.getState().fileName).toBe("untitled");
+    expect(shownAtoms()).toBe(3);
+    expect(edits()).toHaveLength(1);
   });
 
   it("the welcome card starts an empty cell through the New dialog", () => {
@@ -172,7 +201,7 @@ describe("BuilderApp — empty state", () => {
     fireEvent.click(screen.getByTestId("builder-bulk-create"));
     expect(useBuilderStore.getState().fileName).toBe("Cu-fcc");
     expect(shownAtoms()).toBe(4);
-    fireEvent.click(screen.getByTestId("builder-new"));
+    fireEvent.click(screen.getByTestId("builder-file"));
     fireEvent.click(screen.getByTestId("builder-new-bulk-item"));
     expect(screen.getByTestId("builder-new-replaces")).toBeTruthy();
     fireEvent.click(screen.getByTestId("builder-new-close"));
@@ -460,7 +489,7 @@ describe("BuilderApp — editing", () => {
     render(<BuilderApp />);
     tool("delete");
     pick(2);
-    fireEvent.click(screen.getByTestId("builder-new"));
+    fireEvent.click(screen.getByTestId("builder-file"));
     fireEvent.click(screen.getByTestId("builder-new-cell-item"));
     fireEvent.change(screen.getByTestId("builder-new-cell-edge"), { target: { value: "15" } });
     fireEvent.click(screen.getByTestId("builder-new-cell"));
@@ -469,12 +498,25 @@ describe("BuilderApp — editing", () => {
     expect(shownAtoms()).toBe(0);
   });
 
-  it("Reset View and the axis buttons drive the renderer", () => {
+  it("the View menu resets the camera, looks along an axis and sets the theme", () => {
     render(<BuilderApp />);
-    fireEvent.click(screen.getByTestId("reset-view-btn"));
+    const view = (id: string) => {
+      fireEvent.click(screen.getByTestId("builder-view"));
+      fireEvent.click(screen.getByTestId(id));
+    };
+    view("builder-view-reset");
     expect(rendererStub.resetCamera).toHaveBeenCalledTimes(1);
-    fireEvent.click(screen.getByTestId("view-axis-+x"));
+    view("builder-view-axis-+x");
     expect(rendererStub.alignCameraToAxis).toHaveBeenCalledWith("+x");
+    // No cell: no lattice directions.
+    fireEvent.click(screen.getByTestId("builder-view"));
+    expect(screen.queryByTestId("builder-view-axis-+a")).toBeNull();
+    fireEvent.click(screen.getByTestId("builder-theme-dark"));
+    expect(useThemeStore.getState().theme).toBe("dark");
+    // The 3D view follows the theme.
+    expect(rendererStub.setBackgroundColor).toHaveBeenLastCalledWith(themeToHex("dark"));
+    act(() => useThemeStore.getState().setTheme("light"));
+    expect(rendererStub.setBackgroundColor).toHaveBeenLastCalledWith(themeToHex("light"));
   });
 });
 
@@ -510,7 +552,7 @@ describe("BuilderApp — keyboard", () => {
     fireEvent.keyDown(z, { key: "b" });
     expect(useBuilderStore.getState().tool).toBe("add");
     // A dialog owns the keyboard: the tool keys stay inert while it is open.
-    fireEvent.click(screen.getByTestId("builder-new"));
+    fireEvent.click(screen.getByTestId("builder-file"));
     fireEvent.click(screen.getByTestId("builder-new-cell-item"));
     fireEvent.keyDown(window, { key: "b" });
     expect(useBuilderStore.getState().tool).toBe("add");
@@ -600,6 +642,7 @@ describe("BuilderApp — Open", () => {
     render(<BuilderApp />);
     const input = screen.getByTestId("builder-open-input") as HTMLInputElement;
     const click = vi.spyOn(input, "click");
+    fireEvent.click(screen.getByTestId("builder-file"));
     fireEvent.click(screen.getByTestId("builder-open"));
     fireEvent.click(screen.getByTestId("builder-welcome-open"));
     expect(click).toHaveBeenCalledTimes(2);
@@ -730,8 +773,16 @@ describe("BuilderApp — selecting and the atom menu", () => {
     expect(viewportProps.current?.boxSelectActive).toBe(false);
     fireEvent.click(screen.getByTestId("builder-select-box"));
     expect(viewportProps.current?.boxSelectActive).toBe(true);
-    act(() => (viewportProps.current?.onBoxSelect as (i: number[]) => void)([1, 2]));
+    type BoxSelect = (i: number[], o: { additive: boolean }) => void;
+    const box = (indices: number[], additive: boolean) =>
+      act(() => (viewportProps.current?.onBoxSelect as BoxSelect)(indices, { additive }));
+    box([1, 2], false);
     expect(useBuilderStore.getState().selected).toEqual([1, 2]);
+    // Shift adds to the selection; a plain box replaces it.
+    box([2, 4], true);
+    expect(useBuilderStore.getState().selected).toEqual([1, 2, 4]);
+    box([0], false);
+    expect(useBuilderStore.getState().selected).toEqual([0]);
     tool("add");
     expect(viewportProps.current?.boxSelectActive).toBe(false);
   });

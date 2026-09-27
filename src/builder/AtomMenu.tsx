@@ -4,7 +4,7 @@
  * its molecule's geometry. Closes on a choice, a click elsewhere, or Escape.
  */
 
-import { useEffect, useRef } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useBuilderStore, canEdit, shownSnapshot } from "./store";
 import { getElementSymbol } from "../constants";
 import { moleculeOf } from "./geometry";
@@ -17,6 +17,30 @@ export interface AtomMenuTarget {
   y: number;
 }
 
+/** Gap kept between the menu and the window's edges, px. */
+const EDGE_MARGIN = 8;
+
+/**
+ * Where a `width` × `height` menu opened at (`x`, `y`) goes so it stays in a
+ * `viewWidth` × `viewHeight` window: it flips to the other side of the
+ * pointer when it would run off the right or bottom edge, and never starts
+ * above or left of the margin.
+ */
+export function clampMenuPosition(
+  x: number,
+  y: number,
+  width: number,
+  height: number,
+  viewWidth: number,
+  viewHeight: number,
+): { left: number; top: number } {
+  const fit = (at: number, size: number, view: number) => {
+    const pos = at + size > view - EDGE_MARGIN ? at - size : at;
+    return Math.max(EDGE_MARGIN, Math.min(pos, view - EDGE_MARGIN - size));
+  };
+  return { left: fit(x, width, viewWidth), top: fit(y, height, viewHeight) };
+}
+
 export function AtomMenu({ target, onClose }: { target: AtomMenuTarget; onClose: () => void }) {
   const source = useBuilderStore((s) => s.source);
   const result = useBuilderStore((s) => s.result);
@@ -25,6 +49,23 @@ export function AtomMenu({ target, onClose }: { target: AtomMenuTarget; onClose:
   const setSelected = useBuilderStore((s) => s.setSelected);
   const pushOp = useBuilderStore((s) => s.pushOp);
   const rootRef = useRef<HTMLDivElement>(null);
+  const [place, setPlace] = useState({ left: target.x, top: target.y });
+
+  // Measured before paint, so a menu opened near an edge never shows cut off.
+  useLayoutEffect(() => {
+    const el = rootRef.current;
+    if (!el) return;
+    setPlace(
+      clampMenuPosition(
+        target.x,
+        target.y,
+        el.offsetWidth,
+        el.offsetHeight,
+        window.innerWidth,
+        window.innerHeight,
+      ),
+    );
+  }, [target.x, target.y]);
 
   const shown = shownSnapshot({ source, result, showOriginal });
   const editable = canEdit({ source, result, showOriginal });
@@ -98,8 +139,8 @@ export function AtomMenu({ target, onClose }: { target: AtomMenuTarget; onClose:
       aria-label={`${sym} #${target.atom}`}
       style={{
         position: "fixed",
-        left: target.x,
-        top: target.y,
+        left: place.left,
+        top: place.top,
         zIndex: 60,
         minWidth: 180,
         display: "flex",

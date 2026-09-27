@@ -85,7 +85,7 @@ function Library({ onClose = () => {} }: { onClose?: () => void }) {
 }
 
 describe("LibraryPanel", () => {
-  it("lists the presets, disables Add until a document is open, and closes", () => {
+  it("lists the presets, starts a document on Add with nothing open, and closes", () => {
     const onClose = vi.fn();
     render(<Library onClose={onClose} />);
     fireEvent.click(screen.getByTestId("builder-library-close"));
@@ -96,7 +96,16 @@ describe("LibraryPanel", () => {
     expect(item("preset:water").textContent).toContain("H2O");
     expect(within(item("preset:water")).queryByTestId("builder-library-remove")).toBeNull();
     fireEvent.click(button("preset:water", "add"));
-    expect(useBuilderStore.getState().edits).toEqual([]);
+    expect(useBuilderStore.getState().fileName).toBe("untitled");
+    expect(shown().nAtoms).toBe(3);
+  });
+
+  it("Add is off while the original structure is shown", () => {
+    useBuilderStore.getState().openStructure(water(), null, "w.xyz");
+    useBuilderStore.getState().pushOp({ op: "wrap" });
+    useBuilderStore.getState().setShowOriginal(true);
+    render(<Library />);
+    expect((button("preset:water", "add") as HTMLButtonElement).disabled).toBe(true);
   });
 
   it("Add drops the molecule beside the structure and selects it", () => {

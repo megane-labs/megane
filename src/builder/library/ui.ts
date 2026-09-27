@@ -67,11 +67,11 @@ export function useLibraryActions() {
     [addMolecule, reportInfo],
   );
 
-  /** Drop `m` beside the structure (as one op) and select it. */
+  /** Drop `m` beside the structure (as one op) and select it; with nothing open, start a document with it. */
   const add = useCallback(
     (m: LibraryMolecule) => {
       const s = useBuilderStore.getState();
-      if (!canEdit(s)) return;
+      if (s.source && !canEdit(s)) return;
       addFragment(m, autoPlacement(shownSnapshot(s), m));
     },
     [addFragment],

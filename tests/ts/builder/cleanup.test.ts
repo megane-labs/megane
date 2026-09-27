@@ -8,6 +8,7 @@ import { describe, it, expect, beforeEach } from "vitest";
 import {
   MAX_CLEANUP_ATOMS,
   cleanUpMolecules,
+  inferredCharges,
   moleculeMolblock,
   molblockPositions,
   runCleanup,
@@ -83,7 +84,117 @@ describe("mol blocks", () => {
   });
 });
 
+/** Atoms of the given elements, each bonded to the first with the given orders. */
+function star(elements: number[], orders: number[]): Snapshot {
+  const n = elements.length;
+  return {
+    ...water(),
+    nAtoms: n,
+    nBonds: n - 1,
+    nFileBonds: n - 1,
+    positions: new Float32Array(n * 3).map((_, i) => i * 0.3),
+    elements: new Uint8Array(elements),
+    bonds: new Uint32Array(Array.from({ length: n - 1 }, (_, i) => [0, i + 1]).flat()),
+    bondOrders: new Uint8Array(orders),
+  };
+}
+
+describe("inferred charges", () => {
+  const charge = (elements: number[], orders: number[]) =>
+    inferredCharges(star(elements, orders), [...elements.keys()]).get(0);
+
+  it("charges an atom with more bonds than its neutral valence", () => {
+    expect(charge([7, 1, 1, 1, 1], [1, 1, 1, 1])).toBe(1); // ammonium
+    expect(charge([15, 6, 6, 6, 6], [1, 1, 1, 1])).toBe(1); // phosphonium
+    expect(charge([8, 1, 1, 1], [1, 1, 1])).toBe(1); // hydronium
+    expect(charge([16, 6, 6, 6], [1, 1, 1])).toBe(1); // sulfonium
+    expect(charge([5, 9, 9, 9, 9], [1, 1, 1, 1])).toBe(-1); // tetrafluoroborate
+    // Double bonds count twice: an iminium N.
+    expect(charge([7, 6, 1, 1], [2, 1, 1])).toBe(1);
+  });
+
+  it("leaves neutral valences and aromatic atoms to RDKit", () => {
+    expect(charge([7, 1, 1, 1], [1, 1, 1])).toBeUndefined();
+    expect(charge([8, 1], [1])).toBeUndefined();
+    expect(charge([7, 6, 6, 1], [4, 4, 1])).toBeUndefined(); // pyrrole N–H
+    expect(charge([6, 1, 1, 1, 1], [1, 1, 1, 1])).toBeUndefined();
+  });
+
+  it("writes them as M  CHG lines, eight to a line", () => {
+    const mb = moleculeMolblock(water(), [0, 1, 2], undefined, new Map([[0, 1]]));
+    expect(mb).toContain("M  CHG  1   1   1\nM  END");
+    const many = new Map(Array.from({ length: 9 }, (_, k) => [k, k % 2 ? -1 : 1]));
+    const lines = moleculeMolblock(
+      star(Array(9).fill(7), Array(8).fill(1)),
+      [...many.keys()],
+      undefined,
+      many,
+    )
+      .split("\n")
+      .filter((l) => l.startsWith("M  CHG"));
+    expect(lines).toHaveLength(2);
+    expect(lines[0].startsWith("M  CHG  8   1   1   2  -1")).toBe(true);
+    expect(lines[1]).toBe("M  CHG  1   9   1");
+  });
+
+  it("sends an ammonium to RDKit with its charge", async () => {
+    const calls: string[] = [];
+    await cleanUpMolecules(star([7, 1, 1, 1, 1], [1, 1, 1, 1]), [], rotatingEmbed(calls));
+    expect(calls[0]).toContain("M  CHG  1   1   1");
+  });
+});
+
 describe("cleanUpMolecules", () => {
+  it("makes a molecule split across the cell whole again", async () => {
+    // O at the cell's +x face, its H through the face on the other side.
+    const split: Snapshot = {
+      ...water(),
+      nAtoms: 3,
+      positions: new Float32Array([9.8, 5, 5, 0.76, 5, 5, 9.56, 5.93, 5]),
+      elements: new Uint8Array([8, 1, 1]),
+      bondOrders: null,
+      box: new Float32Array([10, 0, 0, 0, 10, 0, 0, 0, 10]),
+    };
+    const calls: string[] = [];
+    const r = await cleanUpMolecules(split, [], rotatingEmbed(calls));
+    // RDKit got the whole molecule: the H at x = 10.76, not 0.76.
+    expect(calls[0].split("\n")[5]).toMatch(/^ {3}10\.7600/);
+    // The H moves by one cell length to join its O; the others stay.
+    expect(r.displacements.get(1)![0]).toBeCloseTo(10, 3);
+    expect(Math.abs(r.displacements.get(0)![0])).toBeLessThan(1e-3);
+  });
+
+  it("cleans up the molecules RDKit accepts and counts the ones it rejects", async () => {
+    // Two waters; RDKit fails on the second.
+    const two: Snapshot = {
+      ...water(),
+      nAtoms: 6,
+      nBonds: 4,
+      positions: new Float32Array([
+        0, 0, 0, 0.96, 0, 0, -0.24, 0.93, 0, 5, 0, 0, 5.96, 0, 0, 4.76, 0.93, 0,
+      ]),
+      elements: new Uint8Array([8, 1, 1, 8, 1, 1]),
+      bonds: new Uint32Array([0, 1, 0, 2, 3, 4, 3, 5]),
+      bondOrders: null,
+    };
+    let n = 0;
+    const embed = async (molfile: string) => {
+      if (n++ === 1) throw new Error("Can't kekulize mol");
+      return rotatingEmbed()(molfile);
+    };
+    const r = await cleanUpMolecules(two, [], embed);
+    expect(r).toMatchObject({ cleaned: 1, failed: 1, error: "Can't kekulize mol" });
+    expect([...r.displacements.keys()]).toEqual([0, 1, 2]);
+
+    s().openStructure(two, null, "two.xyz");
+    n = 0;
+    await runCleanup(useBuilderStore, embed);
+    expect(s().notice).toEqual({
+      level: "error",
+      text: "Cleaned up 1 molecule (MMFF94s, 1.50 kcal/mol); 1 left as they are (RDKit: Can't kekulize mol).",
+    });
+  });
+
   it("re-embeds each chosen molecule and puts it back where it was", async () => {
     const calls: string[] = [];
     const r = await cleanUpMolecules(water(), [], rotatingEmbed(calls));

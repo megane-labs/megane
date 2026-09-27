@@ -7,6 +7,7 @@
  */
 
 import type { Snapshot } from "../types";
+import { inverse3, mulVec } from "../crystal/cell";
 
 type Vec3 = [number, number, number];
 
@@ -84,6 +85,45 @@ const cross = (a: Vec3, b: Vec3): Vec3 => [
   a[0] * b[1] - a[1] * b[0],
 ];
 const norm = (a: Vec3) => Math.sqrt(dot(a, a));
+
+/**
+ * Positions of `atoms` (in that order, flat xyz) with the molecule made whole
+ * across the periodic cell: walking the bonds from the first atom, every
+ * neighbour is put at the image nearest the atom it is bonded to. Without a
+ * cell the positions come back as they are.
+ */
+export function unwrappedPositions(snapshot: Snapshot, atoms: number[]): Float64Array {
+  const out = new Float64Array(atoms.length * 3);
+  atoms.forEach((a, k) => {
+    for (let c = 0; c < 3; c++) out[k * 3 + c] = snapshot.positions[a * 3 + c];
+  });
+  const box = snapshot.box;
+  const inv = box ? inverse3(box) : null;
+  if (!box || !inv || atoms.length < 2) return out;
+  const local = new Map(atoms.map((a, k) => [a, k]));
+  const adj = adjacency(snapshot);
+  const done = new Uint8Array(atoms.length);
+  // Every bonded component of `atoms` is walked from its own first atom.
+  for (let start = 0; start < atoms.length; start++) {
+    if (done[start]) continue;
+    done[start] = 1;
+    const stack = [start];
+    while (stack.length > 0) {
+      const k = stack.pop()!;
+      for (const j of adj[atoms[k]]) {
+        const m = local.get(j);
+        if (m === undefined || done[m]) continue;
+        done[m] = 1;
+        const d = sub(pos(out, m), pos(out, k));
+        const shift = mulVec(d, inv).map((f) => Math.round(f));
+        const image = mulVec(shift, box);
+        for (let c = 0; c < 3; c++) out[m * 3 + c] -= image[c];
+        stack.push(m);
+      }
+    }
+  }
+  return out;
+}
 
 /** Rotate `p` about the axis through `origin` along unit `axis` by `angle` (rad). */
 function rotateAbout(p: Vec3, origin: Vec3, axis: Vec3, angle: number): Vec3 {

@@ -74,7 +74,8 @@ export function LibraryPanel({ onClose }: { onClose: () => void }) {
   const importer = useLibraryUi((s) => s.importer);
   const { add, place, remove } = useLibraryActions();
 
-  const editable = canEdit({ source, result, showOriginal });
+  // With nothing open, Add starts a new document with the molecule.
+  const editable = !source || canEdit({ source, result, showOriginal });
   const molecules = allMolecules({ user });
 
   return (

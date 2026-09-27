@@ -33,9 +33,8 @@ import { fragmentOp, newFragmentId } from "./library/fragment";
 import type { LibraryMolecule } from "./library/types";
 import { bulkName, bulkSnapshot, type BulkSpec } from "../crystal/bulk";
 
-/** A structure with no atoms and a cubic cell of edge `edge` Å: the blank sheet. */
-export function emptyCellSnapshot(edge: number): Snapshot {
-  const a = Math.max(edge, 0.1);
+/** A structure with no atoms and no cell: what placing a molecule with nothing open starts from. */
+export function emptySnapshot(): Snapshot {
   return {
     nAtoms: 0,
     nBonds: 0,
@@ -44,11 +43,17 @@ export function emptyCellSnapshot(edge: number): Snapshot {
     elements: new Uint8Array(0),
     bonds: new Uint32Array(0),
     bondOrders: null,
-    box: new Float32Array([a, 0, 0, 0, a, 0, 0, 0, a]),
+    box: null,
     boxOrigin: null,
     atomChainIds: null,
     atomBFactors: null,
   };
+}
+
+/** A structure with no atoms and a cubic cell of edge `edge` Å: the blank sheet. */
+export function emptyCellSnapshot(edge: number): Snapshot {
+  const a = Math.max(edge, 0.1);
+  return { ...emptySnapshot(), box: new Float32Array([a, 0, 0, 0, a, 0, 0, 0, a]) };
 }
 
 /** File name the Builder gives a document that started from a blank cell. */
@@ -411,6 +416,8 @@ export const builderStateCreator: StateCreator<BuilderStore> = (set, get) => ({
   reportError: (text) => set({ notice: { level: "error", text } }),
   reportInfo: (text) => set({ notice: { level: "info", text } }),
   addFragment: (molecule, at) => {
+    // With nothing open, the molecule starts a new, cell-less document.
+    if (!get().source) get().openStructure(emptySnapshot(), null, UNTITLED);
     const s = get();
     if (!canEdit(s)) return null;
     const before = s.result!.snapshot.nAtoms;

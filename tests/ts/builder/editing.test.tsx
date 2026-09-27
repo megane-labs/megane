@@ -4,9 +4,9 @@
  * and the history grouped into Undo steps.
  */
 
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, fireEvent, cleanup, act } from "@testing-library/react";
-import { AtomMenu } from "@/builder/AtomMenu";
+import { AtomMenu, clampMenuPosition } from "@/builder/AtomMenu";
 import { ContextBar } from "@/builder/ContextBar";
 import { useBuilderStore, editSteps } from "@/builder/store";
 import { describeStep } from "@/builder/placement";
@@ -117,9 +117,36 @@ describe("Select tool bar", () => {
   });
 });
 
+describe("clampMenuPosition", () => {
+  it("keeps a menu inside the window, flipping it across the pointer at an edge", () => {
+    // Room to spare: it opens at the pointer.
+    expect(clampMenuPosition(100, 100, 180, 200, 1000, 800)).toEqual({ left: 100, top: 100 });
+    // Near the right and bottom edges: it opens up and to the left instead.
+    expect(clampMenuPosition(950, 750, 180, 200, 1000, 800)).toEqual({ left: 770, top: 550 });
+    // A window too small for either side: pinned to the margin.
+    expect(clampMenuPosition(50, 50, 180, 200, 120, 100)).toEqual({ left: 8, top: 8 });
+  });
+});
+
 describe("AtomMenu", () => {
   const open = (atom: number, onClose = () => {}) =>
     render(<AtomMenu target={{ atom, x: 10, y: 20 }} onClose={onClose} />);
+
+  it("measures itself and moves inside the window near an edge", () => {
+    const w = vi.spyOn(HTMLElement.prototype, "offsetWidth", "get").mockReturnValue(180);
+    const h = vi.spyOn(HTMLElement.prototype, "offsetHeight", "get").mockReturnValue(200);
+    render(
+      <AtomMenu
+        target={{ atom: 0, x: window.innerWidth - 10, y: window.innerHeight - 10 }}
+        onClose={() => {}}
+      />,
+    );
+    const style = screen.getByTestId("builder-atom-menu").style;
+    expect(parseFloat(style.left)).toBe(window.innerWidth - 190);
+    expect(parseFloat(style.top)).toBe(window.innerHeight - 210);
+    w.mockRestore();
+    h.mockRestore();
+  });
 
   it("names the atom and selects its molecule or its element", () => {
     let closed = 0;

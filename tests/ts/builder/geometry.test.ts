@@ -14,6 +14,7 @@ import {
   setDihedral,
   setDistance,
   superpose,
+  unwrappedPositions,
   type Displacements,
 } from "@/builder/geometry";
 import { computeAngle, computeDihedral, computeDistance } from "@/renderer/Selection";
@@ -141,5 +142,33 @@ describe("superpose", () => {
     const ref = [0, 0, 0, 1, 0, 0, 0, 1, 0];
     const out = superpose(ref, ref);
     for (let k = 0; k < ref.length; k++) expect(out[k]).toBeCloseTo(ref[k], 6);
+  });
+});
+
+describe("unwrappedPositions", () => {
+  it("puts each bonded atom at the image nearest its neighbour", () => {
+    // A chain 0–1–2 crossing the x face of a 10 Å cube, plus an unbonded atom 3.
+    const s = {
+      ...snap(
+        [9, 0, 0, 0.5, 0, 0, 1.5, 0, 0, 5, 5, 5],
+        [
+          [0, 1],
+          [1, 2],
+        ],
+      ),
+      box: new Float32Array([10, 0, 0, 0, 10, 0, 0, 0, 10]),
+    };
+    expect(Array.from(unwrappedPositions(s, [0, 1, 2, 3]))).toEqual([
+      9, 0, 0, 10.5, 0, 0, 11.5, 0, 0, 5, 5, 5,
+    ]);
+    // Walked from the first atom listed.
+    expect(Array.from(unwrappedPositions(s, [2, 1, 0]))).toEqual([1.5, 0, 0, 0.5, 0, 0, -1, 0, 0]);
+  });
+
+  it("leaves positions alone without a usable cell", () => {
+    const s = snap([9, 0, 0, 0.5, 0, 0], [[0, 1]]);
+    expect(Array.from(unwrappedPositions(s, [0, 1]))).toEqual([9, 0, 0, 0.5, 0, 0]);
+    const flat = { ...s, box: new Float32Array(9) };
+    expect(Array.from(unwrappedPositions(flat, [0, 1]))).toEqual([9, 0, 0, 0.5, 0, 0]);
   });
 });

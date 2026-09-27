@@ -1,7 +1,7 @@
 /**
  * The context bar: a strip floating over the top of the 3D view that holds the
  * settings of the current tool and nothing else — the element for *Add atom*
- * and *Element*, the bond order for *Add atom* and *Bond*, *Place on atoms*
+ * and *Element* (a periodic table opens below it for the rarer ones), the bond order for *Add atom* and *Bond*, *Place on atoms*
  * for *Place*. A tool with no settings (Select, Move, Delete) shows no bar, so
  * the view stays clear.
  */
@@ -11,6 +11,7 @@ import { useBuilderStore } from "./store";
 import { toolInfo } from "./ToolRail";
 import { DEFAULT_ADSORB_HEIGHT, useLibraryUi } from "./library/ui";
 import { LibraryPanel } from "./library/LibraryPanel";
+import { PeriodicTable } from "./PeriodicTable";
 import { getElementSymbol } from "../constants";
 import { OVERLAY_INSET } from "../components/overlayLayout";
 import { hintStyle, inputStyle } from "./styles";
@@ -76,6 +77,10 @@ export function ContextBar() {
   const placeSource = useBuilderStore((s) => s.placeSource);
   const galleryOpen = useLibraryUi((s) => s.galleryOpen);
   const setGalleryOpen = useLibraryUi((s) => s.setGalleryOpen);
+  const [tableOpen, setTableOpen] = useState(false);
+
+  // The periodic table belongs to the tool it was opened from.
+  useEffect(() => setTableOpen(false), [tool]);
 
   // Place with nothing to place opens the gallery; choosing a molecule closes
   // it, and so does leaving the tool.
@@ -141,7 +146,7 @@ export function ContextBar() {
               type="button"
               data-testid="builder-select-box"
               aria-pressed={boxSelect}
-              title="Drag a box on the view to select what it holds (the view stops rotating while on)"
+              title="Drag a box on the view to select what it holds; Shift adds to the selection (the view stops rotating while on)"
               style={{ ...choiceStyle(boxSelect), fontWeight: 500, padding: "0 10px" }}
               onClick={() => setBoxSelect(!boxSelect)}
             >
@@ -202,6 +207,21 @@ export function ContextBar() {
               />
               <span data-testid="builder-element-symbol">{getElementSymbol(element)}</span>
             </label>
+            <button
+              type="button"
+              data-testid="builder-element-table"
+              aria-expanded={tableOpen}
+              title="Choose the element from the periodic table"
+              style={{
+                ...choiceStyle(tableOpen),
+                fontWeight: 500,
+                padding: "0 10px",
+                marginLeft: 4,
+              }}
+              onClick={() => setTableOpen(!tableOpen)}
+            >
+              Table {tableOpen ? "▴" : "▾"}
+            </button>
           </>
         )}
 
@@ -286,6 +306,16 @@ export function ContextBar() {
           </>
         )}
       </div>
+      {info.needs.includes("element") && tableOpen && (
+        <PeriodicTable
+          value={element}
+          onPick={(z) => {
+            setElement(z);
+            setTableOpen(false);
+          }}
+          onClose={() => setTableOpen(false)}
+        />
+      )}
       {info.needs.includes("place") && galleryOpen && (
         <LibraryPanel onClose={() => setGalleryOpen(false)} />
       )}

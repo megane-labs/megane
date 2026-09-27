@@ -21,8 +21,11 @@ interface ViewportProps {
   previewIndices?: number[] | null;
   /** When true, left-drag draws a rubber-band box instead of rotating. */
   boxSelectActive?: boolean;
-  /** Called with the atom indices inside a completed box drag. */
-  onBoxSelect?: (indices: number[]) => void;
+  /**
+   * Called with the atom indices inside a completed box drag; `additive` is
+   * true when Shift was held (add to the selection instead of replacing it).
+   */
+  onBoxSelect?: (indices: number[], options: { additive: boolean }) => void;
   /** Called when an atom is left-clicked while the Inspector is active. */
   onInspectorPick?: (atomIndex: number) => void;
   /** True while the Selection Inspector tab is the active editing surface. */
@@ -162,7 +165,7 @@ export function Viewport({
     // ── Box (rubber-band) selection ──
     // Active only while `boxSelectActive`; camera rotation is suspended by an
     // effect below so the drag can't also orbit the camera.
-    let boxStart: { x: number; y: number } | null = null;
+    let boxStart: { x: number; y: number; shiftKey: boolean } | null = null;
     let boxEl: HTMLDivElement | null = null;
 
     const clearBoxEl = () => {
@@ -172,7 +175,7 @@ export function Viewport({
 
     const handleBoxDown = (e: PointerEvent) => {
       if (!boxSelectActiveRef.current || e.button !== 0) return;
-      boxStart = { x: e.clientX, y: e.clientY };
+      boxStart = { x: e.clientX, y: e.clientY, shiftKey: e.shiftKey };
       boxEl = document.createElement("div");
       boxEl.setAttribute("data-testid", "viewport-box-select");
       Object.assign(boxEl.style, {
@@ -203,12 +206,13 @@ export function Viewport({
     const handleBoxUp = (e: PointerEvent) => {
       if (!boxStart) return;
       const rect = { x0: boxStart.x, y0: boxStart.y, x1: e.clientX, y1: e.clientY };
+      const additive = boxStart.shiftKey || e.shiftKey;
       boxStart = null;
       clearBoxEl();
       // Ignore an accidental click (no meaningful drag area).
       if (Math.abs(rect.x1 - rect.x0) < 3 && Math.abs(rect.y1 - rect.y0) < 3) return;
       const indices = renderer.selectAtomsInRect(rect);
-      onBoxSelectRef.current?.(indices);
+      onBoxSelectRef.current?.(indices, { additive });
     };
 
     // ── Builder: click-to-edit and drag-to-move ──

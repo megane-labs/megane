@@ -20,11 +20,15 @@ nothing has to be re-encoded when they meet.
 
 ## The window
 
-The top bar owns the **document**: *Open…*, *New* (an empty cell or a bulk
-crystal), *Undo* / *Redo*, *Save*, and the theme. Its **Structure** menu holds
-the operations on the cell and the crystal (see [Crystal](#crystal)), its
-**Insert** menu the molecule library (see [Library](#library)), and its
-**Tools** menu the Python tools (see [Python tools](#python-tools)). The **tool rail** down the
+The top bar's menus follow the usual order. **File** owns the document:
+*Open…*, *New empty cell…* / *New bulk crystal…* and *Save* in each format.
+**Structure** holds the operations on the cell and the crystal (see
+[Crystal](#crystal)), **Insert** the molecule library (see
+[Library](#library)), **Tools** the Python tools (see
+[Python tools](#python-tools)), and **View** the camera (*Reset view*, look
+along ±x / ±y / ±z, and ±a / ±b / ±c while there is a cell) and the theme
+(System, Light, Dark — the 3D view's background follows it). *Undo* and
+*Redo* sit beside the menus. The **tool rail** down the
 left of the 3D view picks the tool — one icon per tool, each marked with its
 key — and the **context bar** floating over the top of the view holds the
 settings of that tool and nothing else. The sidebar on the right is an
@@ -39,29 +43,33 @@ it open; its header keeps the number of edits visible while it is closed.
 
 ## Getting started
 
-- **Open…** loads a structure file. Any format the viewer reads works
+- **File › Open…** loads a structure file. Any format the viewer reads works
   (PDB, XYZ, MOL / SDF, MOL2, CIF, GRO, LAMMPS data, …). Only the structure
   is taken; trajectory frames are ignored. Dropping a file anywhere on the 3D
   view opens it too.
-- **New** starts a document from scratch, in a dialog with two tabs:
+- **File › New empty cell… / New bulk crystal…** starts a document from
+  scratch, in a dialog with two tabs:
   *Empty cell* — an atom-less cubic cell of the edge you give in Å; the cell
   is what the camera frames and what the *Add atom* tool places free atoms
   against, so the first click already puts an atom in the box, and the
   document is called `untitled` until you save it — and *Bulk crystal*, a
   prototype structure (see [Crystal](#crystal)). Either replaces whatever is
   open, which the dialog says when there is something to replace.
-- **Save XYZ / PDB / MOL** bakes the edited structure into a file named after
+- **File › Save XYZ / PDB / MOL** bakes the edited structure into a file named after
   the document (`caffeine.sdf` → `caffeine.xyz`). XYZ becomes extended XYZ
   with a `Lattice="…"` header when there is a cell; PDB carries `CRYST1`,
   residue labels and `CONECT` records; MOL is V2000 with bond orders.
 - **Undo / Redo** in the top bar, in the sidebar's *History* section, or with
   the keys below.
+- Or skip all of that: pick **Place** (P) and place a library molecule with
+  nothing open — the first molecule starts an `untitled` document without a
+  cell (see [Library](#library)).
 
 ## Tools
 
 | Tool | Key | What a click in the 3D view does |
 |---|---|---|
-| **Select** | S | Selects the atom (Shift-click adds to the selection; clicking empty space clears it). Its context bar adds **Box** (drag a rectangle to select what it holds; the view stops rotating while it is on), **All** and **Invert**. The selection feeds the [Inspector](#inspector) (*Delete*, *Set to*, *Save as fragment*, *Clean up*, the measurement) and lets *Move* drag several atoms at once. |
+| **Select** | S | Selects the atom (Shift-click adds to the selection; clicking empty space clears it). Its context bar adds **Box** (drag a rectangle to select what it holds, Shift-drag to add it to the selection; the view stops rotating while it is on), **All** and **Invert**. The selection feeds the [Inspector](#inspector) (*Delete*, *Set to*, *Save as fragment*, *Clean up*, the measurement) and lets *Move* drag several atoms at once. |
 | **Add atom** | A | On an atom: attaches a new atom of the chosen element at bond length (sum of covalent radii), pointing away from the atom's existing neighbours, and bonds it with the chosen bond order. On empty space: places a free atom at that point, at the depth of the rotation pivot. |
 | **Bond** | B | Click two atoms to bond them. Clicking an already bonded pair changes the bond order to the one chosen in the context bar. |
 | **Delete** | D | Removes the atom and every bond it had. |
@@ -88,8 +96,9 @@ A bare skeleton (no hydrogen anywhere) is left bare, as are elements with no
 single usual valence (metals); add hydrogens yourself in that case.
 
 The context bar shows **only the settings the current tool uses**: the element
-(one-click buttons for the common ones, or any atomic number in the *Z* field)
-for *Add atom* and *Element*, the bond order (single, double, triple,
+(one-click buttons for the common ones, **Table** for a periodic table of
+every element up to U, or any atomic number in the *Z* field) for *Add atom*
+and *Element*, the bond order (single, double, triple,
 aromatic) for *Add atom* and *Bond*, and *On atoms* for *Place*. *Select*,
 *Move* and *Delete* have no settings, so they show no bar.
 
@@ -116,7 +125,8 @@ The top of the sidebar describes what you are looking at.
   in a ring with the others, only the atom itself moves. The change is one
   Undo step.
 
-**Right-click an atom** for a menu: *Select molecule* (every atom bonded to
+**Right-click an atom** for a menu (it opens beside the pointer, flipped to
+stay on screen near an edge): *Select molecule* (every atom bonded to
 it, directly or not), *Select all* of its element, *Set to* the current
 element, *Clean up molecule* and *Delete atom*.
 
@@ -128,10 +138,16 @@ all of them when nothing is selected — to [RDKit](https://www.rdkit.org/):
 it is embedded again from its atoms and bonds (ETKDG), minimised with
 MMFF94s (UFF when MMFF has no parameters), and put back where it was by a
 rigid fit on the old positions, so only its shape changes. Hydrogens are
-kept as they are (add them first if you want them). A molecule of one atom
-or of more than 999 atoms is skipped, and a molecule RDKit cannot read (an
-impossible valence, say) is reported and nothing moves. All the moved atoms
-are one Undo step.
+kept as they are (add them first if you want them). Two things are sorted out
+before RDKit sees a molecule: one split across the periodic cell is made whole
+first (each bonded atom taken at the image nearest its neighbour), so it comes
+back as one piece next to where it started; and an atom with more bonds than
+its neutral valence gets the formal charge that explains them — four bonds on
+N or P, three on O or S make it +1, four on B make it −1 — so ammonium,
+oxonium and borate groups embed instead of being refused. A molecule of one
+atom or of more than 999 atoms is skipped; a molecule RDKit still cannot read
+is left as it is, and the notice counts it with RDKit's message while every
+other molecule is cleaned up. All the moved atoms are one Undo step.
 
 ## Keyboard
 
@@ -150,8 +166,9 @@ lattice constant never switches tools.
 
 Editing never moves the camera: the view keeps its zoom and orientation across
 every operation (and across Undo / Redo / Clear all). Only opening a file or
-starting a new document re-fits the view. *Reset View* and the axis buttons
-(±x / ±y / ±z, and ±a / ±b / ±c while there is a cell) work as in the viewer.
+starting a new document re-fits the view. **View › Reset view** and the
+*Look along* directions (±x / ±y / ±z, and ±a / ±b / ±c while there is a cell)
+work as the viewer's Reset View and axis buttons.
 
 ## Library
 
@@ -212,6 +229,11 @@ Each molecule has two ways into the document:
 
 *Place* closes the gallery; *Add* leaves it open, so several molecules can be
 added one after another.
+
+Neither needs an open document. With nothing open, *Place* (or **Insert ›
+Molecule…**) still shows the gallery, and the first molecule you place or add
+starts an `untitled` document without a cell — build a molecule up from a
+library piece without making a cell first.
 
 Either way the molecule enters the history as one `add_fragment` operation
 (named after the molecule, e.g. `Add water-3 (3 atoms)`), so Undo removes it

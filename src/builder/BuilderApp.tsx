@@ -31,8 +31,6 @@ import {
 } from "react";
 import { Viewport } from "../components/Viewport";
 import { Tooltip } from "../components/Tooltip";
-import { ViewAxisControls } from "../components/ViewAxisControls";
-import { OVERLAY_INSET } from "../components/overlayLayout";
 import type { MoleculeRenderer } from "../renderer/MoleculeRenderer";
 import { latticeVectors, type ViewAxis } from "../renderer/cameraOrientation";
 import { applyViewportState } from "../pipeline/apply";
@@ -40,7 +38,7 @@ import type { ViewportState } from "../pipeline/types";
 import { parseStructureFile } from "../parsers/structure";
 import { STRUCTURE_EXPORT_FORMATS, exportSnapshot } from "../export/structureExport";
 import type { StructureWriteFormat } from "../parsers/parseCore";
-import { useThemeStore, type Theme } from "../stores/useThemeStore";
+import { useThemeStore, themeToHex } from "../stores/useThemeStore";
 import type { HoverInfo } from "../types";
 import { useBuilderStore, canEdit, editSteps, shownSnapshot, viewSnapshot } from "./store";
 import { builderViewportState, BUILDER_SOURCE_ID } from "./view";
@@ -51,6 +49,7 @@ import { ToolRail, toolHint, toolInfo } from "./ToolRail";
 import { ContextBar } from "./ContextBar";
 import { Menu } from "./Menu";
 import { NewStructureDialog, type NewStructureKind } from "./NewStructureDialog";
+import { fileMenuItems, viewMenuItems } from "./topbarMenus";
 import { CrystalDialog, type CrystalDialogKind } from "./crystal/CrystalDialog";
 import { structureMenuItems } from "./crystal/structureMenu";
 import { hasCellBox, symmetryOpsAvailable } from "./crystal/structure";
@@ -65,9 +64,6 @@ import { buttonStyle, hintStyle } from "./styles";
 import { trackEvent, trackFileOpen } from "../analytics";
 
 const SIDEBAR_WIDTH = 320;
-
-const THEME_LABELS: Record<Theme, string> = { light: "Light", dark: "Dark", system: "System" };
-const THEME_ORDER: Theme[] = ["system", "light", "dark"];
 
 /** ⌘ on a Mac, Ctrl elsewhere, for the shortcut hints in the tooltips. */
 function modKeyLabel(): string {
@@ -158,6 +154,7 @@ export function BuilderApp() {
   const handleRendererReady = useCallback(
     (renderer: MoleculeRenderer) => {
       rendererRef.current = renderer;
+      renderer.setBackgroundColor(themeToHex(useThemeStore.getState().resolvedTheme));
       // The sidebar sits beside the view, not over it, so the frustum needs
       // no inset: the structure is centred in the view it is drawn in.
       renderer.setViewInsets(0, 0);
@@ -255,9 +252,11 @@ export function BuilderApp() {
 
   const theme = useThemeStore((s) => s.theme);
   const setTheme = useThemeStore((s) => s.setTheme);
-  const cycleTheme = useCallback(() => {
-    setTheme(THEME_ORDER[(THEME_ORDER.indexOf(theme) + 1) % THEME_ORDER.length]);
-  }, [theme, setTheme]);
+  // The view's background follows the theme, as in the viewer.
+  const resolvedTheme = useThemeStore((s) => s.resolvedTheme);
+  useEffect(() => {
+    rendererRef.current?.setBackgroundColor(themeToHex(resolvedTheme));
+  }, [resolvedTheme]);
 
   // A Structure dialog's preview can grow or shrink the structure (a
   // supercell, a slab, a new cell): fit the view to what is drawn whenever
@@ -314,15 +313,6 @@ export function BuilderApp() {
           {fileName ?? "No structure"}
           {steps > 0 && ` · ${steps} edit${steps === 1 ? "" : "s"}`}
         </span>
-        <button
-          type="button"
-          data-testid="builder-open"
-          style={buttonStyle()}
-          onClick={() => inputRef.current?.click()}
-          title={`Open a structure file (${mod}+O)`}
-        >
-          Open…
-        </button>
         <input
           ref={inputRef}
           data-testid="builder-open-input"
@@ -331,21 +321,18 @@ export function BuilderApp() {
           onChange={(e) => void handleOpenChange(e)}
         />
         <Menu
-          testId="builder-new"
-          label="New"
-          title="Start a new structure (replaces the open one)"
-          items={[
-            {
-              label: "Empty cell…",
-              testId: "builder-new-cell-item",
-              onSelect: () => setNewDialog("cell"),
-            },
-            {
-              label: "Bulk crystal…",
-              testId: "builder-new-bulk-item",
-              onSelect: () => setNewDialog("bulk"),
-            },
-          ]}
+          testId="builder-file"
+          label="File"
+          title="Open, start or save a structure"
+          items={fileMenuItems({
+            open: () => inputRef.current?.click(),
+            newCell: () => setNewDialog("cell"),
+            newBulk: () => setNewDialog("bulk"),
+            formats: STRUCTURE_EXPORT_FORMATS,
+            save: (f) => void handleExport(f as StructureWriteFormat),
+            canSave: !!shown,
+            mod,
+          })}
         />
         <Menu
           testId="builder-structure"
@@ -362,7 +349,6 @@ export function BuilderApp() {
             {
               label: "Molecule…",
               testId: "builder-insert-molecule",
-              disabled: !shown,
               title: "Choose a library molecule to place (P)",
               onSelect: () => {
                 setTool("place");
@@ -397,6 +383,18 @@ export function BuilderApp() {
           title="Python tools from a connected tool server"
           items={toolsItems}
         />
+        <Menu
+          testId="builder-view"
+          label="View"
+          title="Camera and theme"
+          items={viewMenuItems({
+            resetView: handleResetView,
+            align: handleAlignView,
+            hasCell,
+            theme,
+            setTheme,
+          })}
+        />
         <button
           type="button"
           data-testid="builder-topbar-undo"
@@ -418,27 +416,6 @@ export function BuilderApp() {
           Redo
         </button>
         <span style={{ flex: 1 }} />
-        <Menu
-          testId="builder-save"
-          label="Save"
-          variant="primary"
-          disabled={!shown}
-          title={`Save the edited structure (${mod}+S saves XYZ)`}
-          items={STRUCTURE_EXPORT_FORMATS.map((f) => ({
-            label: `Save ${f.label}`,
-            testId: `builder-save-${f.value}`,
-            onSelect: () => void handleExport(f.value),
-          }))}
-        />
-        <button
-          type="button"
-          data-testid="builder-theme"
-          style={buttonStyle()}
-          onClick={cycleTheme}
-          title={`Theme: ${THEME_LABELS[theme]} (click to cycle)`}
-        >
-          {THEME_LABELS[theme]}
-        </button>
       </div>
 
       <div style={{ flex: 1, display: "flex", minHeight: 0 }}>
@@ -470,7 +447,11 @@ export function BuilderApp() {
             buildHandlers={handlers}
             preserveCameraKey={revision}
             boxSelectActive={!!source && tool === "select" && boxSelect}
-            onBoxSelect={setSelected}
+            onBoxSelect={(indices, { additive }) =>
+              setSelected(
+                additive ? [...new Set([...api.getState().selected, ...indices])] : indices,
+              )
+            }
             onAtomRightClick={(atom) => {
               // A preview's atoms are not the document's; nothing to act on.
               if (api.getState().preview) return;
@@ -478,45 +459,12 @@ export function BuilderApp() {
               setAtomMenu({ atom, x: at.x, y: at.y });
             }}
           />
-          {source && !crystalDialog && <ContextBar />}
+          {/* Place works with nothing open, so its bar (and gallery) does too. */}
+          {(source || tool === "place") && !crystalDialog && <ContextBar />}
           {crystalDialog && (
             <CrystalDialog key={crystalDialog} kind={crystalDialog} onClose={closeCrystalDialog} />
           )}
-          <div
-            data-testid="view-controls"
-            style={{
-              position: "absolute",
-              top: OVERLAY_INSET,
-              left: OVERLAY_INSET,
-              display: "flex",
-              flexDirection: "column",
-              alignItems: "flex-start",
-              gap: 4,
-              zIndex: 10,
-            }}
-          >
-            <button
-              data-testid="reset-view-btn"
-              title="Reset view (fit to structure, standard orientation) — R"
-              onClick={handleResetView}
-              style={{
-                padding: "4px 8px",
-                fontSize: 11,
-                lineHeight: 1,
-                background: "rgba(255,255,255,0.85)",
-                border: "1px solid rgba(0,0,0,0.15)",
-                borderRadius: 4,
-                cursor: "pointer",
-                color: "#374151",
-                backdropFilter: "blur(4px)",
-                userSelect: "none",
-              }}
-            >
-              Reset View
-            </button>
-            <ViewAxisControls hasCell={hasCell} onAlign={handleAlignView} />
-          </div>
-          {!source && (
+          {!source && tool !== "place" && (
             <div
               data-testid="builder-welcome"
               style={{

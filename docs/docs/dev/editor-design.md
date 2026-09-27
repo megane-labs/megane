@@ -137,7 +137,8 @@ swapped the view) ended up with the two competing for the same column and
 users unsure which of them the picture reflected. So `src/builder/` mounts
 its own page (`builder.html`, a Vite entry beside `index.html` and the
 multi-instance harness), laid out so that each control has exactly one home:
-a top bar for the **document** (Open, New, Undo / Redo, Save, theme), the 3D
+a top bar of menus — *File* for the **document** (Open, New, Save) and *View*
+for the camera and the theme (`topbarMenus.ts`), plus Undo / Redo — the 3D
 view with a tool rail on its left (`ToolRail.tsx`, one icon per tool with its
 key) and a context bar over its top (`ContextBar.tsx`, only the settings the
 current tool uses — none for Select / Move / Delete), *Structure* and
@@ -227,10 +228,19 @@ one Undo step — so numeric edits and the clean-up need no new op in the
 geometry*: `megane-rdkit` only exposes embedding, so each molecule goes to
 the existing worker (`library/embed.ts`) as a V2000 block with `addHs` off
 (RDKit then keeps our atom order), and the conformer is superposed back on
-the old positions. `editSteps` groups the history into Undo steps (an op and
+the old positions. On the way in, `unwrappedPositions` makes a molecule
+split across the cell whole (minimum image along its bonds) and
+`inferredCharges` writes `M  CHG` for over-bonded N / P / O / S / B, and a
+molecule RDKit rejects is counted and left alone rather than failing the
+rest. `editSteps` groups the history into Undo steps (an op and
 its continuations) for the History list and the edit counts; the op list
-itself is unchanged. The right-click menu is `AtomMenu.tsx`; box selection
-reuses the viewer's `Viewport` `boxSelectActive` / `onBoxSelect`. The view
+itself is unchanged. The right-click menu is `AtomMenu.tsx` (`clampMenuPosition` keeps it on
+screen); box selection reuses the viewer's `Viewport` `boxSelectActive` /
+`onBoxSelect`, whose `additive` flag (Shift held) unions with the selection.
+The element picker's periodic table is `PeriodicTable.tsx` (`tablePosition`).
+`addFragment` with no document opens an `emptySnapshot()` (no cell) first, so
+the Place tool and its gallery work before anything is open. The 3D view's
+background follows the theme store (`themeToHex`), as in the viewer. The view
 has no frustum inset (the sidebar sits beside it, not over it), and a
 Structure preview starting or ending refits the camera (`resetView`, which
 keeps the orientation).

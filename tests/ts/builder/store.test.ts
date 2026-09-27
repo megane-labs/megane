@@ -347,7 +347,6 @@ describe("useBuilderStore — library placement", () => {
   });
 
   it("addFragment appends one add_fragment op with the centroid at the point and selects the new atoms", () => {
-    expect(s().addFragment(molecule, [1, 2, 3])).toBeNull();
     s().openStructure(water(), null, "w.xyz");
     const id = s().addFragment(molecule, [10, 0, 0]);
     expect(id).toMatch(/^test-mol-\d+$/);
@@ -369,6 +368,15 @@ describe("useBuilderStore — library placement", () => {
     // Not editable under the preview.
     s().setShowOriginal(true);
     expect(s().addFragment(molecule, [0, 0, 0])).toBeNull();
+    expect(s().edits).toHaveLength(1);
+  });
+
+  it("addFragment with nothing open starts an untitled document without a cell", () => {
+    expect(s().source).toBeNull();
+    expect(s().addFragment(molecule, [1, 2, 3])).toMatch(/^test-mol-\d+$/);
+    expect(s().fileName).toBe("untitled");
+    expect(s().source!.box).toBeNull();
+    expect(shownSnapshot(s())!.nAtoms).toBe(2);
     expect(s().edits).toHaveLength(1);
   });
 });

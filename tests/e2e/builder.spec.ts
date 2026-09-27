@@ -11,6 +11,7 @@
  */
 
 import { test, expect, type Page } from "playwright/test";
+import { PNG } from "pngjs";
 import { waitForReady } from "./lib/setup";
 
 interface BuilderState {
@@ -81,9 +82,9 @@ async function newEmptyCell(page: Page) {
   await page.locator('[data-testid="builder-new-cell"]').click();
 }
 
-/** Pick a format from the top bar's Save menu. */
+/** Pick a format from the File menu's Save entries. */
 async function saveAs(page: Page, format: string) {
-  await page.locator('[data-testid="builder-save"]').click();
+  await page.locator('[data-testid="builder-file"]').click();
   await page.locator(`[data-testid="builder-save-${format}"]`).click();
 }
 
@@ -145,6 +146,50 @@ test.describe("builder: webapp", () => {
     await expect(page.locator('[data-testid="builder-file-name"]')).toHaveText(
       /untitled · 2 edits/,
     );
+  });
+
+  test("Place starts a document with nothing open; the periodic table and the View menu", async ({
+    page,
+  }) => {
+    const root = page.locator('[data-testid="megane-builder"]');
+    const viewport = page.locator('[data-testid="viewer-root"]');
+
+    // Dark theme from the View menu: the 3D view's background follows.
+    const corner = async () => {
+      const png = PNG.sync.read(await viewport.screenshot());
+      const i = (png.width * 4 + 4) * 4;
+      return [png.data[i], png.data[i + 1], png.data[i + 2]];
+    };
+    expect(await corner()).toEqual([255, 255, 255]);
+    await page.locator('[data-testid="builder-view"]').click();
+    await page.locator('[data-testid="builder-theme-dark"]').click();
+    await expect.poll(corner).toEqual([0x0f, 0x17, 0x2a]);
+    await page.locator('[data-testid="builder-view"]').click();
+    await page.locator('[data-testid="builder-theme-light"]').click();
+    await expect.poll(corner).toEqual([255, 255, 255]);
+
+    // Nothing open: Insert › Molecule… still shows the gallery.
+    await page.locator('[data-testid="builder-insert"]').click();
+    await page.locator('[data-testid="builder-insert-molecule"]').click();
+    await expect(page.locator('[data-testid="builder-library"]')).toBeVisible();
+    await expect(page.locator('[data-testid="builder-welcome"]')).toHaveCount(0);
+    await page
+      .locator('[data-testid="builder-library-item-preset:water"]')
+      .locator('[data-testid="builder-library-place"]')
+      .click();
+    // A real click on the empty view places it and starts an untitled document.
+    const box = (await viewport.boundingBox())!;
+    await page.mouse.click(box.x + box.width * 0.5, box.y + box.height * 0.6);
+    await waitForReady(page);
+    await expect(root).toHaveAttribute("data-atom-count", "3");
+    expect(await builderState(page)).toMatchObject({ fileName: "untitled", edge: null });
+
+    // The periodic table sets any element for Add atom.
+    await page.locator('[data-testid="builder-tool-add"]').click();
+    await page.locator('[data-testid="builder-element-table"]').click();
+    await page.locator('[data-testid="builder-periodic-Pt"]').click();
+    await expect(page.locator('[data-testid="builder-periodic-table"]')).toHaveCount(0);
+    await expect(page.locator('[data-testid="builder-element-symbol"]')).toHaveText("Pt");
   });
 
   test("opens a file, edits it with every tool, and saves the result", async ({ page }) => {
@@ -488,8 +533,8 @@ test.describe("builder: webapp", () => {
       "No cell",
     );
 
-    // Bulk: the Cu fcc example in its conventional cell, from the New menu.
-    await page.locator('[data-testid="builder-new"]').click();
+    // Bulk: the Cu fcc example in its conventional cell, from the File menu.
+    await page.locator('[data-testid="builder-file"]').click();
     await page.locator('[data-testid="builder-new-bulk-item"]').click();
     await page.locator('[data-testid="builder-bulk-example"]').selectOption("Cu (fcc)");
     await page.locator('[data-testid="builder-bulk-create"]').click();

@@ -9,6 +9,13 @@
  * equal to ours), and the conformer that comes back is rigidly superposed on
  * the original atoms (`superpose`) so the molecule stays in place. The new
  * positions are written as `move_atoms` ops, one Undo step for the lot.
+ *
+ * Two things RDKit would otherwise trip over are handled on the way in: a
+ * molecule split across a periodic cell is made whole first
+ * (`unwrappedPositions`), and an atom with more bonds than its neutral valence
+ * allows (an ammonium N, an oxonium O, a borate B) is given the formal charge
+ * that explains it (`inferredCharges`). A molecule RDKit still rejects is
+ * left as it is and counted; the others are cleaned up.
  */
 
 import type { StoreApi } from "zustand";
@@ -16,7 +23,7 @@ import { getElementSymbol } from "../constants";
 import type { Snapshot } from "../types";
 import { embedSketch, type EmbeddedSketch, type EmbedSketchOptions } from "./library/embed";
 import { canEdit, shownSnapshot, type BuilderStore } from "./store";
-import { molecules, superpose, type Displacements } from "./geometry";
+import { molecules, superpose, unwrappedPositions, type Displacements } from "./geometry";
 
 /** V2000 holds at most 999 atoms; larger molecules are skipped. */
 export const MAX_CLEANUP_ATOMS = 999;
@@ -25,30 +32,86 @@ type Embed = (molfile: string, options?: EmbedSketchOptions) => Promise<Embedded
 
 const pad = (v: string | number, n: number) => String(v).padStart(n);
 
-/** The atoms `atoms` of `snapshot` (in that order) and the bonds among them, as a V2000 mol block. */
-export function moleculeMolblock(snapshot: Snapshot, atoms: number[]): string {
-  const local = new Map(atoms.map((a, k) => [a, k + 1]));
-  const bonds: string[] = [];
+/** V2000 bond type per bond among `atoms` (local 0-based ends), bond order 1–4 as given, else single. */
+function localBonds(snapshot: Snapshot, atoms: number[]): [number, number, number][] {
+  const local = new Map(atoms.map((a, k) => [a, k]));
+  const out: [number, number, number][] = [];
   for (let b = 0; b < snapshot.nBonds; b++) {
     const i = local.get(snapshot.bonds[b * 2]);
     const j = local.get(snapshot.bonds[b * 2 + 1]);
     if (i === undefined || j === undefined) continue;
     const order = snapshot.bondOrders ? snapshot.bondOrders[b] : 1;
-    const type = order >= 1 && order <= 4 ? order : 1;
-    bonds.push(`${pad(i, 3)}${pad(j, 3)}${pad(type, 3)}  0`);
+    out.push([i, j, order >= 1 && order <= 4 ? order : 1]);
   }
+  return out;
+}
+
+/**
+ * The charge that makes an over-bonded atom's valence legal: four bonds on N
+ * or P, three on O or S make a cation; four on B an anion. Atoms with an
+ * aromatic bond are left alone (their valence is RDKit's to work out), and so
+ * is every atom whose bonds fit its neutral valence — RDKit fills those up with
+ * implicit hydrogens. Keyed by position in `atoms`.
+ */
+export function inferredCharges(snapshot: Snapshot, atoms: number[]): Map<number, number> {
+  const valence = new Array<number>(atoms.length).fill(0);
+  const aromatic = new Uint8Array(atoms.length);
+  for (const [i, j, type] of localBonds(snapshot, atoms)) {
+    for (const k of [i, j]) {
+      if (type === 4) aromatic[k] = 1;
+      else valence[k] += type;
+    }
+  }
+  const charges = new Map<number, number>();
+  atoms.forEach((a, k) => {
+    if (aromatic[k]) return;
+    const z = snapshot.elements[a];
+    const v = valence[k];
+    if ((z === 7 || z === 15) && v === 4) charges.set(k, 1);
+    else if ((z === 8 || z === 16) && v === 3) charges.set(k, 1);
+    else if (z === 5 && v === 4) charges.set(k, -1);
+  });
+  return charges;
+}
+
+/**
+ * The atoms `atoms` of `snapshot` (in that order) and the bonds among them, as
+ * a V2000 mol block, with `positions` (flat xyz, same order) in place of the
+ * snapshot's when given and `charges` (by position in `atoms`) as `M  CHG`.
+ */
+export function moleculeMolblock(
+  snapshot: Snapshot,
+  atoms: number[],
+  positions?: ArrayLike<number>,
+  charges: Map<number, number> = new Map(),
+): string {
+  const bonds = localBonds(snapshot, atoms).map(
+    ([i, j, type]) => `${pad(i + 1, 3)}${pad(j + 1, 3)}${pad(type, 3)}  0`,
+  );
   const lines = [
     "",
     "  megane-builder",
     "",
     `${pad(atoms.length, 3)}${pad(bonds.length, 3)}  0  0  0  0  0  0  0  0999 V2000`,
   ];
-  for (const a of atoms) {
-    const [x, y, z] = [0, 1, 2].map((k) => snapshot.positions[a * 3 + k].toFixed(4));
+  atoms.forEach((a, k) => {
+    const [x, y, z] = [0, 1, 2].map((c) =>
+      (positions ? positions[k * 3 + c] : snapshot.positions[a * 3 + c]).toFixed(4),
+    );
     const sym = getElementSymbol(snapshot.elements[a]).padEnd(3);
     lines.push(`${pad(x, 10)}${pad(y, 10)}${pad(z, 10)} ${sym} 0  0  0  0  0  0  0  0  0  0  0  0`);
+  });
+  lines.push(...bonds);
+  // At most eight charges per M  CHG line.
+  const entries = [...charges];
+  for (let i = 0; i < entries.length; i += 8) {
+    const chunk = entries.slice(i, i + 8);
+    lines.push(
+      `M  CHG${pad(chunk.length, 3)}` +
+        chunk.map(([k, q]) => `${pad(k + 1, 4)}${pad(q, 4)}`).join(""),
+    );
   }
-  lines.push(...bonds, "M  END");
+  lines.push("M  END");
   return lines.join("\n") + "\n";
 }
 
@@ -74,6 +137,9 @@ export interface CleanupResult {
   /** Molecules cleaned up, and those skipped (a single atom, or too large). */
   cleaned: number;
   skipped: number;
+  /** Molecules RDKit could not embed (left as they are), and its first message. */
+  failed: number;
+  error: string | null;
   /** Sum of the final force-field energies, kcal/mol (null when none reported). */
   energy: number | null;
   forceField: string | null;
@@ -81,8 +147,8 @@ export interface CleanupResult {
 
 /**
  * Clean up every molecule that contains one of `atoms` (every molecule when
- * `atoms` is empty). Rejects with RDKit's message when a molecule cannot be
- * embedded; nothing is changed then.
+ * `atoms` is empty). A molecule RDKit cannot embed is left out of
+ * `displacements` and counted in `failed`.
  */
 export async function cleanUpMolecules(
   snapshot: Snapshot,
@@ -96,6 +162,8 @@ export async function cleanUpMolecules(
   const displacements: Displacements = new Map();
   let cleaned = 0;
   let skipped = 0;
+  let failed = 0;
+  let error: string | null = null;
   let energy: number | null = null;
   let forceField: string | null = null;
   for (const mol of chosen) {
@@ -103,24 +171,36 @@ export async function cleanUpMolecules(
       skipped++;
       continue;
     }
-    const result = await embed(moleculeMolblock(snapshot, mol), { addHydrogens: false });
-    const embedded = molblockPositions(result.molblock, mol.length);
-    const original = new Float64Array(mol.length * 3);
-    mol.forEach((a, k) => {
-      for (let c = 0; c < 3; c++) original[k * 3 + c] = snapshot.positions[a * 3 + c];
-    });
-    const placed = superpose(embedded, original);
+    // The superposition target is the molecule made whole, so a molecule
+    // split across the cell comes back whole next to its first atom.
+    const whole = unwrappedPositions(snapshot, mol);
+    let embedded: Float64Array;
+    let result: EmbeddedSketch;
+    try {
+      const molblock = moleculeMolblock(snapshot, mol, whole, inferredCharges(snapshot, mol));
+      result = await embed(molblock, { addHydrogens: false });
+      embedded = molblockPositions(result.molblock, mol.length);
+    } catch (err) {
+      failed++;
+      error ??= err instanceof Error ? err.message : String(err);
+      continue;
+    }
+    const placed = superpose(embedded, whole);
     mol.forEach((a, k) => {
       displacements.set(
         a,
-        [0, 1, 2].map((c) => placed[k * 3 + c] - original[k * 3 + c]) as [number, number, number],
+        [0, 1, 2].map((c) => placed[k * 3 + c] - snapshot.positions[a * 3 + c]) as [
+          number,
+          number,
+          number,
+        ],
       );
     });
     cleaned++;
     if (result.energy !== null) energy = (energy ?? 0) + result.energy;
     forceField = result.forceField;
   }
-  return { displacements, cleaned, skipped, energy, forceField };
+  return { displacements, cleaned, skipped, failed, error, energy, forceField };
 }
 
 /**
@@ -137,17 +217,7 @@ export async function runCleanup(
   if (!canEdit(s) || !shown || shown.nAtoms === 0) return;
   const revision = s.revision;
   s.reportInfo("Cleaning up the geometry with RDKit…");
-  let result: CleanupResult;
-  try {
-    result = await cleanUpMolecules(shown, s.selected, embed);
-  } catch (err) {
-    api
-      .getState()
-      .reportError(
-        `Could not clean up the geometry: ${err instanceof Error ? err.message : String(err)}`,
-      );
-    return;
-  }
+  const result = await cleanUpMolecules(shown, s.selected, embed);
   const now = api.getState();
   // The document changed while RDKit worked: the result no longer fits it.
   if (now.revision !== revision) {
@@ -155,7 +225,11 @@ export async function runCleanup(
     return;
   }
   if (result.cleaned === 0) {
-    now.reportError("Nothing to clean up: select a molecule of 2 to 999 bonded atoms.");
+    now.reportError(
+      result.error !== null
+        ? `Could not clean up the geometry: ${result.error}`
+        : "Nothing to clean up: select a molecule of 2 to 999 bonded atoms.",
+    );
     return;
   }
   now.moveAtoms(result.displacements);
@@ -164,5 +238,11 @@ export async function runCleanup(
     result.skipped > 0 ? `; ${result.skipped} skipped (single atoms or too large)` : "";
   const energy =
     result.energy !== null ? ` (${result.forceField}, ${result.energy.toFixed(2)} kcal/mol)` : "";
-  now.reportInfo(`Cleaned up ${mols}${energy}${skipped}.`);
+  if (result.failed > 0) {
+    now.reportError(
+      `Cleaned up ${mols}${energy}${skipped}; ${result.failed} left as they are (RDKit: ${result.error}).`,
+    );
+  } else {
+    now.reportInfo(`Cleaned up ${mols}${energy}${skipped}.`);
+  }
 }
