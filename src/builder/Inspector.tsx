@@ -3,11 +3,12 @@
  * describes the structure (formula, atoms, bonds, mass, and each element as a
  * chip that selects all its atoms); with a selection it describes the
  * selected atoms — each atom and its position, the distance, angle or
- * dihedral they span (2, 3 or 4 atoms, in the order they were picked) — and
- * offers what can be done with them.
+ * dihedral they span (2, 3 or 4 atoms, in the order they were picked), which
+ * can be typed in to move the last atom's side — and offers what can be done
+ * with them.
  */
 
-import { useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useBuilderStore, canEdit, shownSnapshot } from "./store";
 import { buttonStyle, hintStyle, inputStyle, rowStyle, sectionStyle } from "./styles";
 import { getAtomicMass, getElementSymbol } from "../constants";
@@ -16,7 +17,9 @@ import { formulaOf } from "./library/fragment";
 import { useLibraryActions } from "./library/ui";
 import { QUICK_ELEMENTS } from "./ContextBar";
 import type { EditAtomRef } from "../pipeline/types";
-import type { Snapshot } from "../types";
+import type { Measurement, Snapshot } from "../types";
+import { setAngle, setDihedral, setDistance } from "./geometry";
+import { runCleanup } from "./cleanup";
 
 /** Selected atoms listed one per row; the rest are counted. */
 export const MAX_ATOM_ROWS = 6;
@@ -246,11 +249,8 @@ function SelectionInspector() {
         </div>
       )}
 
-      {measure ? (
-        <div data-testid="builder-inspector-measure" data-type={measure.type}>
-          <div style={hintStyle}>{MEASURE_LABELS[measure.type]}</div>
-          <div style={{ ...monoStyle, fontSize: 22 }}>{measure.label}</div>
-        </div>
+      {measure && shown ? (
+        <MeasureEditor measure={measure} shown={shown} editable={editable} />
       ) : (
         atoms.length === 1 && (
           <div style={hintStyle} data-testid="builder-inspector-measure-hint">
@@ -297,6 +297,16 @@ function SelectionInspector() {
         </button>
         <button
           type="button"
+          data-testid="builder-selection-cleanup"
+          style={buttonStyle("default", !editable)}
+          disabled={!editable}
+          onClick={() => void runCleanup(useBuilderStore)}
+          title="Re-embed the selected molecules with RDKit (ETKDG + MMFF94s) and put them back in place"
+        >
+          Clean up
+        </button>
+        <button
+          type="button"
           data-testid="builder-delete-selected"
           style={buttonStyle("danger", !editable)}
           disabled={!editable}
@@ -305,6 +315,86 @@ function SelectionInspector() {
           Delete
         </button>
       </div>
+    </div>
+  );
+}
+
+/**
+ * The measurement of 2–4 selected atoms, with a field to set it: the last
+ * picked atom's side of the structure moves (translated for a distance,
+ * rotated for an angle or dihedral), as one Undo step.
+ */
+function MeasureEditor({
+  measure,
+  shown,
+  editable,
+}: {
+  measure: Measurement;
+  shown: Snapshot;
+  editable: boolean;
+}) {
+  const moveAtoms = useBuilderStore((s) => s.moveAtoms);
+  const reportError = useBuilderStore((s) => s.reportError);
+  const unit = measure.type === "distance" ? "Å" : "°";
+  const digits = measure.type === "distance" ? 3 : 1;
+  const [draft, setDraft] = useState(measure.value.toFixed(digits));
+  useEffect(() => setDraft(measure.value.toFixed(digits)), [measure.value, digits]);
+
+  const apply = () => {
+    // An empty field is no number (Number("") would read as 0).
+    const target = draft.trim() === "" ? NaN : Number(draft);
+    const [a, b, c, d] = measure.atoms;
+    const moved =
+      measure.type === "distance"
+        ? setDistance(shown, a, b, target)
+        : measure.type === "angle"
+          ? setAngle(shown, a, b, c, target)
+          : setDihedral(shown, a, b, c, d, target);
+    if (!moved) {
+      reportError(
+        measure.type === "distance"
+          ? "A distance must be a positive number of Å."
+          : measure.type === "angle"
+            ? "An angle must be between 0° and 180° (exclusive), and the atoms not in a line."
+            : "The dihedral needs a number of degrees.",
+      );
+      return;
+    }
+    moveAtoms(moved);
+  };
+
+  return (
+    <div data-testid="builder-inspector-measure" data-type={measure.type}>
+      <div style={hintStyle}>{MEASURE_LABELS[measure.type]}</div>
+      <div style={{ ...monoStyle, fontSize: 22 }}>{measure.label}</div>
+      <form
+        style={{ ...rowStyle, flexWrap: "nowrap", marginTop: 4 }}
+        onSubmit={(e) => {
+          e.preventDefault();
+          if (editable) apply();
+        }}
+      >
+        <span style={{ ...hintStyle, flex: 1 }}>Set to</span>
+        <input
+          data-testid="builder-inspector-measure-input"
+          aria-label={`${MEASURE_LABELS[measure.type]} in ${unit}`}
+          type="number"
+          step={measure.type === "distance" ? 0.01 : 1}
+          value={draft}
+          onChange={(e) => setDraft(e.target.value)}
+          style={{ ...inputStyle, width: 80 }}
+        />
+        <span style={hintStyle}>{unit}</span>
+        <button
+          type="submit"
+          data-testid="builder-inspector-measure-apply"
+          style={buttonStyle("default", !editable)}
+          disabled={!editable}
+          title="Moves the last picked atom's side of the structure"
+        >
+          Set
+        </button>
+      </form>
     </div>
   );
 }

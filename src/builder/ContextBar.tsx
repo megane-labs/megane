@@ -65,6 +65,10 @@ export function ContextBar() {
   const element = useBuilderStore((s) => s.element);
   const bondOrder = useBuilderStore((s) => s.bondOrder);
   const adsorbHeight = useBuilderStore((s) => s.adsorbHeight);
+  const boxSelect = useBuilderStore((s) => s.boxSelect);
+  const setBoxSelect = useBuilderStore((s) => s.setBoxSelect);
+  const selectAll = useBuilderStore((s) => s.selectAll);
+  const invertSelection = useBuilderStore((s) => s.invertSelection);
   const setElement = useBuilderStore((s) => s.setElement);
   const setBondOrder = useBuilderStore((s) => s.setBondOrder);
   const setAdsorbHeight = useBuilderStore((s) => s.setAdsorbHeight);
@@ -130,6 +134,40 @@ export function ContextBar() {
         >
           {info.label}
         </span>
+
+        {info.needs.includes("select") && (
+          <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+            <button
+              type="button"
+              data-testid="builder-select-box"
+              aria-pressed={boxSelect}
+              title="Drag a box on the view to select what it holds (the view stops rotating while on)"
+              style={{ ...choiceStyle(boxSelect), fontWeight: 500, padding: "0 10px" }}
+              onClick={() => setBoxSelect(!boxSelect)}
+            >
+              Box
+            </button>
+            <Divider />
+            <button
+              type="button"
+              data-testid="builder-select-all"
+              title="Select every atom (Ctrl/⌘ + A)"
+              style={{ ...choiceStyle(false), fontWeight: 500, padding: "0 10px" }}
+              onClick={selectAll}
+            >
+              All
+            </button>
+            <button
+              type="button"
+              data-testid="builder-select-invert"
+              title="Select the atoms that are not selected"
+              style={{ ...choiceStyle(false), fontWeight: 500, padding: "0 10px" }}
+              onClick={invertSelection}
+            >
+              Invert
+            </button>
+          </div>
+        )}
 
         {info.needs.includes("element") && (
           <>

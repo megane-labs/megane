@@ -16,8 +16,8 @@
  * actions and the handlers installed by `useBuilderHandlers`.
  */
 
-import { useBuilderStore } from "./store";
-import { describeOp } from "./placement";
+import { useBuilderStore, editSteps } from "./store";
+import { describeStep } from "./placement";
 import { Section } from "./Section";
 import { Inspector } from "./Inspector";
 import { CellCard } from "./crystal/CellCard";
@@ -106,6 +106,7 @@ function HistorySection({ defaultOpen }: { defaultOpen: boolean }) {
   const redo = useBuilderStore((s) => s.redo);
   const clearOps = useBuilderStore((s) => s.clearOps);
   const setShowOriginal = useBuilderStore((s) => s.setShowOriginal);
+  const steps = editSteps(edits);
 
   return (
     <Section
@@ -114,7 +115,7 @@ function HistorySection({ defaultOpen }: { defaultOpen: boolean }) {
       defaultOpen={defaultOpen}
       summary={
         <span data-testid="builder-op-count">
-          {edits.length} edit{edits.length === 1 ? "" : "s"}
+          {steps.length} edit{steps.length === 1 ? "" : "s"}
         </span>
       }
     >
@@ -173,8 +174,8 @@ function HistorySection({ defaultOpen }: { defaultOpen: boolean }) {
             overflowY: "auto",
           }}
         >
-          {edits.map((op, i) => (
-            <li key={i}>{describeOp(op)}</li>
+          {steps.map((step, i) => (
+            <li key={i}>{describeStep(step)}</li>
           ))}
         </ol>
       )}

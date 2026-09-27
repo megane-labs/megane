@@ -216,6 +216,25 @@ tool's *Place on atoms* option (`adsorbHeight` on the store,
 height above a clicked atom along the cell's c axis, which with a slab is
 the surface normal — an adsorbate as one `add_fragment` op.
 
+**Geometry.** `src/builder/geometry.ts` holds what moves together
+(`moleculeOf`, and `movingSide` — the far side of a bond, or only the atom
+when a ring joins the sides), the numeric edits (`setDistance`, `setAngle`,
+`setDihedral`, which return a displacement per atom) and `superpose`, a
+Kabsch fit by Horn's quaternion method. `BuilderStore.moveAtoms` writes
+displacements as `move_atoms` ops — one per distinct displacement, pushed as
+one Undo step — so numeric edits and the clean-up need no new op in the
+`load_structure` edit vocabulary. `src/builder/cleanup.ts` is *Clean up
+geometry*: `megane-rdkit` only exposes embedding, so each molecule goes to
+the existing worker (`library/embed.ts`) as a V2000 block with `addHs` off
+(RDKit then keeps our atom order), and the conformer is superposed back on
+the old positions. `editSteps` groups the history into Undo steps (an op and
+its continuations) for the History list and the edit counts; the op list
+itself is unchanged. The right-click menu is `AtomMenu.tsx`; box selection
+reuses the viewer's `Viewport` `boxSelectActive` / `onBoxSelect`. The view
+has no frustum inset (the sidebar sits beside it, not over it), and a
+Structure preview starting or ending refits the camera (`resetView`, which
+keeps the orientation).
+
 **Library.** `src/builder/library/` holds the molecule library the Place
 tool's gallery offers (and the Insert menu and the Inspector's *Save as
 fragment*): `presets.ts` (small molecules with 3D geometries), a persisted

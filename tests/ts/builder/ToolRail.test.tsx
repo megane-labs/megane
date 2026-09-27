@@ -62,7 +62,7 @@ describe("toolHint", () => {
 
 describe("ContextBar", () => {
   it("is absent for a tool with no settings", () => {
-    for (const tool of ["select", "move", "delete"] as const) {
+    for (const tool of ["move", "delete"] as const) {
       useBuilderStore.setState({ tool });
       const { unmount } = render(<ContextBar />);
       expect(screen.queryByTestId("builder-context-bar")).toBeNull();

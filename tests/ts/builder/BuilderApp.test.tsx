@@ -12,6 +12,7 @@ const { rendererStub, viewportProps, applyViewportState, exportSnapshot, parseSt
     rendererStub: {
       setViewInsets: vi.fn(),
       resetCamera: vi.fn(),
+      resetView: vi.fn(),
       alignCameraToAxis: vi.fn(),
     },
     viewportProps: { current: null as Record<string, unknown> | null },
@@ -132,12 +133,12 @@ afterEach(() => {
 });
 
 describe("BuilderApp — empty state", () => {
-  it("shows the welcome card and reserves the sidebar in the frustum", () => {
+  it("shows the welcome card and centres the view (the sidebar sits beside it)", () => {
     render(<BuilderApp />);
     expect(screen.getByTestId("builder-welcome")).toBeTruthy();
     expect(screen.getByTestId("builder-file-name").textContent).toBe("No structure");
     expect(shownAtoms()).toBe(0);
-    expect(rendererStub.setViewInsets).toHaveBeenCalledWith(0, 332);
+    expect(rendererStub.setViewInsets).toHaveBeenCalledWith(0, 0);
     // The view is always in edit mode with the handlers installed.
     expect(viewportProps.current?.buildActive).toBe(true);
     expect(viewportProps.current?.buildHandlers).toBe(useBuilderStore.getState().handlers);
@@ -204,8 +205,9 @@ describe("BuilderApp — editing", () => {
 
   it("shows only the settings the current tool uses, in the bar over the view", () => {
     render(<BuilderApp />);
-    // Select needs neither an element nor a bond order: no bar at all.
-    expect(screen.queryByTestId("builder-context-bar")).toBeNull();
+    // Select needs neither an element nor a bond order: only its own settings.
+    expect(screen.getByTestId("builder-context-label").textContent).toBe("Select");
+    expect(screen.getByTestId("builder-select-box")).toBeTruthy();
     expect(screen.queryByTestId("builder-element-z")).toBeNull();
     expect(screen.queryByTestId("builder-bond-order")).toBeNull();
     expect(screen.queryByTestId("builder-adsorb-toggle")).toBeNull();
@@ -695,5 +697,82 @@ describe("BuilderApp — Structure and Tools menus", () => {
     act(() => useBuilderStore.getState().setSelected([0, 1]));
     menu("builder-insert", "builder-insert-save-selection");
     expect(useBuilderStore.getState().notice?.text).toContain("to the library");
+  });
+
+  it("fits the view when a Structure preview starts and ends", async () => {
+    cu();
+    render(<BuilderApp />);
+    rendererStub.resetView.mockClear();
+    menu("builder-structure", "builder-structure-supercell");
+    await waitFor(() => expect(useBuilderStore.getState().preview).not.toBeNull());
+    expect(rendererStub.resetView).toHaveBeenCalledTimes(1);
+    fireEvent.click(screen.getByTestId("builder-crystal-cancel"));
+    expect(rendererStub.resetView).toHaveBeenCalledTimes(2);
+  });
+
+  it("Structure › Clean up geometry runs on the whole structure", () => {
+    cu();
+    render(<BuilderApp />);
+    fireEvent.click(screen.getByTestId("builder-structure"));
+    expect(screen.getByTestId("builder-structure-cleanup").textContent).toBe("Clean up geometry");
+    fireEvent.click(screen.getByTestId("builder-structure-cleanup"));
+    expect(useBuilderStore.getState().notice?.text).toContain("Cleaning up");
+  });
+});
+
+describe("BuilderApp — selecting and the atom menu", () => {
+  beforeEach(() => {
+    useBuilderStore.getState().openStructure(water(), ["HOH", "HOH", "HOH"], "water.pdb");
+  });
+
+  it("box selection is on only with the Select tool and its Box toggle", () => {
+    render(<BuilderApp />);
+    expect(viewportProps.current?.boxSelectActive).toBe(false);
+    fireEvent.click(screen.getByTestId("builder-select-box"));
+    expect(viewportProps.current?.boxSelectActive).toBe(true);
+    act(() => (viewportProps.current?.onBoxSelect as (i: number[]) => void)([1, 2]));
+    expect(useBuilderStore.getState().selected).toEqual([1, 2]);
+    tool("add");
+    expect(viewportProps.current?.boxSelectActive).toBe(false);
+  });
+
+  it("a right-click on an atom opens its menu where the pointer was, and hides the tooltip", () => {
+    render(<BuilderApp />);
+    fireEvent.contextMenu(screen.getByTestId("builder-dropzone"), { clientX: 40, clientY: 50 });
+    act(() => (viewportProps.current?.onAtomRightClick as (i: number) => void)(1));
+    const menu = screen.getByTestId("builder-atom-menu");
+    expect(menu.style.left).toBe("40px");
+    expect(menu.style.top).toBe("50px");
+    fireEvent.click(screen.getByTestId("builder-atom-menu-molecule"));
+    expect(useBuilderStore.getState().selected).toEqual([0, 1, 2]);
+    expect(screen.queryByTestId("builder-atom-menu")).toBeNull();
+  });
+
+  it("the atom menu does not open over a preview", () => {
+    act(() => useBuilderStore.getState().setPreview({ op: "center", axes: [0], vacuum: 3 }));
+    render(<BuilderApp />);
+    act(() => (viewportProps.current?.onAtomRightClick as (i: number) => void)(0));
+    expect(screen.queryByTestId("builder-atom-menu")).toBeNull();
+  });
+
+  it("tool keys keep working while the Place gallery is open", () => {
+    render(<BuilderApp />);
+    tool("place");
+    expect(screen.getByTestId("builder-library")).toBeTruthy();
+    fireEvent.keyDown(window, { key: "s" });
+    expect(useBuilderStore.getState().tool).toBe("select");
+  });
+
+  it("the history lists Undo steps, not ops", () => {
+    render(<BuilderApp />);
+    act(() => {
+      useBuilderStore.getState().pushOps([
+        { op: "move_atoms", atoms: [1], delta: [1, 0, 0] },
+        { op: "move_atoms", atoms: [2], delta: [0, 1, 0] },
+      ]);
+    });
+    expect(screen.getByTestId("builder-op-count").textContent).toBe("1 edit");
+    expect(screen.getByTestId("builder-file-name").textContent).toContain("1 edit");
+    expect(screen.getByTestId("builder-op-list").textContent).toBe("Move 2 atoms");
   });
 });

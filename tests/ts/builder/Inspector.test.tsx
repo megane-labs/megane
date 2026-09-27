@@ -106,7 +106,7 @@ describe("Inspector — selection", () => {
     // H–C–O–H with both H on the +y side: cis.
     act(() => s().setSelected([3, 0, 1, 2]));
     expect(measure().getAttribute("data-type")).toBe("dihedral");
-    expect(measure().textContent).toMatch(/^Dihedral-?0\.0°$/);
+    expect(measure().textContent).toMatch(/^Dihedral-?0\.0°Set to/);
 
     // Five or more atoms: no measurement, and no hint either.
     act(() => s().setSelected([0, 1, 2, 3, 4]));
@@ -184,5 +184,51 @@ describe("Inspector — selection", () => {
     click("builder-delete-selected");
     click("builder-set-element-selected");
     expect(s().edits).toHaveLength(0);
+  });
+
+  it("sets a distance, an angle and a dihedral by number, each one Undo step", () => {
+    render(<Inspector />);
+    const set = (value: string) => {
+      fireEvent.change(screen.getByTestId("builder-inspector-measure-input"), {
+        target: { value },
+      });
+      click("builder-inspector-measure-apply");
+    };
+    // C–O is 1.400 Å: stretch it; the O side (O and its H) moves.
+    act(() => s().setSelected([0, 1]));
+    expect((screen.getByTestId("builder-inspector-measure-input") as HTMLInputElement).value).toBe(
+      "1.400",
+    );
+    set("1.6");
+    expect(text("builder-inspector-measure")).toContain("1.600 Å");
+    expect(s().edits).toEqual([{ op: "move_atoms", atoms: [1, 2], delta: expect.any(Array) }]);
+
+    act(() => s().setSelected([0, 1, 2]));
+    set("109.5");
+    expect(text("builder-inspector-measure")).toContain("109.5°");
+
+    act(() => s().setSelected([3, 0, 1, 2]));
+    set("180");
+    expect(text("builder-inspector-measure")).toMatch(/-?180\.0°/);
+
+    // Out of range: nothing moves and the notice says why.
+    const before = s().edits.length;
+    act(() => s().setSelected([0, 1]));
+    set("-1");
+    expect(s().edits).toHaveLength(before);
+    expect(s().notice?.text).toContain("positive");
+    act(() => s().setSelected([0, 1, 2]));
+    set("200");
+    expect(s().notice?.text).toContain("between 0° and 180°");
+    act(() => s().setSelected([3, 0, 1, 2]));
+    set("");
+    expect(s().notice?.text).toContain("degrees");
+  });
+
+  it("Clean up hands the selection's molecules to RDKit", () => {
+    render(<Inspector />);
+    act(() => s().setSelected([0]));
+    click("builder-selection-cleanup");
+    expect(s().notice?.text).toContain("Cleaning up");
   });
 });

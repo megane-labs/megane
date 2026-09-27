@@ -177,7 +177,8 @@ test.describe("builder: webapp", () => {
       "add_atom",
       "add_bond",
     ]);
-    await expect(page.locator('[data-testid="builder-op-list"] li')).toHaveCount(4);
+    // The history lists Undo steps: Element and the hydrogen it added are one.
+    await expect(page.locator('[data-testid="builder-op-list"] li')).toHaveCount(3);
 
     // Show original previews the file as opened and pauses editing.
     await page.locator('[data-testid="builder-show-original"]').click();
@@ -195,6 +196,91 @@ test.describe("builder: webapp", () => {
       .toArray()
       .then((chunks) => Buffer.concat(chunks as Buffer[]).toString("utf8"));
     expect(text.split("\n")[0].trim()).toBe("24");
+  });
+
+  test("right-click menu, a bond length set by number, and an RDKit clean-up", async ({ page }) => {
+    test.setTimeout(120_000);
+    const root = page.locator('[data-testid="megane-builder"]');
+    await page.setInputFiles('[data-testid="builder-open-input"]', "tests/fixtures/caffeine.sdf");
+    await waitForReady(page);
+    await expect(root).toHaveAttribute("data-atom-count", "24");
+
+    // Right-click an atom (scan the middle of the view until one is under the
+    // pointer): its menu selects the whole molecule.
+    const menu = page.locator('[data-testid="builder-atom-menu"]');
+    const box = (await page.locator('[data-testid="viewer-root"]').boundingBox())!;
+    scan: for (let fy = 0.35; fy <= 0.65; fy += 0.03) {
+      for (let fx = 0.35; fx <= 0.65; fx += 0.03) {
+        await page.mouse.click(box.x + box.width * fx, box.y + box.height * fy, {
+          button: "right",
+        });
+        if ((await menu.count()) > 0) break scan;
+      }
+    }
+    await expect(menu).toBeVisible();
+    await page.locator('[data-testid="builder-atom-menu-molecule"]').click();
+    await expect(page.locator('[data-testid="builder-status-selection"]')).toHaveText(
+      "24 selected",
+    );
+
+    // Pick a bonded pair and stretch the bond to 2.5 Å in the Inspector.
+    // Measured between the pair chosen below (Undo clears the selection).
+    let pair: [number, number] = [0, 0];
+    const distance = () =>
+      page.evaluate(([a, b]) => {
+        const s = (
+          window as unknown as {
+            __megane_test_builder_store: {
+              getState: () => { result: { snapshot: { positions: Float32Array } } };
+            };
+          }
+        ).__megane_test_builder_store.getState();
+        const p = s.result.snapshot.positions;
+        return Math.hypot(
+          p[a * 3] - p[b * 3],
+          p[a * 3 + 1] - p[b * 3 + 1],
+          p[a * 3 + 2] - p[b * 3 + 2],
+        );
+      }, pair);
+    pair = await page.evaluate(() => {
+      const store = (
+        window as unknown as {
+          __megane_test_builder_store: {
+            getState: () => {
+              result: { snapshot: { bonds: Uint32Array } };
+              setSelected: (i: number[]) => void;
+            };
+          };
+        }
+      ).__megane_test_builder_store;
+      const bonds = store.getState().result.snapshot.bonds;
+      store.getState().setSelected([bonds[0], bonds[1]]);
+      return [bonds[0], bonds[1]] as [number, number];
+    });
+    const bonded = await distance();
+    expect(bonded).toBeGreaterThan(0.9);
+    expect(bonded).toBeLessThan(1.6);
+    await page.locator('[data-testid="builder-inspector-measure-input"]').fill("2.5");
+    await page.locator('[data-testid="builder-inspector-measure-apply"]').click();
+    await expect(page.locator('[data-testid="builder-inspector-measure"]')).toContainText(
+      "2.500 Å",
+    );
+    expect(await distance()).toBeCloseTo(2.5, 3);
+
+    // Clean up with the real RDKit worker: the bond goes back to a sane
+    // length, the molecule stays in place, and one Undo takes it all back.
+    await page.locator('[data-testid="builder-structure"]').click();
+    await page.locator('[data-testid="builder-structure-cleanup"]').click();
+    await expect(page.locator('[data-testid="builder-notice"]')).toContainText(
+      "Cleaned up 1 molecule",
+      { timeout: 90_000 },
+    );
+    const cleaned = await distance();
+    expect(cleaned).toBeGreaterThan(0.9);
+    expect(cleaned).toBeLessThan(1.6);
+    await expect(root).toHaveAttribute("data-atom-count", "24");
+    await page.locator('[data-testid="builder-topbar-undo"]').click();
+    expect(await distance()).toBeCloseTo(2.5, 3);
   });
 
   test("adds library presets, places one with the Place tool, and keeps a Ketcher sketch", async ({

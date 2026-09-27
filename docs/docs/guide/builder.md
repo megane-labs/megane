@@ -61,7 +61,7 @@ it open; its header keeps the number of edits visible while it is closed.
 
 | Tool | Key | What a click in the 3D view does |
 |---|---|---|
-| **Select** | S | Selects the atom (Shift-click adds to the selection; clicking empty space clears it). The selection feeds the [Inspector](#inspector) (*Delete*, *Set to*, *Save as fragment*) and lets *Move* drag several atoms at once. |
+| **Select** | S | Selects the atom (Shift-click adds to the selection; clicking empty space clears it). Its context bar adds **Box** (drag a rectangle to select what it holds; the view stops rotating while it is on), **All** and **Invert**. The selection feeds the [Inspector](#inspector) (*Delete*, *Set to*, *Save as fragment*, *Clean up*, the measurement) and lets *Move* drag several atoms at once. |
 | **Add atom** | A | On an atom: attaches a new atom of the chosen element at bond length (sum of covalent radii), pointing away from the atom's existing neighbours, and bonds it with the chosen bond order. On empty space: places a free atom at that point, at the depth of the rotation pivot. |
 | **Bond** | B | Click two atoms to bond them. Clicking an already bonded pair changes the bond order to the one chosen in the context bar. |
 | **Delete** | D | Removes the atom and every bond it had. |
@@ -105,8 +105,33 @@ The top of the sidebar describes what you are looking at.
   distance, angle or dihedral** they span, taken in the order you picked
   them (Shift-click adds the next one). Below that, what can be done with
   them: **Set to** an element chosen in the list, **Save as fragment** (keeps
-  them in the library, see below), **Delete**, and **×** to clear the
+  them in the library, see below), **Clean up** (see
+  [Clean up geometry](#clean-up-geometry)), **Delete**, and **×** to clear the
   selection (or Esc).
+- **Setting a measurement**: type a new distance (Å), angle or dihedral (°)
+  under the measurement and press **Set**. The *last* atom you picked moves,
+  together with everything bonded to it on its side — the rest of the chain
+  for a bond, the whole substituent for an angle or a torsion — so a
+  molecule keeps its shape while one coordinate changes. When that atom is
+  in a ring with the others, only the atom itself moves. The change is one
+  Undo step.
+
+**Right-click an atom** for a menu: *Select molecule* (every atom bonded to
+it, directly or not), *Select all* of its element, *Set to* the current
+element, *Clean up molecule* and *Delete atom*.
+
+### Clean up geometry
+
+**Structure › Clean up geometry** (or *Clean up* in the Inspector, or *Clean
+up molecule* in the atom menu) hands each molecule — the selected ones, or
+all of them when nothing is selected — to [RDKit](https://www.rdkit.org/):
+it is embedded again from its atoms and bonds (ETKDG), minimised with
+MMFF94s (UFF when MMFF has no parameters), and put back where it was by a
+rigid fit on the old positions, so only its shape changes. Hydrogens are
+kept as they are (add them first if you want them). A molecule of one atom
+or of more than 999 atoms is skipped, and a molecule RDKit cannot read (an
+impossible valence, say) is reported and nothing moves. All the moved atoms
+are one Undo step.
 
 ## Keyboard
 
@@ -117,6 +142,7 @@ The top of the sidebar describes what you are looking at.
 | Delete, Backspace | Delete the selected atoms |
 | Esc | Drop the pending bond, then the selection, then the *Place* molecule |
 | Ctrl/⌘ + O, Ctrl/⌘ + S | Open a file, save XYZ |
+| Ctrl/⌘ + A | Select every atom |
 | R | Reset the view |
 
 Keys are ignored while a text field or a dialog has the keyboard, so typing a
@@ -251,7 +277,8 @@ While its fields describe a valid operation, **the view previews the result**
 (the status bar says *Preview*) and clicks in the view are paused; **Apply**
 writes the operation, **Cancel** or Esc leaves the structure as it was. A
 result of more than 200 000 atoms is not previewed — the dialog says so — but
-Apply still builds it.
+Apply still builds it. The view is refitted to what it shows when the preview
+starts and ends, keeping the angle you were looking from.
 
 Each action is one operation in the history (`Supercell 2×2×1`,
 `Slab (1 1 1), 4 layers, 10 Å vacuum`, `Expand symmetry`, …), so Undo takes
@@ -299,7 +326,9 @@ connects on load. Anyone can write a tool server with the
 
 ## History
 
-The **History** section lists every operation in order and offers **Undo**,
+The **History** section lists every step in order — one line per Undo, so an
+atom and the hydrogens that came with it, or a cleaned-up molecule, is one
+line — and offers **Undo**,
 **Redo**, **Clear all**, and **Show original** (a preview of the structure as
 opened; editing is paused while it is on, and a banner at the top of the
 sidebar offers the way back). The history is the document: the

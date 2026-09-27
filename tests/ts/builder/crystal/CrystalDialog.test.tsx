@@ -135,7 +135,7 @@ describe("Structure menu", () => {
       "builder-structure-expand-symmetry",
     ]);
     expect(disabled({ nAtoms: 0 })).toContain("builder-cell-wrap");
-    expect(disabled({ editable: false })).toHaveLength(7);
+    expect(disabled({ editable: false })).toHaveLength(8);
     const one = structureMenuItems({ ...base, symmetryOps: 1 }, vi.fn(), vi.fn());
     expect(action(one, "builder-structure-expand-symmetry").label).toBe(
       "Expand symmetry (1 operation)",

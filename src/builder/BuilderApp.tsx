@@ -42,7 +42,7 @@ import { STRUCTURE_EXPORT_FORMATS, exportSnapshot } from "../export/structureExp
 import type { StructureWriteFormat } from "../parsers/parseCore";
 import { useThemeStore, type Theme } from "../stores/useThemeStore";
 import type { HoverInfo } from "../types";
-import { useBuilderStore, canEdit, shownSnapshot, viewSnapshot } from "./store";
+import { useBuilderStore, canEdit, editSteps, shownSnapshot, viewSnapshot } from "./store";
 import { builderViewportState, BUILDER_SOURCE_ID } from "./view";
 import { useBuilderHandlers } from "./useBuilderHandlers";
 import { useBuilderShortcuts, TOOL_KEYS } from "./shortcuts";
@@ -58,6 +58,8 @@ import { ToolServerDialog, toolsMenuItems, useToolServerLaunch } from "./tools/T
 import { ToolDialog } from "./tools/ToolDialog";
 import { useToolsStore } from "./tools/store";
 import { LibraryHost } from "./library/LibraryPanel";
+import { AtomMenu, type AtomMenuTarget } from "./AtomMenu";
+import { runCleanup } from "./cleanup";
 import { useLibraryActions, useLibraryUi } from "./library/ui";
 import { buttonStyle, hintStyle } from "./styles";
 import { trackEvent, trackFileOpen } from "../analytics";
@@ -97,6 +99,8 @@ export function BuilderApp() {
   const reportError = useBuilderStore((s) => s.reportError);
   const pushOp = useBuilderStore((s) => s.pushOp);
   const preview = useBuilderStore((s) => s.preview);
+  const boxSelect = useBuilderStore((s) => s.boxSelect);
+  const setSelected = useBuilderStore((s) => s.setSelected);
   const toolsStatus = useToolsStore((s) => s.status);
   const toolsConnection = useToolsStore((s) => s.connection);
   const openTool = useToolsStore((s) => s.openTool);
@@ -128,6 +132,8 @@ export function BuilderApp() {
   const [newDialog, setNewDialog] = useState<NewStructureKind | null>(null);
   const [crystalDialog, setCrystalDialog] = useState<CrystalDialogKind | null>(null);
   const [toolServerOpen, setToolServerOpen] = useState(false);
+  const [atomMenu, setAtomMenu] = useState<AtomMenuTarget | null>(null);
+  const closeAtomMenu = useCallback(() => setAtomMenu(null), []);
   const closeCrystalDialog = useCallback(() => setCrystalDialog(null), []);
   const closeToolServer = useCallback(() => setToolServerOpen(false), []);
   // A new document ends whatever a Structure dialog was about to do to the old one.
@@ -152,7 +158,9 @@ export function BuilderApp() {
   const handleRendererReady = useCallback(
     (renderer: MoleculeRenderer) => {
       rendererRef.current = renderer;
-      renderer.setViewInsets(0, SIDEBAR_WIDTH + OVERLAY_INSET);
+      // The sidebar sits beside the view, not over it, so the frustum needs
+      // no inset: the structure is centred in the view it is drawn in.
+      renderer.setViewInsets(0, 0);
       applyState(renderer, viewportState);
     },
     // Only the first state matters here; later ones arrive through the effect.
@@ -222,9 +230,11 @@ export function BuilderApp() {
       hasCell: hasCellBox(shown?.box),
       nAtoms: shown?.nAtoms ?? 0,
       symmetryOps: symmetryOpsAvailable(source, edits),
+      nSelected: selected.length,
     },
     setCrystalDialog,
     pushOp,
+    () => void runCleanup(api),
   );
   const toolsItems = toolsMenuItems(
     { status: toolsStatus, connection: toolsConnection, openForm },
@@ -248,6 +258,19 @@ export function BuilderApp() {
   const cycleTheme = useCallback(() => {
     setTheme(THEME_ORDER[(THEME_ORDER.indexOf(theme) + 1) % THEME_ORDER.length]);
   }, [theme, setTheme]);
+
+  // A Structure dialog's preview can grow or shrink the structure (a
+  // supercell, a slab, a new cell): fit the view to what is drawn whenever
+  // the preview starts, changes or ends (Apply, Cancel), keeping the angle.
+  // Parent effects run after the Viewport's, so the snapshot is loaded.
+  const previewSeen = useRef(preview);
+  useEffect(() => {
+    if (previewSeen.current === preview) return;
+    previewSeen.current = preview;
+    rendererRef.current?.resetView();
+  }, [preview]);
+  const lastContextMenuAt = useRef<{ x: number; y: number } | null>(null);
+  const steps = useMemo(() => editSteps(edits).length, [edits]);
 
   const highlighted = useMemo(() => {
     const set = new Set(selected);
@@ -289,7 +312,7 @@ export function BuilderApp() {
         </span>
         <span style={{ ...hintStyle, marginRight: 8 }} data-testid="builder-file-name">
           {fileName ?? "No structure"}
-          {edits.length > 0 && ` · ${edits.length} edit${edits.length === 1 ? "" : "s"}`}
+          {steps > 0 && ` · ${steps} edit${steps === 1 ? "" : "s"}`}
         </span>
         <button
           type="button"
@@ -430,6 +453,9 @@ export function BuilderApp() {
             if (e.currentTarget === e.target) setDropActive(false);
           }}
           onDrop={handleDrop}
+          onContextMenuCapture={(e) => {
+            lastContextMenuAt.current = { x: e.clientX, y: e.clientY };
+          }}
           data-testid="builder-dropzone"
         >
           <Viewport
@@ -443,6 +469,14 @@ export function BuilderApp() {
             buildActive={true}
             buildHandlers={handlers}
             preserveCameraKey={revision}
+            boxSelectActive={!!source && tool === "select" && boxSelect}
+            onBoxSelect={setSelected}
+            onAtomRightClick={(atom) => {
+              // A preview's atoms are not the document's; nothing to act on.
+              if (api.getState().preview) return;
+              const at = lastContextMenuAt.current ?? { x: 0, y: 0 };
+              setAtomMenu({ atom, x: at.x, y: at.y });
+            }}
           />
           {source && !crystalDialog && <ContextBar />}
           {crystalDialog && (
@@ -563,7 +597,7 @@ export function BuilderApp() {
               Drop a structure file to open it
             </div>
           )}
-          <Tooltip info={hoverInfo} />
+          <Tooltip info={atomMenu ? null : hoverInfo} />
         </div>
         <div
           style={{
@@ -645,6 +679,7 @@ export function BuilderApp() {
       </div>
 
       <LibraryHost />
+      {atomMenu && <AtomMenu target={atomMenu} onClose={closeAtomMenu} />}
       {openTool && <ToolDialog key={openTool.name} tool={openTool} />}
       {toolServerOpen && <ToolServerDialog onClose={closeToolServer} />}
       {newDialog && (

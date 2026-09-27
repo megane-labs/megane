@@ -18,14 +18,17 @@ export interface StructureMenuState {
   nAtoms: number;
   /** Symmetry operations still to expand (`symmetryOpsAvailable`). */
   symmetryOps: number;
+  /** Atoms selected; Clean up then works on their molecules only. */
+  nSelected?: number;
 }
 
 export function structureMenuItems(
   state: StructureMenuState,
   open: (kind: CrystalDialogKind) => void,
   apply: (op: EditOp) => void,
+  cleanUp: () => void = () => {},
 ): MenuItem[] {
-  const { editable, hasCell, nAtoms, symmetryOps } = state;
+  const { editable, hasCell, nAtoms, symmetryOps, nSelected = 0 } = state;
   const withCell = editable && hasCell;
   return [
     { caption: "Cell" },
@@ -80,6 +83,16 @@ export function structureMenuItems(
           ? "Fill the unit cell with the symmetry-equivalent atoms"
           : "Only for a file that lists symmetry operations, before the cell is changed",
       onSelect: () => apply({ op: "expand_symmetry", id: newFragmentId("symmetry") }),
+    },
+    { separator: true },
+    { caption: "Geometry" },
+    {
+      label: nSelected > 0 ? "Clean up selected molecules" : "Clean up geometry",
+      testId: "builder-structure-cleanup",
+      disabled: !editable || nAtoms === 0,
+      title:
+        "Re-embed each molecule with RDKit (ETKDG + MMFF94s, UFF as a fallback) and put it back in place",
+      onSelect: cleanUp,
     },
   ];
 }

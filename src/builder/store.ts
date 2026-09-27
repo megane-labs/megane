@@ -25,7 +25,7 @@
 import { create, type StateCreator, type StoreApi } from "zustand";
 import { createStore } from "zustand/vanilla";
 import { applyEditOps, type EditResult } from "../pipeline/executors/edit";
-import type { EditOp } from "../pipeline/types";
+import type { EditAtomRef, EditOp } from "../pipeline/types";
 import type { Snapshot } from "../types";
 import { registerTestStores, GLOBAL_BUNDLE_ID } from "../stores/testRegistry";
 import type { BuildHandlers, BuildTool } from "./types";
@@ -110,6 +110,8 @@ export interface BuilderStore {
    * cell) — an adsorbate on a surface site. Null keeps clicks on atoms inert.
    */
   adsorbHeight: number | null;
+  /** With the Select tool, a drag on the view draws a box and selects what it holds. */
+  boxSelect: boolean;
   /** The message on screen, if any; see `BuilderNotice`. */
   notice: BuilderNotice | null;
 
@@ -149,6 +151,7 @@ export interface BuilderStore {
   /** Choose the molecule the Place tool stamps (and switch to that tool), or clear it. */
   setPlaceSource: (molecule: LibraryMolecule | null) => void;
   setAdsorbHeight: (height: number | null) => void;
+  setBoxSelect: (on: boolean) => void;
   /** Show a message (replacing the current one), or clear it with null. */
   setNotice: (notice: BuilderNotice | null) => void;
   /** Shorthand for an error notice. */
@@ -162,6 +165,16 @@ export interface BuilderStore {
    * document is not editable.
    */
   addFragment: (molecule: LibraryMolecule, at: [number, number, number]) => string | null;
+  /**
+   * Move rendered atoms by their own displacements (a set distance, a
+   * rotation, a cleaned-up geometry) as one Undo step: one `move_atoms` op per
+   * distinct displacement. Returns whether anything was written.
+   */
+  moveAtoms: (displacements: Map<number, [number, number, number]>) => boolean;
+  /** Select every rendered atom. */
+  selectAll: () => void;
+  /** Select the atoms that are not selected, and deselect the rest. */
+  invertSelection: () => void;
 }
 
 /** The structure the 3D view draws for `state`: edited, or the source under the preview. */
@@ -196,6 +209,20 @@ export function canEdit(
  */
 const continuations = new WeakSet<EditOp>();
 
+/**
+ * The history as the user made it: one group per Undo step (an op plus the
+ * ops pushed with it — an atom and its hydrogens, the moves of a cleaned-up
+ * molecule), in order.
+ */
+export function editSteps(edits: EditOp[]): EditOp[][] {
+  const steps: EditOp[][] = [];
+  for (const op of edits) {
+    if (continuations.has(op) && steps.length > 0) steps[steps.length - 1].push(op);
+    else steps.push([op]);
+  }
+  return steps;
+}
+
 function compute(source: Snapshot | null, edits: EditOp[]): EditResult | null {
   return source ? applyEditOps(source, edits) : null;
 }
@@ -219,6 +246,7 @@ export const builderStateCreator: StateCreator<BuilderStore> = (set, get) => ({
   handlers: null,
   placeSource: null,
   adsorbHeight: null,
+  boxSelect: false,
   notice: null,
 
   openStructure: (snapshot, labels, fileName) =>
@@ -378,6 +406,7 @@ export const builderStateCreator: StateCreator<BuilderStore> = (set, get) => ({
     ),
   setAdsorbHeight: (height) =>
     set({ adsorbHeight: height !== null && Number.isFinite(height) ? height : null }),
+  setBoxSelect: (boxSelect) => set({ boxSelect }),
   setNotice: (notice) => set({ notice }),
   reportError: (text) => set({ notice: { level: "error", text } }),
   reportInfo: (text) => set({ notice: { level: "info", text } }),
@@ -392,6 +421,40 @@ export const builderStateCreator: StateCreator<BuilderStore> = (set, get) => ({
     set({ selected: added, pendingBondAtom: null });
     return id;
   },
+  moveAtoms: (displacements) => {
+    const s = get();
+    if (!canEdit(s)) return false;
+    const n = s.result!.snapshot.nAtoms;
+    const groups = new Map<string, { delta: [number, number, number]; atoms: EditAtomRef[] }>();
+    for (const [i, delta] of displacements) {
+      if (i < 0 || i >= n || delta.every((v) => Math.abs(v) < 1e-9)) continue;
+      const ref = s.result!.refAt(i);
+      if (ref === null) continue;
+      const key = delta.map((v) => v.toFixed(9)).join(",");
+      const group = groups.get(key) ?? { delta, atoms: [] };
+      group.atoms.push(ref);
+      groups.set(key, group);
+    }
+    if (groups.size === 0) return false;
+    s.pushOps(
+      [...groups.values()].map((g) => ({ op: "move_atoms", atoms: g.atoms, delta: g.delta })),
+    );
+    return true;
+  },
+  selectAll: () =>
+    set((s) => {
+      const n = viewSnapshot(s)?.nAtoms ?? 0;
+      return { selected: Array.from({ length: n }, (_, i) => i), pendingBondAtom: null };
+    }),
+  invertSelection: () =>
+    set((s) => {
+      const n = viewSnapshot(s)?.nAtoms ?? 0;
+      const chosen = new Set(s.selected);
+      return {
+        selected: Array.from({ length: n }, (_, i) => i).filter((i) => !chosen.has(i)),
+        pendingBondAtom: null,
+      };
+    }),
 });
 
 /** The app's store. */
