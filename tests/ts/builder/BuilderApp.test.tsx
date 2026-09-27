@@ -596,3 +596,73 @@ describe("BuilderApp — Open", () => {
     expect(click).toHaveBeenCalledTimes(2);
   });
 });
+
+describe("BuilderApp — Structure and Tools menus", () => {
+  const cu = () =>
+    useBuilderStore.getState().newBulk({ structure: "fcc", elements: [29], a: 4, cubic: true });
+  const menu = (trigger: string, item: string) => {
+    fireEvent.click(screen.getByTestId(trigger));
+    fireEvent.click(screen.getByTestId(item));
+  };
+  const viewAtoms = () => (viewportProps.current?.snapshot as Snapshot | null)?.nAtoms;
+
+  it("a Structure dialog previews its op in the view, hides the context bar, and Apply commits", async () => {
+    cu();
+    render(<BuilderApp />);
+    tool("add");
+    expect(screen.getByTestId("builder-context-bar")).toBeTruthy();
+    menu("builder-structure", "builder-structure-supercell");
+    expect(screen.getByTestId("builder-crystal-dialog").getAttribute("data-kind")).toBe(
+      "supercell",
+    );
+    expect(screen.queryByTestId("builder-context-bar")).toBeNull();
+    await waitFor(() => expect(viewAtoms()).toBe(32));
+    // The document is untouched while the view shows the preview.
+    expect(shownAtoms()).toBe(4);
+    expect(screen.getByTestId("builder-status-atoms").textContent).toBe("32 atoms · 0 bonds");
+    expect(screen.getByTestId("builder-status-preview")).toBeTruthy();
+    fireEvent.click(screen.getByTestId("builder-supercell-apply"));
+    expect(shownAtoms()).toBe(32);
+    expect(edits()[0]).toMatchObject({ op: "supercell" });
+    expect(screen.queryByTestId("builder-crystal-dialog")).toBeNull();
+    expect(screen.queryByTestId("builder-status-preview")).toBeNull();
+    expect(screen.getByTestId("builder-context-bar")).toBeTruthy();
+  });
+
+  it("Wrap and Remove cell run straight from the menu; the cell card opens the Cell dialog", () => {
+    cu();
+    render(<BuilderApp />);
+    menu("builder-structure", "builder-cell-wrap");
+    expect(edits()).toEqual([{ op: "wrap" }]);
+    fireEvent.click(screen.getByTestId("builder-cell-edit"));
+    expect(screen.getByTestId("builder-crystal-dialog").getAttribute("data-kind")).toBe("cell");
+    fireEvent.keyDown(window, { key: "Escape" });
+    expect(screen.queryByTestId("builder-crystal-dialog")).toBeNull();
+    menu("builder-structure", "builder-cell-remove");
+    expect(edits()[1]).toEqual({ op: "set_cell", box: null });
+    expect(screen.getByTestId("builder-crystal-cell-summary").textContent).toBe("No cell");
+  });
+
+  it("a new document closes an open Structure dialog and drops its preview", async () => {
+    cu();
+    render(<BuilderApp />);
+    menu("builder-structure", "builder-structure-supercell");
+    await waitFor(() => expect(useBuilderStore.getState().preview).not.toBeNull());
+    act(() => useBuilderStore.getState().newCell(10));
+    expect(screen.queryByTestId("builder-crystal-dialog")).toBeNull();
+    expect(useBuilderStore.getState().preview).toBeNull();
+  });
+
+  it("the Structure menu waits for a document", () => {
+    render(<BuilderApp />);
+    expect((screen.getByTestId("builder-structure") as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it("Tools › Tool server… opens the connection dialog", () => {
+    render(<BuilderApp />);
+    menu("builder-tools", "builder-tools-server");
+    expect(screen.getByTestId("builder-tools-dialog")).toBeTruthy();
+    fireEvent.click(screen.getByTestId("builder-tools-dialog-close"));
+    expect(screen.queryByTestId("builder-tools-dialog")).toBeNull();
+  });
+});

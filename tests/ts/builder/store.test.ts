@@ -4,6 +4,7 @@ import {
   createBuilderStore,
   emptyCellSnapshot,
   shownSnapshot,
+  viewSnapshot,
   canEdit,
   UNTITLED,
 } from "@/builder/store";
@@ -43,6 +44,7 @@ describe("useBuilderStore — document", () => {
       bondOrder: 1,
       selected: [],
       pendingBondAtom: null,
+      preview: null,
     });
   });
 
@@ -148,6 +150,81 @@ describe("useBuilderStore — document", () => {
     s().pushOp({ op: "delete_atoms", atoms: [99] });
     expect(s().result!.warnings[0]).toContain("unknown atom 99");
     expect(shownSnapshot(s())!.nAtoms).toBe(3);
+  });
+});
+
+describe("useBuilderStore — preview", () => {
+  const cell = new Float32Array([10, 0, 0, 0, 10, 0, 0, 0, 10]);
+  const supercell = { op: "supercell" as const, id: "p", matrix: [2, 0, 0, 0, 1, 0, 0, 0, 1] };
+
+  beforeEach(() => {
+    useBuilderStore.setState(useBuilderStore.getInitialState(), true);
+    s().openStructure({ ...water(), box: cell }, null, "w.xyz");
+  });
+
+  it("shows an op applied without committing it, and pauses editing", () => {
+    const rev = s().revision;
+    s().setSelected([1]);
+    s().setPreview(supercell);
+    expect(s().preview!.snapshot.nAtoms).toBe(6);
+    expect(viewSnapshot(s())!.nAtoms).toBe(6);
+    // The document is untouched; the view keeps its camera; the selection goes.
+    expect(shownSnapshot(s())!.nAtoms).toBe(3);
+    expect(s().edits).toEqual([]);
+    expect(s().revision).toBe(rev + 1);
+    expect(s().selected).toEqual([]);
+    expect(canEdit(s())).toBe(false);
+    s().setPreview(null);
+    expect(s().preview).toBeNull();
+    expect(viewSnapshot(s())!.nAtoms).toBe(3);
+    expect(canEdit(s())).toBe(true);
+    // Clearing an absent preview changes nothing.
+    const again = s().revision;
+    s().setPreview(null);
+    expect(s().revision).toBe(again);
+  });
+
+  it("any change to the document drops the preview", () => {
+    const drops: [string, () => void][] = [
+      ["pushOp", () => s().pushOp({ op: "wrap" })],
+      ["pushOps", () => s().pushOps([{ op: "wrap" }])],
+      ["undo", () => s().undo()],
+      ["redo", () => s().redo()],
+      ["replaceLastOp", () => s().replaceLastOp({ op: "wrap" })],
+      ["clearOps", () => s().clearOps()],
+      ["setShowOriginal", () => s().setShowOriginal(true)],
+      ["openStructure", () => s().openStructure(water(), null, "x.xyz")],
+    ];
+    for (const [name, change] of drops) {
+      useBuilderStore.setState(useBuilderStore.getInitialState(), true);
+      s().openStructure({ ...water(), box: cell }, null, "w.xyz");
+      s().pushOp({ op: "wrap" });
+      s().undo(); // one op on each stack, so undo, redo and clear all act
+      s().pushOp({ op: "wrap" });
+      s().pushOp({ op: "wrap" });
+      s().undo();
+      s().setPreview(supercell);
+      expect(s().preview, name).not.toBeNull();
+      change();
+      expect(s().preview, name).toBeNull();
+    }
+  });
+
+  it("shows nothing without a document, while the original is shown, or for an op that throws", () => {
+    s().setShowOriginal(true);
+    s().setPreview(supercell);
+    expect(s().preview).toBeNull();
+    s().setShowOriginal(false);
+    // A preview left over while the original is shown is not what the view draws.
+    s().setPreview(supercell);
+    useBuilderStore.setState({ showOriginal: true });
+    expect(viewSnapshot(s())!.nAtoms).toBe(3);
+    useBuilderStore.setState(useBuilderStore.getInitialState(), true);
+    s().setPreview(supercell);
+    expect(s().preview).toBeNull();
+    s().openStructure({ ...water(), box: cell }, null, "w.xyz");
+    s().setPreview({ op: "slab" } as never);
+    expect(s().preview).toBeNull();
   });
 });
 

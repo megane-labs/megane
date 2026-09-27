@@ -1,17 +1,35 @@
 /**
- * A small dropdown for the top bar: a trigger button and a list of items.
- * Closes on an item, a click outside, or Escape.
+ * A small dropdown for the top bar: a trigger button and a list of items,
+ * optionally split by separators and headed by captions. Closes on an item,
+ * a click outside, or Escape.
  */
 
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { buttonStyle, type ButtonVariant } from "./styles";
 
-export interface MenuItem {
+export interface MenuAction {
   label: ReactNode;
   onSelect: () => void;
   disabled?: boolean;
   testId?: string;
   title?: string;
+}
+
+/** A thin rule between groups of items. */
+export interface MenuSeparator {
+  separator: true;
+}
+
+/** A small uppercase heading over the items that follow it. */
+export interface MenuCaption {
+  caption: ReactNode;
+  testId?: string;
+}
+
+export type MenuItem = MenuAction | MenuSeparator | MenuCaption;
+
+function isAction(item: MenuItem): item is MenuAction {
+  return "onSelect" in item;
 }
 
 export interface MenuProps {
@@ -43,7 +61,7 @@ export function Menu({ label, items, disabled = false, variant, testId, title }:
     };
   }, [open]);
 
-  const select = useCallback((item: MenuItem) => {
+  const select = useCallback((item: MenuAction) => {
     if (item.disabled) return;
     setOpen(false);
     item.onSelect();
@@ -82,31 +100,65 @@ export function Menu({ label, items, disabled = false, variant, testId, title }:
             boxShadow: "0 8px 24px var(--megane-shadow, rgba(0,0,0,0.12))",
           }}
         >
-          {items.map((item, i) => (
-            <button
-              key={i}
-              type="button"
-              role="menuitem"
-              data-testid={item.testId}
-              disabled={item.disabled}
-              title={item.title}
-              onClick={() => select(item)}
-              style={{
-                textAlign: "left",
-                fontSize: 12,
-                padding: "6px 10px",
-                border: "none",
-                borderRadius: 6,
-                background: "transparent",
-                color: item.disabled ? "#94a3b8" : "var(--megane-text, #1e293b)",
-                cursor: item.disabled ? "default" : "pointer",
-                fontFamily: "inherit",
-                whiteSpace: "nowrap",
-              }}
-            >
-              {item.label}
-            </button>
-          ))}
+          {items.map((item, i) => {
+            if ("separator" in item) {
+              return (
+                <div
+                  key={i}
+                  role="separator"
+                  style={{
+                    height: 1,
+                    margin: "4px 6px",
+                    background: "var(--megane-border-solid, #e2e8f0)",
+                  }}
+                />
+              );
+            }
+            if (!isAction(item)) {
+              return (
+                <div
+                  key={i}
+                  data-testid={item.testId}
+                  style={{
+                    padding: "6px 10px 2px",
+                    fontSize: 10,
+                    fontWeight: 700,
+                    letterSpacing: 0.4,
+                    textTransform: "uppercase",
+                    color: "var(--megane-text-secondary, #64748b)",
+                    whiteSpace: "nowrap",
+                  }}
+                >
+                  {item.caption}
+                </div>
+              );
+            }
+            return (
+              <button
+                key={i}
+                type="button"
+                role="menuitem"
+                data-testid={item.testId}
+                disabled={item.disabled}
+                title={item.title}
+                onClick={() => select(item)}
+                style={{
+                  textAlign: "left",
+                  fontSize: 12,
+                  padding: "6px 10px",
+                  border: "none",
+                  borderRadius: 6,
+                  background: "transparent",
+                  color: item.disabled ? "#94a3b8" : "var(--megane-text, #1e293b)",
+                  cursor: item.disabled ? "default" : "pointer",
+                  fontFamily: "inherit",
+                  whiteSpace: "nowrap",
+                }}
+              >
+                {item.label}
+              </button>
+            );
+          })}
         </div>
       )}
     </div>

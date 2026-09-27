@@ -21,19 +21,21 @@ nothing has to be re-encoded when they meet.
 ## The window
 
 The top bar owns the **document**: *Open…*, *New* (an empty cell or a bulk
-crystal), *Undo* / *Redo*, *Save*, and the theme. The **tool rail** down the
+crystal), *Undo* / *Redo*, *Save*, and the theme. Its **Structure** menu holds
+the operations on the cell and the crystal (see [Crystal](#crystal)) and its
+**Tools** menu the Python tools (see [Python tools](#python-tools)). The **tool rail** down the
 left of the 3D view picks the tool — one icon per tool, each marked with its
 key — and the **context bar** floating over the top of the view holds the
-settings of that tool and nothing else. The sidebar on the right owns the
-**structure**: the current selection, the molecule library, the crystal tools,
-and the history. The bar along the bottom says what is on
+settings of that tool and nothing else. The sidebar on the right shows the
+**structure**: the current selection, the cell, the molecule library, and the
+history. The bar along the bottom says what is on
 screen (atoms, bonds, cell, selection) and what the current tool does, and any
 message — a file that would not parse, a molecule added to the library —
 appears on one line just above it until you dismiss it.
 
-The sidebar's *Library*, *Crystal* and *History* sections fold away; each one
+The sidebar's *Library* and *History* sections fold away; each one
 remembers whether you left it open. Their headers keep the summary visible
-while they are closed (the number of molecules, the cell, the number of edits).
+while they are closed (the number of molecules, the number of edits).
 
 ## Getting started
 
@@ -179,14 +181,14 @@ atoms stay inert.
 
 ## Crystal
 
-The **Crystal** section edits the solid the document holds. Its three tabs,
-plus the symmetry offer that appears for CIF files, cover the ASE-style
+The top bar's **Structure** menu edits the solid the document holds. Its
+items, plus the symmetry offer that appears for CIF files, cover the ASE-style
 workflow of bulk → supercell → slab → adsorbate without leaving the browser;
 the geometry is computed in TypeScript and pinned to what ASE produces by the
 tests (`tests/fixtures/crystal/ase-oracle.json`).
 
 - **Bulk crystal** is a *new document*, so it lives in the top bar's *New*
-  dialog rather than in this section: a prototype structure — simple cubic,
+  dialog rather than in this menu: a prototype structure — simple cubic,
   fcc, bcc, hcp, diamond, zincblende, rocksalt, CsCl, fluorite, wurtzite or
   perovskite, with the element(s), the lattice constant `a`, `c/a` for the
   hexagonal ones, and *conventional cell* for the cubic ones (the primitive
@@ -194,34 +196,43 @@ tests (`tests/fixtures/crystal/ase-oracle.json`).
   the fields with reference lattice constants (Cu, Al, Fe, Mg, Si, NaCl, GaAs,
   SrTiO₃, …). The document is named after the crystal (`Cu-fcc`) and, like
   an empty cell, replaces whatever is open.
-- **Cell** edits the cell as `a b c α β γ`. With *move atoms with the cell*
-  on, the atoms keep their fractional coordinates (ASE's `scale_atoms`);
-  off, they stay where they are. **Wrap atoms** folds every atom back into
-  the cell; **Center + vacuum** centres the atoms along the chosen axes and
-  resizes those cell vectors to leave the given vacuum on each side
-  (`Atoms.center`). **Remove cell** drops the cell.
-- **Supercell** repeats the cell `na × nb × nc` — or, with **Matrix**, by any
+- **Set cell… / Edit cell…** edits the cell as `a b c α β γ` (the sidebar's
+  *Cell* card, which always shows the current cell, opens the same dialog).
+  With *move atoms with the cell* on, the atoms keep their fractional
+  coordinates (ASE's `scale_atoms`); off, they stay where they are.
+  **Wrap atoms into cell** folds every atom back into the cell; **Center with
+  vacuum…** centres the atoms along the chosen axes and resizes those cell
+  vectors to leave the given vacuum on each side (`Atoms.center`). **Remove
+  cell** drops the cell.
+- **Supercell…** repeats the cell `na × nb × nc` — or, with **Matrix**, by any
   integer 3×3 transformation whose rows are the new lattice vectors in units
   of the old ones (`make_supercell`; `[1 1 0 / −1 1 0 / 0 0 1]` is the √2×√2
   R45° cell, `[−1 1 1 / 1 −1 1 / 1 1 −1]` turns a primitive fcc cell into the
-  conventional one). The line beside the button says how many atoms the
-  result will have. Bonds are carried along: a bond that crossed the cell
+  conventional one). The dialog says how many atoms the result will have. Bonds are carried along: a bond that crossed the cell
   face now reaches the neighbouring image, as the viewer's Replicate node
   draws it.
-- **Slab** cuts the (h k l) surface out of the current cell
+- **Cut slab…** cuts the (h k l) surface out of the current cell
   (`ase.build.surface`): the surface unit cell is repeated *layers* times
   along the normal, rotated so the first surface vector lies along x and
   the normal along z, and centred in *vacuum* Å of empty space on each side
   (0 keeps the slab periodic). The **termination** slider slides the cut
-  along the normal so a different plane ends up on top. The line beside the
-  button previews the atom count and thickness before you commit. Bonds that
+  along the normal so a different plane ends up on top. The dialog states the
+  atom count and thickness before you commit. Bonds that
   would have crossed into the vacuum are dropped; in-plane periodic ones are
   kept.
-- **Expand symmetry** appears when the opened file (a CIF) lists space-group
-  operations for its asymmetric unit, and fills the unit cell with the
-  symmetry-equivalent atoms the way the viewer's Symmetry node does. Do it
-  before cutting a supercell or slab; the offer goes away once the cell has
-  been changed, because the operations no longer apply.
+- **Expand symmetry** is offered (in the menu and on the sidebar's *Cell*
+  card) when the opened file (a CIF) lists space-group operations for its
+  asymmetric unit, and fills the unit cell with the symmetry-equivalent atoms
+  the way the viewer's Symmetry node does. Do it before cutting a supercell or
+  slab; the offer goes away once the cell has been changed, because the
+  operations no longer apply.
+
+The items that take parameters open a dialog in the corner of the 3D view.
+While its fields describe a valid operation, **the view previews the result**
+(the status bar says *Preview*) and clicks in the view are paused; **Apply**
+writes the operation, **Cancel** or Esc leaves the structure as it was. A
+result of more than 200 000 atoms is not previewed — the dialog says so — but
+Apply still builds it.
 
 Each action is one operation in the history (`Supercell 2×2×1`,
 `Slab (1 1 1), 4 layers, 10 Å vacuum`, `Expand symmetry`, …), so Undo takes
@@ -232,8 +243,8 @@ structure.
 ## Python tools
 
 Structure generators written in Python — packmol liquid boxes, RadonPy
-polymer chains, solvation — appear as buttons in the **Python tools**
-section. They run in a separate *tool server*, an
+polymer chains, solvation — appear in the top bar's **Tools** menu. They run
+in a separate *tool server*, an
 [MCP](https://modelcontextprotocol.io/) server that follows the
 [Builder Tool Contract](../dev/builder-tools.md). Start the reference server
 with HTTP on your machine, allowing the page you opened Builder from:
@@ -243,9 +254,10 @@ uvx megane-builder-tools --transport http --port 8765 \
     --allow-origin http://localhost:8080
 ```
 
-It prints a bearer token. Paste the server URL (`http://127.0.0.1:8765/mcp`)
-and the token into the section and press **Connect**; the tools appear grouped
-by category. A button opens the tool's form: molecules are picked from the
+It prints a bearer token. Choose **Tools › Tool server…**, paste the server
+URL (`http://127.0.0.1:8765/mcp`) and the token, and press **Connect**; the
+tools appear in the Tools menu, grouped by category. Choosing one opens the
+tool's form: molecules are picked from the
 library, atoms (such as a monomer's head and tail) from a list of the chosen
 molecule's atoms, and the seed is filled in for you. **Run** shows the
 server's progress and can be cancelled.

@@ -11,6 +11,12 @@
  * uses (`pipeline/executors/edit.ts`), which is what will let a Builder
  * document travel into the viewer later.
  *
+ * A dialog that is about to write an op (a supercell, a slab, a new cell) can
+ * show it first: `setPreview(op)` applies it to the edited structure without
+ * committing it, the view draws `preview` instead (`viewSnapshot`), and clicks
+ * in the view are paused until the op is applied (`pushOp`) or dropped
+ * (`setPreview(null)`).
+ *
  * Atom indices in `selected` / `pendingBondAtom` and in the Viewport's
  * callbacks address the *rendered* structure; `result.refAt` translates
  * them to op refs before an op is written.
@@ -73,6 +79,11 @@ export interface BuilderStore {
   /** `applyEditOps(source, edits)`, recomputed whenever either changes. */
   result: EditResult | null;
   /**
+   * An op a dialog is about to write, applied to `result` but not committed:
+   * what the view draws while it is set. Any change to the document drops it.
+   */
+  preview: EditResult | null;
+  /**
    * Bumped by every change that reshapes the rendered structure without
    * replacing the document (an op, undo, redo, the preview toggle): the view
    * keeps its camera across such changes and re-fits only for a new document.
@@ -120,6 +131,11 @@ export interface BuilderStore {
   redo: () => EditOp | null;
   clearOps: () => void;
   setShowOriginal: (on: boolean) => void;
+  /**
+   * Show `op` applied to the edited structure without committing it, or stop
+   * showing it with null. An op that cannot be applied shows nothing.
+   */
+  setPreview: (op: EditOp | null) => void;
 
   // ── Tool actions ──
   setTool: (tool: BuildTool) => void;
@@ -154,9 +170,22 @@ export function shownSnapshot(state: Pick<BuilderStore, "source" | "result" | "s
   return state.showOriginal ? state.source : (state.result?.snapshot ?? state.source);
 }
 
-/** Whether clicks may write ops: a document is open and the edited structure is what is shown. */
-export function canEdit(state: Pick<BuilderStore, "source" | "result" | "showOriginal">) {
-  return !!state.source && !!state.result && !state.showOriginal;
+/** What the 3D view draws: the preview of a pending op if there is one, else `shownSnapshot`. */
+export function viewSnapshot(
+  state: Pick<BuilderStore, "source" | "result" | "showOriginal" | "preview">,
+) {
+  return state.preview && !state.showOriginal ? state.preview.snapshot : shownSnapshot(state);
+}
+
+/**
+ * Whether clicks may write ops: a document is open, the edited structure is
+ * what is shown, and no dialog is previewing an op over it.
+ */
+export function canEdit(
+  state: Pick<BuilderStore, "source" | "result" | "showOriginal"> &
+    Partial<Pick<BuilderStore, "preview">>,
+) {
+  return !!state.source && !!state.result && !state.showOriginal && !state.preview;
 }
 
 /**
@@ -179,6 +208,7 @@ export const builderStateCreator: StateCreator<BuilderStore> = (set, get) => ({
   redoStack: [],
   showOriginal: false,
   result: null,
+  preview: null,
   revision: 0,
 
   tool: "select",
@@ -200,6 +230,7 @@ export const builderStateCreator: StateCreator<BuilderStore> = (set, get) => ({
       redoStack: [],
       showOriginal: false,
       result: compute(snapshot, []),
+      preview: null,
       selected: [],
       pendingBondAtom: null,
       notice: null,
@@ -215,6 +246,7 @@ export const builderStateCreator: StateCreator<BuilderStore> = (set, get) => ({
         edits,
         redoStack: [],
         result: compute(s.source, edits),
+        preview: null,
         revision: s.revision + 1,
       };
     }),
@@ -228,6 +260,7 @@ export const builderStateCreator: StateCreator<BuilderStore> = (set, get) => ({
         edits,
         redoStack: [],
         result: compute(s.source, edits),
+        preview: null,
         revision: s.revision + 1,
       };
     });
@@ -237,7 +270,7 @@ export const builderStateCreator: StateCreator<BuilderStore> = (set, get) => ({
     set((s) => {
       if (s.edits.length === 0) return {};
       const edits = [...s.edits.slice(0, -1), op];
-      return { edits, result: compute(s.source, edits), revision: s.revision + 1 };
+      return { edits, result: compute(s.source, edits), preview: null, revision: s.revision + 1 };
     }),
 
   undo: () => {
@@ -254,6 +287,7 @@ export const builderStateCreator: StateCreator<BuilderStore> = (set, get) => ({
       edits,
       redoStack,
       result: compute(s.source, edits),
+      preview: null,
       revision: s.revision + 1,
       selected: [],
       pendingBondAtom: null,
@@ -274,6 +308,7 @@ export const builderStateCreator: StateCreator<BuilderStore> = (set, get) => ({
       edits,
       redoStack,
       result: compute(s.source, edits),
+      preview: null,
       revision: s.revision + 1,
     });
     return op;
@@ -287,6 +322,7 @@ export const builderStateCreator: StateCreator<BuilderStore> = (set, get) => ({
             edits: [],
             redoStack: [],
             result: compute(s.source, []),
+            preview: null,
             revision: s.revision + 1,
             selected: [],
             pendingBondAtom: null,
@@ -297,8 +333,29 @@ export const builderStateCreator: StateCreator<BuilderStore> = (set, get) => ({
     set((s) =>
       s.showOriginal === on
         ? {}
-        : { showOriginal: on, revision: s.revision + 1, selected: [], pendingBondAtom: null },
+        : {
+            showOriginal: on,
+            preview: null,
+            revision: s.revision + 1,
+            selected: [],
+            pendingBondAtom: null,
+          },
     ),
+
+  setPreview: (op) =>
+    set((s) => {
+      if (!op || !s.result || s.showOriginal) {
+        return s.preview ? { preview: null, revision: s.revision + 1 } : {};
+      }
+      let preview: EditResult | null;
+      try {
+        preview = applyEditOps(s.result.snapshot, [op]);
+      } catch {
+        preview = null;
+      }
+      // The selection addresses the edited structure, not the preview.
+      return { preview, revision: s.revision + 1, selected: [], pendingBondAtom: null };
+    }),
 
   setTool: (tool) => set({ tool, pendingBondAtom: null }),
   setElement: (element) => set({ element }),

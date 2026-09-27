@@ -398,12 +398,27 @@ test.describe("builder: webapp", () => {
     );
     await expect(page.locator('[data-testid="builder-statusbar"]')).toContainText("Cell");
 
-    // Supercell 2×2×1: the preview announces the count before the op is written.
-    await page.locator('[data-testid="builder-crystal-tab-supercell"]').click();
+    // Supercell 2×2×1 from the Structure menu: the dialog announces the count
+    // and the view previews the result before the op is written.
+    await page.locator('[data-testid="builder-structure"]').click();
+    await page.locator('[data-testid="builder-structure-supercell"]').click();
     await page.locator('[data-testid="builder-supercell-nc"]').fill("1");
     await expect(page.locator('[data-testid="builder-supercell-preview"]')).toHaveText(
       "4 images → 16 atoms",
     );
+    await expect(page.locator('[data-testid="builder-status-atoms"]')).toHaveText(
+      "16 atoms · 0 bonds",
+    );
+    await expect(root).toHaveAttribute("data-edit-count", "0");
+    await expect(root).toHaveAttribute("data-atom-count", "4");
+    // Cancel leaves the document as it was.
+    await page.locator('[data-testid="builder-crystal-cancel"]').click();
+    await expect(page.locator('[data-testid="builder-status-atoms"]')).toHaveText(
+      "4 atoms · 0 bonds",
+    );
+    await page.locator('[data-testid="builder-structure"]').click();
+    await page.locator('[data-testid="builder-structure-supercell"]').click();
+    await page.locator('[data-testid="builder-supercell-nc"]').fill("1");
     await page.locator('[data-testid="builder-supercell-apply"]').click();
     await expect(root).toHaveAttribute("data-atom-count", "16");
     await expect(page.locator('[data-testid="builder-op-list"]')).toContainText("Supercell 2×2×1");
@@ -414,7 +429,8 @@ test.describe("builder: webapp", () => {
     // Undo the supercell, cut a (111) slab from the unit cell instead.
     await page.locator('[data-testid="builder-topbar-undo"]').click();
     await expect(root).toHaveAttribute("data-atom-count", "4");
-    await page.locator('[data-testid="builder-crystal-tab-slab"]').click();
+    await page.locator('[data-testid="builder-structure"]').click();
+    await page.locator('[data-testid="builder-structure-slab"]').click();
     await page.locator('[data-testid="builder-slab-layers"]').fill("3");
     await page.locator('[data-testid="builder-slab-vacuum"]').fill("10");
     await expect(page.locator('[data-testid="builder-slab-preview"]')).toContainText("12 atoms");
@@ -471,8 +487,9 @@ test.describe("builder: webapp", () => {
     // (Water was placed with its centroid at the site + 2 Å, so the atoms are ~2 Å above.)
     expect(placed.translate[2]).toBeCloseTo(site[2] + 2, 3);
 
-    // Cell tab: the fields show the slab cell and setting a cell records the op.
-    await page.locator('[data-testid="builder-crystal-tab-cell"]').click();
+    // Cell dialog (from the sidebar's cell card): the fields show the slab cell
+    // and setting a cell records the op.
+    await page.locator('[data-testid="builder-cell-edit"]').click();
     await expect(page.locator('[data-testid="builder-cell-c"]')).toHaveValue(String(slabBox[8]));
     await page.locator('[data-testid="builder-cell-scale-atoms"]').uncheck();
     await page.locator('[data-testid="builder-cell-c"]').fill("30");
@@ -533,13 +550,13 @@ test.describe("builder: webapp", () => {
     );
 
     // A collapsed section stays collapsed across a reload.
-    await expect(page.locator('[data-testid="builder-crystal"]')).toBeVisible();
-    await page.locator('[data-testid="builder-section-crystal-toggle"]').click();
-    await expect(page.locator('[data-testid="builder-crystal"]')).toHaveCount(0);
+    await expect(page.locator('[data-testid="builder-library"]')).toBeVisible();
+    await page.locator('[data-testid="builder-section-library-toggle"]').click();
+    await expect(page.locator('[data-testid="builder-library"]')).toHaveCount(0);
     await page.reload({ waitUntil: "domcontentloaded" });
     await expect(page.locator('[data-testid="builder-sidebar"]')).toBeVisible();
-    await expect(page.locator('[data-testid="builder-crystal"]')).toHaveCount(0);
-    await page.locator('[data-testid="builder-section-crystal-toggle"]').click();
-    await expect(page.locator('[data-testid="builder-crystal"]')).toBeVisible();
+    await expect(page.locator('[data-testid="builder-library"]')).toHaveCount(0);
+    await page.locator('[data-testid="builder-section-library-toggle"]').click();
+    await expect(page.locator('[data-testid="builder-library"]')).toBeVisible();
   });
 });

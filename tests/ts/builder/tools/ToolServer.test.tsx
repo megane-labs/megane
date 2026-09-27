@@ -1,9 +1,16 @@
+/**
+ * Python tools in the top bar: the Tools menu, the Tool server dialog, the
+ * launch-link / site-server auto-connect, and each tool's form.
+ */
+
+import { useState } from "react";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, fireEvent, cleanup, act, waitFor } from "@testing-library/react";
-import { ToolsSection } from "@/builder/tools/ToolsSection";
+import { ToolServerDialog, toolsMenuItems, useToolServerLaunch } from "@/builder/tools/ToolServer";
+import { ToolDialog } from "@/builder/tools/ToolDialog";
+import { Menu } from "@/builder/Menu";
 import { useToolsStore } from "@/builder/tools/store";
 import { useBuilderStore } from "@/builder/store";
-import { SECTIONS_STORAGE_KEY } from "@/builder/Section";
 import { META_KEY, parseResult, parseTools } from "@/builder/tools/contract";
 import type { CallOptions, CallOutcome, ToolConnection } from "@/builder/tools/client";
 import { CALLS, TOOLS } from "./fixtures";
@@ -40,9 +47,34 @@ function connection(tools = TOOLS): ToolConnection {
 const click = (id: string) => fireEvent.click(screen.getByTestId(id));
 const change = (id: string, value: string) =>
   fireEvent.change(screen.getByTestId(id), { target: { value } });
+/** Open the Tools menu and choose a tool. */
+const pick = (name: string) => {
+  click("builder-tools");
+  click(`builder-tools-button-${name}`);
+};
+
+/** The Tools menu, the server dialog and the tool form, wired as `BuilderApp` wires them. */
+function Tools({ serverOpen = true }: { serverOpen?: boolean }) {
+  useToolServerLaunch();
+  const status = useToolsStore((s) => s.status);
+  const connection = useToolsStore((s) => s.connection);
+  const openForm = useToolsStore((s) => s.openForm);
+  const openTool = useToolsStore((s) => s.openTool);
+  const [server, setServer] = useState(serverOpen);
+  return (
+    <>
+      <Menu
+        testId="builder-tools"
+        label="Tools"
+        items={toolsMenuItems({ status, connection, openForm }, () => setServer(true))}
+      />
+      {server && <ToolServerDialog onClose={() => setServer(false)} />}
+      {openTool && <ToolDialog key={openTool.name} tool={openTool} />}
+    </>
+  );
+}
 
 beforeEach(() => {
-  localStorage.setItem(SECTIONS_STORAGE_KEY, JSON.stringify({ tools: true }));
   mocks.connect.mockReset();
   mocks.connect.mockImplementation(async () => connection());
   mocks.call = async (name) => recorded(name);
@@ -58,31 +90,68 @@ afterEach(() => {
   vi.unstubAllEnvs();
 });
 
+/** Connect through the dialog, then close it: the tools are in the menu. */
 async function connect() {
-  render(<ToolsSection />);
+  render(<Tools />);
   change("builder-tools-token", "tok");
   await act(async () => click("builder-tools-connect"));
-  await screen.findByTestId("builder-tools-list");
+  await screen.findByTestId("builder-tools-connected");
+  click("builder-tools-dialog-close");
 }
 
-describe("ToolsSection", () => {
+describe("Tools menu and Tool server dialog", () => {
+  it("says no server is connected, and opens the server dialog", () => {
+    render(<Tools serverOpen={false} />);
+    click("builder-tools");
+    const status = screen.getByTestId("builder-tools-status") as HTMLButtonElement;
+    expect(status.textContent).toBe("No tool server connected");
+    expect(status.disabled).toBe(true);
+    click("builder-tools-server");
+    expect(screen.getByTestId("builder-tools-dialog")).toBeTruthy();
+    change("builder-tools-url", "http://h:2/mcp");
+    expect(useToolsStore.getState().url).toBe("http://h:2/mcp");
+    // Escape and a click on the backdrop both close it.
+    fireEvent.keyDown(window, { key: "Escape" });
+    expect(screen.queryByTestId("builder-tools-dialog")).toBeNull();
+    click("builder-tools");
+    click("builder-tools-server");
+    fireEvent.click(screen.getByTestId("builder-tools-dialog"));
+    expect(screen.queryByTestId("builder-tools-dialog")).toBeNull();
+  });
+
+  it("says it is connecting while the server answers", async () => {
+    let answer!: (c: ToolConnection) => void;
+    mocks.connect.mockImplementationOnce(() => new Promise((r) => (answer = r)));
+    render(<Tools />);
+    act(() => click("builder-tools-connect"));
+    click("builder-tools");
+    expect(screen.getByTestId("builder-tools-status").textContent).toBe("Connecting…");
+    await act(async () => answer(connection()));
+    expect(screen.getByTestId("builder-tools-connected")).toBeTruthy();
+  });
+
   it("connects and lists the tools by category", async () => {
     await connect();
     expect(mocks.connect).toHaveBeenCalledWith("http://127.0.0.1:8765/mcp", "tok");
-    expect(screen.getByTestId("builder-section-tools-summary").textContent).toBe(
+    click("builder-tools");
+    expect(screen.getByTestId("builder-tools-server-name").textContent).toBe(
       "megane-builder-tools",
     );
-    expect(screen.getByTestId("builder-tools-button-liquid_box").textContent).toBe("Liquid box");
+    expect(screen.getByTestId("builder-tools-button-liquid_box").textContent).toBe("Liquid box…");
     expect(screen.getByText("Solvation")).toBeTruthy();
+    click("builder-tools-server");
+    expect(screen.getByTestId("builder-tools-connected").textContent).toContain("3 tools");
     await act(async () => click("builder-tools-disconnect"));
-    expect(screen.queryByTestId("builder-tools-list")).toBeNull();
+    expect(screen.queryByTestId("builder-tools-connected")).toBeNull();
+    click("builder-tools");
+    expect(screen.queryByTestId("builder-tools-button-liquid_box")).toBeNull();
   });
 
   it("shows connection errors, empty servers, unsupported and unformable tools", async () => {
     mocks.connect.mockImplementationOnce(async () => {
       throw new Error("refused");
     });
-    render(<ToolsSection />);
+    render(<Tools />);
     await act(async () => click("builder-tools-connect"));
     expect(screen.getByTestId("builder-tools-error").textContent).toContain("refused");
 
@@ -98,20 +167,24 @@ describe("ToolsSection", () => {
     mocks.connect.mockImplementationOnce(async () => connection(odd));
     await act(async () => click("builder-tools-connect"));
     expect(screen.getByTestId("builder-tools-unsupported").textContent).toContain("future");
+    expect(screen.getByTestId("builder-tools-connected").textContent).toContain("1 tool ");
+    click("builder-tools");
     const button = screen.getByTestId("builder-tools-button-oneof") as HTMLButtonElement;
     expect(button.disabled).toBe(true);
     expect(button.title).toContain("cannot build a form");
+    click("builder-tools"); // closes the menu again
 
     mocks.connect.mockImplementationOnce(async () => connection([]));
     await act(async () => click("builder-tools-disconnect"));
     await act(async () => click("builder-tools-connect"));
+    click("builder-tools");
     expect(screen.getByText("This server offers no Builder tools.")).toBeTruthy();
   });
 
   it("connects from #tools=…&token=… and strips the token from the address", async () => {
     window.history.replaceState(null, "", "/builder.html#tools=http%3A%2F%2Fh%3A1%2Fmcp&token=abc");
-    render(<ToolsSection />);
-    await screen.findByTestId("builder-tools-list");
+    render(<Tools />);
+    await screen.findByTestId("builder-tools-connected");
     expect(mocks.connect).toHaveBeenCalledWith("http://h:1/mcp", "abc");
     expect(window.location.hash).toBe("");
   });
@@ -119,16 +192,16 @@ describe("ToolsSection", () => {
   it("connects to the site tool server on load while it is the chosen one", async () => {
     vi.stubEnv("VITE_BUILDER_TOOLS_URL", "https://t.example/mcp");
     useToolsStore.setState({ url: "https://t.example/mcp" });
-    render(<ToolsSection />);
-    await screen.findByTestId("builder-tools-list");
+    render(<Tools />);
+    await screen.findByTestId("builder-tools-connected");
     expect(mocks.connect).toHaveBeenCalledWith("https://t.example/mcp", "");
   });
 
   it("does not auto-connect to another server or without a site server", async () => {
-    render(<ToolsSection />);
+    render(<Tools />);
     cleanup();
     vi.stubEnv("VITE_BUILDER_TOOLS_URL", "https://t.example/mcp");
-    render(<ToolsSection />);
+    render(<Tools />);
     await act(async () => undefined);
     expect(mocks.connect).not.toHaveBeenCalled();
   });
@@ -137,7 +210,7 @@ describe("ToolsSection", () => {
 describe("ToolDialog", () => {
   it("runs a new-document tool and closes", async () => {
     await connect();
-    click("builder-tools-button-liquid_box");
+    pick("liquid_box");
     expect(screen.getByTestId("builder-tool-dialog")).toBeTruthy();
     change("builder-tool-field-components-0-molecule", "preset:water");
     change("builder-tool-field-components-0-count", "50");
@@ -166,7 +239,7 @@ describe("ToolDialog", () => {
 
   it("keeps the form open on a tool error and validates before running", async () => {
     await connect();
-    click("builder-tools-button-polymer_chain");
+    pick("polymer_chain");
     change("builder-tool-field-monomer", "preset:ethanol");
     change("builder-tool-field-head", "0");
     change("builder-tool-field-tail", "1");
@@ -189,7 +262,7 @@ describe("ToolDialog", () => {
 
   it("insert tools need a document; the replace warning shows for edited documents", async () => {
     await connect();
-    click("builder-tools-button-solvate");
+    pick("solvate");
     expect(screen.getByTestId("builder-tool-needs-document")).toBeTruthy();
     expect(screen.getByTestId("builder-tool-field-document").textContent).toContain("none is open");
     click("builder-tool-close");
@@ -200,13 +273,13 @@ describe("ToolDialog", () => {
         .getState()
         .pushOp({ op: "add_atom", id: "a", element: 6, position: [10, 10, 10] });
     });
-    click("builder-tools-button-solvate");
+    pick("solvate");
     expect(screen.queryByTestId("builder-tool-needs-document")).toBeNull();
     expect(screen.getByTestId("builder-tool-field-document").textContent).toContain("1 atoms");
     fireEvent.click(screen.getByTestId("builder-tool-dialog"));
     expect(screen.queryByTestId("builder-tool-dialog")).toBeNull();
 
-    click("builder-tools-button-liquid_box");
+    pick("liquid_box");
     expect(screen.getByTestId("builder-tool-replaces")).toBeTruthy();
   });
 
@@ -218,7 +291,7 @@ describe("ToolDialog", () => {
       await new Promise<void>((r) => (release = r));
       return recorded(name);
     };
-    click("builder-tools-button-liquid_box");
+    pick("liquid_box");
     act(() => click("builder-tool-run"));
     await waitFor(() =>
       expect(screen.getByTestId("builder-tool-progress").textContent).toContain("packing"),
@@ -256,7 +329,7 @@ describe("ToolDialog", () => {
     ];
     mocks.connect.mockImplementation(async () => connection(kitchen));
     await connect();
-    click("builder-tools-button-kitchen");
+    pick("kitchen");
     change("builder-tool-field-label", "abc");
     fireEvent.click(screen.getByTestId("builder-tool-field-flag"));
     change("builder-tool-field-group-x", "3");

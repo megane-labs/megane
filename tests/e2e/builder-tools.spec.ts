@@ -103,21 +103,21 @@ test.describe("builder-tools: webapp", () => {
     await fakeToolServer(page, calls);
     await page.addInitScript(() => {
       (globalThis as { __MEGANE_TEST__?: boolean }).__MEGANE_TEST__ = true;
-      localStorage.setItem("megane.builder.sections.v1", JSON.stringify({ tools: true }));
     });
     await page.goto(`/builder.html?test=1#tools=${encodeURIComponent(SERVER)}&token=${TOKEN}`);
-    await expect(page.getByTestId("builder-tools-list")).toBeVisible();
-    await expect(page.getByTestId("builder-section-tools-summary")).toHaveText(
-      "megane-builder-tools",
-    );
+    // The launch link connects on load; the tools are in the Tools menu.
+    await page.getByTestId("builder-tools").click();
+    await expect(page.getByTestId("builder-tools-server-name")).toHaveText("megane-builder-tools");
     expect(await page.evaluate(() => location.hash)).toBe("");
     await expect(page.locator('[data-testid^="builder-tools-button-"]')).toHaveText([
-      "Liquid box",
-      "Polymer chain",
-      "Solvate",
+      "Liquid box…",
+      "Polymer chain…",
+      "Solvate…",
     ]);
+    await page.getByTestId("builder-tools").click();
 
     // Liquid box → a new document.
+    await page.getByTestId("builder-tools").click();
     await page.getByTestId("builder-tools-button-liquid_box").click();
     await page.getByTestId("builder-tool-field-components-0-molecule").selectOption("preset:water");
     await page.getByTestId("builder-tool-field-seed").fill("42");
@@ -139,6 +139,7 @@ test.describe("builder-tools: webapp", () => {
     await expect(page.getByTestId("megane-builder")).toHaveAttribute("data-atom-count", "300");
 
     // Polymer chain: the atom pickers list the chosen monomer's atoms.
+    await page.getByTestId("builder-tools").click();
     await page.getByTestId("builder-tools-button-polymer_chain").click();
     await page.getByTestId("builder-tool-field-monomer").selectOption("preset:ethanol");
     await expect(page.getByTestId("builder-tool-field-head").locator("option")).toHaveCount(9);
@@ -156,6 +157,7 @@ test.describe("builder-tools: webapp", () => {
       ).__megane_test_builder_store.getState();
       s.newCell(20);
     });
+    await page.getByTestId("builder-tools").click();
     await page.getByTestId("builder-tools-button-solvate").click();
     await expect(page.getByTestId("builder-tool-field-document")).toContainText("0 atoms");
     await page.getByTestId("builder-tool-run").click();
@@ -174,14 +176,13 @@ test.describe("builder-tools: webapp", () => {
 
   test("a wrong token is reported and nothing connects", async ({ page }) => {
     await fakeToolServer(page, []);
-    await page.addInitScript(() => {
-      localStorage.setItem("megane.builder.sections.v1", JSON.stringify({ tools: true }));
-    });
     await page.goto("/builder.html?test=1");
+    await page.getByTestId("builder-tools").click();
+    await page.getByTestId("builder-tools-server").click();
     await page.getByTestId("builder-tools-url").fill(SERVER);
     await page.getByTestId("builder-tools-token").fill("wrong");
     await page.getByTestId("builder-tools-connect").click();
     await expect(page.getByTestId("builder-tools-error")).toContainText("Could not connect");
-    await expect(page.getByTestId("builder-tools-list")).toHaveCount(0);
+    await expect(page.getByTestId("builder-tools-connected")).toHaveCount(0);
   });
 });

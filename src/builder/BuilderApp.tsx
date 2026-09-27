@@ -42,7 +42,7 @@ import { STRUCTURE_EXPORT_FORMATS, exportSnapshot } from "../export/structureExp
 import type { StructureWriteFormat } from "../parsers/parseCore";
 import { useThemeStore, type Theme } from "../stores/useThemeStore";
 import type { HoverInfo } from "../types";
-import { useBuilderStore, shownSnapshot } from "./store";
+import { useBuilderStore, canEdit, shownSnapshot, viewSnapshot } from "./store";
 import { builderViewportState, BUILDER_SOURCE_ID } from "./view";
 import { useBuilderHandlers } from "./useBuilderHandlers";
 import { useBuilderShortcuts, TOOL_KEYS } from "./shortcuts";
@@ -51,6 +51,12 @@ import { ToolRail, toolHint, toolInfo } from "./ToolRail";
 import { ContextBar } from "./ContextBar";
 import { Menu } from "./Menu";
 import { NewStructureDialog, type NewStructureKind } from "./NewStructureDialog";
+import { CrystalDialog, type CrystalDialogKind } from "./crystal/CrystalDialog";
+import { structureMenuItems } from "./crystal/structureMenu";
+import { hasCellBox, symmetryOpsAvailable } from "./crystal/structure";
+import { ToolServerDialog, toolsMenuItems, useToolServerLaunch } from "./tools/ToolServer";
+import { ToolDialog } from "./tools/ToolDialog";
+import { useToolsStore } from "./tools/store";
 import { buttonStyle, hintStyle } from "./styles";
 import { trackEvent, trackFileOpen } from "../analytics";
 
@@ -87,12 +93,24 @@ export function BuilderApp() {
   const openStructure = useBuilderStore((s) => s.openStructure);
   const setNotice = useBuilderStore((s) => s.setNotice);
   const reportError = useBuilderStore((s) => s.reportError);
+  const pushOp = useBuilderStore((s) => s.pushOp);
+  const preview = useBuilderStore((s) => s.preview);
+  const toolsStatus = useToolsStore((s) => s.status);
+  const toolsConnection = useToolsStore((s) => s.connection);
+  const openTool = useToolsStore((s) => s.openTool);
+  const openForm = useToolsStore((s) => s.openForm);
 
+  // `shown` is the document (what Save writes); `viewed` is what the view
+  // draws, which is the preview of a Structure dialog's op while one is open.
   const shown = useMemo(
     () => shownSnapshot({ source, result, showOriginal }),
     [source, result, showOriginal],
   );
-  const viewportState = useMemo(() => builderViewportState(shown), [shown]);
+  const viewed = useMemo(
+    () => viewSnapshot({ source, result, showOriginal, preview }),
+    [source, result, showOriginal, preview],
+  );
+  const viewportState = useMemo(() => builderViewportState(viewed), [viewed]);
 
   const handlers = useBuilderHandlers(api);
 
@@ -101,6 +119,13 @@ export function BuilderApp() {
   const prevViewportStateRef = useRef<ViewportState | null>(null);
   const [hoverInfo, setHoverInfo] = useState<HoverInfo>(null);
   const [newDialog, setNewDialog] = useState<NewStructureKind | null>(null);
+  const [crystalDialog, setCrystalDialog] = useState<CrystalDialogKind | null>(null);
+  const [toolServerOpen, setToolServerOpen] = useState(false);
+  const closeCrystalDialog = useCallback(() => setCrystalDialog(null), []);
+  const closeToolServer = useCallback(() => setToolServerOpen(false), []);
+  // A new document ends whatever a Structure dialog was about to do to the old one.
+  useEffect(() => setCrystalDialog(null), [source]);
+  useToolServerLaunch();
   const [dropActive, setDropActive] = useState(false);
 
   const applyState = useCallback(
@@ -182,7 +207,22 @@ export function BuilderApp() {
     (axis: ViewAxis) => rendererRef.current?.alignCameraToAxis(axis),
     [],
   );
-  const hasCell = latticeVectors(shown?.box) !== null;
+  const hasCell = latticeVectors(viewed?.box) !== null;
+  const structureItems = structureMenuItems(
+    {
+      hasDocument: !!shown,
+      editable: canEdit({ source, result, showOriginal }),
+      hasCell: hasCellBox(shown?.box),
+      nAtoms: shown?.nAtoms ?? 0,
+      symmetryOps: symmetryOpsAvailable(source, edits),
+    },
+    setCrystalDialog,
+    pushOp,
+  );
+  const toolsItems = toolsMenuItems(
+    { status: toolsStatus, connection: toolsConnection, openForm },
+    () => setToolServerOpen(true),
+  );
 
   // ── Keyboard ──
   const shortcutHost = useMemo(
@@ -202,7 +242,7 @@ export function BuilderApp() {
     setTheme(THEME_ORDER[(THEME_ORDER.indexOf(theme) + 1) % THEME_ORDER.length]);
   }, [theme, setTheme]);
 
-  const preview = useMemo(() => {
+  const highlighted = useMemo(() => {
     const set = new Set(selected);
     if (pendingBondAtom !== null) set.add(pendingBondAtom);
     return set.size > 0 ? [...set] : null;
@@ -277,6 +317,19 @@ export function BuilderApp() {
             },
           ]}
         />
+        <Menu
+          testId="builder-structure"
+          label="Structure"
+          disabled={!shown}
+          title="Cell, supercell, slab and symmetry of the open structure"
+          items={structureItems}
+        />
+        <Menu
+          testId="builder-tools"
+          label="Tools"
+          title="Python tools from a connected tool server"
+          items={toolsItems}
+        />
         <button
           type="button"
           data-testid="builder-topbar-undo"
@@ -336,18 +389,21 @@ export function BuilderApp() {
           data-testid="builder-dropzone"
         >
           <Viewport
-            snapshot={shown}
+            snapshot={viewed}
             frame={null}
             atomLabels={null}
             atomVectors={null}
             onRendererReady={handleRendererReady}
             onHover={setHoverInfo}
-            previewIndices={preview}
+            previewIndices={highlighted}
             buildActive={true}
             buildHandlers={handlers}
             preserveCameraKey={revision}
           />
-          {source && <ContextBar />}
+          {source && !crystalDialog && <ContextBar />}
+          {crystalDialog && (
+            <CrystalDialog key={crystalDialog} kind={crystalDialog} onClose={closeCrystalDialog} />
+          )}
           <div
             data-testid="view-controls"
             style={{
@@ -475,7 +531,7 @@ export function BuilderApp() {
             flexDirection: "column",
           }}
         >
-          <BuilderSidebar />
+          <BuilderSidebar onOpenCrystal={setCrystalDialog} />
         </div>
       </div>
 
@@ -520,8 +576,13 @@ export function BuilderApp() {
         }}
       >
         <span data-testid="builder-status-atoms">
-          {shown ? `${shown.nAtoms} atoms · ${shown.nBonds} bonds` : "No structure"}
+          {viewed ? `${viewed.nAtoms} atoms · ${viewed.nBonds} bonds` : "No structure"}
         </span>
+        {preview && (
+          <span data-testid="builder-status-preview" style={{ color: "#1d4ed8" }}>
+            Preview — Apply keeps it
+          </span>
+        )}
         {hasCell && <span data-testid="builder-status-cell">Cell</span>}
         {selected.length > 0 && (
           <span data-testid="builder-status-selection">{selected.length} selected</span>
@@ -539,6 +600,8 @@ export function BuilderApp() {
         {showOriginal && <span>Showing original</span>}
       </div>
 
+      {openTool && <ToolDialog key={openTool.name} tool={openTool} />}
+      {toolServerOpen && <ToolServerDialog onClose={closeToolServer} />}
       {newDialog && (
         <NewStructureDialog
           initialKind={newDialog}

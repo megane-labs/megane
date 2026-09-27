@@ -140,13 +140,15 @@ multi-instance harness), laid out so that each control has exactly one home:
 a top bar for the **document** (Open, New, Undo / Redo, Save, theme), the 3D
 view with a tool rail on its left (`ToolRail.tsx`, one icon per tool with its
 key) and a context bar over its top (`ContextBar.tsx`, only the settings the
-current tool uses — none for Select / Move / Delete), a sidebar for the
-**structure** (the selection's actions while there is one, library, crystal,
-history), a status bar for what is on screen and what the tool does
+current tool uses — none for Select / Move / Delete), *Structure* and
+*Tools* menus in the top bar for the operations (`crystal/structureMenu.ts`,
+`tools/ToolServer.tsx`), a sidebar for the
+**structure** (the selection's actions while there is one, the cell as a
+read-only card, library, history), a status bar for what is on screen and what the tool does
 (`toolHint`, the one place the hint is written), and one notice line for every message the app has to
 show (`BuilderStore.notice`, written through `reportError` / `reportInfo` so
 no panel keeps an error line of its own). `Section` (`src/builder/Section.tsx`)
-makes the sidebar's library, crystal and history sections collapsible and
+makes the sidebar's library and history sections collapsible and
 remembers each one in `localStorage`; `shortcuts.ts` holds the key table
 (`resolveShortcut`) and applies it to the store (`runShortcut`), ignoring keys
 aimed at a text field or a dialog. Starting a document — an empty cell or a
@@ -191,13 +193,23 @@ the Inspector's box select:
 - otherwise a press that barely moves is a click, reported to `pick` with the
   atom index or, on empty space, the world point at the pivot's depth.
 
-**Crystal.** `src/builder/crystal/CrystalSection.tsx` is the sidebar's
-Crystal section: *Cell*, *Supercell*, *Slab* and *Expand symmetry* each
-push one op. The bulk-crystal form (`crystal/BulkForm.tsx`) is not a tab of
-it, because `BuilderStore.newBulk` starts a *new document* rather than
+**Crystal.** The top bar's *Structure* menu (`crystal/structureMenu.ts`)
+lists every cell and crystal op: *Wrap*, *Remove cell* and *Expand
+symmetry* push their op at once; *Set cell*, *Center with vacuum*,
+*Supercell* and *Cut slab* open `crystal/CrystalDialog.tsx`, a panel in the
+corner of the view with one form per op. While a form describes a valid op
+the dialog hands it to `BuilderStore.setPreview`, which applies it to the
+edited structure without committing it; the view draws `viewSnapshot` (the
+preview when there is one), `canEdit` is false so clicks are paused, and any
+change to the document drops the preview. *Apply* pushes the op with a fresh
+fragment id. Results above `PREVIEW_MAX_ATOMS` are announced but not
+previewed, since building the preview is the cost of every keystroke. The
+sidebar keeps only a read-only cell card (`crystal/CellCard.tsx`) with the
+symmetry offer. The bulk-crystal form (`crystal/BulkForm.tsx`) is not in the
+menu, because `BuilderStore.newBulk` starts a *new document* rather than
 editing the open one; it lives in the New structure dialog beside the empty
-cell. The slab tab runs `buildSlab` on the shown structure to
-preview the atom count and thickness before the op is written. The Place
+cell. The slab form runs `slabPreview` on the shown structure to state the
+atom count and thickness before the op is written. The Place
 tool's *Place on atoms* option (`adsorbHeight` on the store,
 `adsorptionSite` in `placement.ts`) stamps a library molecule a given
 height above a clicked atom along the cell's c axis, which with a slab is

@@ -1,16 +1,16 @@
 /**
- * The Builder's side panel, in five layers:
+ * The Builder's side panel, in four layers:
  *
- *   Selection    — what can be done with the selected atoms (only while there are some)
- *   Library      — molecules to drop into the document
- *   Crystal      — cell, supercell, slab, symmetry (edits of the open structure)
- *   Python tools — buttons backed by an MCP tool server (liquid box, polymer, …)
- *   History      — the operation list, undo / redo / clear, "show original"
+ *   Selection — what can be done with the selected atoms (only while there are some)
+ *   Cell      — the cell, read-only, and the offer to expand a file's symmetry
+ *   Library   — molecules to drop into the document
+ *   History   — the operation list, undo / redo / clear, "show original"
  *
  * The tools are not here: they sit on the rail left of the view (`ToolRail`)
- * and their settings in the bar over it (`ContextBar`). Document-level actions
- * (open, new, save) live in the top bar, so each control appears exactly
- * once. Pure UI over `useBuilderStore`; every edit goes through the store's
+ * and their settings in the bar over it (`ContextBar`). Cell, supercell, slab
+ * and the Python tools are operations, so they live in the top bar's
+ * Structure and Tools menus, as do the document's own actions (open, new,
+ * save): each control appears exactly once. Pure UI over `useBuilderStore`; every edit goes through the store's
  * actions and the handlers installed by `useBuilderHandlers`.
  */
 
@@ -20,8 +20,8 @@ import { Section } from "./Section";
 import type { EditAtomRef } from "../pipeline/types";
 import { getElementSymbol } from "../constants";
 import { LibrarySection } from "./library/LibrarySection";
-import { CrystalSection } from "./crystal/CrystalSection";
-import { ToolsSection } from "./tools/ToolsSection";
+import { CellCard } from "./crystal/CellCard";
+import type { CrystalDialogKind } from "./crystal/CrystalDialog";
 import {
   buttonStyle,
   hintStyle,
@@ -40,7 +40,12 @@ export {
   buttonStyle,
 } from "./styles";
 
-export function BuilderSidebar() {
+export function BuilderSidebar({
+  onOpenCrystal,
+}: {
+  /** Open one of the Structure menu's dialogs (the cell card's *Edit cell…*). */
+  onOpenCrystal: (kind: CrystalDialogKind) => void;
+}) {
   const source = useBuilderStore((s) => s.source);
   const result = useBuilderStore((s) => s.result);
   const showOriginal = useBuilderStore((s) => s.showOriginal);
@@ -94,9 +99,8 @@ export function BuilderSidebar() {
       )}
 
       {selected.length > 0 && <SelectionSection editable={editable} />}
+      <CellCard onOpen={onOpenCrystal} />
       <LibrarySection />
-      <CrystalSection />
-      <ToolsSection />
       <HistorySection defaultOpen={edits.length > 0} />
     </div>
   );

@@ -50,4 +50,29 @@ describe("Menu", () => {
     fireEvent.pointerDown(screen.getByTestId("menu-first"));
     expect(screen.getByRole("menu")).toBeTruthy();
   });
+
+  it("draws separators and captions, which run nothing", () => {
+    const onSelect = vi.fn();
+    render(
+      <Menu
+        testId="tools"
+        label="Tools"
+        items={[
+          { caption: "Server", testId: "menu-caption" },
+          { label: "Run", testId: "menu-run", onSelect },
+          { separator: true },
+          { label: "Settings", testId: "menu-settings", onSelect },
+        ]}
+      />,
+    );
+    fireEvent.click(screen.getByTestId("tools"));
+    expect(screen.getByTestId("menu-caption").textContent).toBe("Server");
+    expect(screen.getAllByRole("separator")).toHaveLength(1);
+    expect(screen.getAllByRole("menuitem").map((b) => b.textContent)).toEqual(["Run", "Settings"]);
+    fireEvent.click(screen.getByTestId("menu-caption"));
+    expect(onSelect).not.toHaveBeenCalled();
+    expect(screen.getByRole("menu")).toBeTruthy();
+    fireEvent.click(screen.getByTestId("menu-settings"));
+    expect(onSelect).toHaveBeenCalledTimes(1);
+  });
 });
