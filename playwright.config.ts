@@ -202,6 +202,12 @@ export default defineConfig({
       use: { baseURL: `http://127.0.0.1:${PORT_WEBAPP}` },
     },
     {
+      // Builder's Python tool buttons against a faked MCP tool server (recorded responses).
+      name: "builder-tools",
+      testMatch: /builder-tools\.spec\.ts$/,
+      use: { baseURL: `http://127.0.0.1:${PORT_WEBAPP}` },
+    },
+    {
       name: "pipeline-file",
       testMatch: /pipeline-file\.spec\.ts$/,
       use: { baseURL: `http://127.0.0.1:${PORT_WEBAPP}` },

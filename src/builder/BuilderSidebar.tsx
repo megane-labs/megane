@@ -1,10 +1,11 @@
 /**
- * The Builder's side panel, in four layers:
+ * The Builder's side panel, in five layers:
  *
- *   Tool      — the tool, and *only* the settings that tool uses
- *   Library   — molecules to drop into the document
- *   Crystal   — cell, supercell, slab, symmetry (edits of the open structure)
- *   History   — the operation list, undo / redo / clear, "show original"
+ *   Tool         — the tool, and *only* the settings that tool uses
+ *   Library      — molecules to drop into the document
+ *   Crystal      — cell, supercell, slab, symmetry (edits of the open structure)
+ *   Python tools — buttons backed by an MCP tool server (liquid box, polymer, …)
+ *   History      — the operation list, undo / redo / clear, "show original"
  *
  * Document-level actions (open, new, save) live in the top bar, not here, so
  * each control appears exactly once. Pure UI over `useBuilderStore`; every
@@ -22,6 +23,7 @@ import type { EditAtomRef } from "../pipeline/types";
 import { getElementSymbol } from "../constants";
 import { LibrarySection, DEFAULT_ADSORB_HEIGHT } from "./library/LibrarySection";
 import { CrystalSection } from "./crystal/CrystalSection";
+import { ToolsSection } from "./tools/ToolsSection";
 import {
   buttonStyle,
   chipStyle,
@@ -157,6 +159,7 @@ export function BuilderSidebar() {
       <ToolPanel editable={editable} />
       <LibrarySection />
       <CrystalSection />
+      <ToolsSection />
       <HistorySection defaultOpen={edits.length > 0} />
     </div>
   );
