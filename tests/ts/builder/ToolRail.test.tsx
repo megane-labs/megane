@@ -9,6 +9,8 @@ import { ToolRail, TOOLS, toolHint, toolInfo } from "@/builder/ToolRail";
 import { ContextBar, QUICK_ELEMENTS, BOND_ORDERS } from "@/builder/ContextBar";
 import { useBuilderStore } from "@/builder/store";
 import { TOOL_KEYS } from "@/builder/shortcuts";
+import { useLibraryUi } from "@/builder/library/ui";
+import { act } from "@testing-library/react";
 
 beforeEach(() => {
   useBuilderStore.setState({
@@ -19,6 +21,7 @@ beforeEach(() => {
     placeSource: null,
     adsorbHeight: null,
   });
+  useLibraryUi.setState({ sketch: null, galleryOpen: false });
 });
 afterEach(cleanup);
 
@@ -122,5 +125,33 @@ describe("ContextBar", () => {
     expect(useBuilderStore.getState().adsorbHeight).toBe(3);
     fireEvent.click(screen.getByTestId("builder-adsorb-toggle"));
     expect(useBuilderStore.getState().adsorbHeight).toBeNull();
+  });
+
+  it("Place: the molecule picker opens the gallery, which a choice closes", () => {
+    useBuilderStore.setState({ tool: "place" });
+    render(<ContextBar />);
+    // Nothing to place yet: the gallery is open straight away.
+    expect(screen.getByTestId("builder-library")).toBeTruthy();
+    expect(screen.getByTestId("builder-place-fragment").textContent).toContain("Choose a molecule");
+    expect(screen.getByTestId("builder-place-fragment").getAttribute("aria-expanded")).toBe("true");
+    fireEvent.click(
+      screen
+        .getByTestId("builder-library-item-preset:benzene")
+        .querySelector('[data-testid="builder-library-place"]')!,
+    );
+    expect(useBuilderStore.getState().placeSource?.id).toBe("preset:benzene");
+    expect(screen.queryByTestId("builder-library")).toBeNull();
+    expect(screen.getByTestId("builder-place-fragment").textContent).toContain("Benzene");
+    // The picker toggles it; so does the gallery's own close button.
+    fireEvent.click(screen.getByTestId("builder-place-fragment"));
+    expect(screen.getByTestId("builder-library")).toBeTruthy();
+    fireEvent.click(screen.getByTestId("builder-library-close"));
+    expect(screen.queryByTestId("builder-library")).toBeNull();
+    fireEvent.click(screen.getByTestId("builder-place-fragment"));
+    // Leaving the tool closes it, and coming back with a molecule keeps it shut.
+    act(() => useBuilderStore.getState().setTool("select"));
+    expect(useLibraryUi.getState().galleryOpen).toBe(false);
+    act(() => useBuilderStore.getState().setTool("place"));
+    expect(screen.queryByTestId("builder-library")).toBeNull();
   });
 });

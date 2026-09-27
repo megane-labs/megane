@@ -143,12 +143,13 @@ key) and a context bar over its top (`ContextBar.tsx`, only the settings the
 current tool uses — none for Select / Move / Delete), *Structure* and
 *Tools* menus in the top bar for the operations (`crystal/structureMenu.ts`,
 `tools/ToolServer.tsx`), a sidebar for the
-**structure** (the selection's actions while there is one, the cell as a
-read-only card, library, history), a status bar for what is on screen and what the tool does
+**structure** (`Inspector.tsx`: the structure summary, or the selected atoms
+with their positions, distance / angle / dihedral and actions; the cell as a
+read-only card; history), a status bar for what is on screen and what the tool does
 (`toolHint`, the one place the hint is written), and one notice line for every message the app has to
 show (`BuilderStore.notice`, written through `reportError` / `reportInfo` so
 no panel keeps an error line of its own). `Section` (`src/builder/Section.tsx`)
-makes the sidebar's library and history sections collapsible and
+makes the sidebar's history section collapsible and
 remembers each one in `localStorage`; `shortcuts.ts` holds the key table
 (`resolveShortcut`) and applies it to the store (`runShortcut`), ignoring keys
 aimed at a text field or a dialog. Starting a document — an empty cell or a
@@ -215,15 +216,19 @@ tool's *Place on atoms* option (`adsorbHeight` on the store,
 height above a clicked atom along the cell's c axis, which with a slab is
 the surface normal — an adsorbate as one `add_fragment` op.
 
-**Library.** `src/builder/library/` holds the molecule library the sidebar
-offers: `presets.ts` (small molecules with 3D geometries), a persisted
+**Library.** `src/builder/library/` holds the molecule library the Place
+tool's gallery offers (and the Insert menu and the Inspector's *Save as
+fragment*): `presets.ts` (small molecules with 3D geometries), a persisted
 `useLibraryStore` (`store.ts`, the user's molecules in `localStorage`,
 sanitized on read), `fragment.ts` (centring, Hill formulas, the flat-sketch
 rescale, `autoPlacement`, and `fragmentOp` — the `add_fragment` op a
 placement writes), `hydrogens.ts` (valence-rule hydrogen counts and their
 3D placement), `sketch.ts` (a molfile, file or selection → library
-molecule, through the shared parsers), and the UI (`LibrarySection`,
-`SketchModal`). Ketcher (`ketcher-react` + the standalone Indigo engine) is
+molecule, through the shared parsers), the actions and the shared UI state
+(`ui.ts`: `useLibraryActions`, and `useLibraryUi` for the one sketch dialog,
+the one file input and the gallery's open state, mounted once by
+`LibraryHost`), and the UI (`LibraryPanel`, the gallery under the context
+bar, and `SketchModal`). Ketcher (`ketcher-react` + the standalone Indigo engine) is
 mounted only by `KetcherEditor.tsx`, which `SketchModal` loads lazily, so the
 sketcher's bundle and WASM are fetched on first use and the Builder itself
 stays small. A molecule enters the document through

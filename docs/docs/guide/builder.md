@@ -22,20 +22,20 @@ nothing has to be re-encoded when they meet.
 
 The top bar owns the **document**: *Open…*, *New* (an empty cell or a bulk
 crystal), *Undo* / *Redo*, *Save*, and the theme. Its **Structure** menu holds
-the operations on the cell and the crystal (see [Crystal](#crystal)) and its
+the operations on the cell and the crystal (see [Crystal](#crystal)), its
+**Insert** menu the molecule library (see [Library](#library)), and its
 **Tools** menu the Python tools (see [Python tools](#python-tools)). The **tool rail** down the
 left of the 3D view picks the tool — one icon per tool, each marked with its
 key — and the **context bar** floating over the top of the view holds the
-settings of that tool and nothing else. The sidebar on the right shows the
-**structure**: the current selection, the cell, the molecule library, and the
-history. The bar along the bottom says what is on
+settings of that tool and nothing else. The sidebar on the right is an
+**inspector**: what you are looking at (see [Inspector](#inspector)), the
+cell, and the history. The bar along the bottom says what is on
 screen (atoms, bonds, cell, selection) and what the current tool does, and any
 message — a file that would not parse, a molecule added to the library —
 appears on one line just above it until you dismiss it.
 
-The sidebar's *Library* and *History* sections fold away; each one
-remembers whether you left it open. Their headers keep the summary visible
-while they are closed (the number of molecules, the number of edits).
+The sidebar's *History* section folds away and remembers whether you left
+it open; its header keeps the number of edits visible while it is closed.
 
 ## Getting started
 
@@ -61,13 +61,13 @@ while they are closed (the number of molecules, the number of edits).
 
 | Tool | Key | What a click in the 3D view does |
 |---|---|---|
-| **Select** | S | Selects the atom (Shift-click adds to the selection; clicking empty space clears it). The selection feeds *Delete* / *Set to element* / *Save selection* and lets *Move* drag several atoms at once. |
+| **Select** | S | Selects the atom (Shift-click adds to the selection; clicking empty space clears it). The selection feeds the [Inspector](#inspector) (*Delete*, *Set to*, *Save as fragment*) and lets *Move* drag several atoms at once. |
 | **Add atom** | A | On an atom: attaches a new atom of the chosen element at bond length (sum of covalent radii), pointing away from the atom's existing neighbours, and bonds it with the chosen bond order. On empty space: places a free atom at that point, at the depth of the rotation pivot. |
 | **Bond** | B | Click two atoms to bond them. Clicking an already bonded pair changes the bond order to the one chosen in the context bar. |
 | **Delete** | D | Removes the atom and every bond it had. |
 | **Move** | M | Drag an atom in the screen plane (the plane through the atom facing the camera). If the atom is part of the current selection, the whole selection moves. Dragging empty space still orbits the camera. |
 | **Element** | E | Changes the clicked atom to the chosen element (and rebalances its hydrogens, see below). |
-| **Place** | P | Stamps the library molecule chosen below (see [Library](#library)). |
+| **Place** | P | Stamps the library molecule chosen in the context bar (see [Library](#library)). |
 
 **Hydrogens are kept balanced.** When the structure already carries explicit
 hydrogens, *Add atom* and *Element* edit it the way a chemist expects:
@@ -91,9 +91,22 @@ The context bar shows **only the settings the current tool uses**: the element
 (one-click buttons for the common ones, or any atomic number in the *Z* field)
 for *Add atom* and *Element*, the bond order (single, double, triple,
 aromatic) for *Add atom* and *Bond*, and *On atoms* for *Place*. *Select*,
-*Move* and *Delete* have no settings, so they show no bar. Whenever atoms are
-selected, a *Selection* card at the top of the sidebar offers what can be done
-with them (*Delete*, *Set to* the current element, *Clear*).
+*Move* and *Delete* have no settings, so they show no bar.
+
+## Inspector
+
+The top of the sidebar describes what you are looking at.
+
+- **Nothing selected**: the structure — its formula (Hill order), the number
+  of atoms and bonds, the mass, and one chip per element with its count.
+  Clicking a chip selects every atom of that element.
+- **Atoms selected**: each selected atom (element, index and x y z in Å; the
+  first six are listed and the rest counted) and, for **2, 3 or 4 atoms, the
+  distance, angle or dihedral** they span, taken in the order you picked
+  them (Shift-click adds the next one). Below that, what can be done with
+  them: **Set to** an element chosen in the list, **Save as fragment** (keeps
+  them in the library, see below), **Delete**, and **×** to clear the
+  selection (or Esc).
 
 ## Keyboard
 
@@ -116,12 +129,14 @@ starting a new document re-fits the view. *Reset View* and the axis buttons
 
 ## Library
 
-The **Library** section of the sidebar keeps molecules ready to drop into the
-document. It starts with a set of presets — water, ammonia, methane, carbon
+The **Library** keeps molecules ready to drop into the document. It is the
+**Place** tool's gallery: pick *Place* (P) — or **Insert › Molecule…** — and
+the list opens under the context bar; once you choose a molecule it closes,
+and the button in the context bar that names the molecule opens it again. It starts with a set of presets — water, ammonia, methane, carbon
 dioxide, methanol, ethanol, benzene, H₂, N₂, O₂ — with real 3D geometries,
 and grows with your own molecules:
 
-- **Sketch…** opens [Ketcher](https://lifescience.opensource.epam.com/ketcher/),
+- **Sketch…** (in the gallery, or **Insert › Sketch molecule…**) opens [Ketcher](https://lifescience.opensource.epam.com/ketcher/),
   the open-source 2D structure editor, in a dialog (it runs entirely in the
   browser with its standalone Indigo engine, so it loads on first use and
   needs no server). Draw the molecule, give it a name (the formula is used
@@ -143,10 +158,11 @@ and grows with your own molecules:
   **Paste MOL** in the dialog takes a molfile from elsewhere instead of
   drawing (it is embedded the same way); it is also what the dialog falls
   back to if Ketcher cannot load.
-- **From file…** imports any structure file megane reads as a molecule (3D
+- **From file…** (or **Insert › Molecule from file…**) imports any structure file megane reads as a molecule (3D
   coordinates are kept as they are).
-- **Save selection** keeps the selected atoms, with the bonds between them,
-  as a molecule — a quick way to lift a 3D fragment out of an opened file.
+- **Save as fragment** in the Inspector (or **Insert › Save selection as
+  molecule**) keeps the selected atoms, with the bonds between them, as a
+  molecule — a quick way to lift a 3D fragment out of an opened file.
   A flat 2D file (a molfile without z coordinates) is only rescaled to
   ångström and marked *flat* in the list; the Builder never invents a
   conformer for it.
@@ -167,6 +183,9 @@ Each molecule has two ways into the document:
   the rotation pivot, like *Add atom*). Clicking an atom does nothing, so a
   molecule never lands on top of one. Press *Place* again on the same
   molecule to turn the tool off.
+
+*Place* closes the gallery; *Add* leaves it open, so several molecules can be
+added one after another.
 
 Either way the molecule enters the history as one `add_fragment` operation
 (named after the molecule, e.g. `Add water-3 (3 atoms)`), so Undo removes it

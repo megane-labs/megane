@@ -57,6 +57,8 @@ import { hasCellBox, symmetryOpsAvailable } from "./crystal/structure";
 import { ToolServerDialog, toolsMenuItems, useToolServerLaunch } from "./tools/ToolServer";
 import { ToolDialog } from "./tools/ToolDialog";
 import { useToolsStore } from "./tools/store";
+import { LibraryHost } from "./library/LibraryPanel";
+import { useLibraryActions, useLibraryUi } from "./library/ui";
 import { buttonStyle, hintStyle } from "./styles";
 import { trackEvent, trackFileOpen } from "../analytics";
 
@@ -99,6 +101,11 @@ export function BuilderApp() {
   const toolsConnection = useToolsStore((s) => s.connection);
   const openTool = useToolsStore((s) => s.openTool);
   const openForm = useToolsStore((s) => s.openForm);
+  const setTool = useBuilderStore((s) => s.setTool);
+  const openSketch = useLibraryUi((s) => s.openSketch);
+  const setGalleryOpen = useLibraryUi((s) => s.setGalleryOpen);
+  const importer = useLibraryUi((s) => s.importer);
+  const { saveSelection } = useLibraryActions();
 
   // `shown` is the document (what Save writes); `viewed` is what the view
   // draws, which is the preview of a Structure dialog's op while one is open.
@@ -323,6 +330,43 @@ export function BuilderApp() {
           disabled={!shown}
           title="Cell, supercell, slab and symmetry of the open structure"
           items={structureItems}
+        />
+        <Menu
+          testId="builder-insert"
+          label="Insert"
+          title="Molecules from the library, a sketch or a file"
+          items={[
+            {
+              label: "Molecule…",
+              testId: "builder-insert-molecule",
+              disabled: !shown,
+              title: "Choose a library molecule to place (P)",
+              onSelect: () => {
+                setTool("place");
+                setGalleryOpen(true);
+              },
+            },
+            {
+              label: "Sketch molecule…",
+              testId: "builder-insert-sketch",
+              title: "Draw a molecule in Ketcher and add it to the library",
+              onSelect: () => openSketch(),
+            },
+            {
+              label: "Molecule from file…",
+              testId: "builder-insert-import",
+              title: "Add a molecule to the library from a structure file",
+              onSelect: () => importer?.(),
+            },
+            { separator: true },
+            {
+              label: "Save selection as molecule",
+              testId: "builder-insert-save-selection",
+              disabled: selected.length === 0,
+              title: "Keep the selected atoms (and the bonds between them) in the library",
+              onSelect: saveSelection,
+            },
+          ]}
         />
         <Menu
           testId="builder-tools"
@@ -600,6 +644,7 @@ export function BuilderApp() {
         {showOriginal && <span>Showing original</span>}
       </div>
 
+      <LibraryHost />
       {openTool && <ToolDialog key={openTool.name} tool={openTool} />}
       {toolServerOpen && <ToolServerDialog onClose={closeToolServer} />}
       {newDialog && (

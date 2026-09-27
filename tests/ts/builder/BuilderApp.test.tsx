@@ -44,6 +44,7 @@ vi.mock("@/parsers/structure", () => ({ parseStructureFile }));
 
 import { BuilderApp } from "@/builder/BuilderApp";
 import { useBuilderStore } from "@/builder/store";
+import { useLibraryUi } from "@/builder/library/ui";
 import type { BuildHandlers } from "@/builder/types";
 import type { Snapshot } from "@/types";
 
@@ -99,6 +100,7 @@ const save = (format: string) => {
 
 beforeEach(() => {
   localStorage.clear();
+  useLibraryUi.setState({ sketch: null, galleryOpen: false });
   useBuilderStore.setState({
     source: null,
     sourceLabels: null,
@@ -285,7 +287,7 @@ describe("BuilderApp — editing", () => {
     expect(screen.queryByTestId("builder-selection")).toBeNull();
     pick(1);
     pick(2, { shiftKey: true });
-    expect(screen.getByTestId("builder-selected-count").textContent).toBe("2 atoms selected.");
+    expect(screen.getByTestId("builder-selected-count").textContent).toBe("2 atoms selected");
     expect(screen.getByTestId("builder-status-selection").textContent).toBe("2 selected");
     expect(viewportProps.current?.previewIndices).toEqual([1, 2]);
     fireEvent.click(screen.getByTestId("builder-set-element-selected"));
@@ -351,7 +353,11 @@ describe("BuilderApp — editing", () => {
     expect(shownAtoms()).toBe(6);
     expect(useBuilderStore.getState().selected).toEqual([3, 4, 5]);
     expect(screen.getByTestId("builder-op-list").textContent).toMatch(/Add water-\d+ \(3 atoms\)/);
-    // Choosing the same molecule again turns Place off.
+    // The gallery closed once a molecule was chosen; the picker reopens it,
+    // and choosing the same molecule again turns Place off.
+    expect(screen.queryByTestId("builder-library")).toBeNull();
+    expect(screen.getByTestId("builder-place-fragment").textContent).toContain("Water");
+    fireEvent.click(screen.getByTestId("builder-place-fragment"));
     fireEvent.click(
       screen
         .getByTestId("builder-library-item-preset:water")
@@ -362,6 +368,7 @@ describe("BuilderApp — editing", () => {
 
   it("Place on atoms stamps the molecule above the clicked atom when an adsorption height is set", () => {
     render(<BuilderApp />);
+    tool("place");
     fireEvent.click(
       screen
         .getByTestId("builder-library-item-preset:water")
@@ -664,5 +671,29 @@ describe("BuilderApp — Structure and Tools menus", () => {
     expect(screen.getByTestId("builder-tools-dialog")).toBeTruthy();
     fireEvent.click(screen.getByTestId("builder-tools-dialog-close"));
     expect(screen.queryByTestId("builder-tools-dialog")).toBeNull();
+  });
+
+  it("Insert opens the molecule gallery, the sketch dialog and the file picker, and saves a selection", () => {
+    cu();
+    render(<BuilderApp />);
+    menu("builder-insert", "builder-insert-molecule");
+    expect(useBuilderStore.getState().tool).toBe("place");
+    expect(screen.getByTestId("builder-library")).toBeTruthy();
+    menu("builder-insert", "builder-insert-sketch");
+    expect(useLibraryUi.getState().sketch).toEqual({});
+    act(() => useLibraryUi.getState().closeSketch());
+    const input = screen.getByTestId("builder-library-import-input") as HTMLInputElement;
+    const pickFile = vi.spyOn(input, "click");
+    menu("builder-insert", "builder-insert-import");
+    expect(pickFile).toHaveBeenCalled();
+    // Save selection waits for a selection.
+    fireEvent.click(screen.getByTestId("builder-insert"));
+    expect(
+      (screen.getByTestId("builder-insert-save-selection") as HTMLButtonElement).disabled,
+    ).toBe(true);
+    fireEvent.click(screen.getByTestId("builder-insert"));
+    act(() => useBuilderStore.getState().setSelected([0, 1]));
+    menu("builder-insert", "builder-insert-save-selection");
+    expect(useBuilderStore.getState().notice?.text).toContain("to the library");
   });
 });

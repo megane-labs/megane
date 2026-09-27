@@ -6,10 +6,11 @@
  * the view stays clear.
  */
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useBuilderStore } from "./store";
 import { toolInfo } from "./ToolRail";
-import { DEFAULT_ADSORB_HEIGHT } from "./library/LibrarySection";
+import { DEFAULT_ADSORB_HEIGHT, useLibraryUi } from "./library/ui";
+import { LibraryPanel } from "./library/LibraryPanel";
 import { getElementSymbol } from "../constants";
 import { OVERLAY_INSET } from "../components/overlayLayout";
 import { hintStyle, inputStyle } from "./styles";
@@ -68,6 +69,20 @@ export function ContextBar() {
   const setBondOrder = useBuilderStore((s) => s.setBondOrder);
   const setAdsorbHeight = useBuilderStore((s) => s.setAdsorbHeight);
 
+  const placeSource = useBuilderStore((s) => s.placeSource);
+  const galleryOpen = useLibraryUi((s) => s.galleryOpen);
+  const setGalleryOpen = useLibraryUi((s) => s.setGalleryOpen);
+
+  // Place with nothing to place opens the gallery; choosing a molecule closes
+  // it, and so does leaving the tool.
+  useEffect(() => {
+    if (tool !== "place") setGalleryOpen(false);
+    else if (!placeSource) setGalleryOpen(true);
+  }, [tool, setGalleryOpen]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    if (placeSource) setGalleryOpen(false);
+  }, [placeSource, setGalleryOpen]);
+
   const info = toolInfo(tool);
   if (info.needs.length === 0) return null;
 
@@ -82,7 +97,9 @@ export function ContextBar() {
         right: OVERLAY_INSET,
         zIndex: 10,
         display: "flex",
-        justifyContent: "center",
+        flexDirection: "column",
+        alignItems: "center",
+        gap: 8,
         pointerEvents: "none",
       }}
     >
@@ -192,9 +209,48 @@ export function ContextBar() {
         )}
 
         {info.needs.includes("place") && (
-          <AdsorbOption height={adsorbHeight} onChange={setAdsorbHeight} />
+          <>
+            <button
+              type="button"
+              data-testid="builder-place-fragment"
+              aria-expanded={galleryOpen}
+              title="Choose the molecule to place"
+              style={{
+                height: 30,
+                display: "inline-flex",
+                alignItems: "center",
+                gap: 6,
+                padding: "0 10px",
+                borderRadius: 6,
+                cursor: "pointer",
+                fontFamily: "inherit",
+                fontSize: 13,
+                fontWeight: 500,
+                border: `1px solid ${placeSource ? ACCENT : "var(--megane-border-solid, #cbd5e1)"}`,
+                background: placeSource ? "rgba(37, 99, 235, 0.08)" : "transparent",
+                color: "var(--megane-text, #1e293b)",
+                marginRight: 6,
+                whiteSpace: "nowrap",
+              }}
+              onClick={() => setGalleryOpen(!galleryOpen)}
+            >
+              {placeSource ? (
+                <>
+                  {placeSource.name}
+                  <span style={{ ...hintStyle, fontSize: 11 }}>{placeSource.formula}</span>
+                </>
+              ) : (
+                "Choose a molecule…"
+              )}
+              <span aria-hidden="true">{galleryOpen ? "▴" : "▾"}</span>
+            </button>
+            <AdsorbOption height={adsorbHeight} onChange={setAdsorbHeight} />
+          </>
         )}
       </div>
+      {info.needs.includes("place") && galleryOpen && (
+        <LibraryPanel onClose={() => setGalleryOpen(false)} />
+      )}
     </div>
   );
 }

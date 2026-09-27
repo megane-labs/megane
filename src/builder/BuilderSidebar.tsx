@@ -1,35 +1,28 @@
 /**
- * The Builder's side panel, in four layers:
+ * The Builder's side panel, an inspector in three layers:
  *
- *   Selection — what can be done with the selected atoms (only while there are some)
+ *   Inspector — the structure (formula, counts, elements), or with a
+ *               selection the selected atoms, what they measure and what can
+ *               be done with them
  *   Cell      — the cell, read-only, and the offer to expand a file's symmetry
- *   Library   — molecules to drop into the document
  *   History   — the operation list, undo / redo / clear, "show original"
  *
  * The tools are not here: they sit on the rail left of the view (`ToolRail`)
- * and their settings in the bar over it (`ContextBar`). Cell, supercell, slab
- * and the Python tools are operations, so they live in the top bar's
- * Structure and Tools menus, as do the document's own actions (open, new,
- * save): each control appears exactly once. Pure UI over `useBuilderStore`; every edit goes through the store's
+ * and their settings in the bar over it (`ContextBar`), which is also where
+ * the Place tool's molecule library opens. Cell, supercell, slab, the Python
+ * tools and inserting molecules are operations, so they live in the top bar's
+ * Structure, Tools and Insert menus, as do the document's own actions (open,
+ * new, save): each control appears exactly once. Pure UI over `useBuilderStore`; every edit goes through the store's
  * actions and the handlers installed by `useBuilderHandlers`.
  */
 
-import { useBuilderStore, canEdit } from "./store";
+import { useBuilderStore } from "./store";
 import { describeOp } from "./placement";
 import { Section } from "./Section";
-import type { EditAtomRef } from "../pipeline/types";
-import { getElementSymbol } from "../constants";
-import { LibrarySection } from "./library/LibrarySection";
+import { Inspector } from "./Inspector";
 import { CellCard } from "./crystal/CellCard";
 import type { CrystalDialogKind } from "./crystal/CrystalDialog";
-import {
-  buttonStyle,
-  hintStyle,
-  rowStyle,
-  sectionStyle,
-  sectionTitleStyle,
-  toggleStyle,
-} from "./styles";
+import { buttonStyle, hintStyle, rowStyle, sectionStyle, toggleStyle } from "./styles";
 
 export {
   sectionStyle,
@@ -47,13 +40,9 @@ export function BuilderSidebar({
   onOpenCrystal: (kind: CrystalDialogKind) => void;
 }) {
   const source = useBuilderStore((s) => s.source);
-  const result = useBuilderStore((s) => s.result);
   const showOriginal = useBuilderStore((s) => s.showOriginal);
   const edits = useBuilderStore((s) => s.edits);
-  const selected = useBuilderStore((s) => s.selected);
   const setShowOriginal = useBuilderStore((s) => s.setShowOriginal);
-
-  const editable = canEdit({ source, result, showOriginal });
 
   return (
     <div
@@ -98,76 +87,9 @@ export function BuilderSidebar({
         </div>
       )}
 
-      {selected.length > 0 && <SelectionSection editable={editable} />}
+      <Inspector />
       <CellCard onOpen={onOpenCrystal} />
-      <LibrarySection />
       <HistorySection defaultOpen={edits.length > 0} />
-    </div>
-  );
-}
-
-/** What can be done with the current selection, shown only while there is one. */
-function SelectionSection({ editable }: { editable: boolean }) {
-  const result = useBuilderStore((s) => s.result);
-  const selected = useBuilderStore((s) => s.selected);
-  const element = useBuilderStore((s) => s.element);
-  const clearSelected = useBuilderStore((s) => s.clearSelected);
-  const pushOp = useBuilderStore((s) => s.pushOp);
-
-  const refs = (): EditAtomRef[] =>
-    selected
-      .map((i) => (result && i >= 0 && i < result.snapshot.nAtoms ? result.refAt(i) : null))
-      .filter((r): r is EditAtomRef => r !== null);
-
-  const handleDelete = () => {
-    const atoms = refs();
-    if (atoms.length === 0) return;
-    clearSelected();
-    pushOp({ op: "delete_atoms", atoms });
-  };
-  const handleSetElement = () => {
-    const atoms = refs();
-    if (atoms.length === 0) return;
-    pushOp({ op: "set_element", atoms, element });
-  };
-
-  return (
-    <div
-      style={{ ...sectionStyle, borderColor: "rgba(37, 99, 235, 0.35)" }}
-      data-testid="builder-selection"
-    >
-      <span style={sectionTitleStyle}>Selection</span>
-      <span style={hintStyle} data-testid="builder-selected-count">
-        {selected.length} atom{selected.length === 1 ? "" : "s"} selected.
-      </span>
-      <div style={rowStyle}>
-        <button
-          type="button"
-          data-testid="builder-delete-selected"
-          style={buttonStyle("danger", !editable)}
-          disabled={!editable}
-          onClick={handleDelete}
-        >
-          Delete
-        </button>
-        <button
-          type="button"
-          data-testid="builder-set-element-selected"
-          style={buttonStyle("default", !editable)}
-          disabled={!editable}
-          onClick={handleSetElement}
-        >
-          Set to {getElementSymbol(element)}
-        </button>
-        <button
-          type="button"
-          data-testid="builder-clear-selection"
-          style={buttonStyle()}
-          onClick={clearSelected}
-        >
-          Clear
-        </button>
-      </div>
     </div>
   );
 }
