@@ -138,9 +138,12 @@ users unsure which of them the picture reflected. So `src/builder/` mounts
 its own page (`builder.html`, a Vite entry beside `index.html` and the
 multi-instance harness), laid out so that each control has exactly one home:
 a top bar for the **document** (Open, New, Undo / Redo, Save, theme), the 3D
-view, a sidebar for the **structure** (the tool and only the settings that
-tool uses, library, crystal, history), a status bar for what is on screen and
-what the tool does, and one notice line for every message the app has to
+view with a tool rail on its left (`ToolRail.tsx`, one icon per tool with its
+key) and a context bar over its top (`ContextBar.tsx`, only the settings the
+current tool uses — none for Select / Move / Delete), a sidebar for the
+**structure** (the selection's actions while there is one, library, crystal,
+history), a status bar for what is on screen and what the tool does
+(`toolHint`, the one place the hint is written), and one notice line for every message the app has to
 show (`BuilderStore.notice`, written through `reportError` / `reportInfo` so
 no panel keeps an error line of its own). `Section` (`src/builder/Section.tsx`)
 makes the sidebar's library, crystal and history sections collapsible and

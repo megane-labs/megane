@@ -21,9 +21,12 @@ nothing has to be re-encoded when they meet.
 ## The window
 
 The top bar owns the **document**: *Open…*, *New* (an empty cell or a bulk
-crystal), *Undo* / *Redo*, *Save*, and the theme. The sidebar owns the
-**structure**: the tool and the settings that tool uses, the molecule library,
-the crystal tools, and the history. The bar along the bottom says what is on
+crystal), *Undo* / *Redo*, *Save*, and the theme. The **tool rail** down the
+left of the 3D view picks the tool — one icon per tool, each marked with its
+key — and the **context bar** floating over the top of the view holds the
+settings of that tool and nothing else. The sidebar on the right owns the
+**structure**: the current selection, the molecule library, the crystal tools,
+and the history. The bar along the bottom says what is on
 screen (atoms, bonds, cell, selection) and what the current tool does, and any
 message — a file that would not parse, a molecule added to the library —
 appears on one line just above it until you dismiss it.
@@ -58,7 +61,7 @@ while they are closed (the number of molecules, the cell, the number of edits).
 |---|---|---|
 | **Select** | S | Selects the atom (Shift-click adds to the selection; clicking empty space clears it). The selection feeds *Delete* / *Set to element* / *Save selection* and lets *Move* drag several atoms at once. |
 | **Add atom** | A | On an atom: attaches a new atom of the chosen element at bond length (sum of covalent radii), pointing away from the atom's existing neighbours, and bonds it with the chosen bond order. On empty space: places a free atom at that point, at the depth of the rotation pivot. |
-| **Bond** | B | Click two atoms to bond them. Clicking an already bonded pair changes the bond order to the one chosen in the sidebar. |
+| **Bond** | B | Click two atoms to bond them. Clicking an already bonded pair changes the bond order to the one chosen in the context bar. |
 | **Delete** | D | Removes the atom and every bond it had. |
 | **Move** | M | Drag an atom in the screen plane (the plane through the atom facing the camera). If the atom is part of the current selection, the whole selection moves. Dragging empty space still orbits the camera. |
 | **Element** | E | Changes the clicked atom to the chosen element (and rebalances its hydrogens, see below). |
@@ -82,11 +85,13 @@ hydrogens, *Add atom* and *Element* edit it the way a chemist expects:
 A bare skeleton (no hydrogen anywhere) is left bare, as are elements with no
 single usual valence (metals); add hydrogens yourself in that case.
 
-The *Tool* panel shows **only the settings the current tool uses**: the element
-(quick chips for the common ones, or any atomic number) for *Add atom* and
-*Element*, the bond order for *Add atom* and *Bond*, and *Place on atoms* for
-*Place*. Whenever atoms are selected, the actions for that selection appear
-under the tool as well.
+The context bar shows **only the settings the current tool uses**: the element
+(one-click buttons for the common ones, or any atomic number in the *Z* field)
+for *Add atom* and *Element*, the bond order (single, double, triple,
+aromatic) for *Add atom* and *Bond*, and *On atoms* for *Place*. *Select*,
+*Move* and *Delete* have no settings, so they show no bar. Whenever atoms are
+selected, a *Selection* card at the top of the sidebar offers what can be done
+with them (*Delete*, *Set to* the current element, *Clear*).
 
 ## Keyboard
 

@@ -1,39 +1,33 @@
 /**
  * The Builder's side panel, in five layers:
  *
- *   Tool         — the tool, and *only* the settings that tool uses
+ *   Selection    — what can be done with the selected atoms (only while there are some)
  *   Library      — molecules to drop into the document
  *   Crystal      — cell, supercell, slab, symmetry (edits of the open structure)
  *   Python tools — buttons backed by an MCP tool server (liquid box, polymer, …)
  *   History      — the operation list, undo / redo / clear, "show original"
  *
- * Document-level actions (open, new, save) live in the top bar, not here, so
- * each control appears exactly once. Pure UI over `useBuilderStore`; every
- * edit goes through the store's actions and the handlers installed by
- * `useBuilderHandlers`.
+ * The tools are not here: they sit on the rail left of the view (`ToolRail`)
+ * and their settings in the bar over it (`ContextBar`). Document-level actions
+ * (open, new, save) live in the top bar, so each control appears exactly
+ * once. Pure UI over `useBuilderStore`; every edit goes through the store's
+ * actions and the handlers installed by `useBuilderHandlers`.
  */
 
-import { useState } from "react";
-import { useBuilderStore, canEdit, shownSnapshot } from "./store";
+import { useBuilderStore, canEdit } from "./store";
 import { describeOp } from "./placement";
 import { Section } from "./Section";
-import { TOOL_KEYS } from "./shortcuts";
-import type { BuildTool } from "./types";
 import type { EditAtomRef } from "../pipeline/types";
 import { getElementSymbol } from "../constants";
-import { LibrarySection, DEFAULT_ADSORB_HEIGHT } from "./library/LibrarySection";
+import { LibrarySection } from "./library/LibrarySection";
 import { CrystalSection } from "./crystal/CrystalSection";
 import { ToolsSection } from "./tools/ToolsSection";
 import {
   buttonStyle,
-  chipStyle,
   hintStyle,
-  inputStyle,
   rowStyle,
   sectionStyle,
   sectionTitleStyle,
-  segmentGroupStyle,
-  segmentStyle,
   toggleStyle,
 } from "./styles";
 
@@ -46,69 +40,12 @@ export {
   buttonStyle,
 } from "./styles";
 
-export interface ToolInfo {
-  value: BuildTool;
-  label: string;
-  hint: string;
-  /** Which contextual settings the tool panel shows for it. */
-  needs: ("element" | "bondOrder" | "place")[];
-}
-
-export const TOOLS: ToolInfo[] = [
-  {
-    value: "select",
-    label: "Select",
-    hint: "Click atoms to select them (Shift adds).",
-    needs: [],
-  },
-  {
-    value: "add",
-    label: "Add atom",
-    hint: "Click an atom to attach a new one at bond length; click empty space to place it free.",
-    needs: ["element", "bondOrder"],
-  },
-  {
-    value: "bond",
-    label: "Bond",
-    hint: "Click two atoms to bond them (or change the bond order).",
-    needs: ["bondOrder"],
-  },
-  {
-    value: "delete",
-    label: "Delete",
-    hint: "Click an atom to remove it with its bonds.",
-    needs: [],
-  },
-  { value: "move", label: "Move", hint: "Drag an atom in the screen plane.", needs: [] },
-  {
-    value: "element",
-    label: "Element",
-    hint: "Click an atom to change it to the chosen element.",
-    needs: ["element"],
-  },
-  {
-    value: "place",
-    label: "Place",
-    hint: "Click empty space to drop the library molecule chosen below there.",
-    needs: ["place"],
-  },
-];
-
-/** Elements offered as quick chips; anything else via the number input. */
-const QUICK_ELEMENTS = [1, 6, 7, 8, 9, 15, 16, 17, 35, 14];
-
-const BOND_ORDERS: { value: number; label: string }[] = [
-  { value: 1, label: "Single" },
-  { value: 2, label: "Double" },
-  { value: 3, label: "Triple" },
-  { value: 4, label: "Aromatic" },
-];
-
 export function BuilderSidebar() {
   const source = useBuilderStore((s) => s.source);
   const result = useBuilderStore((s) => s.result);
   const showOriginal = useBuilderStore((s) => s.showOriginal);
   const edits = useBuilderStore((s) => s.edits);
+  const selected = useBuilderStore((s) => s.selected);
   const setShowOriginal = useBuilderStore((s) => s.setShowOriginal);
 
   const editable = canEdit({ source, result, showOriginal });
@@ -156,7 +93,7 @@ export function BuilderSidebar() {
         </div>
       )}
 
-      <ToolPanel editable={editable} />
+      {selected.length > 0 && <SelectionSection editable={editable} />}
       <LibrarySection />
       <CrystalSection />
       <ToolsSection />
@@ -165,155 +102,8 @@ export function BuilderSidebar() {
   );
 }
 
-// ── Tool ──
-
-function ToolPanel({ editable }: { editable: boolean }) {
-  const tool = useBuilderStore((s) => s.tool);
-  const element = useBuilderStore((s) => s.element);
-  const bondOrder = useBuilderStore((s) => s.bondOrder);
-  const selected = useBuilderStore((s) => s.selected);
-  const pendingBondAtom = useBuilderStore((s) => s.pendingBondAtom);
-  const placeSource = useBuilderStore((s) => s.placeSource);
-  const adsorbHeight = useBuilderStore((s) => s.adsorbHeight);
-  const setTool = useBuilderStore((s) => s.setTool);
-  const setElement = useBuilderStore((s) => s.setElement);
-  const setBondOrder = useBuilderStore((s) => s.setBondOrder);
-  const setAdsorbHeight = useBuilderStore((s) => s.setAdsorbHeight);
-
-  const active = TOOLS.find((t) => t.value === tool)!;
-
-  return (
-    <div style={sectionStyle} data-testid="builder-tools">
-      <span style={sectionTitleStyle}>Tool</span>
-      <div style={segmentGroupStyle} role="radiogroup" aria-label="Tool">
-        {TOOLS.map((t) => (
-          <span
-            key={t.value}
-            role="radio"
-            data-testid={`builder-tool-${t.value}`}
-            aria-checked={tool === t.value}
-            aria-pressed={tool === t.value}
-            title={`${t.label} (${TOOL_KEYS[t.value]})`}
-            style={segmentStyle(tool === t.value)}
-            onClick={() => setTool(t.value)}
-          >
-            {t.label}
-          </span>
-        ))}
-      </div>
-      <div style={hintStyle} data-testid="builder-tool-hint">
-        {active.hint}
-        {tool === "bond" && pendingBondAtom !== null && ` First atom: #${pendingBondAtom}.`}
-        {tool === "place" &&
-          (placeSource ? ` Placing ${placeSource.name}.` : " Choose a molecule in the library.")}
-      </div>
-
-      {active.needs.includes("element") && (
-        <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-          <span style={hintStyle}>Element</span>
-          <div style={rowStyle}>
-            {QUICK_ELEMENTS.map((z) => (
-              <span
-                key={z}
-                role="button"
-                data-testid={`builder-element-${getElementSymbol(z)}`}
-                aria-pressed={element === z}
-                style={chipStyle(element === z)}
-                onClick={() => setElement(z)}
-              >
-                {getElementSymbol(z)}
-              </span>
-            ))}
-            <label style={{ ...hintStyle, display: "flex", alignItems: "center", gap: 4 }}>
-              Z
-              <input
-                data-testid="builder-element-z"
-                type="number"
-                min={1}
-                max={118}
-                value={element}
-                onChange={(e) => {
-                  const v = parseInt(e.target.value, 10);
-                  if (Number.isFinite(v) && v >= 1 && v <= 118) setElement(v);
-                }}
-                style={{ ...inputStyle, width: 56 }}
-              />
-            </label>
-            <span style={hintStyle}>= {getElementSymbol(element)}</span>
-          </div>
-        </div>
-      )}
-
-      {active.needs.includes("bondOrder") && (
-        <label style={rowStyle}>
-          <span style={hintStyle}>Bond order</span>
-          <select
-            data-testid="builder-bond-order"
-            value={bondOrder}
-            onChange={(e) => setBondOrder(parseInt(e.target.value, 10))}
-            style={inputStyle}
-          >
-            {BOND_ORDERS.map((o) => (
-              <option key={o.value} value={o.value}>
-                {o.label}
-              </option>
-            ))}
-          </select>
-        </label>
-      )}
-
-      {active.needs.includes("place") && (
-        <AdsorbOption height={adsorbHeight} onChange={setAdsorbHeight} />
-      )}
-
-      {selected.length > 0 && <SelectionActions editable={editable} />}
-    </div>
-  );
-}
-
-/**
- * "Place on atoms": with a height set, the Place tool also accepts a click on
- * an atom and stamps the molecule that far above it — an adsorbate on a site.
- */
-function AdsorbOption({
-  height,
-  onChange,
-}: {
-  height: number | null;
-  onChange: (h: number | null) => void;
-}) {
-  // The typed height survives unticking the box, so turning the option back
-  // on uses it again rather than the default.
-  const [draft, setDraft] = useState(height ?? DEFAULT_ADSORB_HEIGHT);
-  return (
-    <label style={{ ...rowStyle, ...hintStyle }}>
-      <input
-        type="checkbox"
-        data-testid="builder-adsorb-toggle"
-        checked={height !== null}
-        onChange={(e) => onChange(e.target.checked ? draft : null)}
-      />
-      Place on atoms:
-      <input
-        type="number"
-        data-testid="builder-adsorb-height"
-        step={0.1}
-        value={draft}
-        onChange={(e) => {
-          const v = Number(e.target.value);
-          setDraft(v);
-          if (height !== null) onChange(v);
-        }}
-        style={{ ...inputStyle, width: 56 }}
-        title="Height above the clicked atom along the cell's c axis (an adsorbate on a surface site)"
-      />
-      Å above along c
-    </label>
-  );
-}
-
 /** What can be done with the current selection, shown only while there is one. */
-function SelectionActions({ editable }: { editable: boolean }) {
+function SelectionSection({ editable }: { editable: boolean }) {
   const result = useBuilderStore((s) => s.result);
   const selected = useBuilderStore((s) => s.selected);
   const element = useBuilderStore((s) => s.element);
@@ -339,15 +129,10 @@ function SelectionActions({ editable }: { editable: boolean }) {
 
   return (
     <div
-      style={{
-        display: "flex",
-        flexDirection: "column",
-        gap: 6,
-        paddingTop: 8,
-        borderTop: "1px solid var(--megane-border-solid, #e2e8f0)",
-      }}
+      style={{ ...sectionStyle, borderColor: "rgba(37, 99, 235, 0.35)" }}
       data-testid="builder-selection"
     >
+      <span style={sectionTitleStyle}>Selection</span>
       <span style={hintStyle} data-testid="builder-selected-count">
         {selected.length} atom{selected.length === 1 ? "" : "s"} selected.
       </span>
