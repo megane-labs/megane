@@ -20,52 +20,62 @@ nothing has to be re-encoded when they meet.
 
 ## The window
 
-The top bar owns the **document**: *Open…*, *New* (an empty cell or a bulk
-crystal), *Undo* / *Redo*, *Save*, and the theme. The **tool rail** down the
+The top bar's menus follow the usual order. **File** owns the document:
+*Open…*, *New empty cell…* / *New bulk crystal…* and *Save* in each format.
+**Structure** holds the operations on the cell and the crystal (see
+[Crystal](#crystal)), **Insert** the molecule library (see
+[Library](#library)), **Tools** the Python tools (see
+[Python tools](#python-tools)), and **View** the camera (*Reset view*, look
+along ±x / ±y / ±z, and ±a / ±b / ±c while there is a cell) and the theme
+(System, Light, Dark — the 3D view's background follows it). *Undo* and
+*Redo* sit beside the menus. The **tool rail** down the
 left of the 3D view picks the tool — one icon per tool, each marked with its
 key — and the **context bar** floating over the top of the view holds the
-settings of that tool and nothing else. The sidebar on the right owns the
-**structure**: the current selection, the molecule library, the crystal tools,
-and the history. The bar along the bottom says what is on
+settings of that tool and nothing else. The sidebar on the right is an
+**inspector**: what you are looking at (see [Inspector](#inspector)), the
+cell, and the history. The bar along the bottom says what is on
 screen (atoms, bonds, cell, selection) and what the current tool does, and any
 message — a file that would not parse, a molecule added to the library —
 appears on one line just above it until you dismiss it.
 
-The sidebar's *Library*, *Crystal* and *History* sections fold away; each one
-remembers whether you left it open. Their headers keep the summary visible
-while they are closed (the number of molecules, the cell, the number of edits).
+The sidebar's *History* section folds away and remembers whether you left
+it open; its header keeps the number of edits visible while it is closed.
 
 ## Getting started
 
-- **Open…** loads a structure file. Any format the viewer reads works
+- **File › Open…** loads a structure file. Any format the viewer reads works
   (PDB, XYZ, MOL / SDF, MOL2, CIF, GRO, LAMMPS data, …). Only the structure
   is taken; trajectory frames are ignored. Dropping a file anywhere on the 3D
   view opens it too.
-- **New** starts a document from scratch, in a dialog with two tabs:
+- **File › New empty cell… / New bulk crystal…** starts a document from
+  scratch, in a dialog with two tabs:
   *Empty cell* — an atom-less cubic cell of the edge you give in Å; the cell
   is what the camera frames and what the *Add atom* tool places free atoms
   against, so the first click already puts an atom in the box, and the
   document is called `untitled` until you save it — and *Bulk crystal*, a
   prototype structure (see [Crystal](#crystal)). Either replaces whatever is
   open, which the dialog says when there is something to replace.
-- **Save XYZ / PDB / MOL** bakes the edited structure into a file named after
+- **File › Save XYZ / PDB / MOL** bakes the edited structure into a file named after
   the document (`caffeine.sdf` → `caffeine.xyz`). XYZ becomes extended XYZ
   with a `Lattice="…"` header when there is a cell; PDB carries `CRYST1`,
   residue labels and `CONECT` records; MOL is V2000 with bond orders.
 - **Undo / Redo** in the top bar, in the sidebar's *History* section, or with
   the keys below.
+- Or skip all of that: pick **Place** (P) and place a library molecule with
+  nothing open — the first molecule starts an `untitled` document without a
+  cell (see [Library](#library)).
 
 ## Tools
 
 | Tool | Key | What a click in the 3D view does |
 |---|---|---|
-| **Select** | S | Selects the atom (Shift-click adds to the selection; clicking empty space clears it). The selection feeds *Delete* / *Set to element* / *Save selection* and lets *Move* drag several atoms at once. |
+| **Select** | S | Selects the atom (Shift-click adds to the selection; clicking empty space clears it). Its context bar adds **Box** (drag a rectangle to select what it holds, Shift-drag to add it to the selection; the view stops rotating while it is on), **All** and **Invert**. The selection feeds the [Inspector](#inspector) (*Delete*, *Set to*, *Save as fragment*, *Clean up*, the measurement) and lets *Move* drag several atoms at once. |
 | **Add atom** | A | On an atom: attaches a new atom of the chosen element at bond length (sum of covalent radii), pointing away from the atom's existing neighbours, and bonds it with the chosen bond order. On empty space: places a free atom at that point, at the depth of the rotation pivot. |
 | **Bond** | B | Click two atoms to bond them. Clicking an already bonded pair changes the bond order to the one chosen in the context bar. |
 | **Delete** | D | Removes the atom and every bond it had. |
 | **Move** | M | Drag an atom in the screen plane (the plane through the atom facing the camera). If the atom is part of the current selection, the whole selection moves. Dragging empty space still orbits the camera. |
 | **Element** | E | Changes the clicked atom to the chosen element (and rebalances its hydrogens, see below). |
-| **Place** | P | Stamps the library molecule chosen below (see [Library](#library)). |
+| **Place** | P | Stamps the library molecule chosen in the context bar (see [Library](#library)). |
 
 **Hydrogens are kept balanced.** When the structure already carries explicit
 hydrogens, *Add atom* and *Element* edit it the way a chemist expects:
@@ -86,12 +96,58 @@ A bare skeleton (no hydrogen anywhere) is left bare, as are elements with no
 single usual valence (metals); add hydrogens yourself in that case.
 
 The context bar shows **only the settings the current tool uses**: the element
-(one-click buttons for the common ones, or any atomic number in the *Z* field)
-for *Add atom* and *Element*, the bond order (single, double, triple,
+(one-click buttons for the common ones, **Table** for a periodic table of
+every element up to U, or any atomic number in the *Z* field) for *Add atom*
+and *Element*, the bond order (single, double, triple,
 aromatic) for *Add atom* and *Bond*, and *On atoms* for *Place*. *Select*,
-*Move* and *Delete* have no settings, so they show no bar. Whenever atoms are
-selected, a *Selection* card at the top of the sidebar offers what can be done
-with them (*Delete*, *Set to* the current element, *Clear*).
+*Move* and *Delete* have no settings, so they show no bar.
+
+## Inspector
+
+The top of the sidebar describes what you are looking at.
+
+- **Nothing selected**: the structure — its formula (Hill order), the number
+  of atoms and bonds, the mass, and one chip per element with its count.
+  Clicking a chip selects every atom of that element.
+- **Atoms selected**: each selected atom (element, index and x y z in Å; the
+  first six are listed and the rest counted) and, for **2, 3 or 4 atoms, the
+  distance, angle or dihedral** they span, taken in the order you picked
+  them (Shift-click adds the next one). Below that, what can be done with
+  them: **Set to** an element chosen in the list, **Save as fragment** (keeps
+  them in the library, see below), **Clean up** (see
+  [Clean up geometry](#clean-up-geometry)), **Delete**, and **×** to clear the
+  selection (or Esc).
+- **Setting a measurement**: type a new distance (Å), angle or dihedral (°)
+  under the measurement and press **Set**. The *last* atom you picked moves,
+  together with everything bonded to it on its side — the rest of the chain
+  for a bond, the whole substituent for an angle or a torsion — so a
+  molecule keeps its shape while one coordinate changes. When that atom is
+  in a ring with the others, only the atom itself moves. The change is one
+  Undo step.
+
+**Right-click an atom** for a menu (it opens beside the pointer, flipped to
+stay on screen near an edge): *Select molecule* (every atom bonded to
+it, directly or not), *Select all* of its element, *Set to* the current
+element, *Clean up molecule* and *Delete atom*.
+
+### Clean up geometry
+
+**Structure › Clean up geometry** (or *Clean up* in the Inspector, or *Clean
+up molecule* in the atom menu) hands each molecule — the selected ones, or
+all of them when nothing is selected — to [RDKit](https://www.rdkit.org/):
+it is embedded again from its atoms and bonds (ETKDG), minimised with
+MMFF94s (UFF when MMFF has no parameters), and put back where it was by a
+rigid fit on the old positions, so only its shape changes. Hydrogens are
+kept as they are (add them first if you want them). Two things are sorted out
+before RDKit sees a molecule: one split across the periodic cell is made whole
+first (each bonded atom taken at the image nearest its neighbour), so it comes
+back as one piece next to where it started; and an atom with more bonds than
+its neutral valence gets the formal charge that explains them — four bonds on
+N or P, three on O or S make it +1, four on B make it −1 — so ammonium,
+oxonium and borate groups embed instead of being refused. A molecule of one
+atom or of more than 999 atoms is skipped; a molecule RDKit still cannot read
+is left as it is, and the notice counts it with RDKit's message while every
+other molecule is cleaned up. All the moved atoms are one Undo step.
 
 ## Keyboard
 
@@ -102,6 +158,7 @@ with them (*Delete*, *Set to* the current element, *Clear*).
 | Delete, Backspace | Delete the selected atoms |
 | Esc | Drop the pending bond, then the selection, then the *Place* molecule |
 | Ctrl/⌘ + O, Ctrl/⌘ + S | Open a file, save XYZ |
+| Ctrl/⌘ + A | Select every atom |
 | R | Reset the view |
 
 Keys are ignored while a text field or a dialog has the keyboard, so typing a
@@ -109,17 +166,20 @@ lattice constant never switches tools.
 
 Editing never moves the camera: the view keeps its zoom and orientation across
 every operation (and across Undo / Redo / Clear all). Only opening a file or
-starting a new document re-fits the view. *Reset View* and the axis buttons
-(±x / ±y / ±z, and ±a / ±b / ±c while there is a cell) work as in the viewer.
+starting a new document re-fits the view. **View › Reset view** and the
+*Look along* directions (±x / ±y / ±z, and ±a / ±b / ±c while there is a cell)
+work as the viewer's Reset View and axis buttons.
 
 ## Library
 
-The **Library** section of the sidebar keeps molecules ready to drop into the
-document. It starts with a set of presets — water, ammonia, methane, carbon
+The **Library** keeps molecules ready to drop into the document. It is the
+**Place** tool's gallery: pick *Place* (P) — or **Insert › Molecule…** — and
+the list opens under the context bar; once you choose a molecule it closes,
+and the button in the context bar that names the molecule opens it again. It starts with a set of presets — water, ammonia, methane, carbon
 dioxide, methanol, ethanol, benzene, H₂, N₂, O₂ — with real 3D geometries,
 and grows with your own molecules:
 
-- **Sketch…** opens [Ketcher](https://lifescience.opensource.epam.com/ketcher/),
+- **Sketch…** (in the gallery, or **Insert › Sketch molecule…**) opens [Ketcher](https://lifescience.opensource.epam.com/ketcher/),
   the open-source 2D structure editor, in a dialog (it runs entirely in the
   browser with its standalone Indigo engine, so it loads on first use and
   needs no server). Draw the molecule, give it a name (the formula is used
@@ -141,10 +201,11 @@ and grows with your own molecules:
   **Paste MOL** in the dialog takes a molfile from elsewhere instead of
   drawing (it is embedded the same way); it is also what the dialog falls
   back to if Ketcher cannot load.
-- **From file…** imports any structure file megane reads as a molecule (3D
+- **From file…** (or **Insert › Molecule from file…**) imports any structure file megane reads as a molecule (3D
   coordinates are kept as they are).
-- **Save selection** keeps the selected atoms, with the bonds between them,
-  as a molecule — a quick way to lift a 3D fragment out of an opened file.
+- **Save as fragment** in the Inspector (or **Insert › Save selection as
+  molecule**) keeps the selected atoms, with the bonds between them, as a
+  molecule — a quick way to lift a 3D fragment out of an opened file.
   A flat 2D file (a molfile without z coordinates) is only rescaled to
   ångström and marked *flat* in the list; the Builder never invents a
   conformer for it.
@@ -166,6 +227,14 @@ Each molecule has two ways into the document:
   molecule never lands on top of one. Press *Place* again on the same
   molecule to turn the tool off.
 
+*Place* closes the gallery; *Add* leaves it open, so several molecules can be
+added one after another.
+
+Neither needs an open document. With nothing open, *Place* (or **Insert ›
+Molecule…**) still shows the gallery, and the first molecule you place or add
+starts an `untitled` document without a cell — build a molecule up from a
+library piece without making a cell first.
+
 Either way the molecule enters the history as one `add_fragment` operation
 (named after the molecule, e.g. `Add water-3 (3 atoms)`), so Undo removes it
 whole and the fragment's atoms can be addressed by later operations.
@@ -179,14 +248,14 @@ atoms stay inert.
 
 ## Crystal
 
-The **Crystal** section edits the solid the document holds. Its three tabs,
-plus the symmetry offer that appears for CIF files, cover the ASE-style
+The top bar's **Structure** menu edits the solid the document holds. Its
+items, plus the symmetry offer that appears for CIF files, cover the ASE-style
 workflow of bulk → supercell → slab → adsorbate without leaving the browser;
 the geometry is computed in TypeScript and pinned to what ASE produces by the
 tests (`tests/fixtures/crystal/ase-oracle.json`).
 
 - **Bulk crystal** is a *new document*, so it lives in the top bar's *New*
-  dialog rather than in this section: a prototype structure — simple cubic,
+  dialog rather than in this menu: a prototype structure — simple cubic,
   fcc, bcc, hcp, diamond, zincblende, rocksalt, CsCl, fluorite, wurtzite or
   perovskite, with the element(s), the lattice constant `a`, `c/a` for the
   hexagonal ones, and *conventional cell* for the cubic ones (the primitive
@@ -194,34 +263,44 @@ tests (`tests/fixtures/crystal/ase-oracle.json`).
   the fields with reference lattice constants (Cu, Al, Fe, Mg, Si, NaCl, GaAs,
   SrTiO₃, …). The document is named after the crystal (`Cu-fcc`) and, like
   an empty cell, replaces whatever is open.
-- **Cell** edits the cell as `a b c α β γ`. With *move atoms with the cell*
-  on, the atoms keep their fractional coordinates (ASE's `scale_atoms`);
-  off, they stay where they are. **Wrap atoms** folds every atom back into
-  the cell; **Center + vacuum** centres the atoms along the chosen axes and
-  resizes those cell vectors to leave the given vacuum on each side
-  (`Atoms.center`). **Remove cell** drops the cell.
-- **Supercell** repeats the cell `na × nb × nc` — or, with **Matrix**, by any
+- **Set cell… / Edit cell…** edits the cell as `a b c α β γ` (the sidebar's
+  *Cell* card, which always shows the current cell, opens the same dialog).
+  With *move atoms with the cell* on, the atoms keep their fractional
+  coordinates (ASE's `scale_atoms`); off, they stay where they are.
+  **Wrap atoms into cell** folds every atom back into the cell; **Center with
+  vacuum…** centres the atoms along the chosen axes and resizes those cell
+  vectors to leave the given vacuum on each side (`Atoms.center`). **Remove
+  cell** drops the cell.
+- **Supercell…** repeats the cell `na × nb × nc` — or, with **Matrix**, by any
   integer 3×3 transformation whose rows are the new lattice vectors in units
   of the old ones (`make_supercell`; `[1 1 0 / −1 1 0 / 0 0 1]` is the √2×√2
   R45° cell, `[−1 1 1 / 1 −1 1 / 1 1 −1]` turns a primitive fcc cell into the
-  conventional one). The line beside the button says how many atoms the
-  result will have. Bonds are carried along: a bond that crossed the cell
+  conventional one). The dialog says how many atoms the result will have. Bonds are carried along: a bond that crossed the cell
   face now reaches the neighbouring image, as the viewer's Replicate node
   draws it.
-- **Slab** cuts the (h k l) surface out of the current cell
+- **Cut slab…** cuts the (h k l) surface out of the current cell
   (`ase.build.surface`): the surface unit cell is repeated *layers* times
   along the normal, rotated so the first surface vector lies along x and
   the normal along z, and centred in *vacuum* Å of empty space on each side
   (0 keeps the slab periodic). The **termination** slider slides the cut
-  along the normal so a different plane ends up on top. The line beside the
-  button previews the atom count and thickness before you commit. Bonds that
+  along the normal so a different plane ends up on top. The dialog states the
+  atom count and thickness before you commit. Bonds that
   would have crossed into the vacuum are dropped; in-plane periodic ones are
   kept.
-- **Expand symmetry** appears when the opened file (a CIF) lists space-group
-  operations for its asymmetric unit, and fills the unit cell with the
-  symmetry-equivalent atoms the way the viewer's Symmetry node does. Do it
-  before cutting a supercell or slab; the offer goes away once the cell has
-  been changed, because the operations no longer apply.
+- **Expand symmetry** is offered (in the menu and on the sidebar's *Cell*
+  card) when the opened file (a CIF) lists space-group operations for its
+  asymmetric unit, and fills the unit cell with the symmetry-equivalent atoms
+  the way the viewer's Symmetry node does. Do it before cutting a supercell or
+  slab; the offer goes away once the cell has been changed, because the
+  operations no longer apply.
+
+The items that take parameters open a dialog in the corner of the 3D view.
+While its fields describe a valid operation, **the view previews the result**
+(the status bar says *Preview*) and clicks in the view are paused; **Apply**
+writes the operation, **Cancel** or Esc leaves the structure as it was. A
+result of more than 200 000 atoms is not previewed — the dialog says so — but
+Apply still builds it. The view is refitted to what it shows when the preview
+starts and ends, keeping the angle you were looking from.
 
 Each action is one operation in the history (`Supercell 2×2×1`,
 `Slab (1 1 1), 4 layers, 10 Å vacuum`, `Expand symmetry`, …), so Undo takes
@@ -232,8 +311,8 @@ structure.
 ## Python tools
 
 Structure generators written in Python — packmol liquid boxes, RadonPy
-polymer chains, solvation — appear as buttons in the **Python tools**
-section. They run in a separate *tool server*, an
+polymer chains, solvation — appear in the top bar's **Tools** menu. They run
+in a separate *tool server*, an
 [MCP](https://modelcontextprotocol.io/) server that follows the
 [Builder Tool Contract](../dev/builder-tools.md). Start the reference server
 with HTTP on your machine, allowing the page you opened Builder from:
@@ -243,9 +322,10 @@ uvx megane-builder-tools --transport http --port 8765 \
     --allow-origin http://localhost:8080
 ```
 
-It prints a bearer token. Paste the server URL (`http://127.0.0.1:8765/mcp`)
-and the token into the section and press **Connect**; the tools appear grouped
-by category. A button opens the tool's form: molecules are picked from the
+It prints a bearer token. Choose **Tools › Tool server…**, paste the server
+URL (`http://127.0.0.1:8765/mcp`) and the token, and press **Connect**; the
+tools appear in the Tools menu, grouped by category. Choosing one opens the
+tool's form: molecules are picked from the
 library, atoms (such as a monomer's head and tail) from a list of the chosen
 molecule's atoms, and the seed is filled in for you. **Run** shows the
 server's progress and can be cancelled.
@@ -268,7 +348,9 @@ connects on load. Anyone can write a tool server with the
 
 ## History
 
-The **History** section lists every operation in order and offers **Undo**,
+The **History** section lists every step in order — one line per Undo, so an
+atom and the hydrogens that came with it, or a cleaned-up molecule, is one
+line — and offers **Undo**,
 **Redo**, **Clear all**, and **Show original** (a preview of the structure as
 opened; editing is paused while it is on, and a banner at the top of the
 sidebar offers the way back). The history is the document: the

@@ -1,6 +1,8 @@
 /**
- * The sidebar's Library section: presets and user molecules, Add / Place,
- * importing from a file, saving a selection, and opening the sketch dialog.
+ * The molecule library as the Place tool's gallery (presets and user
+ * molecules, Place / Add, Edit / remove), the shared host that owns the one
+ * sketch dialog and file input, and the library actions (import, save a
+ * selection) the Insert menu and the Inspector reuse.
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
@@ -19,7 +21,8 @@ vi.mock("@/builder/library/SketchModal", () => ({
   },
 }));
 
-import { LibrarySection } from "@/builder/library/LibrarySection";
+import { LibraryHost, LibraryPanel } from "@/builder/library/LibraryPanel";
+import { useLibraryActions, useLibraryUi } from "@/builder/library/ui";
 import { useBuilderStore } from "@/builder/store";
 import { LIBRARY_STORAGE_KEY, useLibraryStore } from "@/builder/library/store";
 import { PRESET_MOLECULES } from "@/builder/library/presets";
@@ -65,24 +68,49 @@ beforeEach(() => {
   });
   parseStructureFile.mockReset();
   sketchModalProps.current = null;
+  useLibraryUi.setState({ sketch: null, galleryOpen: false });
 });
 afterEach(() => cleanup());
 
-describe("LibrarySection", () => {
-  it("lists the presets and disables Add until a document is open", () => {
-    render(<LibrarySection />);
+/** The gallery with the host beside it, and a button for the Inspector's Save as fragment. */
+function Library({ onClose = () => {} }: { onClose?: () => void }) {
+  const { saveSelection } = useLibraryActions();
+  return (
+    <>
+      <LibraryPanel onClose={onClose} />
+      <LibraryHost />
+      <button data-testid="builder-library-save-selection" onClick={saveSelection} />
+    </>
+  );
+}
+
+describe("LibraryPanel", () => {
+  it("lists the presets, starts a document on Add with nothing open, and closes", () => {
+    const onClose = vi.fn();
+    render(<Library onClose={onClose} />);
+    fireEvent.click(screen.getByTestId("builder-library-close"));
+    expect(onClose).toHaveBeenCalled();
     expect(screen.getByTestId("builder-library-count").textContent).toBe(
       `${PRESET_MOLECULES.length} molecules`,
     );
     expect(item("preset:water").textContent).toContain("H2O");
     expect(within(item("preset:water")).queryByTestId("builder-library-remove")).toBeNull();
     fireEvent.click(button("preset:water", "add"));
-    expect(useBuilderStore.getState().edits).toEqual([]);
+    expect(useBuilderStore.getState().fileName).toBe("untitled");
+    expect(shown().nAtoms).toBe(3);
+  });
+
+  it("Add is off while the original structure is shown", () => {
+    useBuilderStore.getState().openStructure(water(), null, "w.xyz");
+    useBuilderStore.getState().pushOp({ op: "wrap" });
+    useBuilderStore.getState().setShowOriginal(true);
+    render(<Library />);
+    expect((button("preset:water", "add") as HTMLButtonElement).disabled).toBe(true);
   });
 
   it("Add drops the molecule beside the structure and selects it", () => {
     useBuilderStore.getState().openStructure(water(), null, "w.xyz");
-    render(<LibrarySection />);
+    render(<Library />);
     fireEvent.click(button("preset:methane", "add"));
     expect(shown().nAtoms).toBe(8);
     expect(useBuilderStore.getState().selected).toEqual([3, 4, 5, 6, 7]);
@@ -99,7 +127,7 @@ describe("LibrarySection", () => {
   });
 
   it("Place toggles the place source and highlights the row", () => {
-    render(<LibrarySection />);
+    render(<Library />);
     fireEvent.click(button("preset:benzene", "place"));
     expect(useBuilderStore.getState().tool).toBe("place");
     expect(useBuilderStore.getState().placeSource?.id).toBe("preset:benzene");
@@ -122,7 +150,7 @@ describe("LibrarySection", () => {
       scalarChannels: [],
       warnings: [],
     });
-    render(<LibrarySection />);
+    render(<Library />);
     const input = screen.getByTestId("builder-library-import-input") as HTMLInputElement;
     const click = vi.spyOn(input, "click");
     fireEvent.click(screen.getByTestId("builder-library-import"));
@@ -160,7 +188,7 @@ describe("LibrarySection", () => {
 
   it("saves the selection as a molecule", () => {
     useBuilderStore.getState().openStructure(water(), null, "w.xyz");
-    render(<LibrarySection />);
+    render(<Library />);
     fireEvent.click(screen.getByTestId("builder-library-save-selection"));
     expect(useLibraryStore.getState().user).toEqual([]);
     act(() => useBuilderStore.getState().setSelected([0, 1]));
@@ -173,7 +201,7 @@ describe("LibrarySection", () => {
   });
 
   it("Sketch… opens the dialog; Add keeps the result; Edit reopens a sketch", () => {
-    render(<LibrarySection />);
+    render(<Library />);
     expect(screen.queryByTestId("sketch-modal-stub")).toBeNull();
     fireEvent.click(screen.getByTestId("builder-library-sketch"));
     expect(screen.getByTestId("sketch-modal-stub")).toBeTruthy();

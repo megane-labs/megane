@@ -11,6 +11,12 @@
  * uses (`pipeline/executors/edit.ts`), which is what will let a Builder
  * document travel into the viewer later.
  *
+ * A dialog that is about to write an op (a supercell, a slab, a new cell) can
+ * show it first: `setPreview(op)` applies it to the edited structure without
+ * committing it, the view draws `preview` instead (`viewSnapshot`), and clicks
+ * in the view are paused until the op is applied (`pushOp`) or dropped
+ * (`setPreview(null)`).
+ *
  * Atom indices in `selected` / `pendingBondAtom` and in the Viewport's
  * callbacks address the *rendered* structure; `result.refAt` translates
  * them to op refs before an op is written.
@@ -19,7 +25,7 @@
 import { create, type StateCreator, type StoreApi } from "zustand";
 import { createStore } from "zustand/vanilla";
 import { applyEditOps, type EditResult } from "../pipeline/executors/edit";
-import type { EditOp } from "../pipeline/types";
+import type { EditAtomRef, EditOp } from "../pipeline/types";
 import type { Snapshot } from "../types";
 import { registerTestStores, GLOBAL_BUNDLE_ID } from "../stores/testRegistry";
 import type { BuildHandlers, BuildTool } from "./types";
@@ -27,9 +33,8 @@ import { fragmentOp, newFragmentId } from "./library/fragment";
 import type { LibraryMolecule } from "./library/types";
 import { bulkName, bulkSnapshot, type BulkSpec } from "../crystal/bulk";
 
-/** A structure with no atoms and a cubic cell of edge `edge` Å: the blank sheet. */
-export function emptyCellSnapshot(edge: number): Snapshot {
-  const a = Math.max(edge, 0.1);
+/** A structure with no atoms and no cell: what placing a molecule with nothing open starts from. */
+export function emptySnapshot(): Snapshot {
   return {
     nAtoms: 0,
     nBonds: 0,
@@ -38,11 +43,17 @@ export function emptyCellSnapshot(edge: number): Snapshot {
     elements: new Uint8Array(0),
     bonds: new Uint32Array(0),
     bondOrders: null,
-    box: new Float32Array([a, 0, 0, 0, a, 0, 0, 0, a]),
+    box: null,
     boxOrigin: null,
     atomChainIds: null,
     atomBFactors: null,
   };
+}
+
+/** A structure with no atoms and a cubic cell of edge `edge` Å: the blank sheet. */
+export function emptyCellSnapshot(edge: number): Snapshot {
+  const a = Math.max(edge, 0.1);
+  return { ...emptySnapshot(), box: new Float32Array([a, 0, 0, 0, a, 0, 0, 0, a]) };
 }
 
 /** File name the Builder gives a document that started from a blank cell. */
@@ -73,6 +84,11 @@ export interface BuilderStore {
   /** `applyEditOps(source, edits)`, recomputed whenever either changes. */
   result: EditResult | null;
   /**
+   * An op a dialog is about to write, applied to `result` but not committed:
+   * what the view draws while it is set. Any change to the document drops it.
+   */
+  preview: EditResult | null;
+  /**
    * Bumped by every change that reshapes the rendered structure without
    * replacing the document (an op, undo, redo, the preview toggle): the view
    * keeps its camera across such changes and re-fits only for a new document.
@@ -99,6 +115,8 @@ export interface BuilderStore {
    * cell) — an adsorbate on a surface site. Null keeps clicks on atoms inert.
    */
   adsorbHeight: number | null;
+  /** With the Select tool, a drag on the view draws a box and selects what it holds. */
+  boxSelect: boolean;
   /** The message on screen, if any; see `BuilderNotice`. */
   notice: BuilderNotice | null;
 
@@ -120,6 +138,11 @@ export interface BuilderStore {
   redo: () => EditOp | null;
   clearOps: () => void;
   setShowOriginal: (on: boolean) => void;
+  /**
+   * Show `op` applied to the edited structure without committing it, or stop
+   * showing it with null. An op that cannot be applied shows nothing.
+   */
+  setPreview: (op: EditOp | null) => void;
 
   // ── Tool actions ──
   setTool: (tool: BuildTool) => void;
@@ -133,6 +156,7 @@ export interface BuilderStore {
   /** Choose the molecule the Place tool stamps (and switch to that tool), or clear it. */
   setPlaceSource: (molecule: LibraryMolecule | null) => void;
   setAdsorbHeight: (height: number | null) => void;
+  setBoxSelect: (on: boolean) => void;
   /** Show a message (replacing the current one), or clear it with null. */
   setNotice: (notice: BuilderNotice | null) => void;
   /** Shorthand for an error notice. */
@@ -146,6 +170,16 @@ export interface BuilderStore {
    * document is not editable.
    */
   addFragment: (molecule: LibraryMolecule, at: [number, number, number]) => string | null;
+  /**
+   * Move rendered atoms by their own displacements (a set distance, a
+   * rotation, a cleaned-up geometry) as one Undo step: one `move_atoms` op per
+   * distinct displacement. Returns whether anything was written.
+   */
+  moveAtoms: (displacements: Map<number, [number, number, number]>) => boolean;
+  /** Select every rendered atom. */
+  selectAll: () => void;
+  /** Select the atoms that are not selected, and deselect the rest. */
+  invertSelection: () => void;
 }
 
 /** The structure the 3D view draws for `state`: edited, or the source under the preview. */
@@ -154,9 +188,22 @@ export function shownSnapshot(state: Pick<BuilderStore, "source" | "result" | "s
   return state.showOriginal ? state.source : (state.result?.snapshot ?? state.source);
 }
 
-/** Whether clicks may write ops: a document is open and the edited structure is what is shown. */
-export function canEdit(state: Pick<BuilderStore, "source" | "result" | "showOriginal">) {
-  return !!state.source && !!state.result && !state.showOriginal;
+/** What the 3D view draws: the preview of a pending op if there is one, else `shownSnapshot`. */
+export function viewSnapshot(
+  state: Pick<BuilderStore, "source" | "result" | "showOriginal" | "preview">,
+) {
+  return state.preview && !state.showOriginal ? state.preview.snapshot : shownSnapshot(state);
+}
+
+/**
+ * Whether clicks may write ops: a document is open, the edited structure is
+ * what is shown, and no dialog is previewing an op over it.
+ */
+export function canEdit(
+  state: Pick<BuilderStore, "source" | "result" | "showOriginal"> &
+    Partial<Pick<BuilderStore, "preview">>,
+) {
+  return !!state.source && !!state.result && !state.showOriginal && !state.preview;
 }
 
 /**
@@ -166,6 +213,20 @@ export function canEdit(state: Pick<BuilderStore, "source" | "result" | "showOri
  * identity, so the op list itself stays plain `EditOp`s.
  */
 const continuations = new WeakSet<EditOp>();
+
+/**
+ * The history as the user made it: one group per Undo step (an op plus the
+ * ops pushed with it — an atom and its hydrogens, the moves of a cleaned-up
+ * molecule), in order.
+ */
+export function editSteps(edits: EditOp[]): EditOp[][] {
+  const steps: EditOp[][] = [];
+  for (const op of edits) {
+    if (continuations.has(op) && steps.length > 0) steps[steps.length - 1].push(op);
+    else steps.push([op]);
+  }
+  return steps;
+}
 
 function compute(source: Snapshot | null, edits: EditOp[]): EditResult | null {
   return source ? applyEditOps(source, edits) : null;
@@ -179,6 +240,7 @@ export const builderStateCreator: StateCreator<BuilderStore> = (set, get) => ({
   redoStack: [],
   showOriginal: false,
   result: null,
+  preview: null,
   revision: 0,
 
   tool: "select",
@@ -189,6 +251,7 @@ export const builderStateCreator: StateCreator<BuilderStore> = (set, get) => ({
   handlers: null,
   placeSource: null,
   adsorbHeight: null,
+  boxSelect: false,
   notice: null,
 
   openStructure: (snapshot, labels, fileName) =>
@@ -200,6 +263,7 @@ export const builderStateCreator: StateCreator<BuilderStore> = (set, get) => ({
       redoStack: [],
       showOriginal: false,
       result: compute(snapshot, []),
+      preview: null,
       selected: [],
       pendingBondAtom: null,
       notice: null,
@@ -215,6 +279,7 @@ export const builderStateCreator: StateCreator<BuilderStore> = (set, get) => ({
         edits,
         redoStack: [],
         result: compute(s.source, edits),
+        preview: null,
         revision: s.revision + 1,
       };
     }),
@@ -228,6 +293,7 @@ export const builderStateCreator: StateCreator<BuilderStore> = (set, get) => ({
         edits,
         redoStack: [],
         result: compute(s.source, edits),
+        preview: null,
         revision: s.revision + 1,
       };
     });
@@ -237,7 +303,7 @@ export const builderStateCreator: StateCreator<BuilderStore> = (set, get) => ({
     set((s) => {
       if (s.edits.length === 0) return {};
       const edits = [...s.edits.slice(0, -1), op];
-      return { edits, result: compute(s.source, edits), revision: s.revision + 1 };
+      return { edits, result: compute(s.source, edits), preview: null, revision: s.revision + 1 };
     }),
 
   undo: () => {
@@ -254,6 +320,7 @@ export const builderStateCreator: StateCreator<BuilderStore> = (set, get) => ({
       edits,
       redoStack,
       result: compute(s.source, edits),
+      preview: null,
       revision: s.revision + 1,
       selected: [],
       pendingBondAtom: null,
@@ -274,6 +341,7 @@ export const builderStateCreator: StateCreator<BuilderStore> = (set, get) => ({
       edits,
       redoStack,
       result: compute(s.source, edits),
+      preview: null,
       revision: s.revision + 1,
     });
     return op;
@@ -287,6 +355,7 @@ export const builderStateCreator: StateCreator<BuilderStore> = (set, get) => ({
             edits: [],
             redoStack: [],
             result: compute(s.source, []),
+            preview: null,
             revision: s.revision + 1,
             selected: [],
             pendingBondAtom: null,
@@ -297,8 +366,29 @@ export const builderStateCreator: StateCreator<BuilderStore> = (set, get) => ({
     set((s) =>
       s.showOriginal === on
         ? {}
-        : { showOriginal: on, revision: s.revision + 1, selected: [], pendingBondAtom: null },
+        : {
+            showOriginal: on,
+            preview: null,
+            revision: s.revision + 1,
+            selected: [],
+            pendingBondAtom: null,
+          },
     ),
+
+  setPreview: (op) =>
+    set((s) => {
+      if (!op || !s.result || s.showOriginal) {
+        return s.preview ? { preview: null, revision: s.revision + 1 } : {};
+      }
+      let preview: EditResult | null;
+      try {
+        preview = applyEditOps(s.result.snapshot, [op]);
+      } catch {
+        preview = null;
+      }
+      // The selection addresses the edited structure, not the preview.
+      return { preview, revision: s.revision + 1, selected: [], pendingBondAtom: null };
+    }),
 
   setTool: (tool) => set({ tool, pendingBondAtom: null }),
   setElement: (element) => set({ element }),
@@ -321,10 +411,13 @@ export const builderStateCreator: StateCreator<BuilderStore> = (set, get) => ({
     ),
   setAdsorbHeight: (height) =>
     set({ adsorbHeight: height !== null && Number.isFinite(height) ? height : null }),
+  setBoxSelect: (boxSelect) => set({ boxSelect }),
   setNotice: (notice) => set({ notice }),
   reportError: (text) => set({ notice: { level: "error", text } }),
   reportInfo: (text) => set({ notice: { level: "info", text } }),
   addFragment: (molecule, at) => {
+    // With nothing open, the molecule starts a new, cell-less document.
+    if (!get().source) get().openStructure(emptySnapshot(), null, UNTITLED);
     const s = get();
     if (!canEdit(s)) return null;
     const before = s.result!.snapshot.nAtoms;
@@ -335,6 +428,40 @@ export const builderStateCreator: StateCreator<BuilderStore> = (set, get) => ({
     set({ selected: added, pendingBondAtom: null });
     return id;
   },
+  moveAtoms: (displacements) => {
+    const s = get();
+    if (!canEdit(s)) return false;
+    const n = s.result!.snapshot.nAtoms;
+    const groups = new Map<string, { delta: [number, number, number]; atoms: EditAtomRef[] }>();
+    for (const [i, delta] of displacements) {
+      if (i < 0 || i >= n || delta.every((v) => Math.abs(v) < 1e-9)) continue;
+      const ref = s.result!.refAt(i);
+      if (ref === null) continue;
+      const key = delta.map((v) => v.toFixed(9)).join(",");
+      const group = groups.get(key) ?? { delta, atoms: [] };
+      group.atoms.push(ref);
+      groups.set(key, group);
+    }
+    if (groups.size === 0) return false;
+    s.pushOps(
+      [...groups.values()].map((g) => ({ op: "move_atoms", atoms: g.atoms, delta: g.delta })),
+    );
+    return true;
+  },
+  selectAll: () =>
+    set((s) => {
+      const n = viewSnapshot(s)?.nAtoms ?? 0;
+      return { selected: Array.from({ length: n }, (_, i) => i), pendingBondAtom: null };
+    }),
+  invertSelection: () =>
+    set((s) => {
+      const n = viewSnapshot(s)?.nAtoms ?? 0;
+      const chosen = new Set(s.selected);
+      return {
+        selected: Array.from({ length: n }, (_, i) => i).filter((i) => !chosen.has(i)),
+        pendingBondAtom: null,
+      };
+    }),
 });
 
 /** The app's store. */

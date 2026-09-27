@@ -40,9 +40,15 @@ vi.mock("@/renderer/MoleculeRenderer", () => ({
 
 import { Viewport } from "@/components/Viewport";
 
-function pointer(type: string, x: number, y: number, button = 0) {
+function pointer(type: string, x: number, y: number, button = 0, shiftKey = false) {
   canvas.dispatchEvent(
-    new MouseEvent(type, { clientX: x, clientY: y, button, bubbles: true }) as unknown as Event,
+    new MouseEvent(type, {
+      clientX: x,
+      clientY: y,
+      button,
+      shiftKey,
+      bubbles: true,
+    }) as unknown as Event,
   );
 }
 
@@ -70,9 +76,18 @@ describe("Viewport — Inspector interactions", () => {
     pointer("pointermove", 60, 60);
     pointer("pointerup", 60, 60);
     expect(rendererMock.selectAtomsInRect).toHaveBeenCalled();
-    expect(onBoxSelect).toHaveBeenCalledWith([1, 2]);
+    expect(onBoxSelect).toHaveBeenCalledWith([1, 2], { additive: false });
     // The rubber-band element is cleaned up.
     expect(document.querySelector('[data-testid="viewport-box-select"]')).toBeNull();
+    cleanup();
+  });
+
+  it("reports a Shift box drag as additive", () => {
+    const onBoxSelect = vi.fn();
+    render(<Viewport snapshot={null} frame={null} boxSelectActive onBoxSelect={onBoxSelect} />);
+    pointer("pointerdown", 10, 10, 0, true);
+    pointer("pointerup", 60, 60);
+    expect(onBoxSelect).toHaveBeenCalledWith([1, 2], { additive: true });
     cleanup();
   });
 

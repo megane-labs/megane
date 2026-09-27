@@ -1,15 +1,17 @@
 /**
  * The context bar: a strip floating over the top of the 3D view that holds the
  * settings of the current tool and nothing else — the element for *Add atom*
- * and *Element*, the bond order for *Add atom* and *Bond*, *Place on atoms*
+ * and *Element* (a periodic table opens below it for the rarer ones), the bond order for *Add atom* and *Bond*, *Place on atoms*
  * for *Place*. A tool with no settings (Select, Move, Delete) shows no bar, so
  * the view stays clear.
  */
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useBuilderStore } from "./store";
 import { toolInfo } from "./ToolRail";
-import { DEFAULT_ADSORB_HEIGHT } from "./library/LibrarySection";
+import { DEFAULT_ADSORB_HEIGHT, useLibraryUi } from "./library/ui";
+import { LibraryPanel } from "./library/LibraryPanel";
+import { PeriodicTable } from "./PeriodicTable";
 import { getElementSymbol } from "../constants";
 import { OVERLAY_INSET } from "../components/overlayLayout";
 import { hintStyle, inputStyle } from "./styles";
@@ -64,9 +66,31 @@ export function ContextBar() {
   const element = useBuilderStore((s) => s.element);
   const bondOrder = useBuilderStore((s) => s.bondOrder);
   const adsorbHeight = useBuilderStore((s) => s.adsorbHeight);
+  const boxSelect = useBuilderStore((s) => s.boxSelect);
+  const setBoxSelect = useBuilderStore((s) => s.setBoxSelect);
+  const selectAll = useBuilderStore((s) => s.selectAll);
+  const invertSelection = useBuilderStore((s) => s.invertSelection);
   const setElement = useBuilderStore((s) => s.setElement);
   const setBondOrder = useBuilderStore((s) => s.setBondOrder);
   const setAdsorbHeight = useBuilderStore((s) => s.setAdsorbHeight);
+
+  const placeSource = useBuilderStore((s) => s.placeSource);
+  const galleryOpen = useLibraryUi((s) => s.galleryOpen);
+  const setGalleryOpen = useLibraryUi((s) => s.setGalleryOpen);
+  const [tableOpen, setTableOpen] = useState(false);
+
+  // The periodic table belongs to the tool it was opened from.
+  useEffect(() => setTableOpen(false), [tool]);
+
+  // Place with nothing to place opens the gallery; choosing a molecule closes
+  // it, and so does leaving the tool.
+  useEffect(() => {
+    if (tool !== "place") setGalleryOpen(false);
+    else if (!placeSource) setGalleryOpen(true);
+  }, [tool, setGalleryOpen]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    if (placeSource) setGalleryOpen(false);
+  }, [placeSource, setGalleryOpen]);
 
   const info = toolInfo(tool);
   if (info.needs.length === 0) return null;
@@ -82,7 +106,9 @@ export function ContextBar() {
         right: OVERLAY_INSET,
         zIndex: 10,
         display: "flex",
-        justifyContent: "center",
+        flexDirection: "column",
+        alignItems: "center",
+        gap: 8,
         pointerEvents: "none",
       }}
     >
@@ -113,6 +139,40 @@ export function ContextBar() {
         >
           {info.label}
         </span>
+
+        {info.needs.includes("select") && (
+          <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+            <button
+              type="button"
+              data-testid="builder-select-box"
+              aria-pressed={boxSelect}
+              title="Drag a box on the view to select what it holds; Shift adds to the selection (the view stops rotating while on)"
+              style={{ ...choiceStyle(boxSelect), fontWeight: 500, padding: "0 10px" }}
+              onClick={() => setBoxSelect(!boxSelect)}
+            >
+              Box
+            </button>
+            <Divider />
+            <button
+              type="button"
+              data-testid="builder-select-all"
+              title="Select every atom (Ctrl/⌘ + A)"
+              style={{ ...choiceStyle(false), fontWeight: 500, padding: "0 10px" }}
+              onClick={selectAll}
+            >
+              All
+            </button>
+            <button
+              type="button"
+              data-testid="builder-select-invert"
+              title="Select the atoms that are not selected"
+              style={{ ...choiceStyle(false), fontWeight: 500, padding: "0 10px" }}
+              onClick={invertSelection}
+            >
+              Invert
+            </button>
+          </div>
+        )}
 
         {info.needs.includes("element") && (
           <>
@@ -147,6 +207,21 @@ export function ContextBar() {
               />
               <span data-testid="builder-element-symbol">{getElementSymbol(element)}</span>
             </label>
+            <button
+              type="button"
+              data-testid="builder-element-table"
+              aria-expanded={tableOpen}
+              title="Choose the element from the periodic table"
+              style={{
+                ...choiceStyle(tableOpen),
+                fontWeight: 500,
+                padding: "0 10px",
+                marginLeft: 4,
+              }}
+              onClick={() => setTableOpen(!tableOpen)}
+            >
+              Table {tableOpen ? "▴" : "▾"}
+            </button>
           </>
         )}
 
@@ -192,9 +267,58 @@ export function ContextBar() {
         )}
 
         {info.needs.includes("place") && (
-          <AdsorbOption height={adsorbHeight} onChange={setAdsorbHeight} />
+          <>
+            <button
+              type="button"
+              data-testid="builder-place-fragment"
+              aria-expanded={galleryOpen}
+              title="Choose the molecule to place"
+              style={{
+                height: 30,
+                display: "inline-flex",
+                alignItems: "center",
+                gap: 6,
+                padding: "0 10px",
+                borderRadius: 6,
+                cursor: "pointer",
+                fontFamily: "inherit",
+                fontSize: 13,
+                fontWeight: 500,
+                border: `1px solid ${placeSource ? ACCENT : "var(--megane-border-solid, #cbd5e1)"}`,
+                background: placeSource ? "rgba(37, 99, 235, 0.08)" : "transparent",
+                color: "var(--megane-text, #1e293b)",
+                marginRight: 6,
+                whiteSpace: "nowrap",
+              }}
+              onClick={() => setGalleryOpen(!galleryOpen)}
+            >
+              {placeSource ? (
+                <>
+                  {placeSource.name}
+                  <span style={{ ...hintStyle, fontSize: 11 }}>{placeSource.formula}</span>
+                </>
+              ) : (
+                "Choose a molecule…"
+              )}
+              <span aria-hidden="true">{galleryOpen ? "▴" : "▾"}</span>
+            </button>
+            <AdsorbOption height={adsorbHeight} onChange={setAdsorbHeight} />
+          </>
         )}
       </div>
+      {info.needs.includes("element") && tableOpen && (
+        <PeriodicTable
+          value={element}
+          onPick={(z) => {
+            setElement(z);
+            setTableOpen(false);
+          }}
+          onClose={() => setTableOpen(false)}
+        />
+      )}
+      {info.needs.includes("place") && galleryOpen && (
+        <LibraryPanel onClose={() => setGalleryOpen(false)} />
+      )}
     </div>
   );
 }

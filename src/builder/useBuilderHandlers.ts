@@ -28,6 +28,13 @@ export function useBuilderHandlers(api: StoreApi<BuilderStore>): BuildHandlers {
   const pick = useCallback(
     (info: BuildPickInfo) => {
       const state = api.getState();
+      // Place needs no open document: the first molecule placed starts one.
+      if (!state.source && state.tool === "place") {
+        if (state.placeSource && info.atomIndex === null && info.world) {
+          state.addFragment(state.placeSource, info.world);
+        }
+        return;
+      }
       const snapshot = shownSnapshot(state);
       if (!canEdit(state) || !snapshot) return;
       const { atomIndex } = info;

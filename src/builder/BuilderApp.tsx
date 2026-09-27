@@ -31,8 +31,6 @@ import {
 } from "react";
 import { Viewport } from "../components/Viewport";
 import { Tooltip } from "../components/Tooltip";
-import { ViewAxisControls } from "../components/ViewAxisControls";
-import { OVERLAY_INSET } from "../components/overlayLayout";
 import type { MoleculeRenderer } from "../renderer/MoleculeRenderer";
 import { latticeVectors, type ViewAxis } from "../renderer/cameraOrientation";
 import { applyViewportState } from "../pipeline/apply";
@@ -40,9 +38,9 @@ import type { ViewportState } from "../pipeline/types";
 import { parseStructureFile } from "../parsers/structure";
 import { STRUCTURE_EXPORT_FORMATS, exportSnapshot } from "../export/structureExport";
 import type { StructureWriteFormat } from "../parsers/parseCore";
-import { useThemeStore, type Theme } from "../stores/useThemeStore";
+import { useThemeStore, themeToHex } from "../stores/useThemeStore";
 import type { HoverInfo } from "../types";
-import { useBuilderStore, shownSnapshot } from "./store";
+import { useBuilderStore, canEdit, editSteps, shownSnapshot, viewSnapshot } from "./store";
 import { builderViewportState, BUILDER_SOURCE_ID } from "./view";
 import { useBuilderHandlers } from "./useBuilderHandlers";
 import { useBuilderShortcuts, TOOL_KEYS } from "./shortcuts";
@@ -51,13 +49,21 @@ import { ToolRail, toolHint, toolInfo } from "./ToolRail";
 import { ContextBar } from "./ContextBar";
 import { Menu } from "./Menu";
 import { NewStructureDialog, type NewStructureKind } from "./NewStructureDialog";
+import { fileMenuItems, viewMenuItems } from "./topbarMenus";
+import { CrystalDialog, type CrystalDialogKind } from "./crystal/CrystalDialog";
+import { structureMenuItems } from "./crystal/structureMenu";
+import { hasCellBox, symmetryOpsAvailable } from "./crystal/structure";
+import { ToolServerDialog, toolsMenuItems, useToolServerLaunch } from "./tools/ToolServer";
+import { ToolDialog } from "./tools/ToolDialog";
+import { useToolsStore } from "./tools/store";
+import { LibraryHost } from "./library/LibraryPanel";
+import { AtomMenu, type AtomMenuTarget } from "./AtomMenu";
+import { runCleanup } from "./cleanup";
+import { useLibraryActions, useLibraryUi } from "./library/ui";
 import { buttonStyle, hintStyle } from "./styles";
 import { trackEvent, trackFileOpen } from "../analytics";
 
 const SIDEBAR_WIDTH = 320;
-
-const THEME_LABELS: Record<Theme, string> = { light: "Light", dark: "Dark", system: "System" };
-const THEME_ORDER: Theme[] = ["system", "light", "dark"];
 
 /** ⌘ on a Mac, Ctrl elsewhere, for the shortcut hints in the tooltips. */
 function modKeyLabel(): string {
@@ -87,12 +93,31 @@ export function BuilderApp() {
   const openStructure = useBuilderStore((s) => s.openStructure);
   const setNotice = useBuilderStore((s) => s.setNotice);
   const reportError = useBuilderStore((s) => s.reportError);
+  const pushOp = useBuilderStore((s) => s.pushOp);
+  const preview = useBuilderStore((s) => s.preview);
+  const boxSelect = useBuilderStore((s) => s.boxSelect);
+  const setSelected = useBuilderStore((s) => s.setSelected);
+  const toolsStatus = useToolsStore((s) => s.status);
+  const toolsConnection = useToolsStore((s) => s.connection);
+  const openTool = useToolsStore((s) => s.openTool);
+  const openForm = useToolsStore((s) => s.openForm);
+  const setTool = useBuilderStore((s) => s.setTool);
+  const openSketch = useLibraryUi((s) => s.openSketch);
+  const setGalleryOpen = useLibraryUi((s) => s.setGalleryOpen);
+  const importer = useLibraryUi((s) => s.importer);
+  const { saveSelection } = useLibraryActions();
 
+  // `shown` is the document (what Save writes); `viewed` is what the view
+  // draws, which is the preview of a Structure dialog's op while one is open.
   const shown = useMemo(
     () => shownSnapshot({ source, result, showOriginal }),
     [source, result, showOriginal],
   );
-  const viewportState = useMemo(() => builderViewportState(shown), [shown]);
+  const viewed = useMemo(
+    () => viewSnapshot({ source, result, showOriginal, preview }),
+    [source, result, showOriginal, preview],
+  );
+  const viewportState = useMemo(() => builderViewportState(viewed), [viewed]);
 
   const handlers = useBuilderHandlers(api);
 
@@ -101,6 +126,15 @@ export function BuilderApp() {
   const prevViewportStateRef = useRef<ViewportState | null>(null);
   const [hoverInfo, setHoverInfo] = useState<HoverInfo>(null);
   const [newDialog, setNewDialog] = useState<NewStructureKind | null>(null);
+  const [crystalDialog, setCrystalDialog] = useState<CrystalDialogKind | null>(null);
+  const [toolServerOpen, setToolServerOpen] = useState(false);
+  const [atomMenu, setAtomMenu] = useState<AtomMenuTarget | null>(null);
+  const closeAtomMenu = useCallback(() => setAtomMenu(null), []);
+  const closeCrystalDialog = useCallback(() => setCrystalDialog(null), []);
+  const closeToolServer = useCallback(() => setToolServerOpen(false), []);
+  // A new document ends whatever a Structure dialog was about to do to the old one.
+  useEffect(() => setCrystalDialog(null), [source]);
+  useToolServerLaunch();
   const [dropActive, setDropActive] = useState(false);
 
   const applyState = useCallback(
@@ -120,7 +154,10 @@ export function BuilderApp() {
   const handleRendererReady = useCallback(
     (renderer: MoleculeRenderer) => {
       rendererRef.current = renderer;
-      renderer.setViewInsets(0, SIDEBAR_WIDTH + OVERLAY_INSET);
+      renderer.setBackgroundColor(themeToHex(useThemeStore.getState().resolvedTheme));
+      // The sidebar sits beside the view, not over it, so the frustum needs
+      // no inset: the structure is centred in the view it is drawn in.
+      renderer.setViewInsets(0, 0);
       applyState(renderer, viewportState);
     },
     // Only the first state matters here; later ones arrive through the effect.
@@ -182,7 +219,24 @@ export function BuilderApp() {
     (axis: ViewAxis) => rendererRef.current?.alignCameraToAxis(axis),
     [],
   );
-  const hasCell = latticeVectors(shown?.box) !== null;
+  const hasCell = latticeVectors(viewed?.box) !== null;
+  const structureItems = structureMenuItems(
+    {
+      hasDocument: !!shown,
+      editable: canEdit({ source, result, showOriginal }),
+      hasCell: hasCellBox(shown?.box),
+      nAtoms: shown?.nAtoms ?? 0,
+      symmetryOps: symmetryOpsAvailable(source, edits),
+      nSelected: selected.length,
+    },
+    setCrystalDialog,
+    pushOp,
+    () => void runCleanup(api),
+  );
+  const toolsItems = toolsMenuItems(
+    { status: toolsStatus, connection: toolsConnection, openForm },
+    () => setToolServerOpen(true),
+  );
 
   // ── Keyboard ──
   const shortcutHost = useMemo(
@@ -198,11 +252,26 @@ export function BuilderApp() {
 
   const theme = useThemeStore((s) => s.theme);
   const setTheme = useThemeStore((s) => s.setTheme);
-  const cycleTheme = useCallback(() => {
-    setTheme(THEME_ORDER[(THEME_ORDER.indexOf(theme) + 1) % THEME_ORDER.length]);
-  }, [theme, setTheme]);
+  // The view's background follows the theme, as in the viewer.
+  const resolvedTheme = useThemeStore((s) => s.resolvedTheme);
+  useEffect(() => {
+    rendererRef.current?.setBackgroundColor(themeToHex(resolvedTheme));
+  }, [resolvedTheme]);
 
-  const preview = useMemo(() => {
+  // A Structure dialog's preview can grow or shrink the structure (a
+  // supercell, a slab, a new cell): fit the view to what is drawn whenever
+  // the preview starts, changes or ends (Apply, Cancel), keeping the angle.
+  // Parent effects run after the Viewport's, so the snapshot is loaded.
+  const previewSeen = useRef(preview);
+  useEffect(() => {
+    if (previewSeen.current === preview) return;
+    previewSeen.current = preview;
+    rendererRef.current?.resetView();
+  }, [preview]);
+  const lastContextMenuAt = useRef<{ x: number; y: number } | null>(null);
+  const steps = useMemo(() => editSteps(edits).length, [edits]);
+
+  const highlighted = useMemo(() => {
     const set = new Set(selected);
     if (pendingBondAtom !== null) set.add(pendingBondAtom);
     return set.size > 0 ? [...set] : null;
@@ -242,17 +311,8 @@ export function BuilderApp() {
         </span>
         <span style={{ ...hintStyle, marginRight: 8 }} data-testid="builder-file-name">
           {fileName ?? "No structure"}
-          {edits.length > 0 && ` · ${edits.length} edit${edits.length === 1 ? "" : "s"}`}
+          {steps > 0 && ` · ${steps} edit${steps === 1 ? "" : "s"}`}
         </span>
-        <button
-          type="button"
-          data-testid="builder-open"
-          style={buttonStyle()}
-          onClick={() => inputRef.current?.click()}
-          title={`Open a structure file (${mod}+O)`}
-        >
-          Open…
-        </button>
         <input
           ref={inputRef}
           data-testid="builder-open-input"
@@ -261,21 +321,79 @@ export function BuilderApp() {
           onChange={(e) => void handleOpenChange(e)}
         />
         <Menu
-          testId="builder-new"
-          label="New"
-          title="Start a new structure (replaces the open one)"
+          testId="builder-file"
+          label="File"
+          title="Open, start or save a structure"
+          items={fileMenuItems({
+            open: () => inputRef.current?.click(),
+            newCell: () => setNewDialog("cell"),
+            newBulk: () => setNewDialog("bulk"),
+            formats: STRUCTURE_EXPORT_FORMATS,
+            save: (f) => void handleExport(f as StructureWriteFormat),
+            canSave: !!shown,
+            mod,
+          })}
+        />
+        <Menu
+          testId="builder-structure"
+          label="Structure"
+          disabled={!shown}
+          title="Cell, supercell, slab and symmetry of the open structure"
+          items={structureItems}
+        />
+        <Menu
+          testId="builder-insert"
+          label="Insert"
+          title="Molecules from the library, a sketch or a file"
           items={[
             {
-              label: "Empty cell…",
-              testId: "builder-new-cell-item",
-              onSelect: () => setNewDialog("cell"),
+              label: "Molecule…",
+              testId: "builder-insert-molecule",
+              title: "Choose a library molecule to place (P)",
+              onSelect: () => {
+                setTool("place");
+                setGalleryOpen(true);
+              },
             },
             {
-              label: "Bulk crystal…",
-              testId: "builder-new-bulk-item",
-              onSelect: () => setNewDialog("bulk"),
+              label: "Sketch molecule…",
+              testId: "builder-insert-sketch",
+              title: "Draw a molecule in Ketcher and add it to the library",
+              onSelect: () => openSketch(),
+            },
+            {
+              label: "Molecule from file…",
+              testId: "builder-insert-import",
+              title: "Add a molecule to the library from a structure file",
+              onSelect: () => importer?.(),
+            },
+            { separator: true },
+            {
+              label: "Save selection as molecule",
+              testId: "builder-insert-save-selection",
+              disabled: selected.length === 0,
+              title: "Keep the selected atoms (and the bonds between them) in the library",
+              onSelect: saveSelection,
             },
           ]}
+        />
+        <Menu
+          testId="builder-tools"
+          label="Tools"
+          title="Python tools from a connected tool server"
+          items={toolsItems}
+        />
+        <Menu
+          testId="builder-view"
+          label="View"
+          title="Camera and theme"
+          items={viewMenuItems({
+            resetView: handleResetView,
+            align: handleAlignView,
+            hasCell,
+            theme,
+            setTheme,
+          })}
         />
         <button
           type="button"
@@ -298,27 +416,6 @@ export function BuilderApp() {
           Redo
         </button>
         <span style={{ flex: 1 }} />
-        <Menu
-          testId="builder-save"
-          label="Save"
-          variant="primary"
-          disabled={!shown}
-          title={`Save the edited structure (${mod}+S saves XYZ)`}
-          items={STRUCTURE_EXPORT_FORMATS.map((f) => ({
-            label: `Save ${f.label}`,
-            testId: `builder-save-${f.value}`,
-            onSelect: () => void handleExport(f.value),
-          }))}
-        />
-        <button
-          type="button"
-          data-testid="builder-theme"
-          style={buttonStyle()}
-          onClick={cycleTheme}
-          title={`Theme: ${THEME_LABELS[theme]} (click to cycle)`}
-        >
-          {THEME_LABELS[theme]}
-        </button>
       </div>
 
       <div style={{ flex: 1, display: "flex", minHeight: 0 }}>
@@ -333,56 +430,41 @@ export function BuilderApp() {
             if (e.currentTarget === e.target) setDropActive(false);
           }}
           onDrop={handleDrop}
+          onContextMenuCapture={(e) => {
+            lastContextMenuAt.current = { x: e.clientX, y: e.clientY };
+          }}
           data-testid="builder-dropzone"
         >
           <Viewport
-            snapshot={shown}
+            snapshot={viewed}
             frame={null}
             atomLabels={null}
             atomVectors={null}
             onRendererReady={handleRendererReady}
             onHover={setHoverInfo}
-            previewIndices={preview}
+            previewIndices={highlighted}
             buildActive={true}
             buildHandlers={handlers}
             preserveCameraKey={revision}
-          />
-          {source && <ContextBar />}
-          <div
-            data-testid="view-controls"
-            style={{
-              position: "absolute",
-              top: OVERLAY_INSET,
-              left: OVERLAY_INSET,
-              display: "flex",
-              flexDirection: "column",
-              alignItems: "flex-start",
-              gap: 4,
-              zIndex: 10,
+            boxSelectActive={!!source && tool === "select" && boxSelect}
+            onBoxSelect={(indices, { additive }) =>
+              setSelected(
+                additive ? [...new Set([...api.getState().selected, ...indices])] : indices,
+              )
+            }
+            onAtomRightClick={(atom) => {
+              // A preview's atoms are not the document's; nothing to act on.
+              if (api.getState().preview) return;
+              const at = lastContextMenuAt.current ?? { x: 0, y: 0 };
+              setAtomMenu({ atom, x: at.x, y: at.y });
             }}
-          >
-            <button
-              data-testid="reset-view-btn"
-              title="Reset view (fit to structure, standard orientation) — R"
-              onClick={handleResetView}
-              style={{
-                padding: "4px 8px",
-                fontSize: 11,
-                lineHeight: 1,
-                background: "rgba(255,255,255,0.85)",
-                border: "1px solid rgba(0,0,0,0.15)",
-                borderRadius: 4,
-                cursor: "pointer",
-                color: "#374151",
-                backdropFilter: "blur(4px)",
-                userSelect: "none",
-              }}
-            >
-              Reset View
-            </button>
-            <ViewAxisControls hasCell={hasCell} onAlign={handleAlignView} />
-          </div>
-          {!source && (
+          />
+          {/* Place works with nothing open, so its bar (and gallery) does too. */}
+          {(source || tool === "place") && !crystalDialog && <ContextBar />}
+          {crystalDialog && (
+            <CrystalDialog key={crystalDialog} kind={crystalDialog} onClose={closeCrystalDialog} />
+          )}
+          {!source && tool !== "place" && (
             <div
               data-testid="builder-welcome"
               style={{
@@ -463,7 +545,7 @@ export function BuilderApp() {
               Drop a structure file to open it
             </div>
           )}
-          <Tooltip info={hoverInfo} />
+          <Tooltip info={atomMenu ? null : hoverInfo} />
         </div>
         <div
           style={{
@@ -475,7 +557,7 @@ export function BuilderApp() {
             flexDirection: "column",
           }}
         >
-          <BuilderSidebar />
+          <BuilderSidebar onOpenCrystal={setCrystalDialog} />
         </div>
       </div>
 
@@ -520,8 +602,13 @@ export function BuilderApp() {
         }}
       >
         <span data-testid="builder-status-atoms">
-          {shown ? `${shown.nAtoms} atoms · ${shown.nBonds} bonds` : "No structure"}
+          {viewed ? `${viewed.nAtoms} atoms · ${viewed.nBonds} bonds` : "No structure"}
         </span>
+        {preview && (
+          <span data-testid="builder-status-preview" style={{ color: "#1d4ed8" }}>
+            Preview — Apply keeps it
+          </span>
+        )}
         {hasCell && <span data-testid="builder-status-cell">Cell</span>}
         {selected.length > 0 && (
           <span data-testid="builder-status-selection">{selected.length} selected</span>
@@ -539,6 +626,10 @@ export function BuilderApp() {
         {showOriginal && <span>Showing original</span>}
       </div>
 
+      <LibraryHost />
+      {atomMenu && <AtomMenu target={atomMenu} onClose={closeAtomMenu} />}
+      {openTool && <ToolDialog key={openTool.name} tool={openTool} />}
+      {toolServerOpen && <ToolServerDialog onClose={closeToolServer} />}
       {newDialog && (
         <NewStructureDialog
           initialKind={newDialog}

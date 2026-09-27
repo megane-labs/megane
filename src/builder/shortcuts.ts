@@ -19,6 +19,7 @@ export type ShortcutAction =
   | { kind: "redo" }
   | { kind: "delete_selected" }
   | { kind: "escape" }
+  | { kind: "select_all" }
   | { kind: "open" }
   | { kind: "save" }
   | { kind: "reset_view" };
@@ -64,6 +65,8 @@ export function resolveShortcut(key: ShortcutKey): ShortcutAction | null {
         return key.shiftKey ? null : { kind: "open" };
       case "s":
         return key.shiftKey ? null : { kind: "save" };
+      case "a":
+        return key.shiftKey ? null : { kind: "select_all" };
       default:
         return null;
     }
@@ -124,6 +127,10 @@ export function runShortcut(
       s.pushOp({ op: "delete_atoms", atoms: refs });
       return true;
     }
+    case "select_all":
+      if (!s.source) return false;
+      s.selectAll();
+      return true;
     case "escape":
       if (s.pendingBondAtom !== null) {
         s.setPendingBondAtom(null);
@@ -157,8 +164,10 @@ export function useBuilderShortcuts(api: StoreApi<BuilderStore>, host: ShortcutH
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.defaultPrevented || e.repeat) return;
       if (isTypingTarget(e.target)) return;
-      // A dialog (the sketcher, the new-structure form) owns the keyboard.
-      if (document.querySelector('[role="dialog"]')) return;
+      // A modal dialog (the sketcher, the new-structure form) owns the
+      // keyboard; the panels over the view (a Structure dialog, the Place
+      // gallery) do not, so the tool keys keep working beside them.
+      if (document.querySelector('[role="dialog"][aria-modal="true"]')) return;
       const action = resolveShortcut(e);
       if (!action) return;
       if (runShortcut(action, api, host)) e.preventDefault();

@@ -3,7 +3,7 @@ title: Builder Tool Contract (MCP)
 ---
 
 **Status: contract version 1.** Builder implements it over Streamable HTTP
-(`src/builder/tools/`, the *Python tools* section of the sidebar); the
+(`src/builder/tools/`, the *Tools* menu of the top bar); the
 reference server is [megane-builder-tools](https://github.com/hodakamori/megane-builder-tools).
 This page is the specification megane Builder and third-party structure tools
 implement. Change
@@ -418,7 +418,7 @@ server bounds each call's time and the number of concurrent calls.
 
 | Host | Bridge | Config location | stdio | HTTP |
 | --- | --- | --- | --- | --- |
-| Any webapp page (hosted, local build, `megane serve`) — **implemented** | None: the page connects to HTTP servers directly | *Python tools* section; the URL is remembered in local storage, the token is not | no | CORS permitting |
+| Any webapp page (hosted, local build, `megane serve`) — **implemented** | None: the page connects to HTTP servers directly | *Tools › Tool server…*; the URL is remembered in local storage, the token is not | no | CORS permitting |
 | Standalone webapp via `megane serve` (planned) | FastAPI app spawns servers and relays over its WebSocket | `megane serve --mcp-config <file>` | yes | yes |
 | VS Code extension (when Builder is hosted there) | Extension host spawns servers and relays through `postMessage` | `megane.builder.mcpServers` setting | yes | yes |
 | JupyterLab labextension (when Builder is hosted there) | Jupyter server extension spawns servers and relays | `jupyter_server_config` | yes | yes |

@@ -93,6 +93,20 @@ export function adsorptionSite(
   ];
 }
 
+/**
+ * One-line description of an Undo step (`editSteps`) for the history list:
+ * the op itself, "Move N atoms" for a group of moves, or the first op and how
+ * many came with it.
+ */
+export function describeStep(step: EditOp[]): string {
+  if (step.length === 1) return describeOp(step[0]);
+  if (step.every((op) => op.op === "move_atoms")) {
+    const n = step.reduce((sum, op) => sum + (op.op === "move_atoms" ? op.atoms.length : 0), 0);
+    return `Move ${n} atom${n === 1 ? "" : "s"}`;
+  }
+  return `${describeOp(step[0])} + ${step.length - 1} more`;
+}
+
 /** One-line description of an op for the history list. */
 export function describeOp(op: EditOp): string {
   const ref = (r: EditAtomRef) => (typeof r === "number" ? `#${r}` : r);

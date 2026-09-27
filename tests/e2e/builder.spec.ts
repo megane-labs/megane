@@ -11,6 +11,7 @@
  */
 
 import { test, expect, type Page } from "playwright/test";
+import { PNG } from "pngjs";
 import { waitForReady } from "./lib/setup";
 
 interface BuilderState {
@@ -81,9 +82,9 @@ async function newEmptyCell(page: Page) {
   await page.locator('[data-testid="builder-new-cell"]').click();
 }
 
-/** Pick a format from the top bar's Save menu. */
+/** Pick a format from the File menu's Save entries. */
 async function saveAs(page: Page, format: string) {
-  await page.locator('[data-testid="builder-save"]').click();
+  await page.locator('[data-testid="builder-file"]').click();
   await page.locator(`[data-testid="builder-save-${format}"]`).click();
 }
 
@@ -147,6 +148,50 @@ test.describe("builder: webapp", () => {
     );
   });
 
+  test("Place starts a document with nothing open; the periodic table and the View menu", async ({
+    page,
+  }) => {
+    const root = page.locator('[data-testid="megane-builder"]');
+    const viewport = page.locator('[data-testid="viewer-root"]');
+
+    // Dark theme from the View menu: the 3D view's background follows.
+    const corner = async () => {
+      const png = PNG.sync.read(await viewport.screenshot());
+      const i = (png.width * 4 + 4) * 4;
+      return [png.data[i], png.data[i + 1], png.data[i + 2]];
+    };
+    expect(await corner()).toEqual([255, 255, 255]);
+    await page.locator('[data-testid="builder-view"]').click();
+    await page.locator('[data-testid="builder-theme-dark"]').click();
+    await expect.poll(corner).toEqual([0x0f, 0x17, 0x2a]);
+    await page.locator('[data-testid="builder-view"]').click();
+    await page.locator('[data-testid="builder-theme-light"]').click();
+    await expect.poll(corner).toEqual([255, 255, 255]);
+
+    // Nothing open: Insert › Molecule… still shows the gallery.
+    await page.locator('[data-testid="builder-insert"]').click();
+    await page.locator('[data-testid="builder-insert-molecule"]').click();
+    await expect(page.locator('[data-testid="builder-library"]')).toBeVisible();
+    await expect(page.locator('[data-testid="builder-welcome"]')).toHaveCount(0);
+    await page
+      .locator('[data-testid="builder-library-item-preset:water"]')
+      .locator('[data-testid="builder-library-place"]')
+      .click();
+    // A real click on the empty view places it and starts an untitled document.
+    const box = (await viewport.boundingBox())!;
+    await page.mouse.click(box.x + box.width * 0.5, box.y + box.height * 0.6);
+    await waitForReady(page);
+    await expect(root).toHaveAttribute("data-atom-count", "3");
+    expect(await builderState(page)).toMatchObject({ fileName: "untitled", edge: null });
+
+    // The periodic table sets any element for Add atom.
+    await page.locator('[data-testid="builder-tool-add"]').click();
+    await page.locator('[data-testid="builder-element-table"]').click();
+    await page.locator('[data-testid="builder-periodic-Pt"]').click();
+    await expect(page.locator('[data-testid="builder-periodic-table"]')).toHaveCount(0);
+    await expect(page.locator('[data-testid="builder-element-symbol"]')).toHaveText("Pt");
+  });
+
   test("opens a file, edits it with every tool, and saves the result", async ({ page }) => {
     const root = page.locator('[data-testid="megane-builder"]');
     await page.setInputFiles('[data-testid="builder-open-input"]', "tests/fixtures/caffeine.sdf");
@@ -177,7 +222,8 @@ test.describe("builder: webapp", () => {
       "add_atom",
       "add_bond",
     ]);
-    await expect(page.locator('[data-testid="builder-op-list"] li')).toHaveCount(4);
+    // The history lists Undo steps: Element and the hydrogen it added are one.
+    await expect(page.locator('[data-testid="builder-op-list"] li')).toHaveCount(3);
 
     // Show original previews the file as opened and pauses editing.
     await page.locator('[data-testid="builder-show-original"]').click();
@@ -197,21 +243,112 @@ test.describe("builder: webapp", () => {
     expect(text.split("\n")[0].trim()).toBe("24");
   });
 
+  test("right-click menu, a bond length set by number, and an RDKit clean-up", async ({ page }) => {
+    test.setTimeout(120_000);
+    const root = page.locator('[data-testid="megane-builder"]');
+    await page.setInputFiles('[data-testid="builder-open-input"]', "tests/fixtures/caffeine.sdf");
+    await waitForReady(page);
+    await expect(root).toHaveAttribute("data-atom-count", "24");
+
+    // Right-click an atom (scan the middle of the view until one is under the
+    // pointer): its menu selects the whole molecule.
+    const menu = page.locator('[data-testid="builder-atom-menu"]');
+    const box = (await page.locator('[data-testid="viewer-root"]').boundingBox())!;
+    scan: for (let fy = 0.35; fy <= 0.65; fy += 0.03) {
+      for (let fx = 0.35; fx <= 0.65; fx += 0.03) {
+        await page.mouse.click(box.x + box.width * fx, box.y + box.height * fy, {
+          button: "right",
+        });
+        if ((await menu.count()) > 0) break scan;
+      }
+    }
+    await expect(menu).toBeVisible();
+    await page.locator('[data-testid="builder-atom-menu-molecule"]').click();
+    await expect(page.locator('[data-testid="builder-status-selection"]')).toHaveText(
+      "24 selected",
+    );
+
+    // Pick a bonded pair and stretch the bond to 2.5 Å in the Inspector.
+    // Measured between the pair chosen below (Undo clears the selection).
+    let pair: [number, number] = [0, 0];
+    const distance = () =>
+      page.evaluate(([a, b]) => {
+        const s = (
+          window as unknown as {
+            __megane_test_builder_store: {
+              getState: () => { result: { snapshot: { positions: Float32Array } } };
+            };
+          }
+        ).__megane_test_builder_store.getState();
+        const p = s.result.snapshot.positions;
+        return Math.hypot(
+          p[a * 3] - p[b * 3],
+          p[a * 3 + 1] - p[b * 3 + 1],
+          p[a * 3 + 2] - p[b * 3 + 2],
+        );
+      }, pair);
+    pair = await page.evaluate(() => {
+      const store = (
+        window as unknown as {
+          __megane_test_builder_store: {
+            getState: () => {
+              result: { snapshot: { bonds: Uint32Array } };
+              setSelected: (i: number[]) => void;
+            };
+          };
+        }
+      ).__megane_test_builder_store;
+      const bonds = store.getState().result.snapshot.bonds;
+      store.getState().setSelected([bonds[0], bonds[1]]);
+      return [bonds[0], bonds[1]] as [number, number];
+    });
+    const bonded = await distance();
+    expect(bonded).toBeGreaterThan(0.9);
+    expect(bonded).toBeLessThan(1.6);
+    await page.locator('[data-testid="builder-inspector-measure-input"]').fill("2.5");
+    await page.locator('[data-testid="builder-inspector-measure-apply"]').click();
+    await expect(page.locator('[data-testid="builder-inspector-measure"]')).toContainText(
+      "2.500 Å",
+    );
+    expect(await distance()).toBeCloseTo(2.5, 3);
+
+    // Clean up with the real RDKit worker: the bond goes back to a sane
+    // length, the molecule stays in place, and one Undo takes it all back.
+    await page.locator('[data-testid="builder-structure"]').click();
+    await page.locator('[data-testid="builder-structure-cleanup"]').click();
+    await expect(page.locator('[data-testid="builder-notice"]')).toContainText(
+      "Cleaned up 1 molecule",
+      { timeout: 90_000 },
+    );
+    const cleaned = await distance();
+    expect(cleaned).toBeGreaterThan(0.9);
+    expect(cleaned).toBeLessThan(1.6);
+    await expect(root).toHaveAttribute("data-atom-count", "24");
+    await page.locator('[data-testid="builder-topbar-undo"]').click();
+    expect(await distance()).toBeCloseTo(2.5, 3);
+  });
+
   test("adds library presets, places one with the Place tool, and keeps a Ketcher sketch", async ({
     page,
   }) => {
     test.setTimeout(120_000);
     const root = page.locator('[data-testid="megane-builder"]');
     const library = page.locator('[data-testid="builder-library"]');
-    await expect(library).toBeVisible();
+    const openLibrary = async () => {
+      await page.locator('[data-testid="builder-insert"]').click();
+      await page.locator('[data-testid="builder-insert-molecule"]').click();
+      await expect(library).toBeVisible();
+    };
+    // The library opens from Insert › Molecule… (the Place tool's gallery)
+    // once a document is open.
+    await expect(library).toHaveCount(0);
+    await newEmptyCell(page);
+    await waitForReady(page);
+    await openLibrary();
     await expect(page.locator('[data-testid="builder-library-count"]')).toHaveText("10 molecules");
     const water = page.locator('[data-testid="builder-library-item-preset:water"]');
 
-    // Add is inert without a document; with an empty cell it lands at the centre.
-    await water.locator('[data-testid="builder-library-add"]').click();
-    await expect(root).toHaveAttribute("data-atom-count", "0");
-    await newEmptyCell(page);
-    await waitForReady(page);
+    // With an empty cell, Add lands at the centre.
     await water.locator('[data-testid="builder-library-add"]').click();
     await expect(root).toHaveAttribute("data-atom-count", "3");
     await expect(root).toHaveAttribute("data-bond-count", "2");
@@ -236,7 +373,13 @@ test.describe("builder: webapp", () => {
     // Place: choose methane, then a real click on empty space stamps it there.
     const methane = page.locator('[data-testid="builder-library-item-preset:methane"]');
     await methane.locator('[data-testid="builder-library-place"]').click();
+    // Choosing closes the gallery; the picker names the molecule and reopens it.
+    await expect(library).toHaveCount(0);
+    await expect(page.locator('[data-testid="builder-place-fragment"]')).toContainText("Methane");
+    await page.locator('[data-testid="builder-place-fragment"]').click();
     await expect(methane).toHaveAttribute("data-placing", "true");
+    await page.locator('[data-testid="builder-place-fragment"]').click();
+    await expect(library).toHaveCount(0);
     await expect(page.locator('[data-testid="builder-tool-place"]')).toHaveAttribute(
       "aria-pressed",
       "true",
@@ -259,7 +402,8 @@ test.describe("builder: webapp", () => {
     // Sketch: Ketcher (the real standalone build) loads in the dialog; a
     // molecule set through its API is embedded in 3D by RDKit (the real
     // megane-rdkit WASM build, in a worker) with its implicit hydrogens.
-    await page.locator('[data-testid="builder-library-sketch"]').click();
+    await page.locator('[data-testid="builder-insert"]').click();
+    await page.locator('[data-testid="builder-insert-sketch"]').click();
     await expect(page.locator('[data-testid="sketch-modal"]')).toBeVisible();
     await page.waitForFunction(
       () => !!(window as unknown as { __megane_test_ketcher?: unknown }).__megane_test_ketcher,
@@ -280,6 +424,7 @@ test.describe("builder: webapp", () => {
     await page.locator('[data-testid="sketch-name"]').fill("Ethanol sketch");
     await page.locator('[data-testid="sketch-add"]').click();
     await expect(page.locator('[data-testid="sketch-modal"]')).toHaveCount(0, { timeout: 60_000 });
+    await page.locator('[data-testid="builder-place-fragment"]').click();
     await expect(page.locator('[data-testid="builder-library-count"]')).toHaveText("11 molecules");
     const sketched = page.locator('[data-testid="builder-library-item-name"]', {
       hasText: "Ethanol sketch",
@@ -368,6 +513,9 @@ test.describe("builder: webapp", () => {
 
     // The user library survives a reload (localStorage); presets do not duplicate.
     await page.reload({ waitUntil: "domcontentloaded" });
+    await newEmptyCell(page);
+    await waitForReady(page);
+    await openLibrary();
     await expect(page.locator('[data-testid="builder-library-count"]')).toHaveText("12 molecules");
     await expect(sketched).toHaveCount(1);
     await row.locator('[data-testid="builder-library-remove"]').click();
@@ -385,8 +533,8 @@ test.describe("builder: webapp", () => {
       "No cell",
     );
 
-    // Bulk: the Cu fcc example in its conventional cell, from the New menu.
-    await page.locator('[data-testid="builder-new"]').click();
+    // Bulk: the Cu fcc example in its conventional cell, from the File menu.
+    await page.locator('[data-testid="builder-file"]').click();
     await page.locator('[data-testid="builder-new-bulk-item"]').click();
     await page.locator('[data-testid="builder-bulk-example"]').selectOption("Cu (fcc)");
     await page.locator('[data-testid="builder-bulk-create"]').click();
@@ -398,12 +546,27 @@ test.describe("builder: webapp", () => {
     );
     await expect(page.locator('[data-testid="builder-statusbar"]')).toContainText("Cell");
 
-    // Supercell 2×2×1: the preview announces the count before the op is written.
-    await page.locator('[data-testid="builder-crystal-tab-supercell"]').click();
+    // Supercell 2×2×1 from the Structure menu: the dialog announces the count
+    // and the view previews the result before the op is written.
+    await page.locator('[data-testid="builder-structure"]').click();
+    await page.locator('[data-testid="builder-structure-supercell"]').click();
     await page.locator('[data-testid="builder-supercell-nc"]').fill("1");
     await expect(page.locator('[data-testid="builder-supercell-preview"]')).toHaveText(
       "4 images → 16 atoms",
     );
+    await expect(page.locator('[data-testid="builder-status-atoms"]')).toHaveText(
+      "16 atoms · 0 bonds",
+    );
+    await expect(root).toHaveAttribute("data-edit-count", "0");
+    await expect(root).toHaveAttribute("data-atom-count", "4");
+    // Cancel leaves the document as it was.
+    await page.locator('[data-testid="builder-crystal-cancel"]').click();
+    await expect(page.locator('[data-testid="builder-status-atoms"]')).toHaveText(
+      "4 atoms · 0 bonds",
+    );
+    await page.locator('[data-testid="builder-structure"]').click();
+    await page.locator('[data-testid="builder-structure-supercell"]').click();
+    await page.locator('[data-testid="builder-supercell-nc"]').fill("1");
     await page.locator('[data-testid="builder-supercell-apply"]').click();
     await expect(root).toHaveAttribute("data-atom-count", "16");
     await expect(page.locator('[data-testid="builder-op-list"]')).toContainText("Supercell 2×2×1");
@@ -414,7 +577,8 @@ test.describe("builder: webapp", () => {
     // Undo the supercell, cut a (111) slab from the unit cell instead.
     await page.locator('[data-testid="builder-topbar-undo"]').click();
     await expect(root).toHaveAttribute("data-atom-count", "4");
-    await page.locator('[data-testid="builder-crystal-tab-slab"]').click();
+    await page.locator('[data-testid="builder-structure"]').click();
+    await page.locator('[data-testid="builder-structure-slab"]').click();
     await page.locator('[data-testid="builder-slab-layers"]').fill("3");
     await page.locator('[data-testid="builder-slab-vacuum"]').fill("10");
     await expect(page.locator('[data-testid="builder-slab-preview"]')).toContainText("12 atoms");
@@ -442,6 +606,8 @@ test.describe("builder: webapp", () => {
     expect(slabBox[8]).toBeGreaterThan(20);
 
     // Adsorb water 2 Å above a surface atom with the Place tool.
+    await page.locator('[data-testid="builder-insert"]').click();
+    await page.locator('[data-testid="builder-insert-molecule"]').click();
     await page
       .locator('[data-testid="builder-library-item-preset:water"]')
       .locator('[data-testid="builder-library-place"]')
@@ -471,8 +637,9 @@ test.describe("builder: webapp", () => {
     // (Water was placed with its centroid at the site + 2 Å, so the atoms are ~2 Å above.)
     expect(placed.translate[2]).toBeCloseTo(site[2] + 2, 3);
 
-    // Cell tab: the fields show the slab cell and setting a cell records the op.
-    await page.locator('[data-testid="builder-crystal-tab-cell"]').click();
+    // Cell dialog (from the sidebar's cell card): the fields show the slab cell
+    // and setting a cell records the op.
+    await page.locator('[data-testid="builder-cell-edit"]').click();
     await expect(page.locator('[data-testid="builder-cell-c"]')).toHaveValue(String(slabBox[8]));
     await page.locator('[data-testid="builder-cell-scale-atoms"]').uncheck();
     await page.locator('[data-testid="builder-cell-c"]').fill("30");
@@ -532,14 +699,18 @@ test.describe("builder: webapp", () => {
       "true",
     );
 
-    // A collapsed section stays collapsed across a reload.
-    await expect(page.locator('[data-testid="builder-crystal"]')).toBeVisible();
-    await page.locator('[data-testid="builder-section-crystal-toggle"]').click();
-    await expect(page.locator('[data-testid="builder-crystal"]')).toHaveCount(0);
-    await page.reload({ waitUntil: "domcontentloaded" });
-    await expect(page.locator('[data-testid="builder-sidebar"]')).toBeVisible();
-    await expect(page.locator('[data-testid="builder-crystal"]')).toHaveCount(0);
-    await page.locator('[data-testid="builder-section-crystal-toggle"]').click();
-    await expect(page.locator('[data-testid="builder-crystal"]')).toBeVisible();
+    // A section opened by hand stays open across a reload: History starts
+    // closed for a document without edits, unless you opened it.
+    const reopen = async () => {
+      await page.reload({ waitUntil: "domcontentloaded" });
+      await page.setInputFiles('[data-testid="builder-open-input"]', "tests/fixtures/caffeine.sdf");
+      await waitForReady(page);
+    };
+    await reopen();
+    await expect(page.locator('[data-testid="builder-undo"]')).toHaveCount(0);
+    await page.locator('[data-testid="builder-section-history-toggle"]').click();
+    await expect(page.locator('[data-testid="builder-undo"]')).toBeVisible();
+    await reopen();
+    await expect(page.locator('[data-testid="builder-undo"]')).toBeVisible();
   });
 });

@@ -137,16 +137,20 @@ swapped the view) ended up with the two competing for the same column and
 users unsure which of them the picture reflected. So `src/builder/` mounts
 its own page (`builder.html`, a Vite entry beside `index.html` and the
 multi-instance harness), laid out so that each control has exactly one home:
-a top bar for the **document** (Open, New, Undo / Redo, Save, theme), the 3D
+a top bar of menus — *File* for the **document** (Open, New, Save) and *View*
+for the camera and the theme (`topbarMenus.ts`), plus Undo / Redo — the 3D
 view with a tool rail on its left (`ToolRail.tsx`, one icon per tool with its
 key) and a context bar over its top (`ContextBar.tsx`, only the settings the
-current tool uses — none for Select / Move / Delete), a sidebar for the
-**structure** (the selection's actions while there is one, library, crystal,
-history), a status bar for what is on screen and what the tool does
+current tool uses — none for Select / Move / Delete), *Structure* and
+*Tools* menus in the top bar for the operations (`crystal/structureMenu.ts`,
+`tools/ToolServer.tsx`), a sidebar for the
+**structure** (`Inspector.tsx`: the structure summary, or the selected atoms
+with their positions, distance / angle / dihedral and actions; the cell as a
+read-only card; history), a status bar for what is on screen and what the tool does
 (`toolHint`, the one place the hint is written), and one notice line for every message the app has to
 show (`BuilderStore.notice`, written through `reportError` / `reportInfo` so
 no panel keeps an error line of its own). `Section` (`src/builder/Section.tsx`)
-makes the sidebar's library, crystal and history sections collapsible and
+makes the sidebar's history section collapsible and
 remembers each one in `localStorage`; `shortcuts.ts` holds the key table
 (`resolveShortcut`) and applies it to the store (`runShortcut`), ignoring keys
 aimed at a text field or a dialog. Starting a document — an empty cell or a
@@ -191,27 +195,69 @@ the Inspector's box select:
 - otherwise a press that barely moves is a click, reported to `pick` with the
   atom index or, on empty space, the world point at the pivot's depth.
 
-**Crystal.** `src/builder/crystal/CrystalSection.tsx` is the sidebar's
-Crystal section: *Cell*, *Supercell*, *Slab* and *Expand symmetry* each
-push one op. The bulk-crystal form (`crystal/BulkForm.tsx`) is not a tab of
-it, because `BuilderStore.newBulk` starts a *new document* rather than
+**Crystal.** The top bar's *Structure* menu (`crystal/structureMenu.ts`)
+lists every cell and crystal op: *Wrap*, *Remove cell* and *Expand
+symmetry* push their op at once; *Set cell*, *Center with vacuum*,
+*Supercell* and *Cut slab* open `crystal/CrystalDialog.tsx`, a panel in the
+corner of the view with one form per op. While a form describes a valid op
+the dialog hands it to `BuilderStore.setPreview`, which applies it to the
+edited structure without committing it; the view draws `viewSnapshot` (the
+preview when there is one), `canEdit` is false so clicks are paused, and any
+change to the document drops the preview. *Apply* pushes the op with a fresh
+fragment id. Results above `PREVIEW_MAX_ATOMS` are announced but not
+previewed, since building the preview is the cost of every keystroke. The
+sidebar keeps only a read-only cell card (`crystal/CellCard.tsx`) with the
+symmetry offer. The bulk-crystal form (`crystal/BulkForm.tsx`) is not in the
+menu, because `BuilderStore.newBulk` starts a *new document* rather than
 editing the open one; it lives in the New structure dialog beside the empty
-cell. The slab tab runs `buildSlab` on the shown structure to
-preview the atom count and thickness before the op is written. The Place
+cell. The slab form runs `slabPreview` on the shown structure to state the
+atom count and thickness before the op is written. The Place
 tool's *Place on atoms* option (`adsorbHeight` on the store,
 `adsorptionSite` in `placement.ts`) stamps a library molecule a given
 height above a clicked atom along the cell's c axis, which with a slab is
 the surface normal — an adsorbate as one `add_fragment` op.
 
-**Library.** `src/builder/library/` holds the molecule library the sidebar
-offers: `presets.ts` (small molecules with 3D geometries), a persisted
+**Geometry.** `src/builder/geometry.ts` holds what moves together
+(`moleculeOf`, and `movingSide` — the far side of a bond, or only the atom
+when a ring joins the sides), the numeric edits (`setDistance`, `setAngle`,
+`setDihedral`, which return a displacement per atom) and `superpose`, a
+Kabsch fit by Horn's quaternion method. `BuilderStore.moveAtoms` writes
+displacements as `move_atoms` ops — one per distinct displacement, pushed as
+one Undo step — so numeric edits and the clean-up need no new op in the
+`load_structure` edit vocabulary. `src/builder/cleanup.ts` is *Clean up
+geometry*: `megane-rdkit` only exposes embedding, so each molecule goes to
+the existing worker (`library/embed.ts`) as a V2000 block with `addHs` off
+(RDKit then keeps our atom order), and the conformer is superposed back on
+the old positions. On the way in, `unwrappedPositions` makes a molecule
+split across the cell whole (minimum image along its bonds) and
+`inferredCharges` writes `M  CHG` for over-bonded N / P / O / S / B, and a
+molecule RDKit rejects is counted and left alone rather than failing the
+rest. `editSteps` groups the history into Undo steps (an op and
+its continuations) for the History list and the edit counts; the op list
+itself is unchanged. The right-click menu is `AtomMenu.tsx` (`clampMenuPosition` keeps it on
+screen); box selection reuses the viewer's `Viewport` `boxSelectActive` /
+`onBoxSelect`, whose `additive` flag (Shift held) unions with the selection.
+The element picker's periodic table is `PeriodicTable.tsx` (`tablePosition`).
+`addFragment` with no document opens an `emptySnapshot()` (no cell) first, so
+the Place tool and its gallery work before anything is open. The 3D view's
+background follows the theme store (`themeToHex`), as in the viewer. The view
+has no frustum inset (the sidebar sits beside it, not over it), and a
+Structure preview starting or ending refits the camera (`resetView`, which
+keeps the orientation).
+
+**Library.** `src/builder/library/` holds the molecule library the Place
+tool's gallery offers (and the Insert menu and the Inspector's *Save as
+fragment*): `presets.ts` (small molecules with 3D geometries), a persisted
 `useLibraryStore` (`store.ts`, the user's molecules in `localStorage`,
 sanitized on read), `fragment.ts` (centring, Hill formulas, the flat-sketch
 rescale, `autoPlacement`, and `fragmentOp` — the `add_fragment` op a
 placement writes), `hydrogens.ts` (valence-rule hydrogen counts and their
 3D placement), `sketch.ts` (a molfile, file or selection → library
-molecule, through the shared parsers), and the UI (`LibrarySection`,
-`SketchModal`). Ketcher (`ketcher-react` + the standalone Indigo engine) is
+molecule, through the shared parsers), the actions and the shared UI state
+(`ui.ts`: `useLibraryActions`, and `useLibraryUi` for the one sketch dialog,
+the one file input and the gallery's open state, mounted once by
+`LibraryHost`), and the UI (`LibraryPanel`, the gallery under the context
+bar, and `SketchModal`). Ketcher (`ketcher-react` + the standalone Indigo engine) is
 mounted only by `KetcherEditor.tsx`, which `SketchModal` loads lazily, so the
 sketcher's bundle and WASM are fetched on first use and the Builder itself
 stays small. A molecule enters the document through

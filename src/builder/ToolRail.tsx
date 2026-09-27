@@ -17,15 +17,15 @@ export interface ToolInfo {
   label: string;
   hint: string;
   /** Which settings the context bar shows for it. */
-  needs: ("element" | "bondOrder" | "place")[];
+  needs: ("select" | "element" | "bondOrder" | "place")[];
 }
 
 export const TOOLS: ToolInfo[] = [
   {
     value: "select",
     label: "Select",
-    hint: "Click atoms to select them (Shift adds).",
-    needs: [],
+    hint: "Click atoms to select them (Shift adds); right-click an atom for more.",
+    needs: ["select"],
   },
   { value: "move", label: "Move", hint: "Drag an atom in the screen plane.", needs: [] },
   {
