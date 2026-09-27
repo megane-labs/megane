@@ -7,12 +7,13 @@
  * (`BuilderStore`) as ball-and-stick with every atom, its bonds and its cell,
  * and every click is an edit.
  *
- * The shell is in four places and each control appears in exactly one of
+ * The shell is in six places and each control appears in exactly one of
  * them: the **top bar** owns the document (open, new, undo / redo, save),
- * the **sidebar** owns the tools and the structure's own edits, the
- * **status bar** says what is on screen and what the current tool does, and
- * a single **notice** line carries every message. Keyboard shortcuts are in
- * `shortcuts.ts`.
+ * the **tool rail** left of the view picks the tool, the **context bar** over
+ * the view holds that tool's settings, the **sidebar** owns the structure's
+ * own edits (selection, library, crystal, history), the **status bar** says
+ * what is on screen and what the current tool does, and a single **notice**
+ * line carries every message. Keyboard shortcuts are in `shortcuts.ts`.
  *
  * Reuses the viewer's renderer (`Viewport` + `MoleculeRenderer`, driven through
  * `applyViewportState`), parsers, writers and the edit engine; nothing in the
@@ -45,7 +46,9 @@ import { useBuilderStore, shownSnapshot } from "./store";
 import { builderViewportState, BUILDER_SOURCE_ID } from "./view";
 import { useBuilderHandlers } from "./useBuilderHandlers";
 import { useBuilderShortcuts, TOOL_KEYS } from "./shortcuts";
-import { BuilderSidebar, TOOLS } from "./BuilderSidebar";
+import { BuilderSidebar } from "./BuilderSidebar";
+import { ToolRail, toolHint, toolInfo } from "./ToolRail";
+import { ContextBar } from "./ContextBar";
 import { Menu } from "./Menu";
 import { NewStructureDialog, type NewStructureKind } from "./NewStructureDialog";
 import { buttonStyle, hintStyle } from "./styles";
@@ -75,6 +78,7 @@ export function BuilderApp() {
   const selected = useBuilderStore((s) => s.selected);
   const tool = useBuilderStore((s) => s.tool);
   const pendingBondAtom = useBuilderStore((s) => s.pendingBondAtom);
+  const placeSource = useBuilderStore((s) => s.placeSource);
   const notice = useBuilderStore((s) => s.notice);
   const undo = useBuilderStore((s) => s.undo);
   const redo = useBuilderStore((s) => s.redo);
@@ -204,7 +208,7 @@ export function BuilderApp() {
     return set.size > 0 ? [...set] : null;
   }, [selected, pendingBondAtom]);
 
-  const activeTool = TOOLS.find((t) => t.value === tool)!;
+  const activeTool = toolInfo(tool);
 
   return (
     <div
@@ -318,6 +322,7 @@ export function BuilderApp() {
       </div>
 
       <div style={{ flex: 1, display: "flex", minHeight: 0 }}>
+        <ToolRail />
         <div
           style={{ flex: 1, position: "relative", minWidth: 0 }}
           onDragOver={(e) => {
@@ -342,6 +347,7 @@ export function BuilderApp() {
             buildHandlers={handlers}
             preserveCameraKey={revision}
           />
+          {source && <ContextBar />}
           <div
             data-testid="view-controls"
             style={{
@@ -522,7 +528,13 @@ export function BuilderApp() {
         )}
         <span style={{ flex: 1 }} />
         <span data-testid="builder-status-tool">
-          {activeTool.label} ({TOOL_KEYS[activeTool.value]}) · {activeTool.hint}
+          <b style={{ fontWeight: 600, color: "var(--megane-text, #334155)" }}>
+            {activeTool.label} ({TOOL_KEYS[activeTool.value]})
+          </b>{" "}
+          ·{" "}
+          <span data-testid="builder-tool-hint">
+            {toolHint(tool, pendingBondAtom, placeSource)}
+          </span>
         </span>
         {showOriginal && <span>Showing original</span>}
       </div>

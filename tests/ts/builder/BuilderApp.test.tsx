@@ -146,6 +146,8 @@ describe("BuilderApp — empty state", () => {
   it("clicks on the empty view do nothing", () => {
     render(<BuilderApp />);
     tool("add");
+    // No document, nothing to set: the context bar waits for one.
+    expect(screen.queryByTestId("builder-context-bar")).toBeNull();
     pick(null);
     expect(edits()).toEqual([]);
   });
@@ -189,7 +191,8 @@ describe("BuilderApp — editing", () => {
     expect(edits()[0]).toMatchObject({ op: "add_atom", element: 6, position: [5, 5, 5] });
     expect(shownAtoms()).toBe(4);
     fireEvent.click(screen.getByTestId("builder-element-N"));
-    fireEvent.change(screen.getByTestId("builder-bond-order"), { target: { value: "2" } });
+    fireEvent.click(screen.getByTestId("builder-bond-order-2"));
+    expect(screen.getByTestId("builder-bond-order-2").getAttribute("aria-checked")).toBe("true");
     pick(0);
     expect(edits()[1]).toMatchObject({ op: "add_atom", element: 7, bondTo: 0, order: 2 });
     expect(shownAtoms()).toBe(5);
@@ -197,15 +200,21 @@ describe("BuilderApp — editing", () => {
     expect(screen.getByTestId("builder-file-name").textContent).toContain("2 edits");
   });
 
-  it("shows only the settings the current tool uses", () => {
+  it("shows only the settings the current tool uses, in the bar over the view", () => {
     render(<BuilderApp />);
-    // Select needs neither an element nor a bond order.
+    // Select needs neither an element nor a bond order: no bar at all.
+    expect(screen.queryByTestId("builder-context-bar")).toBeNull();
     expect(screen.queryByTestId("builder-element-z")).toBeNull();
     expect(screen.queryByTestId("builder-bond-order")).toBeNull();
     expect(screen.queryByTestId("builder-adsorb-toggle")).toBeNull();
     tool("add");
+    expect(screen.getByTestId("builder-context-label").textContent).toBe("Add atom");
     expect(screen.getByTestId("builder-element-z")).toBeTruthy();
     expect(screen.getByTestId("builder-bond-order")).toBeTruthy();
+    // The settings live in the bar, not in the sidebar.
+    expect(
+      screen.getByTestId("builder-sidebar").querySelector('[data-testid="builder-element-z"]'),
+    ).toBeNull();
     tool("bond");
     expect(screen.queryByTestId("builder-element-z")).toBeNull();
     expect(screen.getByTestId("builder-bond-order")).toBeTruthy();
@@ -215,7 +224,7 @@ describe("BuilderApp — editing", () => {
     tool("place");
     expect(screen.getByTestId("builder-adsorb-toggle")).toBeTruthy();
     tool("delete");
-    expect(screen.queryByTestId("builder-element-z")).toBeNull();
+    expect(screen.queryByTestId("builder-context-bar")).toBeNull();
     // The status bar always names the tool.
     expect(screen.getByTestId("builder-status-tool").textContent).toContain("Delete (D)");
   });

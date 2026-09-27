@@ -1,0 +1,241 @@
+/**
+ * The context bar: a strip floating over the top of the 3D view that holds the
+ * settings of the current tool and nothing else — the element for *Add atom*
+ * and *Element*, the bond order for *Add atom* and *Bond*, *Place on atoms*
+ * for *Place*. A tool with no settings (Select, Move, Delete) shows no bar, so
+ * the view stays clear.
+ */
+
+import { useState } from "react";
+import { useBuilderStore } from "./store";
+import { toolInfo } from "./ToolRail";
+import { DEFAULT_ADSORB_HEIGHT } from "./library/LibrarySection";
+import { getElementSymbol } from "../constants";
+import { OVERLAY_INSET } from "../components/overlayLayout";
+import { hintStyle, inputStyle } from "./styles";
+
+/** Elements offered as one-click buttons; anything else via the Z field. */
+export const QUICK_ELEMENTS = [6, 1, 7, 8, 9, 15, 16, 17, 35, 14];
+
+export const BOND_ORDERS: { value: number; label: string; lines: string[] }[] = [
+  { value: 1, label: "Single", lines: ["M4 12h16"] },
+  { value: 2, label: "Double", lines: ["M4 9h16", "M4 15h16"] },
+  { value: 3, label: "Triple", lines: ["M4 7h16", "M4 12h16", "M4 17h16"] },
+  { value: 4, label: "Aromatic", lines: ["M4 9h16", "M4 15h3M10.5 15h3M17 15h3"] },
+];
+
+const ACCENT = "#2563eb";
+
+function choiceStyle(active: boolean): React.CSSProperties {
+  return {
+    minWidth: 30,
+    height: 30,
+    padding: "0 6px",
+    display: "inline-flex",
+    alignItems: "center",
+    justifyContent: "center",
+    border: "none",
+    borderRadius: 6,
+    cursor: "pointer",
+    fontFamily: "inherit",
+    fontSize: 13,
+    fontWeight: 600,
+    background: active ? ACCENT : "transparent",
+    color: active ? "#fff" : "var(--megane-text, #334155)",
+  };
+}
+
+function Divider() {
+  return (
+    <span
+      aria-hidden="true"
+      style={{
+        width: 1,
+        height: 22,
+        margin: "0 6px",
+        background: "var(--megane-border-solid, #e2e8f0)",
+      }}
+    />
+  );
+}
+
+export function ContextBar() {
+  const tool = useBuilderStore((s) => s.tool);
+  const element = useBuilderStore((s) => s.element);
+  const bondOrder = useBuilderStore((s) => s.bondOrder);
+  const adsorbHeight = useBuilderStore((s) => s.adsorbHeight);
+  const setElement = useBuilderStore((s) => s.setElement);
+  const setBondOrder = useBuilderStore((s) => s.setBondOrder);
+  const setAdsorbHeight = useBuilderStore((s) => s.setAdsorbHeight);
+
+  const info = toolInfo(tool);
+  if (info.needs.length === 0) return null;
+
+  // A full-width strip centres the bar; only the bar itself takes clicks, so
+  // the view stays usable on either side of it.
+  return (
+    <div
+      style={{
+        position: "absolute",
+        top: OVERLAY_INSET,
+        left: OVERLAY_INSET,
+        right: OVERLAY_INSET,
+        zIndex: 10,
+        display: "flex",
+        justifyContent: "center",
+        pointerEvents: "none",
+      }}
+    >
+      <div
+        data-testid="builder-context-bar"
+        role="toolbar"
+        aria-label={`${info.label} settings`}
+        style={{
+          pointerEvents: "auto",
+          maxWidth: "100%",
+          boxSizing: "border-box",
+          display: "flex",
+          flexWrap: "wrap",
+          alignItems: "center",
+          gap: 2,
+          padding: "5px 8px 5px 12px",
+          fontSize: 13,
+          borderRadius: 10,
+          background: "var(--megane-surface-solid, #fff)",
+          border: "1px solid var(--megane-border-solid, #e2e8f0)",
+          boxShadow: "0 6px 20px var(--megane-shadow, rgba(15, 23, 42, 0.08))",
+          color: "var(--megane-text, #1e293b)",
+        }}
+      >
+        <span
+          data-testid="builder-context-label"
+          style={{ fontSize: 12, fontWeight: 600, marginRight: 8, whiteSpace: "nowrap" }}
+        >
+          {info.label}
+        </span>
+
+        {info.needs.includes("element") && (
+          <>
+            {QUICK_ELEMENTS.map((z) => (
+              <button
+                key={z}
+                type="button"
+                data-testid={`builder-element-${getElementSymbol(z)}`}
+                aria-pressed={element === z}
+                style={choiceStyle(element === z)}
+                onClick={() => setElement(z)}
+              >
+                {getElementSymbol(z)}
+              </button>
+            ))}
+            <label
+              style={{ ...hintStyle, display: "flex", alignItems: "center", gap: 4, marginLeft: 4 }}
+              title="Any element by atomic number"
+            >
+              Z
+              <input
+                data-testid="builder-element-z"
+                type="number"
+                min={1}
+                max={118}
+                value={element}
+                onChange={(e) => {
+                  const v = parseInt(e.target.value, 10);
+                  if (Number.isFinite(v) && v >= 1 && v <= 118) setElement(v);
+                }}
+                style={{ ...inputStyle, width: 48 }}
+              />
+              <span data-testid="builder-element-symbol">{getElementSymbol(element)}</span>
+            </label>
+          </>
+        )}
+
+        {info.needs.includes("element") && info.needs.includes("bondOrder") && <Divider />}
+
+        {info.needs.includes("bondOrder") && (
+          <div
+            data-testid="builder-bond-order"
+            role="radiogroup"
+            aria-label="Bond order"
+            style={{ display: "flex", alignItems: "center", gap: 2 }}
+          >
+            <span style={{ ...hintStyle, marginRight: 4 }}>Bond</span>
+            {BOND_ORDERS.map((o) => (
+              <button
+                key={o.value}
+                type="button"
+                role="radio"
+                data-testid={`builder-bond-order-${o.value}`}
+                aria-checked={bondOrder === o.value}
+                aria-label={`${o.label} bond`}
+                title={`${o.label} bond`}
+                style={{ ...choiceStyle(bondOrder === o.value), width: 34 }}
+                onClick={() => setBondOrder(o.value)}
+              >
+                <svg
+                  viewBox="0 0 24 24"
+                  width={20}
+                  height={20}
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth={2}
+                  strokeLinecap="round"
+                  aria-hidden="true"
+                >
+                  {o.lines.map((d) => (
+                    <path key={d} d={d} />
+                  ))}
+                </svg>
+              </button>
+            ))}
+          </div>
+        )}
+
+        {info.needs.includes("place") && (
+          <AdsorbOption height={adsorbHeight} onChange={setAdsorbHeight} />
+        )}
+      </div>
+    </div>
+  );
+}
+
+/**
+ * "Place on atoms": with a height set, the Place tool also accepts a click on
+ * an atom and stamps the molecule that far above it — an adsorbate on a site.
+ */
+function AdsorbOption({
+  height,
+  onChange,
+}: {
+  height: number | null;
+  onChange: (h: number | null) => void;
+}) {
+  // The typed height survives unticking the box, so turning the option back
+  // on uses it again rather than the default.
+  const [draft, setDraft] = useState(height ?? DEFAULT_ADSORB_HEIGHT);
+  return (
+    <label style={{ ...hintStyle, display: "flex", alignItems: "center", gap: 6 }}>
+      <input
+        type="checkbox"
+        data-testid="builder-adsorb-toggle"
+        checked={height !== null}
+        onChange={(e) => onChange(e.target.checked ? draft : null)}
+      />
+      On atoms:
+      <input
+        type="number"
+        data-testid="builder-adsorb-height"
+        step={0.1}
+        value={draft}
+        onChange={(e) => {
+          const v = Number(e.target.value);
+          setDraft(v);
+          if (height !== null) onChange(v);
+        }}
+        style={{ ...inputStyle, width: 56 }}
+        title="Height above the clicked atom along the cell's c axis (an adsorbate on a surface site)"
+      />
+      Å above along c
+    </label>
+  );
+}
