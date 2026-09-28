@@ -9,13 +9,20 @@
  *
  * Exposes the same signatures as the original `structure.ts` / `xtc.ts`.
  *
+ * The worker is emitted as its own file (`?worker`), not inlined as a blob:
+ * it imports the wasm-bindgen glue as a separate chunk by relative URL, which a
+ * `blob:` worker cannot resolve. The inline build failed on its first request
+ * in every production bundle, which silently moved all parsing back onto the
+ * main thread and disabled lazy trajectory streaming for the session.
+ *
  * NOTE: on hosts whose bundler cannot handle the worker import (JupyterLab's
- * webpack, and the single-file anywidget bundle), this module is swapped for
- * `parseClientSync` at build time — see `jupyterlab-megane/webpack.config.js`
- * and `vite.widget.config.ts`.
+ * webpack, the single-file anywidget bundle, the VSCode webview whose CSP only
+ * allows blob: workers), this module is swapped for `parseClientSync` at build
+ * time — see `jupyterlab-megane/webpack.config.js`, `vite.widget.config.ts`
+ * and `vscode-megane/vite.webview.config.ts`.
  */
 
-import ParseWorker from "./parse.worker?worker&inline";
+import ParseWorker from "./parse.worker?worker";
 import wasmAssetUrl from "../../crates/megane-wasm/pkg/megane_wasm_bg.wasm?url";
 import { perfMark, perfMeasure } from "../perf";
 import * as sync from "./parseClientSync";

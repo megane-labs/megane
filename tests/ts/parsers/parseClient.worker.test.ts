@@ -2,7 +2,7 @@
  * Unit tests for parseClient's Web Worker path.
  *
  * jsdom has no real Worker, so we install a fake Worker (both as the mocked
- * `?worker&inline` import and as `globalThis.Worker`) that echoes a canned
+ * `?worker` import and as `globalThis.Worker`) that echoes a canned
  * response. This exercises getWorker / send / resolveWasmUrl / onmessage and
  * the error → tearDown → synchronous-fallback branch that the plain fallback
  * test cannot reach.
@@ -32,7 +32,7 @@ const { state, FakeWorker } = vi.hoisted(() => {
   return { state, FakeWorker };
 });
 
-vi.mock("@/parsers/parse.worker?worker&inline", () => ({ default: FakeWorker }));
+vi.mock("@/parsers/parse.worker?worker", () => ({ default: FakeWorker }));
 vi.mock("@/parsers/parseClientSync", () => ({
   parseStructureFile: vi.fn(async () => ({ tag: "sync" })),
   parseStructureText: vi.fn(async () => ({ tag: "sync" })),
