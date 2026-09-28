@@ -12,7 +12,7 @@ import { useBuilderStore } from "./store";
 import { TOOL_KEYS } from "./shortcuts";
 import type { BuildTool } from "./types";
 import type { LibraryMolecule } from "./library/types";
-import { ACCENT_TEXT } from "./styles";
+import { ACCENT_TEXT, monoStyle } from "./styles";
 import { RailDivider, RailIcon, railButtonStyle, railCornerMarkStyle, railStyle } from "./rail";
 
 export interface ToolInfo {
@@ -166,7 +166,7 @@ export function ToolRail() {
                     ...railCornerMarkStyle,
                     fontSize: 9,
                     fontWeight: 600,
-                    fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
+                    ...monoStyle,
                     color: active ? ACCENT_TEXT : "var(--megane-text-muted, #94a3b8)",
                   }}
                 >

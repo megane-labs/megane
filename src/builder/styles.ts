@@ -28,6 +28,11 @@ export const sectionTitleStyle: React.CSSProperties = {
   color: "var(--megane-text-muted, #94a3b8)",
 };
 
+/** Monospace figures: coordinates, formulas, shortcut keys. */
+export const monoStyle: React.CSSProperties = {
+  fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
+};
+
 export const hintStyle: React.CSSProperties = {
   fontSize: 12,
   color: "var(--megane-text-secondary, #64748b)",

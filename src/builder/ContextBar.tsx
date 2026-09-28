@@ -19,15 +19,12 @@ import {
   buttonStyle,
   hintStyle,
   inputStyle,
+  monoStyle,
   sectionStyle,
   sectionTitleStyle,
 } from "./styles";
 import { TOOL_KEYS } from "./shortcuts";
 import { elementGroups } from "./elements";
-
-const monoStyle: React.CSSProperties = {
-  fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
-};
 
 /** Elements offered as one-click buttons; anything else via the Z field. */
 export const QUICK_ELEMENTS = [6, 1, 7, 8, 9, 15, 16, 17, 35, 14];

@@ -10,13 +10,9 @@
 import { useMemo } from "react";
 import type { Snapshot } from "../types";
 import { overlayButtonStyle } from "../components/toolbarStyles";
-import { structureSummary } from "./Inspector";
-import { cellSummary } from "./crystal/CrystalDialog";
+import { cellSummary, structureSummary } from "./summary";
+import { monoStyle } from "./styles";
 import { hasCellBox } from "./crystal/structure";
-
-const monoStyle: React.CSSProperties = {
-  fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
-};
 
 export interface InfoHudProps {
   /** The document's name, or null before anything is open. */
