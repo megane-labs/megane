@@ -65,6 +65,7 @@ function makeMockRenderer(scene?: THREE.Scene): MoleculeRenderer {
     getRenderer: () =>
       ({
         getClearAlpha: () => 1,
+        getClearColor: (target: THREE.Color) => target.set(0xffffff),
         setClearColor: vi.fn(),
         info: { memory: {} },
       }) as unknown as THREE.WebGLRenderer,
@@ -519,5 +520,72 @@ describe("captureGif (issues #497, #599)", () => {
     });
 
     expect(revokeObjectURL).toHaveBeenCalledWith("blob:gif-worker-url");
+  });
+});
+
+describe("capture state restore", () => {
+  beforeEach(() => {
+    vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue({
+      drawImage: vi.fn(),
+    } as unknown as CanvasRenderingContext2D);
+    vi.spyOn(HTMLCanvasElement.prototype, "toBlob").mockImplementation(function (
+      this: HTMLCanvasElement,
+      callback: BlobCallback,
+    ) {
+      callback(new Blob([new Uint8Array([137, 80, 78, 71])], { type: "image/png" }));
+    });
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  function makeThemedRenderer(canvas: HTMLCanvasElement | null) {
+    const scene = new THREE.Scene();
+    const dark = new THREE.Color(0x0f172a);
+    scene.background = dark;
+    let clear = { color: new THREE.Color(0x0f172a), alpha: 1 };
+    const webgl = {
+      getClearAlpha: () => clear.alpha,
+      getClearColor: (target: THREE.Color) => target.copy(clear.color),
+      setClearColor: vi.fn((color: THREE.ColorRepresentation, alpha: number) => {
+        clear = { color: new THREE.Color(color), alpha };
+      }),
+    };
+    const unresize = vi.fn();
+    const renderer = {
+      getScene: () => scene,
+      getRenderer: () => webgl,
+      getCanvas: () => canvas,
+      getLabelOverlay: () => null,
+      resizeForCapture: vi.fn(() => unresize),
+      renderSingleFrame: vi.fn(),
+    } as unknown as MoleculeRenderer;
+    return { renderer, scene, dark, unresize, clear: () => clear };
+  }
+
+  it("puts back the theme's clear colour after a transparent export", async () => {
+    const canvas = document.createElement("canvas");
+    const { renderer, scene, dark, unresize, clear } = makeThemedRenderer(canvas);
+    await captureSnapshot(renderer, { width: 4, height: 4, transparent: true, format: "png" });
+    expect(scene.background).toBe(dark);
+    // Used to be reset to white, whatever the theme.
+    expect(clear().color.getHex()).toBe(0x0f172a);
+    expect(clear().alpha).toBe(1);
+    expect(unresize).toHaveBeenCalledTimes(1);
+  });
+
+  it("restores the viewer when the capture throws", async () => {
+    const { renderer, scene, dark, unresize, clear } = makeThemedRenderer(null);
+    // The capture's own render fails; the one after the restore does not.
+    vi.mocked(renderer.renderSingleFrame).mockImplementationOnce(() => {
+      throw new Error("context lost");
+    });
+    await expect(
+      captureSnapshot(renderer, { width: 4, height: 4, transparent: true, format: "png" }),
+    ).rejects.toThrow("context lost");
+    expect(scene.background).toBe(dark);
+    expect(clear().alpha).toBe(1);
+    expect(unresize).toHaveBeenCalledTimes(1);
   });
 });

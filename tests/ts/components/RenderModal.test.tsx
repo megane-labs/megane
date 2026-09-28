@@ -48,6 +48,7 @@ function makeRendererRef(
     getScene: vi.fn().mockReturnValue({ background: null }),
     getRenderer: vi.fn().mockReturnValue({
       getClearAlpha: () => 1,
+      getClearColor: (target: { set: (hex: number) => unknown }) => target.set(0xffffff),
       setClearColor: vi.fn(),
     }),
     getCanvas: vi.fn().mockReturnValue(makeCanvas()),
