@@ -23,31 +23,33 @@ nothing has to be re-encoded when they meet.
 The Builder looks and behaves like the viewer: the 3D view fills the window
 and every control floats over it on the same frosted-glass panels.
 
-The **Builder panel** on the right is the viewer's collapsible panel (where
-the viewer keeps its *Pipeline*); ▶ folds it to a small *Builder* button and
-gives the view the whole window. Its header shows the document's name and
-edit count, and its toolbar rows follow the viewer's Pipeline toolbar:
-**Document** — the **File** menu (*Open…*, *New empty cell…* /
-*New bulk crystal…* and *Save* in each format), *Undo* and *Redo*; and
-**Others** — the theme button (Light → Dark → Auto, as in the viewer; the 3D
-view's background follows it). Below the toolbar the panel is an
-**inspector**: what you are looking at (see [Inspector](#inspector)), the
-cell, and the history.
+Everything you *do* is on the left of the view; everything you *read* is on
+the right.
 
-The left side of the view holds everything that acts on the structure. The
-**top-left corner** has the viewer's camera controls — *Reset View* and the
-axis buttons (look along ±x / ±y / ±z, and ±a / ±b / ±c while there is a
-cell) — and under them the **tool rail** picks the tool, one icon per tool,
-each marked with its key. Under the tool rail, the **operations rail** holds
-three menus that open to its right: **Structure**, the operations on the cell
-and the crystal (see [Crystal](#crystal)), **Insert**, the molecule library
-(see [Library](#library)), and **Tools**, the Python tools (see
-[Python tools](#python-tools)). The **context bar** floating over the top of the
-view holds the settings of that tool and nothing else. The line at the
-**bottom left** says what is on screen (atoms, bonds, cell, selection) and
-what the current tool does, and any message — a file that would not parse, a
-molecule added to the library — appears on one line just above it until you
-dismiss it.
+The **top-left corner** has the viewer's camera controls — *Reset View* and
+the axis buttons (look along ±x / ±y / ±z, and ±a / ±b / ±c while there is a
+cell). Under them the **tool rail** picks the tool, one icon per tool, each
+marked with its key, and under that the **operations rail** holds every
+action, top to bottom: **File** (*Open…*, *New empty cell…* /
+*New bulk crystal…* and *Save* in each format); **Structure**, the operations
+on the cell and the crystal (see [Crystal](#crystal)), **Insert**, the
+molecule library (see [Library](#library)), and **Tools**, the Python tools
+(see [Python tools](#python-tools)); *Undo* and *Redo*; and the theme button
+(Light → Dark → Auto, as in the viewer; the 3D view's background follows it).
+The menus open to the right of their button; hover a button for its name.
+The **context bar** floating over the top of the view holds the settings of
+the current tool and nothing else.
+
+The **Details panel** on the right is the viewer's collapsible panel (where
+the viewer keeps its *Pipeline*); ▶ folds it to a small *Details* button and
+gives the view the whole window. Its header shows the document's name and
+edit count, and the panel is an **inspector**: what you are looking at (see
+[Inspector](#inspector)), the cell, and the history.
+
+The line at the **bottom left**, right of the rails, says what is on screen
+(atoms, bonds, cell, selection) and what the current tool does, and any
+message — a file that would not parse, a molecule added to the library —
+appears on one line just above it until you dismiss it.
 
 The panel's *History* section folds away and remembers whether you left
 it open; its header keeps the number of edits visible while it is closed.
@@ -70,7 +72,7 @@ it open; its header keeps the number of edits visible while it is closed.
   the document (`caffeine.sdf` → `caffeine.xyz`). XYZ becomes extended XYZ
   with a `Lattice="…"` header when there is a cell; PDB carries `CRYST1`,
   residue labels and `CONECT` records; MOL is V2000 with bond orders.
-- **Undo / Redo** in the panel's toolbar, in its *History* section, or with
+- **Undo / Redo** on the operations rail, in the Details panel's *History* section, or with
   the keys below.
 - Or skip all of that: pick **Place** (P) and place a library molecule with
   nothing open — the first molecule starts an `untitled` document without a
@@ -115,7 +117,7 @@ aromatic) for *Add atom* and *Bond*, and *On atoms* for *Place*. *Select*,
 
 ## Inspector
 
-The top of the panel's inspector describes what you are looking at.
+The top of the Details panel describes what you are looking at.
 
 - **Nothing selected**: the structure — its formula (Hill order), the number
   of atoms and bonds, the mass, and one chip per element with its count.

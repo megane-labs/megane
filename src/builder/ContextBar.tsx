@@ -63,7 +63,7 @@ function Divider() {
 export interface ContextBarProps {
   /** Left edge of the strip the bar centres in (clear of the left column). */
   left?: number;
-  /** Right edge of that strip (clear of the Builder panel). */
+  /** Right edge of that strip (clear of the Details panel). */
   right?: number;
 }
 

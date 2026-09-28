@@ -105,7 +105,7 @@ export function CrystalDialog({
 }: {
   kind: CrystalDialogKind;
   onClose: () => void;
-  /** Distance from the view's right edge (clear of the Builder panel). */
+  /** Distance from the view's right edge (clear of the Details panel). */
   right?: number;
 }) {
   const source = useBuilderStore((s) => s.source);

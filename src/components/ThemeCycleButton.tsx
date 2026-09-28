@@ -17,7 +17,7 @@ const iconProps = {
   strokeLinejoin: "round" as const,
   "aria-hidden": true as const,
   focusable: "false" as const,
-  style: { flexShrink: 0, width: 12, height: 12 } as React.CSSProperties,
+  style: { flexShrink: 0, width: "1em", height: "1em" } as React.CSSProperties,
 };
 
 const THEME_ICONS: Record<Theme, React.ReactNode> = {
@@ -53,7 +53,22 @@ export const THEME_LABELS: Record<Theme, string> = { light: "Light", dark: "Dark
 
 const themeBtnStyle = tintedButtonStyle("148, 163, 184", "var(--megane-text-secondary)", 0.3);
 
-export function ThemeCycleButton({ testId }: { testId: string }) {
+export interface ThemeCycleButtonProps {
+  testId: string;
+  /** The button's style (default: the grey toolbar pill). */
+  style?: React.CSSProperties;
+  /** Only the icon, at `iconSize` px (the label moves to the tooltip). */
+  iconOnly?: boolean;
+  /** Icon size in px (default 12, the toolbar pill's). */
+  iconSize?: number;
+}
+
+export function ThemeCycleButton({
+  testId,
+  style = themeBtnStyle,
+  iconOnly = false,
+  iconSize = 12,
+}: ThemeCycleButtonProps) {
   const theme = useThemeStore((s) => s.theme);
   const setTheme = useThemeStore((s) => s.setTheme);
   const handleCycle = useCallback(() => {
@@ -64,11 +79,12 @@ export function ThemeCycleButton({ testId }: { testId: string }) {
       type="button"
       data-testid={testId}
       onClick={handleCycle}
-      style={themeBtnStyle}
+      style={style}
       title={`Theme: ${THEME_LABELS[theme]} (click to cycle)`}
       aria-label={`Switch theme, current: ${THEME_LABELS[theme]}`}
     >
-      {THEME_ICONS[theme]} {THEME_LABELS[theme]}
+      <span style={{ display: "inline-flex", fontSize: iconSize }}>{THEME_ICONS[theme]}</span>
+      {!iconOnly && ` ${THEME_LABELS[theme]}`}
     </button>
   );
 }

@@ -1,5 +1,5 @@
 /**
- * The body of the Builder panel (the viewer-style frosted panel on the right
+ * The body of the Details panel (the viewer-style frosted panel on the right
  * of the view), an inspector in three layers:
  *
  *   Inspector — the structure (formula, counts, elements), or with a
@@ -13,9 +13,9 @@
  * the Place tool's molecule library opens. Cell, supercell, slab, the Python
  * tools and inserting molecules are operations, so they live in the
  * Structure, Tools and Insert menus on the operations rail under the tools
- * (`OperationsRail`); the document's own actions (open, new, save, undo) are
- * in this panel's toolbar (`BuilderToolbar`): each control appears exactly
- * once. Pure UI over `useBuilderStore`; every edit goes through the store's
+ * (`OperationsRail`), as do the document's own actions (File, Undo / Redo)
+ * and the theme: this panel shows details only, and each control appears
+ * exactly once. Pure UI over `useBuilderStore`; every edit goes through the store's
  * actions and the handlers installed by `useBuilderHandlers`.
  */
 

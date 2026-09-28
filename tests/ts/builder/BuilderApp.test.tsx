@@ -522,11 +522,11 @@ describe("BuilderApp — editing", () => {
 
   it("collapses the panel to its stub and gives the view back its full width", () => {
     render(<BuilderApp />);
-    fireEvent.click(screen.getByTestId("panel-builder-toggle"));
-    expect(screen.getByTestId("panel-builder").getAttribute("data-collapsed")).toBe("true");
+    fireEvent.click(screen.getByTestId("panel-details-toggle"));
+    expect(screen.getByTestId("panel-details").getAttribute("data-collapsed")).toBe("true");
     expect(screen.queryByTestId("builder-sidebar")).toBeNull();
     expect(rendererStub.setViewInsets).toHaveBeenLastCalledWith(0, 0);
-    fireEvent.click(screen.getByTestId("panel-builder-toggle"));
+    fireEvent.click(screen.getByTestId("panel-details-toggle"));
     expect(screen.getByTestId("builder-sidebar")).toBeTruthy();
     expect(rendererStub.setViewInsets).toHaveBeenLastCalledWith(0, 364);
   });

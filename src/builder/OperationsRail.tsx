@@ -1,15 +1,21 @@
 /**
  * The operations rail: a second floating column under the tool rail, on the
- * left of the view, holding what acts on the structure as a whole — the
- * Structure menu (cell, supercell, slab, symmetry, clean-up), Insert (library
- * molecules, a sketch, a file) and Tools (the Python tool server). The tools
- * above it act on a click; these act at once or through a dialog, so they are
- * menus, and each list opens to the right of its button. The document itself
- * (File, Undo / Redo) stays in the Builder panel on the right.
+ * left of the view, holding every action — the tools above it act on a
+ * click, these act at once or through a menu or dialog. Top to bottom:
+ *
+ *   File                      — open, new, save (the document)
+ *   Structure, Insert, Tools  — what acts on the structure as a whole
+ *   Undo, Redo                — the history
+ *   Theme                     — Light → Dark → Auto, as in the viewer
+ *
+ * Menus open to the right of their button. The panel on the right of the
+ * view shows details only (inspector, cell, history).
  */
 
 import type { ReactNode } from "react";
+import { Fragment } from "react";
 import { Menu, type MenuItem } from "./Menu";
+import { ThemeCycleButton } from "../components/ThemeCycleButton";
 import { TOOL_RAIL_WIDTH, railButtonStyle } from "./ToolRail";
 import { floatingSurfaceStyle } from "../components/toolbarStyles";
 
@@ -31,6 +37,27 @@ function RailIcon({ children }: { children: ReactNode }) {
     </svg>
   );
 }
+
+const IconFile = (
+  <RailIcon>
+    <path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z" />
+    <path d="M14 3v5h5M9 13h6M9 17h4" />
+  </RailIcon>
+);
+
+const IconUndo = (
+  <RailIcon>
+    <path d="M9 14L4 9l5-5" />
+    <path d="M4 9h10.5a5.5 5.5 0 0 1 0 11H11" />
+  </RailIcon>
+);
+
+const IconRedo = (
+  <RailIcon>
+    <path d="M15 14l5-5-5-5" />
+    <path d="M20 9H9.5a5.5 5.5 0 0 0 0 11H13" />
+  </RailIcon>
+);
 
 const IconStructure = (
   <RailIcon>
@@ -71,50 +98,96 @@ function FlyoutMark() {
   );
 }
 
+function Divider() {
+  return (
+    <div
+      aria-hidden="true"
+      style={{
+        width: 24,
+        height: 1,
+        margin: "3px 0",
+        background: "var(--megane-border-solid, #e2e8f0)",
+      }}
+    />
+  );
+}
+
+function disabledRail(disabled: boolean): React.CSSProperties {
+  return {
+    ...railButtonStyle(false),
+    opacity: disabled ? 0.45 : 1,
+    cursor: disabled ? "default" : "pointer",
+  };
+}
+
 export interface OperationsRailProps {
+  fileItems: MenuItem[];
   structureItems: MenuItem[];
   insertItems: MenuItem[];
   toolsItems: MenuItem[];
   /** Whether a structure is open (the Structure menu needs one). */
   hasDocument: boolean;
+  canUndo: boolean;
+  canRedo: boolean;
+  onUndo: () => void;
+  onRedo: () => void;
+  /** ⌘ or Ctrl, for the shortcut hints. */
+  mod: string;
 }
 
 export function OperationsRail({
+  fileItems,
   structureItems,
   insertItems,
   toolsItems,
   hasDocument,
+  canUndo,
+  canRedo,
+  onUndo,
+  onRedo,
+  mod,
 }: OperationsRailProps) {
-  const entries: {
+  const menus: {
     testId: string;
     label: string;
     title: string;
     icon: ReactNode;
     items: MenuItem[];
     disabled?: boolean;
-  }[] = [
-    {
-      testId: "builder-structure",
-      label: "Structure",
-      title: "Structure: cell, supercell, slab and symmetry of the open structure",
-      icon: IconStructure,
-      items: structureItems,
-      disabled: !hasDocument,
-    },
-    {
-      testId: "builder-insert",
-      label: "Insert",
-      title: "Insert: molecules from the library, a sketch or a file",
-      icon: IconInsert,
-      items: insertItems,
-    },
-    {
-      testId: "builder-tools",
-      label: "Tools",
-      title: "Tools: Python tools from a connected tool server",
-      icon: IconTools,
-      items: toolsItems,
-    },
+  }[][] = [
+    [
+      {
+        testId: "builder-file",
+        label: "File",
+        title: `File: open (${mod}+O), start or save (${mod}+S) a structure`,
+        icon: IconFile,
+        items: fileItems,
+      },
+    ],
+    [
+      {
+        testId: "builder-structure",
+        label: "Structure",
+        title: "Structure: cell, supercell, slab and symmetry of the open structure",
+        icon: IconStructure,
+        items: structureItems,
+        disabled: !hasDocument,
+      },
+      {
+        testId: "builder-insert",
+        label: "Insert",
+        title: "Insert: molecules from the library, a sketch or a file",
+        icon: IconInsert,
+        items: insertItems,
+      },
+      {
+        testId: "builder-tools",
+        label: "Tools",
+        title: "Tools: Python tools from a connected tool server",
+        icon: IconTools,
+        items: toolsItems,
+      },
+    ],
   ];
 
   return (
@@ -135,27 +208,62 @@ export function OperationsRail({
         pointerEvents: "auto",
       }}
     >
-      {entries.map((e) => (
-        <Menu
-          key={e.testId}
-          testId={e.testId}
-          label={
-            <>
-              {e.icon}
-              <FlyoutMark />
-            </>
-          }
-          ariaLabel={e.label}
-          title={e.title}
-          disabled={e.disabled}
-          placement="right"
-          caret={false}
-          triggerStyle={railButtonStyle(false)}
-          openTriggerStyle={railButtonStyle(true)}
-          heading={e.label}
-          items={e.items}
-        />
+      {menus.map((group, g) => (
+        <Fragment key={g}>
+          {g > 0 && <Divider />}
+          {group.map((e) => (
+            <Menu
+              key={e.testId}
+              testId={e.testId}
+              label={
+                <>
+                  {e.icon}
+                  <FlyoutMark />
+                </>
+              }
+              ariaLabel={e.label}
+              title={e.title}
+              disabled={e.disabled}
+              placement="right"
+              caret={false}
+              triggerStyle={railButtonStyle(false)}
+              openTriggerStyle={railButtonStyle(true)}
+              heading={e.label}
+              items={e.items}
+            />
+          ))}
+        </Fragment>
       ))}
+      <Divider />
+      <button
+        type="button"
+        data-testid="builder-topbar-undo"
+        aria-label="Undo"
+        title={`Undo (${mod}+Z)`}
+        disabled={!canUndo}
+        style={disabledRail(!canUndo)}
+        onClick={onUndo}
+      >
+        {IconUndo}
+      </button>
+      <button
+        type="button"
+        data-testid="builder-topbar-redo"
+        aria-label="Redo"
+        title={`Redo (${mod}+Shift+Z)`}
+        disabled={!canRedo}
+        style={disabledRail(!canRedo)}
+        onClick={onRedo}
+      >
+        {IconRedo}
+      </button>
+      <Divider />
+      <ThemeCycleButton
+        testId="builder-theme"
+        style={railButtonStyle(false)}
+        iconOnly
+        iconSize={18}
+      />
     </div>
   );
 }

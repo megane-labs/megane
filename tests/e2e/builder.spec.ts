@@ -154,7 +154,7 @@ test.describe("builder: webapp", () => {
     const root = page.locator('[data-testid="megane-builder"]');
     const viewport = page.locator('[data-testid="viewer-root"]');
 
-    // Dark theme from the panel's theme button (Light → Dark → Auto, as in
+    // Dark theme from the rail's theme button (Light → Dark → Auto, as in
     // the viewer): the 3D view's background follows.
     const corner = async () => {
       const png = PNG.sync.read(await viewport.screenshot());
@@ -164,12 +164,12 @@ test.describe("builder: webapp", () => {
     const theme = page.locator('[data-testid="builder-theme"]');
     expect(await corner()).toEqual([255, 255, 255]);
     await theme.click();
-    await expect(theme).toHaveText("Light");
+    await expect(theme).toHaveAttribute("aria-label", /current: Light$/);
     await theme.click();
-    await expect(theme).toHaveText("Dark");
+    await expect(theme).toHaveAttribute("aria-label", /current: Dark$/);
     await expect.poll(corner).toEqual([0x0f, 0x17, 0x2a]);
     await theme.click();
-    await expect(theme).toHaveText("Auto");
+    await expect(theme).toHaveAttribute("aria-label", /current: Auto$/);
     await expect.poll(corner).toEqual([255, 255, 255]);
 
     // Nothing open: Insert › Molecule… still shows the gallery.

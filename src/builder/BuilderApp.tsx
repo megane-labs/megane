@@ -9,13 +9,14 @@
  *
  * The shell follows the viewer's design: the 3D view fills the window and
  * every control floats over it on frosted-glass panels, each control in
- * exactly one of them. The **Builder panel** on the right (the viewer's
- * collapsible panel, where the viewer keeps its Pipeline) owns the document
- * in its toolbar rows (File, Undo / Redo, theme) and the structure's own
- * state in its body (selection, cell, history); the **top-left corner** holds
- * Reset View and the axis buttons as in the viewer, with the **tool rail**
- * under them and the **operations rail** (Structure, Insert, Tools — the
- * menus that act on the structure, opening to the right) under that; the
+ * exactly one of them. Everything you *do* is on the left, everything you
+ * *read* on the right. The **top-left corner** holds Reset View and the axis
+ * buttons as in the viewer, with the **tool rail** under them and the
+ * **operations rail** under that (File; Structure, Insert, Tools; Undo /
+ * Redo; theme — menus open to the right). The **Details panel** on the right
+ * (the viewer's collapsible panel, where the viewer keeps its Pipeline, with
+ * the document's name in its header) shows the structure's state: selection,
+ * cell, history. The
  * **context bar** over the top of the view holds the current tool's
  * settings; and the **bottom-left** status line says what is on screen and
  * what the current tool does, under the single **notice** line that carries
@@ -55,10 +56,9 @@ import { builderViewportState, BUILDER_SOURCE_ID } from "./view";
 import { useBuilderHandlers } from "./useBuilderHandlers";
 import { useBuilderShortcuts, TOOL_KEYS } from "./shortcuts";
 import { BuilderSidebar } from "./BuilderSidebar";
-import { ToolRail, toolHint, toolInfo } from "./ToolRail";
+import { TOOL_RAIL_WIDTH, ToolRail, toolHint, toolInfo } from "./ToolRail";
 import { ContextBar } from "./ContextBar";
 import type { MenuItem } from "./Menu";
-import { BuilderToolbar } from "./BuilderToolbar";
 import { OperationsRail } from "./OperationsRail";
 import { NewStructureDialog, type NewStructureKind } from "./NewStructureDialog";
 import { fileMenuItems } from "./topbarMenus";
@@ -75,7 +75,7 @@ import { useLibraryActions, useLibraryUi } from "./library/ui";
 import { buttonStyle, hintStyle } from "./styles";
 import { trackEvent, trackFileOpen } from "../analytics";
 
-/** The Builder panel's width on the right of the view. */
+/** The Details panel's width on the right of the view. */
 const PANEL_WIDTH = 352;
 /** Right clearance for overlays while the panel is collapsed to its stub. */
 const COLLAPSED_STUB_CLEARANCE = 120;
@@ -84,8 +84,11 @@ const COLLAPSED_STUB_CLEARANCE = 120;
  * the six axis buttons (≈ 154 px wide) in the top-left corner.
  */
 const CONTEXT_BAR_LEFT = 180;
-/** Room the tool rail leaves at the bottom for the status line. */
-const STATUS_CLEARANCE = 36;
+/**
+ * Left edge of the bottom-left status and notice lines: right of the rails,
+ * so the rails can run down the whole left edge without being covered.
+ */
+const STATUS_LEFT = OVERLAY_INSET + TOOL_RAIL_WIDTH + OVERLAY_INSET;
 
 /** ⌘ on a Mac, Ctrl elsewhere, for the shortcut hints in the tooltips. */
 function modKeyLabel(): string {
@@ -409,15 +412,14 @@ export function BuilderApp() {
       </div>
 
       {/* Top-left, as in the viewer: Reset View and the axis buttons, then the
-          tool rail and, under it, the operations rail (Structure, Insert,
-          Tools) — everything that acts on the structure in the view. */}
+          tool rail and, under it, the operations rail — every action. */}
       <div
         data-testid="builder-left-column"
         style={{
           position: "absolute",
           top: OVERLAY_INSET,
           left: OVERLAY_INSET,
-          bottom: OVERLAY_INSET + STATUS_CLEARANCE,
+          bottom: OVERLAY_INSET,
           zIndex: 10,
           display: "flex",
           flexDirection: "column",
@@ -451,7 +453,12 @@ export function BuilderApp() {
           style={{
             marginTop: 8,
             minHeight: 0,
+            // A short window scrolls the rails; room for their shadows, and
+            // no scrollbar over a 50 px column.
             overflowY: "auto",
+            scrollbarWidth: "none",
+            padding: "0 10px 10px 0",
+            marginRight: -10,
             display: "flex",
             flexDirection: "column",
             gap: 8,
@@ -459,10 +466,24 @@ export function BuilderApp() {
         >
           <ToolRail />
           <OperationsRail
+            fileItems={fileMenuItems({
+              open: () => inputRef.current?.click(),
+              newCell: () => setNewDialog("cell"),
+              newBulk: () => setNewDialog("bulk"),
+              formats: STRUCTURE_EXPORT_FORMATS,
+              save: (f) => void handleExport(f as StructureWriteFormat),
+              canSave: !!shown,
+              mod,
+            })}
             structureItems={structureItems}
             insertItems={insertItems}
             toolsItems={toolsItems}
             hasDocument={!!shown}
+            canUndo={edits.length > 0}
+            canRedo={redoStack.length > 0}
+            onUndo={() => undo()}
+            onRedo={() => redo()}
+            mod={mod}
           />
         </div>
       </div>
@@ -567,7 +588,7 @@ export function BuilderApp() {
       )}
 
       <CollapsiblePanel
-        title="Builder"
+        title="Details"
         subtitle={
           <span data-testid="builder-file-name">
             {fileName ?? "No structure"}
@@ -578,33 +599,16 @@ export function BuilderApp() {
         onToggleCollapse={() => setPanelCollapsed((c) => !c)}
         width={PANEL_WIDTH}
         bottom={OVERLAY_INSET}
-        headerExtra={
-          <BuilderToolbar
-            fileItems={fileMenuItems({
-              open: () => inputRef.current?.click(),
-              newCell: () => setNewDialog("cell"),
-              newBulk: () => setNewDialog("bulk"),
-              formats: STRUCTURE_EXPORT_FORMATS,
-              save: (f) => void handleExport(f as StructureWriteFormat),
-              canSave: !!shown,
-              mod,
-            })}
-            canUndo={edits.length > 0}
-            canRedo={redoStack.length > 0}
-            onUndo={() => undo()}
-            onRedo={() => redo()}
-            mod={mod}
-          />
-        }
       >
         <BuilderSidebar onOpenCrystal={setCrystalDialog} />
       </CollapsiblePanel>
 
-      {/* Bottom-left: the one notice line over the status line. */}
+      {/* Bottom-left, right of the rails: the one notice line over the
+          status line. */}
       <div
         style={{
           position: "absolute",
-          left: OVERLAY_INSET,
+          left: STATUS_LEFT,
           right: overlayRight,
           bottom: OVERLAY_INSET,
           zIndex: 10,

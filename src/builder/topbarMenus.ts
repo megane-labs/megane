@@ -1,8 +1,8 @@
 /**
- * The Builder panel's File menu: the document (open, start a new one, save
- * it). A pure item list, so the panel and its tests read the same thing. The
- * camera lives on the view (Reset View and the axis buttons, as in the
- * viewer) and the theme on the panel's Others row.
+ * The File menu on the operations rail: the document (open, start a new
+ * one, save it). A pure item list, so the rail and its tests read the same
+ * thing. The camera lives on the view (Reset View and the axis buttons, as in
+ * the viewer) and the theme at the foot of the rail.
  */
 
 import type { MenuItem } from "./Menu";

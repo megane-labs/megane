@@ -139,27 +139,26 @@ its own page (`builder.html`, a Vite entry beside `index.html` and the
 multi-instance harness). It is laid out in the viewer's design language — the
 3D view fills the window and every control floats over it on the viewer's
 frosted-glass surfaces (`src/components/toolbarStyles.ts`, shared with the
-viewer's Pipeline panel) — so that each control has exactly one home: the
-viewer's `CollapsiblePanel` on the right, titled *Builder* with the document's
-name beside it, whose header carries toolbar rows built like the Pipeline
-panel's (`BuilderToolbar.tsx`: *Document* — the *File* menu for the
-**document** (Open, New, Save; `topbarMenus.ts`), Undo / Redo; *Others* — the
-viewer's `ThemeCycleButton`) and whose body is the **structure** (`Inspector.tsx`: the
-structure summary, or the selected atoms with their positions, distance /
-angle / dihedral and actions; the cell as a read-only card; history); the
-viewer's Reset View and `ViewAxisControls` in the top-left corner with a
-floating tool rail under them (`ToolRail.tsx`, one icon per tool with its
-key) and, under that, the operations rail (`OperationsRail.tsx`: the
-*Structure*, *Insert* and *Tools* menus for what acts on the structure,
-`crystal/structureMenu.ts`, `tools/ToolServer.tsx`, their lists opening to
-the right); a context bar over the top of the view (`ContextBar.tsx`, only the
+viewer's Pipeline panel) — so that each control has exactly one home, with
+every action on the left and every detail on the right: the viewer's Reset
+View and `ViewAxisControls` in the top-left corner with a floating tool rail
+under them (`ToolRail.tsx`, one icon per tool with its key) and, under that,
+the operations rail (`OperationsRail.tsx`: the *File* menu for the
+**document** (Open, New, Save; `topbarMenus.ts`); the *Structure*, *Insert*
+and *Tools* menus for what acts on the structure (`crystal/structureMenu.ts`,
+`tools/ToolServer.tsx`); Undo / Redo; the viewer's `ThemeCycleButton` — its
+lists opening to the right); the viewer's `CollapsiblePanel` on the right,
+titled *Details* with the document's name beside it, showing the
+**structure** (`Inspector.tsx`: the structure summary, or the selected atoms
+with their positions, distance / angle / dihedral and actions; the cell as a
+read-only card; history); a context bar over the top of the view (`ContextBar.tsx`, only the
 settings the current tool uses — none for Select / Move / Delete); a status
-line at the bottom left for what is on screen and what the tool does
+line at the bottom left, right of the rails, for what is on screen and what the tool does
 (`toolHint`, the one place the hint is written); and one notice line above it
 for every message the app has to show (`BuilderStore.notice`, written through
 `reportError` / `reportInfo` so no panel keeps an error line of its own). The
-menus (`Menu.tsx`) portal their lists to `<body>` because the panel clips its
-overflow. `Section` (`src/builder/Section.tsx`)
+menus (`Menu.tsx`) portal their lists to `<body>` so no panel or scrolling
+rail clips them. `Section` (`src/builder/Section.tsx`)
 makes the panel's history section collapsible and
 remembers each one in `localStorage`; `shortcuts.ts` holds the key table
 (`resolveShortcut`) and applies it to the store (`runShortcut`), ignoring keys
@@ -209,7 +208,7 @@ the Inspector's box select:
 lists every cell and crystal op: *Wrap*, *Remove cell* and *Expand
 symmetry* push their op at once; *Set cell*, *Center with vacuum*,
 *Supercell* and *Cut slab* open `crystal/CrystalDialog.tsx`, a panel in the
-top-right of the view, left of the Builder panel, with one form per op. While a form describes a valid op
+top-right of the view, left of the Details panel, with one form per op. While a form describes a valid op
 the dialog hands it to `BuilderStore.setPreview`, which applies it to the
 edited structure without committing it; the view draws `viewSnapshot` (the
 preview when there is one), `canEdit` is false so clicks are paused, and any

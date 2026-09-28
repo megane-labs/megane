@@ -1,11 +1,12 @@
 /**
- * A toolbar dropdown for the Builder panel: a pill trigger in the viewer's
- * toolbar look and a list of items, optionally split by separators and headed
- * by captions. Closes on an item, a click outside, or Escape.
+ * A dropdown for the Builder: a trigger (a pill in the viewer's toolbar look
+ * by default, or an icon button on the operations rail) and a list of items,
+ * optionally split by separators and headed by captions. Closes on an item,
+ * a click outside, or Escape.
  *
- * The list is portalled to `<body>` and placed under the trigger with fixed
- * coordinates, kept inside the window: the panel it sits in clips its
- * overflow (and its backdrop blur would otherwise capture fixed positioning).
+ * The list is portalled to `<body>` and placed under (or beside) the trigger
+ * with fixed coordinates, kept inside the window: the rail it sits in scrolls
+ * and clips its overflow, and a backdrop blur would capture fixed positioning.
  */
 
 import {
