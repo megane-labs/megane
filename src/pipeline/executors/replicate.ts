@@ -8,6 +8,7 @@ import type {
   FrameProvider,
 } from "../types";
 import { invert3x3 } from "./mathUtils";
+import { tileArray, tileIndices } from "./tile";
 
 /**
  * Replicate node — OVITO/VESTA-style supercell builder.
@@ -160,27 +161,12 @@ export function executeReplicate(
   }
 
   // Cα backbone arrays (optional): caIndices shift per image, the rest tile.
-  let caIndices: Uint32Array | undefined;
-  let caChainIds: Uint8Array | undefined;
-  let caResNums: Uint32Array | undefined;
-  let caSsType: Uint8Array | undefined;
-  if (src.caIndices) {
-    const nCa = src.caIndices.length;
-    caIndices = new Uint32Array(nCa * total);
-    caChainIds = src.caChainIds ? new Uint8Array(nCa * total) : undefined;
-    caResNums = src.caResNums ? new Uint32Array(nCa * total) : undefined;
-    caSsType = src.caSsType ? new Uint8Array(nCa * total) : undefined;
-    for (let m = 0; m < total; m++) {
-      const atomOffset = m * nAtomsOld;
-      const caBase = m * nCa;
-      for (let c = 0; c < nCa; c++) {
-        caIndices[caBase + c] = src.caIndices[c] + atomOffset;
-        if (caChainIds) caChainIds[caBase + c] = src.caChainIds![c];
-        if (caResNums) caResNums[caBase + c] = src.caResNums![c];
-        if (caSsType) caSsType[caBase + c] = src.caSsType![c];
-      }
-    }
-  }
+  // The Cα arrays other than caIndices only exist alongside it.
+  const ca = src.caIndices;
+  const caIndices = ca && tileIndices(ca, nAtomsOld, total);
+  const caChainIds = ca && src.caChainIds && tileArray(src.caChainIds, total);
+  const caResNums = ca && src.caResNums && tileArray(src.caResNums, total);
+  const caSsType = ca && src.caSsType && tileArray(src.caSsType, total);
 
   // Enlarge the cell to span the full supercell.
   const newBox = new Float32Array([
@@ -218,10 +204,10 @@ export function executeReplicate(
   const newParticle: ParticleData = {
     ...particle,
     source: newSnapshot,
-    indices: tileIndices(particle.indices, nAtomsOld, total),
-    scaleOverrides: tileFloat(particle.scaleOverrides, total),
-    opacityOverrides: tileFloat(particle.opacityOverrides, total),
-    colorOverrides: tileFloat(particle.colorOverrides, total),
+    indices: particle.indices && tileIndices(particle.indices, nAtomsOld, total),
+    scaleOverrides: particle.scaleOverrides && tileArray(particle.scaleOverrides, total),
+    opacityOverrides: particle.opacityOverrides && tileArray(particle.opacityOverrides, total),
+    colorOverrides: particle.colorOverrides && tileArray(particle.colorOverrides, total),
   };
   outputs.set("particle", newParticle);
 
@@ -299,30 +285,4 @@ class ReplicatedFrameProvider implements FrameProvider {
       positions: out,
     };
   }
-}
-
-/** Tile a per-atom selection index array, shifting each copy by img·nAtomsOld. */
-function tileIndices(
-  indices: Uint32Array | null,
-  nAtomsOld: number,
-  total: number,
-): Uint32Array | null {
-  if (indices === null) return null;
-  const out = new Uint32Array(indices.length * total);
-  for (let m = 0; m < total; m++) {
-    const offset = m * nAtomsOld;
-    const base = m * indices.length;
-    for (let i = 0; i < indices.length; i++) {
-      out[base + i] = indices[i] + offset;
-    }
-  }
-  return out;
-}
-
-/** Tile a per-atom (or per-atom×channel) float override array `total` times. */
-function tileFloat(arr: Float32Array | null, total: number): Float32Array | null {
-  if (arr === null) return null;
-  const out = new Float32Array(arr.length * total);
-  for (let m = 0; m < total; m++) out.set(arr, m * arr.length);
-  return out;
 }
