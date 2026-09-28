@@ -12,8 +12,8 @@ import { useBuilderStore } from "./store";
 import { TOOL_KEYS } from "./shortcuts";
 import type { BuildTool } from "./types";
 import type { LibraryMolecule } from "./library/types";
-import { ACCENT_TEXT, ACCENT_TINT } from "./styles";
-import { floatingSurfaceStyle } from "../components/toolbarStyles";
+import { ACCENT_TEXT } from "./styles";
+import { RailDivider, RailIcon, railButtonStyle, railCornerMarkStyle, railStyle } from "./rail";
 
 export interface ToolInfo {
   value: BuildTool;
@@ -84,7 +84,7 @@ export function toolHint(
   return hint;
 }
 
-// 20 px stroke icons, drawn in currentColor so the active tint carries over.
+// The tools' 20 px stroke icons (see RailIcon).
 const ICON_PATHS: Record<BuildTool, ReactNode> = {
   select: <path d="M6 3.5l12 7-5.2 1.6L10.5 18z" />,
   move: (
@@ -125,40 +125,7 @@ const ICON_PATHS: Record<BuildTool, ReactNode> = {
 };
 
 export function ToolIcon({ tool }: { tool: BuildTool }) {
-  return (
-    <svg
-      viewBox="0 0 24 24"
-      width={20}
-      height={20}
-      fill="none"
-      stroke="currentColor"
-      strokeWidth={1.7}
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      aria-hidden="true"
-    >
-      {ICON_PATHS[tool]}
-    </svg>
-  );
-}
-
-export const TOOL_RAIL_WIDTH = 50;
-
-export function railButtonStyle(active: boolean): React.CSSProperties {
-  return {
-    position: "relative",
-    width: 38,
-    height: 38,
-    display: "flex",
-    alignItems: "center",
-    justifyContent: "center",
-    padding: 0,
-    border: "none",
-    borderRadius: 8,
-    cursor: "pointer",
-    background: active ? ACCENT_TINT : "transparent",
-    color: active ? ACCENT_TEXT : "var(--megane-text-secondary, #64748b)",
-  };
+  return <RailIcon>{ICON_PATHS[tool]}</RailIcon>;
 }
 
 export function ToolRail() {
@@ -171,31 +138,11 @@ export function ToolRail() {
       role="radiogroup"
       aria-label="Tool"
       aria-orientation="vertical"
-      style={{
-        ...floatingSurfaceStyle,
-        width: TOOL_RAIL_WIDTH,
-        boxSizing: "border-box",
-        padding: "6px 0",
-        display: "flex",
-        flexDirection: "column",
-        alignItems: "center",
-        gap: 2,
-        pointerEvents: "auto",
-      }}
+      style={railStyle}
     >
       {GROUPS.map((group, g) => (
         <div key={g} style={{ display: "contents" }}>
-          {g > 0 && (
-            <div
-              aria-hidden="true"
-              style={{
-                width: 24,
-                height: 1,
-                margin: "3px 0",
-                background: "var(--megane-border-solid, #e2e8f0)",
-              }}
-            />
-          )}
+          {g > 0 && <RailDivider />}
           {group.map((value) => {
             const t = toolInfo(value);
             const active = tool === value;
@@ -216,9 +163,7 @@ export function ToolRail() {
                 <span
                   aria-hidden="true"
                   style={{
-                    position: "absolute",
-                    right: 3,
-                    bottom: 1,
+                    ...railCornerMarkStyle,
                     fontSize: 9,
                     fontWeight: 600,
                     fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",

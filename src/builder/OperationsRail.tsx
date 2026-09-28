@@ -9,34 +9,15 @@
  *   Theme                     — Light → Dark → Auto, as in the viewer
  *
  * Menus open to the right of their button. The panel on the right of the
- * view shows details only (inspector, cell, history).
+ * view shows details only (the current tool's settings, the selection or an
+ * open form, and the history).
  */
 
 import type { ReactNode } from "react";
 import { Fragment } from "react";
 import { Menu, type MenuItem } from "./Menu";
 import { ThemeCycleButton } from "../components/ThemeCycleButton";
-import { TOOL_RAIL_WIDTH, railButtonStyle } from "./ToolRail";
-import { floatingSurfaceStyle } from "../components/toolbarStyles";
-
-// 20 px stroke icons in the tool rail's style.
-function RailIcon({ children }: { children: ReactNode }) {
-  return (
-    <svg
-      viewBox="0 0 24 24"
-      width={20}
-      height={20}
-      fill="none"
-      stroke="currentColor"
-      strokeWidth={1.7}
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      aria-hidden="true"
-    >
-      {children}
-    </svg>
-  );
-}
+import { RailDivider, RailIcon, railButtonStyle, railCornerMarkStyle, railStyle } from "./rail";
 
 const IconFile = (
   <RailIcon>
@@ -86,29 +67,13 @@ function FlyoutMark() {
     <span
       aria-hidden="true"
       style={{
-        position: "absolute",
-        right: 3,
-        bottom: 1,
+        ...railCornerMarkStyle,
         fontSize: 8,
         color: "var(--megane-text-muted, #94a3b8)",
       }}
     >
       ▸
     </span>
-  );
-}
-
-function Divider() {
-  return (
-    <div
-      aria-hidden="true"
-      style={{
-        width: 24,
-        height: 1,
-        margin: "3px 0",
-        background: "var(--megane-border-solid, #e2e8f0)",
-      }}
-    />
   );
 }
 
@@ -196,21 +161,11 @@ export function OperationsRail({
       role="toolbar"
       aria-label="Operations"
       aria-orientation="vertical"
-      style={{
-        ...floatingSurfaceStyle,
-        width: TOOL_RAIL_WIDTH,
-        boxSizing: "border-box",
-        padding: "6px 0",
-        display: "flex",
-        flexDirection: "column",
-        alignItems: "center",
-        gap: 2,
-        pointerEvents: "auto",
-      }}
+      style={railStyle}
     >
       {menus.map((group, g) => (
         <Fragment key={g}>
-          {g > 0 && <Divider />}
+          {g > 0 && <RailDivider />}
           {group.map((e) => (
             <Menu
               key={e.testId}
@@ -234,7 +189,7 @@ export function OperationsRail({
           ))}
         </Fragment>
       ))}
-      <Divider />
+      <RailDivider />
       <button
         type="button"
         data-testid="builder-topbar-undo"
@@ -257,7 +212,7 @@ export function OperationsRail({
       >
         {IconRedo}
       </button>
-      <Divider />
+      <RailDivider />
       <ThemeCycleButton
         testId="builder-theme"
         style={railButtonStyle(false)}
