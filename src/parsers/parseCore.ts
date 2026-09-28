@@ -267,7 +267,9 @@ export async function ensureInit(wasmUrl?: string): Promise<void> {
       const url =
         wasmUrl ??
         ((globalThis as Record<string, unknown>).__MEGANE_WASM_URL__ as string | undefined);
-      await wasm.default(url);
+      // wasm-bindgen's init takes an options object; a bare URL still works
+      // but logs a deprecation warning (on every page load, from the worker).
+      await wasm.default({ module_or_path: url });
       perfMark("megane:wasm:end");
       perfMeasure("megane:wasm-init", "megane:wasm:start", "megane:wasm:end");
       wasmModule = {

@@ -1,5 +1,7 @@
 """megane - A fast, beautiful molecular viewer."""
 
+from typing import TYPE_CHECKING
+
 from megane.parsers.c3xml import load_c3xml
 from megane.parsers.cif import load_cif
 from megane.parsers.cml import load_cml
@@ -46,8 +48,10 @@ from megane.pipeline import (
     view,
     view_traj,
 )
-from megane.widget import MolecularViewer
 from megane.writers import save_structure, write_structure
+
+if TYPE_CHECKING:
+    from megane.widget import MolecularViewer
 
 __all__ = [
     "AddBonds",
@@ -99,3 +103,21 @@ __all__ = [
     "write_structure",
 ]
 __version__ = "0.16.0"
+
+
+def __getattr__(name: str) -> object:
+    # The Jupyter widget imports anywidget -> ipywidgets -> IPython, which
+    # roughly doubles the cost of `import megane` in time and memory. The CLI,
+    # the server and scripts that only read or write structures never use it,
+    # so it is imported on first access instead of with the package.
+    if name == "MolecularViewer":
+        from megane.widget import MolecularViewer
+
+        globals()["MolecularViewer"] = MolecularViewer
+        return MolecularViewer
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
+
+def __dir__() -> list[str]:
+    # Keep the lazily imported widget visible to dir() and tab completion.
+    return sorted(set(globals()) | {"MolecularViewer"})
