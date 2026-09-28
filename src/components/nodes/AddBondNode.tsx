@@ -18,7 +18,7 @@ import { useRef, useCallback } from "react";
 const sectionLabelStyle: React.CSSProperties = {
   fontSize: 17,
   fontWeight: 600,
-  color: "#94a3b8",
+  color: "var(--megane-text-muted)",
   textTransform: "uppercase",
   letterSpacing: "0.06em",
   marginBottom: 7,
@@ -44,7 +44,7 @@ const thresholdRowStyle: React.CSSProperties = {
 const thresholdLabelStyle: React.CSSProperties = {
   fontSize: 16,
   fontWeight: 500,
-  color: "#64748b",
+  color: "var(--megane-text-secondary)",
   flex: 1,
 };
 
@@ -55,7 +55,7 @@ const thresholdSliderStyle: React.CSSProperties = {
 
 const thresholdValueStyle: React.CSSProperties = {
   fontSize: 15,
-  color: "#64748b",
+  color: "var(--megane-text-secondary)",
   minWidth: 30,
   textAlign: "right",
 };
@@ -119,7 +119,7 @@ export function AddBondNode({ id, data }: NodeProps<Node<PipelineNodeData>>) {
           {params.bondFileName ? (
             <div style={{ ...fileNameStyle, fontSize: 18 }}>{params.bondFileName}</div>
           ) : (
-            <div style={{ fontSize: 18, color: "#94a3b8", fontStyle: "italic" }}>
+            <div style={{ fontSize: 18, color: "var(--megane-text-muted)", fontStyle: "italic" }}>
               No topology loaded
             </div>
           )}

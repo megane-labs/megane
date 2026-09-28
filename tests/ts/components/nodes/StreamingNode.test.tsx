@@ -138,11 +138,11 @@ describe("StreamingNode", () => {
     const seeded = seedPipelineStore("streaming", { id: "s1" });
     render(<StreamingNode {...nodeProps("s1", seeded.data.params as StreamingParams)} />);
 
-    const disabledColor = "rgb(203, 213, 225)"; // slate-300
+    const disabledColor = "var(--megane-border-strong)"; // theme-aware gray
     expect(screen.getByTestId("handle-source-bond").style.background).toBe(disabledColor);
     expect(screen.getByTestId("handle-source-trajectory").style.background).toBe(disabledColor);
     expect(screen.getByTestId("handle-source-cell").style.background).toBe(disabledColor);
-    // particle output stays its data-type color (green, not slate-300)
+    // particle output stays its data-type color (green, not the disabled gray)
     expect(screen.getByTestId("handle-source-particle").style.background).not.toBe(disabledColor);
   });
 
@@ -162,7 +162,7 @@ describe("StreamingNode", () => {
     });
     render(<StreamingNode {...nodeProps("s1", seeded.data.params as StreamingParams)} />);
 
-    const disabledColor = "rgb(203, 213, 225)";
+    const disabledColor = "var(--megane-border-strong)";
     expect(screen.getByTestId("handle-source-bond").style.background).not.toBe(disabledColor);
     expect(screen.getByTestId("handle-source-trajectory").style.background).not.toBe(disabledColor);
     expect(screen.getByTestId("handle-source-cell").style.background).not.toBe(disabledColor);

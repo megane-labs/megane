@@ -1,31 +1,12 @@
 /* megane - Molecular viewer styles */
 
 /* ── Theme tokens ─────────────────────────────────────────────────────── */
-:root {
-  --megane-bg: #ffffff;
-  --megane-surface: rgba(255, 255, 255, 0.92);
-  --megane-surface-solid: #f8f9fb;
-  --megane-text: #1e293b;
-  --megane-text-muted: #94a3b8;
-  --megane-text-secondary: #64748b;
-  --megane-border: rgba(226, 232, 240, 0.6);
-  --megane-border-solid: #e2e8f0;
-  --megane-primary: #3b82f6;
-  --megane-shadow: rgba(0, 0, 0, 0.06);
-}
-
-html[data-theme="dark"] {
-  --megane-bg: #0f172a;
-  --megane-surface: rgba(15, 23, 42, 0.92);
-  --megane-surface-solid: #1e293b;
-  --megane-text: #e2e8f0;
-  --megane-text-muted: #475569;
-  --megane-text-secondary: #94a3b8;
-  --megane-border: rgba(51, 65, 85, 0.6);
-  --megane-border-solid: #334155;
-  --megane-primary: #60a5fa;
-  --megane-shadow: rgba(0, 0, 0, 0.3);
-}
+/*
+ * The --megane-* colour tokens (light on :root, dark under
+ * html[data-theme="dark"]) are defined in src/styles/themeTokens.ts and
+ * injected at runtime by ensureThemeTokens(), because the anywidget and npm
+ * library bundles do not load this stylesheet.
+ */
 
 * {
   margin: 0;
@@ -81,10 +62,10 @@ body,
 
 .megane-status--connected {
   background: rgba(34, 197, 94, 0.1);
-  color: #16a34a;
+  color: var(--megane-success-text);
 }
 
 .megane-status--disconnected {
   background: rgba(239, 68, 68, 0.1);
-  color: #dc2626;
+  color: var(--megane-danger-text);
 }

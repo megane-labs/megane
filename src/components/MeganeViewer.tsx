@@ -11,7 +11,7 @@
  * the `ui` prop — see {@link MeganeViewerUiOptions}.
  */
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { Viewport } from "./Viewport";
 import { PipelineEditor } from "./PipelineEditor";
 import { Timeline } from "./Timeline";
@@ -53,6 +53,7 @@ import type {
 } from "../types";
 import type { ViewportState } from "../pipeline/types";
 import { useThemeStore, themeToHex } from "../stores/useThemeStore";
+import { ensureThemeTokens } from "../styles/themeTokens";
 
 /**
  * Visibility switches for every piece of viewer UI that is *not* the 3D
@@ -451,6 +452,13 @@ export function MeganeViewer({
 
   const resolvedTheme = useThemeStore((s) => s.resolvedTheme);
 
+  // The UI chrome paints with --megane-* tokens. Host entry points inject them
+  // via installThemeSync(); an npm-library embedder may not, so make sure they
+  // exist (light by default, dark under html[data-theme="dark"]).
+  useLayoutEffect(() => {
+    ensureThemeTokens();
+  }, []);
+
   // Update Three.js background color when theme changes
   useEffect(() => {
     rendererRef.current?.setBackgroundColor(themeToHex(resolvedTheme));
@@ -673,11 +681,11 @@ export function MeganeViewer({
                 padding: "4px 8px",
                 fontSize: 11,
                 lineHeight: 1,
-                background: "rgba(255,255,255,0.85)",
-                border: "1px solid rgba(0,0,0,0.15)",
+                background: "var(--megane-surface)",
+                border: "1px solid var(--megane-border-solid)",
                 borderRadius: 4,
                 cursor: "pointer",
-                color: "#374151",
+                color: "var(--megane-text-body)",
                 backdropFilter: "blur(4px)",
                 userSelect: "none",
               }}

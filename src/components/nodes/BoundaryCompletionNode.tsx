@@ -27,7 +27,7 @@ export function BoundaryCompletionNode({ id, data }: NodeProps<Node<PipelineNode
             <option value="components">Finite connected components</option>
           </select>
         </label>
-        <div style={{ color: "#64748b", fontSize: 13, lineHeight: 1.3 }}>
+        <div style={{ color: "var(--megane-text-secondary)", fontSize: 13, lineHeight: 1.3 }}>
           Adds periodic display copies without changing structural coordinates. Infinite periodic
           networks are not expanded in component mode.
         </div>

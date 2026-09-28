@@ -69,20 +69,20 @@ export function LoadVolumetricNode({ id, data }: NodeProps<Node<PipelineNodeData
         {params.fileName ? (
           <div style={fileNameStyle}>{params.fileName}</div>
         ) : (
-          <div style={{ fontSize: 20, color: "#94a3b8", fontStyle: "italic" }}>
+          <div style={{ fontSize: 20, color: "var(--megane-text-muted)", fontStyle: "italic" }}>
             No volumetric file loaded
           </div>
         )}
         {params.fileName && !hasData && (
           <div
             data-testid="load-volumetric-error"
-            style={{ fontSize: 14, color: "#ef4444", marginTop: 4 }}
+            style={{ fontSize: 14, color: "var(--megane-danger)", marginTop: 4 }}
           >
             {params.parseError ?? "Parse error — check file format"}
           </div>
         )}
         {hasData && params.volumetricData && (
-          <div style={{ fontSize: 13, color: "#64748b", marginTop: 4 }}>
+          <div style={{ fontSize: 13, color: "var(--megane-text-secondary)", marginTop: 4 }}>
             {params.volumetricData.nx}×{params.volumetricData.ny}×{params.volumetricData.nz} voxels
           </div>
         )}

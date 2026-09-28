@@ -39,11 +39,11 @@ const backdropStyle: React.CSSProperties = {
 };
 
 const panelStyle: React.CSSProperties = {
-  background: "rgba(255,255,255,0.97)",
+  background: "var(--megane-surface)",
   backdropFilter: "blur(16px)",
   borderRadius: 16,
   boxShadow: "0 8px 32px rgba(0,0,0,0.12)",
-  border: "1px solid rgba(226,232,240,0.6)",
+  border: "1px solid var(--megane-border)",
   maxWidth: 440,
   width: "90vw",
   maxHeight: "85vh",
@@ -54,7 +54,7 @@ const panelStyle: React.CSSProperties = {
 const labelStyle: React.CSSProperties = {
   fontSize: 10,
   fontWeight: 600,
-  color: "#94a3b8",
+  color: "var(--megane-text-muted)",
   textTransform: "uppercase",
   letterSpacing: "0.06em",
   marginBottom: 6,
@@ -62,9 +62,11 @@ const labelStyle: React.CSSProperties = {
 };
 
 const inputStyle: React.CSSProperties = {
-  border: "1px solid #e2e8f0",
+  border: "1px solid var(--megane-border-solid)",
   borderRadius: 8,
   padding: "6px 10px",
+  background: "var(--megane-surface-raised)",
+  color: "var(--megane-text)",
   fontSize: 13,
   width: "100%",
   boxSizing: "border-box",
@@ -81,7 +83,7 @@ const tabContainerStyle: React.CSSProperties = {
   display: "flex",
   borderRadius: 10,
   overflow: "hidden",
-  border: "1px solid #e2e8f0",
+  border: "1px solid var(--megane-border-solid)",
   marginBottom: 10,
 };
 
@@ -109,7 +111,7 @@ function TabButton({
         cursor: active ? "default" : "pointer",
         fontSize: 12,
         fontWeight: 600,
-        color: active ? "#3b82f6" : "#94a3b8",
+        color: active ? "var(--megane-primary)" : "var(--megane-text-muted)",
         transition: "all 0.15s",
       }}
     >
@@ -305,7 +307,7 @@ export function RenderModal({
             marginBottom: 16,
           }}
         >
-          <span style={{ fontSize: 16, fontWeight: 700, color: "#1e293b" }}>Render</span>
+          <span style={{ fontSize: 16, fontWeight: 700, color: "var(--megane-text)" }}>Render</span>
           <button
             onClick={onClose}
             disabled={exporting}
@@ -314,7 +316,7 @@ export function RenderModal({
               border: "none",
               cursor: exporting ? "default" : "pointer",
               fontSize: 18,
-              color: "#94a3b8",
+              color: "var(--megane-text-muted)",
               padding: 4,
             }}
           >
@@ -340,7 +342,14 @@ export function RenderModal({
           />
         </div>
         {!hasAnimation && mode === "snapshot" && (
-          <div style={{ fontSize: 11, color: "#94a3b8", marginBottom: 8, fontStyle: "italic" }}>
+          <div
+            style={{
+              fontSize: 11,
+              color: "var(--megane-text-muted)",
+              marginBottom: 8,
+              fontStyle: "italic",
+            }}
+          >
             Load a trajectory for animation export.
           </div>
         )}
@@ -414,7 +423,9 @@ export function RenderModal({
                 disabled={exporting}
                 data-testid="render-modal-width"
               />
-              <span style={{ color: "#94a3b8", fontSize: 12, fontWeight: 600 }}>×</span>
+              <span style={{ color: "var(--megane-text-muted)", fontSize: 12, fontWeight: 600 }}>
+                ×
+              </span>
               <input
                 type="number"
                 value={height}
@@ -448,7 +459,7 @@ export function RenderModal({
                   alignItems: "center",
                   gap: 6,
                   fontSize: 12,
-                  color: "#64748b",
+                  color: "var(--megane-text-secondary)",
                   cursor: "pointer",
                   paddingTop: 16,
                 }}
@@ -467,7 +478,7 @@ export function RenderModal({
             <div
               style={{
                 fontSize: 11,
-                color: "#94a3b8",
+                color: "var(--megane-text-muted)",
                 marginTop: 6,
               }}
             >
@@ -486,7 +497,7 @@ export function RenderModal({
                 alignItems: "center",
                 gap: 6,
                 fontSize: 12,
-                color: "#64748b",
+                color: "var(--megane-text-secondary)",
                 cursor: "pointer",
               }}
             >
@@ -518,7 +529,9 @@ export function RenderModal({
                 disabled={exporting}
                 data-testid="render-modal-start-frame"
               />
-              <span style={{ color: "#94a3b8", fontSize: 12, fontWeight: 600 }}>–</span>
+              <span style={{ color: "var(--megane-text-muted)", fontSize: 12, fontWeight: 600 }}>
+                –
+              </span>
               <input
                 type="number"
                 value={endFrame}
@@ -534,7 +547,7 @@ export function RenderModal({
                 data-testid="render-modal-end-frame"
               />
             </div>
-            <div style={{ fontSize: 11, color: "#94a3b8", marginTop: 4 }}>
+            <div style={{ fontSize: 11, color: "var(--megane-text-muted)", marginTop: 4 }}>
               {endFrame - startFrame + 1} frames (total: {totalFrames})
             </div>
 
@@ -560,7 +573,7 @@ export function RenderModal({
               style={{
                 height: 6,
                 borderRadius: 3,
-                background: "#e2e8f0",
+                background: "var(--megane-border-solid)",
                 overflow: "hidden",
               }}
             >
@@ -574,7 +587,14 @@ export function RenderModal({
                 }}
               />
             </div>
-            <div style={{ fontSize: 11, color: "#94a3b8", marginTop: 4, textAlign: "center" }}>
+            <div
+              style={{
+                fontSize: 11,
+                color: "var(--megane-text-muted)",
+                marginTop: 4,
+                textAlign: "center",
+              }}
+            >
               Exporting... {Math.round(progress * 100)}%
             </div>
           </div>

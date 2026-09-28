@@ -34,11 +34,11 @@ const backdropStyle: React.CSSProperties = {
 };
 
 const panelStyle: React.CSSProperties = {
-  background: "rgba(255,255,255,0.97)",
+  background: "var(--megane-surface)",
   backdropFilter: "blur(16px)",
   borderRadius: 16,
   boxShadow: "0 8px 32px rgba(0,0,0,0.12)",
-  border: "1px solid rgba(226,232,240,0.6)",
+  border: "1px solid var(--megane-border)",
   maxWidth: 520,
   width: "90vw",
   padding: "20px 24px",
@@ -54,7 +54,7 @@ const headerRowStyle: React.CSSProperties = {
 const titleStyle: React.CSSProperties = {
   fontSize: 16,
   fontWeight: 700,
-  color: "#1e293b",
+  color: "var(--megane-text)",
 };
 
 const closeBtnStyle: React.CSSProperties = {
@@ -62,14 +62,16 @@ const closeBtnStyle: React.CSSProperties = {
   border: "none",
   cursor: "pointer",
   fontSize: 18,
-  color: "#94a3b8",
+  color: "var(--megane-text-muted)",
   padding: 4,
 };
 
 const inputStyle: React.CSSProperties = {
-  border: "1px solid #e2e8f0",
+  border: "1px solid var(--megane-border-solid)",
   borderRadius: 8,
   padding: "8px 10px",
+  background: "var(--megane-surface-raised)",
+  color: "var(--megane-text)",
   fontSize: 13,
   width: "100%",
   boxSizing: "border-box",
@@ -87,7 +89,7 @@ const buttonRowStyle: React.CSSProperties = {
 const copyBtnBaseStyle: React.CSSProperties = {
   border: "1px solid rgba(16, 185, 129, 0.35)",
   background: "rgba(16, 185, 129, 0.1)",
-  color: "#047857",
+  color: "var(--megane-success-text)",
   padding: "7px 14px",
   borderRadius: 8,
   fontSize: 13,
@@ -99,7 +101,7 @@ const copyBtnDisabledStyle: React.CSSProperties = {
   ...copyBtnBaseStyle,
   background: "rgba(148, 163, 184, 0.08)",
   border: "1px solid rgba(148, 163, 184, 0.3)",
-  color: "#94a3b8",
+  color: "var(--megane-text-muted)",
   cursor: "not-allowed",
 };
 
@@ -107,12 +109,12 @@ const copyBtnFailedStyle: React.CSSProperties = {
   ...copyBtnBaseStyle,
   background: "rgba(220, 38, 38, 0.1)",
   border: "1px solid rgba(220, 38, 38, 0.35)",
-  color: "#b91c1c",
+  color: "var(--megane-danger-text)",
 };
 
 const openTabStyle: React.CSSProperties = {
   fontSize: 13,
-  color: "#3b82f6",
+  color: "var(--megane-primary)",
   textDecoration: "none",
 };
 
@@ -121,7 +123,7 @@ const warningStyle: React.CSSProperties = {
   border: "1px solid rgba(220, 38, 38, 0.3)",
   borderRadius: 8,
   padding: "10px 12px",
-  color: "#b91c1c",
+  color: "var(--megane-danger-text)",
   fontSize: 13,
   marginBottom: 12,
   lineHeight: 1.4,

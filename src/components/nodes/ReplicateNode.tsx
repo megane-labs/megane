@@ -21,7 +21,7 @@ const rowStyle: React.CSSProperties = {
 const labelStyle: React.CSSProperties = {
   fontSize: 17,
   fontWeight: 500,
-  color: "#64748b",
+  color: "var(--megane-text-secondary)",
   flex: 1,
 };
 
@@ -29,9 +29,9 @@ const inputStyle: React.CSSProperties = {
   width: 72,
   padding: "3px 6px",
   fontSize: 16,
-  border: "1px solid #e2e8f0",
+  border: "1px solid var(--megane-border-solid)",
   borderRadius: 6,
-  background: "var(--megane-node-bg, #fff)",
+  background: "var(--megane-surface-raised)",
   color: "inherit",
   boxSizing: "border-box",
 };

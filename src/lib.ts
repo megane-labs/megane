@@ -11,6 +11,18 @@ export { Viewport } from "./components/Viewport";
 export { Sidebar } from "./components/Sidebar";
 export { Timeline } from "./components/Timeline";
 
+// Light / dark theme. Hosts call installThemeSync() (or mount <ThemeSync />)
+// to follow the OS or host theme; useThemeStore().setTheme("dark") forces one.
+export { ThemeSync } from "./components/ThemeSync";
+export {
+  useThemeStore,
+  installThemeSync,
+  detectHostTheme,
+  resolveTheme,
+} from "./stores/useThemeStore";
+export type { Theme, ResolvedTheme } from "./stores/useThemeStore";
+export { ensureThemeTokens } from "./styles/themeTokens";
+
 // Sidebar config types
 export type { BondConfig, TrajectoryConfig } from "./components/Sidebar";
 

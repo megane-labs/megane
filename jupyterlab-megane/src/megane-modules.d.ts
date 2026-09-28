@@ -39,8 +39,8 @@ declare module "@megane/pipeline/storeSnapshot" {
   export function capturePipelineStore(state: any): PipelineStoreSnapshot;
 }
 
-declare module "@megane/stores/useThemeStore" {
-  export const useThemeStore: <T>(selector: (s: any) => T) => T;
+declare module "@megane/components/ThemeSync" {
+  export function ThemeSync(): null;
 }
 
 declare module "@megane/stores/usePlaybackStore" {

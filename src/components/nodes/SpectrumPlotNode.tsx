@@ -125,7 +125,7 @@ export function SpectrumPlotNode({ id, data }: NodeProps<Node<PipelineNodeData>>
         {!spectrum || !plot ? (
           <div
             data-testid="spectrum-plot-empty"
-            style={{ fontSize: 20, color: "#94a3b8", fontStyle: "italic" }}
+            style={{ fontSize: 20, color: "var(--megane-text-muted)", fontStyle: "italic" }}
           >
             No spectrum connected
           </div>
@@ -133,7 +133,7 @@ export function SpectrumPlotNode({ id, data }: NodeProps<Node<PipelineNodeData>>
           <>
             <div
               data-testid="spectrum-plot-title"
-              style={{ fontSize: 14, color: "#334155", marginBottom: 2 }}
+              style={{ fontSize: 14, color: "var(--megane-text-body)", marginBottom: 2 }}
             >
               {spectrum.title || spectrum.dataType || "Spectrum"}
             </div>
@@ -144,7 +144,11 @@ export function SpectrumPlotNode({ id, data }: NodeProps<Node<PipelineNodeData>>
               viewBox={`0 0 ${PLOT_W} ${PLOT_H}`}
               role="img"
               aria-label={`${spectrum.dataType || "Spectrum"} plot`}
-              style={{ background: "#fff", borderRadius: 4, border: "1px solid #e2e8f0" }}
+              style={{
+                background: "var(--megane-surface-raised)",
+                borderRadius: 4,
+                border: "1px solid var(--megane-border-solid)",
+              }}
             >
               {/* Axes */}
               <line
@@ -152,14 +156,32 @@ export function SpectrumPlotNode({ id, data }: NodeProps<Node<PipelineNodeData>>
                 y1={PLOT_H - PAD_B}
                 x2={PLOT_W - PAD_R}
                 y2={PLOT_H - PAD_B}
-                stroke="#cbd5e1"
+                style={{ stroke: "var(--megane-border-strong)" }}
               />
-              <line x1={PAD_L} y1={PAD_T} x2={PAD_L} y2={PLOT_H - PAD_B} stroke="#cbd5e1" />
+              <line
+                x1={PAD_L}
+                y1={PAD_T}
+                x2={PAD_L}
+                y2={PLOT_H - PAD_B}
+                style={{ stroke: "var(--megane-border-strong)" }}
+              />
               {/* Ordinate ticks */}
-              <text x={PAD_L - 4} y={PAD_T + 8} textAnchor="end" fontSize="9" fill="#64748b">
+              <text
+                x={PAD_L - 4}
+                y={PAD_T + 8}
+                textAnchor="end"
+                fontSize="9"
+                style={{ fill: "var(--megane-text-secondary)" }}
+              >
                 {formatTick(plot.yMax)}
               </text>
-              <text x={PAD_L - 4} y={PLOT_H - PAD_B} textAnchor="end" fontSize="9" fill="#64748b">
+              <text
+                x={PAD_L - 4}
+                y={PLOT_H - PAD_B}
+                textAnchor="end"
+                fontSize="9"
+                style={{ fill: "var(--megane-text-secondary)" }}
+              >
                 {formatTick(plot.yMin)}
               </text>
               {/* Abscissa ticks */}
@@ -168,7 +190,7 @@ export function SpectrumPlotNode({ id, data }: NodeProps<Node<PipelineNodeData>>
                 y={PLOT_H - PAD_B + 12}
                 textAnchor="start"
                 fontSize="9"
-                fill="#64748b"
+                style={{ fill: "var(--megane-text-secondary)" }}
               >
                 {formatTick(leftTick)}
               </text>
@@ -177,7 +199,7 @@ export function SpectrumPlotNode({ id, data }: NodeProps<Node<PipelineNodeData>>
                 y={PLOT_H - PAD_B + 12}
                 textAnchor="end"
                 fontSize="9"
-                fill="#64748b"
+                style={{ fill: "var(--megane-text-secondary)" }}
               >
                 {formatTick(rightTick)}
               </text>
@@ -187,7 +209,7 @@ export function SpectrumPlotNode({ id, data }: NodeProps<Node<PipelineNodeData>>
                 y={PLOT_H - 3}
                 textAnchor="middle"
                 fontSize="9"
-                fill="#94a3b8"
+                style={{ fill: "var(--megane-text-muted)" }}
               >
                 {spectrum.xUnits}
               </text>
@@ -196,7 +218,7 @@ export function SpectrumPlotNode({ id, data }: NodeProps<Node<PipelineNodeData>>
                 y={PLOT_H / 2}
                 textAnchor="middle"
                 fontSize="9"
-                fill="#94a3b8"
+                style={{ fill: "var(--megane-text-muted)" }}
                 transform={`rotate(-90 10 ${PLOT_H / 2})`}
               >
                 {spectrum.yUnits}
@@ -218,7 +240,7 @@ export function SpectrumPlotNode({ id, data }: NodeProps<Node<PipelineNodeData>>
             gap: 6,
             fontSize: 14,
             marginTop: 6,
-            color: "#475569",
+            color: "var(--megane-text-body)",
           }}
         >
           <input

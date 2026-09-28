@@ -1,5 +1,13 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { useThemeStore, resolveTheme, themeToHex, type Theme } from "@/stores/useThemeStore";
+import {
+  useThemeStore,
+  resolveTheme,
+  themeToHex,
+  detectHostTheme,
+  installThemeSync,
+  type Theme,
+} from "@/stores/useThemeStore";
+import { THEME_STYLE_ID } from "@/styles/themeTokens";
 
 const STORAGE_KEY = "megane-theme";
 
@@ -151,5 +159,125 @@ describe("useThemeStore initial load", () => {
     });
     const mod = await import("@/stores/useThemeStore");
     expect(mod.useThemeStore.getState().theme).toBe("system");
+  });
+});
+
+describe("detectHostTheme", () => {
+  afterEach(() => {
+    document.body.className = "";
+    document.body.removeAttribute("data-jp-theme-light");
+    document.body.removeAttribute("data-vscode-theme-kind");
+  });
+
+  it("returns null when the host says nothing", () => {
+    expect(detectHostTheme()).toBeNull();
+  });
+
+  it("returns null without a document body", () => {
+    expect(detectHostTheme(undefined)).toBeNull();
+    expect(detectHostTheme({ body: null } as unknown as Document)).toBeNull();
+  });
+
+  it("reads JupyterLab's data-jp-theme-light", () => {
+    document.body.setAttribute("data-jp-theme-light", "false");
+    expect(detectHostTheme()).toBe("dark");
+    document.body.setAttribute("data-jp-theme-light", "true");
+    expect(detectHostTheme()).toBe("light");
+  });
+
+  it.each([
+    ["vscode-dark", "dark"],
+    ["vscode-high-contrast", "dark"],
+    ["vscode-light", "light"],
+    ["vscode-high-contrast-light", "light"],
+  ] as const)("reads VSCode body class %s", (cls, expected) => {
+    document.body.classList.add(cls);
+    expect(detectHostTheme()).toBe(expected);
+  });
+
+  it("treats high-contrast-light as light even alongside the hc class", () => {
+    document.body.classList.add("vscode-high-contrast", "vscode-high-contrast-light");
+    expect(detectHostTheme()).toBe("light");
+  });
+
+  it.each([
+    ["vscode-dark", "dark"],
+    ["vscode-high-contrast", "dark"],
+    ["vscode-light", "light"],
+    ["vscode-high-contrast-light", "light"],
+  ] as const)("reads data-vscode-theme-kind=%s", (kind, expected) => {
+    document.body.setAttribute("data-vscode-theme-kind", kind);
+    expect(detectHostTheme()).toBe(expected);
+  });
+
+  it("makes 'system' follow the host over the OS preference", () => {
+    vi.stubGlobal("window", {
+      ...window,
+      matchMedia: vi.fn().mockReturnValue({ matches: false }),
+    });
+    document.body.classList.add("vscode-dark");
+    expect(resolveTheme("system")).toBe("dark");
+    vi.unstubAllGlobals();
+  });
+});
+
+describe("installThemeSync", () => {
+  let uninstall: (() => void) | null = null;
+
+  beforeEach(() => {
+    localStorage.clear();
+    resetStore("system");
+    document.getElementById(THEME_STYLE_ID)?.remove();
+    document.documentElement.removeAttribute("data-theme");
+  });
+
+  afterEach(() => {
+    uninstall?.();
+    uninstall = null;
+    document.body.removeAttribute("data-jp-theme-light");
+    vi.unstubAllGlobals();
+  });
+
+  it("injects the tokens and writes data-theme", () => {
+    uninstall = installThemeSync();
+    expect(document.getElementById(THEME_STYLE_ID)).not.toBeNull();
+    expect(document.documentElement.getAttribute("data-theme")).toBe("light");
+  });
+
+  it("follows setTheme until uninstalled", () => {
+    uninstall = installThemeSync();
+    useThemeStore.getState().setTheme("dark");
+    expect(document.documentElement.getAttribute("data-theme")).toBe("dark");
+    uninstall();
+    uninstall = null;
+    useThemeStore.getState().setTheme("light");
+    expect(document.documentElement.getAttribute("data-theme")).toBe("dark");
+  });
+
+  it("re-resolves 'system' when the host theme attribute flips", async () => {
+    uninstall = installThemeSync();
+    document.body.setAttribute("data-jp-theme-light", "false");
+    // MutationObserver callbacks run as microtasks.
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(useThemeStore.getState().resolvedTheme).toBe("dark");
+    expect(document.documentElement.getAttribute("data-theme")).toBe("dark");
+  });
+
+  it("re-resolves 'system' when the OS preference changes", () => {
+    let listener: (() => void) | undefined;
+    const mq = {
+      matches: false,
+      addEventListener: vi.fn((_: string, cb: () => void) => (listener = cb)),
+      removeEventListener: vi.fn(),
+    };
+    vi.stubGlobal("window", { ...window, matchMedia: vi.fn(() => mq) });
+    uninstall = installThemeSync();
+    mq.matches = true;
+    listener?.();
+    expect(useThemeStore.getState().resolvedTheme).toBe("dark");
+    uninstall();
+    uninstall = null;
+    expect(mq.removeEventListener).toHaveBeenCalledWith("change", listener);
   });
 });

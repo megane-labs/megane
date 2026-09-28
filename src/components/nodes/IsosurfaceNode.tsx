@@ -22,7 +22,7 @@ const rowStyle: React.CSSProperties = {
 const labelStyle: React.CSSProperties = {
   fontSize: 17,
   fontWeight: 500,
-  color: "#64748b",
+  color: "var(--megane-text-secondary)",
   flex: 1,
 };
 
@@ -30,9 +30,9 @@ const inputStyle: React.CSSProperties = {
   width: 72,
   padding: "3px 6px",
   fontSize: 16,
-  border: "1px solid #e2e8f0",
+  border: "1px solid var(--megane-border-solid)",
   borderRadius: 6,
-  background: "var(--megane-node-bg, #fff)",
+  background: "var(--megane-surface-raised)",
   color: "inherit",
   boxSizing: "border-box",
 };
@@ -41,7 +41,7 @@ const colorStyle: React.CSSProperties = {
   width: 40,
   height: 26,
   padding: 2,
-  border: "1px solid #e2e8f0",
+  border: "1px solid var(--megane-border-solid)",
   borderRadius: 6,
   cursor: "pointer",
   background: "none",
@@ -54,7 +54,7 @@ const sliderStyle: React.CSSProperties = {
 
 const valueStyle: React.CSSProperties = {
   fontSize: 14,
-  color: "#64748b",
+  color: "var(--megane-text-secondary)",
   minWidth: 32,
   textAlign: "right",
 };
@@ -68,9 +68,9 @@ const checkboxRowStyle: React.CSSProperties = {
 
 const selectStyle: React.CSSProperties = {
   fontSize: 14,
-  color: "#334155",
-  background: "#f1f5f9",
-  border: "1px solid #cbd5e1",
+  color: "var(--megane-text-body)",
+  background: "var(--megane-surface-muted)",
+  border: "1px solid var(--megane-border-strong)",
   borderRadius: 6,
   padding: "3px 6px",
 };
@@ -235,7 +235,10 @@ export function IsosurfaceNode({ id, data }: NodeProps<Node<PipelineNodeData>>) 
           checked={params.showNegative}
           onChange={(e) => updateNodeParams(id, { showNegative: e.target.checked })}
         />
-        <label htmlFor={`${id}-neg`} style={{ fontSize: 17, color: "#64748b" }}>
+        <label
+          htmlFor={`${id}-neg`}
+          style={{ fontSize: 17, color: "var(--megane-text-secondary)" }}
+        >
           Show negative lobe
         </label>
       </div>

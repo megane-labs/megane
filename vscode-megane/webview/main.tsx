@@ -22,7 +22,7 @@ import type { SerializedPipeline } from "../../src/pipeline/types";
 import type { MeganeCameraState } from "../../src/renderer/MoleculeRenderer";
 import type { SelectionState, Measurement } from "../../src/types";
 import { useTour } from "../../src/tour/useTour";
-import { useThemeStore } from "../../src/stores/useThemeStore";
+import { ThemeSync } from "../../src/components/ThemeSync";
 import { ErrorBoundary } from "../../src/components/ErrorBoundary";
 import "../../src/styles/megane.css";
 
@@ -44,23 +44,6 @@ const vscode = acquireVsCodeApi();
     });
   });
 };
-
-function ThemeSync() {
-  const resolvedTheme = useThemeStore((s) => s.resolvedTheme);
-  const syncSystem = useThemeStore((s) => s._syncSystemTheme);
-
-  useEffect(() => {
-    document.documentElement.setAttribute("data-theme", resolvedTheme);
-  }, [resolvedTheme]);
-
-  useEffect(() => {
-    const mq = window.matchMedia("(prefers-color-scheme: dark)");
-    mq.addEventListener("change", syncSystem);
-    return () => mq.removeEventListener("change", syncSystem);
-  }, [syncSystem]);
-
-  return null;
-}
 
 interface VsCodeState {
   camera?: MeganeCameraState;

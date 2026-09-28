@@ -129,7 +129,7 @@ export function LoadStructureNode({ id, data }: NodeProps<Node<PipelineNodeData>
         ) : (
           <div
             data-testid="load-structure-filename"
-            style={{ fontSize: 20, color: "#94a3b8", fontStyle: "italic" }}
+            style={{ fontSize: 20, color: "var(--megane-text-muted)", fontStyle: "italic" }}
           >
             No structure loaded
           </div>
@@ -140,7 +140,7 @@ export function LoadStructureNode({ id, data }: NodeProps<Node<PipelineNodeData>
         {editCount > 0 && (
           <div
             data-testid="load-structure-edits"
-            style={{ marginTop: 4, fontSize: 12, color: "#047857" }}
+            style={{ marginTop: 4, fontSize: 12, color: "var(--megane-success-text)" }}
           >
             {editCount} edit{editCount === 1 ? "" : "s"}
           </div>

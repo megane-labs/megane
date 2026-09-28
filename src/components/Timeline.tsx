@@ -27,7 +27,7 @@ const FPS_OPTIONS = [10, 20, 30, 60] as const;
 
 const buttonStyle: React.CSSProperties = {
   background: "none",
-  border: "1px solid #e2e8f0",
+  border: "1px solid var(--megane-border-solid)",
   borderRadius: 8,
   width: 28,
   height: 28,
@@ -36,20 +36,20 @@ const buttonStyle: React.CSSProperties = {
   alignItems: "center",
   justifyContent: "center",
   fontSize: 13,
-  color: "#64748b",
+  color: "var(--megane-text-secondary)",
   flexShrink: 0,
   transition: "all 0.15s",
   padding: 0,
 };
 
 const selectStyle: React.CSSProperties = {
-  background: "rgba(255,255,255,0.8)",
-  border: "1px solid #e2e8f0",
+  background: "var(--megane-surface)",
+  border: "1px solid var(--megane-border-solid)",
   borderRadius: 6,
   padding: "2px 4px",
   fontSize: 12,
   fontWeight: 500,
-  color: "#64748b",
+  color: "var(--megane-text-secondary)",
   cursor: "pointer",
   flexShrink: 0,
 };
@@ -115,17 +115,17 @@ export function Timeline({
         left: 0,
         right: 0,
         padding: "8px 16px 12px",
-        background: "rgba(255, 255, 255, 0.88)",
+        background: "var(--megane-surface)",
         backdropFilter: "blur(16px)",
         WebkitBackdropFilter: "blur(16px)",
-        borderTop: "1px solid rgba(226,232,240,0.6)",
+        borderTop: "1px solid var(--megane-border)",
         boxShadow: "0 -1px 8px rgba(0,0,0,0.04)",
         display: "flex",
         alignItems: "center",
         gap: 8,
         zIndex: 10,
         fontSize: 13,
-        color: "#64748b",
+        color: "var(--megane-text-secondary)",
       }}
     >
       {/* Step backward */}
@@ -167,7 +167,7 @@ export function Timeline({
           textAlign: "center",
           fontVariantNumeric: "tabular-nums",
           fontWeight: 500,
-          color: "#64748b",
+          color: "var(--megane-text-secondary)",
           flexShrink: 0,
           fontSize: 12,
         }}
@@ -193,7 +193,7 @@ export function Timeline({
       />
 
       {/* Loop range */}
-      <span style={{ fontSize: 11, color: "#94a3b8", flexShrink: 0 }}>Loop</span>
+      <span style={{ fontSize: 11, color: "var(--megane-text-muted)", flexShrink: 0 }}>Loop</span>
       <input
         data-testid="loop-start"
         type="number"
@@ -209,7 +209,7 @@ export function Timeline({
         }}
         title="Loop start frame (0-based)"
       />
-      <span style={{ fontSize: 11, color: "#94a3b8" }}>–</span>
+      <span style={{ fontSize: 11, color: "var(--megane-text-muted)" }}>–</span>
       <input
         data-testid="loop-end"
         type="number"

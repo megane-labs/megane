@@ -378,7 +378,7 @@ export function PipelineViewer({ pipeline, width = "100%", height = 500 }: Pipel
     height,
     position: "relative",
     overflow: "hidden",
-    background: "#ffffff",
+    background: "var(--megane-surface-raised)",
     borderRadius: 8,
   };
 
@@ -390,7 +390,7 @@ export function PipelineViewer({ pipeline, width = "100%", height = 500 }: Pipel
           display: "flex",
           alignItems: "center",
           justifyContent: "center",
-          color: "#94a3b8",
+          color: "var(--megane-text-muted)",
           fontSize: 16,
         }}
       >
@@ -407,7 +407,7 @@ export function PipelineViewer({ pipeline, width = "100%", height = 500 }: Pipel
           display: "flex",
           alignItems: "center",
           justifyContent: "center",
-          color: "#ef4444",
+          color: "var(--megane-danger)",
           fontSize: 14,
           padding: 16,
           textAlign: "center",

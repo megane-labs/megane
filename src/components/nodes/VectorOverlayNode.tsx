@@ -12,7 +12,7 @@ import { NodeShell } from "./NodeShell";
 const labelStyle: React.CSSProperties = {
   fontSize: 17,
   fontWeight: 500,
-  color: "#64748b",
+  color: "var(--megane-text-secondary)",
   marginBottom: 3,
 };
 
@@ -25,7 +25,7 @@ const sliderStyle: React.CSSProperties = {
 const valueStyle: React.CSSProperties = {
   fontSize: 18,
   fontWeight: 500,
-  color: "#3b82f6",
+  color: "var(--megane-primary)",
   minWidth: 40,
   textAlign: "right",
 };

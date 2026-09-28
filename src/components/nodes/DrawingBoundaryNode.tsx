@@ -7,9 +7,9 @@ import { NodeShell } from "./NodeShell";
 const inputStyle: React.CSSProperties = {
   width: 78,
   padding: "4px 6px",
-  border: "1px solid #cbd5e1",
+  border: "1px solid var(--megane-border-strong)",
   borderRadius: 5,
-  background: "var(--megane-node-bg, #fff)",
+  background: "var(--megane-surface-raised)",
   color: "inherit",
   fontSize: 16,
 };
@@ -26,7 +26,14 @@ export function DrawingBoundaryNode({ id, data }: NodeProps<Node<PipelineNodeDat
 
   return (
     <NodeShell id={id} nodeType="drawing_boundary" enabled={data.enabled}>
-      <div style={{ color: "#64748b", fontSize: 13, lineHeight: 1.3, marginBottom: 8 }}>
+      <div
+        style={{
+          color: "var(--megane-text-secondary)",
+          fontSize: 13,
+          lineHeight: 1.3,
+          marginBottom: 8,
+        }}
+      >
         Show periodic atom images inside these inclusive fractional-coordinate ranges.
       </div>
       <div
@@ -38,11 +45,11 @@ export function DrawingBoundaryNode({ id, data }: NodeProps<Node<PipelineNodeDat
         }}
       >
         <span />
-        <span style={{ fontSize: 14, color: "#64748b" }}>Min</span>
-        <span style={{ fontSize: 14, color: "#64748b" }}>Max</span>
+        <span style={{ fontSize: 14, color: "var(--megane-text-secondary)" }}>Min</span>
+        <span style={{ fontSize: 14, color: "var(--megane-text-secondary)" }}>Max</span>
         {AXES.map(([label, minKey, maxKey]) => (
           <div key={label} style={{ display: "contents" }}>
-            <strong style={{ color: "#475569" }}>{label}</strong>
+            <strong style={{ color: "var(--megane-text-body)" }}>{label}</strong>
             <input
               className="nodrag"
               type="number"

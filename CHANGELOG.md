@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+### Fixed
+
+- **Dark mode now covers the whole UI, on every host.** The Light / Dark / Auto theme switch recoloured the page background and the 3D view, but most panels hard-coded the light palette, so dark mode showed a white timeline, white pipeline nodes, dialogs and inputs, and a grey chat pane. Every panel (sidebar, timeline, pipeline editor and its nodes, inspector, chat, measurement panels, Render / Share dialogs, the guided tour) now paints through `--megane-*` colour tokens that swap with the theme, and the node editor canvas follows it too. The tokens are defined once (`src/styles/themeTokens.ts`) and injected at runtime, so they also reach the Jupyter widget and the `megane-viewer` npm library, which never loaded the stylesheet that held them. *Auto* now follows the host's theme where there is one — the VS Code colour theme in the extension and in notebook outputs, the JupyterLab theme in the labextension — before falling back to the OS preference, and switches live when that theme changes. The library exports `ThemeSync`, `installThemeSync`, `useThemeStore` and `ensureThemeTokens` so embedders can do the same.
+
 ## [0.16.0] - 2026-09-26
 
 ### Added

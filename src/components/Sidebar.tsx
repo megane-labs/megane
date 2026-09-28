@@ -93,10 +93,10 @@ export function Sidebar({
           onClick={onToggleCollapse}
           data-testid="sidebar-toggle"
           style={{
-            background: "rgba(255, 255, 255, 0.88)",
+            background: "var(--megane-surface)",
             backdropFilter: "blur(16px)",
             WebkitBackdropFilter: "blur(16px)",
-            border: "1px solid rgba(226,232,240,0.6)",
+            border: "1px solid var(--megane-border)",
             borderRadius: 10,
             padding: "8px 12px",
             cursor: "pointer",
@@ -106,13 +106,15 @@ export function Sidebar({
             gap: 8,
             fontSize: 13,
             fontWeight: 700,
-            color: "#1e293b",
+            color: "var(--megane-text)",
             letterSpacing: "-0.02em",
           }}
           title="Open sidebar"
         >
           megane
-          <span style={{ fontSize: 11, color: "#94a3b8", fontWeight: 400 }}>&#9654;</span>
+          <span style={{ fontSize: 11, color: "var(--megane-text-muted)", fontWeight: 400 }}>
+            &#9654;
+          </span>
         </button>
       </div>
     );
@@ -129,12 +131,12 @@ export function Sidebar({
         bottom: 60,
         width: 240,
         zIndex: 10,
-        background: "rgba(255, 255, 255, 0.92)",
+        background: "var(--megane-surface)",
         backdropFilter: "blur(16px)",
         WebkitBackdropFilter: "blur(16px)",
         borderRadius: 12,
         boxShadow: "0 1px 8px rgba(0,0,0,0.06)",
-        border: "1px solid rgba(226,232,240,0.6)",
+        border: "1px solid var(--megane-border)",
         display: "flex",
         flexDirection: "column",
         overflow: "hidden",
@@ -147,14 +149,14 @@ export function Sidebar({
           display: "flex",
           alignItems: "center",
           justifyContent: "space-between",
-          borderBottom: "1px solid rgba(226,232,240,0.6)",
+          borderBottom: "1px solid var(--megane-border)",
           flexShrink: 0,
         }}
       >
         <span
           style={{
             fontWeight: 700,
-            color: "#1e293b",
+            color: "var(--megane-text)",
             fontSize: 14,
             letterSpacing: "-0.02em",
           }}
@@ -169,7 +171,7 @@ export function Sidebar({
             border: "none",
             cursor: "pointer",
             fontSize: 13,
-            color: "#94a3b8",
+            color: "var(--megane-text-muted)",
             padding: "2px 4px",
           }}
           title="Collapse sidebar"
@@ -198,7 +200,7 @@ export function Sidebar({
                 display: "flex",
                 borderRadius: 6,
                 overflow: "hidden",
-                border: "1px solid #e2e8f0",
+                border: "1px solid var(--megane-border-solid)",
               }}
             >
               <button
@@ -207,12 +209,12 @@ export function Sidebar({
                   flex: 1,
                   background: mode === "local" ? "rgba(59,130,246,0.08)" : "none",
                   border: "none",
-                  borderRight: "1px solid #e2e8f0",
+                  borderRight: "1px solid var(--megane-border-solid)",
                   padding: "4px 0",
                   cursor: mode === "local" ? "default" : "pointer",
                   fontSize: 12,
                   fontWeight: 500,
-                  color: mode === "local" ? "#3b82f6" : "#94a3b8",
+                  color: mode === "local" ? "var(--megane-primary)" : "var(--megane-text-muted)",
                   transition: "all 0.15s",
                 }}
               >
@@ -228,7 +230,8 @@ export function Sidebar({
                   cursor: mode === "streaming" ? "default" : "pointer",
                   fontSize: 12,
                   fontWeight: 500,
-                  color: mode === "streaming" ? "#3b82f6" : "#94a3b8",
+                  color:
+                    mode === "streaming" ? "var(--megane-primary)" : "var(--megane-text-muted)",
                   transition: "all 0.15s",
                 }}
               >
@@ -342,7 +345,7 @@ export function Sidebar({
       <div
         style={{
           padding: "8px 14px",
-          borderTop: "1px solid rgba(226,232,240,0.6)",
+          borderTop: "1px solid var(--megane-border)",
           display: "flex",
           gap: 6,
           flexShrink: 0,

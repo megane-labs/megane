@@ -1,4 +1,5 @@
 import { create } from "zustand";
+import { ensureThemeTokens } from "../styles/themeTokens";
 
 export type Theme = "light" | "dark" | "system";
 export type ResolvedTheme = "light" | "dark";
@@ -23,8 +24,52 @@ function saveTheme(theme: Theme) {
   }
 }
 
+/**
+ * The theme the embedding host (not the OS) is showing, when it says so.
+ *
+ * - JupyterLab marks `<body data-jp-theme-light="true|false">`.
+ * - VSCode webviews (custom editor and notebook outputs) put `vscode-light`,
+ *   `vscode-dark`, `vscode-high-contrast` or `vscode-high-contrast-light` on
+ *   `<body>` and mirror it in `data-vscode-theme-kind`.
+ *
+ * A VSCode or JupyterLab theme can disagree with the OS preference, so
+ * "system" follows the host first and `prefers-color-scheme` only elsewhere.
+ */
+export function detectHostTheme(
+  doc: Document | undefined = globalThis.document,
+): ResolvedTheme | null {
+  const body = doc?.body;
+  if (!body) return null;
+  const jp = body.getAttribute("data-jp-theme-light");
+  if (jp === "true") return "light";
+  if (jp === "false") return "dark";
+  const kind = body.getAttribute("data-vscode-theme-kind");
+  const cls = body.classList;
+  // High-contrast-light carries both hc classes in some VSCode versions, so
+  // the light checks run first.
+  if (
+    kind === "vscode-light" ||
+    kind === "vscode-high-contrast-light" ||
+    cls.contains("vscode-light") ||
+    cls.contains("vscode-high-contrast-light")
+  ) {
+    return "light";
+  }
+  if (
+    kind === "vscode-dark" ||
+    kind === "vscode-high-contrast" ||
+    cls.contains("vscode-dark") ||
+    cls.contains("vscode-high-contrast")
+  ) {
+    return "dark";
+  }
+  return null;
+}
+
 export function resolveTheme(theme: Theme): ResolvedTheme {
   if (theme === "system") {
+    const host = detectHostTheme();
+    if (host) return host;
     return typeof window !== "undefined" &&
       typeof window.matchMedia === "function" &&
       window.matchMedia("(prefers-color-scheme: dark)").matches
@@ -42,7 +87,7 @@ interface ThemeStore {
   theme: Theme;
   resolvedTheme: ResolvedTheme;
   setTheme: (theme: Theme) => void;
-  /** Called by a media query listener when system preference changes. */
+  /** Re-resolve "system" after the OS preference or the host theme changed. */
   _syncSystemTheme: () => void;
 }
 
@@ -59,8 +104,45 @@ export const useThemeStore = create<ThemeStore>((set, get) => {
 
     _syncSystemTheme: () => {
       if (get().theme === "system") {
-        set({ resolvedTheme: resolveTheme("system") });
+        const resolvedTheme = resolveTheme("system");
+        if (resolvedTheme !== get().resolvedTheme) set({ resolvedTheme });
       }
     },
   };
 });
+
+/** Body attributes whose change can flip the host theme (see detectHostTheme). */
+const HOST_THEME_ATTRIBUTES = ["class", "data-jp-theme-light", "data-vscode-theme-kind"];
+
+/**
+ * Keep `<html data-theme>` in step with the theme store, and the store's
+ * "system" resolution in step with the OS preference and the host theme.
+ * Also injects the colour tokens. Every host entry point calls this once
+ * (directly, or through `<ThemeSync />`); the returned function undoes it.
+ */
+export function installThemeSync(root: HTMLElement = document.documentElement): () => void {
+  ensureThemeTokens(root.ownerDocument);
+  const sync = () => useThemeStore.getState()._syncSystemTheme();
+  sync();
+  root.setAttribute("data-theme", useThemeStore.getState().resolvedTheme);
+  const unsubscribe = useThemeStore.subscribe((s) =>
+    root.setAttribute("data-theme", s.resolvedTheme),
+  );
+
+  const mq =
+    typeof window !== "undefined" && typeof window.matchMedia === "function"
+      ? window.matchMedia("(prefers-color-scheme: dark)")
+      : null;
+  mq?.addEventListener("change", sync);
+
+  const body = root.ownerDocument.body;
+  const observer =
+    body && typeof MutationObserver !== "undefined" ? new MutationObserver(sync) : null;
+  observer?.observe(body, { attributes: true, attributeFilter: HOST_THEME_ATTRIBUTES });
+
+  return () => {
+    unsubscribe();
+    mq?.removeEventListener("change", sync);
+    observer?.disconnect();
+  };
+}
