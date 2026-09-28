@@ -24,7 +24,7 @@ export const VASP_EXT = ".vasp";
 const VASP_BARE_NAME_RE = /^(poscar|contcar|xdatcar)([-_.].*)?$/;
 
 /** Strip any directory component from a path. */
-function basename(path: string): string {
+export function basename(path: string): string {
   return path.split(/[\\/]/).pop() ?? path;
 }
 
@@ -64,3 +64,68 @@ export function matchesStructureName(name: string, exts: readonly string[]): boo
   if (exts.some((ext) => lower.endsWith(ext))) return true;
   return exts.includes(VASP_EXT) && isVaspBareName(lower);
 }
+
+/**
+ * Every extension a structure file is opened by — the file pickers' accept
+ * lists, the drag-drop guards and `openFile`'s classifier all read this one
+ * list, which `docs/docs/platform-support.md` documents. Each entry must have
+ * a case in `getParserForExtension` (`parseCore.ts`); VASP's extensionless
+ * spellings (POSCAR / CONTCAR / XDATCAR) are matched by `isVaspBareName`.
+ */
+export const STRUCTURE_EXTS: readonly string[] = [
+  ".pdb",
+  ".gro",
+  ".xyz",
+  // Jmol's second extension for plain XYZ.
+  ".jxyz",
+  ".mol",
+  ".sdf",
+  ".mol2",
+  ".cif",
+  ".mmcif",
+  ".data",
+  ".lammps",
+  ".prmtop",
+  ".traj",
+  // LAMMPS dump opened standalone as a multi-frame structure (topology from
+  // frame 0; integer atom `type` ids used as element proxies). Also listed in
+  // TRAJECTORY_EXTS so it can still be attached onto a separately-loaded
+  // topology via the Load Trajectory node.
+  ".lammpstrj",
+  ".dump",
+  ".trj",
+  ".vasp",
+  // Chemical Markup Language.
+  ".cml",
+  // Molden geometry output.
+  ".molden",
+  // XCrySDen structure / animation (`.axsf` is the animated variant).
+  ".xsf",
+  ".axsf",
+  // Chem3D XML (CDXML family).
+  ".c3xml",
+  // Wavefunction Odyssey. `.xodydata` is XML, `.odydata` is the older text
+  // layout; the parser detects which from the content, not the extension.
+  ".xodydata",
+  ".odydata",
+  // CASTEP / Quantum ESPRESSO NMR output.
+  ".magres",
+  ".gamess",
+  ".phonon",
+];
+
+/** Every extension a trajectory file attached to a loaded topology is opened by. */
+export const TRAJECTORY_EXTS: readonly string[] = [
+  ".xtc",
+  ".lammpstrj",
+  ".dump",
+  ".trj",
+  ".dcd",
+  ".nc",
+];
+
+/** `STRUCTURE_EXTS` as a file-input `accept` attribute. */
+export const STRUCTURE_ACCEPT = STRUCTURE_EXTS.join(",");
+
+/** `TRAJECTORY_EXTS` as a file-input `accept` attribute. */
+export const TRAJECTORY_ACCEPT = TRAJECTORY_EXTS.join(",");

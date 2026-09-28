@@ -4,6 +4,12 @@
 
 import type { BondSource, TrajectorySource } from "../types";
 import {
+  STRUCTURE_ACCEPT,
+  STRUCTURE_EXTS,
+  TRAJECTORY_ACCEPT,
+  TRAJECTORY_EXTS,
+} from "../parsers/fileNames";
+import {
   sectionLabelStyle,
   smallBtnStyle,
   activeBtnStyle,
@@ -48,18 +54,6 @@ interface SidebarProps {
   onToggleCollapse: () => void;
 }
 
-const STRUCTURE_ACCEPT = ".pdb,.gro,.xyz,.mol,.sdf,.traj,.lammpstrj,.dump,.trj";
-const STRUCTURE_EXTS = [
-  ".pdb",
-  ".gro",
-  ".xyz",
-  ".mol",
-  ".sdf",
-  ".traj",
-  ".lammpstrj",
-  ".dump",
-  ".trj",
-];
 const BOND_FILE_ACCEPT = ".pdb,.top";
 const BOND_FILE_EXTS = [".pdb", ".top"];
 
@@ -309,8 +303,8 @@ export function Sidebar({
           />
           {trajectory.source === "file" && (
             <DropZone
-              accept=".xtc,.lammpstrj,.dump,.trj,.dcd,.nc"
-              exts={[".xtc", ".lammpstrj", ".dump", ".trj", ".dcd", ".nc"]}
+              accept={TRAJECTORY_ACCEPT}
+              exts={TRAJECTORY_EXTS}
               onFile={trajectory.onUploadXtc}
               label="Load trajectory..."
               testId="trajectory-upload"

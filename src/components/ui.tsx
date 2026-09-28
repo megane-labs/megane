@@ -51,7 +51,7 @@ export const placeholderStyle: React.CSSProperties = {
   fontStyle: "italic",
 };
 
-export function matchesAccept(name: string, exts: string[]): boolean {
+export function matchesAccept(name: string, exts: readonly string[]): boolean {
   const lower = name.toLowerCase();
   return exts.some((ext) => lower.endsWith(ext));
 }
@@ -65,7 +65,7 @@ export function DropZone({
   testId,
 }: {
   accept: string;
-  exts: string[];
+  exts: readonly string[];
   onFile: (file: File) => void;
   label: string;
   children: React.ReactNode;

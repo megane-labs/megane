@@ -13,54 +13,10 @@ import { globalLoadHandlers, type StructureLoadHandler } from "../../stores/load
 import { NodeShell } from "./NodeShell";
 import { smallBtnStyle, fileNameStyle } from "../ui";
 import { useRef, useCallback } from "react";
-import { matchesStructureName } from "../../parsers/fileNames";
-
 // The file-dialog filter can only express extensions, so VASP contributes
-// `.vasp` here. Its extensionless spellings (POSCAR / CONTCAR / XDATCAR) are
+// `.vasp` there. Its extensionless spellings (POSCAR / CONTCAR / XDATCAR) are
 // still accepted on drag-drop via `matchesStructureName`.
-const STRUCTURE_ACCEPT =
-  ".pdb,.gro,.xyz,.mol,.sdf,.mol2,.cif,.mmcif,.data,.lammps,.prmtop,.traj,.lammpstrj,.dump,.trj,.vasp,.cml,.molden,.xsf,.axsf,.jxyz,.c3xml,.xodydata,.odydata,.magres,.gamess,.phonon";
-export const STRUCTURE_EXTS = [
-  // Molden geometry output.
-  ".molden",
-  // Chem3D XML (CDXML family).
-  ".c3xml",
-  // Wavefunction Odyssey. `.xodydata` is XML, `.odydata` is the older text
-  // layout; the parser detects which from the content, not the extension.
-  ".xodydata",
-  ".odydata",
-  // CASTEP / Quantum ESPRESSO NMR output.
-  ".magres",
-  ".gamess",
-  ".phonon",
-  ".pdb",
-  ".gro",
-  ".xyz",
-  // Jmol's second extension for plain XYZ.
-  ".jxyz",
-  ".mol",
-  ".sdf",
-  ".mol2",
-  ".cif",
-  ".mmcif",
-  ".data",
-  ".lammps",
-  ".prmtop",
-  ".traj",
-  // LAMMPS dump opened standalone as a multi-frame structure (topology from
-  // frame 0; integer atom `type` ids used as element proxies).
-  ".lammpstrj",
-  ".dump",
-  ".trj",
-  // XCrySDen structure / animation (`.axsf` is the animated variant).
-  ".xsf",
-  ".axsf",
-  // Chemical Markup Language.
-  ".cml",
-  // VASP POSCAR / CONTCAR / XDATCAR. Bare (extensionless) VASP filenames are
-  // matched by `matchesStructureName`, not by this suffix list.
-  ".vasp",
-];
+import { matchesStructureName, STRUCTURE_ACCEPT, STRUCTURE_EXTS } from "../../parsers/fileNames";
 
 /**
  * Event bus for structure loading.
