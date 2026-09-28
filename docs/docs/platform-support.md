@@ -347,6 +347,7 @@ Sources of truth: `crates/megane-wasm/src/lib.rs` (browser parsers), `crates/meg
 | Visual pipeline editor | ✓ | — | ✓ | ✓ (`.megane.json`) | ✓ | n/a |
 | Trajectory timeline / scrubbing | ✓ | ✓ | ✓ | ✓ | ✓ | n/a |
 | WebSocket trajectory streaming | ✓ | — | — | — | — | n/a |
+| Parsing in a Web Worker; trajectories and multi-frame XYZ / multi-MODEL PDB of 8 MB or more stream frames on demand | ✓ | — | — | — | — | n/a |
 | Multi-layer rendering | ✓ | ✓ (via pipeline) | ✓ | ✓ | ✓ | n/a |
 | Solvent-accessible surface (SAS) | ✓ | ✓ (via pipeline) | ✓ | ✓ | ✓ | n/a |
 | Surface mesh (alpha-shape envelope) | ✓ | ✓ (via pipeline) | ✓ | ✓ | ✓ | n/a |

@@ -42,6 +42,20 @@ function makeResult(overrides: Partial<StructureParseResult> = {}): StructurePar
   } as unknown as StructureParseResult;
 }
 
+/**
+ * A PDB stand-in whose head is readable (jsdom's Blob has no `.text()`): the
+ * handler sniffs a large PDB's head for MODEL records before streaming it.
+ */
+function pdbFile(name: string, content: string): File {
+  return {
+    name,
+    size: content.length,
+    slice: (start = 0, end = content.length) => ({ text: async () => content.slice(start, end) }),
+  } as unknown as File;
+}
+
+const ATOM = "ATOM      1  N   MET A   1      27.340  24.430   2.614  1.00  9.67           N";
+
 function seedStore(nodeId = "n1") {
   usePipelineStore.setState({
     nodes: [
@@ -138,15 +152,64 @@ describe("useNodeLoadHandlers — double-parse fix", () => {
 
     renderHook(() => useNodeLoadHandlers({ snapshot: null, onUploadStructure }));
 
-    const file = new File(["dummy"], "trajectory.pdb");
+    const file = pdbFile("trajectory.pdb", `MODEL        1\n${ATOM}\nENDMDL\n`);
     await act(async () => {
       captured.structure?.("n1", file);
-      await Promise.resolve();
     });
+    await vi.waitFor(() => expect(onUploadStructure).toHaveBeenCalled());
 
     expect(parseMock).not.toHaveBeenCalled();
     expect(onUploadStructure).toHaveBeenCalledExactlyOnceWith(file);
     expect(shouldLazyMock).toHaveBeenCalledWith("pdb", file.size);
+  });
+
+  it("parses a large single-model PDB eagerly instead of streaming it", async () => {
+    seedStore("n1");
+    shouldLazyMock.mockReturnValue(true);
+    const result = makeResult();
+    parseMock.mockResolvedValue(result);
+    const onUploadStructure = vi.fn();
+
+    renderHook(() => useNodeLoadHandlers({ snapshot: null, onUploadStructure }));
+
+    // No MODEL record before the first ATOM: one frame, nothing to stream.
+    const file = pdbFile("water_100k.pdb", `CRYST1\n${ATOM}\nEND\n`);
+    await act(async () => {
+      captured.structure?.("n1", file);
+    });
+    await vi.waitFor(() => expect(onUploadStructure).toHaveBeenCalled());
+
+    // One parse on the node's own path; the legacy loader reuses it.
+    expect(parseMock).toHaveBeenCalledExactlyOnceWith(file);
+    expect(onUploadStructure).toHaveBeenCalledExactlyOnceWith(file, result);
+    expect(usePipelineStore.getState().setNodeSnapshot).toHaveBeenCalledTimes(1);
+  });
+
+  it("falls back to the eager path when a large PDB's head cannot be read", async () => {
+    seedStore("n1");
+    shouldLazyMock.mockReturnValue(true);
+    parseMock.mockRejectedValue(new Error("unreadable"));
+    const onUploadStructure = vi.fn();
+
+    renderHook(() => useNodeLoadHandlers({ snapshot: null, onUploadStructure }));
+
+    const file = {
+      name: "broken.pdb",
+      size: 1,
+      slice: () => ({ text: () => Promise.reject(new Error("unreadable")) }),
+    } as unknown as File;
+    await act(async () => {
+      captured.structure?.("n1", file);
+    });
+
+    // The eager parse surfaces the read error on the node.
+    await vi.waitFor(() =>
+      expect(usePipelineStore.getState().setNodeParseError).toHaveBeenCalledWith(
+        "n1",
+        "Failed to parse file: unreadable",
+      ),
+    );
+    expect(onUploadStructure).not.toHaveBeenCalled();
   });
 
   it("keeps the eager path for a small XYZ (lazy declined)", async () => {

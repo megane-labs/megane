@@ -9,13 +9,20 @@
  *
  * Exposes the same signatures as the original `structure.ts` / `xtc.ts`.
  *
+ * The worker is emitted as its own file (`?worker`), not inlined as a blob:
+ * it imports the wasm-bindgen glue as a separate chunk by relative URL, which a
+ * `blob:` worker cannot resolve. The inline build failed on its first request
+ * in every production bundle, which silently moved all parsing back onto the
+ * main thread and disabled lazy trajectory streaming for the session.
+ *
  * NOTE: on hosts whose bundler cannot handle the worker import (JupyterLab's
- * webpack, and the single-file anywidget bundle), this module is swapped for
- * `parseClientSync` at build time — see `jupyterlab-megane/webpack.config.js`
- * and `vite.widget.config.ts`.
+ * webpack, the single-file anywidget bundle, the VSCode webview whose CSP only
+ * allows blob: workers), this module is swapped for `parseClientSync` at build
+ * time — see `jupyterlab-megane/webpack.config.js`, `vite.widget.config.ts`
+ * and `vscode-megane/vite.webview.config.ts`.
  */
 
-import ParseWorker from "./parse.worker?worker&inline";
+import ParseWorker from "./parse.worker?worker";
 import wasmAssetUrl from "../../crates/megane-wasm/pkg/megane_wasm_bg.wasm?url";
 import { perfMark, perfMeasure } from "../perf";
 import * as sync from "./parseClientSync";
@@ -50,6 +57,44 @@ interface Pending {
   timer: ReturnType<typeof setTimeout>;
 }
 const pending = new Map<number, Pending>();
+
+/**
+ * How long the worker may sit idle before it is terminated.
+ *
+ * WASM linear memory only ever grows, so after a large parse the worker keeps
+ * that high-water mark (easily tens of MB) for as long as it lives. Once nothing
+ * is in flight and no lazy decoder needs the file bytes it holds, the worker is
+ * released to give that memory back; the next request starts a fresh one (the
+ * glue and .wasm come from the HTTP cache, so that costs tens of milliseconds).
+ */
+export const WORKER_IDLE_MS = 10_000;
+let idleTimer: ReturnType<typeof setTimeout> | null = null;
+/** Lazy decoders alive in the worker (trajectory ids not yet disposed). */
+const liveDecoders = new Set<number>();
+
+function cancelIdleRelease(): void {
+  if (idleTimer !== null) {
+    clearTimeout(idleTimer);
+    idleTimer = null;
+  }
+}
+
+function workerIdle(): boolean {
+  return pending.size === 0 && liveDecoders.size === 0;
+}
+
+function scheduleIdleRelease(): void {
+  cancelIdleRelease();
+  if (!worker || !workerIdle()) return;
+  idleTimer = setTimeout(() => {
+    idleTimer = null;
+    // Re-check: a decoder handle is registered only after its index response.
+    if (worker && workerIdle()) {
+      worker.terminate();
+      worker = null;
+    }
+  }, WORKER_IDLE_MS);
+}
 
 function workerUnavailable(): boolean {
   return workerBroken || typeof Worker === "undefined";
@@ -87,6 +132,8 @@ export function shouldUseLazyStructure(_kind: LazyStructureKind, fileSize: numbe
 /** Reject every in-flight request and drop the worker (used on a fatal error). */
 function tearDown(reason: string): void {
   workerBroken = true;
+  cancelIdleRelease();
+  liveDecoders.clear();
   for (const entry of pending.values()) {
     clearTimeout(entry.timer);
     entry.reject(new Error(reason));
@@ -106,6 +153,7 @@ function getWorker(): Worker {
     if (!entry) return;
     clearTimeout(entry.timer);
     pending.delete(e.data.id);
+    scheduleIdleRelease();
     if (e.data.ok) {
       entry.resolve(e.data.result);
     } else {
@@ -126,9 +174,11 @@ function resolveWasmUrl(): string | undefined {
 
 function send<T>(req: ParseRequest, transfer: Transferable[]): Promise<T> {
   return new Promise<T>((resolve, reject) => {
+    cancelIdleRelease();
     const w = getWorker();
     const timer = setTimeout(() => {
       pending.delete(req.id);
+      scheduleIdleRelease();
       reject(new Error(`parse worker timed out after ${TIMEOUT_MS}ms`));
     }, TIMEOUT_MS);
     pending.set(req.id, {
@@ -277,6 +327,7 @@ export async function indexTrajectoryLazy(
       },
       [buffer],
     );
+    liveDecoders.add(trajectoryId);
     return { trajectoryId, kind, index };
   } catch {
     // Any failure ⇒ let the caller fall back to eager parsing.
@@ -342,6 +393,7 @@ export async function decodeTrajectoryFrame(
 /** Free a lazy trajectory decoder in the worker (fire-and-forget). */
 export function disposeTrajectoryLazy(trajectoryId: number): void {
   if (workerUnavailable()) return;
+  liveDecoders.delete(trajectoryId);
   const id = nextId++;
   void send<undefined>({ id, op: "disposeTrajectory", trajectoryId }, []).catch(() => {
     // best-effort cleanup; worker teardown already frees everything
@@ -446,6 +498,7 @@ export async function indexStructureLazy(
       { id, op: "indexStructure", wasmUrl: resolveWasmUrl(), kind, trajectoryId, bytes: buffer },
       [buffer],
     );
+    liveDecoders.add(trajectoryId);
     return { handle: { trajectoryId, kind, index }, frame0 };
   } catch {
     return null;

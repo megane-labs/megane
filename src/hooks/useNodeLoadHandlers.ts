@@ -12,6 +12,7 @@ import {
 } from "../stores/MeganeProvider";
 import { loadVectorFileData } from "../logic/vectorSourceLogic";
 import { parseStructureFile, shouldUseLazyStructure } from "../parsers/structure";
+import { pdbMayHaveModels } from "../parsers/pdbModels";
 import type { StructureParseResult, LazyStructureKind } from "../parsers/structure";
 import type { NodeSnapshotData } from "../pipeline/execute";
 import type { Snapshot } from "../types";
@@ -71,49 +72,67 @@ export function useNodeLoadHandlers({
       const lazyKind: LazyStructureKind | null =
         ext === ".xyz" ? "xyz" : ext === ".pdb" ? "pdb" : null;
       if (isPrimary && lazyKind && shouldUseLazyStructure(lazyKind, file.size)) {
-        clearNodeParseError(nodeId);
-        onUploadStructure(file);
+        const streamIt = () => {
+          clearNodeParseError(nodeId);
+          onUploadStructure(file);
+        };
+        if (lazyKind === "pdb") {
+          // A PDB without MODEL records is a single frame: there is nothing to
+          // stream, and without an ENDMDL the lazy path cannot prove frame 0
+          // complete, so it would parse the file up to three times. Parse it
+          // once, here. (An unreadable head falls to the eager path, which
+          // reports the read error on the node.)
+          pdbMayHaveModels(file).then(
+            (multiModel) => (multiModel ? streamIt() : parseEagerly()),
+            parseEagerly,
+          );
+          return;
+        }
+        streamIt();
         return;
       }
+      parseEagerly();
 
-      parseStructureFile(file)
-        .then((result) => {
-          clearNodeParseError(nodeId);
-          const data: NodeSnapshotData = {
-            snapshot: result.snapshot,
-            frames: result.frames.length > 0 ? result.frames : null,
-            meta: result.meta,
-            labels: result.labels,
-          };
-          setNodeSnapshot(nodeId, data);
-          updateNodeParams(nodeId, {
-            hasTrajectory: result.frames.length > 0,
-            hasCell: !!result.snapshot.box,
+      function parseEagerly() {
+        parseStructureFile(file)
+          .then((result) => {
+            clearNodeParseError(nodeId);
+            const data: NodeSnapshotData = {
+              snapshot: result.snapshot,
+              frames: result.frames.length > 0 ? result.frames : null,
+              meta: result.meta,
+              labels: result.labels,
+            };
+            setNodeSnapshot(nodeId, data);
+            updateNodeParams(nodeId, {
+              hasTrajectory: result.frames.length > 0,
+              hasCell: !!result.snapshot.box,
+            });
+            // Offer embedded vector channels (e.g. GRO velocities) to the
+            // load_vector node UI. Nothing is rendered until the user activates
+            // one — a parse must not switch a visual overlay on as a side effect.
+            pipelineApi
+              .getState()
+              .setEmbeddedVectorChannels(
+                result.vectorChannels.length > 0
+                  ? result.vectorChannels.map((ch) => ({ name: ch.name, frames: ch.frames }))
+                  : null,
+              );
+            // For the primary node, also drive the legacy load path for
+            // trajectory/label/bond source management. Pass the ALREADY-parsed
+            // result so it reuses this parse instead of reading + WASM-parsing the
+            // same file a second time (previously ~2x wall-clock per open). Doing
+            // it inside .then also removes the prior race between this parse and
+            // the legacy path's concurrent parse.
+            if (isPrimary) {
+              onUploadStructure(file, result);
+            }
+          })
+          .catch((err: unknown) => {
+            const message = err instanceof Error ? err.message : String(err);
+            setNodeParseError(nodeId, `Failed to parse file: ${message}`);
           });
-          // Offer embedded vector channels (e.g. GRO velocities) to the
-          // load_vector node UI. Nothing is rendered until the user activates
-          // one — a parse must not switch a visual overlay on as a side effect.
-          pipelineApi
-            .getState()
-            .setEmbeddedVectorChannels(
-              result.vectorChannels.length > 0
-                ? result.vectorChannels.map((ch) => ({ name: ch.name, frames: ch.frames }))
-                : null,
-            );
-          // For the primary node, also drive the legacy load path for
-          // trajectory/label/bond source management. Pass the ALREADY-parsed
-          // result so it reuses this parse instead of reading + WASM-parsing the
-          // same file a second time (previously ~2x wall-clock per open). Doing
-          // it inside .then also removes the prior race between this parse and
-          // the legacy path's concurrent parse.
-          if (isPrimary) {
-            onUploadStructure(file, result);
-          }
-        })
-        .catch((err: unknown) => {
-          const message = err instanceof Error ? err.message : String(err);
-          setNodeParseError(nodeId, `Failed to parse file: ${message}`);
-        });
+      }
     };
     loadHandlers.setStructure(handler);
     return () => {
