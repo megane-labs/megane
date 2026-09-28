@@ -6,7 +6,7 @@
  */
 
 /**
- * `place` stamps the library molecule chosen in the sidebar
+ * `place` stamps the library molecule chosen in its settings
  * (`BuilderStore.placeSource`) wherever the user clicks empty space.
  */
 export type BuildTool = "select" | "add" | "bond" | "delete" | "move" | "element" | "place";

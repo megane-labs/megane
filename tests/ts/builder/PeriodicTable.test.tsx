@@ -1,6 +1,6 @@
 /**
- * The periodic table behind the context bar's *Table* button: where each
- * element sits, and choosing one from it.
+ * The periodic table behind the tool settings' *Periodic table* button: where
+ * each element sits, what it says about one, and choosing one from it.
  */
 
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
@@ -76,5 +76,67 @@ describe("PeriodicTable", () => {
     fireEvent.click(toggle);
     act(() => useBuilderStore.setState({ tool: "element" }));
     expect(screen.queryByTestId("builder-periodic-table")).toBeNull();
+  });
+
+  it("describes the element under the pointer, else the current one", () => {
+    render(<PeriodicTable value={26} onPick={() => {}} onClose={() => {}} />);
+    expect(screen.getByTestId("builder-periodic-info-name").textContent).toBe("Iron");
+    expect(screen.getByTestId("builder-periodic-info").textContent).toContain("Transition metal");
+    fireEvent.mouseEnter(screen.getByTestId("builder-periodic-Ne"));
+    expect(screen.getByTestId("builder-periodic-info-name").textContent).toBe("Neon");
+    expect(screen.getByTestId("builder-periodic-info").textContent).toContain("Noble gas");
+    expect(screen.getByTestId("builder-periodic-info").textContent).toContain("20.180 u");
+    fireEvent.mouseLeave(screen.getByTestId("builder-periodic-Ne").parentElement!);
+    expect(screen.getByTestId("builder-periodic-info-name").textContent).toBe("Iron");
+    // Keyboard focus shows it too; uranium's mass has two decimals.
+    fireEvent.focus(screen.getByTestId("builder-periodic-U"));
+    expect(screen.getByTestId("builder-periodic-info").textContent).toContain("Actinide");
+    expect(screen.getByTestId("builder-periodic-info").textContent).toMatch(/238\.\d\d u/);
+  });
+
+  it("closes on a click outside or on ×, not on a click inside or on its button", () => {
+    const anchor = { current: document.createElement("button") };
+    document.body.append(anchor.current);
+    let closed = 0;
+    render(<PeriodicTable value={6} anchor={anchor} onPick={() => {}} onClose={() => closed++} />);
+    fireEvent.pointerDown(screen.getByTestId("builder-periodic-info"));
+    fireEvent.pointerDown(anchor.current);
+    expect(closed).toBe(0);
+    fireEvent.pointerDown(document.body);
+    expect(closed).toBe(1);
+    fireEvent.click(screen.getByTestId("builder-periodic-close"));
+    expect(closed).toBe(2);
+    anchor.current.remove();
+  });
+
+  it("sits left of the panel its button is in, inside the window", () => {
+    const panel = document.createElement("div");
+    panel.setAttribute("data-collapsed", "false");
+    const button = document.createElement("button");
+    panel.append(button);
+    document.body.append(panel);
+    const rect = (left: number, top: number) =>
+      ({ left, top, right: left + 10, bottom: top + 10, width: 10, height: 10 }) as DOMRect;
+    panel.getBoundingClientRect = () => rect(900, 0);
+    button.getBoundingClientRect = () => rect(950, 200);
+    const original = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "offsetWidth")!;
+    Object.defineProperty(HTMLElement.prototype, "offsetWidth", { configurable: true, value: 600 });
+    try {
+      render(
+        <PeriodicTable
+          value={6}
+          anchor={{ current: button }}
+          onPick={() => {}}
+          onClose={() => {}}
+        />,
+      );
+      const table = screen.getByTestId("builder-periodic-table");
+      expect(table.style.left).toBe("290px");
+      expect(table.style.top).toBe("188px");
+      expect(table.style.visibility).toBe("visible");
+    } finally {
+      Object.defineProperty(HTMLElement.prototype, "offsetWidth", original);
+      panel.remove();
+    }
   });
 });

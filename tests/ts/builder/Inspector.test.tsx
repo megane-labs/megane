@@ -1,12 +1,13 @@
 /**
- * The sidebar's Inspector: the structure summary with nothing selected, and
- * the selected atoms — their positions, what they measure, and the actions on
- * them — with a selection.
+ * The Details panel's Inspector — the selected atoms, their positions, what
+ * they measure, and the actions on them — and the info line over the view,
+ * which summarises the document and the structure.
  */
 
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { render, screen, fireEvent, cleanup, act } from "@testing-library/react";
 import { Inspector, MAX_ATOM_ROWS, elementGroups } from "@/builder/Inspector";
+import { InfoHud } from "@/builder/InfoHud";
 import { useBuilderStore } from "@/builder/store";
 import { useLibraryStore } from "@/builder/library/store";
 import type { Snapshot } from "@/types";
@@ -52,32 +53,40 @@ describe("elementGroups", () => {
   });
 });
 
-describe("Inspector — structure", () => {
-  it("is empty without a document", () => {
+describe("Inspector — nothing selected", () => {
+  it("is empty without a selection: the structure is on the info line", () => {
     const { container } = render(<Inspector />);
     expect(container.textContent).toBe("");
+    act(() => s().openStructure(methanol(), null, "meoh.xyz"));
+    expect(container.textContent).toBe("");
   });
+});
 
-  it("summarises the structure and selects every atom of an element", () => {
-    s().openStructure(methanol(), null, "meoh.xyz");
-    render(<Inspector />);
+describe("InfoHud", () => {
+  const hud = (viewed: Snapshot | null, fileName: string | null = null, steps = 0) =>
+    render(<InfoHud fileName={fileName} steps={steps} viewed={viewed} left={92} right={384} />);
+
+  it("says what the document is and summarises the structure", () => {
+    hud(methanol(), "meoh.xyz", 2);
+    expect(text("builder-file-name")).toBe("meoh.xyz · 2 edits");
     expect(text("builder-inspector-formula")).toBe("CH4O");
-    expect(text("builder-inspector-atoms")).toBe("6");
-    expect(text("builder-inspector-bonds")).toBe("5");
+    expect(text("builder-status-atoms")).toBe("6 atoms · 5 bonds");
     expect(Number(text("builder-inspector-mass"))).toBeCloseTo(32.04, 1);
-    expect(text("builder-inspector-element-H")).toBe("H4");
-    click("builder-inspector-element-H");
-    expect(s().selected).toEqual([2, 3, 4, 5]);
-    // The selection replaces the summary.
-    expect(screen.queryByTestId("builder-inspector-structure")).toBeNull();
-    expect(text("builder-selected-count")).toBe("4 atoms selected");
+    expect(text("builder-crystal-cell-summary")).toBe("No cell");
+    // It reports only: clicks go through to the view.
+    expect(screen.getByTestId("builder-info").style.pointerEvents).toBe("none");
   });
 
-  it("an empty cell has no formula and no element chips", () => {
+  it("shows the cell, and only the name before anything is open", () => {
     s().newCell(10);
-    render(<Inspector />);
+    hud(s().result!.snapshot, "untitled", 1);
+    expect(text("builder-file-name")).toBe("untitled · 1 edit");
     expect(text("builder-inspector-formula")).toBe("—");
-    expect(screen.queryByTestId("builder-inspector-element-C")).toBeNull();
+    expect(text("builder-crystal-cell-summary")).toBe("10.00 × 10.00 × 10.00 Å");
+    cleanup();
+    hud(null);
+    expect(text("builder-file-name")).toBe("No structure");
+    expect(screen.queryByTestId("builder-inspector-formula")).toBeNull();
   });
 });
 

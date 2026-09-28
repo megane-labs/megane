@@ -20,6 +20,7 @@ import { MeasurementPanel } from "./MeasurementPanel";
 import { MeasurementListPanel } from "./MeasurementListPanel";
 import { PerfHud } from "./PerfHud";
 import { ViewAxisControls } from "./ViewAxisControls";
+import { overlayButtonStyle } from "./toolbarStyles";
 import { OVERLAY_INSET, PERF_HUD_LEFT_DEFAULT, MEASUREMENT_BOTTOM_DEFAULT } from "./overlayLayout";
 import { MoleculeRenderer, isMeganeTestMode } from "../renderer/MoleculeRenderer";
 import { latticeVectors, type ViewAxis } from "../renderer/cameraOrientation";
@@ -677,18 +678,7 @@ export function MeganeViewer({
               data-testid="reset-view-btn"
               title="Reset view (fit to structure, standard orientation)"
               onClick={handleResetView}
-              style={{
-                padding: "4px 8px",
-                fontSize: 11,
-                lineHeight: 1,
-                background: "var(--megane-surface)",
-                border: "1px solid var(--megane-border-solid)",
-                borderRadius: 4,
-                cursor: "pointer",
-                color: "var(--megane-text-body)",
-                backdropFilter: "blur(4px)",
-                userSelect: "none",
-              }}
+              style={overlayButtonStyle}
             >
               Reset View
             </button>

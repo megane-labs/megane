@@ -1,7 +1,7 @@
 /**
  * The Structure menu's dialogs: set the cell, centre the atoms with vacuum,
- * build a supercell, cut a slab. One operation per dialog, each a panel in
- * the corner of the 3D view so the view stays visible: while its fields make
+ * build a supercell, cut a slab. One operation per dialog, each a form in the
+ * Details panel beside the 3D view so the view stays visible: while its fields make
  * a valid op, the view shows that op applied (`BuilderStore.setPreview`), and
  * *Apply* writes it as one undoable edit. Cancel, Escape or closing drops the
  * preview and leaves the document as it was.
@@ -13,13 +13,19 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useBuilderStore, canEdit, shownSnapshot } from "../store";
-import { buttonStyle, hintStyle, inputStyle, rowStyle, toggleStyle } from "../styles";
+import {
+  buttonStyle,
+  detailCardStyle,
+  hintStyle,
+  inputStyle,
+  rowStyle,
+  toggleStyle,
+} from "../styles";
 import { boxToCellParams, cellParamsToBox, det3, type CellParams } from "../../crystal/cell";
 import { slabPreview } from "../../crystal/transform";
 import type { EditOp } from "../../pipeline/types";
 import type { Snapshot } from "../../types";
 import { newFragmentId } from "../library/fragment";
-import { OVERLAY_INSET } from "../../components/overlayLayout";
 import { NumberField } from "./NumberField";
 import { hasCellBox } from "./structure";
 
@@ -154,25 +160,7 @@ export function CrystalDialog({ kind, onClose }: { kind: CrystalDialogKind; onCl
       data-kind={kind}
       role="dialog"
       aria-label={spec.title}
-      style={{
-        position: "absolute",
-        top: OVERLAY_INSET,
-        right: OVERLAY_INSET,
-        zIndex: 20,
-        width: 320,
-        maxWidth: `calc(100% - ${2 * OVERLAY_INSET}px)`,
-        boxSizing: "border-box",
-        display: "flex",
-        flexDirection: "column",
-        gap: 10,
-        padding: 14,
-        fontSize: 13,
-        borderRadius: 10,
-        background: "var(--megane-surface-solid, #fff)",
-        color: "var(--megane-text, #1e293b)",
-        border: "1px solid var(--megane-border-solid, #e2e8f0)",
-        boxShadow: "0 12px 32px var(--megane-shadow, rgba(15, 23, 42, 0.16))",
-      }}
+      style={detailCardStyle}
     >
       <div style={{ display: "flex", flexDirection: "column", gap: 1 }}>
         <span style={{ ...hintStyle, fontSize: 11 }}>Structure ›</span>

@@ -1,6 +1,6 @@
 /**
- * The tool rail left of the view, the context bar over it, and the status-bar
- * hint that says what a click does.
+ * The tool rail left of the view, the tool's settings in the Details panel,
+ * and the status-line hint that says what a click does.
  */
 
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
@@ -99,6 +99,23 @@ describe("ContextBar", () => {
         "true",
       );
     }
+  });
+
+  it("Select picks every atom of an element from the structure's chips", () => {
+    useBuilderStore.getState().newCell(10);
+    for (const [id, element] of [
+      ["a", 6],
+      ["b", 1],
+      ["c", 1],
+    ] as const) {
+      useBuilderStore.getState().pushOp({ op: "add_atom", id, element, position: [1, 1, 1] });
+    }
+    useBuilderStore.setState({ tool: "select" });
+    render(<ContextBar />);
+    expect(screen.getByTestId("builder-inspector-element-H").textContent).toBe("H2");
+    fireEvent.click(screen.getByTestId("builder-inspector-element-H"));
+    expect(useBuilderStore.getState().selected).toEqual([1, 2]);
+    useBuilderStore.setState(useBuilderStore.getInitialState(), true);
   });
 
   it("Bond shows only the bond order; Element only the element", () => {

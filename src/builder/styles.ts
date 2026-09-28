@@ -1,5 +1,6 @@
 /**
- * Inline styles shared by the Builder's panels (sidebar, library, dialogs).
+ * Inline styles shared by the Builder's panels (Details, History, library,
+ * forms).
  *
  * Three kinds of control, each with its own look, so a glance tells what a
  * click does: a *segment* picks one of a set (tools, tabs), a *toggle* turns
@@ -7,6 +8,7 @@
  * is the panel's commit, `danger` replaces or discards work).
  */
 
+/** A card inside the floating panel, like a pipeline node card in the viewer. */
 export const sectionStyle: React.CSSProperties = {
   border: "1px solid var(--megane-border-solid, #e2e8f0)",
   borderRadius: 8,
@@ -14,15 +16,16 @@ export const sectionStyle: React.CSSProperties = {
   display: "flex",
   flexDirection: "column",
   gap: 8,
-  background: "var(--megane-surface-solid, #fff)",
+  background: "var(--megane-surface-raised, #fff)",
 };
 
+/** The viewer's section label: small, uppercase, muted. */
 export const sectionTitleStyle: React.CSSProperties = {
-  fontSize: 11,
-  fontWeight: 700,
-  letterSpacing: 0.4,
+  fontSize: 10,
+  fontWeight: 600,
+  letterSpacing: "0.06em",
   textTransform: "uppercase",
-  color: "var(--megane-text-secondary, #64748b)",
+  color: "var(--megane-text-muted, #94a3b8)",
 };
 
 export const hintStyle: React.CSSProperties = {
@@ -32,9 +35,9 @@ export const hintStyle: React.CSSProperties = {
 
 export const inputStyle: React.CSSProperties = {
   fontSize: 13,
-  color: "var(--megane-text, #334155)",
-  background: "var(--megane-surface-solid, #f1f5f9)",
-  border: "1px solid var(--megane-border-solid, #cbd5e1)",
+  color: "var(--megane-text-body, #334155)",
+  background: "var(--megane-surface-raised, #fff)",
+  border: "1px solid var(--megane-border-strong, #cbd5e1)",
   borderRadius: 4,
   padding: "3px 6px",
 };
@@ -46,7 +49,16 @@ export const rowStyle: React.CSSProperties = {
   flexWrap: "wrap",
 };
 
-const ACCENT = "#2563eb";
+/**
+ * The viewer's blue (`--megane-primary` in the light theme). A fill behind
+ * white text stays this literal so it reads on both themes; blue *text* uses
+ * `ACCENT_TEXT`, which follows the theme.
+ */
+export const ACCENT = "#3b82f6";
+export const ACCENT_TEXT = "var(--megane-primary-text, #2563eb)";
+/** The translucent blue behind an active, unfilled choice (viewer tabs). */
+export const ACCENT_TINT = "rgba(59, 130, 246, 0.1)";
+const DISABLED_TEXT = "var(--megane-text-muted, #94a3b8)";
 
 /** A pill that is either the active choice or a plain action (legacy look). */
 export function chipStyle(active: boolean, disabled = false): React.CSSProperties {
@@ -55,9 +67,9 @@ export function chipStyle(active: boolean, disabled = false): React.CSSPropertie
     padding: "3px 9px",
     borderRadius: 999,
     cursor: disabled ? "default" : "pointer",
-    border: active ? `1px solid ${ACCENT}` : "1px solid var(--megane-border-solid, #cbd5e1)",
-    background: active ? ACCENT : "var(--megane-surface-solid, #f1f5f9)",
-    color: active ? "#fff" : disabled ? "#94a3b8" : "var(--megane-text, #334155)",
+    border: active ? `1px solid ${ACCENT}` : "1px solid var(--megane-border-strong, #cbd5e1)",
+    background: active ? ACCENT : "var(--megane-surface-raised, #fff)",
+    color: active ? "#fff" : disabled ? DISABLED_TEXT : "var(--megane-text-body, #334155)",
     userSelect: "none",
     opacity: disabled ? 0.6 : 1,
   };
@@ -72,7 +84,7 @@ export function segmentStyle(active: boolean, disabled = false): React.CSSProper
     cursor: disabled ? "default" : "pointer",
     border: "1px solid transparent",
     background: active ? ACCENT : "transparent",
-    color: active ? "#fff" : disabled ? "#94a3b8" : "var(--megane-text, #334155)",
+    color: active ? "#fff" : disabled ? DISABLED_TEXT : "var(--megane-text-body, #334155)",
     fontWeight: active ? 600 : 400,
     userSelect: "none",
     opacity: disabled ? 0.6 : 1,
@@ -96,9 +108,9 @@ export function toggleStyle(on: boolean, disabled = false): React.CSSProperties 
     padding: "3px 9px",
     borderRadius: 6,
     cursor: disabled ? "default" : "pointer",
-    border: on ? `1px solid ${ACCENT}` : "1px solid var(--megane-border-solid, #cbd5e1)",
-    background: on ? "rgba(37, 99, 235, 0.12)" : "transparent",
-    color: on ? ACCENT : disabled ? "#94a3b8" : "var(--megane-text, #334155)",
+    border: on ? `1px solid ${ACCENT}` : "1px solid var(--megane-border-strong, #cbd5e1)",
+    background: on ? ACCENT_TINT : "transparent",
+    color: on ? ACCENT_TEXT : disabled ? DISABLED_TEXT : "var(--megane-text-body, #334155)",
     fontWeight: on ? 600 : 400,
     userSelect: "none",
     opacity: disabled ? 0.6 : 1,
@@ -134,16 +146,34 @@ export function buttonStyle(
     case "danger":
       return {
         ...base,
-        border: "1px solid rgba(220, 38, 38, 0.5)",
+        border: "1px solid rgba(239, 68, 68, 0.5)",
         background: "transparent",
-        color: "#b91c1c",
+        color: "var(--megane-danger-text, #b91c1c)",
       };
     default:
       return {
         ...base,
-        border: "1px solid var(--megane-border-solid, #cbd5e1)",
-        background: "var(--megane-surface-solid, #f8f9fb)",
-        color: disabled ? "#94a3b8" : "var(--megane-text, #1e293b)",
+        border: "1px solid var(--megane-border-strong, #cbd5e1)",
+        background: "var(--megane-surface-raised, #fff)",
+        color: disabled ? DISABLED_TEXT : "var(--megane-text, #1e293b)",
       };
   }
 }
+
+/**
+ * A form in the Details panel: what a button on the left opened (a Structure
+ * operation, a Python tool, a new document). It sits in the panel's column
+ * rather than floating over the view.
+ */
+export const detailCardStyle: React.CSSProperties = {
+  display: "flex",
+  flexDirection: "column",
+  gap: 10,
+  padding: 12,
+  fontSize: 13,
+  borderRadius: 8,
+  border: "1px solid rgba(59, 130, 246, 0.35)",
+  background: "var(--megane-surface-raised, #fff)",
+  color: "var(--megane-text, #1e293b)",
+  minWidth: 0,
+};

@@ -203,7 +203,7 @@ export function SketchModal({ initialMolfile, initialName, onAdd, onClose }: Ske
                   data-testid="sketch-fallback"
                   style={{ flex: 1, display: "flex", flexDirection: "column", gap: 8, padding: 8 }}
                 >
-                  <div style={{ ...hintStyle, color: "#b45309" }}>
+                  <div style={{ ...hintStyle, color: "var(--megane-warning-text, #b45309)" }}>
                     Ketcher could not be loaded ({err.message}). Paste a MOL file instead.
                   </div>
                   <span
@@ -232,7 +232,11 @@ export function SketchModal({ initialMolfile, initialName, onAdd, onClose }: Ske
           )}
         </div>
         {error && (
-          <div data-testid="sketch-error" role="alert" style={{ ...hintStyle, color: "#991b1b" }}>
+          <div
+            data-testid="sketch-error"
+            role="alert"
+            style={{ ...hintStyle, color: "var(--megane-danger-text, #b91c1c)" }}
+          >
             {error}
           </div>
         )}

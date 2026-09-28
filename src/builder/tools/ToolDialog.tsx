@@ -1,15 +1,14 @@
 /**
- * The form of one tool (§4.1): generated from its `inputSchema`, run against
+ * The form of one tool (§4.1), in the Details panel: generated from its `inputSchema`, run against
  * the connected server, closed when the result has been applied. Errors keep
  * the form open with the user's values (§6).
  */
 
 import { useEffect, useMemo, useState } from "react";
-import { createPortal } from "react-dom";
 import { getElementSymbol } from "../../constants";
 import { useBuilderStore, shownSnapshot } from "../store";
 import { allMolecules, useLibraryStore } from "../library/store";
-import { buttonStyle, hintStyle, inputStyle, rowStyle } from "../styles";
+import { buttonStyle, hintStyle, inputStyle, rowStyle, detailCardStyle } from "../styles";
 import { unitLabel, type BuilderToolInfo, type FieldSpec } from "./contract";
 import {
   buildArguments,
@@ -67,137 +66,114 @@ export function ToolDialog({ tool }: { tool: BuilderToolInfo }) {
     if (!outcome.ok) setError(outcome.error);
   };
 
-  return createPortal(
+  return (
     <div
       data-testid="builder-tool-dialog"
       role="dialog"
-      aria-modal="true"
       aria-label={tool.label}
-      style={{
-        position: "fixed",
-        inset: 0,
-        zIndex: 1000,
-        background: "rgba(15, 23, 42, 0.45)",
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
-      }}
-      onClick={(e) => {
-        if (e.target === e.currentTarget && !busy) closeForm();
-      }}
+      style={detailCardStyle}
     >
-      <div
-        style={{
-          width: "min(560px, 94vw)",
-          maxHeight: "90vh",
-          overflowY: "auto",
-          display: "flex",
-          flexDirection: "column",
-          gap: 10,
-          padding: 16,
-          borderRadius: 10,
-          background: "var(--megane-surface-solid, #fff)",
-          color: "var(--megane-text, #1e293b)",
-          border: "1px solid var(--megane-border-solid, #e2e8f0)",
-          boxShadow: "0 12px 40px rgba(0,0,0,0.25)",
-          fontSize: 13,
-        }}
-      >
-        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-          <span style={{ fontWeight: 700 }}>{tool.label}</span>
-          <span style={{ flex: 1 }} />
-          <button
-            type="button"
-            data-testid="builder-tool-close"
-            style={buttonStyle("default", busy)}
-            disabled={busy}
-            onClick={closeForm}
-          >
-            Close
-          </button>
-        </div>
-        <div
-          style={{ ...hintStyle, whiteSpace: "pre-wrap" }}
-          data-testid="builder-tool-description"
+      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+        <span style={{ fontWeight: 700 }}>{tool.label}</span>
+        <span style={{ flex: 1 }} />
+        <button
+          type="button"
+          data-testid="builder-tool-close"
+          style={buttonStyle("default", busy)}
+          disabled={busy}
+          onClick={closeForm}
         >
-          {tool.description}
+          Close
+        </button>
+      </div>
+      <div style={{ ...hintStyle, whiteSpace: "pre-wrap" }} data-testid="builder-tool-description">
+        {tool.description}
+      </div>
+      <Fields
+        fields={fields}
+        values={values}
+        onChange={setValues}
+        ctx={ctx}
+        testPrefix="builder-tool-field"
+      />
+      {tool.apply === "new_document" && source && edits.length > 0 && (
+        <div
+          style={{ ...hintStyle, color: "var(--megane-warning-text, #b45309)" }}
+          data-testid="builder-tool-replaces"
+        >
+          The result replaces the open structure and its history.
         </div>
-        <Fields
-          fields={fields}
-          values={values}
-          onChange={setValues}
-          ctx={ctx}
-          testPrefix="builder-tool-field"
-        />
-        {tool.apply === "new_document" && source && edits.length > 0 && (
-          <div style={{ ...hintStyle, color: "#b45309" }} data-testid="builder-tool-replaces">
-            The result replaces the open structure and its history.
-          </div>
-        )}
-        {insertBlocked && (
-          <div style={{ ...hintStyle, color: "#b45309" }} data-testid="builder-tool-needs-document">
-            This tool adds atoms to the open structure; open or create one first.
-          </div>
-        )}
-        {busy && (
+      )}
+      {insertBlocked && (
+        <div
+          style={{ ...hintStyle, color: "var(--megane-warning-text, #b45309)" }}
+          data-testid="builder-tool-needs-document"
+        >
+          This tool adds atoms to the open structure; open or create one first.
+        </div>
+      )}
+      {busy && (
+        <div
+          style={{ display: "flex", flexDirection: "column", gap: 4 }}
+          data-testid="builder-tool-progress"
+        >
           <div
-            style={{ display: "flex", flexDirection: "column", gap: 4 }}
-            data-testid="builder-tool-progress"
+            style={{
+              height: 6,
+              borderRadius: 3,
+              background: "var(--megane-border, rgba(226,232,240,0.8))",
+              overflow: "hidden",
+            }}
           >
             <div
               style={{
-                height: 6,
-                borderRadius: 3,
-                background: "var(--megane-border, rgba(226,232,240,0.8))",
-                overflow: "hidden",
+                height: "100%",
+                width: `${Math.round((running?.fraction ?? 0.05) * 100)}%`,
+                background: "#3b82f6",
+                transition: "width 200ms",
               }}
-            >
-              <div
-                style={{
-                  height: "100%",
-                  width: `${Math.round((running?.fraction ?? 0.05) * 100)}%`,
-                  background: "#2563eb",
-                  transition: "width 200ms",
-                }}
-              />
-            </div>
-            <span style={hintStyle}>{running?.message ?? "Running…"}</span>
+            />
           </div>
-        )}
-        {(error || (problem && !busy)) && (
-          <div
-            data-testid="builder-tool-error"
-            role="alert"
-            style={{ ...hintStyle, color: error ? "#b91c1c" : "#b45309" }}
-          >
-            {error ?? problem}
-          </div>
-        )}
-        <div style={{ ...rowStyle, justifyContent: "flex-end" }}>
-          {busy ? (
-            <button
-              type="button"
-              data-testid="builder-tool-cancel"
-              style={buttonStyle("danger")}
-              onClick={cancel}
-            >
-              Cancel
-            </button>
-          ) : (
-            <button
-              type="button"
-              data-testid="builder-tool-run"
-              style={buttonStyle("primary", !!problem || insertBlocked)}
-              disabled={!!problem || insertBlocked}
-              onClick={() => void submit()}
-            >
-              Run
-            </button>
-          )}
+          <span style={hintStyle}>{running?.message ?? "Running…"}</span>
         </div>
+      )}
+      {(error || (problem && !busy)) && (
+        <div
+          data-testid="builder-tool-error"
+          role="alert"
+          style={{
+            ...hintStyle,
+            color: error
+              ? "var(--megane-danger-text, #b91c1c)"
+              : "var(--megane-warning-text, #b45309)",
+          }}
+        >
+          {error ?? problem}
+        </div>
+      )}
+      <div style={{ ...rowStyle, justifyContent: "flex-end" }}>
+        {busy ? (
+          <button
+            type="button"
+            data-testid="builder-tool-cancel"
+            style={buttonStyle("danger")}
+            onClick={cancel}
+          >
+            Cancel
+          </button>
+        ) : (
+          <button
+            type="button"
+            data-testid="builder-tool-run"
+            style={buttonStyle("primary", !!problem || insertBlocked)}
+            disabled={!!problem || insertBlocked}
+            onClick={() => void submit()}
+          >
+            Run
+          </button>
+        )}
       </div>
-    </div>,
-    document.body,
+    </div>
   );
 }
 

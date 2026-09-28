@@ -185,7 +185,7 @@ export function AtomMenu({ target, onClose }: { target: AtomMenuTarget; onClose:
             border: "none",
             borderRadius: 6,
             background: "transparent",
-            color: item.disabled ? "#94a3b8" : "inherit",
+            color: item.disabled ? "var(--megane-text-muted, #94a3b8)" : "inherit",
             cursor: item.disabled ? "default" : "pointer",
             fontFamily: "inherit",
           }}

@@ -111,7 +111,8 @@ test.describe("builder: webapp", () => {
     await expect(page.locator('[data-testid="builder-welcome"]')).toHaveCount(0);
     await waitForReady(page);
     expect(await builderState(page)).toMatchObject({ fileName: "untitled", nAtoms: 0, edge: 10 });
-    await expect(page.locator('[data-testid="builder-op-count"]')).toHaveText("0 edits");
+    // No edits yet: the info line shows just the name.
+    await expect(page.locator('[data-testid="builder-file-name"]')).toHaveText("untitled");
 
     // A real click on empty space: the camera framed the cell, so the pivot
     // sits at its centre and the atom lands inside the box.
@@ -148,24 +149,28 @@ test.describe("builder: webapp", () => {
     );
   });
 
-  test("Place starts a document with nothing open; the periodic table and the View menu", async ({
+  test("Place starts a document with nothing open; the periodic table and the theme", async ({
     page,
   }) => {
     const root = page.locator('[data-testid="megane-builder"]');
     const viewport = page.locator('[data-testid="viewer-root"]');
 
-    // Dark theme from the View menu: the 3D view's background follows.
+    // Dark theme from the rail's theme button (Light → Dark → Auto, as in
+    // the viewer): the 3D view's background follows.
     const corner = async () => {
       const png = PNG.sync.read(await viewport.screenshot());
       const i = (png.width * 4 + 4) * 4;
       return [png.data[i], png.data[i + 1], png.data[i + 2]];
     };
+    const theme = page.locator('[data-testid="builder-theme"]');
     expect(await corner()).toEqual([255, 255, 255]);
-    await page.locator('[data-testid="builder-view"]').click();
-    await page.locator('[data-testid="builder-theme-dark"]').click();
+    await theme.click();
+    await expect(theme).toHaveAttribute("aria-label", /current: Light$/);
+    await theme.click();
+    await expect(theme).toHaveAttribute("aria-label", /current: Dark$/);
     await expect.poll(corner).toEqual([0x0f, 0x17, 0x2a]);
-    await page.locator('[data-testid="builder-view"]').click();
-    await page.locator('[data-testid="builder-theme-light"]').click();
+    await theme.click();
+    await expect(theme).toHaveAttribute("aria-label", /current: Auto$/);
     await expect.poll(corner).toEqual([255, 255, 255]);
 
     // Nothing open: Insert › Molecule… still shows the gallery.
@@ -527,11 +532,6 @@ test.describe("builder: webapp", () => {
     page,
   }) => {
     const root = page.locator('[data-testid="megane-builder"]');
-    const crystal = page.locator('[data-testid="builder-crystal"]');
-    await expect(crystal).toBeVisible();
-    await expect(page.locator('[data-testid="builder-crystal-cell-summary"]')).toHaveText(
-      "No cell",
-    );
 
     // Bulk: the Cu fcc example in its conventional cell, from the File menu.
     await page.locator('[data-testid="builder-file"]').click();
@@ -544,7 +544,6 @@ test.describe("builder: webapp", () => {
     await expect(page.locator('[data-testid="builder-crystal-cell-summary"]')).toHaveText(
       "3.61 × 3.61 × 3.61 Å",
     );
-    await expect(page.locator('[data-testid="builder-statusbar"]')).toContainText("Cell");
 
     // Supercell 2×2×1 from the Structure menu: the dialog announces the count
     // and the view previews the result before the op is written.
@@ -637,9 +636,10 @@ test.describe("builder: webapp", () => {
     // (Water was placed with its centroid at the site + 2 Å, so the atoms are ~2 Å above.)
     expect(placed.translate[2]).toBeCloseTo(site[2] + 2, 3);
 
-    // Cell dialog (from the sidebar's cell card): the fields show the slab cell
+    // Structure › Set cell…: the form in the Details panel shows the slab cell
     // and setting a cell records the op.
-    await page.locator('[data-testid="builder-cell-edit"]').click();
+    await page.locator('[data-testid="builder-structure"]').click();
+    await page.locator('[data-testid="builder-structure-cell"]').click();
     await expect(page.locator('[data-testid="builder-cell-c"]')).toHaveValue(String(slabBox[8]));
     await page.locator('[data-testid="builder-cell-scale-atoms"]').uncheck();
     await page.locator('[data-testid="builder-cell-c"]').fill("30");
@@ -699,8 +699,8 @@ test.describe("builder: webapp", () => {
       "true",
     );
 
-    // A section opened by hand stays open across a reload: History starts
-    // closed for a document without edits, unless you opened it.
+    // A panel opened by hand stays open across a reload: History starts
+    // collapsed for a document without edits, unless you opened it.
     const reopen = async () => {
       await page.reload({ waitUntil: "domcontentloaded" });
       await page.setInputFiles('[data-testid="builder-open-input"]', "tests/fixtures/caffeine.sdf");
@@ -708,7 +708,7 @@ test.describe("builder: webapp", () => {
     };
     await reopen();
     await expect(page.locator('[data-testid="builder-undo"]')).toHaveCount(0);
-    await page.locator('[data-testid="builder-section-history-toggle"]').click();
+    await page.locator('[data-testid="panel-history-toggle"]').click();
     await expect(page.locator('[data-testid="builder-undo"]')).toBeVisible();
     await reopen();
     await expect(page.locator('[data-testid="builder-undo"]')).toBeVisible();

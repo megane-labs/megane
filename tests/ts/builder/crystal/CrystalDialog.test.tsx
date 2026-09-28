@@ -17,7 +17,7 @@ import {
   cellSummary,
   type CrystalDialogKind,
 } from "@/builder/crystal/CrystalDialog";
-import { CellCard } from "@/builder/crystal/CellCard";
+import { SymmetryOffer } from "@/builder/crystal/SymmetryOffer";
 import { structureMenuItems, type StructureMenuState } from "@/builder/crystal/structureMenu";
 import { hasCellBox, symmetryOpsAvailable } from "@/builder/crystal/structure";
 import type { MenuAction, MenuItem } from "@/builder/Menu";
@@ -405,24 +405,10 @@ describe("CrystalDialog — slab", () => {
   });
 });
 
-describe("CellCard", () => {
-  it("summarises the cell and opens the cell dialog", () => {
-    const onOpen = vi.fn();
-    render(<CellCard onOpen={onOpen} />);
-    expect(text("builder-crystal-cell-summary")).toBe("No cell");
-    expect(screen.queryByTestId("builder-cell-edit")).toBeNull();
-    act(() => cu(3.61));
-    expect(text("builder-crystal-cell-summary")).toBe("3.61 × 3.61 × 3.61 Å");
-    expect(text("builder-cell-edit")).toBe("Edit cell…");
-    click("builder-cell-edit");
-    expect(onOpen).toHaveBeenCalledWith("cell");
-    act(() => s().pushOp({ op: "set_cell", box: null }));
-    expect(text("builder-cell-edit")).toBe("Set cell…");
-  });
-
+describe("SymmetryOffer", () => {
   it("offers to expand a file's symmetry operations once", () => {
     s().openStructure(cif(), null, "nacl.cif");
-    render(<CellCard onOpen={vi.fn()} />);
+    render(<SymmetryOffer />);
     expect(text("builder-crystal-symmetry")).toContain("2 symmetry operations");
     click("builder-crystal-expand-symmetry");
     expect(edits()[0]).toMatchObject({ op: "expand_symmetry" });
@@ -437,7 +423,7 @@ describe("CellCard", () => {
 
   it("is quiet for files without symmetry operations", () => {
     cu(3.61);
-    render(<CellCard onOpen={vi.fn()} />);
+    render(<SymmetryOffer />);
     expect(screen.queryByTestId("builder-crystal-symmetry")).toBeNull();
   });
 });

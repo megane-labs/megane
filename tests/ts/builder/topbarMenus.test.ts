@@ -1,10 +1,10 @@
 /**
- * The File and View menus' item lists: what each entry is called, when it is
+ * The File menu's item list: what each entry is called, when it is
  * offered, and what it calls.
  */
 
 import { describe, it, expect, vi } from "vitest";
-import { fileMenuItems, viewMenuItems } from "@/builder/topbarMenus";
+import { fileMenuItems } from "@/builder/topbarMenus";
 import type { MenuAction, MenuItem } from "@/builder/Menu";
 
 const actions = (items: MenuItem[]) => items.filter((i): i is MenuAction => "onSelect" in i);
@@ -48,37 +48,5 @@ describe("fileMenuItems", () => {
     const { items } = make(false);
     expect(byId(items, "builder-save-pdb").disabled).toBe(true);
     expect(byId(items, "builder-open").disabled).toBeFalsy();
-  });
-});
-
-describe("viewMenuItems", () => {
-  const make = (hasCell: boolean) => {
-    const a = {
-      resetView: vi.fn(),
-      align: vi.fn(),
-      hasCell,
-      theme: "dark" as const,
-      setTheme: vi.fn(),
-    };
-    return { a, items: viewMenuItems(a) };
-  };
-
-  it("offers the lattice directions only with a cell", () => {
-    expect(byId(make(true).items, "builder-view-axis-+a")).toBeTruthy();
-    expect(byId(make(false).items, "builder-view-axis-+a")).toBeUndefined();
-    const { a, items } = make(false);
-    expect(byId(items, "builder-view-axis--x").label).toBe("Look along −x");
-    byId(items, "builder-view-axis--x").onSelect();
-    expect(a.align).toHaveBeenCalledWith("-x");
-    byId(items, "builder-view-reset").onSelect();
-    expect(a.resetView).toHaveBeenCalled();
-  });
-
-  it("ticks the current theme and switches it", () => {
-    const { a, items } = make(false);
-    expect(byId(items, "builder-theme-dark").label).toBe("✓\u2002Dark");
-    expect(byId(items, "builder-theme-light").label).toBe("\u2003\u2002Light");
-    byId(items, "builder-theme-system").onSelect();
-    expect(a.setTheme).toHaveBeenCalledWith("system");
   });
 });

@@ -1,17 +1,15 @@
 /**
- * The top of the sidebar: what you are looking at. With nothing selected it
- * describes the structure (formula, atoms, bonds, mass, and each element as a
- * chip that selects all its atoms); with a selection it describes the
- * selected atoms — each atom and its position, the distance, angle or
+ * The selection, in the Details panel: the selected atoms — each atom and its position, the distance, angle or
  * dihedral they span (2, 3 or 4 atoms, in the order they were picked), which
  * can be typed in to move the last atom's side — and offers what can be done
  * with them.
  */
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import { useBuilderStore, canEdit, shownSnapshot } from "./store";
 import { buttonStyle, hintStyle, inputStyle, rowStyle, sectionStyle } from "./styles";
 import { getAtomicMass, getElementSymbol } from "../constants";
+export { elementGroups } from "./elements";
 import { computeMeasurement } from "../renderer/Selection";
 import { formulaOf } from "./library/fragment";
 import { useLibraryActions } from "./library/ui";
@@ -38,111 +36,20 @@ const monoStyle: React.CSSProperties = {
   fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
 };
 
-/** Atom indices of each element, in Hill order (C, H, then alphabetical). */
-export function elementGroups(elements: ArrayLike<number>): { z: number; atoms: number[] }[] {
-  const byZ = new Map<number, number[]>();
-  for (let i = 0; i < elements.length; i++) {
-    const list = byZ.get(elements[i]) ?? [];
-    list.push(i);
-    byZ.set(elements[i], list);
-  }
-  const sym = (z: number) => getElementSymbol(z);
-  const rank = (z: number) => (z === 6 ? 0 : z === 1 && byZ.has(6) ? 1 : 2);
-  return [...byZ.entries()]
-    .sort(([a], [b]) => rank(a) - rank(b) || sym(a).localeCompare(sym(b)))
-    .map(([z, atoms]) => ({ z, atoms }));
+/** The structure's formula and molar mass, for the top info line. */
+export function structureSummary(shown: Snapshot): { formula: string; mass: number } {
+  let mass = 0;
+  for (let i = 0; i < shown.nAtoms; i++) mass += getAtomicMass(shown.elements[i]);
+  return { formula: formulaOf(shown.elements), mass };
 }
 
+/**
+ * The selected atoms, in the Details panel. With nothing selected it shows
+ * nothing: the structure's own summary is the info line over the view.
+ */
 export function Inspector() {
   const hasSelection = useBuilderStore((s) => s.selected.length > 0);
-  return hasSelection ? <SelectionInspector /> : <StructureInspector />;
-}
-
-function Stat({ label, value, testId }: { label: string; value: string; testId: string }) {
-  return (
-    <div
-      style={{
-        flex: 1,
-        minWidth: 0,
-        padding: "6px 8px",
-        borderRadius: 6,
-        border: "1px solid var(--megane-border-solid, #e2e8f0)",
-        background: "var(--megane-bg, #fff)",
-      }}
-    >
-      <div style={{ ...hintStyle, fontSize: 11 }}>{label}</div>
-      <div style={{ ...monoStyle, fontSize: 14 }} data-testid={testId}>
-        {value}
-      </div>
-    </div>
-  );
-}
-
-function StructureInspector() {
-  const source = useBuilderStore((s) => s.source);
-  const result = useBuilderStore((s) => s.result);
-  const showOriginal = useBuilderStore((s) => s.showOriginal);
-  const setSelected = useBuilderStore((s) => s.setSelected);
-  const shown = shownSnapshot({ source, result, showOriginal });
-
-  const summary = useMemo(() => {
-    if (!shown) return null;
-    let mass = 0;
-    for (let i = 0; i < shown.nAtoms; i++) mass += getAtomicMass(shown.elements[i]);
-    return {
-      formula: formulaOf(shown.elements),
-      mass,
-      groups: elementGroups(shown.elements),
-    };
-  }, [shown]);
-
-  if (!shown || !summary) return null;
-
-  return (
-    <div style={sectionStyle} data-testid="builder-inspector-structure">
-      <div style={{ ...rowStyle, justifyContent: "space-between" }}>
-        <span style={titleStyle}>Structure</span>
-        <span style={hintStyle}>nothing selected</span>
-      </div>
-      <div
-        data-testid="builder-inspector-formula"
-        style={{ ...monoStyle, fontSize: 18, wordBreak: "break-all" }}
-      >
-        {summary.formula || "—"}
-      </div>
-      <div style={{ display: "flex", gap: 6 }}>
-        <Stat label="Atoms" value={String(shown.nAtoms)} testId="builder-inspector-atoms" />
-        <Stat label="Bonds" value={String(shown.nBonds)} testId="builder-inspector-bonds" />
-        <Stat
-          label="Mass (g/mol)"
-          value={summary.mass.toFixed(2)}
-          testId="builder-inspector-mass"
-        />
-      </div>
-      {summary.groups.length > 0 && (
-        <>
-          <span style={hintStyle}>Elements — click to select all</span>
-          <div style={rowStyle}>
-            {summary.groups.map(({ z, atoms }) => (
-              <button
-                key={z}
-                type="button"
-                data-testid={`builder-inspector-element-${getElementSymbol(z)}`}
-                style={{ ...buttonStyle(), display: "inline-flex", gap: 6 }}
-                onClick={() => setSelected(atoms)}
-                title={`Select every ${getElementSymbol(z)} atom`}
-              >
-                {getElementSymbol(z)}
-                <span style={{ ...monoStyle, color: "var(--megane-text-secondary, #64748b)" }}>
-                  {atoms.length}
-                </span>
-              </button>
-            ))}
-          </div>
-        </>
-      )}
-    </div>
-  );
+  return hasSelection ? <SelectionInspector /> : null;
 }
 
 function position(shown: Snapshot, i: number): string {
@@ -189,11 +96,14 @@ function SelectionInspector() {
 
   return (
     <div
-      style={{ ...sectionStyle, borderColor: "rgba(37, 99, 235, 0.35)" }}
+      style={{ ...sectionStyle, borderColor: "rgba(59, 130, 246, 0.35)" }}
       data-testid="builder-selection"
     >
       <div style={{ ...rowStyle, justifyContent: "space-between", flexWrap: "nowrap" }}>
-        <span style={{ ...titleStyle, color: "#1d4ed8" }} data-testid="builder-selected-count">
+        <span
+          style={{ ...titleStyle, color: "var(--megane-primary-text, #2563eb)" }}
+          data-testid="builder-selected-count"
+        >
           {selected.length} atom{selected.length === 1 ? "" : "s"} selected
         </span>
         <button

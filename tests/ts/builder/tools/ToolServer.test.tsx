@@ -110,12 +110,14 @@ describe("Tools menu and Tool server dialog", () => {
     expect(screen.getByTestId("builder-tools-dialog")).toBeTruthy();
     change("builder-tools-url", "http://h:2/mcp");
     expect(useToolsStore.getState().url).toBe("http://h:2/mcp");
-    // Escape and a click on the backdrop both close it.
+    // A click inside the form keeps it; Escape and Close both close it.
+    fireEvent.click(screen.getByTestId("builder-tools-dialog"));
+    expect(screen.getByTestId("builder-tools-dialog")).toBeTruthy();
     fireEvent.keyDown(window, { key: "Escape" });
     expect(screen.queryByTestId("builder-tools-dialog")).toBeNull();
     click("builder-tools");
     click("builder-tools-server");
-    fireEvent.click(screen.getByTestId("builder-tools-dialog"));
+    click("builder-tools-dialog-close");
     expect(screen.queryByTestId("builder-tools-dialog")).toBeNull();
   });
 
@@ -277,6 +279,8 @@ describe("ToolDialog", () => {
     expect(screen.queryByTestId("builder-tool-needs-document")).toBeNull();
     expect(screen.getByTestId("builder-tool-field-document").textContent).toContain("1 atoms");
     fireEvent.click(screen.getByTestId("builder-tool-dialog"));
+    expect(screen.getByTestId("builder-tool-dialog")).toBeTruthy();
+    click("builder-tool-close");
     expect(screen.queryByTestId("builder-tool-dialog")).toBeNull();
 
     pick("liquid_box");
