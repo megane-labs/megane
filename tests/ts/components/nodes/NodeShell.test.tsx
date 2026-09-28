@@ -103,7 +103,7 @@ describe("NodeShell", () => {
     );
     const trajectoryHandle = screen.getByTestId("handle-source-trajectory");
     const particleHandle = screen.getByTestId("handle-source-particle");
-    expect(trajectoryHandle.style.background).toBe(toRgb("#cbd5e1"));
+    expect(trajectoryHandle.style.background).toBe("var(--megane-border-strong)");
     expect(particleHandle.style.background).toBe(toRgb(DATA_TYPE_COLORS.particle));
   });
 

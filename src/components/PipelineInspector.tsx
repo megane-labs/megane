@@ -62,17 +62,17 @@ const panelStyle: React.CSSProperties = {
   flexDirection: "column",
   gap: 12,
   fontSize: 13,
-  color: "var(--megane-text, #1e293b)",
+  color: "var(--megane-text)",
 };
 
 const sectionStyle: React.CSSProperties = {
-  border: "1px solid var(--megane-border-solid, #e2e8f0)",
+  border: "1px solid var(--megane-border-solid)",
   borderRadius: 8,
   padding: 10,
   display: "flex",
   flexDirection: "column",
   gap: 8,
-  background: "var(--megane-surface-solid, #fff)",
+  background: "var(--megane-surface-solid)",
 };
 
 const sectionTitleStyle: React.CSSProperties = {
@@ -80,16 +80,16 @@ const sectionTitleStyle: React.CSSProperties = {
   fontWeight: 700,
   letterSpacing: 0.4,
   textTransform: "uppercase",
-  color: "#64748b",
+  color: "var(--megane-text-secondary)",
 };
 
 const chipRowStyle: React.CSSProperties = { display: "flex", flexWrap: "wrap", gap: 6 };
 
 const selectStyle: React.CSSProperties = {
   fontSize: 13,
-  color: "#334155",
-  background: "#f1f5f9",
-  border: "1px solid #cbd5e1",
+  color: "var(--megane-text-body)",
+  background: "var(--megane-surface-muted)",
+  border: "1px solid var(--megane-border-strong)",
   borderRadius: 4,
   padding: "3px 6px",
 };
@@ -100,9 +100,9 @@ function chipStyle(active: boolean): React.CSSProperties {
     padding: "3px 9px",
     borderRadius: 999,
     cursor: "pointer",
-    border: active ? "1px solid #2563eb" : "1px solid #cbd5e1",
-    background: active ? "#2563eb" : "#f1f5f9",
-    color: active ? "#fff" : "#334155",
+    border: active ? "1px solid #2563eb" : "1px solid var(--megane-border-strong)",
+    background: active ? "#2563eb" : "var(--megane-surface-muted)",
+    color: active ? "#fff" : "var(--megane-text-body)",
     userSelect: "none",
   };
 }
@@ -281,7 +281,7 @@ export function PipelineInspector() {
   if (!facts) {
     return (
       <div style={panelStyle} data-testid="pipeline-inspector">
-        <div style={{ color: "#64748b", fontSize: 13 }}>
+        <div style={{ color: "var(--megane-text-secondary)", fontSize: 13 }}>
           Load a structure to start selecting atoms.
         </div>
       </div>
@@ -303,7 +303,7 @@ export function PipelineInspector() {
           </button>
         </div>
         {layers.length === 0 ? (
-          <div style={{ color: "#94a3b8", fontSize: 12 }}>
+          <div style={{ color: "var(--megane-text-muted)", fontSize: 12 }}>
             No selections yet — add one to color or restyle a subset of atoms.
           </div>
         ) : (
@@ -319,7 +319,7 @@ export function PipelineInspector() {
                   padding: "4px 6px",
                   borderRadius: 6,
                   cursor: "pointer",
-                  background: l.id === activeId ? "#e0e7ff" : "transparent",
+                  background: l.id === activeId ? "rgba(99, 102, 241, 0.15)" : "transparent",
                 }}
                 onClick={() => setActiveId(l.id)}
               >
@@ -328,7 +328,9 @@ export function PipelineInspector() {
                     width: 12,
                     height: 12,
                     borderRadius: 3,
-                    background: l.appearance.colorEnabled ? l.appearance.uniformColor : "#cbd5e1",
+                    background: l.appearance.colorEnabled
+                      ? l.appearance.uniformColor
+                      : "var(--megane-border-strong)",
                     flexShrink: 0,
                   }}
                 />
@@ -336,7 +338,7 @@ export function PipelineInspector() {
                 <code
                   style={{
                     fontSize: 10,
-                    color: "#64748b",
+                    color: "var(--megane-text-secondary)",
                     maxWidth: 120,
                     overflow: "hidden",
                     textOverflow: "ellipsis",
@@ -355,7 +357,7 @@ export function PipelineInspector() {
                     border: "none",
                     background: "none",
                     cursor: "pointer",
-                    color: "#94a3b8",
+                    color: "var(--megane-text-muted)",
                   }}
                   aria-label={`Delete ${l.name}`}
                 >
@@ -384,7 +386,9 @@ export function PipelineInspector() {
               </span>
               {pickedAtom && (
                 <>
-                  <span style={{ fontSize: 11, color: "#64748b" }}>Atom #{pickedAtom.index}:</span>
+                  <span style={{ fontSize: 11, color: "var(--megane-text-secondary)" }}>
+                    Atom #{pickedAtom.index}:
+                  </span>
                   <span
                     data-testid="inspector-quick-element"
                     style={chipStyle(false)}
@@ -414,7 +418,7 @@ export function PipelineInspector() {
               )}
             </div>
 
-            <div style={{ fontSize: 11, color: "#64748b" }}>Elements</div>
+            <div style={{ fontSize: 11, color: "var(--megane-text-secondary)" }}>Elements</div>
             <div style={chipRowStyle}>
               {facts.elements.map((e) => (
                 <span
@@ -435,7 +439,7 @@ export function PipelineInspector() {
 
             {facts.resnames.length > 0 && (
               <>
-                <div style={{ fontSize: 11, color: "#64748b" }}>Residues</div>
+                <div style={{ fontSize: 11, color: "var(--megane-text-secondary)" }}>Residues</div>
                 <div style={chipRowStyle}>
                   {facts.resnames.map((r) => (
                     <span
@@ -458,7 +462,7 @@ export function PipelineInspector() {
 
             {facts.chains.length > 0 && (
               <>
-                <div style={{ fontSize: 11, color: "#64748b" }}>Chains</div>
+                <div style={{ fontSize: 11, color: "var(--megane-text-secondary)" }}>Chains</div>
                 <div style={chipRowStyle}>
                   {facts.chains.map((c) => (
                     <span
@@ -480,7 +484,9 @@ export function PipelineInspector() {
             )}
 
             <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-              <label style={{ fontSize: 11, color: "#64748b" }}>Within (Å)</label>
+              <label style={{ fontSize: 11, color: "var(--megane-text-secondary)" }}>
+                Within (Å)
+              </label>
               <input
                 data-testid="inspector-within"
                 type="number"
@@ -495,11 +501,11 @@ export function PipelineInspector() {
                     regenerateFromChips(chipEls, chipRes, chipChains, e.target.value);
                 }}
               />
-              <span style={{ fontSize: 11, color: "#94a3b8" }}>of the above</span>
+              <span style={{ fontSize: 11, color: "var(--megane-text-muted)" }}>of the above</span>
             </div>
 
             {/* Raw expression (source of truth) */}
-            <div style={{ fontSize: 11, color: "#64748b" }}>Expression</div>
+            <div style={{ fontSize: 11, color: "var(--megane-text-secondary)" }}>Expression</div>
             <textarea
               data-testid="inspector-query"
               className="nodrag"
@@ -512,7 +518,7 @@ export function PipelineInspector() {
                 fontFamily: "monospace",
                 fontSize: 12,
                 resize: "vertical",
-                borderColor: queryValidation.valid ? "#cbd5e1" : "#ef4444",
+                borderColor: queryValidation.valid ? "var(--megane-border-strong)" : "#ef4444",
               }}
               onChange={(e) => {
                 setCustomQuery(true);
@@ -522,7 +528,11 @@ export function PipelineInspector() {
             <div style={{ display: "flex", justifyContent: "space-between", fontSize: 11 }}>
               <span
                 data-testid="inspector-selected-count"
-                style={{ color: queryValidation.valid ? "#059669" : "#ef4444" }}
+                style={{
+                  color: queryValidation.valid
+                    ? "var(--megane-success-text)"
+                    : "var(--megane-danger)",
+                }}
               >
                 {queryValidation.valid
                   ? selectedCount != null
@@ -568,7 +578,7 @@ export function PipelineInspector() {
                   style={{
                     width: 36,
                     height: 24,
-                    border: "1px solid #cbd5e1",
+                    border: "1px solid var(--megane-border-strong)",
                     borderRadius: 4,
                     padding: 0,
                   }}

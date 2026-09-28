@@ -393,7 +393,7 @@ const addBtnStyle: React.CSSProperties = {
   ...textBtnBase,
   background: "rgba(59, 130, 246, 0.08)",
   border: "1px solid rgba(59, 130, 246, 0.25)",
-  color: "#3b82f6",
+  color: "var(--megane-primary)",
 };
 
 const renderBtnStyle: React.CSSProperties = {
@@ -435,21 +435,21 @@ const shareBtnStyle: React.CSSProperties = {
   ...textBtnBase,
   background: "rgba(16, 185, 129, 0.08)",
   border: "1px solid rgba(16, 185, 129, 0.25)",
-  color: "#059669",
+  color: "var(--megane-success-text)",
 };
 
 const guideBtnStyle: React.CSSProperties = {
   ...textBtnBase,
   background: "rgba(100, 116, 139, 0.08)",
   border: "1px solid rgba(100, 116, 139, 0.3)",
-  color: "#64748b",
+  color: "var(--megane-text-secondary)",
 };
 
 const tutorialBtnStyle: React.CSSProperties = {
   ...textBtnBase,
   background: "rgba(59, 130, 246, 0.08)",
   border: "1px solid rgba(59, 130, 246, 0.3)",
-  color: "#1d4ed8",
+  color: "var(--megane-primary-text)",
 };
 
 const themeBtnStyle: React.CSSProperties = {
@@ -599,7 +599,7 @@ function PipelineEditorInner({
   const flowContainerRef = useRef<HTMLDivElement | null>(null);
   const importInputRef = useRef<HTMLInputElement | null>(null);
 
-  const { theme, setTheme } = useThemeStore();
+  const { theme, setTheme, resolvedTheme } = useThemeStore();
   const THEME_CYCLE: Theme[] = ["light", "dark", "system"];
   const THEME_LABELS: Record<Theme, string> = { light: "Light", dark: "Dark", system: "Auto" };
   const handleCycleTheme = useCallback(() => {
@@ -829,7 +829,7 @@ function PipelineEditorInner({
               <div key={group.category}>
                 <div style={{ ...groupHeaderStyle, color: NODE_CATEGORY_COLORS[group.category] }}>
                   {CATEGORY_ICONS[group.category]}
-                  <span style={{ color: "#94a3b8" }}>{group.label}</span>
+                  <span style={{ color: "var(--megane-text-muted)" }}>{group.label}</span>
                 </div>
                 {group.types.map((type) => (
                   <button
@@ -1000,7 +1000,7 @@ function PipelineEditorInner({
       style={{
         padding: "4px 10px",
         background: "rgba(16, 185, 129, 0.1)",
-        color: "#059669",
+        color: "var(--megane-success-text)",
         fontSize: 11,
         fontWeight: 500,
         borderBottom: "1px solid var(--megane-border)",
@@ -1080,12 +1080,17 @@ function PipelineEditorInner({
                 style: { stroke: "#94a3b8", strokeWidth: 3 },
               }}
               proOptions={{ hideAttribution: true }}
+              colorMode={resolvedTheme}
+              // xyflow's dark mode paints its own #141414 canvas; let the
+              // panel's themed surface show through instead.
+              style={{ background: "transparent" }}
             >
               <Background
                 variant={BackgroundVariant.Dots}
                 gap={16}
                 size={1}
                 color="var(--megane-border-solid)"
+                bgColor="transparent"
               />
               <MiniMap
                 style={{

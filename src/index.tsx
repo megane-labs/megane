@@ -33,31 +33,13 @@ import caffeineSDF from "../tests/fixtures/caffeine.sdf?raw";
 // emitted asset, not in the entry bundle every visitor downloads.
 import caffeineEspCubeUrl from "../tests/fixtures/caffeine_esp.cube?url";
 import "./styles/megane.css";
-import { useThemeStore } from "./stores/useThemeStore";
+import { ThemeSync } from "./components/ThemeSync";
 import { ErrorBoundary } from "./components/ErrorBoundary";
 import { initAnalytics, trackEvent, trackFileOpen } from "./analytics";
 
 import type { DataMode } from "./types";
 import type { StructureParseResult } from "./parsers/structure";
 export type { DataMode };
-
-/** Applies data-theme attribute to <html> and listens for OS preference changes. */
-function ThemeSync() {
-  const resolvedTheme = useThemeStore((s) => s.resolvedTheme);
-  const syncSystem = useThemeStore((s) => s._syncSystemTheme);
-
-  useEffect(() => {
-    document.documentElement.setAttribute("data-theme", resolvedTheme);
-  }, [resolvedTheme]);
-
-  useEffect(() => {
-    const mq = window.matchMedia("(prefers-color-scheme: dark)");
-    mq.addEventListener("change", syncSystem);
-    return () => mq.removeEventListener("change", syncSystem);
-  }, [syncSystem]);
-
-  return null;
-}
 
 /** Bundled fixtures for the templates that load more than one file. */
 const TEMPLATE_ASSETS: TemplateAssetSources = {

@@ -17,7 +17,9 @@ function ElementChoices({
   onToggle: (z: number) => void;
 }) {
   if (candidates.length === 0) {
-    return <div style={{ color: "#94a3b8", fontStyle: "italic" }}>None detected</div>;
+    return (
+      <div style={{ color: "var(--megane-text-muted)", fontStyle: "italic" }}>None detected</div>
+    );
   }
   const excludedSet = new Set(excluded);
   return (
@@ -110,7 +112,7 @@ export function CoordinationGeneratorNode({ id, data }: NodeProps<Node<PipelineN
             <option value="inside">Visible atoms only</option>
           </select>
         </label>
-        <div style={{ color: "#64748b", fontSize: 13, lineHeight: 1.3 }}>
+        <div style={{ color: "var(--megane-text-secondary)", fontSize: 13, lineHeight: 1.3 }}>
           Complete visible centers includes bonded neighbors just outside the drawing boundary.
         </div>
       </div>

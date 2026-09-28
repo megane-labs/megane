@@ -49,15 +49,15 @@ export function MeasurementPanel({
         position: "absolute",
         bottom,
         right: 12,
-        background: "rgba(255, 255, 255, 0.92)",
+        background: "var(--megane-surface)",
         backdropFilter: "blur(16px)",
         WebkitBackdropFilter: "blur(16px)",
         borderRadius: 10,
         padding: "12px 16px",
         fontSize: 13,
-        color: "#1e293b",
+        color: "var(--megane-text)",
         boxShadow: "0 4px 16px rgba(0,0,0,0.06)",
-        border: "1px solid rgba(226,232,240,0.6)",
+        border: "1px solid var(--megane-border)",
         zIndex: 15,
         minWidth: 180,
       }}
@@ -97,7 +97,7 @@ export function MeasurementPanel({
               background: "none",
               border: "none",
               cursor: "pointer",
-              color: "#3b82f6",
+              color: "var(--megane-primary)",
               fontSize: 12,
               fontWeight: 500,
               padding: "2px 4px",
@@ -107,7 +107,7 @@ export function MeasurementPanel({
           </button>
         </div>
       </div>
-      <div style={{ marginBottom: 6, fontSize: 12, color: "#64748b" }}>
+      <div style={{ marginBottom: 6, fontSize: 12, color: "var(--megane-text-secondary)" }}>
         {selection.atoms.map((idx, i) => (
           <span key={idx}>
             {i > 0 && " — "}
@@ -120,16 +120,16 @@ export function MeasurementPanel({
         <div
           style={{
             padding: "6px 0",
-            borderTop: "1px solid #e2e8f0",
+            borderTop: "1px solid var(--megane-border-solid)",
             fontSize: 14,
             fontWeight: 600,
-            color: "#3b82f6",
+            color: "var(--megane-primary)",
           }}
         >
           {MEASUREMENT_LABELS[measurement.type]}: {measurement.label}
         </div>
       )}
-      <div style={{ fontSize: 11, color: "#94a3b8", marginTop: 4 }}>
+      <div style={{ fontSize: 11, color: "var(--megane-text-muted)", marginTop: 4 }}>
         Right-click atoms to select (max 4)
       </div>
     </div>

@@ -187,11 +187,11 @@ describe("LoadStructureNode", () => {
     const cellHandle = screen.getByTestId("handle-source-cell");
     const particleHandle = screen.getByTestId("handle-source-particle");
 
-    // Disabled handles use the slate-300 gray (#cbd5e1 → rgb(203, 213, 225))
-    expect(trajectoryHandle.style.background).toBe("rgb(203, 213, 225)");
-    expect(cellHandle.style.background).toBe("rgb(203, 213, 225)");
+    // Disabled handles use the theme-aware disabled gray
+    expect(trajectoryHandle.style.background).toBe("var(--megane-border-strong)");
+    expect(cellHandle.style.background).toBe("var(--megane-border-strong)");
     // Particle handle remains its data-type color
-    expect(particleHandle.style.background).not.toBe("rgb(203, 213, 225)");
+    expect(particleHandle.style.background).not.toBe("var(--megane-border-strong)");
   });
 
   it("enables trajectory handle when hasTrajectory is true", () => {
@@ -201,7 +201,7 @@ describe("LoadStructureNode", () => {
     });
     render(<LoadStructureNode {...nodeProps("ls1", seeded.data.params as LoadStructureParams)} />);
     const trajectoryHandle = screen.getByTestId("handle-source-trajectory");
-    expect(trajectoryHandle.style.background).not.toBe("rgb(203, 213, 225)");
+    expect(trajectoryHandle.style.background).not.toBe("var(--megane-border-strong)");
   });
 
   // An edit history (Builder document, chat, builder script) rides on this

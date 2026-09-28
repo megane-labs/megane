@@ -42,11 +42,11 @@ export function StreamingNode({ id, data }: NodeProps<Node<PipelineNodeData>>) {
             {connected ? "Connected" : "Disconnected"}
           </span>
         </div>
-        <div style={{ fontSize: 11, color: "#94a3b8", fontStyle: "italic" }}>
+        <div style={{ fontSize: 11, color: "var(--megane-text-muted)", fontStyle: "italic" }}>
           WebSocket: same origin /ws
         </div>
         {hasSnapshot && (
-          <div style={{ fontSize: 11, color: "#64748b", marginTop: 4 }}>
+          <div style={{ fontSize: 11, color: "var(--megane-text-secondary)", marginTop: 4 }}>
             {nodeStreamingData!.snapshot.nAtoms} atoms
             {hasBond && `, ${nodeStreamingData!.snapshot.nBonds} bonds`}
             {hasTrajectory && `, ${nodeStreamingData!.streamProvider!.meta.nFrames} frames`}

@@ -19,30 +19,30 @@ const inputStyle: React.CSSProperties = {
   padding: "7px 10px",
   fontSize: 19,
   fontFamily: "monospace",
-  border: "1px solid #e2e8f0",
+  border: "1px solid var(--megane-border-solid)",
   borderRadius: 7,
   outline: "none",
-  background: "#f8fafc",
-  color: "#1e293b",
+  background: "var(--megane-surface-solid)",
+  color: "var(--megane-text)",
   boxSizing: "border-box",
 };
 
 const inputErrorStyle: React.CSSProperties = {
   ...inputStyle,
   borderColor: "#ef4444",
-  background: "#fef2f2",
+  background: "rgba(239, 68, 68, 0.08)",
 };
 
 const errorStyle: React.CSSProperties = {
   fontSize: 17,
-  color: "#ef4444",
+  color: "var(--megane-danger)",
   marginTop: 7,
   lineHeight: 1.3,
 };
 
 const hintStyle: React.CSSProperties = {
   fontSize: 15,
-  color: "#94a3b8",
+  color: "var(--megane-text-muted)",
   marginTop: 7,
   lineHeight: 1.3,
 };

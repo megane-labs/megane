@@ -26,9 +26,9 @@ interface NodeShellProps {
 }
 
 const nodeStyle: React.CSSProperties = {
-  background: "rgba(255, 255, 255, 0.95)",
+  background: "var(--megane-surface)",
   backdropFilter: "blur(8px)",
-  border: "1px solid #e2e8f0",
+  border: "1px solid var(--megane-border-solid)",
   borderRadius: 14,
   minWidth: 340,
   maxWidth: 420,
@@ -46,14 +46,14 @@ const headerStyle: React.CSSProperties = {
   alignItems: "center",
   justifyContent: "space-between",
   padding: "10px 17px",
-  borderBottom: "1px solid #e2e8f0",
+  borderBottom: "1px solid var(--megane-border-solid)",
   gap: 10,
 };
 
 const titleStyle: React.CSSProperties = {
   fontWeight: 600,
   fontSize: 19,
-  color: "#1e293b",
+  color: "var(--megane-text)",
   letterSpacing: "-0.02em",
   flex: 1,
 };
@@ -63,7 +63,7 @@ const iconBtnStyle: React.CSSProperties = {
   border: "none",
   cursor: "pointer",
   fontSize: 19,
-  color: "#94a3b8",
+  color: "var(--megane-text-muted)",
   padding: "3px 7px",
   lineHeight: 1,
 };
@@ -75,14 +75,14 @@ const bodyStyle: React.CSSProperties = {
 const baseHandleStyle: React.CSSProperties = {
   width: 14,
   height: 14,
-  border: "3px solid white",
+  border: "3px solid var(--megane-surface-raised)",
   boxShadow: "0 0 3px rgba(0,0,0,0.2)",
 };
 
 const handleLabelStyle: React.CSSProperties = {
   position: "absolute",
   fontSize: 14,
-  color: "#94a3b8",
+  color: "var(--megane-text-muted)",
   whiteSpace: "nowrap",
   pointerEvents: "none",
 };
@@ -108,8 +108,8 @@ const tooltipStyle: React.CSSProperties = {
   position: "absolute",
   top: "calc(100% + 8px)",
   right: 0,
-  background: "white",
-  border: "1px solid #e2e8f0",
+  background: "var(--megane-surface-raised)",
+  border: "1px solid var(--megane-border-solid)",
   borderRadius: 8,
   boxShadow: "0 4px 12px rgba(0,0,0,0.12)",
   padding: "8px 12px",
@@ -118,7 +118,7 @@ const tooltipStyle: React.CSSProperties = {
   maxWidth: 300,
   fontSize: 13,
   lineHeight: 1.4,
-  color: "#334155",
+  color: "var(--megane-text-body)",
   pointerEvents: "none",
 };
 
@@ -167,7 +167,7 @@ function ErrorIndicator({ errors }: { errors: NodeError[] }) {
 }
 
 function getHandleColor(port: PortDefinition, disabled?: boolean): string {
-  if (disabled) return "#cbd5e1"; // slate-300 gray
+  if (disabled) return "var(--megane-border-strong)";
   return DATA_TYPE_COLORS[port.dataType];
 }
 
@@ -190,7 +190,7 @@ export function NodeShell({ id, nodeType, enabled, children, disabledPorts }: No
 
   const hasError = errors.some((e) => e.severity === "error");
   const hasWarning = errors.length > 0 && !hasError;
-  const borderColor = hasError ? "#ef4444" : hasWarning ? "#f59e0b" : "#e2e8f0";
+  const borderColor = hasError ? "#ef4444" : hasWarning ? "#f59e0b" : "var(--megane-border-solid)";
 
   const containerStyle: React.CSSProperties = {
     ...(enabled ? nodeStyle : disabledStyle),
@@ -227,7 +227,7 @@ export function NodeShell({ id, nodeType, enabled, children, disabledPorts }: No
                 top: -22,
                 left: "50%",
                 transform: "translateX(-50%)",
-                color: isDisabled ? "#cbd5e1" : "#94a3b8",
+                color: isDisabled ? "var(--megane-text-faint)" : "var(--megane-text-muted)",
               }}
             >
               {port.label}
@@ -245,7 +245,7 @@ export function NodeShell({ id, nodeType, enabled, children, disabledPorts }: No
             width: 48,
             height: 24,
             borderRadius: 12,
-            background: enabled ? "#3b82f6" : "#cbd5e1",
+            background: enabled ? "#3b82f6" : "var(--megane-border-strong)",
             position: "relative",
             cursor: "pointer",
             transition: "background 0.15s",
@@ -258,7 +258,7 @@ export function NodeShell({ id, nodeType, enabled, children, disabledPorts }: No
               width: 18,
               height: 18,
               borderRadius: "50%",
-              background: "white",
+              background: "#ffffff",
               position: "absolute",
               top: 3,
               left: enabled ? 27 : 3,
@@ -295,7 +295,7 @@ export function NodeShell({ id, nodeType, enabled, children, disabledPorts }: No
                 bottom: -22,
                 left: "50%",
                 transform: "translateX(-50%)",
-                color: isDisabled ? "#cbd5e1" : "#94a3b8",
+                color: isDisabled ? "var(--megane-text-faint)" : "var(--megane-text-muted)",
               }}
             >
               {port.label}

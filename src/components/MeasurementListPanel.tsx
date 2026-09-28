@@ -57,12 +57,14 @@ function MeasurementRow({ id, name, type, label, atoms, hidden, elements }: RowP
       data-measurement-id={id}
       style={{
         padding: "6px 0",
-        borderBottom: "1px solid #e2e8f0",
+        borderBottom: "1px solid var(--megane-border-solid)",
         opacity: hidden ? 0.45 : 1,
       }}
     >
       <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
-        <span style={{ fontSize: 14, minWidth: 18, color: "#3b82f6" }}>{TYPE_ICON[type]}</span>
+        <span style={{ fontSize: 14, minWidth: 18, color: "var(--megane-primary)" }}>
+          {TYPE_ICON[type]}
+        </span>
         {editing ? (
           <input
             data-testid="measurement-rename-input"
@@ -102,7 +104,7 @@ function MeasurementRow({ id, name, type, label, atoms, hidden, elements }: RowP
         )}
         <span
           data-testid="measurement-value"
-          style={{ fontSize: 12, color: "#3b82f6", fontWeight: 600, marginRight: 4 }}
+          style={{ fontSize: 12, color: "var(--megane-primary)", fontWeight: 600, marginRight: 4 }}
         >
           {label}
         </span>
@@ -129,14 +131,16 @@ function MeasurementRow({ id, name, type, label, atoms, hidden, elements }: RowP
             border: "none",
             cursor: "pointer",
             fontSize: 12,
-            color: "#ef4444",
+            color: "var(--megane-danger)",
             padding: 2,
           }}
         >
           ✕
         </button>
       </div>
-      <div style={{ fontSize: 11, color: "#94a3b8", marginLeft: 22 }}>{atomLabels}</div>
+      <div style={{ fontSize: 11, color: "var(--megane-text-muted)", marginLeft: 22 }}>
+        {atomLabels}
+      </div>
     </div>
   );
 }
@@ -164,15 +168,15 @@ export function MeasurementListPanel({
         position: "absolute",
         bottom,
         left: 12,
-        background: "rgba(255, 255, 255, 0.92)",
+        background: "var(--megane-surface)",
         backdropFilter: "blur(16px)",
         WebkitBackdropFilter: "blur(16px)",
         borderRadius: 10,
         padding: "12px 14px",
         fontSize: 13,
-        color: "#1e293b",
+        color: "var(--megane-text)",
         boxShadow: "0 4px 16px rgba(0,0,0,0.06)",
-        border: "1px solid rgba(226,232,240,0.6)",
+        border: "1px solid var(--megane-border)",
         zIndex: 15,
         minWidth: 220,
         maxWidth: 300,
@@ -196,7 +200,7 @@ export function MeasurementListPanel({
             background: "none",
             border: "none",
             cursor: "pointer",
-            color: "#94a3b8",
+            color: "var(--megane-text-muted)",
             fontSize: 11,
             padding: "2px 4px",
           }}
@@ -217,11 +221,11 @@ export function MeasurementListPanel({
             flex: 1,
             fontSize: 11,
             padding: "4px 0",
-            background: "#f1f5f9",
-            border: "1px solid #cbd5e1",
+            background: "var(--megane-surface-muted)",
+            border: "1px solid var(--megane-border-strong)",
             borderRadius: 4,
             cursor: "pointer",
-            color: "#374151",
+            color: "var(--megane-text-body)",
           }}
         >
           CSV
@@ -233,11 +237,11 @@ export function MeasurementListPanel({
             flex: 1,
             fontSize: 11,
             padding: "4px 0",
-            background: "#f1f5f9",
-            border: "1px solid #cbd5e1",
+            background: "var(--megane-surface-muted)",
+            border: "1px solid var(--megane-border-strong)",
             borderRadius: 4,
             cursor: "pointer",
-            color: "#374151",
+            color: "var(--megane-text-body)",
           }}
         >
           JSON

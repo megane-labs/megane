@@ -84,7 +84,7 @@ export function LoadTrajectoryNode({ id, data }: NodeProps<Node<PipelineNodeData
         ) : (
           <div
             data-testid="load-trajectory-filename"
-            style={{ fontSize: 20, color: "#94a3b8", fontStyle: "italic" }}
+            style={{ fontSize: 20, color: "var(--megane-text-muted)", fontStyle: "italic" }}
           >
             No trajectory loaded
           </div>

@@ -8,7 +8,7 @@ import { useMeganeLocal } from "@megane/hooks/useMeganeLocal";
 import { usePipelineStore } from "@megane/pipeline/store";
 import { capturePipelineStore, type PipelineStoreSnapshot } from "@megane/pipeline/storeSnapshot";
 import { useTour } from "@megane/tour/useTour";
-import { useThemeStore } from "@megane/stores/useThemeStore";
+import { ThemeSync } from "@megane/components/ThemeSync";
 import { usePlaybackStore } from "@megane/stores/usePlaybackStore";
 import "@megane/styles/megane.css";
 import { ensureWasmUrl } from "./wasmLoader";
@@ -42,23 +42,6 @@ interface DocBodyProps {
 }
 
 type LoadState = "loading" | "ready" | { error: string };
-
-function ThemeSync() {
-  const resolvedTheme = useThemeStore((s) => s.resolvedTheme);
-  const syncSystem = useThemeStore((s) => s._syncSystemTheme);
-
-  useEffect(() => {
-    document.documentElement.setAttribute("data-theme", resolvedTheme);
-  }, [resolvedTheme]);
-
-  useEffect(() => {
-    const mq = window.matchMedia("(prefers-color-scheme: dark)");
-    mq.addEventListener("change", syncSystem);
-    return () => mq.removeEventListener("change", syncSystem);
-  }, [syncSystem]);
-
-  return null;
-}
 
 function DocBody({
   context,

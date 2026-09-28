@@ -78,13 +78,15 @@ export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundarySt
           padding: "24px",
           gap: "10px",
           textAlign: "center",
-          background: "var(--megane-bg, #ffffff)",
+          background: "var(--megane-bg)",
         }}
       >
-        <div style={{ fontWeight: 700, fontSize: "15px", color: "#ef4444" }}>{title}</div>
+        <div style={{ fontWeight: 700, fontSize: "15px", color: "var(--megane-danger)" }}>
+          {title}
+        </div>
         <div
           style={{
-            color: "var(--megane-text-secondary, #64748b)",
+            color: "var(--megane-text-secondary)",
             fontSize: "13px",
             maxWidth: "440px",
             lineHeight: 1.5,
@@ -94,7 +96,7 @@ export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundarySt
         </div>
         <div
           style={{
-            color: "var(--megane-text-secondary, #64748b)",
+            color: "var(--megane-text-secondary)",
             fontSize: "12px",
             maxWidth: "440px",
             wordBreak: "break-word",

@@ -122,7 +122,7 @@ const containerStyle: React.CSSProperties = {
   minHeight: 0,
   display: "flex",
   flexDirection: "column",
-  background: "rgba(248, 250, 252, 0.95)",
+  background: "var(--megane-surface)",
 };
 
 const messagesAreaStyle: React.CSSProperties = {
@@ -147,14 +147,14 @@ const inputRowStyle: React.CSSProperties = {
 const textareaStyle: React.CSSProperties = {
   flex: 1,
   resize: "none",
-  border: "1px solid #e2e8f0",
+  border: "1px solid var(--megane-border-solid)",
   borderRadius: 6,
   padding: "6px 8px",
   fontSize: 11,
   fontFamily: "inherit",
   lineHeight: 1.5,
   outline: "none",
-  background: "white",
+  background: "var(--megane-surface-raised)",
   minHeight: 95,
   maxHeight: 160,
 };
@@ -167,7 +167,7 @@ const sendBtnStyle: React.CSSProperties = {
   cursor: "pointer",
   fontSize: 11,
   fontWeight: 600,
-  color: "#3b82f6",
+  color: "var(--megane-primary)",
   whiteSpace: "nowrap",
 };
 
@@ -179,7 +179,7 @@ const cancelBtnStyle: React.CSSProperties = {
   cursor: "pointer",
   fontSize: 11,
   fontWeight: 600,
-  color: "#ef4444",
+  color: "var(--megane-danger)",
   whiteSpace: "nowrap",
 };
 
@@ -190,14 +190,14 @@ const gearBtnStyle: React.CSSProperties = {
   padding: "6px 8px",
   cursor: "pointer",
   fontSize: 13,
-  color: "#64748b",
+  color: "var(--megane-text-secondary)",
   lineHeight: 1,
 };
 
 const configPanelStyle: React.CSSProperties = {
   padding: "8px 10px",
-  borderTop: "1px solid rgba(226,232,240,0.6)",
-  background: "rgba(241, 245, 249, 0.95)",
+  borderTop: "1px solid var(--megane-border)",
+  background: "var(--megane-surface)",
   display: "flex",
   flexDirection: "column",
   gap: 6,
@@ -213,28 +213,30 @@ const configRowStyle: React.CSSProperties = {
 const configLabelStyle: React.CSSProperties = {
   width: 60,
   fontWeight: 600,
-  color: "#475569",
+  color: "var(--megane-text-body)",
   fontSize: 11,
   flexShrink: 0,
 };
 
 const configSelectStyle: React.CSSProperties = {
   flex: 1,
-  border: "1px solid #e2e8f0",
+  border: "1px solid var(--megane-border-solid)",
   borderRadius: 4,
   padding: "3px 6px",
   fontSize: 11,
-  background: "white",
+  background: "var(--megane-surface-raised)",
+  color: "var(--megane-text)",
   outline: "none",
 };
 
 const configInputStyle: React.CSSProperties = {
   flex: 1,
-  border: "1px solid #e2e8f0",
+  border: "1px solid var(--megane-border-solid)",
   borderRadius: 4,
   padding: "3px 6px",
   fontSize: 11,
-  background: "white",
+  background: "var(--megane-surface-raised)",
+  color: "var(--megane-text)",
   outline: "none",
   fontFamily: "monospace",
 };
@@ -242,7 +244,7 @@ const configInputStyle: React.CSSProperties = {
 const userMsgStyle: React.CSSProperties = {
   alignSelf: "flex-end",
   background: "rgba(59, 130, 246, 0.1)",
-  color: "#1e40af",
+  color: "var(--megane-primary-text)",
   borderRadius: "8px 8px 2px 8px",
   padding: "4px 8px",
   maxWidth: "85%",
@@ -252,7 +254,7 @@ const userMsgStyle: React.CSSProperties = {
 const assistantMsgStyle: React.CSSProperties = {
   alignSelf: "flex-start",
   background: "rgba(100, 116, 139, 0.08)",
-  color: "#334155",
+  color: "var(--megane-text-body)",
   borderRadius: "8px 8px 8px 2px",
   padding: "4px 8px",
   maxWidth: "85%",
@@ -262,7 +264,7 @@ const assistantMsgStyle: React.CSSProperties = {
 const errorMsgStyle: React.CSSProperties = {
   alignSelf: "flex-start",
   background: "rgba(239, 68, 68, 0.08)",
-  color: "#dc2626",
+  color: "var(--megane-danger-text)",
   borderRadius: "8px 8px 8px 2px",
   padding: "4px 8px",
   maxWidth: "85%",
@@ -272,7 +274,7 @@ const errorMsgStyle: React.CSSProperties = {
 const successMsgStyle: React.CSSProperties = {
   alignSelf: "flex-start",
   background: "rgba(16, 185, 129, 0.08)",
-  color: "#059669",
+  color: "var(--megane-success-text)",
   borderRadius: "8px 8px 8px 2px",
   padding: "4px 8px",
   maxWidth: "85%",
@@ -500,11 +502,13 @@ export function PipelineChatBox({ onPipelineApplied }: { onPipelineApplied?: () 
                 checked={useOwnKey}
                 onChange={(e) => setUseOwnKey(e.target.checked)}
               />
-              <span style={{ color: "#475569" }}>Use my own API key</span>
+              <span style={{ color: "var(--megane-text-body)" }}>Use my own API key</span>
             </label>
           )}
           {useDemo ? (
-            <div style={{ color: "#64748b", fontSize: 11, fontStyle: "italic" }}>
+            <div
+              style={{ color: "var(--megane-text-secondary)", fontSize: 11, fontStyle: "italic" }}
+            >
               The free demo runs through megane&apos;s shared proxy — no API key needed. It uses a
               rate-limited free-tier model, so responses may be slower or lower quality than your
               own API key.
@@ -619,7 +623,7 @@ export function PipelineChatBox({ onPipelineApplied }: { onPipelineApplied?: () 
           style={{
             ...gearBtnStyle,
             background: showConfig ? "rgba(59, 130, 246, 0.1)" : gearBtnStyle.background,
-            color: showConfig ? "#3b82f6" : gearBtnStyle.color,
+            color: showConfig ? "var(--megane-primary)" : gearBtnStyle.color,
           }}
           title="AI Settings"
         >

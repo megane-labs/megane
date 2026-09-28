@@ -12,7 +12,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { WidgetViewer } from "./components/WidgetViewer";
 import { ErrorBoundary } from "./components/ErrorBoundary";
 import { perfMark, perfMeasure } from "./perf";
-import { useThemeStore } from "./stores/useThemeStore";
+import { installThemeSync } from "./stores/useThemeStore";
 import {
   decodeSnapshot,
   decodeFrame,
@@ -42,14 +42,9 @@ function render({ model, el }: { model: AnyWidgetModel; el: HTMLElement }) {
   container.style.overflow = "hidden";
   el.appendChild(container);
 
-  // Apply initial theme to document root (system preference detection)
-  const { resolvedTheme, _syncSystemTheme } = useThemeStore.getState();
-  document.documentElement.setAttribute("data-theme", resolvedTheme);
-  const mq =
-    typeof window !== "undefined" && typeof window.matchMedia === "function"
-      ? window.matchMedia("(prefers-color-scheme: dark)")
-      : null;
-  mq?.addEventListener("change", _syncSystemTheme);
+  // Colour tokens + data-theme on the document root, following the notebook
+  // host's theme (JupyterLab / VSCode) or the OS preference.
+  const uninstallThemeSync = installThemeSync();
 
   let root: Root | null = null;
   let currentSnapshot: Snapshot | null = null;
@@ -209,7 +204,7 @@ function render({ model, el }: { model: AnyWidgetModel; el: HTMLElement }) {
   return () => {
     disposed = true;
     ro.disconnect();
-    mq?.removeEventListener("change", _syncSystemTheme);
+    uninstallThemeSync();
     root?.unmount();
     root = null;
   };

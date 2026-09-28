@@ -72,7 +72,7 @@ export function LoadSpectrumNode({ id, data }: NodeProps<Node<PipelineNodeData>>
         ) : (
           <div
             data-testid="load-spectrum-filename"
-            style={{ fontSize: 20, color: "#94a3b8", fontStyle: "italic" }}
+            style={{ fontSize: 20, color: "var(--megane-text-muted)", fontStyle: "italic" }}
           >
             No spectrum loaded
           </div>
@@ -80,7 +80,7 @@ export function LoadSpectrumNode({ id, data }: NodeProps<Node<PipelineNodeData>>
         {params.fileName && !spectrum && (
           <div
             data-testid="load-spectrum-error"
-            style={{ fontSize: 14, color: "#ef4444", marginTop: 4 }}
+            style={{ fontSize: 14, color: "var(--megane-danger)", marginTop: 4 }}
           >
             {params.parseError ?? "Parse error — check file format"}
           </div>
@@ -88,7 +88,7 @@ export function LoadSpectrumNode({ id, data }: NodeProps<Node<PipelineNodeData>>
         {spectrum && (
           <div
             data-testid="load-spectrum-summary"
-            style={{ fontSize: 13, color: "#64748b", marginTop: 4 }}
+            style={{ fontSize: 13, color: "var(--megane-text-secondary)", marginTop: 4 }}
           >
             {spectrum.dataType || "spectrum"} · {spectrum.x.length} points
             {spectrum.xUnits ? ` · ${spectrum.xUnits}` : ""}

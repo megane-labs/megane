@@ -18,15 +18,15 @@ const rowStyle: React.CSSProperties = {
   justifyContent: "space-between",
   fontSize: 17,
   fontWeight: 500,
-  color: "#64748b",
+  color: "var(--megane-text-secondary)",
   padding: "3px 0",
 };
 
 const selectStyle: React.CSSProperties = {
   fontSize: 14,
-  color: "#334155",
-  background: "#f1f5f9",
-  border: "1px solid #cbd5e1",
+  color: "var(--megane-text-body)",
+  background: "var(--megane-surface-muted)",
+  border: "1px solid var(--megane-border-strong)",
   borderRadius: 4,
   padding: "3px 6px",
   cursor: "pointer",

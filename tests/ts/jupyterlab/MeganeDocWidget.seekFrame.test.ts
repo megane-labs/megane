@@ -9,7 +9,7 @@ vi.mock("@megane/pipeline/store", () => ({
 }));
 vi.mock("@megane/pipeline/storeSnapshot", () => ({ capturePipelineStore: vi.fn(() => ({})) }));
 vi.mock("@megane/tour/useTour", () => ({ useTour: vi.fn() }));
-vi.mock("@megane/stores/useThemeStore", () => ({ useThemeStore: vi.fn(() => ({})) }));
+vi.mock("@megane/components/ThemeSync", () => ({ ThemeSync: vi.fn(() => null) }));
 vi.mock("@megane/styles/megane.css", () => ({}));
 vi.mock("../../../jupyterlab-megane/src/wasmLoader", () => ({ ensureWasmUrl: vi.fn() }));
 vi.mock("../../../jupyterlab-megane/src/filetypes", () => ({
