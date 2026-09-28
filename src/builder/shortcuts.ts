@@ -24,7 +24,7 @@ export type ShortcutAction =
   | { kind: "save" }
   | { kind: "reset_view" };
 
-/** The key that selects each tool, shown in the sidebar and tooltips. */
+/** The key that selects each tool, shown on the rail and in tooltips. */
 export const TOOL_KEYS: Record<BuildTool, string> = {
   select: "S",
   add: "A",
@@ -164,9 +164,9 @@ export function useBuilderShortcuts(api: StoreApi<BuilderStore>, host: ShortcutH
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.defaultPrevented || e.repeat) return;
       if (isTypingTarget(e.target)) return;
-      // A modal dialog (the sketcher, the new-structure form) owns the
-      // keyboard; the panels over the view (a Structure dialog, the Place
-      // gallery) do not, so the tool keys keep working beside them.
+      // A modal dialog (the Ketcher sketcher) owns the keyboard; the forms in
+      // the Details panel (a Structure dialog, a new document, a Python tool,
+      // the Place gallery) do not, so the tool keys keep working beside them.
       if (document.querySelector('[role="dialog"][aria-modal="true"]')) return;
       const action = resolveShortcut(e);
       if (!action) return;

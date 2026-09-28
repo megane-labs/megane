@@ -1,5 +1,6 @@
 /**
- * Inline styles shared by the Builder's panels (sidebar, library, dialogs).
+ * Inline styles shared by the Builder's panels (Details, History, library,
+ * forms).
  *
  * Three kinds of control, each with its own look, so a glance tells what a
  * click does: a *segment* picks one of a set (tools, tabs), a *toggle* turns
@@ -158,3 +159,21 @@ export function buttonStyle(
       };
   }
 }
+
+/**
+ * A form in the Details panel: what a button on the left opened (a Structure
+ * operation, a Python tool, a new document). It sits in the panel's column
+ * rather than floating over the view.
+ */
+export const detailCardStyle: React.CSSProperties = {
+  display: "flex",
+  flexDirection: "column",
+  gap: 10,
+  padding: 12,
+  fontSize: 13,
+  borderRadius: 8,
+  border: "1px solid rgba(59, 130, 246, 0.35)",
+  background: "var(--megane-surface-raised, #fff)",
+  color: "var(--megane-text, #1e293b)",
+  minWidth: 0,
+};

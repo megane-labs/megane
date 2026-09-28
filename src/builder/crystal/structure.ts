@@ -1,8 +1,8 @@
 /**
- * What the Structure menu and the sidebar's cell card need to know about the
+ * What the Structure menu and the symmetry offer need to know about the
  * open document: whether it has a cell, and whether the file's symmetry
- * operations can still be expanded. Pure, so the menu, the card and the
- * dialog agree on it.
+ * operations can still be expanded. Pure, so the menu, the offer and the
+ * forms agree on it.
  */
 
 import type { EditOp } from "../../pipeline/types";

@@ -47,6 +47,8 @@ vi.mock("@/parsers/structure", () => ({ parseStructureFile }));
 import { BuilderApp } from "@/builder/BuilderApp";
 import { useBuilderStore } from "@/builder/store";
 import { useLibraryUi } from "@/builder/library/ui";
+import { useToolsStore } from "@/builder/tools/store";
+import type { BuilderToolInfo } from "@/builder/tools/contract";
 import type { BuildHandlers } from "@/builder/types";
 import type { Snapshot } from "@/types";
 import { useThemeStore, themeToHex } from "@/stores/useThemeStore";
@@ -140,10 +142,11 @@ describe("BuilderApp — empty state", () => {
     render(<BuilderApp />);
     expect(screen.getByTestId("builder-welcome")).toBeTruthy();
     expect(screen.getByTestId("builder-file-name").textContent).toBe("No structure");
+    expect(screen.getByTestId("builder-empty-hint").textContent).toContain("File menu");
     expect(shownAtoms()).toBe(0);
-    // The panel floats over the right of the view (352 px + the 12 px inset),
+    // The panels float over the right of the view (372 px + the 12 px inset),
     // as the viewer's Pipeline panel does.
-    expect(rendererStub.setViewInsets).toHaveBeenLastCalledWith(0, 364);
+    expect(rendererStub.setViewInsets).toHaveBeenLastCalledWith(0, 384);
     // The view is always in edit mode with the handlers installed.
     expect(viewportProps.current?.buildActive).toBe(true);
     expect(viewportProps.current?.buildHandlers).toBe(useBuilderStore.getState().handlers);
@@ -234,7 +237,7 @@ describe("BuilderApp — editing", () => {
     expect(screen.getByTestId("builder-file-name").textContent).toContain("2 edits");
   });
 
-  it("shows only the settings the current tool uses, in the bar over the view", () => {
+  it("shows only the settings the current tool uses, in the Details panel", () => {
     render(<BuilderApp />);
     // Select needs neither an element nor a bond order: only its own settings.
     expect(screen.getByTestId("builder-context-label").textContent).toBe("Select");
@@ -246,10 +249,10 @@ describe("BuilderApp — editing", () => {
     expect(screen.getByTestId("builder-context-label").textContent).toBe("Add atom");
     expect(screen.getByTestId("builder-element-z")).toBeTruthy();
     expect(screen.getByTestId("builder-bond-order")).toBeTruthy();
-    // The settings live in the bar, not in the sidebar.
+    // The settings are in the Details panel, not over the view.
     expect(
       screen.getByTestId("builder-sidebar").querySelector('[data-testid="builder-element-z"]'),
-    ).toBeNull();
+    ).toBeTruthy();
     tool("bond");
     expect(screen.queryByTestId("builder-element-z")).toBeNull();
     expect(screen.getByTestId("builder-bond-order")).toBeTruthy();
@@ -520,15 +523,70 @@ describe("BuilderApp — editing", () => {
     expect(rendererStub.setBackgroundColor).toHaveBeenLastCalledWith(themeToHex("light"));
   });
 
-  it("collapses the panel to its stub and gives the view back its full width", () => {
+  it("collapses the panels to their stubs and gives the view back its full width", () => {
     render(<BuilderApp />);
+    // History starts closed with no edits; Details open.
+    expect(screen.getByTestId("panel-history").getAttribute("data-collapsed")).toBe("true");
     fireEvent.click(screen.getByTestId("panel-details-toggle"));
     expect(screen.getByTestId("panel-details").getAttribute("data-collapsed")).toBe("true");
     expect(screen.queryByTestId("builder-sidebar")).toBeNull();
     expect(rendererStub.setViewInsets).toHaveBeenLastCalledWith(0, 0);
+    // History alone still covers the right of the view.
+    fireEvent.click(screen.getByTestId("panel-history-toggle"));
+    expect(screen.getByTestId("builder-history")).toBeTruthy();
+    expect(rendererStub.setViewInsets).toHaveBeenLastCalledWith(0, 384);
+    fireEvent.click(screen.getByTestId("panel-history-toggle"));
+    // Opening a form reveals a collapsed Details panel.
+    fireEvent.click(screen.getByTestId("builder-file"));
+    fireEvent.click(screen.getByTestId("builder-new-cell-item"));
+    expect(screen.getByTestId("panel-details").getAttribute("data-collapsed")).toBe("false");
+    expect(screen.getByTestId("builder-new-dialog")).toBeTruthy();
+    expect(rendererStub.setViewInsets).toHaveBeenLastCalledWith(0, 384);
+  });
+
+  it("a Python tool's form replaces an open form and reveals the Details panel", () => {
+    render(<BuilderApp />);
     fireEvent.click(screen.getByTestId("panel-details-toggle"));
-    expect(screen.getByTestId("builder-sidebar")).toBeTruthy();
-    expect(rendererStub.setViewInsets).toHaveBeenLastCalledWith(0, 364);
+    const tool: BuilderToolInfo = {
+      name: "liquid_box",
+      label: "Liquid box",
+      tooltip: "Fill a box.",
+      description: "Fill a box.",
+      category: "bulk",
+      apply: "new_document",
+      document: "none",
+      stochastic: false,
+      expectedSeconds: null,
+      inputSchema: {},
+      fields: [],
+      formError: null,
+    };
+    act(() => useToolsStore.getState().openForm(tool));
+    expect(screen.getByTestId("panel-details").getAttribute("data-collapsed")).toBe("false");
+    expect(screen.getByTestId("builder-tool-dialog")).toBeTruthy();
+    // A menu form closes the tool's form in turn.
+    fireEvent.click(screen.getByTestId("builder-file"));
+    fireEvent.click(screen.getByTestId("builder-new-bulk-item"));
+    expect(screen.queryByTestId("builder-tool-dialog")).toBeNull();
+    expect(useToolsStore.getState().openTool).toBeNull();
+    expect(screen.getByTestId("builder-new-dialog")).toBeTruthy();
+  });
+
+  it("shows one form at a time in the Details panel", () => {
+    render(<BuilderApp />);
+    fireEvent.click(screen.getByTestId("builder-file"));
+    fireEvent.click(screen.getByTestId("builder-new-cell-item"));
+    expect(screen.getByTestId("builder-new-dialog")).toBeTruthy();
+    fireEvent.click(screen.getByTestId("builder-tools"));
+    fireEvent.click(screen.getByTestId("builder-tools-server"));
+    expect(screen.getByTestId("builder-tools-dialog")).toBeTruthy();
+    expect(screen.queryByTestId("builder-new-dialog")).toBeNull();
+    fireEvent.click(screen.getByTestId("builder-tools-dialog-close"));
+    // With no form open, the panel is back to the current tool's settings.
+    expect(screen.getByTestId("builder-context-bar")).toBeTruthy();
+    // A tool without settings says so.
+    tool("move");
+    expect(screen.getByTestId("builder-empty-hint").textContent).toContain("Move has no settings");
   });
 });
 
@@ -557,17 +615,32 @@ describe("BuilderApp — keyboard", () => {
     expect(rendererStub.resetCamera).toHaveBeenCalled();
   });
 
-  it("ignores keys typed into a field or while a dialog is open", () => {
+  it("ignores keys typed into a field or while a modal dialog is open", () => {
     render(<BuilderApp />);
     tool("add");
     const z = screen.getByTestId("builder-element-z");
     fireEvent.keyDown(z, { key: "b" });
     expect(useBuilderStore.getState().tool).toBe("add");
-    // A dialog owns the keyboard: the tool keys stay inert while it is open.
+    // A form in the Details panel is not modal: its fields swallow keys, the
+    // tool keys still work beside it.
     fireEvent.click(screen.getByTestId("builder-file"));
     fireEvent.click(screen.getByTestId("builder-new-cell-item"));
-    fireEvent.keyDown(window, { key: "b" });
+    const edge = screen.getByTestId("builder-new-dialog").querySelector("input")!;
+    fireEvent.keyDown(edge, { key: "b" });
     expect(useBuilderStore.getState().tool).toBe("add");
+    fireEvent.keyDown(window, { key: "b" });
+    expect(useBuilderStore.getState().tool).toBe("bond");
+    // A modal (the Ketcher sketcher) owns the keyboard.
+    const modal = document.createElement("div");
+    modal.setAttribute("role", "dialog");
+    modal.setAttribute("aria-modal", "true");
+    document.body.append(modal);
+    try {
+      fireEvent.keyDown(window, { key: "a" });
+      expect(useBuilderStore.getState().tool).toBe("bond");
+    } finally {
+      modal.remove();
+    }
   });
 
   it("Ctrl+O opens the file picker and Ctrl+S saves XYZ", async () => {
@@ -693,12 +766,12 @@ describe("BuilderApp — Structure and Tools menus", () => {
     expect(screen.getByTestId("builder-context-bar")).toBeTruthy();
   });
 
-  it("Wrap and Remove cell run straight from the menu; the cell card opens the Cell dialog", () => {
+  it("Wrap and Remove cell run straight from the menu; Set cell opens the Cell form", () => {
     cu();
     render(<BuilderApp />);
     menu("builder-structure", "builder-cell-wrap");
     expect(edits()).toEqual([{ op: "wrap" }]);
-    fireEvent.click(screen.getByTestId("builder-cell-edit"));
+    menu("builder-structure", "builder-structure-cell");
     expect(screen.getByTestId("builder-crystal-dialog").getAttribute("data-kind")).toBe("cell");
     fireEvent.keyDown(window, { key: "Escape" });
     expect(screen.queryByTestId("builder-crystal-dialog")).toBeNull();

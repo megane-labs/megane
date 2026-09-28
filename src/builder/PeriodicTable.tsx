@@ -1,5 +1,5 @@
 /**
- * The periodic table the context bar opens for choosing an element: every
+ * The periodic table the tool settings open for choosing an element: every
  * element megane has a symbol for (Z 1–92) at its place in the 18-column
  * table, the lanthanides and actinides in the two rows below. Each cell is
  * tinted with the colour the view draws that element in; the current element
@@ -69,24 +69,21 @@ export function PeriodicTable({
       role="dialog"
       aria-label="Periodic table"
       style={{
-        pointerEvents: "auto",
         maxWidth: "100%",
-        overflowX: "auto",
         boxSizing: "border-box",
-        padding: 10,
-        borderRadius: 10,
-        background: "var(--megane-surface-solid, #fff)",
-        border: "1px solid var(--megane-border-solid, #e2e8f0)",
-        boxShadow: "0 6px 20px var(--megane-shadow, rgba(15, 23, 42, 0.08))",
+        padding: 6,
+        borderRadius: 8,
+        background: "var(--megane-surface-muted, #f1f5f9)",
         color: "var(--megane-text, #1e293b)",
       }}
     >
       <div
         style={{
           display: "grid",
-          gridTemplateColumns: "repeat(18, 26px)",
-          gridTemplateRows: "repeat(7, 26px) 8px repeat(2, 26px)",
-          gap: 2,
+          // Fluid cells, so the table fits the Details panel's width.
+          gridTemplateColumns: "repeat(18, minmax(0, 1fr))",
+          gridTemplateRows: "repeat(7, auto) 6px repeat(2, auto)",
+          gap: 1,
         }}
       >
         {cells.map((z) => {
@@ -104,15 +101,18 @@ export function PeriodicTable({
               style={{
                 gridRow: row,
                 gridColumn: col,
-                width: 26,
-                height: 26,
+                width: "100%",
+                aspectRatio: "1",
+                minWidth: 0,
                 padding: 0,
                 border: active ? `2px solid ${ACCENT}` : "1px solid transparent",
                 borderRadius: 4,
                 cursor: "pointer",
                 fontFamily: "inherit",
-                fontSize: 11,
+                fontSize: 9,
                 fontWeight: 600,
+                lineHeight: 1,
+                overflow: "hidden",
                 background: active ? ACCENT : tint(z, 0.35),
                 color: active ? "#fff" : "var(--megane-text, #1e293b)",
               }}
@@ -131,7 +131,7 @@ export function PeriodicTable({
               gridColumn: 3,
               alignSelf: "center",
               justifySelf: "center",
-              fontSize: 10,
+              fontSize: 7,
               color: "var(--megane-text-secondary, #64748b)",
             }}
           >

@@ -1,9 +1,10 @@
 /**
  * The Builder's tool rail: a floating frosted-glass column of icon buttons on
  * the left of the 3D view (the viewer's panel look), one per tool, each
- * carrying its shortcut key — the place every molecule editor keeps its tools. The settings a tool uses are not here but
- * in the `ContextBar` over the view, and what a click will do is said once, in
- * the status line (`toolHint`).
+ * carrying its shortcut key — the place every molecule editor keeps its
+ * tools. The settings a tool uses are not here but in the Details panel on
+ * the right (`ContextBar`), and what a click will do is said once, in the
+ * status line (`toolHint`).
  */
 
 import type { ReactNode } from "react";
@@ -18,7 +19,7 @@ export interface ToolInfo {
   value: BuildTool;
   label: string;
   hint: string;
-  /** Which settings the context bar shows for it. */
+  /** Which settings the Details panel shows for it. */
   needs: ("select" | "element" | "bondOrder" | "place")[];
 }
 

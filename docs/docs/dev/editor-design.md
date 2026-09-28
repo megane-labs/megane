@@ -140,30 +140,39 @@ multi-instance harness). It is laid out in the viewer's design language — the
 3D view fills the window and every control floats over it on the viewer's
 frosted-glass surfaces (`src/components/toolbarStyles.ts`, shared with the
 viewer's Pipeline panel) — so that each control has exactly one home, with
-every action on the left and every detail on the right: the viewer's Reset
-View and `ViewAxisControls` in the top-left corner with a floating tool rail
-under them (`ToolRail.tsx`, one icon per tool with its key) and, under that,
-the operations rail (`OperationsRail.tsx`: the *File* menu for the
-**document** (Open, New, Save; `topbarMenus.ts`); the *Structure*, *Insert*
-and *Tools* menus for what acts on the structure (`crystal/structureMenu.ts`,
+every action on the left, the options of what was picked on the right, and
+what is on screen along the top. On the left: the viewer's Reset View and
+`ViewAxisControls` in the top-left corner with a floating tool rail under
+them (`ToolRail.tsx`, one icon per tool with its key) and, under that, the
+operations rail (`OperationsRail.tsx`: the *File* menu for the **document**
+(Open, New, Save; `topbarMenus.ts`); the *Structure*, *Insert* and *Tools*
+menus for what acts on the structure (`crystal/structureMenu.ts`,
 `tools/ToolServer.tsx`); Undo / Redo; the viewer's `ThemeCycleButton` — its
-lists opening to the right); the viewer's `CollapsiblePanel` on the right,
-titled *Details* with the document's name beside it, showing the
-**structure** (`Inspector.tsx`: the structure summary, or the selected atoms
-with their positions, distance / angle / dihedral and actions; the cell as a
-read-only card; history); a context bar over the top of the view (`ContextBar.tsx`, only the
-settings the current tool uses — none for Select / Move / Delete); a status
-line at the bottom left, right of the rails, for what is on screen and what the tool does
-(`toolHint`, the one place the hint is written); and one notice line above it
-for every message the app has to show (`BuilderStore.notice`, written through
-`reportError` / `reportInfo` so no panel keeps an error line of its own). The
-menus (`Menu.tsx`) portal their lists to `<body>` so no panel or scrolling
-rail clips them. `Section` (`src/builder/Section.tsx`)
-makes the panel's history section collapsible and
-remembers each one in `localStorage`; `shortcuts.ts` holds the key table
+lists opening to the right). Along the top, beside Reset View where the
+viewer has its HUD, the info line (`InfoHud.tsx`: the document's name and
+edit count, then formula, atoms and bonds, molar mass and cell). On the
+right, two of the viewer's `CollapsiblePanel`s: **Details** shows the
+options of whatever was picked on the left — the current tool's settings
+(`ContextBar.tsx`, only the settings that tool uses — none for Move /
+Delete; select-by-element chips for Select; the molecule gallery for
+Place), the selection (`Inspector.tsx`: the selected atoms with their
+positions, distance / angle / dihedral and actions) and the symmetry offer
+(`crystal/SymmetryOffer.tsx`), or instead, while one is open, the form a
+menu item opened (`CrystalDialog`, `NewStructureDialog`, `ToolServerDialog`,
+`ToolDialog`, all plain cards styled by `detailCardStyle`; one at a time,
+and opening one reveals a folded panel) — and **History** (`HistoryPanel.tsx`)
+under it the edit list. A status line at the bottom left, right of the
+rails, says what the tool does (`toolHint`, the one place the hint is
+written), with one notice line above it for every message the app has to
+show (`BuilderStore.notice`, written through `reportError` / `reportInfo` so
+no panel keeps an error line of its own). The menus (`Menu.tsx`) portal
+their lists to `<body>` so no panel or scrolling rail clips them.
+`useSectionOpen` (`src/builder/panelState.ts`) keeps whether each panel is
+open and remembers each one in `localStorage`; `shortcuts.ts` holds the key table
 (`resolveShortcut`) and applies it to the store (`runShortcut`), ignoring keys
-aimed at a text field or a dialog. Starting a document — an empty cell or a
-bulk crystal — is one dialog (`NewStructureDialog`), because both replace
+aimed at a text field or while the (modal) Ketcher sketcher is open. Starting
+a document — an empty cell or a bulk crystal — is one form
+(`NewStructureDialog`), because both replace
 what is open. Nothing in the viewer imports the Builder; the Builder reuses
 the viewer's renderer, parsers, writers and edit engine. Bringing a Builder
 document into the viewer is the planned integration, and the shared history
@@ -207,18 +216,18 @@ the Inspector's box select:
 **Crystal.** The operations rail's *Structure* menu (`crystal/structureMenu.ts`)
 lists every cell and crystal op: *Wrap*, *Remove cell* and *Expand
 symmetry* push their op at once; *Set cell*, *Center with vacuum*,
-*Supercell* and *Cut slab* open `crystal/CrystalDialog.tsx`, a panel in the
-top-right of the view, left of the Details panel, with one form per op. While a form describes a valid op
+*Supercell* and *Cut slab* open `crystal/CrystalDialog.tsx` in the Details
+panel, one form per op. While a form describes a valid op
 the dialog hands it to `BuilderStore.setPreview`, which applies it to the
 edited structure without committing it; the view draws `viewSnapshot` (the
 preview when there is one), `canEdit` is false so clicks are paused, and any
 change to the document drops the preview. *Apply* pushes the op with a fresh
 fragment id. Results above `PREVIEW_MAX_ATOMS` are announced but not
 previewed, since building the preview is the cost of every keystroke. The
-panel keeps only a read-only cell card (`crystal/CellCard.tsx`) with the
-symmetry offer. The bulk-crystal form (`crystal/BulkForm.tsx`) is not in the
+current cell is on the info line; the Details panel keeps only the one-time
+symmetry offer (`crystal/SymmetryOffer.tsx`). The bulk-crystal form (`crystal/BulkForm.tsx`) is not in the
 menu, because `BuilderStore.newBulk` starts a *new document* rather than
-editing the open one; it lives in the New structure dialog beside the empty
+editing the open one; it lives in the New structure form beside the empty
 cell. The slab form runs `slabPreview` on the shown structure to state the
 atom count and thickness before the op is written. The Place
 tool's *Place on atoms* option (`adsorbHeight` on the store,

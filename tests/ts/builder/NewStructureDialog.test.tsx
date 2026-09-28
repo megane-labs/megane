@@ -56,14 +56,15 @@ describe("NewStructureDialog — empty cell", () => {
     expect(onNewCell).not.toHaveBeenCalled();
   });
 
-  it("closes on Escape, on the backdrop and on Close", () => {
+  it("closes on Escape and on Close, not on a click inside the form", () => {
     open();
     fireEvent.keyDown(window, { key: "Escape" });
     expect(onClose).toHaveBeenCalledTimes(1);
     click("builder-new-close");
     expect(onClose).toHaveBeenCalledTimes(2);
+    // It is a form in the Details panel, not a modal: no backdrop to dismiss.
     fireEvent.click(screen.getByTestId("builder-new-dialog"));
-    expect(onClose).toHaveBeenCalledTimes(3);
+    expect(onClose).toHaveBeenCalledTimes(2);
   });
 });
 

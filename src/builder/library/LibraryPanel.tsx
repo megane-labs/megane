@@ -3,7 +3,8 @@
  * user's molecules, each with *Place* (stamp it where the next click lands)
  * and *Add* (drop it beside the structure now), *Edit* / *×* for the user's
  * own; *Sketch…* opens Ketcher and *From file…* imports a structure file.
- * It opens from the Place tool's context bar and from Insert › Fragment….
+ * It opens in the Place tool's settings (the Details panel) and from
+ * Insert › Molecule….
  *
  * `LibraryHost` mounts the one sketch dialog and the one file input the
  * gallery, the Insert menu and the Inspector share.
@@ -84,18 +85,14 @@ export function LibraryPanel({ onClose }: { onClose: () => void }) {
       role="dialog"
       aria-label="Molecules"
       style={{
-        width: 380,
-        maxWidth: "100%",
+        width: "100%",
         boxSizing: "border-box",
         display: "flex",
         flexDirection: "column",
-        borderRadius: 10,
-        background: "var(--megane-surface-solid, #fff)",
+        borderRadius: 8,
+        background: "var(--megane-surface-muted, #f1f5f9)",
         color: "var(--megane-text, #1e293b)",
-        border: "1px solid var(--megane-border-solid, #e2e8f0)",
-        boxShadow: "0 16px 40px var(--megane-shadow, rgba(15, 23, 42, 0.14))",
         fontSize: 13,
-        pointerEvents: "auto",
       }}
     >
       <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "10px 12px 6px" }}>

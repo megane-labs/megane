@@ -13,14 +13,16 @@
  * *read* on the right. The **top-left corner** holds Reset View and the axis
  * buttons as in the viewer, with the **tool rail** under them and the
  * **operations rail** under that (File; Structure, Insert, Tools; Undo /
- * Redo; theme — menus open to the right). The **Details panel** on the right
- * (the viewer's collapsible panel, where the viewer keeps its Pipeline, with
- * the document's name in its header) shows the structure's state: selection,
- * cell, history. The
- * **context bar** over the top of the view holds the current tool's
- * settings; and the **bottom-left** status line says what is on screen and
- * what the current tool does, under the single **notice** line that carries
- * every message. Keyboard shortcuts are in `shortcuts.ts`.
+ * Redo; theme — menus open to the right). On the right, the viewer's
+ * collapsible panels (where the viewer keeps its Pipeline): **Details**
+ * shows the options of whatever was picked on the left — the current tool's
+ * settings (`ContextBar`) and the selection, or the form a menu opened (a
+ * Structure operation, a new document, the tool server, a Python tool) —
+ * and **History**, under it, the edit list. The **info line** beside Reset
+ * View says what the document and the structure are, as the viewer's HUD
+ * does; the **bottom-left** status line says what the current tool does,
+ * under the single **notice** line that carries every message. Keyboard
+ * shortcuts are in `shortcuts.ts`.
  *
  * Reuses the viewer's renderer (`Viewport` + `MoleculeRenderer`, driven through
  * `applyViewportState`), parsers, writers and the edit engine; nothing in the
@@ -40,7 +42,7 @@ import { Viewport } from "../components/Viewport";
 import { Tooltip } from "../components/Tooltip";
 import { CollapsiblePanel } from "../components/CollapsiblePanel";
 import { ViewAxisControls } from "../components/ViewAxisControls";
-import { OVERLAY_INSET } from "../components/overlayLayout";
+import { OVERLAY_INSET, PERF_HUD_LEFT_DEFAULT } from "../components/overlayLayout";
 import { floatingSurfaceStyle, overlayButtonStyle } from "../components/toolbarStyles";
 import type { MoleculeRenderer } from "../renderer/MoleculeRenderer";
 import { latticeVectors, type ViewAxis } from "../renderer/cameraOrientation";
@@ -55,7 +57,11 @@ import { useBuilderStore, canEdit, editSteps, shownSnapshot, viewSnapshot } from
 import { builderViewportState, BUILDER_SOURCE_ID } from "./view";
 import { useBuilderHandlers } from "./useBuilderHandlers";
 import { useBuilderShortcuts, TOOL_KEYS } from "./shortcuts";
-import { BuilderSidebar } from "./BuilderSidebar";
+import { HistoryBody } from "./HistoryPanel";
+import { Inspector } from "./Inspector";
+import { InfoHud } from "./InfoHud";
+import { useSectionOpen } from "./panelState";
+import { SymmetryOffer } from "./crystal/SymmetryOffer";
 import { TOOL_RAIL_WIDTH, ToolRail, toolHint, toolInfo } from "./ToolRail";
 import { ContextBar } from "./ContextBar";
 import type { MenuItem } from "./Menu";
@@ -75,15 +81,15 @@ import { useLibraryActions, useLibraryUi } from "./library/ui";
 import { buttonStyle, hintStyle } from "./styles";
 import { trackEvent, trackFileOpen } from "../analytics";
 
-/** The Details panel's width on the right of the view. */
-const PANEL_WIDTH = 352;
-/** Right clearance for overlays while the panel is collapsed to its stub. */
-const COLLAPSED_STUB_CLEARANCE = 120;
-/**
- * Left edge of the strip the context bar centres in: clear of Reset View and
- * the six axis buttons (≈ 154 px wide) in the top-left corner.
- */
-const CONTEXT_BAR_LEFT = 180;
+/** Width of the Details and History panels on the right of the view. */
+const PANEL_WIDTH = 372;
+/** Height of the History panel, under the Details panel. */
+const HISTORY_HEIGHT = 220;
+/** Room a collapsed panel's stub takes, for what sits beside or above it. */
+const STUB_CLEARANCE = 120;
+const STUB_HEIGHT = 40;
+/** Left edge of the info line: beside Reset View, as the viewer's HUD. */
+const INFO_LEFT = PERF_HUD_LEFT_DEFAULT;
 /**
  * Left edge of the bottom-left status and notice lines: right of the rails,
  * so the rails can run down the whole left edge without being covered.
@@ -150,19 +156,45 @@ export function BuilderApp() {
   const rendererRef = useRef<MoleculeRenderer | null>(null);
   const prevViewportStateRef = useRef<ViewportState | null>(null);
   const [hoverInfo, setHoverInfo] = useState<HoverInfo>(null);
+  const [atomMenu, setAtomMenu] = useState<AtomMenuTarget | null>(null);
+  const closeAtomMenu = useCallback(() => setAtomMenu(null), []);
+  useToolServerLaunch();
+  const [dropActive, setDropActive] = useState(false);
+
+  // ── The panels on the right ──
+  // Details shows the options of whatever was picked on the left: a form
+  // (a Structure operation, a new document, the tool server, a Python tool)
+  // while one is open, else the current tool's settings and the selection.
+  // One form at a time; opening one closes the others and opens the panel.
+  const [detailsOpen, toggleDetails, revealDetails] = useSectionOpen("details", true);
+  const [historyOpen, toggleHistory] = useSectionOpen("history", edits.length > 0);
   const [newDialog, setNewDialog] = useState<NewStructureKind | null>(null);
   const [crystalDialog, setCrystalDialog] = useState<CrystalDialogKind | null>(null);
   const [toolServerOpen, setToolServerOpen] = useState(false);
-  const [atomMenu, setAtomMenu] = useState<AtomMenuTarget | null>(null);
-  const closeAtomMenu = useCallback(() => setAtomMenu(null), []);
+  const closeForm = useToolsStore((s) => s.closeForm);
+  const showForm = useCallback(
+    (form: { crystal?: CrystalDialogKind; create?: NewStructureKind; server?: boolean }) => {
+      setCrystalDialog(form.crystal ?? null);
+      setNewDialog(form.create ?? null);
+      setToolServerOpen(!!form.server);
+      closeForm();
+      revealDetails();
+    },
+    [closeForm, revealDetails],
+  );
+  // A Python tool's form opens from the tools store.
+  useEffect(() => {
+    if (!openTool) return;
+    setCrystalDialog(null);
+    setNewDialog(null);
+    setToolServerOpen(false);
+    revealDetails();
+  }, [openTool, revealDetails]);
   const closeCrystalDialog = useCallback(() => setCrystalDialog(null), []);
   const closeToolServer = useCallback(() => setToolServerOpen(false), []);
   // A new document ends whatever a Structure dialog was about to do to the old one.
   useEffect(() => setCrystalDialog(null), [source]);
-  useToolServerLaunch();
-  const [dropActive, setDropActive] = useState(false);
-  const [panelCollapsed, setPanelCollapsed] = useState(false);
-  // The panel's inset as last applied, for a renderer that arrives later.
+  // The panels' inset as last applied, for a renderer that arrives later.
   const panelInsetRef = useRef(PANEL_WIDTH + OVERLAY_INSET);
 
   const applyState = useCallback(
@@ -257,13 +289,13 @@ export function BuilderApp() {
       symmetryOps: symmetryOpsAvailable(source, edits),
       nSelected: selected.length,
     },
-    setCrystalDialog,
+    (kind) => showForm({ crystal: kind }),
     pushOp,
     () => void runCleanup(api),
   );
   const toolsItems = toolsMenuItems(
     { status: toolsStatus, connection: toolsConnection, openForm },
-    () => setToolServerOpen(true),
+    () => showForm({ server: true }),
   );
 
   // ── Keyboard ──
@@ -305,11 +337,14 @@ export function BuilderApp() {
 
   const activeTool = toolInfo(tool);
 
-  // What the panel covers on the right. The renderer centres the structure in
-  // the part of the view left of it, as the viewer does beside its Pipeline
-  // panel; the context bar, a Structure dialog and the status line keep clear.
-  const panelInset = panelCollapsed ? 0 : PANEL_WIDTH + OVERLAY_INSET;
-  const overlayRight = panelCollapsed ? COLLAPSED_STUB_CLEARANCE : panelInset + OVERLAY_INSET;
+  // What the panels cover on the right. The renderer centres the structure in
+  // the part of the view left of them, as the viewer does beside its Pipeline
+  // panel; the info line (beside Details) and the status line (beside
+  // History) keep clear of them or of their stubs.
+  const panelInset = detailsOpen || historyOpen ? PANEL_WIDTH + OVERLAY_INSET : 0;
+  const infoRight = detailsOpen ? PANEL_WIDTH + 2 * OVERLAY_INSET : STUB_CLEARANCE;
+  const statusRight = historyOpen ? PANEL_WIDTH + 2 * OVERLAY_INSET : STUB_CLEARANCE;
+  const detailsBottom = OVERLAY_INSET + (historyOpen ? HISTORY_HEIGHT : STUB_HEIGHT) + 8;
   useEffect(() => {
     panelInsetRef.current = panelInset;
     rendererRef.current?.setViewInsets(0, panelInset);
@@ -468,8 +503,8 @@ export function BuilderApp() {
           <OperationsRail
             fileItems={fileMenuItems({
               open: () => inputRef.current?.click(),
-              newCell: () => setNewDialog("cell"),
-              newBulk: () => setNewDialog("bulk"),
+              newCell: () => showForm({ create: "cell" }),
+              newBulk: () => showForm({ create: "bulk" }),
               formats: STRUCTURE_EXPORT_FORMATS,
               save: (f) => void handleExport(f as StructureWriteFormat),
               canSave: !!shown,
@@ -488,18 +523,13 @@ export function BuilderApp() {
         </div>
       </div>
 
-      {/* Place works with nothing open, so its bar (and gallery) does too. */}
-      {(source || tool === "place") && !crystalDialog && (
-        <ContextBar left={CONTEXT_BAR_LEFT} right={overlayRight} />
-      )}
-      {crystalDialog && (
-        <CrystalDialog
-          key={crystalDialog}
-          kind={crystalDialog}
-          onClose={closeCrystalDialog}
-          right={overlayRight}
-        />
-      )}
+      <InfoHud
+        fileName={fileName}
+        steps={steps}
+        viewed={viewed}
+        left={INFO_LEFT}
+        right={infoRight}
+      />
       {!source && tool !== "place" && (
         <div
           data-testid="builder-welcome"
@@ -549,7 +579,7 @@ export function BuilderApp() {
                 type="button"
                 data-testid="builder-welcome-new"
                 style={buttonStyle()}
-                onClick={() => setNewDialog("cell")}
+                onClick={() => showForm({ create: "cell" })}
               >
                 New empty cell…
               </button>
@@ -557,7 +587,7 @@ export function BuilderApp() {
                 type="button"
                 data-testid="builder-welcome-bulk"
                 style={buttonStyle()}
-                onClick={() => setNewDialog("bulk")}
+                onClick={() => showForm({ create: "bulk" })}
               >
                 New bulk crystal…
               </button>
@@ -589,18 +619,73 @@ export function BuilderApp() {
 
       <CollapsiblePanel
         title="Details"
+        collapsed={!detailsOpen}
+        onToggleCollapse={toggleDetails}
+        width={PANEL_WIDTH}
+        bottom={detailsBottom}
+      >
+        <div
+          data-testid="builder-sidebar"
+          style={{
+            flex: 1,
+            minHeight: 0,
+            display: "flex",
+            flexDirection: "column",
+            gap: 10,
+            padding: 10,
+            overflowY: "auto",
+            fontSize: 13,
+            color: "var(--megane-text, #1e293b)",
+          }}
+        >
+          {crystalDialog ? (
+            <CrystalDialog key={crystalDialog} kind={crystalDialog} onClose={closeCrystalDialog} />
+          ) : newDialog ? (
+            <NewStructureDialog
+              key={newDialog}
+              initialKind={newDialog}
+              hasDocument={!!source}
+              onNewCell={newCell}
+              onNewBulk={newBulk}
+              onClose={() => setNewDialog(null)}
+            />
+          ) : openTool ? (
+            <ToolDialog key={openTool.name} tool={openTool} />
+          ) : toolServerOpen ? (
+            <ToolServerDialog onClose={closeToolServer} />
+          ) : (
+            <>
+              {/* Place works with nothing open, so its settings (and gallery) do too. */}
+              {(source || tool === "place") && <ContextBar />}
+              <Inspector />
+              <SymmetryOffer />
+              {(!(source || tool === "place") || activeTool.needs.length === 0) &&
+                selected.length === 0 && (
+                  <div style={hintStyle} data-testid="builder-empty-hint">
+                    {source
+                      ? `${activeTool.label} has no settings. Pick a tool or an operation on the left; its options appear here.`
+                      : "Open a structure or start a new one from the File menu on the left; the options of what you pick there appear here."}
+                  </div>
+                )}
+            </>
+          )}
+        </div>
+      </CollapsiblePanel>
+
+      <CollapsiblePanel
+        title="History"
         subtitle={
-          <span data-testid="builder-file-name">
-            {fileName ?? "No structure"}
-            {steps > 0 && ` · ${steps} edit${steps === 1 ? "" : "s"}`}
+          <span data-testid="builder-op-count">
+            {steps} edit{steps === 1 ? "" : "s"}
           </span>
         }
-        collapsed={panelCollapsed}
-        onToggleCollapse={() => setPanelCollapsed((c) => !c)}
+        collapsed={!historyOpen}
+        onToggleCollapse={toggleHistory}
         width={PANEL_WIDTH}
         bottom={OVERLAY_INSET}
+        height={HISTORY_HEIGHT}
       >
-        <BuilderSidebar onOpenCrystal={setCrystalDialog} />
+        <HistoryBody />
       </CollapsiblePanel>
 
       {/* Bottom-left, right of the rails: the one notice line over the
@@ -609,7 +694,7 @@ export function BuilderApp() {
         style={{
           position: "absolute",
           left: STATUS_LEFT,
-          right: overlayRight,
+          right: statusRight,
           bottom: OVERLAY_INSET,
           zIndex: 10,
           display: "flex",
@@ -667,9 +752,6 @@ export function BuilderApp() {
             color: "var(--megane-text-secondary, #64748b)",
           }}
         >
-          <span data-testid="builder-status-atoms" style={{ fontVariantNumeric: "tabular-nums" }}>
-            {viewed ? `${viewed.nAtoms} atoms · ${viewed.nBonds} bonds` : "No structure"}
-          </span>
           {preview && (
             <span
               data-testid="builder-status-preview"
@@ -678,7 +760,6 @@ export function BuilderApp() {
               Preview — Apply keeps it
             </span>
           )}
-          {hasCell && <span data-testid="builder-status-cell">Cell</span>}
           {selected.length > 0 && (
             <span data-testid="builder-status-selection">{selected.length} selected</span>
           )}
@@ -697,17 +778,6 @@ export function BuilderApp() {
 
       <LibraryHost />
       {atomMenu && <AtomMenu target={atomMenu} onClose={closeAtomMenu} />}
-      {openTool && <ToolDialog key={openTool.name} tool={openTool} />}
-      {toolServerOpen && <ToolServerDialog onClose={closeToolServer} />}
-      {newDialog && (
-        <NewStructureDialog
-          initialKind={newDialog}
-          hasDocument={!!source}
-          onNewCell={newCell}
-          onNewBulk={newBulk}
-          onClose={() => setNewDialog(null)}
-        />
-      )}
     </div>
   );
 }

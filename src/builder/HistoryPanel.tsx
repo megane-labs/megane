@@ -1,72 +1,42 @@
 /**
- * The body of the Details panel (the viewer-style frosted panel on the right
- * of the view), an inspector in three layers:
- *
- *   Inspector — the structure (formula, counts, elements), or with a
- *               selection the selected atoms, what they measure and what can
- *               be done with them
- *   Cell      — the cell, read-only, and the offer to expand a file's symmetry
- *   History   — the operation list, undo / redo / clear, "show original"
- *
- * The tools are not here: they sit on the rail left of the view (`ToolRail`)
- * and their settings in the bar over it (`ContextBar`), which is also where
- * the Place tool's molecule library opens. Cell, supercell, slab, the Python
- * tools and inserting molecules are operations, so they live in the
- * Structure, Tools and Insert menus on the operations rail under the tools
- * (`OperationsRail`), as do the document's own actions (File, Undo / Redo)
- * and the theme: this panel shows details only, and each control appears
- * exactly once. Pure UI over `useBuilderStore`; every edit goes through the store's
- * actions and the handlers installed by `useBuilderHandlers`.
+ * The body of the History panel, a panel of its own under the Details panel
+ * on the right of the view: the edit list, Undo / Redo / Clear all, "Show
+ * original" (and, while it is on, the way back to the edited structure), and
+ * any warnings the edit engine raised replaying the history. Pure UI over
+ * `useBuilderStore`.
  */
 
 import { useBuilderStore, editSteps } from "./store";
 import { describeStep } from "./placement";
-import { Section } from "./Section";
-import { Inspector } from "./Inspector";
-import { CellCard } from "./crystal/CellCard";
-import type { CrystalDialogKind } from "./crystal/CrystalDialog";
 import { buttonStyle, hintStyle, rowStyle, sectionStyle, toggleStyle } from "./styles";
 
-export {
-  sectionStyle,
-  sectionTitleStyle,
-  hintStyle,
-  inputStyle,
-  chipStyle,
-  buttonStyle,
-} from "./styles";
-
-export function BuilderSidebar({
-  onOpenCrystal,
-}: {
-  /** Open one of the Structure menu's dialogs (the cell card's *Edit cell…*). */
-  onOpenCrystal: (kind: CrystalDialogKind) => void;
-}) {
+export function HistoryBody() {
   const source = useBuilderStore((s) => s.source);
-  const showOriginal = useBuilderStore((s) => s.showOriginal);
   const edits = useBuilderStore((s) => s.edits);
+  const redoStack = useBuilderStore((s) => s.redoStack);
+  const result = useBuilderStore((s) => s.result);
+  const showOriginal = useBuilderStore((s) => s.showOriginal);
+  const undo = useBuilderStore((s) => s.undo);
+  const redo = useBuilderStore((s) => s.redo);
+  const clearOps = useBuilderStore((s) => s.clearOps);
   const setShowOriginal = useBuilderStore((s) => s.setShowOriginal);
+  const steps = editSteps(edits);
 
   return (
     <div
-      data-testid="builder-sidebar"
+      data-testid="builder-history"
       style={{
         flex: 1,
         minHeight: 0,
         display: "flex",
         flexDirection: "column",
-        gap: 10,
+        gap: 8,
         padding: 10,
         overflowY: "auto",
         fontSize: 13,
         color: "var(--megane-text, #1e293b)",
       }}
     >
-      {!source && (
-        <div style={hintStyle} data-testid="builder-empty-hint">
-          Open a structure file, or start a new one from the File menu.
-        </div>
-      )}
       {source && showOriginal && (
         <div
           data-testid="builder-paused"
@@ -91,39 +61,6 @@ export function BuilderSidebar({
           </div>
         </div>
       )}
-
-      <Inspector />
-      <CellCard onOpen={onOpenCrystal} />
-      <HistorySection defaultOpen={edits.length > 0} />
-    </div>
-  );
-}
-
-// ── History ──
-
-function HistorySection({ defaultOpen }: { defaultOpen: boolean }) {
-  const source = useBuilderStore((s) => s.source);
-  const edits = useBuilderStore((s) => s.edits);
-  const redoStack = useBuilderStore((s) => s.redoStack);
-  const result = useBuilderStore((s) => s.result);
-  const showOriginal = useBuilderStore((s) => s.showOriginal);
-  const undo = useBuilderStore((s) => s.undo);
-  const redo = useBuilderStore((s) => s.redo);
-  const clearOps = useBuilderStore((s) => s.clearOps);
-  const setShowOriginal = useBuilderStore((s) => s.setShowOriginal);
-  const steps = editSteps(edits);
-
-  return (
-    <Section
-      id="history"
-      title="History"
-      defaultOpen={defaultOpen}
-      summary={
-        <span data-testid="builder-op-count">
-          {steps.length} edit{steps.length === 1 ? "" : "s"}
-        </span>
-      }
-    >
       <div style={rowStyle}>
         <button
           type="button"
@@ -167,7 +104,7 @@ function HistorySection({ defaultOpen }: { defaultOpen: boolean }) {
           Show original
         </span>
       </div>
-      {edits.length > 0 && (
+      {edits.length > 0 ? (
         <ol
           data-testid="builder-op-list"
           style={{
@@ -175,14 +112,14 @@ function HistorySection({ defaultOpen }: { defaultOpen: boolean }) {
             paddingLeft: 18,
             fontSize: 12,
             color: "var(--megane-text-secondary, #475569)",
-            maxHeight: 160,
-            overflowY: "auto",
           }}
         >
           {steps.map((step, i) => (
             <li key={i}>{describeStep(step)}</li>
           ))}
         </ol>
+      ) : (
+        <span style={hintStyle}>No edits yet.</span>
       )}
       {result && result.warnings.length > 0 && (
         <div
@@ -194,6 +131,6 @@ function HistorySection({ defaultOpen }: { defaultOpen: boolean }) {
           ))}
         </div>
       )}
-    </Section>
+    </div>
   );
 }
