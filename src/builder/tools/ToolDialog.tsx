@@ -5,6 +5,7 @@
  */
 
 import { useEffect, useMemo, useState } from "react";
+import { useDismiss } from "../../hooks/useDismiss";
 import { getElementSymbol } from "../../constants";
 import { useBuilderStore, shownSnapshot } from "../store";
 import { allMolecules, useLibraryStore } from "../library/store";
@@ -46,16 +47,11 @@ export function ToolDialog({ tool }: { tool: BuilderToolInfo }) {
   const [error, setError] = useState<string | null>(null);
   const busy = running?.tool.name === tool.name;
 
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape" && !busy) {
-        e.stopPropagation();
-        closeForm();
-      }
-    };
-    window.addEventListener("keydown", onKey, true);
-    return () => window.removeEventListener("keydown", onKey, true);
-  }, [busy, closeForm]);
+  useDismiss({
+    onDismiss: () => {
+      if (!busy) closeForm();
+    },
+  });
 
   const problem = validate(fields, values, ctx);
   const insertBlocked = tool.apply === "insert" && !(source && result && !showOriginal);

@@ -13,6 +13,7 @@
  */
 
 import { useEffect } from "react";
+import { useDismiss } from "../../hooks/useDismiss";
 import type { MenuItem } from "../Menu";
 import { buttonStyle, hintStyle, inputStyle, rowStyle, detailCardStyle } from "../styles";
 import { CATEGORY_LABELS, type BuilderToolInfo, type ToolCategory } from "./contract";
@@ -103,16 +104,7 @@ export function ToolServerDialog({ onClose }: { onClose: () => void }) {
   const connect = useToolsStore((s) => s.connect);
   const disconnect = useToolsStore((s) => s.disconnect);
 
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") {
-        e.stopPropagation();
-        onClose();
-      }
-    };
-    window.addEventListener("keydown", onKey, true);
-    return () => window.removeEventListener("keydown", onKey, true);
-  }, [onClose]);
+  useDismiss({ onDismiss: onClose });
 
   return (
     <div

@@ -12,7 +12,8 @@
  * Z up to 118. Escape, a click outside or a pick closes it.
  */
 
-import { useEffect, useLayoutEffect, useRef, useState, type RefObject } from "react";
+import { useLayoutEffect, useRef, useState, type RefObject } from "react";
+import { useDismiss } from "../hooks/useDismiss";
 import { createPortal } from "react-dom";
 import { ELEMENT_SYMBOLS, getAtomicMass, getColor, getElementSymbol } from "../constants";
 import { ACCENT, hintStyle } from "./styles";
@@ -163,25 +164,7 @@ export function PeriodicTable({
   const [hovered, setHovered] = useState<number | null>(null);
   const [pos, setPos] = useState<{ left: number; top: number } | null>(null);
 
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") {
-        e.stopPropagation();
-        onClose();
-      }
-    };
-    const onPointerDown = (e: PointerEvent) => {
-      const target = e.target as Node;
-      if (rootRef.current?.contains(target) || anchor?.current?.contains(target)) return;
-      onClose();
-    };
-    window.addEventListener("keydown", onKey, true);
-    window.addEventListener("pointerdown", onPointerDown);
-    return () => {
-      window.removeEventListener("keydown", onKey, true);
-      window.removeEventListener("pointerdown", onPointerDown);
-    };
-  }, [onClose, anchor]);
+  useDismiss({ onDismiss: onClose, inside: anchor ? [rootRef, anchor] : [rootRef] });
 
   // Left of the panel the button is in, level with the button, inside the window.
   useLayoutEffect(() => {

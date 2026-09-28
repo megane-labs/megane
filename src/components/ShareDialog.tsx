@@ -8,6 +8,7 @@
  */
 
 import { useCallback, useEffect, useId, useRef, useState } from "react";
+import { useDismiss } from "../hooks/useDismiss";
 import { createPortal } from "react-dom";
 import { copyShareUrl as defaultCopy } from "../pipeline/shareLink";
 
@@ -158,22 +159,9 @@ export function ShareDialog({ open, url, tooLong, onClose, copy }: ShareDialogPr
     return () => window.cancelAnimationFrame(id);
   }, [open, url]);
 
-  useEffect(() => {
-    if (!open) return;
-    const handleKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") {
-        // Capture phase + preventDefault so this Escape is unambiguously ours:
-        // stopPropagation does not stop other listeners on the same target, and
-        // MeganeViewer's selection-clearing listener registers first (at mount),
-        // so ordering alone can't be relied on.
-        e.preventDefault();
-        e.stopPropagation();
-        onClose();
-      }
-    };
-    window.addEventListener("keydown", handleKey, true);
-    return () => window.removeEventListener("keydown", handleKey, true);
-  }, [open, onClose]);
+  // Marked handled, so it can't also reach MeganeViewer's selection-clearing
+  // listener behind the dialog.
+  useDismiss({ onDismiss: onClose, enabled: open });
 
   useEffect(() => {
     return () => {

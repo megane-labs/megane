@@ -12,6 +12,7 @@
  */
 
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { useDismiss } from "../../hooks/useDismiss";
 import { useBuilderStore, canEdit, shownSnapshot } from "../store";
 import {
   buttonStyle,
@@ -136,16 +137,7 @@ export function CrystalDialog({ kind, onClose }: { kind: CrystalDialogKind; onCl
   // Closing the dialog, however it happens, leaves no preview behind.
   useEffect(() => () => useBuilderStore.getState().setPreview(null), []);
 
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") {
-        e.stopPropagation();
-        onClose();
-      }
-    };
-    window.addEventListener("keydown", onKey, true);
-    return () => window.removeEventListener("keydown", onKey, true);
-  }, [onClose]);
+  useDismiss({ onDismiss: onClose });
 
   const canApply = !!draft.op && editable && (!spec.needsCell || hasCell);
   const apply = () => {

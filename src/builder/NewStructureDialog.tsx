@@ -5,7 +5,8 @@
  * instead of every tab repeating it.
  */
 
-import { useEffect, useState } from "react";
+import { useState } from "react";
+import { useDismiss } from "../hooks/useDismiss";
 import type { BulkSpec } from "../crystal/bulk";
 import { BulkForm } from "./crystal/BulkForm";
 import { NumberField } from "./crystal/NumberField";
@@ -49,16 +50,7 @@ export function NewStructureDialog({
   const [error, setError] = useState<string | null>(null);
   const edgeValid = Number.isFinite(edge) && edge > 0;
 
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") {
-        e.stopPropagation();
-        onClose();
-      }
-    };
-    window.addEventListener("keydown", onKey, true);
-    return () => window.removeEventListener("keydown", onKey, true);
-  }, [onClose]);
+  useDismiss({ onDismiss: onClose });
 
   return (
     <div
