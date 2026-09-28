@@ -20,25 +20,34 @@ nothing has to be re-encoded when they meet.
 
 ## The window
 
-The top bar's menus follow the usual order. **File** owns the document:
-*Open…*, *New empty cell…* / *New bulk crystal…* and *Save* in each format.
-**Structure** holds the operations on the cell and the crystal (see
-[Crystal](#crystal)), **Insert** the molecule library (see
-[Library](#library)), **Tools** the Python tools (see
-[Python tools](#python-tools)), and **View** the camera (*Reset view*, look
-along ±x / ±y / ±z, and ±a / ±b / ±c while there is a cell) and the theme
-(System, Light, Dark — the 3D view's background follows it). *Undo* and
-*Redo* sit beside the menus. The **tool rail** down the
-left of the 3D view picks the tool — one icon per tool, each marked with its
-key — and the **context bar** floating over the top of the view holds the
-settings of that tool and nothing else. The sidebar on the right is an
-**inspector**: what you are looking at (see [Inspector](#inspector)), the
-cell, and the history. The bar along the bottom says what is on
-screen (atoms, bonds, cell, selection) and what the current tool does, and any
-message — a file that would not parse, a molecule added to the library —
-appears on one line just above it until you dismiss it.
+The Builder looks and behaves like the viewer: the 3D view fills the window
+and every control floats over it on the same frosted-glass panels.
 
-The sidebar's *History* section folds away and remembers whether you left
+The **Builder panel** on the right is the viewer's collapsible panel (where
+the viewer keeps its *Pipeline*); ▶ folds it to a small *Builder* button and
+gives the view the whole window. Its header shows the document's name and
+edit count, and its toolbar rows follow the viewer's Pipeline toolbar:
+**Document** — the **File** menu (*Open…*, *New empty cell…* /
+*New bulk crystal…* and *Save* in each format), *Undo* and *Redo*;
+**Build** — **Structure**, the operations on the cell and the crystal (see
+[Crystal](#crystal)), **Insert**, the molecule library (see
+[Library](#library)), and **Tools**, the Python tools (see
+[Python tools](#python-tools)); and **Others** — the theme button
+(Light → Dark → Auto, as in the viewer; the 3D view's background follows it).
+Below the toolbar the panel is an **inspector**: what you are looking at (see
+[Inspector](#inspector)), the cell, and the history.
+
+The **top-left corner** holds the viewer's camera controls — *Reset View* and
+the axis buttons (look along ±x / ±y / ±z, and ±a / ±b / ±c while there is a
+cell) — and under them the **tool rail** picks the tool, one icon per tool,
+each marked with its key. The **context bar** floating over the top of the
+view holds the settings of that tool and nothing else. The line at the
+**bottom left** says what is on screen (atoms, bonds, cell, selection) and
+what the current tool does, and any message — a file that would not parse, a
+molecule added to the library — appears on one line just above it until you
+dismiss it.
+
+The panel's *History* section folds away and remembers whether you left
 it open; its header keeps the number of edits visible while it is closed.
 
 ## Getting started
@@ -59,7 +68,7 @@ it open; its header keeps the number of edits visible while it is closed.
   the document (`caffeine.sdf` → `caffeine.xyz`). XYZ becomes extended XYZ
   with a `Lattice="…"` header when there is a cell; PDB carries `CRYST1`,
   residue labels and `CONECT` records; MOL is V2000 with bond orders.
-- **Undo / Redo** in the top bar, in the sidebar's *History* section, or with
+- **Undo / Redo** in the panel's toolbar, in its *History* section, or with
   the keys below.
 - Or skip all of that: pick **Place** (P) and place a library molecule with
   nothing open — the first molecule starts an `untitled` document without a
@@ -104,7 +113,7 @@ aromatic) for *Add atom* and *Bond*, and *On atoms* for *Place*. *Select*,
 
 ## Inspector
 
-The top of the sidebar describes what you are looking at.
+The top of the panel's inspector describes what you are looking at.
 
 - **Nothing selected**: the structure — its formula (Hill order), the number
   of atoms and bonds, the mass, and one chip per element with its count.
@@ -248,13 +257,13 @@ atoms stay inert.
 
 ## Crystal
 
-The top bar's **Structure** menu edits the solid the document holds. Its
+The panel's **Structure** menu edits the solid the document holds. Its
 items, plus the symmetry offer that appears for CIF files, cover the ASE-style
 workflow of bulk → supercell → slab → adsorbate without leaving the browser;
 the geometry is computed in TypeScript and pinned to what ASE produces by the
 tests (`tests/fixtures/crystal/ase-oracle.json`).
 
-- **Bulk crystal** is a *new document*, so it lives in the top bar's *New*
+- **Bulk crystal** is a *new document*, so it lives in the *File* menu's *New*
   dialog rather than in this menu: a prototype structure — simple cubic,
   fcc, bcc, hcp, diamond, zincblende, rocksalt, CsCl, fluorite, wurtzite or
   perovskite, with the element(s), the lattice constant `a`, `c/a` for the
@@ -263,7 +272,7 @@ tests (`tests/fixtures/crystal/ase-oracle.json`).
   the fields with reference lattice constants (Cu, Al, Fe, Mg, Si, NaCl, GaAs,
   SrTiO₃, …). The document is named after the crystal (`Cu-fcc`) and, like
   an empty cell, replaces whatever is open.
-- **Set cell… / Edit cell…** edits the cell as `a b c α β γ` (the sidebar's
+- **Set cell… / Edit cell…** edits the cell as `a b c α β γ` (the panel's
   *Cell* card, which always shows the current cell, opens the same dialog).
   With *move atoms with the cell* on, the atoms keep their fractional
   coordinates (ASE's `scale_atoms`); off, they stay where they are.
@@ -287,7 +296,7 @@ tests (`tests/fixtures/crystal/ase-oracle.json`).
   atom count and thickness before you commit. Bonds that
   would have crossed into the vacuum are dropped; in-plane periodic ones are
   kept.
-- **Expand symmetry** is offered (in the menu and on the sidebar's *Cell*
+- **Expand symmetry** is offered (in the menu and on the panel's *Cell*
   card) when the opened file (a CIF) lists space-group operations for its
   asymmetric unit, and fills the unit cell with the symmetry-equivalent atoms
   the way the viewer's Symmetry node does. Do it before cutting a supercell or
@@ -296,7 +305,7 @@ tests (`tests/fixtures/crystal/ase-oracle.json`).
 
 The items that take parameters open a dialog in the corner of the 3D view.
 While its fields describe a valid operation, **the view previews the result**
-(the status bar says *Preview*) and clicks in the view are paused; **Apply**
+(the status line says *Preview*) and clicks in the view are paused; **Apply**
 writes the operation, **Cancel** or Esc leaves the structure as it was. A
 result of more than 200 000 atoms is not previewed — the dialog says so — but
 Apply still builds it. The view is refitted to what it shows when the preview
@@ -311,7 +320,7 @@ structure.
 ## Python tools
 
 Structure generators written in Python — packmol liquid boxes, RadonPy
-polymer chains, solvation — appear in the top bar's **Tools** menu. They run
+polymer chains, solvation — appear in the panel's **Tools** menu. They run
 in a separate *tool server*, an
 [MCP](https://modelcontextprotocol.io/) server that follows the
 [Builder Tool Contract](../dev/builder-tools.md). Start the reference server
@@ -353,7 +362,7 @@ atom and the hydrogens that came with it, or a cleaned-up molecule, is one
 line — and offers **Undo**,
 **Redo**, **Clear all**, and **Show original** (a preview of the structure as
 opened; editing is paused while it is on, and a banner at the top of the
-sidebar offers the way back). The history is the document: the
+panel offers the way back). The history is the document: the
 structure you opened is never changed, and what you see is always that
 structure with the operations replayed on it. An operation that no longer
 applies is skipped and reported as a warning in the section rather than

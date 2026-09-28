@@ -20,6 +20,7 @@ import type { EditOp } from "../../pipeline/types";
 import type { Snapshot } from "../../types";
 import { newFragmentId } from "../library/fragment";
 import { OVERLAY_INSET } from "../../components/overlayLayout";
+import { floatingSurfaceStyle } from "../../components/toolbarStyles";
 import { NumberField } from "./NumberField";
 import { hasCellBox } from "./structure";
 
@@ -97,7 +98,16 @@ function committed(op: EditOp): EditOp {
   return op.op === "supercell" || op.op === "slab" ? { ...op, id: newFragmentId(op.op) } : op;
 }
 
-export function CrystalDialog({ kind, onClose }: { kind: CrystalDialogKind; onClose: () => void }) {
+export function CrystalDialog({
+  kind,
+  onClose,
+  right = OVERLAY_INSET,
+}: {
+  kind: CrystalDialogKind;
+  onClose: () => void;
+  /** Distance from the view's right edge (clear of the Builder panel). */
+  right?: number;
+}) {
   const source = useBuilderStore((s) => s.source);
   const result = useBuilderStore((s) => s.result);
   const showOriginal = useBuilderStore((s) => s.showOriginal);
@@ -157,21 +167,20 @@ export function CrystalDialog({ kind, onClose }: { kind: CrystalDialogKind; onCl
       style={{
         position: "absolute",
         top: OVERLAY_INSET,
-        right: OVERLAY_INSET,
+        right,
         zIndex: 20,
         width: 320,
-        maxWidth: `calc(100% - ${2 * OVERLAY_INSET}px)`,
+        maxWidth: `calc(100% - ${right + OVERLAY_INSET}px)`,
+        maxHeight: `calc(100% - ${2 * OVERLAY_INSET}px)`,
+        overflowY: "auto",
         boxSizing: "border-box",
         display: "flex",
         flexDirection: "column",
         gap: 10,
         padding: 14,
         fontSize: 13,
-        borderRadius: 10,
-        background: "var(--megane-surface-solid, #fff)",
+        ...floatingSurfaceStyle,
         color: "var(--megane-text, #1e293b)",
-        border: "1px solid var(--megane-border-solid, #e2e8f0)",
-        boxShadow: "0 12px 32px var(--megane-shadow, rgba(15, 23, 42, 0.16))",
       }}
     >
       <div style={{ display: "flex", flexDirection: "column", gap: 1 }}>

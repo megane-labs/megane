@@ -130,12 +130,18 @@ export function ToolDialog({ tool }: { tool: BuilderToolInfo }) {
           testPrefix="builder-tool-field"
         />
         {tool.apply === "new_document" && source && edits.length > 0 && (
-          <div style={{ ...hintStyle, color: "#b45309" }} data-testid="builder-tool-replaces">
+          <div
+            style={{ ...hintStyle, color: "var(--megane-warning-text, #b45309)" }}
+            data-testid="builder-tool-replaces"
+          >
             The result replaces the open structure and its history.
           </div>
         )}
         {insertBlocked && (
-          <div style={{ ...hintStyle, color: "#b45309" }} data-testid="builder-tool-needs-document">
+          <div
+            style={{ ...hintStyle, color: "var(--megane-warning-text, #b45309)" }}
+            data-testid="builder-tool-needs-document"
+          >
             This tool adds atoms to the open structure; open or create one first.
           </div>
         )}
@@ -156,7 +162,7 @@ export function ToolDialog({ tool }: { tool: BuilderToolInfo }) {
                 style={{
                   height: "100%",
                   width: `${Math.round((running?.fraction ?? 0.05) * 100)}%`,
-                  background: "#2563eb",
+                  background: "#3b82f6",
                   transition: "width 200ms",
                 }}
               />
@@ -168,7 +174,12 @@ export function ToolDialog({ tool }: { tool: BuilderToolInfo }) {
           <div
             data-testid="builder-tool-error"
             role="alert"
-            style={{ ...hintStyle, color: error ? "#b91c1c" : "#b45309" }}
+            style={{
+              ...hintStyle,
+              color: error
+                ? "var(--megane-danger-text, #b91c1c)"
+                : "var(--megane-warning-text, #b45309)",
+            }}
           >
             {error ?? problem}
           </div>

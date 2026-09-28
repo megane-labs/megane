@@ -1,6 +1,6 @@
 /**
  * What the molecule library does, shared by every place that offers it: the
- * Place tool's gallery (`LibraryPanel`), the top bar's Insert menu, and the
+ * Place tool's gallery (`LibraryPanel`), the panel's Insert menu, and the
  * Inspector's *Save as fragment*. `useLibraryActions` holds the actions;
  * `useLibraryUi` holds the one Ketcher dialog, the one file input and whether
  * the gallery is open, so each is mounted once (`LibraryHost`) however many

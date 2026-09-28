@@ -75,4 +75,46 @@ describe("Menu", () => {
     fireEvent.click(screen.getByTestId("menu-settings"));
     expect(onSelect).toHaveBeenCalledTimes(1);
   });
+
+  it("places the list under its trigger, inside the window", () => {
+    render(<Menu testId="save" label="Save" items={items()} />);
+    const trigger = screen.getByTestId("save");
+    const rect = (left: number) =>
+      ({ left, bottom: 40, top: 20, right: left + 60, width: 60, height: 20 }) as DOMRect;
+    const spy = vi.spyOn(trigger, "getBoundingClientRect").mockReturnValue(rect(100));
+    fireEvent.click(trigger);
+    // Portalled out of the (clipping) panel into <body>.
+    const menu = screen.getByTestId("save-menu");
+    expect(menu.parentElement).toBe(document.body);
+    expect(menu.style.position).toBe("fixed");
+    expect(menu.style.left).toBe("100px");
+    expect(menu.style.top).toBe("44px");
+    expect(menu.style.visibility).toBe("visible");
+    // A trigger at the right edge pulls the list back inside the window.
+    fireEvent.click(trigger);
+    spy.mockReturnValue(rect(window.innerWidth - 10));
+    const original = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "offsetWidth")!;
+    Object.defineProperty(HTMLElement.prototype, "offsetWidth", { configurable: true, value: 200 });
+    try {
+      fireEvent.click(trigger);
+      expect(screen.getByTestId("save-menu").style.left).toBe(`${window.innerWidth - 208}px`);
+    } finally {
+      Object.defineProperty(HTMLElement.prototype, "offsetWidth", original);
+    }
+  });
+
+  it("wears a given tint on its trigger and dims it when disabled", () => {
+    render(
+      <Menu
+        testId="tools"
+        label="Tools"
+        items={items()}
+        disabled
+        triggerStyle={{ color: "rgb(245, 158, 11)" }}
+      />,
+    );
+    const trigger = screen.getByTestId("tools");
+    expect(trigger.style.color).toBe("rgb(245, 158, 11)");
+    expect(trigger.style.opacity).toBe("0.45");
+  });
 });

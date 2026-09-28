@@ -1,5 +1,5 @@
 /**
- * The context bar: a strip floating over the top of the 3D view that holds the
+ * The context bar: a frosted-glass strip floating over the top of the 3D view that holds the
  * settings of the current tool and nothing else — the element for *Add atom*
  * and *Element* (a periodic table opens below it for the rarer ones), the bond order for *Add atom* and *Bond*, *Place on atoms*
  * for *Place*. A tool with no settings (Select, Move, Delete) shows no bar, so
@@ -14,7 +14,8 @@ import { LibraryPanel } from "./library/LibraryPanel";
 import { PeriodicTable } from "./PeriodicTable";
 import { getElementSymbol } from "../constants";
 import { OVERLAY_INSET } from "../components/overlayLayout";
-import { hintStyle, inputStyle } from "./styles";
+import { floatingSurfaceStyle } from "../components/toolbarStyles";
+import { ACCENT, hintStyle, inputStyle } from "./styles";
 
 /** Elements offered as one-click buttons; anything else via the Z field. */
 export const QUICK_ELEMENTS = [6, 1, 7, 8, 9, 15, 16, 17, 35, 14];
@@ -25,8 +26,6 @@ export const BOND_ORDERS: { value: number; label: string; lines: string[] }[] = 
   { value: 3, label: "Triple", lines: ["M4 7h16", "M4 12h16", "M4 17h16"] },
   { value: 4, label: "Aromatic", lines: ["M4 9h16", "M4 15h3M10.5 15h3M17 15h3"] },
 ];
-
-const ACCENT = "#2563eb";
 
 function choiceStyle(active: boolean): React.CSSProperties {
   return {
@@ -43,7 +42,7 @@ function choiceStyle(active: boolean): React.CSSProperties {
     fontSize: 13,
     fontWeight: 600,
     background: active ? ACCENT : "transparent",
-    color: active ? "#fff" : "var(--megane-text, #334155)",
+    color: active ? "#fff" : "var(--megane-text-body, #334155)",
   };
 }
 
@@ -61,7 +60,14 @@ function Divider() {
   );
 }
 
-export function ContextBar() {
+export interface ContextBarProps {
+  /** Left edge of the strip the bar centres in (clear of the left column). */
+  left?: number;
+  /** Right edge of that strip (clear of the Builder panel). */
+  right?: number;
+}
+
+export function ContextBar({ left = OVERLAY_INSET, right = OVERLAY_INSET }: ContextBarProps = {}) {
   const tool = useBuilderStore((s) => s.tool);
   const element = useBuilderStore((s) => s.element);
   const bondOrder = useBuilderStore((s) => s.bondOrder);
@@ -102,8 +108,8 @@ export function ContextBar() {
       style={{
         position: "absolute",
         top: OVERLAY_INSET,
-        left: OVERLAY_INSET,
-        right: OVERLAY_INSET,
+        left,
+        right,
         zIndex: 10,
         display: "flex",
         flexDirection: "column",
@@ -124,12 +130,9 @@ export function ContextBar() {
           flexWrap: "wrap",
           alignItems: "center",
           gap: 2,
+          ...floatingSurfaceStyle,
           padding: "5px 8px 5px 12px",
           fontSize: 13,
-          borderRadius: 10,
-          background: "var(--megane-surface-solid, #fff)",
-          border: "1px solid var(--megane-border-solid, #e2e8f0)",
-          boxShadow: "0 6px 20px var(--megane-shadow, rgba(15, 23, 42, 0.08))",
           color: "var(--megane-text, #1e293b)",
         }}
       >
@@ -285,7 +288,7 @@ export function ContextBar() {
                 fontSize: 13,
                 fontWeight: 500,
                 border: `1px solid ${placeSource ? ACCENT : "var(--megane-border-solid, #cbd5e1)"}`,
-                background: placeSource ? "rgba(37, 99, 235, 0.08)" : "transparent",
+                background: placeSource ? "rgba(59, 130, 246, 0.08)" : "transparent",
                 color: "var(--megane-text, #1e293b)",
                 marginRight: 6,
                 whiteSpace: "nowrap",

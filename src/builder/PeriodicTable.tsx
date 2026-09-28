@@ -8,6 +8,7 @@
 
 import { useEffect } from "react";
 import { ELEMENT_SYMBOLS, getColor, getElementSymbol } from "../constants";
+import { ACCENT } from "./styles";
 
 /** The highest Z the table shows (the last one with a symbol). */
 export const TABLE_MAX_Z = Math.max(...Object.keys(ELEMENT_SYMBOLS).map(Number));
@@ -35,8 +36,6 @@ export function tablePosition(z: number): { row: number; col: number } {
   if (k < 17) return { row: row + 3, col: k + 1 };
   return { row, col: k - 13 };
 }
-
-const ACCENT = "#2563eb";
 
 function tint(z: number, alpha: number): string {
   const [r, g, b] = getColor(z).map((c) => Math.round(c * 255));

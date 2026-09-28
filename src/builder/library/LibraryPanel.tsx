@@ -140,7 +140,7 @@ export function LibraryPanel({ onClose }: { onClose: () => void }) {
                 gap: 4,
                 padding: "4px 6px",
                 borderRadius: 6,
-                background: placing ? "rgba(37, 99, 235, 0.08)" : undefined,
+                background: placing ? "rgba(59, 130, 246, 0.08)" : undefined,
               }}
             >
               <span style={{ flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis" }}>

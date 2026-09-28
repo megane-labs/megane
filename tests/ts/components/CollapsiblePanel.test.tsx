@@ -7,6 +7,26 @@ afterEach(() => {
 });
 
 describe("CollapsiblePanel", () => {
+  it("shows a subtitle beside the title only when one is given", () => {
+    const { rerender } = render(
+      <CollapsiblePanel
+        title="Builder"
+        subtitle="water.pdb"
+        collapsed={false}
+        onToggleCollapse={() => {}}
+      >
+        <div />
+      </CollapsiblePanel>,
+    );
+    expect(screen.getByTestId("panel-builder-subtitle").textContent).toBe("water.pdb");
+    rerender(
+      <CollapsiblePanel title="Builder" collapsed={false} onToggleCollapse={() => {}}>
+        <div />
+      </CollapsiblePanel>,
+    );
+    expect(screen.queryByTestId("panel-builder-subtitle")).toBeNull();
+  });
+
   it("stretches from top to the given bottom offset and puts the stub at the top", () => {
     const { rerender } = render(
       <CollapsiblePanel title="Pipeline" collapsed={false} onToggleCollapse={() => {}} bottom={72}>

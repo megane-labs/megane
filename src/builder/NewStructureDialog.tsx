@@ -159,13 +159,16 @@ export function NewStructureDialog({
           <div
             data-testid="builder-new-error"
             role="alert"
-            style={{ ...hintStyle, color: "#b91c1c" }}
+            style={{ ...hintStyle, color: "var(--megane-danger-text, #b91c1c)" }}
           >
             {error}
           </div>
         )}
         {hasDocument && (
-          <div style={{ ...hintStyle, color: "#b45309" }} data-testid="builder-new-replaces">
+          <div
+            style={{ ...hintStyle, color: "var(--megane-warning-text, #b45309)" }}
+            data-testid="builder-new-replaces"
+          >
             This replaces the open structure and its history.
           </div>
         )}

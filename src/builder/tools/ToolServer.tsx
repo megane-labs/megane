@@ -1,5 +1,5 @@
 /**
- * Python tools in the top bar: the *Tools* menu lists the connected tool
+ * Python tools in the Builder panel: the *Tools* menu lists the connected tool
  * server's tools, grouped by category (§3); choosing one opens its form
  * (`ToolDialog`). *Tool server…* opens a dialog to connect to a server (an MCP
  * server implementing the Builder Tool Contract) — set once, so it is a
@@ -204,7 +204,7 @@ export function ToolServerDialog({ onClose }: { onClose: () => void }) {
           <div
             data-testid="builder-tools-error"
             role="alert"
-            style={{ ...hintStyle, color: "#b91c1c" }}
+            style={{ ...hintStyle, color: "var(--megane-danger-text, #b91c1c)" }}
           >
             {error}
           </div>

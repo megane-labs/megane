@@ -1,6 +1,6 @@
 /**
- * megane Builder app shell: the top bar, the sidebar, the welcome card, the
- * notice line, the keyboard shortcuts, and the click / drag handlers it
+ * megane Builder app shell: the Builder panel and its toolbar, the view
+ * controls, the welcome card, the notice line, the keyboard shortcuts, and the click / drag handlers it
  * installs for the (mocked) 3D view.
  */
 
@@ -136,12 +136,14 @@ afterEach(() => {
 });
 
 describe("BuilderApp — empty state", () => {
-  it("shows the welcome card and centres the view (the sidebar sits beside it)", () => {
+  it("shows the welcome card and centres the view left of the panel", () => {
     render(<BuilderApp />);
     expect(screen.getByTestId("builder-welcome")).toBeTruthy();
     expect(screen.getByTestId("builder-file-name").textContent).toBe("No structure");
     expect(shownAtoms()).toBe(0);
-    expect(rendererStub.setViewInsets).toHaveBeenCalledWith(0, 0);
+    // The panel floats over the right of the view (352 px + the 12 px inset),
+    // as the viewer's Pipeline panel does.
+    expect(rendererStub.setViewInsets).toHaveBeenLastCalledWith(0, 364);
     // The view is always in edit mode with the handlers installed.
     expect(viewportProps.current?.buildActive).toBe(true);
     expect(viewportProps.current?.buildHandlers).toBe(useBuilderStore.getState().handlers);
@@ -498,25 +500,35 @@ describe("BuilderApp — editing", () => {
     expect(shownAtoms()).toBe(0);
   });
 
-  it("the View menu resets the camera, looks along an axis and sets the theme", () => {
+  it("the view controls reset the camera and look along an axis, as in the viewer", () => {
     render(<BuilderApp />);
-    const view = (id: string) => {
-      fireEvent.click(screen.getByTestId("builder-view"));
-      fireEvent.click(screen.getByTestId(id));
-    };
-    view("builder-view-reset");
+    fireEvent.click(screen.getByTestId("builder-reset-view"));
     expect(rendererStub.resetCamera).toHaveBeenCalledTimes(1);
-    view("builder-view-axis-+x");
+    fireEvent.click(screen.getByTestId("view-axis-+x"));
     expect(rendererStub.alignCameraToAxis).toHaveBeenCalledWith("+x");
     // No cell: no lattice directions.
-    fireEvent.click(screen.getByTestId("builder-view"));
-    expect(screen.queryByTestId("builder-view-axis-+a")).toBeNull();
-    fireEvent.click(screen.getByTestId("builder-theme-dark"));
+    expect(screen.queryByTestId("view-axis-+a")).toBeNull();
+  });
+
+  it("the theme button cycles the theme and the 3D view follows it", () => {
+    act(() => useThemeStore.getState().setTheme("light"));
+    render(<BuilderApp />);
+    fireEvent.click(screen.getByTestId("builder-theme"));
     expect(useThemeStore.getState().theme).toBe("dark");
-    // The 3D view follows the theme.
     expect(rendererStub.setBackgroundColor).toHaveBeenLastCalledWith(themeToHex("dark"));
     act(() => useThemeStore.getState().setTheme("light"));
     expect(rendererStub.setBackgroundColor).toHaveBeenLastCalledWith(themeToHex("light"));
+  });
+
+  it("collapses the panel to its stub and gives the view back its full width", () => {
+    render(<BuilderApp />);
+    fireEvent.click(screen.getByTestId("panel-builder-toggle"));
+    expect(screen.getByTestId("panel-builder").getAttribute("data-collapsed")).toBe("true");
+    expect(screen.queryByTestId("builder-sidebar")).toBeNull();
+    expect(rendererStub.setViewInsets).toHaveBeenLastCalledWith(0, 0);
+    fireEvent.click(screen.getByTestId("panel-builder-toggle"));
+    expect(screen.getByTestId("builder-sidebar")).toBeTruthy();
+    expect(rendererStub.setViewInsets).toHaveBeenLastCalledWith(0, 364);
   });
 });
 

@@ -41,6 +41,18 @@ export const panelTitleStyle: CSSProperties = {
   letterSpacing: "-0.02em",
 };
 
+/** Muted text beside the title, cut with an ellipsis when it runs long. */
+export const panelSubtitleStyle: CSSProperties = {
+  flex: 1,
+  minWidth: 0,
+  margin: "0 8px",
+  fontSize: 11,
+  color: "var(--megane-text-muted)",
+  overflow: "hidden",
+  textOverflow: "ellipsis",
+  whiteSpace: "nowrap",
+};
+
 /** Collapse/expand button (the ▶ / ◀ arrow). */
 export const collapseButtonStyle: CSSProperties = {
   background: "none",
@@ -72,6 +84,8 @@ const collapsedButtonStyle: CSSProperties = {
 
 interface CollapsiblePanelProps {
   title: string;
+  /** Muted text beside the title in the expanded header (a file name, a count). */
+  subtitle?: ReactNode;
   collapsed: boolean;
   onToggleCollapse: () => void;
   /** Panel width (default: 220). */
@@ -108,6 +122,7 @@ interface CollapsiblePanelProps {
  */
 export function CollapsiblePanel({
   title,
+  subtitle,
   collapsed,
   onToggleCollapse,
   width = 220,
@@ -160,6 +175,11 @@ export function CollapsiblePanel({
       {containerExtra}
       <div style={panelHeaderStyle}>
         <span style={panelTitleStyle}>{title}</span>
+        {subtitle !== undefined && subtitle !== null && (
+          <span style={panelSubtitleStyle} data-testid={`${panelTestId}-subtitle`}>
+            {subtitle}
+          </span>
+        )}
         <button
           onClick={onToggleCollapse}
           data-testid={`${panelTestId}-toggle`}

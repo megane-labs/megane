@@ -14,7 +14,6 @@ import {
   useReactFlow,
 } from "@xyflow/react";
 import { useThemeStore } from "../stores/useThemeStore";
-import type { Theme } from "../stores/useThemeStore";
 import {
   useScopedPipelineStore,
   useScopedPipelineUIStore,
@@ -67,6 +66,15 @@ import { RenderModal } from "./RenderModal";
 import { ShareDialog } from "./ShareDialog";
 import { startTour, startPipelineTutorial } from "../tour/MeganeTour";
 import type { MoleculeRenderer } from "../renderer/MoleculeRenderer";
+import {
+  dropdownItemStyle,
+  dropdownStyle,
+  groupHeaderStyle,
+  tintedButtonStyle,
+  toolbarCategoryLabelStyle,
+  toolbarRowStyle,
+} from "./toolbarStyles";
+import { ThemeCycleButton } from "./ThemeCycleButton";
 
 const nodeTypes = {
   load_structure: LoadStructureNode,
@@ -220,34 +228,6 @@ const IconTutorial = (
   </svg>
 );
 
-const THEME_ICONS: Record<Theme, React.ReactNode> = {
-  light: (
-    <svg {...iconProps}>
-      <circle cx="12" cy="12" r="5" />
-      <line x1="12" y1="1" x2="12" y2="3" />
-      <line x1="12" y1="21" x2="12" y2="23" />
-      <line x1="4.22" y1="4.22" x2="5.64" y2="5.64" />
-      <line x1="18.36" y1="18.36" x2="19.78" y2="19.78" />
-      <line x1="1" y1="12" x2="3" y2="12" />
-      <line x1="21" y1="12" x2="23" y2="12" />
-      <line x1="4.22" y1="19.78" x2="5.64" y2="18.36" />
-      <line x1="18.36" y1="5.64" x2="19.78" y2="4.22" />
-    </svg>
-  ),
-  dark: (
-    <svg {...iconProps}>
-      <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z" />
-    </svg>
-  ),
-  system: (
-    <svg {...iconProps}>
-      <rect x="2" y="3" width="20" height="14" rx="2" ry="2" />
-      <line x1="8" y1="21" x2="16" y2="21" />
-      <line x1="12" y1="17" x2="12" y2="21" />
-    </svg>
-  ),
-};
-
 /* Category icons for Add Node dropdown */
 const CATEGORY_ICONS: Record<NodeCategory, React.ReactNode> = {
   data_load: (
@@ -375,152 +355,20 @@ const MIN_WIDTH = 320;
 const MAX_WIDTH = 600;
 const DEFAULT_WIDTH = 480;
 
-/** Shared base for icon+text buttons */
-const textBtnBase: React.CSSProperties = {
-  borderRadius: 5,
-  padding: "3px 6px",
-  cursor: "pointer",
-  fontSize: 10.5,
-  fontWeight: 600,
-  display: "inline-flex",
-  alignItems: "center",
-  gap: 3,
-  whiteSpace: "nowrap",
-  lineHeight: 1,
-};
-
-const addBtnStyle: React.CSSProperties = {
-  ...textBtnBase,
-  background: "rgba(59, 130, 246, 0.08)",
-  border: "1px solid rgba(59, 130, 246, 0.25)",
-  color: "var(--megane-primary)",
-};
-
-const renderBtnStyle: React.CSSProperties = {
-  ...textBtnBase,
-  background: "rgba(245, 158, 11, 0.08)",
-  border: "1px solid rgba(245, 158, 11, 0.25)",
-  color: "#f59e0b",
-};
-
-const templateBtnStyle: React.CSSProperties = {
-  ...textBtnBase,
-  background: "rgba(139, 92, 246, 0.08)",
-  border: "1px solid rgba(139, 92, 246, 0.25)",
-  color: "#8b5cf6",
-};
-
-const layoutBtnStyle: React.CSSProperties = {
-  ...textBtnBase,
-  background: "rgba(16, 185, 129, 0.08)",
-  border: "1px solid rgba(16, 185, 129, 0.25)",
-  color: "#10b981",
-};
-
-const exportBtnStyle: React.CSSProperties = {
-  ...textBtnBase,
-  background: "rgba(6, 182, 212, 0.08)",
-  border: "1px solid rgba(6, 182, 212, 0.25)",
-  color: "#06b6d4",
-};
-
-const importBtnStyle: React.CSSProperties = {
-  ...textBtnBase,
-  background: "rgba(99, 102, 241, 0.08)",
-  border: "1px solid rgba(99, 102, 241, 0.25)",
-  color: "#6366f1",
-};
-
-const shareBtnStyle: React.CSSProperties = {
-  ...textBtnBase,
-  background: "rgba(16, 185, 129, 0.08)",
-  border: "1px solid rgba(16, 185, 129, 0.25)",
-  color: "var(--megane-success-text)",
-};
-
-const guideBtnStyle: React.CSSProperties = {
-  ...textBtnBase,
-  background: "rgba(100, 116, 139, 0.08)",
-  border: "1px solid rgba(100, 116, 139, 0.3)",
-  color: "var(--megane-text-secondary)",
-};
-
-const tutorialBtnStyle: React.CSSProperties = {
-  ...textBtnBase,
-  background: "rgba(59, 130, 246, 0.08)",
-  border: "1px solid rgba(59, 130, 246, 0.3)",
-  color: "var(--megane-primary-text)",
-};
-
-const themeBtnStyle: React.CSSProperties = {
-  ...textBtnBase,
-  background: "rgba(148, 163, 184, 0.08)",
-  border: "1px solid rgba(148, 163, 184, 0.3)",
-  color: "var(--megane-text-secondary)",
-};
-
-const dropdownStyle: React.CSSProperties = {
-  position: "absolute",
-  top: "100%",
-  right: 0,
-  marginTop: 4,
-  background: "var(--megane-surface-solid)",
-  border: "1px solid var(--megane-border-solid)",
-  borderRadius: 8,
-  boxShadow: "0 4px 12px var(--megane-shadow)",
-  zIndex: 100,
-  minWidth: 180,
-  padding: "4px 0",
-};
-
-const dropdownItemStyle: React.CSSProperties = {
-  display: "block",
-  width: "100%",
-  background: "none",
-  border: "none",
-  padding: "6px 14px 6px 20px",
-  cursor: "pointer",
-  fontSize: 12,
-  color: "var(--megane-text)",
-  textAlign: "left",
-};
-
-const groupHeaderStyle: React.CSSProperties = {
-  fontSize: 10,
-  fontWeight: 600,
-  color: "var(--megane-text-muted)",
-  textTransform: "uppercase",
-  letterSpacing: "0.06em",
-  padding: "6px 14px 2px",
-  display: "flex",
-  alignItems: "center",
-  gap: 6,
-};
+const addBtnStyle = tintedButtonStyle("59, 130, 246", "var(--megane-primary)");
+const renderBtnStyle = tintedButtonStyle("245, 158, 11", "#f59e0b");
+const templateBtnStyle = tintedButtonStyle("139, 92, 246", "#8b5cf6");
+const layoutBtnStyle = tintedButtonStyle("16, 185, 129", "#10b981");
+const exportBtnStyle = tintedButtonStyle("6, 182, 212", "#06b6d4");
+const importBtnStyle = tintedButtonStyle("99, 102, 241", "#6366f1");
+const shareBtnStyle = tintedButtonStyle("16, 185, 129", "var(--megane-success-text)");
+const guideBtnStyle = tintedButtonStyle("100, 116, 139", "var(--megane-text-secondary)", 0.3);
+const tutorialBtnStyle = tintedButtonStyle("59, 130, 246", "var(--megane-primary-text)", 0.3);
 
 const templateItemDescStyle: React.CSSProperties = {
   fontSize: 10,
   color: "var(--megane-text-muted)",
   marginTop: 1,
-};
-
-const toolbarRowStyle: React.CSSProperties = {
-  display: "flex",
-  alignItems: "center",
-  gap: 4,
-  flexBasis: "100%",
-  flexWrap: "wrap",
-  rowGap: 4,
-};
-
-const toolbarCategoryLabelStyle: React.CSSProperties = {
-  fontSize: 9,
-  fontWeight: 700,
-  color: "var(--megane-text-muted)",
-  textTransform: "uppercase",
-  letterSpacing: "0.08em",
-  marginRight: 2,
-  width: 64,
-  flexShrink: 0,
 };
 
 const resizeHandleStyle: React.CSSProperties = {
@@ -599,13 +447,7 @@ function PipelineEditorInner({
   const flowContainerRef = useRef<HTMLDivElement | null>(null);
   const importInputRef = useRef<HTMLInputElement | null>(null);
 
-  const { theme, setTheme, resolvedTheme } = useThemeStore();
-  const THEME_CYCLE: Theme[] = ["light", "dark", "system"];
-  const THEME_LABELS: Record<Theme, string> = { light: "Light", dark: "Dark", system: "Auto" };
-  const handleCycleTheme = useCallback(() => {
-    const next = THEME_CYCLE[(THEME_CYCLE.indexOf(theme) + 1) % THEME_CYCLE.length];
-    setTheme(next);
-  }, [theme, setTheme]);
+  const resolvedTheme = useThemeStore((s) => s.resolvedTheme);
 
   const mode = useScopedPipelineUIStore((s) => s.mode);
   const setMode = useScopedPipelineUIStore((s) => s.setMode);
@@ -979,15 +821,7 @@ function PipelineEditorInner({
           >
             {IconTutorial} Tutorial
           </button>
-          <button
-            data-testid="pipeline-editor-theme"
-            onClick={handleCycleTheme}
-            style={themeBtnStyle}
-            title={`Theme: ${THEME_LABELS[theme]} (click to cycle)`}
-            aria-label={`Switch theme, current: ${THEME_LABELS[theme]}`}
-          >
-            {THEME_ICONS[theme]} {THEME_LABELS[theme]}
-          </button>
+          <ThemeCycleButton testId="pipeline-editor-theme" />
         </div>
       )}
     </>

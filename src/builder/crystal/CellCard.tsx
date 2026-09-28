@@ -38,7 +38,7 @@ export function CellCard({ onOpen }: { onOpen: (kind: CrystalDialogKind) => void
             ...rowStyle,
             padding: "6px 8px",
             borderRadius: 6,
-            background: "rgba(37, 99, 235, 0.08)",
+            background: "rgba(59, 130, 246, 0.08)",
           }}
           data-testid="builder-crystal-symmetry"
         >

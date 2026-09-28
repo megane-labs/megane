@@ -1,13 +1,11 @@
 /**
- * The top bar's File and View menus. File holds the document (open, start
- * a new one, save it); View holds the camera (reset, look along an axis) and
- * the theme. Pure item lists, so the bar and its tests read the same thing.
+ * The Builder panel's File menu: the document (open, start a new one, save
+ * it). A pure item list, so the panel and its tests read the same thing. The
+ * camera lives on the view (Reset View and the axis buttons, as in the
+ * viewer) and the theme on the panel's Others row.
  */
 
 import type { MenuItem } from "./Menu";
-import type { ViewAxis } from "../renderer/cameraOrientation";
-import { CARTESIAN_VIEW_AXES, LATTICE_VIEW_AXES } from "../renderer/cameraOrientation";
-import type { Theme } from "../stores/useThemeStore";
 
 export interface FileMenuActions {
   open: () => void;
@@ -37,52 +35,6 @@ export function fileMenuItems(a: FileMenuActions): MenuItem[] {
       testId: `builder-save-${f.value}`,
       disabled: !a.canSave,
       onSelect: () => a.save(f.value),
-    })),
-  ];
-}
-
-const THEME_LABELS: Record<Theme, string> = { system: "System", light: "Light", dark: "Dark" };
-
-/** `+a` → `+a`, `-x` → `−x`: a real minus sign in the menu. */
-function axisLabel(axis: ViewAxis): string {
-  return axis.replace("-", "−");
-}
-
-export interface ViewMenuActions {
-  resetView: () => void;
-  align: (axis: ViewAxis) => void;
-  /** The a / b / c directions are offered only with a cell. */
-  hasCell: boolean;
-  theme: Theme;
-  setTheme: (theme: Theme) => void;
-}
-
-export function viewMenuItems(a: ViewMenuActions): MenuItem[] {
-  const axisItems = (axes: readonly ViewAxis[]): MenuItem[] =>
-    axes.map((axis) => ({
-      label: `Look along ${axisLabel(axis)}`,
-      testId: `builder-view-axis-${axis}`,
-      onSelect: () => a.align(axis),
-    }));
-  return [
-    {
-      label: "Reset view  (R)",
-      testId: "builder-view-reset",
-      title: "Fit the structure in the standard orientation",
-      onSelect: a.resetView,
-    },
-    { separator: true },
-    { caption: "Look along" },
-    ...(a.hasCell ? axisItems(LATTICE_VIEW_AXES) : []),
-    ...axisItems(CARTESIAN_VIEW_AXES),
-    { separator: true },
-    { caption: "Theme" },
-    ...(["system", "light", "dark"] as Theme[]).map((t) => ({
-      // An em space stands in for the tick so the names line up (HTML would
-      // collapse ordinary spaces).
-      label: `${a.theme === t ? "✓" : "\u2003"}\u2002${THEME_LABELS[t]}`,
-      testId: `builder-theme-${t}`,
-      onSelect: () => a.setTheme(t),
     })),
   ];
 }

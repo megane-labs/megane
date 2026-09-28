@@ -7,13 +7,18 @@
  * (`BuilderStore`) as ball-and-stick with every atom, its bonds and its cell,
  * and every click is an edit.
  *
- * The shell is in six places and each control appears in exactly one of
- * them: the **top bar** owns the document (open, new, undo / redo, save),
- * the **tool rail** left of the view picks the tool, the **context bar** over
- * the view holds that tool's settings, the **sidebar** owns the structure's
- * own edits (selection, library, crystal, history), the **status bar** says
- * what is on screen and what the current tool does, and a single **notice**
- * line carries every message. Keyboard shortcuts are in `shortcuts.ts`.
+ * The shell follows the viewer's design: the 3D view fills the window and
+ * every control floats over it on frosted-glass panels, each control in
+ * exactly one of them. The **Builder panel** on the right (the viewer's
+ * collapsible panel, where the viewer keeps its Pipeline) owns the document
+ * and the operations in its toolbar rows (File, Undo / Redo, Structure,
+ * Insert, Tools, theme) and the structure's own edits in its body
+ * (selection, cell, history); the **top-left corner** holds Reset View and
+ * the axis buttons as in the viewer, with the **tool rail** under them; the
+ * **context bar** over the top of the view holds the current tool's
+ * settings; and the **bottom-left** status line says what is on screen and
+ * what the current tool does, under the single **notice** line that carries
+ * every message. Keyboard shortcuts are in `shortcuts.ts`.
  *
  * Reuses the viewer's renderer (`Viewport` + `MoleculeRenderer`, driven through
  * `applyViewportState`), parsers, writers and the edit engine; nothing in the
@@ -31,6 +36,10 @@ import {
 } from "react";
 import { Viewport } from "../components/Viewport";
 import { Tooltip } from "../components/Tooltip";
+import { CollapsiblePanel } from "../components/CollapsiblePanel";
+import { ViewAxisControls } from "../components/ViewAxisControls";
+import { OVERLAY_INSET } from "../components/overlayLayout";
+import { floatingSurfaceStyle, overlayButtonStyle } from "../components/toolbarStyles";
 import type { MoleculeRenderer } from "../renderer/MoleculeRenderer";
 import { latticeVectors, type ViewAxis } from "../renderer/cameraOrientation";
 import { applyViewportState } from "../pipeline/apply";
@@ -47,9 +56,10 @@ import { useBuilderShortcuts, TOOL_KEYS } from "./shortcuts";
 import { BuilderSidebar } from "./BuilderSidebar";
 import { ToolRail, toolHint, toolInfo } from "./ToolRail";
 import { ContextBar } from "./ContextBar";
-import { Menu } from "./Menu";
+import type { MenuItem } from "./Menu";
+import { BuilderToolbar } from "./BuilderToolbar";
 import { NewStructureDialog, type NewStructureKind } from "./NewStructureDialog";
-import { fileMenuItems, viewMenuItems } from "./topbarMenus";
+import { fileMenuItems } from "./topbarMenus";
 import { CrystalDialog, type CrystalDialogKind } from "./crystal/CrystalDialog";
 import { structureMenuItems } from "./crystal/structureMenu";
 import { hasCellBox, symmetryOpsAvailable } from "./crystal/structure";
@@ -63,7 +73,17 @@ import { useLibraryActions, useLibraryUi } from "./library/ui";
 import { buttonStyle, hintStyle } from "./styles";
 import { trackEvent, trackFileOpen } from "../analytics";
 
-const SIDEBAR_WIDTH = 320;
+/** The Builder panel's width on the right of the view. */
+const PANEL_WIDTH = 352;
+/** Right clearance for overlays while the panel is collapsed to its stub. */
+const COLLAPSED_STUB_CLEARANCE = 120;
+/**
+ * Left edge of the strip the context bar centres in: clear of Reset View and
+ * the six axis buttons (≈ 154 px wide) in the top-left corner.
+ */
+const CONTEXT_BAR_LEFT = 180;
+/** Room the tool rail leaves at the bottom for the status line. */
+const STATUS_CLEARANCE = 36;
 
 /** ⌘ on a Mac, Ctrl elsewhere, for the shortcut hints in the tooltips. */
 function modKeyLabel(): string {
@@ -136,6 +156,9 @@ export function BuilderApp() {
   useEffect(() => setCrystalDialog(null), [source]);
   useToolServerLaunch();
   const [dropActive, setDropActive] = useState(false);
+  const [panelCollapsed, setPanelCollapsed] = useState(false);
+  // The panel's inset as last applied, for a renderer that arrives later.
+  const panelInsetRef = useRef(PANEL_WIDTH + OVERLAY_INSET);
 
   const applyState = useCallback(
     (renderer: MoleculeRenderer, vs: ViewportState) => {
@@ -155,9 +178,9 @@ export function BuilderApp() {
     (renderer: MoleculeRenderer) => {
       rendererRef.current = renderer;
       renderer.setBackgroundColor(themeToHex(useThemeStore.getState().resolvedTheme));
-      // The sidebar sits beside the view, not over it, so the frustum needs
-      // no inset: the structure is centred in the view it is drawn in.
-      renderer.setViewInsets(0, 0);
+      // The panel floats over the right of the view: centre the structure in
+      // the part left of it, as the viewer does beside its Pipeline panel.
+      renderer.setViewInsets(0, panelInsetRef.current);
       applyState(renderer, viewportState);
     },
     // Only the first state matters here; later ones arrive through the effect.
@@ -250,8 +273,6 @@ export function BuilderApp() {
   useBuilderShortcuts(api, shortcutHost);
   const mod = modKeyLabel();
 
-  const theme = useThemeStore((s) => s.theme);
-  const setTheme = useThemeStore((s) => s.setTheme);
   // The view's background follows the theme, as in the viewer.
   const resolvedTheme = useThemeStore((s) => s.resolvedTheme);
   useEffect(() => {
@@ -279,6 +300,48 @@ export function BuilderApp() {
 
   const activeTool = toolInfo(tool);
 
+  // What the panel covers on the right. The renderer centres the structure in
+  // the part of the view left of it, as the viewer does beside its Pipeline
+  // panel; the context bar, a Structure dialog and the status line keep clear.
+  const panelInset = panelCollapsed ? 0 : PANEL_WIDTH + OVERLAY_INSET;
+  const overlayRight = panelCollapsed ? COLLAPSED_STUB_CLEARANCE : panelInset + OVERLAY_INSET;
+  useEffect(() => {
+    panelInsetRef.current = panelInset;
+    rendererRef.current?.setViewInsets(0, panelInset);
+  }, [panelInset]);
+
+  const insertItems: MenuItem[] = [
+    {
+      label: "Molecule…",
+      testId: "builder-insert-molecule",
+      title: "Choose a library molecule to place (P)",
+      onSelect: () => {
+        setTool("place");
+        setGalleryOpen(true);
+      },
+    },
+    {
+      label: "Sketch molecule…",
+      testId: "builder-insert-sketch",
+      title: "Draw a molecule in Ketcher and add it to the library",
+      onSelect: () => openSketch(),
+    },
+    {
+      label: "Molecule from file…",
+      testId: "builder-insert-import",
+      title: "Add a molecule to the library from a structure file",
+      onSelect: () => importer?.(),
+    },
+    { separator: true },
+    {
+      label: "Save selection as molecule",
+      testId: "builder-insert-save-selection",
+      disabled: selected.length === 0,
+      title: "Keep the selected atoms (and the bonds between them) in the library",
+      onSelect: saveSelection,
+    },
+  ];
+
   return (
     <div
       data-testid="megane-builder"
@@ -288,342 +351,330 @@ export function BuilderApp() {
       style={{
         width: "100%",
         height: "100%",
-        display: "flex",
-        flexDirection: "column",
+        position: "relative",
+        overflow: "hidden",
         background: "var(--megane-bg, #fff)",
         color: "var(--megane-text, #1e293b)",
       }}
     >
+      <input
+        ref={inputRef}
+        data-testid="builder-open-input"
+        type="file"
+        style={{ display: "none" }}
+        onChange={(e) => void handleOpenChange(e)}
+      />
+
+      {/* The 3D view fills the window; everything else floats over it. */}
       <div
-        data-testid="builder-topbar"
+        style={{ position: "absolute", inset: 0 }}
+        onDragOver={(e) => {
+          e.preventDefault();
+          setDropActive(true);
+        }}
+        onDragLeave={(e) => {
+          if (e.currentTarget === e.target) setDropActive(false);
+        }}
+        onDrop={handleDrop}
+        onContextMenuCapture={(e) => {
+          lastContextMenuAt.current = { x: e.clientX, y: e.clientY };
+        }}
+        data-testid="builder-dropzone"
+      >
+        <Viewport
+          snapshot={viewed}
+          frame={null}
+          atomLabels={null}
+          atomVectors={null}
+          onRendererReady={handleRendererReady}
+          onHover={setHoverInfo}
+          previewIndices={highlighted}
+          buildActive={true}
+          buildHandlers={handlers}
+          preserveCameraKey={revision}
+          boxSelectActive={!!source && tool === "select" && boxSelect}
+          onBoxSelect={(indices, { additive }) =>
+            setSelected(additive ? [...new Set([...api.getState().selected, ...indices])] : indices)
+          }
+          onAtomRightClick={(atom) => {
+            // A preview's atoms are not the document's; nothing to act on.
+            if (api.getState().preview) return;
+            const at = lastContextMenuAt.current ?? { x: 0, y: 0 };
+            setAtomMenu({ atom, x: at.x, y: at.y });
+          }}
+        />
+        <Tooltip info={atomMenu ? null : hoverInfo} />
+      </div>
+
+      {/* Top-left, as in the viewer: Reset View and the axis buttons, then the
+          tool rail under them. */}
+      <div
+        data-testid="builder-left-column"
         style={{
+          position: "absolute",
+          top: OVERLAY_INSET,
+          left: OVERLAY_INSET,
+          bottom: OVERLAY_INSET + STATUS_CLEARANCE,
+          zIndex: 10,
           display: "flex",
-          alignItems: "center",
-          gap: 8,
-          padding: "8px 12px",
-          borderBottom: "1px solid var(--megane-border-solid, #e2e8f0)",
-          background: "var(--megane-surface-solid, #f8f9fb)",
-          flexWrap: "wrap",
+          flexDirection: "column",
+          alignItems: "flex-start",
+          gap: 4,
+          pointerEvents: "none",
         }}
       >
-        <span style={{ fontWeight: 700, fontSize: 14, letterSpacing: "-0.02em" }}>
-          megane Builder
-        </span>
-        <span style={{ ...hintStyle, marginRight: 8 }} data-testid="builder-file-name">
-          {fileName ?? "No structure"}
-          {steps > 0 && ` · ${steps} edit${steps === 1 ? "" : "s"}`}
-        </span>
-        <input
-          ref={inputRef}
-          data-testid="builder-open-input"
-          type="file"
-          style={{ display: "none" }}
-          onChange={(e) => void handleOpenChange(e)}
-        />
-        <Menu
-          testId="builder-file"
-          label="File"
-          title="Open, start or save a structure"
-          items={fileMenuItems({
-            open: () => inputRef.current?.click(),
-            newCell: () => setNewDialog("cell"),
-            newBulk: () => setNewDialog("bulk"),
-            formats: STRUCTURE_EXPORT_FORMATS,
-            save: (f) => void handleExport(f as StructureWriteFormat),
-            canSave: !!shown,
-            mod,
-          })}
-        />
-        <Menu
-          testId="builder-structure"
-          label="Structure"
-          disabled={!shown}
-          title="Cell, supercell, slab and symmetry of the open structure"
-          items={structureItems}
-        />
-        <Menu
-          testId="builder-insert"
-          label="Insert"
-          title="Molecules from the library, a sketch or a file"
-          items={[
-            {
-              label: "Molecule…",
-              testId: "builder-insert-molecule",
-              title: "Choose a library molecule to place (P)",
-              onSelect: () => {
-                setTool("place");
-                setGalleryOpen(true);
-              },
-            },
-            {
-              label: "Sketch molecule…",
-              testId: "builder-insert-sketch",
-              title: "Draw a molecule in Ketcher and add it to the library",
-              onSelect: () => openSketch(),
-            },
-            {
-              label: "Molecule from file…",
-              testId: "builder-insert-import",
-              title: "Add a molecule to the library from a structure file",
-              onSelect: () => importer?.(),
-            },
-            { separator: true },
-            {
-              label: "Save selection as molecule",
-              testId: "builder-insert-save-selection",
-              disabled: selected.length === 0,
-              title: "Keep the selected atoms (and the bonds between them) in the library",
-              onSelect: saveSelection,
-            },
-          ]}
-        />
-        <Menu
-          testId="builder-tools"
-          label="Tools"
-          title="Python tools from a connected tool server"
-          items={toolsItems}
-        />
-        <Menu
-          testId="builder-view"
-          label="View"
-          title="Camera and theme"
-          items={viewMenuItems({
-            resetView: handleResetView,
-            align: handleAlignView,
-            hasCell,
-            theme,
-            setTheme,
-          })}
-        />
-        <button
-          type="button"
-          data-testid="builder-topbar-undo"
-          style={buttonStyle("default", edits.length === 0)}
-          disabled={edits.length === 0}
-          title={`Undo (${mod}+Z)`}
-          onClick={() => undo()}
-        >
-          Undo
-        </button>
-        <button
-          type="button"
-          data-testid="builder-topbar-redo"
-          style={buttonStyle("default", redoStack.length === 0)}
-          disabled={redoStack.length === 0}
-          title={`Redo (${mod}+Shift+Z)`}
-          onClick={() => redo()}
-        >
-          Redo
-        </button>
-        <span style={{ flex: 1 }} />
-      </div>
-
-      <div style={{ flex: 1, display: "flex", minHeight: 0 }}>
-        <ToolRail />
         <div
-          style={{ flex: 1, position: "relative", minWidth: 0 }}
-          onDragOver={(e) => {
-            e.preventDefault();
-            setDropActive(true);
-          }}
-          onDragLeave={(e) => {
-            if (e.currentTarget === e.target) setDropActive(false);
-          }}
-          onDrop={handleDrop}
-          onContextMenuCapture={(e) => {
-            lastContextMenuAt.current = { x: e.clientX, y: e.clientY };
-          }}
-          data-testid="builder-dropzone"
-        >
-          <Viewport
-            snapshot={viewed}
-            frame={null}
-            atomLabels={null}
-            atomVectors={null}
-            onRendererReady={handleRendererReady}
-            onHover={setHoverInfo}
-            previewIndices={highlighted}
-            buildActive={true}
-            buildHandlers={handlers}
-            preserveCameraKey={revision}
-            boxSelectActive={!!source && tool === "select" && boxSelect}
-            onBoxSelect={(indices, { additive }) =>
-              setSelected(
-                additive ? [...new Set([...api.getState().selected, ...indices])] : indices,
-              )
-            }
-            onAtomRightClick={(atom) => {
-              // A preview's atoms are not the document's; nothing to act on.
-              if (api.getState().preview) return;
-              const at = lastContextMenuAt.current ?? { x: 0, y: 0 };
-              setAtomMenu({ atom, x: at.x, y: at.y });
-            }}
-          />
-          {/* Place works with nothing open, so its bar (and gallery) does too. */}
-          {(source || tool === "place") && !crystalDialog && <ContextBar />}
-          {crystalDialog && (
-            <CrystalDialog key={crystalDialog} kind={crystalDialog} onClose={closeCrystalDialog} />
-          )}
-          {!source && tool !== "place" && (
-            <div
-              data-testid="builder-welcome"
-              style={{
-                position: "absolute",
-                inset: 0,
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "center",
-                pointerEvents: "none",
-              }}
-            >
-              <div
-                style={{
-                  pointerEvents: "auto",
-                  display: "flex",
-                  flexDirection: "column",
-                  alignItems: "center",
-                  gap: 10,
-                  padding: 24,
-                  borderRadius: 12,
-                  background: "var(--megane-surface, rgba(255,255,255,0.92))",
-                  border: "1px solid var(--megane-border-solid, #e2e8f0)",
-                  boxShadow: "0 4px 24px var(--megane-shadow, rgba(0,0,0,0.06))",
-                }}
-              >
-                <div style={{ fontWeight: 600 }}>Build a structure</div>
-                <div style={hintStyle}>
-                  Open a file (PDB, XYZ, MOL, CIF, …) — or drop one here — or start from scratch.
-                </div>
-                <div
-                  style={{ display: "flex", gap: 8, flexWrap: "wrap", justifyContent: "center" }}
-                >
-                  <button
-                    type="button"
-                    data-testid="builder-welcome-open"
-                    style={buttonStyle("primary")}
-                    onClick={() => inputRef.current?.click()}
-                  >
-                    Open…
-                  </button>
-                  <button
-                    type="button"
-                    data-testid="builder-welcome-new"
-                    style={buttonStyle()}
-                    onClick={() => setNewDialog("cell")}
-                  >
-                    New empty cell…
-                  </button>
-                  <button
-                    type="button"
-                    data-testid="builder-welcome-bulk"
-                    style={buttonStyle()}
-                    onClick={() => setNewDialog("bulk")}
-                  >
-                    New bulk crystal…
-                  </button>
-                </div>
-              </div>
-            </div>
-          )}
-          {dropActive && (
-            <div
-              data-testid="builder-drop-overlay"
-              style={{
-                position: "absolute",
-                inset: 8,
-                borderRadius: 10,
-                border: "2px dashed #2563eb",
-                background: "rgba(37, 99, 235, 0.08)",
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "center",
-                fontWeight: 600,
-                color: "#1d4ed8",
-                pointerEvents: "none",
-              }}
-            >
-              Drop a structure file to open it
-            </div>
-          )}
-          <Tooltip info={atomMenu ? null : hoverInfo} />
-        </div>
-        <div
+          data-testid="view-controls"
           style={{
-            width: SIDEBAR_WIDTH,
-            borderLeft: "1px solid var(--megane-border-solid, #e2e8f0)",
-            background: "var(--megane-surface-solid, #f8f9fb)",
-            overflow: "hidden",
             display: "flex",
             flexDirection: "column",
+            alignItems: "flex-start",
+            gap: 4,
+            pointerEvents: "auto",
           }}
         >
-          <BuilderSidebar onOpenCrystal={setCrystalDialog} />
+          <button
+            type="button"
+            data-testid="builder-reset-view"
+            title="Reset view (R): fit the structure in the standard orientation"
+            onClick={handleResetView}
+            style={overlayButtonStyle}
+          >
+            Reset View
+          </button>
+          <ViewAxisControls hasCell={hasCell} onAlign={handleAlignView} />
+        </div>
+        <div style={{ marginTop: 8, minHeight: 0, overflowY: "auto" }}>
+          <ToolRail />
         </div>
       </div>
 
-      {notice && (
+      {/* Place works with nothing open, so its bar (and gallery) does too. */}
+      {(source || tool === "place") && !crystalDialog && (
+        <ContextBar left={CONTEXT_BAR_LEFT} right={overlayRight} />
+      )}
+      {crystalDialog && (
+        <CrystalDialog
+          key={crystalDialog}
+          kind={crystalDialog}
+          onClose={closeCrystalDialog}
+          right={overlayRight}
+        />
+      )}
+      {!source && tool !== "place" && (
         <div
-          data-testid="builder-notice"
-          data-level={notice.level}
-          role={notice.level === "error" ? "alert" : "status"}
+          data-testid="builder-welcome"
           style={{
+            position: "absolute",
+            top: 0,
+            bottom: 0,
+            left: 0,
+            right: panelInset,
             display: "flex",
             alignItems: "center",
-            gap: 8,
-            padding: "6px 12px",
-            fontSize: 12,
-            borderTop: "1px solid var(--megane-border-solid, #e2e8f0)",
-            background:
-              notice.level === "error" ? "rgba(220, 38, 38, 0.1)" : "rgba(37, 99, 235, 0.08)",
-            color: notice.level === "error" ? "#991b1b" : "var(--megane-text, #1e293b)",
+            justifyContent: "center",
+            pointerEvents: "none",
+            zIndex: 5,
           }}
         >
-          <span style={{ flex: 1 }}>{notice.text}</span>
-          <button
-            type="button"
-            data-testid="builder-notice-dismiss"
-            style={buttonStyle()}
-            onClick={() => setNotice(null)}
+          <div
+            style={{
+              ...floatingSurfaceStyle,
+              pointerEvents: "auto",
+              display: "flex",
+              flexDirection: "column",
+              alignItems: "center",
+              gap: 10,
+              padding: 24,
+              maxWidth: 420,
+              margin: 16,
+              textAlign: "center",
+            }}
           >
-            Dismiss
-          </button>
+            <div style={{ fontWeight: 600, fontSize: 15, letterSpacing: "-0.02em" }}>
+              Build a structure
+            </div>
+            <div style={hintStyle}>
+              Open a file (PDB, XYZ, MOL, CIF, …) — or drop one here — or start from scratch.
+            </div>
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap", justifyContent: "center" }}>
+              <button
+                type="button"
+                data-testid="builder-welcome-open"
+                style={buttonStyle("primary")}
+                onClick={() => inputRef.current?.click()}
+              >
+                Open…
+              </button>
+              <button
+                type="button"
+                data-testid="builder-welcome-new"
+                style={buttonStyle()}
+                onClick={() => setNewDialog("cell")}
+              >
+                New empty cell…
+              </button>
+              <button
+                type="button"
+                data-testid="builder-welcome-bulk"
+                style={buttonStyle()}
+                onClick={() => setNewDialog("bulk")}
+              >
+                New bulk crystal…
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+      {dropActive && (
+        <div
+          data-testid="builder-drop-overlay"
+          style={{
+            position: "absolute",
+            inset: 8,
+            zIndex: 30,
+            borderRadius: 12,
+            border: "2px dashed #3b82f6",
+            background: "rgba(59, 130, 246, 0.08)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            fontWeight: 600,
+            color: "var(--megane-primary-text, #2563eb)",
+            pointerEvents: "none",
+          }}
+        >
+          Drop a structure file to open it
         </div>
       )}
 
+      <CollapsiblePanel
+        title="Builder"
+        subtitle={
+          <span data-testid="builder-file-name">
+            {fileName ?? "No structure"}
+            {steps > 0 && ` · ${steps} edit${steps === 1 ? "" : "s"}`}
+          </span>
+        }
+        collapsed={panelCollapsed}
+        onToggleCollapse={() => setPanelCollapsed((c) => !c)}
+        width={PANEL_WIDTH}
+        bottom={OVERLAY_INSET}
+        headerExtra={
+          <BuilderToolbar
+            fileItems={fileMenuItems({
+              open: () => inputRef.current?.click(),
+              newCell: () => setNewDialog("cell"),
+              newBulk: () => setNewDialog("bulk"),
+              formats: STRUCTURE_EXPORT_FORMATS,
+              save: (f) => void handleExport(f as StructureWriteFormat),
+              canSave: !!shown,
+              mod,
+            })}
+            structureItems={structureItems}
+            insertItems={insertItems}
+            toolsItems={toolsItems}
+            hasDocument={!!shown}
+            canUndo={edits.length > 0}
+            canRedo={redoStack.length > 0}
+            onUndo={() => undo()}
+            onRedo={() => redo()}
+            mod={mod}
+          />
+        }
+      >
+        <BuilderSidebar onOpenCrystal={setCrystalDialog} />
+      </CollapsiblePanel>
+
+      {/* Bottom-left: the one notice line over the status line. */}
       <div
-        data-testid="builder-statusbar"
         style={{
+          position: "absolute",
+          left: OVERLAY_INSET,
+          right: overlayRight,
+          bottom: OVERLAY_INSET,
+          zIndex: 10,
           display: "flex",
-          gap: 16,
-          padding: "4px 12px",
-          borderTop: "1px solid var(--megane-border-solid, #e2e8f0)",
-          background: "var(--megane-surface-solid, #f8f9fb)",
-          ...hintStyle,
+          flexDirection: "column",
+          alignItems: "flex-start",
+          gap: 6,
+          pointerEvents: "none",
         }}
       >
-        <span data-testid="builder-status-atoms">
-          {viewed ? `${viewed.nAtoms} atoms · ${viewed.nBonds} bonds` : "No structure"}
-        </span>
-        {preview && (
-          <span data-testid="builder-status-preview" style={{ color: "#1d4ed8" }}>
-            Preview — Apply keeps it
-          </span>
+        {notice && (
+          <div
+            data-testid="builder-notice"
+            data-level={notice.level}
+            role={notice.level === "error" ? "alert" : "status"}
+            style={{
+              ...floatingSurfaceStyle,
+              pointerEvents: "auto",
+              maxWidth: "100%",
+              boxSizing: "border-box",
+              display: "flex",
+              alignItems: "center",
+              gap: 10,
+              padding: "6px 8px 6px 12px",
+              fontSize: 12,
+              borderLeft: `3px solid ${notice.level === "error" ? "#ef4444" : "#3b82f6"}`,
+              color:
+                notice.level === "error"
+                  ? "var(--megane-danger-text, #b91c1c)"
+                  : "var(--megane-text, #1e293b)",
+            }}
+          >
+            <span style={{ flex: 1 }}>{notice.text}</span>
+            <button
+              type="button"
+              data-testid="builder-notice-dismiss"
+              style={buttonStyle()}
+              onClick={() => setNotice(null)}
+            >
+              Dismiss
+            </button>
+          </div>
         )}
-        {hasCell && <span data-testid="builder-status-cell">Cell</span>}
-        {selected.length > 0 && (
-          <span data-testid="builder-status-selection">{selected.length} selected</span>
-        )}
-        <span style={{ flex: 1 }} />
-        <span data-testid="builder-status-tool">
-          <b style={{ fontWeight: 600, color: "var(--megane-text, #334155)" }}>
-            {activeTool.label} ({TOOL_KEYS[activeTool.value]})
-          </b>{" "}
-          ·{" "}
-          <span data-testid="builder-tool-hint">
-            {toolHint(tool, pendingBondAtom, placeSource)}
+        <div
+          data-testid="builder-statusbar"
+          style={{
+            ...overlayButtonStyle,
+            cursor: "default",
+            maxWidth: "100%",
+            boxSizing: "border-box",
+            display: "flex",
+            flexWrap: "wrap",
+            columnGap: 12,
+            rowGap: 4,
+            lineHeight: 1.3,
+            color: "var(--megane-text-secondary, #64748b)",
+          }}
+        >
+          <span data-testid="builder-status-atoms" style={{ fontVariantNumeric: "tabular-nums" }}>
+            {viewed ? `${viewed.nAtoms} atoms · ${viewed.nBonds} bonds` : "No structure"}
           </span>
-        </span>
-        {showOriginal && <span>Showing original</span>}
+          {preview && (
+            <span
+              data-testid="builder-status-preview"
+              style={{ color: "var(--megane-primary-text, #2563eb)" }}
+            >
+              Preview — Apply keeps it
+            </span>
+          )}
+          {hasCell && <span data-testid="builder-status-cell">Cell</span>}
+          {selected.length > 0 && (
+            <span data-testid="builder-status-selection">{selected.length} selected</span>
+          )}
+          {showOriginal && <span>Showing original</span>}
+          <span data-testid="builder-status-tool">
+            <b style={{ fontWeight: 600, color: "var(--megane-text-body, #334155)" }}>
+              {activeTool.label} ({TOOL_KEYS[activeTool.value]})
+            </b>{" "}
+            ·{" "}
+            <span data-testid="builder-tool-hint">
+              {toolHint(tool, pendingBondAtom, placeSource)}
+            </span>
+          </span>
+        </div>
       </div>
 
       <LibraryHost />

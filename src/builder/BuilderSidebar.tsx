@@ -1,5 +1,6 @@
 /**
- * The Builder's side panel, an inspector in three layers:
+ * The body of the Builder panel (the viewer-style frosted panel on the right
+ * of the view), an inspector in three layers:
  *
  *   Inspector — the structure (formula, counts, elements), or with a
  *               selection the selected atoms, what they measure and what can
@@ -10,7 +11,7 @@
  * The tools are not here: they sit on the rail left of the view (`ToolRail`)
  * and their settings in the bar over it (`ContextBar`), which is also where
  * the Place tool's molecule library opens. Cell, supercell, slab, the Python
- * tools and inserting molecules are operations, so they live in the top bar's
+ * tools and inserting molecules are operations, so they live in the panel toolbar's
  * Structure, Tools and Insert menus, as do the document's own actions (open,
  * new, save): each control appears exactly once. Pure UI over `useBuilderStore`; every edit goes through the store's
  * actions and the handlers installed by `useBuilderHandlers`.
@@ -48,10 +49,12 @@ export function BuilderSidebar({
     <div
       data-testid="builder-sidebar"
       style={{
+        flex: 1,
+        minHeight: 0,
         display: "flex",
         flexDirection: "column",
-        gap: 12,
-        padding: 12,
+        gap: 10,
+        padding: 10,
         overflowY: "auto",
         fontSize: 13,
         color: "var(--megane-text, #1e293b)",
@@ -59,7 +62,7 @@ export function BuilderSidebar({
     >
       {!source && (
         <div style={hintStyle} data-testid="builder-empty-hint">
-          Open a structure file, or start a new one from the top bar.
+          Open a structure file, or start a new one from the File menu.
         </div>
       )}
       {source && showOriginal && (
@@ -69,7 +72,7 @@ export function BuilderSidebar({
             ...sectionStyle,
             gap: 6,
             background: "rgba(245, 158, 11, 0.12)",
-            color: "#92400e",
+            color: "var(--megane-warning-text, #b45309)",
             fontSize: 12,
           }}
         >
@@ -180,7 +183,10 @@ function HistorySection({ defaultOpen }: { defaultOpen: boolean }) {
         </ol>
       )}
       {result && result.warnings.length > 0 && (
-        <div data-testid="builder-warnings" style={{ ...hintStyle, color: "#b45309" }}>
+        <div
+          data-testid="builder-warnings"
+          style={{ ...hintStyle, color: "var(--megane-warning-text, #b45309)" }}
+        >
           {result.warnings.map((w, i) => (
             <div key={i}>{w}</div>
           ))}

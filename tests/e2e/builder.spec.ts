@@ -148,24 +148,28 @@ test.describe("builder: webapp", () => {
     );
   });
 
-  test("Place starts a document with nothing open; the periodic table and the View menu", async ({
+  test("Place starts a document with nothing open; the periodic table and the theme", async ({
     page,
   }) => {
     const root = page.locator('[data-testid="megane-builder"]');
     const viewport = page.locator('[data-testid="viewer-root"]');
 
-    // Dark theme from the View menu: the 3D view's background follows.
+    // Dark theme from the panel's theme button (Light → Dark → Auto, as in
+    // the viewer): the 3D view's background follows.
     const corner = async () => {
       const png = PNG.sync.read(await viewport.screenshot());
       const i = (png.width * 4 + 4) * 4;
       return [png.data[i], png.data[i + 1], png.data[i + 2]];
     };
+    const theme = page.locator('[data-testid="builder-theme"]');
     expect(await corner()).toEqual([255, 255, 255]);
-    await page.locator('[data-testid="builder-view"]').click();
-    await page.locator('[data-testid="builder-theme-dark"]').click();
+    await theme.click();
+    await expect(theme).toHaveText("Light");
+    await theme.click();
+    await expect(theme).toHaveText("Dark");
     await expect.poll(corner).toEqual([0x0f, 0x17, 0x2a]);
-    await page.locator('[data-testid="builder-view"]').click();
-    await page.locator('[data-testid="builder-theme-light"]').click();
+    await theme.click();
+    await expect(theme).toHaveText("Auto");
     await expect.poll(corner).toEqual([255, 255, 255]);
 
     // Nothing open: Insert › Molecule… still shows the gallery.

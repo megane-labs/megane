@@ -1,9 +1,9 @@
 /**
- * The Builder's tool rail: a vertical strip of icon buttons down the left of
- * the 3D view, one per tool, each carrying its shortcut key — the place every
- * molecule editor keeps its tools. The settings a tool uses are not here but
+ * The Builder's tool rail: a floating frosted-glass column of icon buttons on
+ * the left of the 3D view (the viewer's panel look), one per tool, each
+ * carrying its shortcut key — the place every molecule editor keeps its tools. The settings a tool uses are not here but
  * in the `ContextBar` over the view, and what a click will do is said once, in
- * the status bar (`toolHint`).
+ * the status line (`toolHint`).
  */
 
 import type { ReactNode } from "react";
@@ -11,6 +11,8 @@ import { useBuilderStore } from "./store";
 import { TOOL_KEYS } from "./shortcuts";
 import type { BuildTool } from "./types";
 import type { LibraryMolecule } from "./library/types";
+import { ACCENT_TEXT, ACCENT_TINT } from "./styles";
+import { floatingSurfaceStyle } from "../components/toolbarStyles";
 
 export interface ToolInfo {
   value: BuildTool;
@@ -67,7 +69,7 @@ export function toolInfo(tool: BuildTool): ToolInfo {
   return TOOLS.find((t) => t.value === tool)!;
 }
 
-/** What a click does with `tool` right now, for the status bar. */
+/** What a click does with `tool` right now, for the status line. */
 export function toolHint(
   tool: BuildTool,
   pendingBondAtom: number | null,
@@ -139,9 +141,7 @@ export function ToolIcon({ tool }: { tool: BuildTool }) {
   );
 }
 
-export const TOOL_RAIL_WIDTH = 52;
-
-const ACCENT = "#2563eb";
+export const TOOL_RAIL_WIDTH = 50;
 
 function railButtonStyle(active: boolean): React.CSSProperties {
   return {
@@ -155,8 +155,8 @@ function railButtonStyle(active: boolean): React.CSSProperties {
     border: "none",
     borderRadius: 8,
     cursor: "pointer",
-    background: active ? "rgba(37, 99, 235, 0.14)" : "transparent",
-    color: active ? ACCENT : "var(--megane-text-secondary, #475569)",
+    background: active ? ACCENT_TINT : "transparent",
+    color: active ? ACCENT_TEXT : "var(--megane-text-secondary, #64748b)",
   };
 }
 
@@ -171,16 +171,15 @@ export function ToolRail() {
       aria-label="Tool"
       aria-orientation="vertical"
       style={{
+        ...floatingSurfaceStyle,
         width: TOOL_RAIL_WIDTH,
-        flexShrink: 0,
         boxSizing: "border-box",
-        padding: "8px 0",
+        padding: "6px 0",
         display: "flex",
         flexDirection: "column",
         alignItems: "center",
-        gap: 4,
-        borderRight: "1px solid var(--megane-border-solid, #e2e8f0)",
-        background: "var(--megane-surface-solid, #f8f9fb)",
+        gap: 2,
+        pointerEvents: "auto",
       }}
     >
       {GROUPS.map((group, g) => (
@@ -189,9 +188,9 @@ export function ToolRail() {
             <div
               aria-hidden="true"
               style={{
-                width: 26,
+                width: 24,
                 height: 1,
-                margin: "4px 0",
+                margin: "3px 0",
                 background: "var(--megane-border-solid, #e2e8f0)",
               }}
             />
@@ -222,7 +221,7 @@ export function ToolRail() {
                     fontSize: 9,
                     fontWeight: 600,
                     fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
-                    color: active ? ACCENT : "#94a3b8",
+                    color: active ? ACCENT_TEXT : "var(--megane-text-muted, #94a3b8)",
                   }}
                 >
                   {TOOL_KEYS[value]}

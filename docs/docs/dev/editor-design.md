@@ -136,21 +136,30 @@ structure is *shown*, and every attempt to host editing inside the viewer
 swapped the view) ended up with the two competing for the same column and
 users unsure which of them the picture reflected. So `src/builder/` mounts
 its own page (`builder.html`, a Vite entry beside `index.html` and the
-multi-instance harness), laid out so that each control has exactly one home:
-a top bar of menus — *File* for the **document** (Open, New, Save) and *View*
-for the camera and the theme (`topbarMenus.ts`), plus Undo / Redo — the 3D
-view with a tool rail on its left (`ToolRail.tsx`, one icon per tool with its
-key) and a context bar over its top (`ContextBar.tsx`, only the settings the
-current tool uses — none for Select / Move / Delete), *Structure* and
-*Tools* menus in the top bar for the operations (`crystal/structureMenu.ts`,
-`tools/ToolServer.tsx`), a sidebar for the
-**structure** (`Inspector.tsx`: the structure summary, or the selected atoms
-with their positions, distance / angle / dihedral and actions; the cell as a
-read-only card; history), a status bar for what is on screen and what the tool does
-(`toolHint`, the one place the hint is written), and one notice line for every message the app has to
-show (`BuilderStore.notice`, written through `reportError` / `reportInfo` so
-no panel keeps an error line of its own). `Section` (`src/builder/Section.tsx`)
-makes the sidebar's history section collapsible and
+multi-instance harness). It is laid out in the viewer's design language — the
+3D view fills the window and every control floats over it on the viewer's
+frosted-glass surfaces (`src/components/toolbarStyles.ts`, shared with the
+viewer's Pipeline panel) — so that each control has exactly one home: the
+viewer's `CollapsiblePanel` on the right, titled *Builder* with the document's
+name beside it, whose header carries toolbar rows built like the Pipeline
+panel's (`BuilderToolbar.tsx`: *Document* — the *File* menu for the
+**document** (Open, New, Save; `topbarMenus.ts`), Undo / Redo; *Build* — the
+*Structure*, *Insert* and *Tools* menus for the operations
+(`crystal/structureMenu.ts`, `tools/ToolServer.tsx`); *Others* — the viewer's
+`ThemeCycleButton`) and whose body is the **structure** (`Inspector.tsx`: the
+structure summary, or the selected atoms with their positions, distance /
+angle / dihedral and actions; the cell as a read-only card; history); the
+viewer's Reset View and `ViewAxisControls` in the top-left corner with a
+floating tool rail under them (`ToolRail.tsx`, one icon per tool with its
+key); a context bar over the top of the view (`ContextBar.tsx`, only the
+settings the current tool uses — none for Select / Move / Delete); a status
+line at the bottom left for what is on screen and what the tool does
+(`toolHint`, the one place the hint is written); and one notice line above it
+for every message the app has to show (`BuilderStore.notice`, written through
+`reportError` / `reportInfo` so no panel keeps an error line of its own). The
+menus (`Menu.tsx`) portal their lists to `<body>` because the panel clips its
+overflow. `Section` (`src/builder/Section.tsx`)
+makes the panel's history section collapsible and
 remembers each one in `localStorage`; `shortcuts.ts` holds the key table
 (`resolveShortcut`) and applies it to the store (`runShortcut`), ignoring keys
 aimed at a text field or a dialog. Starting a document — an empty cell or a
@@ -195,18 +204,18 @@ the Inspector's box select:
 - otherwise a press that barely moves is a click, reported to `pick` with the
   atom index or, on empty space, the world point at the pivot's depth.
 
-**Crystal.** The top bar's *Structure* menu (`crystal/structureMenu.ts`)
+**Crystal.** The panel's *Structure* menu (`crystal/structureMenu.ts`)
 lists every cell and crystal op: *Wrap*, *Remove cell* and *Expand
 symmetry* push their op at once; *Set cell*, *Center with vacuum*,
 *Supercell* and *Cut slab* open `crystal/CrystalDialog.tsx`, a panel in the
-corner of the view with one form per op. While a form describes a valid op
+top-right of the view, left of the Builder panel, with one form per op. While a form describes a valid op
 the dialog hands it to `BuilderStore.setPreview`, which applies it to the
 edited structure without committing it; the view draws `viewSnapshot` (the
 preview when there is one), `canEdit` is false so clicks are paused, and any
 change to the document drops the preview. *Apply* pushes the op with a fresh
 fragment id. Results above `PREVIEW_MAX_ATOMS` are announced but not
 previewed, since building the preview is the cost of every keystroke. The
-sidebar keeps only a read-only cell card (`crystal/CellCard.tsx`) with the
+panel keeps only a read-only cell card (`crystal/CellCard.tsx`) with the
 symmetry offer. The bulk-crystal form (`crystal/BulkForm.tsx`) is not in the
 menu, because `BuilderStore.newBulk` starts a *new document* rather than
 editing the open one; it lives in the New structure dialog beside the empty
@@ -240,8 +249,10 @@ screen); box selection reuses the viewer's `Viewport` `boxSelectActive` /
 The element picker's periodic table is `PeriodicTable.tsx` (`tablePosition`).
 `addFragment` with no document opens an `emptySnapshot()` (no cell) first, so
 the Place tool and its gallery work before anything is open. The 3D view's
-background follows the theme store (`themeToHex`), as in the viewer. The view
-has no frustum inset (the sidebar sits beside it, not over it), and a
+background follows the theme store (`themeToHex`), as in the viewer. As in
+the viewer, the frustum is inset by the panel's width while it is open
+(`setViewInsets`), so the structure centres in the part of the view left of
+the panel, and a
 Structure preview starting or ending refits the camera (`resetView`, which
 keeps the orientation).
 

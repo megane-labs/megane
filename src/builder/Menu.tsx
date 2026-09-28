@@ -1,11 +1,29 @@
 /**
- * A small dropdown for the top bar: a trigger button and a list of items,
- * optionally split by separators and headed by captions. Closes on an item,
- * a click outside, or Escape.
+ * A toolbar dropdown for the Builder panel: a pill trigger in the viewer's
+ * toolbar look and a list of items, optionally split by separators and headed
+ * by captions. Closes on an item, a click outside, or Escape.
+ *
+ * The list is portalled to `<body>` and placed under the trigger with fixed
+ * coordinates, kept inside the window: the panel it sits in clips its
+ * overflow (and its backdrop blur would otherwise capture fixed positioning).
  */
 
-import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
-import { buttonStyle, type ButtonVariant } from "./styles";
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type CSSProperties,
+  type ReactNode,
+} from "react";
+import { createPortal } from "react-dom";
+import {
+  dropdownItemStyle,
+  dropdownStyle,
+  groupHeaderStyle,
+  tintedButtonStyle,
+} from "../components/toolbarStyles";
 
 export interface MenuAction {
   label: ReactNode;
@@ -32,23 +50,38 @@ function isAction(item: MenuItem): item is MenuAction {
   return "onSelect" in item;
 }
 
+/** The neutral pill a trigger wears unless it is given its own tint. */
+export const MENU_TRIGGER_STYLE = tintedButtonStyle(
+  "100, 116, 139",
+  "var(--megane-text-body)",
+  0.3,
+);
+
+/** Gap kept between the list and the window's edges. */
+const EDGE = 8;
+
 export interface MenuProps {
   label: ReactNode;
   items: MenuItem[];
   disabled?: boolean;
-  variant?: ButtonVariant;
+  /** The trigger's pill style (default: {@link MENU_TRIGGER_STYLE}). */
+  triggerStyle?: CSSProperties;
   testId?: string;
   title?: string;
 }
 
-export function Menu({ label, items, disabled = false, variant, testId, title }: MenuProps) {
+export function Menu({ label, items, disabled = false, triggerStyle, testId, title }: MenuProps) {
   const [open, setOpen] = useState(false);
-  const rootRef = useRef<HTMLDivElement>(null);
+  const [pos, setPos] = useState<{ left: number; top: number } | null>(null);
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     if (!open) return;
     const onPointerDown = (e: PointerEvent) => {
-      if (rootRef.current && !rootRef.current.contains(e.target as Node)) setOpen(false);
+      const target = e.target as Node;
+      if (triggerRef.current?.contains(target) || menuRef.current?.contains(target)) return;
+      setOpen(false);
     };
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.key === "Escape") setOpen(false);
@@ -61,6 +94,18 @@ export function Menu({ label, items, disabled = false, variant, testId, title }:
     };
   }, [open]);
 
+  // Under the trigger, shifted left when it would run off the window.
+  useLayoutEffect(() => {
+    if (!open || !triggerRef.current) {
+      setPos(null);
+      return;
+    }
+    const at = triggerRef.current.getBoundingClientRect();
+    const width = menuRef.current?.offsetWidth ?? 0;
+    const maxLeft = window.innerWidth - width - EDGE;
+    setPos({ left: Math.max(EDGE, Math.min(at.left, maxLeft)), top: at.bottom + 4 });
+  }, [open]);
+
   const select = useCallback((item: MenuAction) => {
     if (item.disabled) return;
     setOpen(false);
@@ -68,99 +113,102 @@ export function Menu({ label, items, disabled = false, variant, testId, title }:
   }, []);
 
   return (
-    <div ref={rootRef} style={{ position: "relative", display: "inline-block" }}>
+    <>
       <button
+        ref={triggerRef}
         type="button"
         data-testid={testId}
         aria-haspopup="menu"
         aria-expanded={open}
         disabled={disabled}
         title={title}
-        style={buttonStyle(variant, disabled)}
+        style={{
+          ...(triggerStyle ?? MENU_TRIGGER_STYLE),
+          fontFamily: "inherit",
+          cursor: disabled ? "default" : "pointer",
+          opacity: disabled ? 0.45 : 1,
+        }}
         onClick={() => setOpen((o) => !o)}
       >
-        {label} <span aria-hidden="true">▾</span>
+        {label}
+        <span aria-hidden="true" style={{ fontSize: 8, opacity: 0.7 }}>
+          ▼
+        </span>
       </button>
-      {open && (
-        <div
-          role="menu"
-          data-testid={testId ? `${testId}-menu` : undefined}
-          style={{
-            position: "absolute",
-            top: "calc(100% + 4px)",
-            left: 0,
-            minWidth: 160,
-            zIndex: 50,
-            display: "flex",
-            flexDirection: "column",
-            padding: 4,
-            borderRadius: 8,
-            background: "var(--megane-surface-solid, #fff)",
-            border: "1px solid var(--megane-border-solid, #e2e8f0)",
-            boxShadow: "0 8px 24px var(--megane-shadow, rgba(0,0,0,0.12))",
-          }}
-        >
-          {items.map((item, i) => {
-            if ("separator" in item) {
+      {open &&
+        createPortal(
+          <div
+            ref={menuRef}
+            role="menu"
+            data-testid={testId ? `${testId}-menu` : undefined}
+            style={{
+              ...dropdownStyle,
+              position: "fixed",
+              top: pos?.top ?? 0,
+              left: pos?.left ?? 0,
+              right: "auto",
+              marginTop: 0,
+              zIndex: 1000,
+              maxHeight: `calc(100vh - ${(pos?.top ?? 0) + EDGE}px)`,
+              overflowY: "auto",
+              display: "flex",
+              flexDirection: "column",
+              // Hidden for the one frame before it has been measured and placed.
+              visibility: pos ? "visible" : "hidden",
+            }}
+          >
+            {items.map((item, i) => {
+              if ("separator" in item) {
+                return (
+                  <div
+                    key={i}
+                    role="separator"
+                    style={{
+                      height: 1,
+                      margin: "4px 0",
+                      background: "var(--megane-border-solid, #e2e8f0)",
+                    }}
+                  />
+                );
+              }
+              if (!isAction(item)) {
+                return (
+                  <div
+                    key={i}
+                    data-testid={item.testId}
+                    style={{ ...groupHeaderStyle, whiteSpace: "nowrap" }}
+                  >
+                    {item.caption}
+                  </div>
+                );
+              }
               return (
-                <div
+                <button
                   key={i}
-                  role="separator"
-                  style={{
-                    height: 1,
-                    margin: "4px 6px",
-                    background: "var(--megane-border-solid, #e2e8f0)",
-                  }}
-                />
-              );
-            }
-            if (!isAction(item)) {
-              return (
-                <div
-                  key={i}
+                  type="button"
+                  role="menuitem"
                   data-testid={item.testId}
+                  disabled={item.disabled}
+                  title={item.title}
+                  onClick={() => select(item)}
                   style={{
-                    padding: "6px 10px 2px",
-                    fontSize: 10,
-                    fontWeight: 700,
-                    letterSpacing: 0.4,
-                    textTransform: "uppercase",
-                    color: "var(--megane-text-secondary, #64748b)",
+                    ...dropdownItemStyle,
+                    padding: "6px 14px",
+                    fontFamily: "inherit",
                     whiteSpace: "nowrap",
+                    color: item.disabled
+                      ? "var(--megane-text-muted, #94a3b8)"
+                      : "var(--megane-text, #1e293b)",
+                    cursor: item.disabled ? "default" : "pointer",
                   }}
                 >
-                  {item.caption}
-                </div>
+                  {item.label}
+                </button>
               );
-            }
-            return (
-              <button
-                key={i}
-                type="button"
-                role="menuitem"
-                data-testid={item.testId}
-                disabled={item.disabled}
-                title={item.title}
-                onClick={() => select(item)}
-                style={{
-                  textAlign: "left",
-                  fontSize: 12,
-                  padding: "6px 10px",
-                  border: "none",
-                  borderRadius: 6,
-                  background: "transparent",
-                  color: item.disabled ? "#94a3b8" : "var(--megane-text, #1e293b)",
-                  cursor: item.disabled ? "default" : "pointer",
-                  fontFamily: "inherit",
-                  whiteSpace: "nowrap",
-                }}
-              >
-                {item.label}
-              </button>
-            );
-          })}
-        </div>
-      )}
-    </div>
+            })}
+          </div>,
+          document.body,
+        )}
+    </>
   );
 }

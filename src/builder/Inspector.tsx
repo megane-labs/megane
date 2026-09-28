@@ -189,11 +189,14 @@ function SelectionInspector() {
 
   return (
     <div
-      style={{ ...sectionStyle, borderColor: "rgba(37, 99, 235, 0.35)" }}
+      style={{ ...sectionStyle, borderColor: "rgba(59, 130, 246, 0.35)" }}
       data-testid="builder-selection"
     >
       <div style={{ ...rowStyle, justifyContent: "space-between", flexWrap: "nowrap" }}>
-        <span style={{ ...titleStyle, color: "#1d4ed8" }} data-testid="builder-selected-count">
+        <span
+          style={{ ...titleStyle, color: "var(--megane-primary-text, #2563eb)" }}
+          data-testid="builder-selected-count"
+        >
           {selected.length} atom{selected.length === 1 ? "" : "s"} selected
         </span>
         <button
