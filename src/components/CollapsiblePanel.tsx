@@ -1,6 +1,6 @@
 /**
  * Shared collapsible panel with frosted glass styling.
- * Used by AppearancePanel and PipelineEditor.
+ * Used by the viewer's PipelineEditor and the Builder's Details and History panels.
  */
 
 import type { CSSProperties, ReactNode } from "react";
@@ -103,12 +103,6 @@ interface CollapsiblePanelProps {
    */
   bottom?: number | string;
   height?: number | string;
-  /**
-   * Where the collapsed stub sits (default: top-right, or bottom-right when
-   * `height` is given). "bottom" pins it to the bottom-right even for a panel
-   * that stretches the full column when expanded.
-   */
-  stubAnchor?: "top" | "bottom";
   /** Extra header content (buttons etc.) placed before the collapse button. */
   headerExtra?: ReactNode;
   /** Extra elements prepended inside the panel container (e.g. resize handle). */
@@ -130,7 +124,6 @@ export function CollapsiblePanel({
   right = 12,
   bottom = 60,
   height,
-  stubAnchor,
   headerExtra,
   containerExtra,
   children,
@@ -138,9 +131,7 @@ export function CollapsiblePanel({
   const panelTestId = `panel-${title.replace(/\s+/g, "-").toLowerCase()}`;
   const placement: CSSProperties =
     height !== undefined ? { top: "auto", bottom, height } : { top, bottom };
-  const stubAtBottom =
-    stubAnchor === "bottom" || (stubAnchor === undefined && height !== undefined);
-  const stubPlacement: CSSProperties = stubAtBottom ? { bottom, right } : { top, right };
+  const stubPlacement: CSSProperties = height !== undefined ? { bottom, right } : { top, right };
 
   if (collapsed) {
     return (

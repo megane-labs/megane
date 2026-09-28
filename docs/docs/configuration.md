@@ -77,10 +77,7 @@ megane/
 megane uses **billboard impostor rendering** for atoms and bonds at every atom
 count — atoms are screen-aligned quads with ray-sphere intersection in the
 fragment shader (`src/renderer/ImpostorAtomMesh.ts`), and bonds use the same
-technique with cylinder intersection. A legacy `InstancedMesh`-based renderer
-also exists in `src/renderer/AtomMesh.ts` as a reference implementation behind
-the `AtomRenderer` interface, but `MoleculeRenderer` always instantiates the
-impostor renderer for consistent behavior. See
+technique with cylinder intersection (`src/renderer/ImpostorBondMesh.ts`). See
 [Visual Pipeline Architecture](./dev/architecture#impostor-technique) for the
 shader details and per-atom buffer layout.
 

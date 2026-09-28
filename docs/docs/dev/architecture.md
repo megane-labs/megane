@@ -177,7 +177,7 @@ interface AtomRenderer {
 }
 ```
 
-`ImpostorAtomMesh` is the default implementation. The legacy `AtomMesh` (InstancedMesh + SphereGeometry) also exists. The interface is the swap point for alternative renderers.
+`ImpostorAtomMesh` is the implementation `MoleculeRenderer` uses. The interface is the swap point for alternative renderers.
 
 ### Multi-Structure Overlay
 
@@ -244,7 +244,7 @@ Implement the `AtomRenderer` or `BondRenderer` interface from `src/types.ts`:
 - **Required**: `mesh` property, `loadSnapshot()`, `updatePositions()`, `dispose()`
 - **Optional**: `setScale()`, `setOpacity()`, `setScaleOverrides()`, `setOpacityOverrides()`, `clearOverrides()`
 
-Wire it into `MoleculeRenderer` by replacing the renderer construction. See `ImpostorAtomMesh` and the legacy `AtomMesh` (`src/renderer/AtomMesh.ts`) as reference implementations.
+Wire it into `MoleculeRenderer` by replacing the renderer construction. See `ImpostorAtomMesh` (`src/renderer/ImpostorAtomMesh.ts`) as the reference implementation.
 
 ### Adding a New Data Channel Type
 

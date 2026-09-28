@@ -9,7 +9,6 @@ import { useEffect, useState } from "react";
 import { useBuilderStore, canEdit, shownSnapshot } from "./store";
 import { buttonStyle, hintStyle, inputStyle, rowStyle, sectionStyle } from "./styles";
 import { getAtomicMass, getElementSymbol } from "../constants";
-export { elementGroups } from "./elements";
 import { computeMeasurement } from "../renderer/Selection";
 import { formulaOf } from "./library/fragment";
 import { useLibraryActions } from "./library/ui";

@@ -6,7 +6,8 @@
 
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { render, screen, fireEvent, cleanup, act } from "@testing-library/react";
-import { Inspector, MAX_ATOM_ROWS, elementGroups } from "@/builder/Inspector";
+import { Inspector, MAX_ATOM_ROWS } from "@/builder/Inspector";
+import { elementGroups } from "@/builder/elements";
 import { InfoHud } from "@/builder/InfoHud";
 import { useBuilderStore } from "@/builder/store";
 import { useLibraryStore } from "@/builder/library/store";

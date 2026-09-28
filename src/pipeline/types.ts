@@ -286,9 +286,6 @@ export interface PortDefinition {
   label: string; // display label
 }
 
-/** For generic nodes (filter/modify): accepted input types. */
-export type GenericPortAccepts = PipelineDataType[];
-
 // ─── Node Types ───────────────────────────────────────────────────────
 
 /** All pipeline node type identifiers. */
@@ -1119,14 +1116,6 @@ export function canConnect(
   }
 
   return sourcePort.dataType === targetPort.dataType;
-}
-
-/**
- * Resolve the effective data type for a generic node's input,
- * based on what is actually connected to it.
- */
-export function resolveGenericPortType(sourceDataType: PipelineDataType): PipelineDataType {
-  return sourceDataType;
 }
 
 // ─── Viewport State (output of pipeline execution) ────────────────────

@@ -51,10 +51,3 @@ export function capturePipelineStore(state: PipelineStore): PipelineStoreSnapsho
     nodeErrors: state.nodeErrors,
   };
 }
-
-export function restorePipelineStoreInto(
-  setState: (snapshot: PipelineStoreSnapshot) => void,
-  snapshot: PipelineStoreSnapshot,
-): void {
-  setState(snapshot);
-}
