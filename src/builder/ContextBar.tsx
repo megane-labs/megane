@@ -1,13 +1,13 @@
 /**
  * The current tool's settings, at the top of the Details panel: pressing a
  * tool on the rail left of the view shows its options here, and only those —
- * the element for *Add atom* and *Element* (the periodic table opens inline
- * for the rarer ones), the bond order for *Add atom* and *Bond*, Box / All /
+ * the element for *Add atom* and *Element* (the periodic table opens beside
+ * the panel for the rarer ones), the bond order for *Add atom* and *Bond*, Box / All /
  * Invert and select-by-element for *Select*, the molecule gallery and *Place
  * on atoms* for *Place*. A tool with no settings (Move, Delete) shows none.
  */
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useBuilderStore, shownSnapshot } from "./store";
 import { toolInfo } from "./ToolRail";
 import { DEFAULT_ADSORB_HEIGHT, useLibraryUi } from "./library/ui";
@@ -110,6 +110,8 @@ export function ContextBar() {
   const galleryOpen = useLibraryUi((s) => s.galleryOpen);
   const setGalleryOpen = useLibraryUi((s) => s.setGalleryOpen);
   const [tableOpen, setTableOpen] = useState(false);
+  const tableButton = useRef<HTMLButtonElement>(null);
+  const closeTable = useCallback(() => setTableOpen(false), []);
 
   // The periodic table belongs to the tool it was opened from.
   useEffect(() => setTableOpen(false), [tool]);
@@ -236,6 +238,7 @@ export function ContextBar() {
               <span data-testid="builder-element-symbol">{getElementSymbol(element)}</span>
             </label>
             <button
+              ref={tableButton}
               type="button"
               data-testid="builder-element-table"
               aria-expanded={tableOpen}
@@ -243,17 +246,18 @@ export function ContextBar() {
               style={{ ...choiceStyle(tableOpen), fontWeight: 500, padding: "0 10px" }}
               onClick={() => setTableOpen(!tableOpen)}
             >
-              Periodic table {tableOpen ? "▴" : "▾"}
+              Periodic table {tableOpen ? "◂" : "…"}
             </button>
           </div>
           {tableOpen && (
             <PeriodicTable
               value={element}
+              anchor={tableButton}
               onPick={(z) => {
                 setElement(z);
                 setTableOpen(false);
               }}
-              onClose={() => setTableOpen(false)}
+              onClose={closeTable}
             />
           )}
         </Group>

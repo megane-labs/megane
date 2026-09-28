@@ -115,8 +115,10 @@ A bare skeleton (no hydrogen anywhere) is left bare, as are elements with no
 single usual valence (metals); add hydrogens yourself in that case.
 
 The Details panel shows **only the settings the current tool uses**: the
-element (one-click buttons for the common ones, **Periodic table** for a
-table of every element up to U, or any atomic number in the *Z* field) for
+element (one-click buttons for the common ones; **Periodic table** opens a
+table of every element up to U beside the panel — cells tinted by family,
+and pointing at one shows its name, atomic number, mass, family and the
+colour the view draws it in; or any atomic number in the *Z* field) for
 *Add atom* and *Element*, the bond order (single, double, triple, aromatic)
 for *Add atom* and *Bond*, Box / All / Invert and the element chips for
 *Select*, and the molecule and *On atoms* for *Place*. *Move* and *Delete*

@@ -255,7 +255,10 @@ its continuations) for the History list and the edit counts; the op list
 itself is unchanged. The right-click menu is `AtomMenu.tsx` (`clampMenuPosition` keeps it on
 screen); box selection reuses the viewer's `Viewport` `boxSelectActive` /
 `onBoxSelect`, whose `additive` flag (Shift held) unions with the selection.
-The element picker's periodic table is `PeriodicTable.tsx` (`tablePosition`).
+The element picker's periodic table is `PeriodicTable.tsx` (`tablePosition`),
+a popover portalled beside the Details panel, tinted by element family
+(`elements.ts`: `ELEMENT_NAMES`, `elementFamily`), with the pointed element
+described in the table's empty top bay.
 `addFragment` with no document opens an `emptySnapshot()` (no cell) first, so
 the Place tool and its gallery work before anything is open. The 3D view's
 background follows the theme store (`themeToHex`), as in the viewer. As in
