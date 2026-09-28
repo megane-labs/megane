@@ -4,11 +4,8 @@ from __future__ import annotations
 
 import logging
 
-import numpy as np
-
 from megane import megane_parser
-from megane.parsers.common import InMemoryTrajectory, trajectory_from_structure_result
-from megane.parsers.pdb import Structure
+from megane.parsers.common import InMemoryTrajectory, Structure, structure_and_trajectory_from_result
 
 __all__ = ["load_xyz_trajectory", "InMemoryTrajectory"]
 
@@ -35,27 +32,8 @@ def load_xyz_trajectory(path: str) -> tuple[Structure, InMemoryTrajectory]:
 
     result = megane_parser.parse_xyz(text)
 
-    n_atoms = result.n_atoms
-    positions = np.asarray(result.positions, dtype=np.float32)
-    elements = np.asarray(result.elements, dtype=np.uint8)
-    bonds = np.asarray(result.bonds, dtype=np.uint32)
-    bond_orders = np.asarray(result.bond_orders, dtype=np.uint8)
-    box_matrix = np.asarray(result.box_matrix, dtype=np.float32)
-
-    structure = Structure(
-        n_atoms=n_atoms,
-        positions=positions,
-        elements=elements,
-        bonds=bonds,
-        bond_orders=bond_orders,
-        box=box_matrix,
-    )
-
-    # Frame 0 lives in `positions`; extra frames are unpacked (rectangular when
-    # uniform, jagged when heterogeneous — variable atom count / cell / elements)
-    # by the shared structure-lane helper.
-    box_3x3 = box_matrix.reshape(3, 3)
-    trajectory = trajectory_from_structure_result(result, positions, elements, box_3x3, n_atoms)
+    structure, trajectory = structure_and_trajectory_from_result(result)
+    n_atoms = structure.n_atoms
 
     if trajectory.heterogeneous:
         counts = [f.shape[0] for f in (trajectory.frames_list or [])]

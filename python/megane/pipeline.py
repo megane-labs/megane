@@ -792,63 +792,10 @@ class Viewport(PipelineNode):
 
 
 def _load_structure_file(path: str):
-    """Auto-detect format and load a structure file.
+    """Auto-detect format and load a structure file (see ``megane.parsers.dispatch``)."""
+    from megane.parsers.dispatch import load_structure_file
 
-    Returns a ``Structure`` object (from ``megane.parsers.pdb``).
-    """
-    import pathlib
-
-    import numpy as np
-
-    from megane import megane_parser
-    from megane.parsers.pdb import Structure
-
-    ext = pathlib.Path(path).suffix.lower()
-
-    text_parsers = {
-        ".pdb": megane_parser.parse_pdb,
-        ".gro": megane_parser.parse_gro,
-        ".xyz": megane_parser.parse_xyz,
-        ".mol": megane_parser.parse_mol,
-        ".sdf": megane_parser.parse_mol,
-        ".mol2": megane_parser.parse_mol2,
-        ".cif": megane_parser.parse_cif,
-        ".data": megane_parser.parse_lammps_data,
-        ".lammps": megane_parser.parse_lammps_data,
-        # LAMMPS dump opened standalone as a structure (frame-0 topology; integer
-        # atom `type` ids used as element proxies).
-        ".lammpstrj": megane_parser.parse_lammpstrj_structure,
-        ".dump": megane_parser.parse_lammpstrj_structure,
-        ".trj": megane_parser.parse_lammpstrj_structure,
-    }
-    binary_parsers = {
-        ".traj": megane_parser.parse_traj,
-    }
-
-    if ext in text_parsers:
-        with open(path) as f:
-            text = f.read()
-        result = text_parsers[ext](text)
-    elif ext in binary_parsers:
-        with open(path, "rb") as f:
-            data = f.read()
-        result = binary_parsers[ext](data)
-    else:
-        supported = sorted({*text_parsers, *binary_parsers})
-        raise ValueError(f"Unsupported structure format: {ext!r}.  Supported: {', '.join(supported)}")
-
-    return Structure(
-        n_atoms=result.n_atoms,
-        positions=np.asarray(result.positions, dtype=np.float32),
-        elements=np.asarray(result.elements, dtype=np.uint8),
-        bonds=np.asarray(result.bonds, dtype=np.uint32),
-        bond_orders=np.asarray(result.bond_orders, dtype=np.uint8),
-        box=np.asarray(result.box_matrix, dtype=np.float32),
-        box_origin=np.asarray(result.box_origin, dtype=np.float32),
-        # Carried into the binary snapshot so the frontend symmetry node can
-        # expand a CIF's asymmetric unit exactly like the other hosts.
-        symmetry_ops=list(result.symmetry_ops),
-    )
+    return load_structure_file(path)
 
 
 class Pipeline:

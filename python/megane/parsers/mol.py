@@ -4,10 +4,8 @@ from __future__ import annotations
 
 import logging
 
-import numpy as np
-
 from megane import megane_parser
-from megane.parsers.pdb import Structure
+from megane.parsers.common import Structure, structure_from_result
 
 __all__ = ["load_mol", "load_sdf"]
 
@@ -16,14 +14,7 @@ logger = logging.getLogger(__name__)
 
 def _load_mol_text(text: str) -> Structure:
     result = megane_parser.parse_mol(text)
-    return Structure(
-        n_atoms=result.n_atoms,
-        positions=np.asarray(result.positions, dtype=np.float32),
-        elements=np.asarray(result.elements, dtype=np.uint8),
-        bonds=np.asarray(result.bonds, dtype=np.uint32),
-        bond_orders=np.asarray(result.bond_orders, dtype=np.uint8),
-        box=np.asarray(result.box_matrix, dtype=np.float32),
-    )
+    return structure_from_result(result)
 
 
 def load_mol(path: str) -> Structure:

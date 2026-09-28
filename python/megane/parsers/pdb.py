@@ -3,11 +3,11 @@
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass, field
 
 import numpy as np
 
 from megane import megane_parser
+from megane.parsers.common import Structure, structure_from_result
 
 logger = logging.getLogger(__name__)
 
@@ -16,24 +16,6 @@ BOND_SINGLE = 1
 BOND_DOUBLE = 2
 BOND_TRIPLE = 3
 BOND_AROMATIC = 4
-
-
-@dataclass
-class Structure:
-    """Parsed molecular structure."""
-
-    n_atoms: int
-    positions: np.ndarray  # (N, 3) float32
-    elements: np.ndarray  # (N,) uint8 - atomic numbers
-    bonds: np.ndarray  # (M, 2) uint32 - bond pairs
-    bond_orders: np.ndarray  # (M,) uint8 - 1=single, 2=double, 3=triple, 4=aromatic
-    box: np.ndarray  # (3, 3) float32 - cell vectors as rows, zero if no cell
-    # World-space lower corner (xlo,ylo,zlo) the box is anchored at, shape (3,).
-    # Zero for formats without an explicit origin (the cell sits at 0,0,0);
-    # LAMMPS data/dump files set it so an offset cell renders around its atoms.
-    box_origin: np.ndarray = field(default_factory=lambda: np.zeros(3, dtype=np.float32))
-    # Crystallographic symmetry operations as `x,y,z`-style strings (CIF only).
-    symmetry_ops: list[str] = field(default_factory=list)
 
 
 def cell_params_to_matrix(
@@ -84,11 +66,4 @@ def load_pdb(path: str) -> Structure:
     result = megane_parser.parse_pdb(text)
     logger.info("Loaded PDB: %d atoms, %d bonds", result.n_atoms, len(result.bonds))
 
-    return Structure(
-        n_atoms=result.n_atoms,
-        positions=np.asarray(result.positions, dtype=np.float32),
-        elements=np.asarray(result.elements, dtype=np.uint8),
-        bonds=np.asarray(result.bonds, dtype=np.uint32),
-        bond_orders=np.asarray(result.bond_orders, dtype=np.uint8),
-        box=np.asarray(result.box_matrix, dtype=np.float32),
-    )
+    return structure_from_result(result)

@@ -1,11 +1,65 @@
-"""Shared trajectory types used by multiple parser modules."""
+"""Shared structure and trajectory types used by every parser module."""
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 import numpy as np
+
+
+@dataclass
+class Structure:
+    """Parsed molecular structure."""
+
+    n_atoms: int
+    positions: np.ndarray  # (N, 3) float32
+    elements: np.ndarray  # (N,) uint8 - atomic numbers
+    bonds: np.ndarray  # (M, 2) uint32 - bond pairs
+    bond_orders: np.ndarray  # (M,) uint8 - 1=single, 2=double, 3=triple, 4=aromatic
+    box: np.ndarray  # (3, 3) float32 - cell vectors as rows, zero if no cell
+    # World-space lower corner (xlo,ylo,zlo) the box is anchored at, shape (3,).
+    # Zero for formats without an explicit origin (the cell sits at 0,0,0);
+    # LAMMPS data/dump files set it so an offset cell renders around its atoms.
+    box_origin: np.ndarray = field(default_factory=lambda: np.zeros(3, dtype=np.float32))
+    # Crystallographic symmetry operations as `x,y,z`-style strings (CIF only).
+    symmetry_ops: list[str] = field(default_factory=list)
+
+
+def structure_from_result(result: Any) -> Structure:
+    """Build a :class:`Structure` from a PyO3 ``PyStructure`` parse result.
+
+    Every loader goes through here so each carries the same channels: the cell
+    origin and the CIF symmetry operations are empty/zero for formats that have
+    none, never silently dropped for the ones that do.
+    """
+    return Structure(
+        n_atoms=result.n_atoms,
+        positions=np.asarray(result.positions, dtype=np.float32),
+        elements=np.asarray(result.elements, dtype=np.uint8),
+        bonds=np.asarray(result.bonds, dtype=np.uint32),
+        bond_orders=np.asarray(result.bond_orders, dtype=np.uint8),
+        box=np.asarray(result.box_matrix, dtype=np.float32),
+        box_origin=np.asarray(result.box_origin, dtype=np.float32),
+        symmetry_ops=list(result.symmetry_ops),
+    )
+
+
+def structure_and_trajectory_from_result(result: Any) -> tuple[Structure, InMemoryTrajectory]:
+    """Frame 0 as a :class:`Structure` plus every frame as a trajectory.
+
+    For the structure-lane loaders (multi-frame XYZ, ``.traj``, XSF, VASP, …),
+    which return a 1-frame trajectory for a single-frame file.
+    """
+    structure = structure_from_result(result)
+    trajectory = trajectory_from_structure_result(
+        result,
+        structure.positions,
+        structure.elements,
+        structure.box.reshape(3, 3),
+        structure.n_atoms,
+    )
+    return structure, trajectory
 
 
 @dataclass
