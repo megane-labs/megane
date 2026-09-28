@@ -34,7 +34,6 @@ import type {
   TrajectoryIndexResult,
   LazyTrajectoryKind,
   LazyStructureKind,
-  StructureIndexResult,
 } from "./parseCore";
 import type {
   ParseRequest,
@@ -42,6 +41,15 @@ import type {
   DecodeFrameResult,
   IndexStructureResult,
   TrajectoryFrame0Result,
+  DecodedLazyFrame,
+  StructureLazyResult,
+  TrajectoryLazyHandle,
+} from "./parseMessages";
+export type {
+  DecodedLazyFrame,
+  StructureLazyHandle,
+  StructureLazyResult,
+  TrajectoryLazyHandle,
 } from "./parseMessages";
 
 const TIMEOUT_MS = 120_000;
@@ -147,6 +155,9 @@ function tearDown(reason: string): void {
 
 function getWorker(): Worker {
   if (worker) return worker;
+  // A crashed worker stays down for the session: every caller has already
+  // fallen back to the main thread, and a retry must not spin up another one.
+  if (workerBroken) throw new Error("parse worker unavailable");
   const w = new ParseWorker();
   w.onmessage = (e: MessageEvent<ParseResponse>) => {
     const entry = pending.get(e.data.id);
@@ -283,21 +294,6 @@ export function parseNetCDFFile(file: File, expectedNAtoms: number): Promise<XTC
   return parseTrajectoryFile("netcdf", file, expectedNAtoms, sync.parseNetCDFFile);
 }
 
-/** Handle returned by `indexTrajectoryLazy`, consumed by `LazyFrameProvider`. */
-export interface TrajectoryLazyHandle {
-  trajectoryId: number;
-  kind: LazyTrajectoryKind;
-  index: TrajectoryIndexResult;
-}
-
-/** One lazily-decoded frame: positions plus any embedded vector channels. */
-export interface DecodedLazyFrame {
-  positions: Float32Array;
-  /** Concatenated per-atom vector channels for this frame (empty if none). */
-  vectors: Float32Array;
-  vectorChannelCount: number;
-}
-
 /**
  * Build a lazy trajectory decoder in the worker: reads the file, scans its
  * frame index (no coordinate decode), and keeps the bytes resident in the
@@ -352,28 +348,22 @@ export async function decodeTrajectoryFrame0(
   // the phase-1 partial read so loadXtc falls back to the single full-read index
   // (the pre-two-phase behaviour). Used by the perf profiler to measure the win.
   if ((globalThis as Record<string, unknown>).__MEGANE_TRAJ_FRAME0__ === false) return null;
-  let size = Math.min(file.size, LAZY_XTC_MIN_BYTES);
-  for (;;) {
-    try {
-      const id = nextId++;
-      const buffer = await file.slice(0, size).arrayBuffer();
-      const { positions } = await send<TrajectoryFrame0Result>(
-        {
-          id,
-          op: "trajectoryFrame0",
-          wasmUrl: resolveWasmUrl(),
-          kind,
-          bytes: buffer,
-          expectedNAtoms,
-        },
-        [buffer],
-      );
-      return positions;
-    } catch {
-      if (size >= file.size || size >= PREFIX_MAX_BYTES) return null;
-      size = Math.min(file.size, size * 2);
-    }
-  }
+  return withGrowingPrefix(file, async (size) => {
+    const id = nextId++;
+    const buffer = await file.slice(0, size).arrayBuffer();
+    const { positions } = await send<TrajectoryFrame0Result>(
+      {
+        id,
+        op: "trajectoryFrame0",
+        wasmUrl: resolveWasmUrl(),
+        kind,
+        bytes: buffer,
+        expectedNAtoms,
+      },
+      [buffer],
+    );
+    return positions;
+  });
 }
 
 /** Decode one frame (positions + any vectors) of a previously-indexed trajectory. */
@@ -409,19 +399,6 @@ export function disposeTrajectoryLazy(trajectoryId: number): void {
 // via {@link decodeTrajectoryFrame}. The decoder shares the trajectory decoder
 // map, so `decodeTrajectoryFrame` / `disposeTrajectoryLazy` service it too.
 
-/** Handle returned by `indexStructureLazy`, consumed by `LazyFrameProvider`. */
-export interface StructureLazyHandle {
-  trajectoryId: number;
-  kind: LazyStructureKind;
-  index: StructureIndexResult;
-}
-
-/** `indexStructureLazy` result: the streaming handle plus frame 0's snapshot. */
-export interface StructureLazyResult {
-  handle: StructureLazyHandle;
-  frame0: StructureParseResult;
-}
-
 // Initial / max prefix read for `parseStructurePrefix`. One large frame of a
 // big multi-frame file (e.g. 100k atoms ≈ a few MB) must fit; grow-and-retry
 // handles bigger frames, capping the critical-path read regardless of total size.
@@ -430,6 +407,27 @@ const PREFIX_MAX_BYTES = 256 * 1024 * 1024;
 // Bounded tail read that captures a multi-MODEL PDB's trailing CONECT section
 // (written once after the last ENDMDL) so frame 0 gets explicit bonds.
 const PDB_TAIL_BYTES = 4 * 1024 * 1024;
+
+/**
+ * Run `attempt` on the first {@link PREFIX_INITIAL_BYTES} of `file`, doubling
+ * the prefix each time it throws (frame 0 did not fit) up to the whole file or
+ * {@link PREFIX_MAX_BYTES}. Returns `null` — the caller then reads the whole
+ * file — when it never succeeds, or at once when the worker has crashed.
+ */
+async function withGrowingPrefix<T>(
+  file: File,
+  attempt: (size: number) => Promise<T>,
+): Promise<T | null> {
+  let size = Math.min(file.size, PREFIX_INITIAL_BYTES);
+  for (;;) {
+    try {
+      return await attempt(size);
+    } catch {
+      if (workerUnavailable() || size >= file.size || size >= PREFIX_MAX_BYTES) return null;
+      size = Math.min(file.size, size * 2);
+    }
+  }
+}
 
 /**
  * Parse ONLY frame 0 from the FIRST chunk of a large multi-frame structure file,
@@ -449,8 +447,7 @@ export async function parseStructurePrefix(
   kind: LazyStructureKind,
 ): Promise<StructureParseResult | null> {
   if (workerUnavailable()) return null;
-  let size = Math.min(file.size, PREFIX_INITIAL_BYTES);
-  for (;;) {
+  return withGrowingPrefix(file, async (size) => {
     const isWholeFile = size >= file.size;
     // Read the head (frame 0) and — for PDB — the trailing CONECT section in
     // parallel. The tail starts at/after the head so the two never overlap.
@@ -465,18 +462,12 @@ export async function parseStructurePrefix(
     const head = isWholeFile ? rawHead : rawHead.slice(0, rawHead.lastIndexOf("\n") + 1);
     const tail = rawTail ? rawTail.slice(rawTail.indexOf("\n") + 1) : "";
     const text = tail ? head + tail : head;
-    try {
-      const id = nextId++;
-      return await send<StructureParseResult>(
-        { id, op: "structurePrefix", wasmUrl: resolveWasmUrl(), kind, text, isWholeFile },
-        [],
-      );
-    } catch {
-      // Frame 0 didn't fit: grow and retry, or give up (→ full-read fallback).
-      if (isWholeFile || size >= PREFIX_MAX_BYTES) return null;
-      size = Math.min(file.size, size * 2);
-    }
-  }
+    const id = nextId++;
+    return send<StructureParseResult>(
+      { id, op: "structurePrefix", wasmUrl: resolveWasmUrl(), kind, text, isWholeFile },
+      [],
+    );
+  });
 }
 
 /**

@@ -22,6 +22,13 @@ import {
   type XTCParseResult,
 } from "./parseCore";
 import { structureExtFromFileName } from "./fileNames";
+import type { DecodedLazyFrame, StructureLazyResult, TrajectoryLazyHandle } from "./parseMessages";
+export type {
+  DecodedLazyFrame,
+  StructureLazyHandle,
+  StructureLazyResult,
+  TrajectoryLazyHandle,
+} from "./parseMessages";
 
 function extOf(name: string, fallback: string): string {
   return structureExtFromFileName(name, fallback);
@@ -83,20 +90,6 @@ export async function parseNetCDFFile(file: File, expectedNAtoms: number): Promi
   return parseTrajectoryCore({ kind: "netcdf", bytes: new Uint8Array(buffer), expectedNAtoms });
 }
 
-/** Handle shape mirrored from `parseClient` (never produced on the sync path). */
-export interface TrajectoryLazyHandle {
-  trajectoryId: number;
-  kind: import("./parseCore").LazyTrajectoryKind;
-  index: import("./parseCore").TrajectoryIndexResult;
-}
-
-/** One lazily-decoded frame (mirrored; never produced on the sync path). */
-export interface DecodedLazyFrame {
-  positions: Float32Array;
-  vectors: Float32Array;
-  vectorChannelCount: number;
-}
-
 /** Lazy decode needs a worker; the sync path never uses it. */
 export function shouldUseLazyTrajectory(
   _kind: import("./parseCore").LazyTrajectoryKind,
@@ -141,19 +134,6 @@ export function disposeTrajectoryLazy(_trajectoryId: number): void {
 }
 
 // ── Lazy multi-frame structure files (mirrored; never used on the sync path) ──
-
-/** Handle shape mirrored from `parseClient` (never produced on the sync path). */
-export interface StructureLazyHandle {
-  trajectoryId: number;
-  kind: import("./parseCore").LazyStructureKind;
-  index: import("./parseCore").StructureIndexResult;
-}
-
-/** `indexStructureLazy` result shape (mirrored; never produced on the sync path). */
-export interface StructureLazyResult {
-  handle: StructureLazyHandle;
-  frame0: StructureParseResult;
-}
 
 /** Lazy structure decode needs a worker; the sync path never uses it. */
 export function shouldUseLazyStructure(

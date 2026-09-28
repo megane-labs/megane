@@ -11,14 +11,25 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
 const { state, FakeWorker } = vi.hoisted(() => {
-  const state = { mode: "ok" as "ok" | "err", lastReq: null as { id: number; op: string } | null };
+  const state = {
+    mode: "ok" as "ok" | "err" | "crash",
+    lastReq: null as { id: number; op: string } | null,
+    created: 0,
+    posted: 0,
+  };
   class FakeWorker {
     onmessage: ((e: { data: unknown }) => void) | null = null;
     onerror: (() => void) | null = null;
+    constructor() {
+      state.created++;
+    }
     postMessage(req: { id: number; op: string }) {
       state.lastReq = req;
+      state.posted++;
       queueMicrotask(() => {
-        if (state.mode === "ok") {
+        if (state.mode === "crash") {
+          this.onerror?.();
+        } else if (state.mode === "ok") {
           this.onmessage?.({
             data: { id: req.id, ok: true, op: req.op, result: { tag: "worker" } },
           });
@@ -67,6 +78,8 @@ describe("parseClient worker path", () => {
   beforeEach(() => {
     state.mode = "ok";
     state.lastReq = null;
+    state.created = 0;
+    state.posted = 0;
     vi.clearAllMocks();
   });
 
@@ -190,5 +203,18 @@ describe("parseClient worker path", () => {
     const xyz = bigFile("big.xyz");
     await client.parseStructurePrefix(xyz.file, "xyz");
     expect(xyz.slice).toHaveBeenCalledTimes(1); // head only
+  });
+
+  it("gives up growing a prefix once the worker crashes, without starting another", async () => {
+    const client = await freshClient();
+    state.mode = "crash";
+    // Large enough that the prefix could double several times.
+    const big = fakeFile("big.xtc", 64 * 1024 * 1024);
+    expect(await client.decodeTrajectoryFrame0(big, "xtc", 3)).toBeNull();
+    expect(
+      await client.parseStructurePrefix(fakeFile("big.xyz", 64 * 1024 * 1024), "xyz"),
+    ).toBeNull();
+    expect(state.created).toBe(1);
+    expect(state.posted).toBe(1);
   });
 });
