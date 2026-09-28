@@ -11,9 +11,11 @@
  * The tools are not here: they sit on the rail left of the view (`ToolRail`)
  * and their settings in the bar over it (`ContextBar`), which is also where
  * the Place tool's molecule library opens. Cell, supercell, slab, the Python
- * tools and inserting molecules are operations, so they live in the panel toolbar's
- * Structure, Tools and Insert menus, as do the document's own actions (open,
- * new, save): each control appears exactly once. Pure UI over `useBuilderStore`; every edit goes through the store's
+ * tools and inserting molecules are operations, so they live in the
+ * Structure, Tools and Insert menus on the operations rail under the tools
+ * (`OperationsRail`); the document's own actions (open, new, save, undo) are
+ * in this panel's toolbar (`BuilderToolbar`): each control appears exactly
+ * once. Pure UI over `useBuilderStore`; every edit goes through the store's
  * actions and the handlers installed by `useBuilderHandlers`.
  */
 

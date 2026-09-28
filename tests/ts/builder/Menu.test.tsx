@@ -117,4 +117,31 @@ describe("Menu", () => {
     expect(trigger.style.color).toBe("rgb(245, 158, 11)");
     expect(trigger.style.opacity).toBe("0.45");
   });
+
+  it("opening to the right stays inside the window at the bottom", () => {
+    render(<Menu testId="ops" label="Ops" items={items()} placement="right" caret={false} />);
+    const trigger = screen.getByTestId("ops");
+    expect(trigger.textContent).toBe("Ops");
+    vi.spyOn(trigger, "getBoundingClientRect").mockReturnValue({
+      left: 12,
+      right: 50,
+      top: window.innerHeight - 20,
+      bottom: window.innerHeight,
+      width: 38,
+      height: 20,
+    } as DOMRect);
+    const original = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "offsetHeight")!;
+    Object.defineProperty(HTMLElement.prototype, "offsetHeight", {
+      configurable: true,
+      value: 100,
+    });
+    try {
+      fireEvent.click(trigger);
+      const menu = screen.getByTestId("ops-menu");
+      expect(menu.style.left).toBe("58px");
+      expect(menu.style.top).toBe(`${window.innerHeight - 108}px`);
+    } finally {
+      Object.defineProperty(HTMLElement.prototype, "offsetHeight", original);
+    }
+  });
 });

@@ -11,10 +11,11 @@
  * every control floats over it on frosted-glass panels, each control in
  * exactly one of them. The **Builder panel** on the right (the viewer's
  * collapsible panel, where the viewer keeps its Pipeline) owns the document
- * and the operations in its toolbar rows (File, Undo / Redo, Structure,
- * Insert, Tools, theme) and the structure's own edits in its body
- * (selection, cell, history); the **top-left corner** holds Reset View and
- * the axis buttons as in the viewer, with the **tool rail** under them; the
+ * in its toolbar rows (File, Undo / Redo, theme) and the structure's own
+ * state in its body (selection, cell, history); the **top-left corner** holds
+ * Reset View and the axis buttons as in the viewer, with the **tool rail**
+ * under them and the **operations rail** (Structure, Insert, Tools — the
+ * menus that act on the structure, opening to the right) under that; the
  * **context bar** over the top of the view holds the current tool's
  * settings; and the **bottom-left** status line says what is on screen and
  * what the current tool does, under the single **notice** line that carries
@@ -58,6 +59,7 @@ import { ToolRail, toolHint, toolInfo } from "./ToolRail";
 import { ContextBar } from "./ContextBar";
 import type { MenuItem } from "./Menu";
 import { BuilderToolbar } from "./BuilderToolbar";
+import { OperationsRail } from "./OperationsRail";
 import { NewStructureDialog, type NewStructureKind } from "./NewStructureDialog";
 import { fileMenuItems } from "./topbarMenus";
 import { CrystalDialog, type CrystalDialogKind } from "./crystal/CrystalDialog";
@@ -407,7 +409,8 @@ export function BuilderApp() {
       </div>
 
       {/* Top-left, as in the viewer: Reset View and the axis buttons, then the
-          tool rail under them. */}
+          tool rail and, under it, the operations rail (Structure, Insert,
+          Tools) — everything that acts on the structure in the view. */}
       <div
         data-testid="builder-left-column"
         style={{
@@ -444,8 +447,23 @@ export function BuilderApp() {
           </button>
           <ViewAxisControls hasCell={hasCell} onAlign={handleAlignView} />
         </div>
-        <div style={{ marginTop: 8, minHeight: 0, overflowY: "auto" }}>
+        <div
+          style={{
+            marginTop: 8,
+            minHeight: 0,
+            overflowY: "auto",
+            display: "flex",
+            flexDirection: "column",
+            gap: 8,
+          }}
+        >
           <ToolRail />
+          <OperationsRail
+            structureItems={structureItems}
+            insertItems={insertItems}
+            toolsItems={toolsItems}
+            hasDocument={!!shown}
+          />
         </div>
       </div>
 
@@ -571,10 +589,6 @@ export function BuilderApp() {
               canSave: !!shown,
               mod,
             })}
-            structureItems={structureItems}
-            insertItems={insertItems}
-            toolsItems={toolsItems}
-            hasDocument={!!shown}
             canUndo={edits.length > 0}
             canRedo={redoStack.length > 0}
             onUndo={() => undo()}

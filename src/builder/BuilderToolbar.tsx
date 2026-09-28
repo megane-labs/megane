@@ -4,13 +4,12 @@
  * pill buttons.
  *
  *   Document — the File menu (open, new, save), Undo, Redo
- *   Build    — the Structure, Insert and Tools menus
  *   Others   — the theme
  *
- * The tint says what kind of thing a button does, with the viewer's colours:
- * cyan for files (the viewer's Export), violet for whole-structure operations
- * (its Templates), blue for adding things (its Add node), amber for the tool
- * server (its Render), grey for the rest.
+ * The panel owns the document; what acts on the structure (Structure,
+ * Insert, Tools) is on the operations rail left of the view
+ * (`OperationsRail`), beside the tools. The File pill wears the viewer's
+ * cyan for files (its Export), the rest grey.
  */
 
 import type { ReactNode } from "react";
@@ -55,31 +54,7 @@ const IconRedo = (
   </svg>
 );
 
-const IconStructure = (
-  <svg {...iconProps}>
-    <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z" />
-    <polyline points="3.27 6.96 12 12.01 20.73 6.96" />
-    <line x1="12" y1="22.08" x2="12" y2="12" />
-  </svg>
-);
-
-const IconInsert = (
-  <svg {...iconProps} strokeWidth="2.5">
-    <line x1="12" y1="5" x2="12" y2="19" />
-    <line x1="5" y1="12" x2="19" y2="12" />
-  </svg>
-);
-
-const IconTools = (
-  <svg {...iconProps}>
-    <path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z" />
-  </svg>
-);
-
 const fileStyle = tintedButtonStyle("6, 182, 212", "#06b6d4");
-const structureStyle = tintedButtonStyle("139, 92, 246", "#8b5cf6");
-const insertStyle = tintedButtonStyle("59, 130, 246", "var(--megane-primary)");
-const toolsStyle = tintedButtonStyle("245, 158, 11", "#f59e0b");
 const historyStyle = tintedButtonStyle("100, 116, 139", "var(--megane-text-secondary)", 0.3);
 
 function Row({ label, children, testId }: { label: string; children: ReactNode; testId: string }) {
@@ -93,11 +68,6 @@ function Row({ label, children, testId }: { label: string; children: ReactNode; 
 
 export interface BuilderToolbarProps {
   fileItems: MenuItem[];
-  structureItems: MenuItem[];
-  insertItems: MenuItem[];
-  toolsItems: MenuItem[];
-  /** Whether a structure is open (the Structure menu needs one). */
-  hasDocument: boolean;
   canUndo: boolean;
   canRedo: boolean;
   onUndo: () => void;
@@ -108,10 +78,6 @@ export interface BuilderToolbarProps {
 
 export function BuilderToolbar({
   fileItems,
-  structureItems,
-  insertItems,
-  toolsItems,
-  hasDocument,
   canUndo,
   canRedo,
   onUndo,
@@ -156,30 +122,6 @@ export function BuilderToolbar({
         >
           {IconRedo} Redo
         </button>
-      </Row>
-      <Row label="Build" testId="builder-toolbar-build">
-        <Menu
-          testId="builder-structure"
-          label={<>{IconStructure} Structure</>}
-          disabled={!hasDocument}
-          title="Cell, supercell, slab and symmetry of the open structure"
-          triggerStyle={structureStyle}
-          items={structureItems}
-        />
-        <Menu
-          testId="builder-insert"
-          label={<>{IconInsert} Insert</>}
-          title="Molecules from the library, a sketch or a file"
-          triggerStyle={insertStyle}
-          items={insertItems}
-        />
-        <Menu
-          testId="builder-tools"
-          label={<>{IconTools} Tools</>}
-          title="Python tools from a connected tool server"
-          triggerStyle={toolsStyle}
-          items={toolsItems}
-        />
       </Row>
       <Row label="Others" testId="builder-toolbar-others">
         <ThemeCycleButton testId="builder-theme" />

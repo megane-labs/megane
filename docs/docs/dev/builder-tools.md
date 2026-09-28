@@ -3,7 +3,7 @@ title: Builder Tool Contract (MCP)
 ---
 
 **Status: contract version 1.** Builder implements it over Streamable HTTP
-(`src/builder/tools/`, the *Tools* menu of the Builder panel); the
+(`src/builder/tools/`, the *Tools* menu on the operations rail left of the view); the
 reference server is [megane-builder-tools](https://github.com/hodakamori/megane-builder-tools).
 This page is the specification megane Builder and third-party structure tools
 implement. Change

@@ -143,15 +143,16 @@ viewer's Pipeline panel) — so that each control has exactly one home: the
 viewer's `CollapsiblePanel` on the right, titled *Builder* with the document's
 name beside it, whose header carries toolbar rows built like the Pipeline
 panel's (`BuilderToolbar.tsx`: *Document* — the *File* menu for the
-**document** (Open, New, Save; `topbarMenus.ts`), Undo / Redo; *Build* — the
-*Structure*, *Insert* and *Tools* menus for the operations
-(`crystal/structureMenu.ts`, `tools/ToolServer.tsx`); *Others* — the viewer's
-`ThemeCycleButton`) and whose body is the **structure** (`Inspector.tsx`: the
+**document** (Open, New, Save; `topbarMenus.ts`), Undo / Redo; *Others* — the
+viewer's `ThemeCycleButton`) and whose body is the **structure** (`Inspector.tsx`: the
 structure summary, or the selected atoms with their positions, distance /
 angle / dihedral and actions; the cell as a read-only card; history); the
 viewer's Reset View and `ViewAxisControls` in the top-left corner with a
 floating tool rail under them (`ToolRail.tsx`, one icon per tool with its
-key); a context bar over the top of the view (`ContextBar.tsx`, only the
+key) and, under that, the operations rail (`OperationsRail.tsx`: the
+*Structure*, *Insert* and *Tools* menus for what acts on the structure,
+`crystal/structureMenu.ts`, `tools/ToolServer.tsx`, their lists opening to
+the right); a context bar over the top of the view (`ContextBar.tsx`, only the
 settings the current tool uses — none for Select / Move / Delete); a status
 line at the bottom left for what is on screen and what the tool does
 (`toolHint`, the one place the hint is written); and one notice line above it
@@ -204,7 +205,7 @@ the Inspector's box select:
 - otherwise a press that barely moves is a click, reported to `pick` with the
   atom index or, on empty space, the world point at the pivot's depth.
 
-**Crystal.** The panel's *Structure* menu (`crystal/structureMenu.ts`)
+**Crystal.** The operations rail's *Structure* menu (`crystal/structureMenu.ts`)
 lists every cell and crystal op: *Wrap*, *Remove cell* and *Expand
 symmetry* push their op at once; *Set cell*, *Center with vacuum*,
 *Supercell* and *Cut slab* open `crystal/CrystalDialog.tsx`, a panel in the

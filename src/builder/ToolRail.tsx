@@ -143,7 +143,7 @@ export function ToolIcon({ tool }: { tool: BuildTool }) {
 
 export const TOOL_RAIL_WIDTH = 50;
 
-function railButtonStyle(active: boolean): React.CSSProperties {
+export function railButtonStyle(active: boolean): React.CSSProperties {
   return {
     position: "relative",
     width: 38,

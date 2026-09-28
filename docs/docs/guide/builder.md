@@ -28,19 +28,21 @@ the viewer keeps its *Pipeline*); ▶ folds it to a small *Builder* button and
 gives the view the whole window. Its header shows the document's name and
 edit count, and its toolbar rows follow the viewer's Pipeline toolbar:
 **Document** — the **File** menu (*Open…*, *New empty cell…* /
-*New bulk crystal…* and *Save* in each format), *Undo* and *Redo*;
-**Build** — **Structure**, the operations on the cell and the crystal (see
-[Crystal](#crystal)), **Insert**, the molecule library (see
-[Library](#library)), and **Tools**, the Python tools (see
-[Python tools](#python-tools)); and **Others** — the theme button
-(Light → Dark → Auto, as in the viewer; the 3D view's background follows it).
-Below the toolbar the panel is an **inspector**: what you are looking at (see
-[Inspector](#inspector)), the cell, and the history.
+*New bulk crystal…* and *Save* in each format), *Undo* and *Redo*; and
+**Others** — the theme button (Light → Dark → Auto, as in the viewer; the 3D
+view's background follows it). Below the toolbar the panel is an
+**inspector**: what you are looking at (see [Inspector](#inspector)), the
+cell, and the history.
 
-The **top-left corner** holds the viewer's camera controls — *Reset View* and
-the axis buttons (look along ±x / ±y / ±z, and ±a / ±b / ±c while there is a
+The left side of the view holds everything that acts on the structure. The
+**top-left corner** has the viewer's camera controls — *Reset View* and the
+axis buttons (look along ±x / ±y / ±z, and ±a / ±b / ±c while there is a
 cell) — and under them the **tool rail** picks the tool, one icon per tool,
-each marked with its key. The **context bar** floating over the top of the
+each marked with its key. Under the tool rail, the **operations rail** holds
+three menus that open to its right: **Structure**, the operations on the cell
+and the crystal (see [Crystal](#crystal)), **Insert**, the molecule library
+(see [Library](#library)), and **Tools**, the Python tools (see
+[Python tools](#python-tools)). The **context bar** floating over the top of the
 view holds the settings of that tool and nothing else. The line at the
 **bottom left** says what is on screen (atoms, bonds, cell, selection) and
 what the current tool does, and any message — a file that would not parse, a
@@ -257,7 +259,7 @@ atoms stay inert.
 
 ## Crystal
 
-The panel's **Structure** menu edits the solid the document holds. Its
+The **Structure** menu on the operations rail edits the solid the document holds. Its
 items, plus the symmetry offer that appears for CIF files, cover the ASE-style
 workflow of bulk → supercell → slab → adsorbate without leaving the browser;
 the geometry is computed in TypeScript and pinned to what ASE produces by the
@@ -320,7 +322,7 @@ structure.
 ## Python tools
 
 Structure generators written in Python — packmol liquid boxes, RadonPy
-polymer chains, solvation — appear in the panel's **Tools** menu. They run
+polymer chains, solvation — appear in the **Tools** menu on the operations rail. They run
 in a separate *tool server*, an
 [MCP](https://modelcontextprotocol.io/) server that follows the
 [Builder Tool Contract](../dev/builder-tools.md). Start the reference server

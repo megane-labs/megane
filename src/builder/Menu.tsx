@@ -66,11 +66,36 @@ export interface MenuProps {
   disabled?: boolean;
   /** The trigger's pill style (default: {@link MENU_TRIGGER_STYLE}). */
   triggerStyle?: CSSProperties;
+  /**
+   * Where the list opens: under the trigger (a toolbar pill) or beside it,
+   * to its right (an icon button on the left rail).
+   */
+  placement?: "below" | "right";
+  /** Show the ▼ caret after the label (default: true). */
+  caret?: boolean;
+  /** The trigger's style while its list is open (default: `triggerStyle`). */
+  openTriggerStyle?: CSSProperties;
+  /** A title over the list, for a trigger that is only an icon. */
+  heading?: ReactNode;
   testId?: string;
   title?: string;
+  /** Accessible name when the label is only an icon. */
+  ariaLabel?: string;
 }
 
-export function Menu({ label, items, disabled = false, triggerStyle, testId, title }: MenuProps) {
+export function Menu({
+  label,
+  items,
+  disabled = false,
+  triggerStyle,
+  placement = "below",
+  caret = true,
+  openTriggerStyle,
+  heading,
+  testId,
+  title,
+  ariaLabel,
+}: MenuProps) {
   const [open, setOpen] = useState(false);
   const [pos, setPos] = useState<{ left: number; top: number } | null>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
@@ -94,7 +119,8 @@ export function Menu({ label, items, disabled = false, triggerStyle, testId, tit
     };
   }, [open]);
 
-  // Under the trigger, shifted left when it would run off the window.
+  // Under the trigger (or beside it), pulled back when it would run off the
+  // window.
   useLayoutEffect(() => {
     if (!open || !triggerRef.current) {
       setPos(null);
@@ -102,9 +128,16 @@ export function Menu({ label, items, disabled = false, triggerStyle, testId, tit
     }
     const at = triggerRef.current.getBoundingClientRect();
     const width = menuRef.current?.offsetWidth ?? 0;
+    const height = menuRef.current?.offsetHeight ?? 0;
     const maxLeft = window.innerWidth - width - EDGE;
-    setPos({ left: Math.max(EDGE, Math.min(at.left, maxLeft)), top: at.bottom + 4 });
-  }, [open]);
+    const maxTop = window.innerHeight - height - EDGE;
+    const left = placement === "right" ? at.right + 8 : at.left;
+    const top = placement === "right" ? at.top : at.bottom + 4;
+    setPos({
+      left: Math.max(EDGE, Math.min(left, maxLeft)),
+      top: placement === "right" ? Math.max(EDGE, Math.min(top, maxTop)) : top,
+    });
+  }, [open, placement]);
 
   const select = useCallback((item: MenuAction) => {
     if (item.disabled) return;
@@ -122,8 +155,9 @@ export function Menu({ label, items, disabled = false, triggerStyle, testId, tit
         aria-expanded={open}
         disabled={disabled}
         title={title}
+        aria-label={ariaLabel}
         style={{
-          ...(triggerStyle ?? MENU_TRIGGER_STYLE),
+          ...((open && openTriggerStyle) || triggerStyle || MENU_TRIGGER_STYLE),
           fontFamily: "inherit",
           cursor: disabled ? "default" : "pointer",
           opacity: disabled ? 0.45 : 1,
@@ -131,9 +165,11 @@ export function Menu({ label, items, disabled = false, triggerStyle, testId, tit
         onClick={() => setOpen((o) => !o)}
       >
         {label}
-        <span aria-hidden="true" style={{ fontSize: 8, opacity: 0.7 }}>
-          ▼
-        </span>
+        {caret && (
+          <span aria-hidden="true" style={{ fontSize: 8, opacity: 0.7 }}>
+            ▼
+          </span>
+        )}
       </button>
       {open &&
         createPortal(
@@ -157,6 +193,23 @@ export function Menu({ label, items, disabled = false, triggerStyle, testId, tit
               visibility: pos ? "visible" : "hidden",
             }}
           >
+            {heading && (
+              <div
+                data-testid={testId ? `${testId}-heading` : undefined}
+                style={{
+                  padding: "4px 14px 6px",
+                  marginBottom: 2,
+                  fontSize: 12,
+                  fontWeight: 600,
+                  letterSpacing: "-0.01em",
+                  whiteSpace: "nowrap",
+                  color: "var(--megane-text, #1e293b)",
+                  borderBottom: "1px solid var(--megane-border-solid, #e2e8f0)",
+                }}
+              >
+                {heading}
+              </div>
+            )}
             {items.map((item, i) => {
               if ("separator" in item) {
                 return (

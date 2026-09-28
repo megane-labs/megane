@@ -1,5 +1,5 @@
 /**
- * Python tools in the Builder panel: the *Tools* menu lists the connected tool
+ * Python tools on the operations rail: the *Tools* menu lists the connected tool
  * server's tools, grouped by category (§3); choosing one opens its form
  * (`ToolDialog`). *Tool server…* opens a dialog to connect to a server (an MCP
  * server implementing the Builder Tool Contract) — set once, so it is a
