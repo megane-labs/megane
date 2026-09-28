@@ -187,7 +187,7 @@ export function Timeline({
           flex: 1,
           height: 4,
           cursor: "pointer",
-          accentColor: "#3b82f6",
+          accentColor: "var(--megane-primary)",
           minWidth: 60,
         }}
       />

@@ -4,7 +4,8 @@
  * its molecule's geometry. Closes on a choice, a click elsewhere, or Escape.
  */
 
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useLayoutEffect, useRef, useState } from "react";
+import { useDismiss } from "../hooks/useDismiss";
 import { useBuilderStore, canEdit, shownSnapshot } from "./store";
 import { getElementSymbol } from "../constants";
 import { moleculeOf } from "./geometry";
@@ -70,23 +71,7 @@ export function AtomMenu({ target, onClose }: { target: AtomMenuTarget; onClose:
   const shown = shownSnapshot({ source, result, showOriginal });
   const editable = canEdit({ source, result, showOriginal });
 
-  useEffect(() => {
-    const onPointerDown = (e: PointerEvent) => {
-      if (!rootRef.current?.contains(e.target as Node)) onClose();
-    };
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") {
-        e.stopPropagation();
-        onClose();
-      }
-    };
-    window.addEventListener("pointerdown", onPointerDown);
-    window.addEventListener("keydown", onKey, true);
-    return () => {
-      window.removeEventListener("pointerdown", onPointerDown);
-      window.removeEventListener("keydown", onKey, true);
-    };
-  }, [onClose]);
+  useDismiss({ onDismiss: onClose, inside: [rootRef] });
 
   if (!shown || target.atom >= shown.nAtoms) return null;
   const z = shown.elements[target.atom];

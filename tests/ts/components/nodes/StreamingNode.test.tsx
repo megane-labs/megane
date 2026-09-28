@@ -48,7 +48,6 @@ function makeFrameProvider(nFrames: number): FrameProvider {
 }
 
 const ACTIVE_GREEN = "rgb(34, 197, 94)";
-const INACTIVE_RED = "rgb(239, 68, 68)";
 
 describe("StreamingNode", () => {
   beforeEach(() => {
@@ -71,7 +70,7 @@ describe("StreamingNode", () => {
 
     const status = screen.getByText("Disconnected");
     expect(status).toBeInTheDocument();
-    expect(status.style.color).toBe(INACTIVE_RED);
+    expect(status.style.color).toBe("var(--megane-danger)");
   });
 
   it("shows 'Connected' status with green dot when params.connected=true", () => {

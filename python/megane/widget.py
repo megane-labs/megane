@@ -108,7 +108,8 @@ class MolecularViewer(anywidget.AnyWidget):
         """Load a molecular structure, optionally with a trajectory.
 
         The structure path is dispatched by extension to the appropriate
-        Rust-backed parser (PDB, GRO, XYZ, MOL, SDF, MOL2, CIF, LAMMPS data, .traj).
+        Rust-backed parser (any structure format megane reads; see
+        :mod:`megane.parsers.dispatch`).
         For multi-frame XYZ files the trajectory is inferred automatically.
 
         .. deprecated::

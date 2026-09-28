@@ -125,7 +125,7 @@ const tooltipStyle: React.CSSProperties = {
 function ErrorIndicator({ errors }: { errors: NodeError[] }) {
   const [hovered, setHovered] = useState(false);
   const hasError = errors.some((e) => e.severity === "error");
-  const color = hasError ? "#ef4444" : "#f59e0b";
+  const color = hasError ? "var(--megane-danger)" : "#f59e0b";
   const bgColor = hasError ? "rgba(239, 68, 68, 0.12)" : "rgba(245, 158, 11, 0.12)";
 
   return (
@@ -190,7 +190,11 @@ export function NodeShell({ id, nodeType, enabled, children, disabledPorts }: No
 
   const hasError = errors.some((e) => e.severity === "error");
   const hasWarning = errors.length > 0 && !hasError;
-  const borderColor = hasError ? "#ef4444" : hasWarning ? "#f59e0b" : "var(--megane-border-solid)";
+  const borderColor = hasError
+    ? "var(--megane-danger)"
+    : hasWarning
+      ? "#f59e0b"
+      : "var(--megane-border-solid)";
 
   const containerStyle: React.CSSProperties = {
     ...(enabled ? nodeStyle : disabledStyle),

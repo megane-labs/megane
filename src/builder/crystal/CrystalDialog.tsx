@@ -12,15 +12,9 @@
  */
 
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { DetailForm } from "../DetailForm";
 import { useBuilderStore, canEdit, shownSnapshot } from "../store";
-import {
-  buttonStyle,
-  detailCardStyle,
-  hintStyle,
-  inputStyle,
-  rowStyle,
-  toggleStyle,
-} from "../styles";
+import { buttonStyle, hintStyle, inputStyle, rowStyle, toggleStyle } from "../styles";
 import { boxToCellParams, cellParamsToBox, det3, type CellParams } from "../../crystal/cell";
 import { slabPreview } from "../../crystal/transform";
 import type { EditOp } from "../../pipeline/types";
@@ -56,17 +50,6 @@ function overLimit(nAtoms: number): string {
   return `${nAtoms.toLocaleString("en-US")} atoms would exceed the ${MAX_ATOMS.toLocaleString(
     "en-US",
   )}-atom limit`;
-}
-
-/** `a × b × c Å`, with the angles when the cell is not orthogonal. */
-export function cellSummary(box: Float32Array): string {
-  const p = boxToCellParams(box);
-  const f = (v: number) => v.toFixed(2);
-  const angles =
-    Math.abs(p.alpha - 90) < 0.05 && Math.abs(p.beta - 90) < 0.05 && Math.abs(p.gamma - 90) < 0.05
-      ? ""
-      : ` · ${f(p.alpha)}° ${f(p.beta)}° ${f(p.gamma)}°`;
-  return `${f(p.a)} × ${f(p.b)} × ${f(p.c)} Å${angles}`;
 }
 
 const KINDS: Record<
@@ -136,17 +119,6 @@ export function CrystalDialog({ kind, onClose }: { kind: CrystalDialogKind; onCl
   // Closing the dialog, however it happens, leaves no preview behind.
   useEffect(() => () => useBuilderStore.getState().setPreview(null), []);
 
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") {
-        e.stopPropagation();
-        onClose();
-      }
-    };
-    window.addEventListener("keydown", onKey, true);
-    return () => window.removeEventListener("keydown", onKey, true);
-  }, [onClose]);
-
   const canApply = !!draft.op && editable && (!spec.needsCell || hasCell);
   const apply = () => {
     if (!canApply) return;
@@ -155,18 +127,13 @@ export function CrystalDialog({ kind, onClose }: { kind: CrystalDialogKind; onCl
   };
 
   return (
-    <div
-      data-testid="builder-crystal-dialog"
-      data-kind={kind}
-      role="dialog"
-      aria-label={spec.title}
-      style={detailCardStyle}
+    <DetailForm
+      testId="builder-crystal-dialog"
+      data={{ "data-kind": kind }}
+      title={spec.title}
+      breadcrumb="Structure ›"
+      onClose={onClose}
     >
-      <div style={{ display: "flex", flexDirection: "column", gap: 1 }}>
-        <span style={{ ...hintStyle, fontSize: 11 }}>Structure ›</span>
-        <span style={{ fontWeight: 700, fontSize: 14 }}>{spec.title}</span>
-      </div>
-
       {!doc ? (
         <div style={hintStyle} data-testid="builder-crystal-no-document">
           Open or create a structure first.
@@ -217,7 +184,7 @@ export function CrystalDialog({ kind, onClose }: { kind: CrystalDialogKind; onCl
           {spec.apply}
         </button>
       </div>
-    </div>
+    </DetailForm>
   );
 }
 

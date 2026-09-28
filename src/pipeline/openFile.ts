@@ -24,7 +24,7 @@
 import type { StoreApi } from "zustand";
 import type { Node, Edge } from "@xyflow/react";
 import { parseStructureFile, parseTopBonds, parsePsfBonds } from "../parsers/structure";
-import { isVaspBareName } from "../parsers/fileNames";
+import { basename, isVaspBareName, STRUCTURE_EXTS, TRAJECTORY_EXTS } from "../parsers/fileNames";
 import { parseXTCFile, parseLammpstrjFile, parseDCDFile, parseNetCDFFile } from "../parsers/xtc";
 import { createMinimalStructurePipeline } from "./defaults";
 import { getLayoutedElements } from "./layout";
@@ -51,46 +51,11 @@ export interface OpenFileOptions {
 
 type FileKind = "structure" | "trajectory" | "pipeline" | "unknown";
 
-const STRUCTURE_EXTS = [
-  ".molden",
-  ".c3xml",
-  // Wavefunction Odyssey (XML `.xodydata` and the older text `.odydata`).
-  ".xodydata",
-  ".odydata",
-  ".magres",
-  ".gamess",
-  ".phonon",
-  ".pdb",
-  ".ent",
-  ".pdbx",
-  ".gro",
-  ".xyz",
-  // Jmol's second extension for plain XYZ.
-  ".jxyz",
-  ".mol",
-  ".sdf",
-  ".cif",
-  ".mmcif",
-  ".data",
-  ".lammps",
-  ".traj",
-  // LAMMPS dump opened standalone as a multi-frame structure (topology derived
-  // from frame 0). Also listed under TRAJECTORY_EXTS so it can still be attached
-  // onto a separately-loaded topology via the Load Trajectory node.
-  ".lammpstrj",
-  ".dump",
-  ".trj",
-  // XCrySDen structure / animation.
-  ".xsf",
-  ".axsf",
-  // Chemical Markup Language.
-  ".cml",
-  // VASP POSCAR / CONTCAR / XDATCAR (also `.vasp`). The extensionless
-  // spellings are classified by basename in `classify` below.
-  ".vasp",
-];
-
-const TRAJECTORY_EXTS = [".xtc", ".lammpstrj", ".dump", ".trj", ".dcd", ".nc"];
+// Other spellings of a PDB entry that a generic open (drag-drop, a JupyterLab
+// document merge) accepts and parses as PDB. They mirror the PDB family in
+// megane_core::bonds::FILE_BOND_EXTS; the Load Structure picker does not list
+// them.
+const PDB_ALIAS_EXTS = [".ent", ".pdbx"];
 
 const PIPELINE_SUFFIX = ".megane.json";
 
@@ -204,13 +169,10 @@ function classify(filename: string): FileKind {
   // defaults to a standalone structure load on a generic/drag-drop open. The two
   // lists are otherwise disjoint, so pure trajectory formats are unaffected.
   for (const ext of STRUCTURE_EXTS) if (lower.endsWith(ext)) return "structure";
+  for (const ext of PDB_ALIAS_EXTS) if (lower.endsWith(ext)) return "structure";
   if (isVaspBareName(lower)) return "structure";
   for (const ext of TRAJECTORY_EXTS) if (lower.endsWith(ext)) return "trajectory";
   return "unknown";
-}
-
-function basename(p: string): string {
-  return p.split(/[\\/]/).pop() ?? p;
 }
 
 /**
@@ -505,9 +467,3 @@ export async function performOpenFile(
       throw new Error(`Unsupported file type: ${file.name}`);
   }
 }
-
-// Re-export the classifier for use by hosts that want to know how a file
-// would be treated before invoking openFile (e.g. the webapp drag-drop
-// handler reading multi-file drops).
-export { classify as classifyFile };
-export type { FileKind };

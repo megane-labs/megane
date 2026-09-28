@@ -6,6 +6,7 @@
  * structure dialog, covered by its own test.)
  */
 
+import { cellSummary } from "@/builder/summary";
 import { useState } from "react";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, fireEvent, cleanup, act } from "@testing-library/react";
@@ -14,7 +15,6 @@ import {
   MAX_ATOMS,
   PREVIEW_DELAY_MS,
   PREVIEW_MAX_ATOMS,
-  cellSummary,
   type CrystalDialogKind,
 } from "@/builder/crystal/CrystalDialog";
 import { SymmetryOffer } from "@/builder/crystal/SymmetryOffer";

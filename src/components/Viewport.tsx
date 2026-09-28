@@ -180,7 +180,7 @@ export function Viewport({
       boxEl.setAttribute("data-testid", "viewport-box-select");
       Object.assign(boxEl.style, {
         position: "fixed",
-        border: "1px dashed #2563eb",
+        border: "1px dashed var(--megane-primary-text)",
         background: "rgba(37, 99, 235, 0.12)",
         pointerEvents: "none",
         zIndex: "50",

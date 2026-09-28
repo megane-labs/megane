@@ -13,9 +13,7 @@ import { globalLoadHandlers, type TrajectoryLoadHandler } from "../../stores/loa
 import { NodeShell } from "./NodeShell";
 import { smallBtnStyle, fileNameStyle } from "../ui";
 import { useRef, useCallback } from "react";
-
-const TRAJECTORY_ACCEPT = ".xtc,.lammpstrj,.dump,.trj,.dcd,.nc";
-const TRAJECTORY_EXTS = [".xtc", ".lammpstrj", ".dump", ".trj", ".dcd", ".nc"];
+import { TRAJECTORY_ACCEPT, TRAJECTORY_EXTS } from "../../parsers/fileNames";
 
 /**
  * Event bus for trajectory loading.

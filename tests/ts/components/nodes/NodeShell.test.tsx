@@ -229,8 +229,8 @@ describe("NodeShell", () => {
       </NodeShell>,
     );
     const indicator = screen.getByText("!");
-    // Red #ef4444 → rgb(239, 68, 68)
-    expect(indicator.style.color).toBe("rgb(239, 68, 68)");
+    // The theme's danger red, so it follows dark mode.
+    expect(indicator.style.color).toBe("var(--megane-danger)");
   });
 });
 

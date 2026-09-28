@@ -1,6 +1,7 @@
 import type { Snapshot } from "../../types";
 import type { PipelineData, ParticleData, TrajectoryData, SymmetryParams } from "../types";
 import { invert3x3 } from "./mathUtils";
+import { tileArray, tileIndices } from "./tile";
 
 /**
  * Symmetry node — space-group expansion of a crystallographic asymmetric unit.
@@ -57,10 +58,10 @@ export function executeSymmetry(
   outputs.set("particle", {
     ...particle,
     source: expanded,
-    indices: tileIndices(particle.indices, src.nAtoms, nImages),
-    scaleOverrides: tileFloat(particle.scaleOverrides, nImages),
-    opacityOverrides: tileFloat(particle.opacityOverrides, nImages),
-    colorOverrides: tileFloat(particle.colorOverrides, nImages),
+    indices: particle.indices && tileIndices(particle.indices, src.nAtoms, nImages),
+    scaleOverrides: particle.scaleOverrides && tileArray(particle.scaleOverrides, nImages),
+    opacityOverrides: particle.opacityOverrides && tileArray(particle.opacityOverrides, nImages),
+    colorOverrides: particle.colorOverrides && tileArray(particle.colorOverrides, nImages),
   });
   return outputs;
 }
@@ -273,10 +274,10 @@ export function expandSymmetry(
     // Cα backbone arrays: caIndices shift per image, the rest tile. CIF (the
     // only ops-bearing format) never carries them, but stale asymmetric-unit
     // arrays must not survive on an expanded snapshot.
-    caIndices: src.caIndices ? tileIndices(src.caIndices, nBase, nImages)! : undefined,
-    caChainIds: src.caChainIds ? tileUint8(src.caChainIds, nImages) : undefined,
-    caResNums: src.caResNums ? tileUint32(src.caResNums, nImages) : undefined,
-    caSsType: src.caSsType ? tileUint8(src.caSsType, nImages) : undefined,
+    caIndices: src.caIndices && tileIndices(src.caIndices, nBase, nImages),
+    caChainIds: src.caChainIds && tileArray(src.caChainIds, nImages),
+    caResNums: src.caResNums && tileArray(src.caResNums, nImages),
+    caSsType: src.caSsType && tileArray(src.caSsType, nImages),
     // The operations remain file information; expansion consumed them but they
     // stay visible downstream.
   };
@@ -294,42 +295,4 @@ function imageKey(frac: Float64Array, n: number): string {
   }
   const r = (v: number) => Math.round(v * 1000) / 1000;
   return `${r(cx / n)},${r(cy / n)},${r(cz / n)}|${r(frac[0])},${r(frac[1])},${r(frac[2])}`;
-}
-
-/** Tile a selection-index array `total` times with a per-image atom offset. */
-function tileIndices(
-  indices: Uint32Array | null,
-  nAtomsBase: number,
-  total: number,
-): Uint32Array | null {
-  if (indices === null) return null;
-  const out = new Uint32Array(indices.length * total);
-  for (let m = 0; m < total; m++) {
-    const offset = m * nAtomsBase;
-    const base = m * indices.length;
-    for (let i = 0; i < indices.length; i++) {
-      out[base + i] = indices[i] + offset;
-    }
-  }
-  return out;
-}
-
-/** Tile a per-atom (or per-atom×channel) float override array `total` times. */
-function tileFloat(arr: Float32Array | null, total: number): Float32Array | null {
-  if (arr === null) return null;
-  const out = new Float32Array(arr.length * total);
-  for (let m = 0; m < total; m++) out.set(arr, m * arr.length);
-  return out;
-}
-
-function tileUint8(arr: Uint8Array, total: number): Uint8Array {
-  const out = new Uint8Array(arr.length * total);
-  for (let m = 0; m < total; m++) out.set(arr, m * arr.length);
-  return out;
-}
-
-function tileUint32(arr: Uint32Array, total: number): Uint32Array {
-  const out = new Uint32Array(arr.length * total);
-  for (let m = 0; m < total; m++) out.set(arr, m * arr.length);
-  return out;
 }

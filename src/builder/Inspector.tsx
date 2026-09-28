@@ -7,11 +7,9 @@
 
 import { useEffect, useState } from "react";
 import { useBuilderStore, canEdit, shownSnapshot } from "./store";
-import { buttonStyle, hintStyle, inputStyle, rowStyle, sectionStyle } from "./styles";
-import { getAtomicMass, getElementSymbol } from "../constants";
-export { elementGroups } from "./elements";
+import { buttonStyle, hintStyle, inputStyle, monoStyle, rowStyle, sectionStyle } from "./styles";
+import { getElementSymbol } from "../constants";
 import { computeMeasurement } from "../renderer/Selection";
-import { formulaOf } from "./library/fragment";
 import { useLibraryActions } from "./library/ui";
 import { QUICK_ELEMENTS } from "./ContextBar";
 import type { EditAtomRef } from "../pipeline/types";
@@ -31,17 +29,6 @@ const titleStyle: React.CSSProperties = {
   textTransform: "uppercase",
   color: "var(--megane-text-secondary, #64748b)",
 };
-
-const monoStyle: React.CSSProperties = {
-  fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
-};
-
-/** The structure's formula and molar mass, for the top info line. */
-export function structureSummary(shown: Snapshot): { formula: string; mass: number } {
-  let mass = 0;
-  for (let i = 0; i < shown.nAtoms; i++) mass += getAtomicMass(shown.elements[i]);
-  return { formula: formulaOf(shown.elements), mass };
-}
 
 /**
  * The selected atoms, in the Details panel. With nothing selected it shows

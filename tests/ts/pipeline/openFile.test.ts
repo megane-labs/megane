@@ -91,7 +91,9 @@ describe("usePipelineStore.openFile — single structure file", () => {
     expect(state.nodeSnapshots[loader!.id]?.snapshot.nAtoms).toBe(5);
   });
 
-  it.each(["POSCAR", "CONTCAR_relaxed", "XDATCAR", "MgO.vasp"])(
+  // `.mol2` and `.prmtop` were missing from openFile's own copy of the list,
+  // so a JupyterLab `.megane.json` document could not merge them in.
+  it.each(["POSCAR", "CONTCAR_relaxed", "XDATCAR", "MgO.vasp", "ligand.mol2", "complex.prmtop"])(
     "classifies the VASP file %s as a structure open",
     async (filename) => {
       mockParseStructureFile.mockResolvedValueOnce({
@@ -540,8 +542,8 @@ describe("usePipelineStore.openFile — pipeline files", () => {
 });
 
 describe("usePipelineStore.openFile — error cases", () => {
-  it("rejects unsupported extensions", async () => {
-    const file = new File(["random"], "notes.txt");
+  it.each(["notes.txt", "model.pdbq"])("rejects the unsupported file %s", async (name) => {
+    const file = new File(["random"], name);
     await expect(usePipelineStore.getState().openFile(file)).rejects.toThrow(
       /unsupported file type/i,
     );

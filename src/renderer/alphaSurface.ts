@@ -15,6 +15,7 @@
 import * as THREE from "three";
 import { sdfToGeometry } from "./SurfaceRenderer";
 import type { MeshData } from "../pipeline/types";
+import { hexToRgb } from "../pipeline/colorWriter";
 
 /** Default alpha (probe sphere) radius in Å. */
 export const DEFAULT_ALPHA_RADIUS = 3.0;
@@ -127,25 +128,15 @@ export function buildAlphaSdf(
 
 // ─── Geometry → MeshData conversion ──────────────────────────────────────────
 
+/** The neutral blue a surface falls back to when its colour does not parse. */
+const DEFAULT_SURFACE_RGB = [0.267, 0.533, 1.0] as const;
+
 /**
  * Parse a CSS/hex color string (#rrggbb or #rgb) to an [r, g, b] triple in
  * [0, 1] range.  Falls back to a neutral blue on invalid input.
  */
 export function hexColorToRgb(hex: string): [number, number, number] {
-  const clean = hex.replace("#", "");
-  if (clean.length === 3) {
-    const r = parseInt(clean[0] + clean[0], 16) / 255;
-    const g = parseInt(clean[1] + clean[1], 16) / 255;
-    const b = parseInt(clean[2] + clean[2], 16) / 255;
-    return [r, g, b];
-  }
-  if (clean.length === 6) {
-    const r = parseInt(clean.slice(0, 2), 16) / 255;
-    const g = parseInt(clean.slice(2, 4), 16) / 255;
-    const b = parseInt(clean.slice(4, 6), 16) / 255;
-    return [r, g, b];
-  }
-  return [0.267, 0.533, 1.0]; // default blue
+  return hexToRgb(hex, DEFAULT_SURFACE_RGB);
 }
 
 /**

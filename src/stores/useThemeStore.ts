@@ -1,5 +1,6 @@
+import { useEffect, type RefObject } from "react";
 import { create } from "zustand";
-import { ensureThemeTokens } from "../styles/themeTokens";
+import { DARK_TOKENS, LIGHT_TOKENS, ensureThemeTokens } from "../styles/themeTokens";
 
 export type Theme = "light" | "dark" | "system";
 export type ResolvedTheme = "light" | "dark";
@@ -79,8 +80,31 @@ export function resolveTheme(theme: Theme): ResolvedTheme {
   return theme;
 }
 
+/** The theme's page background (`--megane-bg`) as a hex number, for the renderer. */
 export function themeToHex(resolvedTheme: ResolvedTheme): number {
-  return resolvedTheme === "dark" ? 0x0f172a : 0xffffff;
+  const bg = (resolvedTheme === "dark" ? DARK_TOKENS : LIGHT_TOKENS).bg;
+  return parseInt(bg.slice(1), 16);
+}
+
+/** Anything with a three.js clear colour to follow the theme (MoleculeRenderer). */
+interface ThemedRenderer {
+  setBackgroundColor(hex: number): void;
+}
+
+/** Paint `renderer`'s background with the current theme's page colour. */
+export function applyThemeBackground(renderer: ThemedRenderer): void {
+  renderer.setBackgroundColor(themeToHex(useThemeStore.getState().resolvedTheme));
+}
+
+/**
+ * Keep the renderer in `rendererRef` painted with the theme's page colour as
+ * the theme changes. Call {@link applyThemeBackground} when it is created.
+ */
+export function useRendererThemeBackground(rendererRef: RefObject<ThemedRenderer | null>): void {
+  const resolvedTheme = useThemeStore((s) => s.resolvedTheme);
+  useEffect(() => {
+    rendererRef.current?.setBackgroundColor(themeToHex(resolvedTheme));
+  }, [rendererRef, resolvedTheme]);
 }
 
 interface ThemeStore {

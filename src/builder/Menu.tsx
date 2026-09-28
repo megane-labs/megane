@@ -11,13 +11,13 @@
 
 import {
   useCallback,
-  useEffect,
   useLayoutEffect,
   useRef,
   useState,
   type CSSProperties,
   type ReactNode,
 } from "react";
+import { useDismiss } from "../hooks/useDismiss";
 import { createPortal } from "react-dom";
 import {
   dropdownItemStyle,
@@ -102,23 +102,7 @@ export function Menu({
   const triggerRef = useRef<HTMLButtonElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
 
-  useEffect(() => {
-    if (!open) return;
-    const onPointerDown = (e: PointerEvent) => {
-      const target = e.target as Node;
-      if (triggerRef.current?.contains(target) || menuRef.current?.contains(target)) return;
-      setOpen(false);
-    };
-    const onKeyDown = (e: KeyboardEvent) => {
-      if (e.key === "Escape") setOpen(false);
-    };
-    window.addEventListener("pointerdown", onPointerDown);
-    window.addEventListener("keydown", onKeyDown);
-    return () => {
-      window.removeEventListener("pointerdown", onPointerDown);
-      window.removeEventListener("keydown", onKeyDown);
-    };
-  }, [open]);
+  useDismiss({ onDismiss: () => setOpen(false), enabled: open, inside: [triggerRef, menuRef] });
 
   // Under the trigger (or beside it), pulled back when it would run off the
   // window.

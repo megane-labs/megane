@@ -2,6 +2,7 @@
  * Capture utilities for exporting the viewport as images or video.
  */
 
+import { Color } from "three";
 import type { MoleculeRenderer } from "./MoleculeRenderer";
 import { GLTFExporter } from "three/examples/jsm/exporters/GLTFExporter.js";
 import { OBJExporter } from "three/examples/jsm/exporters/OBJExporter.js";
@@ -135,6 +136,61 @@ export async function wrapInSVG(pngBlob: Blob, width: number, height: number): P
   return new Blob([svg], { type: "image/svg+xml" });
 }
 
+interface CaptureSize {
+  width: number;
+  height: number;
+  transparent: boolean;
+}
+
+/**
+ * Size the renderer for an export (and clear to transparent when asked) for
+ * the duration of `fn`, then put back the size, scene background and clear
+ * colour it had — also when `fn` throws, so a failed export never leaves the
+ * viewer resized or see-through.
+ */
+async function withCaptureState<T>(
+  renderer: MoleculeRenderer,
+  { width, height, transparent }: CaptureSize,
+  fn: () => Promise<T>,
+): Promise<T> {
+  const scene = renderer.getScene();
+  const webglRenderer = renderer.getRenderer();
+  const savedBg = scene.background;
+  const savedClearColor = webglRenderer.getClearColor(new Color());
+  const savedClearAlpha = webglRenderer.getClearAlpha();
+  if (transparent) {
+    scene.background = null;
+    webglRenderer.setClearColor(0x000000, 0);
+  }
+  const restore = renderer.resizeForCapture(width, height);
+  try {
+    return await fn();
+  } finally {
+    scene.background = savedBg;
+    webglRenderer.setClearColor(savedClearColor, savedClearAlpha);
+    restore();
+    renderer.renderSingleFrame();
+  }
+}
+
+/** Render one frame and return the WebGL and label-overlay canvases it drew. */
+function renderLayers(renderer: MoleculeRenderer): {
+  webglCanvas: HTMLCanvasElement;
+  labelCanvas: HTMLCanvasElement | null;
+} {
+  renderer.renderSingleFrame();
+  return {
+    webglCanvas: renderer.getCanvas()!,
+    labelCanvas: renderer.getLabelOverlay()?.getCanvas() ?? null,
+  };
+}
+
+/** Wait two animation frames, so a seek has reached the renderer. */
+async function nextPaint(): Promise<void> {
+  await new Promise((r) => requestAnimationFrame(r));
+  await new Promise((r) => requestAnimationFrame(r));
+}
+
 /** Capture a single snapshot from the renderer. */
 export async function captureSnapshot(
   renderer: MoleculeRenderer,
@@ -145,39 +201,12 @@ export async function captureSnapshot(
     format: "png" | "eps" | "svg";
   },
 ): Promise<Blob> {
-  const { width, height, transparent, format } = options;
-  const scene = renderer.getScene();
-  const webglRenderer = renderer.getRenderer();
+  const { width, height, format } = options;
+  const composited = await withCaptureState(renderer, options, async () => {
+    const { webglCanvas, labelCanvas } = renderLayers(renderer);
+    return compositeCanvases(webglCanvas, labelCanvas, width, height);
+  });
 
-  // Save state
-  const savedBg = scene.background;
-  const savedClearAlpha = webglRenderer.getClearAlpha();
-
-  // Apply transparent background if requested
-  if (transparent) {
-    scene.background = null;
-    webglRenderer.setClearColor(0x000000, 0);
-  }
-
-  // Resize for capture
-  const restore = renderer.resizeForCapture(width, height);
-
-  // Render single frame
-  renderer.renderSingleFrame();
-
-  // Composite canvases
-  const webglCanvas = renderer.getCanvas()!;
-  const labelOverlay = renderer.getLabelOverlay();
-  const labelCanvas = labelOverlay?.getCanvas() ?? null;
-  const composited = compositeCanvases(webglCanvas, labelCanvas, width, height);
-
-  // Restore state
-  scene.background = savedBg;
-  webglRenderer.setClearColor(0xffffff, savedClearAlpha);
-  restore();
-  renderer.renderSingleFrame();
-
-  // Export
   const pngBlob = await canvasToBlob(composited, "image/png");
   if (format === "eps") {
     return wrapInEPS(pngBlob, width, height);
@@ -239,58 +268,30 @@ export async function captureGif(
     onProgress?: (progress: number) => void;
   },
 ): Promise<Blob> {
-  const { width, height, transparent, startFrame, endFrame, fps, seekFrame, onProgress } = options;
+  const { width, height, startFrame, endFrame, fps, seekFrame, onProgress } = options;
   const totalFrames = endFrame - startFrame + 1;
   const delay = Math.round(1000 / fps);
 
-  const scene = renderer.getScene();
-  const webglRenderer = renderer.getRenderer();
-
-  // Save state
-  const savedBg = scene.background;
-  const savedClearAlpha = webglRenderer.getClearAlpha();
-
-  if (transparent) {
-    scene.background = null;
-    webglRenderer.setClearColor(0x000000, 0);
-  }
-
-  const restore = renderer.resizeForCapture(width, height);
-
-  // Dynamically import gif.js
-  const GIF = (await import("gif.js")).default;
-  const workerScript = resolveGifWorkerScript();
-  const gif = new GIF({
-    workers: 2,
-    quality: 10,
-    width,
-    height,
-    workerScript,
+  const { gif, workerScript } = await withCaptureState(renderer, options, async () => {
+    const GIF = (await import("gif.js")).default;
+    const workerScript = resolveGifWorkerScript();
+    const gif = new GIF({
+      workers: 2,
+      quality: 10,
+      width,
+      height,
+      workerScript,
+    });
+    for (let i = startFrame; i <= endFrame; i++) {
+      seekFrame(i);
+      await nextPaint();
+      const { webglCanvas, labelCanvas } = renderLayers(renderer);
+      const composited = compositeCanvases(webglCanvas, labelCanvas, width, height);
+      gif.addFrame(composited, { delay, copy: true });
+      onProgress?.(((i - startFrame + 1) / totalFrames) * 0.8);
+    }
+    return { gif, workerScript };
   });
-
-  // Capture each frame
-  for (let i = startFrame; i <= endFrame; i++) {
-    seekFrame(i);
-    // Wait for render
-    await new Promise((r) => requestAnimationFrame(r));
-    await new Promise((r) => requestAnimationFrame(r));
-
-    renderer.renderSingleFrame();
-
-    const webglCanvas = renderer.getCanvas()!;
-    const labelOverlay = renderer.getLabelOverlay();
-    const labelCanvas = labelOverlay?.getCanvas() ?? null;
-    const composited = compositeCanvases(webglCanvas, labelCanvas, width, height);
-
-    gif.addFrame(composited, { delay, copy: true });
-    onProgress?.(((i - startFrame + 1) / totalFrames) * 0.8);
-  }
-
-  // Restore
-  scene.background = savedBg;
-  webglRenderer.setClearColor(0xffffff, savedClearAlpha);
-  restore();
-  renderer.renderSingleFrame();
 
   // Render GIF
   return new Promise((resolve, reject) => {
@@ -341,87 +342,63 @@ export async function captureVideo(
     onProgress?: (progress: number) => void;
   },
 ): Promise<Blob> {
-  const { width, height, transparent, startFrame, endFrame, fps, seekFrame, onProgress } = options;
+  const { width, height, startFrame, endFrame, fps, seekFrame, onProgress } = options;
   const totalFrames = endFrame - startFrame + 1;
 
-  const scene = renderer.getScene();
-  const webglRenderer = renderer.getRenderer();
+  const { chunks, mimeType } = await withCaptureState(renderer, options, async () => {
+    // Create a recording canvas
+    const recordCanvas = document.createElement("canvas");
+    recordCanvas.width = width;
+    recordCanvas.height = height;
+    const recordCtx = recordCanvas.getContext("2d")!;
 
-  const savedBg = scene.background;
-  const savedClearAlpha = webglRenderer.getClearAlpha();
+    // Setup MediaRecorder
+    const stream = recordCanvas.captureStream(0);
+    const mimeType = MediaRecorder.isTypeSupported("video/webm;codecs=vp9")
+      ? "video/webm;codecs=vp9"
+      : "video/webm";
+    const mediaRecorder = new MediaRecorder(stream, {
+      mimeType,
+      videoBitsPerSecond: 8_000_000,
+    });
+    const chunks: Blob[] = [];
+    mediaRecorder.ondataavailable = (e) => {
+      if (e.data.size > 0) chunks.push(e.data);
+    };
 
-  if (transparent) {
-    scene.background = null;
-    webglRenderer.setClearColor(0x000000, 0);
-  }
+    mediaRecorder.start();
 
-  const restore = renderer.resizeForCapture(width, height);
+    const frameDelay = 1000 / fps;
 
-  // Create a recording canvas
-  const recordCanvas = document.createElement("canvas");
-  recordCanvas.width = width;
-  recordCanvas.height = height;
-  const recordCtx = recordCanvas.getContext("2d")!;
+    for (let i = startFrame; i <= endFrame; i++) {
+      seekFrame(i);
+      await nextPaint();
+      const { webglCanvas, labelCanvas } = renderLayers(renderer);
 
-  // Setup MediaRecorder
-  const stream = recordCanvas.captureStream(0);
-  const mimeType = MediaRecorder.isTypeSupported("video/webm;codecs=vp9")
-    ? "video/webm;codecs=vp9"
-    : "video/webm";
-  const mediaRecorder = new MediaRecorder(stream, {
-    mimeType,
-    videoBitsPerSecond: 8_000_000,
-  });
-  const chunks: Blob[] = [];
-  mediaRecorder.ondataavailable = (e) => {
-    if (e.data.size > 0) chunks.push(e.data);
-  };
+      recordCtx.clearRect(0, 0, width, height);
+      recordCtx.drawImage(webglCanvas, 0, 0, width, height);
+      if (labelCanvas) {
+        recordCtx.drawImage(labelCanvas, 0, 0, width, height);
+      }
 
-  mediaRecorder.start();
+      // Request a frame from the capture stream
+      const videoTrack = stream.getVideoTracks()[0] as MediaStreamTrack & {
+        requestFrame?: () => void;
+      };
+      videoTrack.requestFrame?.();
 
-  const frameDelay = 1000 / fps;
+      // Wait for frame duration
+      await new Promise((r) => setTimeout(r, frameDelay));
 
-  // Capture each frame
-  for (let i = startFrame; i <= endFrame; i++) {
-    seekFrame(i);
-    await new Promise((r) => requestAnimationFrame(r));
-    await new Promise((r) => requestAnimationFrame(r));
-
-    renderer.renderSingleFrame();
-
-    const webglCanvas = renderer.getCanvas()!;
-    const labelOverlay = renderer.getLabelOverlay();
-    const labelCanvas = labelOverlay?.getCanvas() ?? null;
-
-    recordCtx.clearRect(0, 0, width, height);
-    recordCtx.drawImage(webglCanvas, 0, 0, width, height);
-    if (labelCanvas) {
-      recordCtx.drawImage(labelCanvas, 0, 0, width, height);
+      onProgress?.((i - startFrame + 1) / totalFrames);
     }
 
-    // Request a frame from the capture stream
-    const videoTrack = stream.getVideoTracks()[0] as MediaStreamTrack & {
-      requestFrame?: () => void;
-    };
-    videoTrack.requestFrame?.();
-
-    // Wait for frame duration
-    await new Promise((r) => setTimeout(r, frameDelay));
-
-    onProgress?.((i - startFrame + 1) / totalFrames);
-  }
-
-  // Stop recording
-  mediaRecorder.stop();
-  await new Promise<void>((resolve) => {
-    mediaRecorder.onstop = () => resolve();
+    mediaRecorder.stop();
+    await new Promise<void>((resolve) => {
+      mediaRecorder.onstop = () => resolve();
+    });
+    return { chunks, mimeType };
   });
-
-  // Restore
-  scene.background = savedBg;
-  webglRenderer.setClearColor(0xffffff, savedClearAlpha);
-  restore();
-  renderer.renderSingleFrame();
 
   onProgress?.(1);
   return new Blob(chunks, { type: mimeType });

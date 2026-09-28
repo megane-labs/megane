@@ -151,3 +151,36 @@ export interface ParseResponse {
     | DecodeFrameResult;
   error?: string;
 }
+
+// ── Lazy decode handles ──────────────────────────────────────────────────
+// Returned by `parseClient`'s lazy entry points; `parseClientSync` (swapped in
+// at build time on hosts without the worker) re-exports the same types so the
+// module shape does not change with the swap.
+
+/** Handle returned by `indexTrajectoryLazy`, consumed by `LazyFrameProvider`. */
+export interface TrajectoryLazyHandle {
+  trajectoryId: number;
+  kind: LazyTrajectoryKind;
+  index: TrajectoryIndexResult;
+}
+
+/** One lazily-decoded frame: positions plus any embedded vector channels. */
+export interface DecodedLazyFrame {
+  positions: Float32Array;
+  /** Concatenated per-atom vector channels for this frame (empty if none). */
+  vectors: Float32Array;
+  vectorChannelCount: number;
+}
+
+/** Handle returned by `indexStructureLazy`, consumed by `LazyFrameProvider`. */
+export interface StructureLazyHandle {
+  trajectoryId: number;
+  kind: LazyStructureKind;
+  index: StructureIndexResult;
+}
+
+/** `indexStructureLazy` result: the streaming handle plus frame 0's snapshot. */
+export interface StructureLazyResult {
+  handle: StructureLazyHandle;
+  frame0: StructureParseResult;
+}

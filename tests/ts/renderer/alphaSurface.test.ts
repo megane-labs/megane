@@ -146,6 +146,10 @@ describe("hexColorToRgb", () => {
     expect(g).toBeGreaterThan(0);
     expect(b).toBeGreaterThan(0);
   });
+
+  it("falls back to blue, not NaN, for six characters that are not hex", () => {
+    expect(hexColorToRgb("#zzzzzz")).toEqual([0.267, 0.533, 1.0]);
+  });
 });
 
 // ─── geometryToMeshData ───────────────────────────────────────────────────────

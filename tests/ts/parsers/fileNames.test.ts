@@ -1,6 +1,13 @@
 import { describe, it, expect } from "vitest";
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import {
+  STRUCTURE_ACCEPT,
+  STRUCTURE_EXTS,
+  TRAJECTORY_ACCEPT,
+  TRAJECTORY_EXTS,
   VASP_EXT,
+  basename,
   isVaspBareName,
   matchesStructureName,
   structureExtFromFileName,
@@ -82,5 +89,44 @@ describe("matchesStructureName", () => {
 
   it("rejects unrelated files", () => {
     expect(matchesStructureName("notes.txt", exts)).toBe(false);
+  });
+});
+
+describe("STRUCTURE_EXTS / TRAJECTORY_EXTS", () => {
+  const parseCore = readFileSync(resolve(__dirname, "../../../src/parsers/parseCore.ts"), "utf8");
+
+  it("has no duplicates", () => {
+    expect(new Set(STRUCTURE_EXTS).size).toBe(STRUCTURE_EXTS.length);
+    expect(new Set(TRAJECTORY_EXTS).size).toBe(TRAJECTORY_EXTS.length);
+  });
+
+  // `getParserForExtension` falls back to the PDB reader for an extension it
+  // has no case for, so an accepted extension without one would open as PDB.
+  // `.traj` (binary ASE) is dispatched before the switch.
+  it.each(STRUCTURE_EXTS.filter((ext) => ext !== ".pdb" && ext !== ".traj"))(
+    "gives %s its own parser case",
+    (ext) => {
+      expect(parseCore).toContain(`case "${ext}":`);
+    },
+  );
+
+  it("dispatches .traj before the extension switch", () => {
+    expect(parseCore).toContain('input.ext === ".traj"');
+  });
+
+  it("renders the accept attributes from the lists", () => {
+    expect(STRUCTURE_ACCEPT.split(",")).toEqual([...STRUCTURE_EXTS]);
+    expect(TRAJECTORY_ACCEPT.split(",")).toEqual([...TRAJECTORY_EXTS]);
+    expect(STRUCTURE_EXTS).toContain(VASP_EXT);
+  });
+});
+
+describe("basename", () => {
+  it.each([
+    ["a/b/c.pdb", "c.pdb"],
+    ["C:\\data\\x.gro", "x.gro"],
+    ["plain.xyz", "plain.xyz"],
+  ])("strips the directory from %s", (path, expected) => {
+    expect(basename(path)).toBe(expected);
   });
 });
