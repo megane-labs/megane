@@ -5,11 +5,11 @@
  */
 
 import { useEffect, useMemo, useState } from "react";
-import { useDismiss } from "../../hooks/useDismiss";
+import { DetailForm } from "../DetailForm";
 import { getElementSymbol } from "../../constants";
 import { useBuilderStore, shownSnapshot } from "../store";
 import { allMolecules, useLibraryStore } from "../library/store";
-import { buttonStyle, hintStyle, inputStyle, rowStyle, detailCardStyle } from "../styles";
+import { buttonStyle, hintStyle, inputStyle, rowStyle } from "../styles";
 import { unitLabel, type BuilderToolInfo, type FieldSpec } from "./contract";
 import {
   buildArguments,
@@ -47,12 +47,6 @@ export function ToolDialog({ tool }: { tool: BuilderToolInfo }) {
   const [error, setError] = useState<string | null>(null);
   const busy = running?.tool.name === tool.name;
 
-  useDismiss({
-    onDismiss: () => {
-      if (!busy) closeForm();
-    },
-  });
-
   const problem = validate(fields, values, ctx);
   const insertBlocked = tool.apply === "insert" && !(source && result && !showOriginal);
 
@@ -63,25 +57,14 @@ export function ToolDialog({ tool }: { tool: BuilderToolInfo }) {
   };
 
   return (
-    <div
-      data-testid="builder-tool-dialog"
-      role="dialog"
-      aria-label={tool.label}
-      style={detailCardStyle}
+    <DetailForm
+      testId="builder-tool-dialog"
+      title={tool.label}
+      onClose={closeForm}
+      closeTestId="builder-tool-close"
+      closeDisabled={busy}
     >
-      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-        <span style={{ fontWeight: 700 }}>{tool.label}</span>
-        <span style={{ flex: 1 }} />
-        <button
-          type="button"
-          data-testid="builder-tool-close"
-          style={buttonStyle("default", busy)}
-          disabled={busy}
-          onClick={closeForm}
-        >
-          Close
-        </button>
-      </div>
+      {" "}
       <div style={{ ...hintStyle, whiteSpace: "pre-wrap" }} data-testid="builder-tool-description">
         {tool.description}
       </div>
@@ -169,7 +152,7 @@ export function ToolDialog({ tool }: { tool: BuilderToolInfo }) {
           </button>
         )}
       </div>
-    </div>
+    </DetailForm>
   );
 }
 

@@ -12,16 +12,9 @@
  */
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { useDismiss } from "../../hooks/useDismiss";
+import { DetailForm } from "../DetailForm";
 import { useBuilderStore, canEdit, shownSnapshot } from "../store";
-import {
-  buttonStyle,
-  detailCardStyle,
-  hintStyle,
-  inputStyle,
-  rowStyle,
-  toggleStyle,
-} from "../styles";
+import { buttonStyle, hintStyle, inputStyle, rowStyle, toggleStyle } from "../styles";
 import { boxToCellParams, cellParamsToBox, det3, type CellParams } from "../../crystal/cell";
 import { slabPreview } from "../../crystal/transform";
 import type { EditOp } from "../../pipeline/types";
@@ -137,8 +130,6 @@ export function CrystalDialog({ kind, onClose }: { kind: CrystalDialogKind; onCl
   // Closing the dialog, however it happens, leaves no preview behind.
   useEffect(() => () => useBuilderStore.getState().setPreview(null), []);
 
-  useDismiss({ onDismiss: onClose });
-
   const canApply = !!draft.op && editable && (!spec.needsCell || hasCell);
   const apply = () => {
     if (!canApply) return;
@@ -147,18 +138,13 @@ export function CrystalDialog({ kind, onClose }: { kind: CrystalDialogKind; onCl
   };
 
   return (
-    <div
-      data-testid="builder-crystal-dialog"
-      data-kind={kind}
-      role="dialog"
-      aria-label={spec.title}
-      style={detailCardStyle}
+    <DetailForm
+      testId="builder-crystal-dialog"
+      data={{ "data-kind": kind }}
+      title={spec.title}
+      breadcrumb="Structure ›"
+      onClose={onClose}
     >
-      <div style={{ display: "flex", flexDirection: "column", gap: 1 }}>
-        <span style={{ ...hintStyle, fontSize: 11 }}>Structure ›</span>
-        <span style={{ fontWeight: 700, fontSize: 14 }}>{spec.title}</span>
-      </div>
-
       {!doc ? (
         <div style={hintStyle} data-testid="builder-crystal-no-document">
           Open or create a structure first.
@@ -209,7 +195,7 @@ export function CrystalDialog({ kind, onClose }: { kind: CrystalDialogKind; onCl
           {spec.apply}
         </button>
       </div>
-    </div>
+    </DetailForm>
   );
 }
 

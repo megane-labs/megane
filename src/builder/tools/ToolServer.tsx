@@ -13,9 +13,9 @@
  */
 
 import { useEffect } from "react";
-import { useDismiss } from "../../hooks/useDismiss";
+import { DetailForm } from "../DetailForm";
 import type { MenuItem } from "../Menu";
-import { buttonStyle, hintStyle, inputStyle, rowStyle, detailCardStyle } from "../styles";
+import { buttonStyle, hintStyle, inputStyle, rowStyle } from "../styles";
 import { CATEGORY_LABELS, type BuilderToolInfo, type ToolCategory } from "./contract";
 import { readLaunchParams, siteToolServerUrl, useToolsStore, type ToolsStore } from "./store";
 
@@ -104,27 +104,14 @@ export function ToolServerDialog({ onClose }: { onClose: () => void }) {
   const connect = useToolsStore((s) => s.connect);
   const disconnect = useToolsStore((s) => s.disconnect);
 
-  useDismiss({ onDismiss: onClose });
-
   return (
-    <div
-      data-testid="builder-tools-dialog"
-      role="dialog"
-      aria-label="Tool server"
-      style={detailCardStyle}
+    <DetailForm
+      testId="builder-tools-dialog"
+      title="Tool server"
+      onClose={onClose}
+      closeTestId="builder-tools-dialog-close"
     >
-      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-        <span style={{ fontWeight: 700 }}>Tool server</span>
-        <span style={{ flex: 1 }} />
-        <button
-          type="button"
-          data-testid="builder-tools-dialog-close"
-          style={buttonStyle()}
-          onClick={onClose}
-        >
-          Close
-        </button>
-      </div>
+      {" "}
       <input
         data-testid="builder-tools-url"
         aria-label="Tool server URL"
@@ -194,6 +181,6 @@ export function ToolServerDialog({ onClose }: { onClose: () => void }) {
           {connection.listing.unsupported.join(", ")}
         </div>
       )}
-    </div>
+    </DetailForm>
   );
 }

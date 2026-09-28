@@ -6,18 +6,11 @@
  */
 
 import { useState } from "react";
-import { useDismiss } from "../hooks/useDismiss";
+import { DetailForm } from "./DetailForm";
 import type { BulkSpec } from "../crystal/bulk";
 import { BulkForm } from "./crystal/BulkForm";
 import { NumberField } from "./crystal/NumberField";
-import {
-  buttonStyle,
-  hintStyle,
-  rowStyle,
-  segmentGroupStyle,
-  segmentStyle,
-  detailCardStyle,
-} from "./styles";
+import { buttonStyle, hintStyle, rowStyle, segmentGroupStyle, segmentStyle } from "./styles";
 
 /** Default edge of a new cell, in Å. */
 export const DEFAULT_NEW_CELL_EDGE = 10;
@@ -50,27 +43,14 @@ export function NewStructureDialog({
   const [error, setError] = useState<string | null>(null);
   const edgeValid = Number.isFinite(edge) && edge > 0;
 
-  useDismiss({ onDismiss: onClose });
-
   return (
-    <div
-      data-testid="builder-new-dialog"
-      role="dialog"
-      aria-label="New structure"
-      style={detailCardStyle}
+    <DetailForm
+      testId="builder-new-dialog"
+      title="New structure"
+      onClose={onClose}
+      closeTestId="builder-new-close"
     >
-      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-        <span style={{ fontWeight: 700 }}>New structure</span>
-        <span style={{ flex: 1 }} />
-        <button
-          type="button"
-          data-testid="builder-new-close"
-          style={buttonStyle()}
-          onClick={onClose}
-        >
-          Close
-        </button>
-      </div>
+      {" "}
       <div style={segmentGroupStyle} role="tablist">
         {KINDS.map((k) => (
           <span
@@ -144,6 +124,6 @@ export function NewStructureDialog({
           This replaces the open structure and its history.
         </div>
       )}
-    </div>
+    </DetailForm>
   );
 }
