@@ -518,7 +518,9 @@ export function PipelineInspector() {
                 fontFamily: "monospace",
                 fontSize: 12,
                 resize: "vertical",
-                borderColor: queryValidation.valid ? "var(--megane-border-strong)" : "#ef4444",
+                borderColor: queryValidation.valid
+                  ? "var(--megane-border-strong)"
+                  : "var(--megane-danger)",
               }}
               onChange={(e) => {
                 setCustomQuery(true);

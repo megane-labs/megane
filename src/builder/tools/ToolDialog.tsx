@@ -108,7 +108,7 @@ export function ToolDialog({ tool }: { tool: BuilderToolInfo }) {
               style={{
                 height: "100%",
                 width: `${Math.round((running?.fraction ?? 0.05) * 100)}%`,
-                background: "#3b82f6",
+                background: "var(--megane-primary)",
                 transition: "width 200ms",
               }}
             />

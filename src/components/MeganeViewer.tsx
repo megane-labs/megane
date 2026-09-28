@@ -53,7 +53,7 @@ import type {
   Measurement,
 } from "../types";
 import type { ViewportState } from "../pipeline/types";
-import { useThemeStore, themeToHex } from "../stores/useThemeStore";
+import { applyThemeBackground, useRendererThemeBackground } from "../stores/useThemeStore";
 import { ensureThemeTokens } from "../styles/themeTokens";
 
 /**
@@ -451,8 +451,6 @@ export function MeganeViewer({
     }
   }, [currentFrame, pipelineApi]);
 
-  const resolvedTheme = useThemeStore((s) => s.resolvedTheme);
-
   // The UI chrome paints with --megane-* tokens. Host entry points inject them
   // via installThemeSync(); an npm-library embedder may not, so make sure they
   // exist (light by default, dark under html[data-theme="dark"]).
@@ -461,9 +459,7 @@ export function MeganeViewer({
   }, []);
 
   // Update Three.js background color when theme changes
-  useEffect(() => {
-    rendererRef.current?.setBackgroundColor(themeToHex(resolvedTheme));
-  }, [resolvedTheme]);
+  useRendererThemeBackground(rendererRef);
 
   const onCameraStateChangeRef = useRef(onCameraStateChange);
   onCameraStateChangeRef.current = onCameraStateChange;
@@ -471,7 +467,7 @@ export function MeganeViewer({
   const handleRendererReady = useCallback(
     (renderer: MoleculeRenderer) => {
       rendererRef.current = renderer;
-      renderer.setBackgroundColor(themeToHex(useThemeStore.getState().resolvedTheme));
+      applyThemeBackground(renderer);
       renderer.setViewInsets(0, rightInset());
       const storeState = pipelineApi.getState();
       applyViewportState(

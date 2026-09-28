@@ -51,7 +51,7 @@ import type { ViewportState } from "../pipeline/types";
 import { parseStructureFile } from "../parsers/structure";
 import { STRUCTURE_EXPORT_FORMATS, exportSnapshot } from "../export/structureExport";
 import type { StructureWriteFormat } from "../parsers/parseCore";
-import { useThemeStore, themeToHex } from "../stores/useThemeStore";
+import { applyThemeBackground, useRendererThemeBackground } from "../stores/useThemeStore";
 import type { HoverInfo } from "../types";
 import { useBuilderStore, canEdit, editSteps, shownSnapshot, viewSnapshot } from "./store";
 import { builderViewportState, BUILDER_SOURCE_ID } from "./view";
@@ -215,7 +215,7 @@ export function BuilderApp() {
   const handleRendererReady = useCallback(
     (renderer: MoleculeRenderer) => {
       rendererRef.current = renderer;
-      renderer.setBackgroundColor(themeToHex(useThemeStore.getState().resolvedTheme));
+      applyThemeBackground(renderer);
       // The panel floats over the right of the view: centre the structure in
       // the part left of it, as the viewer does beside its Pipeline panel.
       renderer.setViewInsets(0, panelInsetRef.current);
@@ -312,10 +312,7 @@ export function BuilderApp() {
   const mod = modKeyLabel();
 
   // The view's background follows the theme, as in the viewer.
-  const resolvedTheme = useThemeStore((s) => s.resolvedTheme);
-  useEffect(() => {
-    rendererRef.current?.setBackgroundColor(themeToHex(resolvedTheme));
-  }, [resolvedTheme]);
+  useRendererThemeBackground(rendererRef);
 
   // A Structure dialog's preview can grow or shrink the structure (a
   // supercell, a slab, a new cell): fit the view to what is drawn whenever
@@ -604,7 +601,7 @@ export function BuilderApp() {
             inset: 8,
             zIndex: 30,
             borderRadius: 12,
-            border: "2px dashed #3b82f6",
+            border: "2px dashed var(--megane-primary)",
             background: "rgba(59, 130, 246, 0.08)",
             display: "flex",
             alignItems: "center",
@@ -720,7 +717,7 @@ export function BuilderApp() {
               gap: 10,
               padding: "6px 8px 6px 12px",
               fontSize: 12,
-              borderLeft: `3px solid ${notice.level === "error" ? "#ef4444" : "#3b82f6"}`,
+              borderLeft: `3px solid ${notice.level === "error" ? "var(--megane-danger)" : "var(--megane-primary)"}`,
               color:
                 notice.level === "error"
                   ? "var(--megane-danger-text, #b91c1c)"

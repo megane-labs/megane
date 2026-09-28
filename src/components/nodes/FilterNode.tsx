@@ -29,7 +29,7 @@ const inputStyle: React.CSSProperties = {
 
 const inputErrorStyle: React.CSSProperties = {
   ...inputStyle,
-  borderColor: "#ef4444",
+  borderColor: "var(--megane-danger)",
   background: "rgba(239, 68, 68, 0.08)",
 };
 

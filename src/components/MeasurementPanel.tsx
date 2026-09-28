@@ -56,7 +56,7 @@ export function MeasurementPanel({
         padding: "12px 16px",
         fontSize: 13,
         color: "var(--megane-text)",
-        boxShadow: "0 4px 16px rgba(0,0,0,0.06)",
+        boxShadow: "0 4px 16px var(--megane-shadow)",
         border: "1px solid var(--megane-border)",
         zIndex: 15,
         minWidth: 180,

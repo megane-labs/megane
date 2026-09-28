@@ -4,6 +4,7 @@
  */
 
 import type { CSSProperties, ReactNode } from "react";
+import { floatingSurfaceStyle } from "./toolbarStyles";
 
 /** Frosted glass panel container style. */
 export const panelContainerStyle: CSSProperties = {
@@ -12,12 +13,7 @@ export const panelContainerStyle: CSSProperties = {
   right: 12,
   bottom: 60,
   zIndex: 10,
-  background: "var(--megane-surface)",
-  backdropFilter: "blur(16px)",
-  WebkitBackdropFilter: "blur(16px)",
-  borderRadius: 12,
-  boxShadow: "0 1px 8px var(--megane-shadow)",
-  border: "1px solid var(--megane-border)",
+  ...floatingSurfaceStyle,
   display: "flex",
   flexDirection: "column",
   overflow: "hidden",
@@ -65,14 +61,10 @@ export const collapseButtonStyle: CSSProperties = {
 
 /** Style for the collapsed toggle button. */
 const collapsedButtonStyle: CSSProperties = {
-  background: "var(--megane-surface)",
-  backdropFilter: "blur(16px)",
-  WebkitBackdropFilter: "blur(16px)",
-  border: "1px solid var(--megane-border)",
+  ...floatingSurfaceStyle,
   borderRadius: 10,
   padding: "8px 12px",
   cursor: "pointer",
-  boxShadow: "0 1px 8px var(--megane-shadow)",
   display: "flex",
   alignItems: "center",
   gap: 8,

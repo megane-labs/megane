@@ -29,7 +29,7 @@ import { applyViewportState } from "../pipeline/apply";
 import { decodeSnapshot, decodeHeader, MSG_SNAPSHOT } from "../protocol/protocol";
 import type { ViewportState } from "../pipeline/types";
 import type { Snapshot, Frame, Measurement, HoverInfo } from "../types";
-import { useThemeStore, themeToHex } from "../stores/useThemeStore";
+import { applyThemeBackground, useRendererThemeBackground } from "../stores/useThemeStore";
 
 interface WidgetViewerProps {
   snapshot: Snapshot | null;
@@ -245,15 +245,12 @@ export function WidgetViewer({
     setBondCount(total);
   }, [viewportState.bonds]);
 
-  const resolvedTheme = useThemeStore((s) => s.resolvedTheme);
-  useEffect(() => {
-    rendererRef.current?.setBackgroundColor(themeToHex(resolvedTheme));
-  }, [resolvedTheme]);
+  useRendererThemeBackground(rendererRef);
 
   const handleRendererReady = useCallback(
     (renderer: MoleculeRenderer) => {
       rendererRef.current = renderer;
-      renderer.setBackgroundColor(themeToHex(useThemeStore.getState().resolvedTheme));
+      applyThemeBackground(renderer);
       applyViewportState(renderer, pipelineStore.getState().viewportState, null);
       prevViewportStateRef.current = pipelineStore.getState().viewportState;
       // Apply initial selectedAtoms that may have arrived before the renderer was ready

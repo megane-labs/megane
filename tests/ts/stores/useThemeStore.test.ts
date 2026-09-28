@@ -5,8 +5,11 @@ import {
   themeToHex,
   detectHostTheme,
   installThemeSync,
+  applyThemeBackground,
+  useRendererThemeBackground,
   type Theme,
 } from "@/stores/useThemeStore";
+import { renderHook, act } from "@testing-library/react";
 import { THEME_STYLE_ID } from "@/styles/themeTokens";
 
 const STORAGE_KEY = "megane-theme";
@@ -60,6 +63,25 @@ describe("themeToHex", () => {
 
   it("maps 'dark' to slate-900-ish (0x0f172a)", () => {
     expect(themeToHex("dark")).toBe(0x0f172a);
+  });
+});
+
+describe("renderer theme background", () => {
+  it("paints a new renderer, then follows theme changes", () => {
+    resetStore("light");
+    const renderer = { setBackgroundColor: vi.fn() };
+    applyThemeBackground(renderer);
+    expect(renderer.setBackgroundColor).toHaveBeenLastCalledWith(0xffffff);
+
+    const ref = { current: renderer };
+    renderHook(() => useRendererThemeBackground(ref));
+    act(() => useThemeStore.setState({ resolvedTheme: "dark" }));
+    expect(renderer.setBackgroundColor).toHaveBeenLastCalledWith(0x0f172a);
+  });
+
+  it("does nothing before the renderer exists", () => {
+    const ref = { current: null };
+    expect(() => renderHook(() => useRendererThemeBackground(ref))).not.toThrow();
   });
 });
 

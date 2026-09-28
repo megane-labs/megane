@@ -38,7 +38,13 @@ export function StreamingNode({ id, data }: NodeProps<Node<PipelineNodeData>>) {
               flexShrink: 0,
             }}
           />
-          <span style={{ fontSize: 19, fontWeight: 500, color: connected ? "#22c55e" : "#ef4444" }}>
+          <span
+            style={{
+              fontSize: 19,
+              fontWeight: 500,
+              color: connected ? "#22c55e" : "var(--megane-danger)",
+            }}
+          >
             {connected ? "Connected" : "Disconnected"}
           </span>
         </div>

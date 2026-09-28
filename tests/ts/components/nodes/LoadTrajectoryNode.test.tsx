@@ -106,7 +106,10 @@ describe("LoadTrajectoryNode", () => {
       .parentElement!.querySelector('input[type="file"]') as HTMLInputElement;
     fireFileInputChange(input, [file]);
 
-    expect(updateNodeParams).toHaveBeenCalledWith("lt1", { fileName: "run.lammpstrj", source: "file" });
+    expect(updateNodeParams).toHaveBeenCalledWith("lt1", {
+      fileName: "run.lammpstrj",
+      source: "file",
+    });
     expect(handler).toHaveBeenCalledWith(file);
   });
 
@@ -127,7 +130,10 @@ describe("LoadTrajectoryNode", () => {
       .parentElement!.querySelector('input[type="file"]') as HTMLInputElement;
     fireFileInputChange(input, [file]);
 
-    expect(updateNodeParams).toHaveBeenCalledWith("lt1", { fileName: "trajectory.dcd", source: "file" });
+    expect(updateNodeParams).toHaveBeenCalledWith("lt1", {
+      fileName: "trajectory.dcd",
+      source: "file",
+    });
     expect(handler).toHaveBeenCalledWith(file);
   });
 
