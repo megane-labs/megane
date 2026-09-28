@@ -5,7 +5,8 @@
  * each atom is a single screen-aligned quad (2 triangles) with a
  * fragment shader that ray-traces a perfect sphere with correct depth.
  *
- * Memory: 7 floats/atom (x,y,z, r, cr,cg,cb) vs 100s of vertices.
+ * Memory: 9 floats/atom (x,y,z, r, cr,cg,cb, scale, opacity) vs 100s of
+ * vertices; buffers are sized to the loaded structure, not preallocated.
  * Draw calls: 1 (single instanced draw).
  * Scales to 1M+ atoms on mid-range GPUs.
  */
@@ -22,6 +23,13 @@ import {
 } from "../constants";
 import { atomVertexShader, atomFragmentShader } from "./shaders";
 import { type ColorContext, getAtomColorForScheme } from "../colorSchemes";
+import {
+  MIN_INSTANCE_CAPACITY,
+  markInstancesDirty,
+  nextInstanceCapacity,
+  resetInstanceLimit,
+  resizeTypedArray,
+} from "./instanceCapacity";
 
 export class ImpostorAtomMesh {
   readonly mesh: THREE.Mesh;
@@ -61,8 +69,12 @@ export class ImpostorAtomMesh {
   private radiusSink: ((radii: Float32Array | null, scale: number) => void) | null = null;
   private baseRadiusBuf: Float32Array = new Float32Array(0);
 
-  constructor(maxAtoms: number = 1_000_000) {
-    this.capacity = maxAtoms;
+  /**
+   * `initialCapacity` is only a starting size: the buffers grow and shrink with
+   * the loaded structure (see `instanceCapacity.ts`).
+   */
+  constructor(initialCapacity: number = MIN_INSTANCE_CAPACITY) {
+    this.capacity = initialCapacity;
 
     // Billboard quad: 2 triangles, [-1,1] in XY
     this.geo = new THREE.InstancedBufferGeometry();
@@ -72,14 +84,14 @@ export class ImpostorAtomMesh {
     this.geo.setIndex(new THREE.BufferAttribute(indices, 1));
     this.geo.instanceCount = 0;
 
-    // Instance buffers (pre-allocated for maxAtoms)
-    this.centerBuf = new Float32Array(maxAtoms * 3);
-    this.radiusBuf = new Float32Array(maxAtoms);
-    this.colorBuf = new Float32Array(maxAtoms * 3);
-    this.scaleOverrideBuf = new Float32Array(maxAtoms).fill(1.0);
-    this.opacityOverrideBuf = new Float32Array(maxAtoms).fill(1.0);
-    this.rawScaleBuf = new Float32Array(maxAtoms).fill(1.0);
-    this.hiddenBuf = new Uint8Array(maxAtoms);
+    // Instance buffers
+    this.centerBuf = new Float32Array(initialCapacity * 3);
+    this.radiusBuf = new Float32Array(initialCapacity);
+    this.colorBuf = new Float32Array(initialCapacity * 3);
+    this.scaleOverrideBuf = new Float32Array(initialCapacity).fill(1.0);
+    this.opacityOverrideBuf = new Float32Array(initialCapacity).fill(1.0);
+    this.rawScaleBuf = new Float32Array(initialCapacity).fill(1.0);
+    this.hiddenBuf = new Uint8Array(initialCapacity);
 
     this.centerAttr = new THREE.InstancedBufferAttribute(this.centerBuf, 3);
     this.radiusAttr = new THREE.InstancedBufferAttribute(this.radiusBuf, 1);
@@ -125,10 +137,10 @@ export class ImpostorAtomMesh {
     const { nAtoms, positions, elements } = snapshot;
     this.nAtoms = nAtoms;
 
-    // Grow buffers if needed
-    if (nAtoms > this.capacity) {
-      this.grow(nAtoms);
-    }
+    // Fit the buffers to the structure: grow when it does not fit, shrink
+    // when a much smaller structure replaces a large one.
+    const capacity = nextInstanceCapacity(this.capacity, nAtoms);
+    if (capacity !== null) this.resize(capacity);
 
     // Fill buffers directly (no object allocation)
     for (let i = 0; i < nAtoms; i++) {
@@ -153,11 +165,11 @@ export class ImpostorAtomMesh {
     this.rawScaleBuf.fill(1.0, 0, nAtoms);
     this.hiddenBuf.fill(0, 0, nAtoms);
 
-    this.centerAttr.needsUpdate = true;
-    this.radiusAttr.needsUpdate = true;
-    this.colorAttr.needsUpdate = true;
-    this.scaleOverrideAttr.needsUpdate = true;
-    this.opacityOverrideAttr.needsUpdate = true;
+    markInstancesDirty(this.centerAttr, nAtoms);
+    markInstancesDirty(this.radiusAttr, nAtoms);
+    markInstancesDirty(this.colorAttr, nAtoms);
+    markInstancesDirty(this.scaleOverrideAttr, nAtoms);
+    markInstancesDirty(this.opacityOverrideAttr, nAtoms);
     this.geo.instanceCount = nAtoms;
     this.publishRadii(true);
   }
@@ -165,7 +177,7 @@ export class ImpostorAtomMesh {
   updatePositions(positions: Float32Array): void {
     // Direct memcpy - no Matrix4 or Vector3 allocation
     this.centerBuf.set(positions.subarray(0, this.nAtoms * 3));
-    this.centerAttr.needsUpdate = true;
+    markInstancesDirty(this.centerAttr, this.nAtoms);
   }
 
   /** Update atom radius scale (O(1) via shader uniform). */
@@ -210,7 +222,7 @@ export class ImpostorAtomMesh {
     for (let i = 0; i < this.nAtoms; i++) {
       this.radiusBuf[i] = this.uniformRadius ?? getRadius(elements[i]) * this.radiusScale;
     }
-    this.radiusAttr.needsUpdate = true;
+    markInstancesDirty(this.radiusAttr, this.nAtoms);
     this.publishRadii(true);
   }
 
@@ -253,7 +265,7 @@ export class ImpostorAtomMesh {
       this.scaleOverrideBuf[i] = eff;
       if (eff !== 1) usePerAtom = true;
     }
-    this.scaleOverrideAttr.needsUpdate = true;
+    markInstancesDirty(this.scaleOverrideAttr, this.nAtoms);
     if (usePerAtom) this.material.uniforms.uUsePerAtomOverrides.value = 1;
     this.publishRadii(true);
   }
@@ -261,7 +273,7 @@ export class ImpostorAtomMesh {
   /** Set per-atom opacity overrides. */
   setOpacityOverrides(overrides: Float32Array): void {
     this.opacityOverrideBuf.set(overrides.subarray(0, this.nAtoms));
-    this.opacityOverrideAttr.needsUpdate = true;
+    markInstancesDirty(this.opacityOverrideAttr, this.nAtoms);
     this.material.uniforms.uUsePerAtomOverrides.value = 1;
     // Enable transparency if any atom has opacity < 1
     let hasTransparent = false;
@@ -288,7 +300,7 @@ export class ImpostorAtomMesh {
   clearOverrides(): void {
     this.rawScaleBuf.fill(1.0, 0, this.nAtoms);
     this.opacityOverrideBuf.fill(1.0, 0, this.nAtoms);
-    this.opacityOverrideAttr.needsUpdate = true;
+    markInstancesDirty(this.opacityOverrideAttr, this.nAtoms);
     let anyHidden = false;
     for (let i = 0; i < this.nAtoms; i++) {
       if (this.hiddenBuf[i]) {
@@ -318,7 +330,7 @@ export class ImpostorAtomMesh {
       this.colorBuf[i3 + 1] = overrides[i3 + 1];
       this.colorBuf[i3 + 2] = overrides[i3 + 2];
     }
-    this.colorAttr.needsUpdate = true;
+    markInstancesDirty(this.colorAttr, this.nAtoms);
   }
 
   /**
@@ -377,44 +389,19 @@ export class ImpostorAtomMesh {
     return this.colorBuf.subarray(0, this.nAtoms * 3);
   }
 
-  private grow(needed: number): void {
-    // Three.js caches `_maxInstanceCount` the first time an instanced geometry
-    // is bound. Replacing the instance attributes alone does not invalidate
-    // that cache, so a mesh that started with capacity 1 would keep drawing at
-    // most one instance after growing. Dispose the GPU-side geometry before
-    // replacing its attributes; the CPU-side index/vertex data remains valid
-    // and is uploaded again on the next render. Clear the cache explicitly as
-    // well so growth is correct before a renderer has attached its dispose
-    // listener (for example, in headless use).
-    this.geo.dispose();
-    delete (this.geo as THREE.InstancedBufferGeometry & { _maxInstanceCount?: number })
-      ._maxInstanceCount;
+  /** Reallocate every instance buffer to `capacity` atoms, keeping the data that fits. */
+  private resize(capacity: number): void {
+    resetInstanceLimit(this.geo);
+    this.capacity = capacity;
 
-    this.capacity = Math.max(needed, this.capacity * 2);
-
-    const newCenter = new Float32Array(this.capacity * 3);
-    const newRadius = new Float32Array(this.capacity);
-    const newColor = new Float32Array(this.capacity * 3);
-    const newScaleOverride = new Float32Array(this.capacity).fill(1.0);
-    const newOpacityOverride = new Float32Array(this.capacity).fill(1.0);
-    const newRawScale = new Float32Array(this.capacity).fill(1.0);
-    const newHidden = new Uint8Array(this.capacity);
-
-    newCenter.set(this.centerBuf);
-    newRadius.set(this.radiusBuf);
-    newColor.set(this.colorBuf);
-    newScaleOverride.set(this.scaleOverrideBuf);
-    newOpacityOverride.set(this.opacityOverrideBuf);
-    newRawScale.set(this.rawScaleBuf);
-    newHidden.set(this.hiddenBuf);
-
-    this.centerBuf = newCenter;
-    this.radiusBuf = newRadius;
-    this.colorBuf = newColor;
-    this.scaleOverrideBuf = newScaleOverride;
-    this.opacityOverrideBuf = newOpacityOverride;
-    this.rawScaleBuf = newRawScale;
-    this.hiddenBuf = newHidden;
+    this.centerBuf = resizeTypedArray(this.centerBuf, capacity * 3);
+    this.radiusBuf = resizeTypedArray(this.radiusBuf, capacity);
+    this.colorBuf = resizeTypedArray(this.colorBuf, capacity * 3);
+    this.scaleOverrideBuf = resizeTypedArray(this.scaleOverrideBuf, capacity, 1.0);
+    this.opacityOverrideBuf = resizeTypedArray(this.opacityOverrideBuf, capacity, 1.0);
+    this.rawScaleBuf = resizeTypedArray(this.rawScaleBuf, capacity, 1.0);
+    this.hiddenBuf = resizeTypedArray(this.hiddenBuf, capacity);
+    if (this.baseRadiusBuf.length > capacity) this.baseRadiusBuf = new Float32Array(0);
 
     this.centerAttr = new THREE.InstancedBufferAttribute(this.centerBuf, 3);
     this.radiusAttr = new THREE.InstancedBufferAttribute(this.radiusBuf, 1);
