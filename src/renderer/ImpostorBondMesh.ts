@@ -31,6 +31,13 @@ import {
   AROMATIC_DASH_RADIUS,
 } from "../constants";
 import { bondVertexShader, bondFragmentShader } from "./shaders";
+import {
+  MIN_INSTANCE_CAPACITY,
+  markInstancesDirty,
+  nextInstanceCapacity,
+  resetInstanceLimit,
+  resizeTypedArray,
+} from "./instanceCapacity";
 
 const TEX_MAX_WIDTH = 4096;
 
@@ -66,7 +73,7 @@ export class ImpostorBondMesh {
   private hiddenAtomMask: Uint8Array | null = null;
 
   // Persistent InstancedBufferAttribute references. Recreated only when the
-  // backing typed arrays are reallocated by grow(); otherwise we just flip
+  // backing typed arrays are reallocated by resize(); otherwise we just flip
   // needsUpdate to re-upload, so the old GL buffer is reused (and not leaked).
   private atomAAttr!: THREE.InstancedBufferAttribute;
   private atomBAttr!: THREE.InstancedBufferAttribute;
@@ -96,8 +103,12 @@ export class ImpostorBondMesh {
 
   private capacity: number;
 
-  constructor(maxBonds: number = 3_000_000) {
-    this.capacity = maxBonds;
+  /**
+   * `initialCapacity` (visual bond instances) is only a starting size: the
+   * buffers grow and shrink with the loaded topology (see `instanceCapacity.ts`).
+   */
+  constructor(initialCapacity: number = MIN_INSTANCE_CAPACITY) {
+    this.capacity = initialCapacity;
 
     // Quad: 2 triangles, XY in [-1, 1]
     this.geo = new THREE.InstancedBufferGeometry();
@@ -110,17 +121,17 @@ export class ImpostorBondMesh {
     this.geo.instanceCount = 0;
 
     // Instance buffers
-    this.atomABuf = new Float32Array(maxBonds);
-    this.atomBBuf = new Float32Array(maxBonds);
-    this.offsetXBuf = new Float32Array(maxBonds);
-    this.offsetYBuf = new Float32Array(maxBonds);
-    this.colorABuf = new Float32Array(maxBonds * 3);
-    this.colorBBuf = new Float32Array(maxBonds * 3);
-    this.radiusBuf = new Float32Array(maxBonds);
-    this.baseRadiusBuf = new Float32Array(maxBonds);
-    this.dashedBuf = new Float32Array(maxBonds);
-    this.opacityBuf = new Float32Array(maxBonds).fill(1.0);
-    this.logicalBondIdx = new Float32Array(maxBonds);
+    this.atomABuf = new Float32Array(initialCapacity);
+    this.atomBBuf = new Float32Array(initialCapacity);
+    this.offsetXBuf = new Float32Array(initialCapacity);
+    this.offsetYBuf = new Float32Array(initialCapacity);
+    this.colorABuf = new Float32Array(initialCapacity * 3);
+    this.colorBBuf = new Float32Array(initialCapacity * 3);
+    this.radiusBuf = new Float32Array(initialCapacity);
+    this.baseRadiusBuf = new Float32Array(initialCapacity);
+    this.dashedBuf = new Float32Array(initialCapacity);
+    this.opacityBuf = new Float32Array(initialCapacity).fill(1.0);
+    this.logicalBondIdx = new Float32Array(initialCapacity);
 
     // Initial DataTexture (1x1 placeholder)
     this.positionTexData = new Float32Array(4);
@@ -197,9 +208,10 @@ export class ImpostorBondMesh {
       else totalInstances += 1;
     }
 
-    if (totalInstances > this.capacity) {
-      this.grow(totalInstances);
-    }
+    // Fit the buffers to the topology: grow when it does not fit, shrink when
+    // a much smaller structure replaces a large one.
+    const capacity = nextInstanceCapacity(this.capacity, totalInstances);
+    if (capacity !== null) this.resize(capacity);
 
     let idx = 0;
 
@@ -289,7 +301,7 @@ export class ImpostorBondMesh {
     // (Three.js only frees them on the attribute's own dispose event), and
     // when bondSource="distance" loadSnapshot runs every frame — that path
     // exhausted GPU memory and triggered WebGL context loss.
-    this.markAttributesDirty();
+    this.markAttributesDirty(idx);
     this.geo.instanceCount = idx;
     // Re-apply a persistent hide mask onto the freshly built topology.
     this._compositeRadius();
@@ -349,8 +361,8 @@ export class ImpostorBondMesh {
         idx++;
       }
     }
-    this.colorAAttr.needsUpdate = true;
-    this.colorBAttr.needsUpdate = true;
+    markInstancesDirty(this.colorAAttr, idx);
+    markInstancesDirty(this.colorBAttr, idx);
   }
 
   private setTopology(
@@ -418,7 +430,7 @@ export class ImpostorBondMesh {
         this.radiusBuf[v] = base;
       }
     }
-    this.radiusAttr.needsUpdate = true;
+    markInstancesDirty(this.radiusAttr, count);
   }
 
   private copyPositionsToTexData(positions: Float32Array): void {
@@ -493,7 +505,7 @@ export class ImpostorBondMesh {
    * (Re)allocate all instance attributes and register them with the
    * geometry. Disposes any previously-held attributes first so their GL
    * buffers are released — this is the only path that should churn GPU
-   * memory, and it only runs at construction and when grow() reallocates
+   * memory, and it only runs at construction and when resize() reallocates
    * the typed arrays.
    */
   private registerAttributes(): void {
@@ -548,56 +560,35 @@ export class ImpostorBondMesh {
     dispose(this.opacityAttr);
   }
 
-  private markAttributesDirty(): void {
-    this.atomAAttr.needsUpdate = true;
-    this.atomBAttr.needsUpdate = true;
-    this.offsetXAttr.needsUpdate = true;
-    this.offsetYAttr.needsUpdate = true;
-    this.colorAAttr.needsUpdate = true;
-    this.colorBAttr.needsUpdate = true;
-    this.radiusAttr.needsUpdate = true;
-    this.dashedAttr.needsUpdate = true;
-    this.opacityAttr.needsUpdate = true;
+  /** Re-upload the first `count` instances of every topology attribute. */
+  private markAttributesDirty(count: number): void {
+    markInstancesDirty(this.atomAAttr, count);
+    markInstancesDirty(this.atomBAttr, count);
+    markInstancesDirty(this.offsetXAttr, count);
+    markInstancesDirty(this.offsetYAttr, count);
+    markInstancesDirty(this.colorAAttr, count);
+    markInstancesDirty(this.colorBAttr, count);
+    markInstancesDirty(this.radiusAttr, count);
+    markInstancesDirty(this.dashedAttr, count);
+    markInstancesDirty(this.opacityAttr, count);
   }
 
-  private grow(needed: number): void {
-    this.capacity = Math.max(needed, this.capacity * 2);
+  /** Reallocate every instance buffer to `capacity` visual bonds, keeping the data that fits. */
+  private resize(capacity: number): void {
+    resetInstanceLimit(this.geo);
+    this.capacity = capacity;
 
-    const newAtomA = new Float32Array(this.capacity);
-    const newAtomB = new Float32Array(this.capacity);
-    const newOffsetX = new Float32Array(this.capacity);
-    const newOffsetY = new Float32Array(this.capacity);
-    const newColorA = new Float32Array(this.capacity * 3);
-    const newColorB = new Float32Array(this.capacity * 3);
-    const newRadius = new Float32Array(this.capacity);
-    const newBaseRadius = new Float32Array(this.capacity);
-    const newDashed = new Float32Array(this.capacity);
-    const newOpacity = new Float32Array(this.capacity).fill(1.0);
-    const newLogical = new Float32Array(this.capacity);
-
-    newAtomA.set(this.atomABuf);
-    newAtomB.set(this.atomBBuf);
-    newOffsetX.set(this.offsetXBuf);
-    newOffsetY.set(this.offsetYBuf);
-    newColorA.set(this.colorABuf);
-    newColorB.set(this.colorBBuf);
-    newRadius.set(this.radiusBuf);
-    newBaseRadius.set(this.baseRadiusBuf);
-    newDashed.set(this.dashedBuf);
-    newOpacity.set(this.opacityBuf);
-    newLogical.set(this.logicalBondIdx);
-
-    this.atomABuf = newAtomA;
-    this.atomBBuf = newAtomB;
-    this.offsetXBuf = newOffsetX;
-    this.offsetYBuf = newOffsetY;
-    this.colorABuf = newColorA;
-    this.colorBBuf = newColorB;
-    this.radiusBuf = newRadius;
-    this.baseRadiusBuf = newBaseRadius;
-    this.dashedBuf = newDashed;
-    this.opacityBuf = newOpacity;
-    this.logicalBondIdx = newLogical;
+    this.atomABuf = resizeTypedArray(this.atomABuf, capacity);
+    this.atomBBuf = resizeTypedArray(this.atomBBuf, capacity);
+    this.offsetXBuf = resizeTypedArray(this.offsetXBuf, capacity);
+    this.offsetYBuf = resizeTypedArray(this.offsetYBuf, capacity);
+    this.colorABuf = resizeTypedArray(this.colorABuf, capacity * 3);
+    this.colorBBuf = resizeTypedArray(this.colorBBuf, capacity * 3);
+    this.radiusBuf = resizeTypedArray(this.radiusBuf, capacity);
+    this.baseRadiusBuf = resizeTypedArray(this.baseRadiusBuf, capacity);
+    this.dashedBuf = resizeTypedArray(this.dashedBuf, capacity);
+    this.opacityBuf = resizeTypedArray(this.opacityBuf, capacity, 1.0);
+    this.logicalBondIdx = resizeTypedArray(this.logicalBondIdx, capacity);
 
     this.registerAttributes();
   }
@@ -620,8 +611,7 @@ export class ImpostorBondMesh {
       const li = this.logicalBondIdx[v];
       this.opacityBuf[v] = logicalOpacities[li] ?? 1.0;
     }
-    const attr = this.geo.getAttribute("instanceBondOpacity") as THREE.InstancedBufferAttribute;
-    if (attr) attr.needsUpdate = true;
+    markInstancesDirty(this.opacityAttr, count);
     this.bondMaterial.uniforms.uUsePerBondOverrides.value = 1;
     this.bondMaterial.transparent = true;
     this.bondMaterial.depthWrite = false;
@@ -630,9 +620,9 @@ export class ImpostorBondMesh {
 
   /** Clear per-bond opacity overrides, reverting to global opacity mode. */
   clearBondOpacityOverrides(): void {
-    this.opacityBuf.fill(1.0);
-    const attr = this.geo.getAttribute("instanceBondOpacity") as THREE.InstancedBufferAttribute;
-    if (attr) attr.needsUpdate = true;
+    const count = this.geo.instanceCount;
+    this.opacityBuf.fill(1.0, 0, count);
+    markInstancesDirty(this.opacityAttr, count);
     this.bondMaterial.uniforms.uUsePerBondOverrides.value = 0;
     this.bondMaterial.needsUpdate = true;
   }
