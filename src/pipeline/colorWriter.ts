@@ -20,13 +20,17 @@ export const NO_OVERRIDE = Number.NaN;
 const HEX_RE = /^#?([0-9a-fA-F]{6}|[0-9a-fA-F]{3})$/;
 
 /**
- * Parse a CSS-style hex color into a normalised [r,g,b] triplet in [0,1].
- * Falls back to white on parse error so a malformed `uniformColor` from a
- * legacy serialized pipeline cannot crash the executor.
+ * Parse a CSS-style hex color (`#rrggbb` or `#rgb`, `#` optional) into a
+ * normalised [r,g,b] triplet in [0,1]. Falls back to `fallback` (white by
+ * default) on parse error so a malformed `uniformColor` from a legacy
+ * serialized pipeline cannot crash the executor.
  */
-export function hexToRgb(hex: string): [number, number, number] {
+export function hexToRgb(
+  hex: string,
+  fallback: readonly [number, number, number] = [1, 1, 1],
+): [number, number, number] {
   const match = hex.match(HEX_RE);
-  if (!match) return [1, 1, 1];
+  if (!match) return [...fallback];
   let body = match[1];
   if (body.length === 3) {
     body = body[0] + body[0] + body[1] + body[1] + body[2] + body[2];
