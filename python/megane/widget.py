@@ -21,6 +21,9 @@ if TYPE_CHECKING:
 
 _STATIC_DIR = pathlib.Path(__file__).parent / "static"
 
+#: anywidget front-end versions a MolecularViewer (live or saved) renders with.
+ANYWIDGET_FRONTEND_RANGE = ">=0.9.0"
+
 #: Largest encoded trajectory ``set_pipeline(..., embed_trajectory="auto")``
 #: embeds in the widget state (and so in a saved notebook), in bytes.
 EMBED_TRAJECTORY_AUTO_LIMIT = 20 * 1024 * 1024
@@ -75,6 +78,15 @@ class MolecularViewer(anywidget.AnyWidget):
 
     _esm = _STATIC_DIR / "widget.js"
     _css = ""
+
+    # anywidget pins the front end to the minor version installed next to the
+    # kernel ("~0.9.*" for 0.9.x), and a notebook saves that range with its
+    # widget state. Opened in a Jupyter whose anywidget front end is another
+    # minor version, the viewer then fails with "Module anywidget, version
+    # ~0.9.* is not registered". megane's state reads the same in every
+    # anywidget front end since 0.9, so accept any of them.
+    _model_module_version = traitlets.Unicode(ANYWIDGET_FRONTEND_RANGE).tag(sync=True)
+    _view_module_version = traitlets.Unicode(ANYWIDGET_FRONTEND_RANGE).tag(sync=True)
 
     # Binary data synced to JS (as DataView)
     _snapshot_data = traitlets.Bytes(b"").tag(sync=True)

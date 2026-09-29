@@ -118,6 +118,30 @@ def test_model_metadata():
     assert "anywidget" in v._model_module
 
 
+def _version_tuple(version: str) -> tuple[int, ...]:
+    return tuple(int(part) for part in version.split(".")[:3] if part.isdigit())
+
+
+def test_frontend_version_range_accepts_every_anywidget_frontend():
+    """The synced (and saved) front-end range is not anywidget's per-minor pin.
+
+    anywidget defaults to "~<major>.<minor>.*", so a notebook saved with one
+    anywidget minor version fails to render ("Module anywidget, version
+    ~0.9.* is not registered, however, 0.11.0 is") where another is installed.
+    """
+    import anywidget
+
+    state = MolecularViewer().get_state()
+    frontend_range = megane.widget.ANYWIDGET_FRONTEND_RANGE
+    assert state["_model_module_version"] == frontend_range
+    assert state["_view_module_version"] == frontend_range
+
+    assert frontend_range.startswith(">=")
+    floor = _version_tuple(frontend_range[2:])
+    for version in (anywidget.__version__, "0.9.0", "0.9.21", "0.10.0", "0.11.0"):
+        assert _version_tuple(version) >= floor, version
+
+
 def test_set_pipeline_and_clear():
     """set_pipeline(None) clears the pipeline."""
     v = MolecularViewer()
