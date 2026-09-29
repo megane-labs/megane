@@ -6,19 +6,41 @@ import json
 import pathlib
 import warnings
 from collections import defaultdict
-from typing import TYPE_CHECKING, Callable
+from typing import TYPE_CHECKING, Callable, Literal
 
 import anywidget
 import traitlets
 
 from megane.parsers.common import encode_trajectory_frame
 from megane.parsers.pdb import load_pdb
-from megane.protocol import encode_snapshot
+from megane.protocol import encode_snapshot, encode_trajectory
 
 if TYPE_CHECKING:
+    from megane.parsers.common import InMemoryTrajectory
     from megane.pipeline import Pipeline
 
 _STATIC_DIR = pathlib.Path(__file__).parent / "static"
+
+#: Largest encoded trajectory ``set_pipeline(..., embed_trajectory="auto")``
+#: embeds in the widget state (and so in a saved notebook), in bytes.
+EMBED_TRAJECTORY_AUTO_LIMIT = 20 * 1024 * 1024
+
+
+def _encode_embedded_trajectory(traj: InMemoryTrajectory, limit: int | None) -> bytes | None:
+    """Encode every frame of *traj* as one MSG_TRAJECTORY message.
+
+    Returns None as soon as the frames exceed *limit* bytes, so an oversized
+    trajectory is never encoded in full.
+    """
+    frames: list[bytes] = []
+    total = 0
+    for idx in range(traj.n_frames):
+        frame = encode_trajectory_frame(traj, idx)
+        total += len(frame)
+        if limit is not None and total > limit:
+            return None
+        frames.append(frame)
+    return encode_trajectory(frames)
 
 
 class MolecularViewer(anywidget.AnyWidget):
@@ -57,6 +79,10 @@ class MolecularViewer(anywidget.AnyWidget):
     # Binary data synced to JS (as DataView)
     _snapshot_data = traitlets.Bytes(b"").tag(sync=True)
     _frame_data = traitlets.Bytes(b"").tag(sync=True)
+    # Every trajectory frame at once (MSG_TRAJECTORY), set by
+    # set_pipeline(..., embed_trajectory=...). When present the front end plays
+    # back from it without the kernel, and _frame_data is not sent.
+    _trajectory_data = traitlets.Bytes(b"").tag(sync=True)
 
     # Trajectory state
     frame_index = traitlets.Int(0).tag(sync=True)
@@ -136,6 +162,7 @@ class MolecularViewer(anywidget.AnyWidget):
             DeprecationWarning,
             stacklevel=2,
         )
+        self._trajectory_data = b""
         if traj is not None:
             from megane.parsers.traj import load_traj
 
@@ -194,6 +221,11 @@ class MolecularViewer(anywidget.AnyWidget):
     def _on_frame_change(self, change: dict) -> None:
         """Send new frame data when frame_index changes."""
         idx = change["new"]
+
+        # An embedded trajectory is played back by the front end itself.
+        if self._trajectory_data:
+            self._fire_event("frame_change", {"frame_index": idx})
+            return
 
         # Legacy trajectory (from viewer.load())
         if self._trajectory is not None:
@@ -299,13 +331,36 @@ class MolecularViewer(anywidget.AnyWidget):
             handlers = self._event_handlers.get(event_name, [])
             self._event_handlers[event_name] = [h for h in handlers if h is not callback]
 
-    def set_pipeline(self, pipeline: Pipeline | None) -> None:
+    def set_pipeline(
+        self,
+        pipeline: Pipeline | None,
+        embed_trajectory: bool | Literal["auto"] = False,
+    ) -> None:
         """Apply a pipeline to this viewer.
+
+        By default the trajectory stays in the kernel and each frame is sent
+        when it is shown, so playback needs a running kernel. Embedding sends
+        every frame to the front end up front instead: playback then works
+        without a kernel, including in a notebook reopened from its saved
+        widget state, at the cost of storing the frames in that state.
 
         Args:
             pipeline: A :class:`~megane.pipeline.Pipeline` instance,
                 or ``None`` to clear the pipeline.
+            embed_trajectory: ``True`` embeds the trajectory whatever its
+                size. ``"auto"`` embeds it when the encoded frames fit in
+                :data:`EMBED_TRAJECTORY_AUTO_LIMIT` bytes and otherwise warns
+                and keeps it in the kernel. ``False`` (the default) never
+                embeds.
+
+        Raises:
+            ValueError: if *embed_trajectory* is not ``True``, ``False`` or
+                ``"auto"``.
         """
+        if embed_trajectory not in (True, False, "auto"):
+            raise ValueError(f"embed_trajectory must be True, False or 'auto'; got {embed_trajectory!r}.")
+
+        self._trajectory_data = b""
         if pipeline is None:
             self._pipeline_json = ""
             self._node_snapshots_data = {}
@@ -322,6 +377,19 @@ class MolecularViewer(anywidget.AnyWidget):
         self._pipeline_ref = pipeline
         if pipeline._trajectories:
             first_traj = next(iter(pipeline._trajectories.values()))
+            if embed_trajectory:
+                limit = EMBED_TRAJECTORY_AUTO_LIMIT if embed_trajectory == "auto" else None
+                data = _encode_embedded_trajectory(first_traj, limit)
+                if data is None:
+                    warnings.warn(
+                        f"Trajectory exceeds the {EMBED_TRAJECTORY_AUTO_LIMIT // (1024 * 1024)} MB "
+                        "auto-embed limit, so it stays in the kernel and playback needs a running "
+                        "kernel. Pass embed_trajectory=True to embed it anyway.",
+                        UserWarning,
+                        stacklevel=2,
+                    )
+                else:
+                    self._trajectory_data = data
             self.total_frames = first_traj.n_frames
 
     def _fire_event(self, event_name: str, data) -> None:

@@ -44,19 +44,21 @@ vi.mock("@/perf", () => ({
   perfMeasure: vi.fn(),
 }));
 
-// Stub protocol decoders so parseSnapshot/parseFrame return null in tests
-// (we don't need real binary decoding for the camera-state tests).
-vi.mock("@/protocol/protocol", () => ({
+// Stub the snapshot/frame decoders so parseSnapshot/parseFrame return null in
+// tests (we don't need real binary decoding for the camera-state tests). The
+// header and embedded-trajectory decoders stay real.
+vi.mock("@/protocol/protocol", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/protocol/protocol")>()),
   decodeSnapshot: vi.fn(() => null),
   decodeFrame: vi.fn(() => null),
-  decodeHeader: vi.fn(() => ({ msgType: 0 })),
-  MSG_SNAPSHOT: 0,
-  MSG_FRAME: 1,
 }));
 
 import widgetEntry from "@/widget";
 import { WidgetViewer } from "@/components/WidgetViewer";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
+import { decodeFrame } from "@/protocol/protocol";
+import type { Frame } from "@/types";
+import { frameMessage, trajectoryMessage } from "./protocol/trajectoryMessage";
 
 const mockedWidgetViewer = vi.mocked(WidgetViewer);
 
@@ -142,6 +144,7 @@ describe("widget.ts — render", () => {
     const expected = [
       "change:_snapshot_data",
       "change:_frame_data",
+      "change:_trajectory_data",
       "change:frame_index",
       "change:total_frames",
       "change:selected_atoms",
@@ -279,5 +282,77 @@ describe("widget.ts — render", () => {
     const el = makeContainer();
     const cleanup = widgetEntry.render({ model: model as never, el }) as () => void;
     expect(() => cleanup()).not.toThrow();
+  });
+});
+
+describe("widget.ts — embedded trajectory", () => {
+  const embedded = () =>
+    new DataView(
+      trajectoryMessage([
+        frameMessage(0, [0, 0, 0]),
+        frameMessage(1, [1, 1, 1]),
+        frameMessage(2, [2, 2, 2]),
+      ]),
+    );
+  const lastFrame = () => renderedElements[renderedElements.length - 1].props.frame as Frame | null;
+
+  it("shows the embedded frame at frame_index on mount", () => {
+    const model = makeMockModel({ _trajectory_data: embedded(), frame_index: 1, total_frames: 3 });
+    widgetEntry.render({ model: model as never, el: makeContainer() });
+
+    expect(lastFrame()?.frameId).toBe(1);
+    expect(Array.from(lastFrame()!.positions)).toEqual([1, 1, 1]);
+  });
+
+  it("follows frame_index changes without kernel frame data", () => {
+    const model = makeMockModel({ _trajectory_data: embedded(), frame_index: 0, total_frames: 3 });
+    widgetEntry.render({ model: model as never, el: makeContainer() });
+
+    const onSeek = renderedElements[renderedElements.length - 1].props.onSeek as (
+      f: number,
+    ) => void;
+    onSeek(2);
+    model.listeners.get("change:frame_index")?.();
+    expect(lastFrame()?.frameId).toBe(2);
+
+    // Kernel frame data is ignored while the trajectory is embedded.
+    const rendersBefore = renderedElements.length;
+    model.listeners.get("change:_frame_data")?.();
+    expect(renderedElements.length).toBe(rendersBefore);
+  });
+
+  it("picks up a trajectory embedded after mount", () => {
+    const model = makeMockModel({ frame_index: 2, total_frames: 3 });
+    widgetEntry.render({ model: model as never, el: makeContainer() });
+    expect(lastFrame()).toBeNull();
+
+    model.state._trajectory_data = embedded();
+    model.listeners.get("change:_trajectory_data")?.();
+    expect(lastFrame()?.frameId).toBe(2);
+  });
+
+  it("falls back to kernel frames when the data is not a trajectory message", () => {
+    const notTrajectory = new DataView(frameMessage(0, [0, 0, 0]).buffer);
+    const model = makeMockModel({ _trajectory_data: notTrajectory, _frame_data: notTrajectory });
+    vi.mocked(decodeFrame).mockClear();
+    widgetEntry.render({ model: model as never, el: makeContainer() });
+
+    // parseFrame() ran on _frame_data (decodeFrame is stubbed to null here).
+    expect(decodeFrame).toHaveBeenCalledTimes(1);
+    expect(lastFrame()).toBeNull();
+  });
+
+  it("keeps playing when save_changes throws for lack of a kernel", () => {
+    const model = makeMockModel({ _trajectory_data: embedded(), frame_index: 0, total_frames: 3 });
+    model.save_changes.mockImplementation(() => {
+      throw new Error("Syncing error: no comm channel defined");
+    });
+    widgetEntry.render({ model: model as never, el: makeContainer() });
+
+    const onSeek = renderedElements[renderedElements.length - 1].props.onSeek as (
+      f: number,
+    ) => void;
+    expect(() => onSeek(-1)).not.toThrow();
+    expect(model.state.frame_index).toBe(1);
   });
 });

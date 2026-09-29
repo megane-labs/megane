@@ -168,10 +168,15 @@ export interface OpenLabNotebookOpts {
   /** Wait gates passed through to waitForReady. */
   waitForData?: boolean;
   waitTimeoutMs?: number;
+  /**
+   * Trigger Run All Cells (default). Pass false to render only the outputs
+   * and widget state saved in the notebook, as its recipient first sees it.
+   */
+  runAll?: boolean;
 }
 
 /**
- * Open a notebook in JupyterLab and trigger Run All Cells. Waits for the
+ * Open a notebook in JupyterLab and trigger Run All Cells (unless `runAll` is false). Waits for the
  * megane renderer's testMode ready signal. Sets `__MEGANE_TEST__=true` via
  * page.addInitScript.
  *
@@ -207,12 +212,14 @@ export async function openLabNotebook(page: Page, opts: OpenLabNotebookOpts): Pr
       .waitFor({ timeout: 15_000 })
       .catch(() => {});
 
-    // Run All via the menu bar.
-    await page.locator(".lm-MenuBar-itemLabel", { hasText: /^Run$/ }).first().click();
-    await page
-      .locator(".lm-Menu-itemLabel", { hasText: /Run All Cells/ })
-      .first()
-      .click();
+    if (opts.runAll ?? true) {
+      // Run All via the menu bar.
+      await page.locator(".lm-MenuBar-itemLabel", { hasText: /^Run$/ }).first().click();
+      await page
+        .locator(".lm-Menu-itemLabel", { hasText: /Run All Cells/ })
+        .first()
+        .click();
+    }
 
     await waitForReady(page, {
       needsData: opts.waitForData ?? true,

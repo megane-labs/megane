@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+### Added
+
+- **Jupyter widget trajectories that play without a kernel.** `MolecularViewer.set_pipeline(pipe, embed_trajectory=True)` (and `view_traj(..., embed_trajectory=True)`) sends every frame to the widget up front instead of one frame per step from the kernel, so a trajectory keeps playing after the kernel stops and in a notebook reopened from its saved widget state — for example one handed to someone else. `embed_trajectory="auto"` embeds only when the frames fit in 20 MB and otherwise warns and keeps them in the kernel; the default (`False`) is unchanged. Frames travel as one new `MSG_TRAJECTORY` protocol message (a frame count, an offset table and the existing frame messages). Like NGLView's `write_html(frame_range=…)`, embedding is opt-in because it stores the frames uncompressed, but it works in the saved notebook itself rather than only in an exported HTML page.
+
 ## [0.17.0] - 2026-09-28
 
 ### Added
