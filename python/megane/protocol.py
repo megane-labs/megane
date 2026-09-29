@@ -30,11 +30,22 @@ Protocol format:
   The optional frame elements/box carry per-frame topology/cell for
   heterogeneous trajectories; a frame that omits them (flags 0) is byte-identical
   to the original positions-only layout, so uniform playback is unchanged.
+
+  Trajectory payload (every frame of a trajectory in one message, so a host can
+  play it back without asking the kernel for each frame):
+    n_frames:   u32
+    offsets:    u32[n_frames + 1]  (byte offsets from the start of the message;
+                                    frame i is bytes offsets[i]..offsets[i+1])
+    frames:     n_frames complete frame messages (header included), back to back
+
+  Every frame message is a multiple of 4 bytes long, so each embedded frame
+  starts 4-byte aligned.
 """
 
 from __future__ import annotations
 
 import struct
+from collections.abc import Sequence
 from typing import Protocol, runtime_checkable
 
 import numpy as np
@@ -43,16 +54,19 @@ __all__ = [
     "encode_snapshot",
     "encode_frame",
     "encode_metadata",
+    "encode_trajectory",
     "StructureLike",
     "MSG_SNAPSHOT",
     "MSG_FRAME",
     "MSG_METADATA",
+    "MSG_TRAJECTORY",
 ]
 
 MAGIC = b"MEGN"
 MSG_SNAPSHOT = 0
 MSG_FRAME = 1
 MSG_METADATA = 2
+MSG_TRAJECTORY = 3
 
 HAS_BOND_ORDERS = 0x01
 HAS_BOX = 0x02
@@ -184,6 +198,28 @@ def encode_frame(
     frame_header = struct.pack("<II", frame_id, n_atoms)
 
     return header + frame_header + pos_bytes + elem_bytes + box_bytes
+
+
+def encode_trajectory(frames: Sequence[bytes]) -> bytes:
+    """Bundle encoded frame messages into one trajectory message.
+
+    Args:
+        frames: frame messages as returned by :func:`encode_frame`, in frame order.
+
+    Raises:
+        ValueError: if the bundle would not fit the u32 offset table (4 GiB).
+    """
+    n_frames = len(frames)
+    table_end = 8 + 4 + 4 * (n_frames + 1)
+    offsets = [table_end]
+    for frame in frames:
+        offsets.append(offsets[-1] + len(frame))
+    if offsets[-1] > 0xFFFFFFFF:
+        raise ValueError(f"Trajectory bundle of {offsets[-1]} bytes exceeds the 4 GiB protocol limit.")
+
+    header = MAGIC + struct.pack("<BBH", MSG_TRAJECTORY, 0, 0)
+    table = struct.pack(f"<I{n_frames + 1}I", n_frames, *offsets)
+    return header + table + b"".join(frames)
 
 
 def encode_metadata(

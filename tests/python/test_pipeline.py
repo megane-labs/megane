@@ -1,5 +1,6 @@
 """Tests for the Python pipeline builder."""
 
+import struct
 from pathlib import Path
 
 import pytest
@@ -1338,6 +1339,22 @@ class TestViewTrajWrapper:
             xtc=str(FIXTURES / "caffeine_water_vibration.xtc"),
         )
         assert viewer.total_frames > 0
+
+    def test_trajectory_stays_in_kernel_by_default(self):
+        viewer = view_traj(
+            str(FIXTURES / "caffeine_water.pdb"),
+            xtc=str(FIXTURES / "caffeine_water_vibration.xtc"),
+        )
+        assert viewer._trajectory_data == b""
+
+    def test_embed_trajectory_forwarded(self):
+        viewer = view_traj(
+            str(FIXTURES / "caffeine_water.pdb"),
+            xtc=str(FIXTURES / "caffeine_water_vibration.xtc"),
+            embed_trajectory=True,
+        )
+        (n_frames,) = struct.unpack_from("<I", viewer._trajectory_data, 8)
+        assert n_frames == viewer.total_frames
 
     def test_raises_without_trajectory(self):
         with pytest.raises(ValueError, match=r"Either 'xtc', 'traj', 'xyz', or 'lammpstrj'"):

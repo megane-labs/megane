@@ -43,6 +43,39 @@ viewer
 
 The timeline scrubber appears automatically when a trajectory is loaded.
 
+### Share a notebook with a playable trajectory
+
+By default the trajectory stays in the Python kernel and the widget asks for
+each frame as it is shown. That keeps the notebook small, but a notebook
+opened without a running kernel (for example one you send to someone else)
+shows a single frame and cannot play. Pass `embed_trajectory` to send every
+frame to the widget up front instead:
+
+```python
+viewer = megane.view_traj("protein.pdb", xtc="trajectory.xtc", embed_trajectory=True)
+# or, with a pipeline:
+viewer.set_pipeline(pipe, embed_trajectory=True)
+```
+
+| Value | Behaviour |
+|-------|-----------|
+| `False` (default) | Frames stay in the kernel; playback needs a running kernel |
+| `True` | Every frame is embedded, whatever the size |
+| `"auto"` | Embedded when the encoded frames fit in 20 MB (`megane.widget.EMBED_TRAJECTORY_AUTO_LIMIT`); otherwise a warning is shown and the frames stay in the kernel |
+
+Embedded frames are stored uncompressed (12 bytes per atom per frame, so
+1,000 atoms × 500 frames ≈ 6 MB), and they end up in the notebook file
+together with the rest of the widget state. For the recipient to play them
+without running the notebook:
+
+- **Save the widget state with the notebook.** In JupyterLab turn on
+  *Settings → Save Widget State Automatically* before saving;
+  `jupyter nbconvert --to notebook --execute` stores it by default.
+- **Trust the notebook on the receiving side.** Jupyter does not render widgets
+  from a notebook it did not produce until it is trusted: run
+  `jupyter trust notebook.ipynb`, or *Trust Notebook* from the JupyterLab
+  command palette.
+
 ### Options
 
 Both `view()` and `view_traj()` accept these keyword arguments:
@@ -52,6 +85,8 @@ Both `view()` and `view_traj()` accept these keyword arguments:
 | `bonds` | `"distance"` \| `"structure"` \| `None` | `"distance"` | Bond detection method. `None` to hide bonds |
 | `perspective` | `bool` | `False` | Perspective projection instead of orthographic |
 | `cell_axes_visible` | `bool` | `True` | Show unit cell axes |
+
+`view_traj()` additionally accepts `embed_trajectory` (see [Share a notebook with a playable trajectory](#share-a-notebook-with-a-playable-trajectory)).
 
 For full control over the visualization (filtering, multi-layer rendering, custom nodes), see [Visual Pipeline — Python API](./pipeline/python).
 
@@ -244,7 +279,7 @@ Select 2–4 atoms to measure distances, angles, or dihedral angles.
 
 | Method | Description |
 |--------|-------------|
-| `set_pipeline(pipeline)` | Apply a `Pipeline` to the viewer, or `None` to clear |
+| `set_pipeline(pipeline, embed_trajectory=False)` | Apply a `Pipeline` to the viewer, or `None` to clear. `embed_trajectory` (`True` / `"auto"`) embeds the trajectory so it plays without a kernel |
 | `on_event(name, callback=None)` | Register an event callback. Use as `@viewer.on_event("name")` decorator or `viewer.on_event("name", fn)` |
 | `off_event(name, callback=None)` | Remove a specific callback, or all callbacks for the event if `callback` is `None` |
 
@@ -263,8 +298,8 @@ The `measurement` dict contains: `type` (`"distance"`, `"angle"`, or `"dihedral"
 
 - **Re-running cells** — calling `viewer.set_pipeline(pipe)` again updates the displayed pipeline in-place without re-creating the widget.
 - **JupyterLab vs. classic Notebook** — megane is tested on JupyterLab 4+. In classic Notebook, enable the `anywidget` extension if the viewer appears blank.
-- **Large trajectories** — the Jupyter widget loads the full trajectory into Python memory before scrubbing. If your XTC is too large, run `megane serve protein.pdb --xtc traj.xtc` from the CLI instead — only the standalone server streams frames over WebSocket on demand. See [Platform Support — UI features](../platform-support#ui-features).
-- **Sharing notebooks** — exported HTML (`File → Export → HTML`) captures the last-rendered frame as a static image.
+- **Large trajectories** — the Jupyter widget loads the full trajectory into Python memory before scrubbing. Keep large trajectories out of `embed_trajectory=True` (every frame would be written into the notebook), or use `"auto"`, which leaves anything over 20 MB in the kernel. If your XTC is too large, run `megane serve protein.pdb --xtc traj.xtc` from the CLI instead — only the standalone server streams frames over WebSocket on demand. See [Platform Support — UI features](../platform-support#ui-features).
+- **Sharing notebooks** — to hand over a notebook whose trajectory still plays, embed it (see [Share a notebook with a playable trajectory](#share-a-notebook-with-a-playable-trajectory)). Exported HTML (`File → Export → HTML`) captures the last-rendered frame as a static image.
 
 ## Troubleshooting
 

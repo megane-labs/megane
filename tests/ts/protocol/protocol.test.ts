@@ -4,10 +4,12 @@ import {
   decodeSnapshot,
   decodeFrame,
   decodeMetadata,
+  decodeTrajectory,
   MSG_SNAPSHOT,
   MSG_FRAME,
   MSG_METADATA,
 } from "@/protocol/protocol";
+import { frameMessage, trajectoryMessage } from "./trajectoryMessage";
 
 const MAGIC = 0x4e47454d; // "MEGN" little-endian
 
@@ -405,6 +407,36 @@ describe("decodeFrame", () => {
     expect(Array.from(frame.elements!)).toEqual([6, 8]);
     expect(frame.box![0]).toBeCloseTo(11, 5);
     expect(frame.box![4]).toBeCloseTo(11, 5);
+  });
+});
+
+describe("decodeTrajectory", () => {
+  const traj = decodeTrajectory(
+    trajectoryMessage([frameMessage(0, [0, 0, 0, 1, 1, 1]), frameMessage(1, [2, 3, 4, 5, 6, 7])]),
+  );
+
+  it("reports the frame count", () => {
+    expect(traj.nFrames).toBe(2);
+  });
+
+  it("decodes each embedded frame", () => {
+    const frame = traj.getFrame(1)!;
+    expect(frame.frameId).toBe(1);
+    expect(frame.nAtoms).toBe(2);
+    expect(Array.from(frame.positions)).toEqual([2, 3, 4, 5, 6, 7]);
+    expect(Array.from(traj.getFrame(0)!.positions)).toEqual([0, 0, 0, 1, 1, 1]);
+  });
+
+  it("returns null outside the frame range", () => {
+    expect(traj.getFrame(-1)).toBeNull();
+    expect(traj.getFrame(2)).toBeNull();
+    expect(traj.getFrame(0.5)).toBeNull();
+  });
+
+  it("handles an empty trajectory", () => {
+    const empty = decodeTrajectory(trajectoryMessage([]));
+    expect(empty.nFrames).toBe(0);
+    expect(empty.getFrame(0)).toBeNull();
   });
 });
 

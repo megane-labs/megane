@@ -17,8 +17,11 @@ import {
   decodeSnapshot,
   decodeFrame,
   decodeHeader,
+  decodeTrajectory,
   MSG_SNAPSHOT,
   MSG_FRAME,
+  MSG_TRAJECTORY,
+  type EmbeddedTrajectory,
 } from "./protocol/protocol";
 import type { Snapshot, Frame, Measurement } from "./types";
 import type { MeganeCameraState } from "./renderer/MoleculeRenderer";
@@ -49,7 +52,19 @@ function render({ model, el }: { model: AnyWidgetModel; el: HTMLElement }) {
   let root: Root | null = null;
   let currentSnapshot: Snapshot | null = null;
   let currentFrame: Frame | null = null;
+  let embeddedTrajectory: EmbeddedTrajectory | null = null;
   let disposed = false;
+
+  // Without a kernel (a saved notebook reopened, or a static HTML export) the
+  // model has no comm to sync over and save_changes() throws. Local state is
+  // already updated by then, so playback of an embedded trajectory goes on.
+  function saveChanges() {
+    try {
+      model.save_changes();
+    } catch {
+      // No kernel to tell.
+    }
+  }
 
   function parseSnapshot(): Snapshot | null {
     const data = model.get("_snapshot_data") as DataView | null;
@@ -75,6 +90,23 @@ function render({ model, el }: { model: AnyWidgetModel; el: HTMLElement }) {
     return null;
   }
 
+  function parseTrajectory(): EmbeddedTrajectory | null {
+    const data = model.get("_trajectory_data") as DataView | null;
+    if (!data || data.byteLength === 0) return null;
+    const buffer = new ArrayBuffer(data.byteLength);
+    new Uint8Array(buffer).set(new Uint8Array(data.buffer, data.byteOffset, data.byteLength));
+    const { msgType } = decodeHeader(buffer);
+    return msgType === MSG_TRAJECTORY ? decodeTrajectory(buffer) : null;
+  }
+
+  /** The frame to show: from the embedded trajectory when there is one. */
+  function resolveFrame(): Frame | null {
+    if (embeddedTrajectory) {
+      return embeddedTrajectory.getFrame((model.get("frame_index") as number) || 0);
+    }
+    return parseFrame();
+  }
+
   function handleSeek(frame: number) {
     const totalFrames = (model.get("total_frames") as number) || 0;
     if (frame === -1) {
@@ -85,23 +117,23 @@ function render({ model, el }: { model: AnyWidgetModel; el: HTMLElement }) {
     } else {
       model.set("frame_index", frame);
     }
-    model.save_changes();
+    saveChanges();
   }
 
   function handleMeasurementChange(measurement: Measurement | null) {
     const json = measurement ? JSON.stringify(measurement) : "";
     model.set("_measurement_json", json);
-    model.save_changes();
+    saveChanges();
   }
 
   function handlePipelineChange(json: string) {
     model.set("_pipeline_json", json);
-    model.save_changes();
+    saveChanges();
   }
 
   function handleCameraStateChange(state: MeganeCameraState) {
     model.set("camera_state", state);
-    model.save_changes();
+    saveChanges();
   }
 
   function getInitialCameraState(): MeganeCameraState | null {
@@ -154,7 +186,8 @@ function render({ model, el }: { model: AnyWidgetModel; el: HTMLElement }) {
 
     root = createRoot(container);
     currentSnapshot = parseSnapshot();
-    currentFrame = parseFrame();
+    embeddedTrajectory = parseTrajectory();
+    currentFrame = resolveFrame();
     renderApp();
     perfMark("megane:widget:end");
     perfMeasure("megane:widget-mount", "megane:widget:start", "megane:widget:end");
@@ -176,11 +209,19 @@ function render({ model, el }: { model: AnyWidgetModel; el: HTMLElement }) {
   });
 
   model.on("change:_frame_data", () => {
+    if (embeddedTrajectory) return;
     currentFrame = parseFrame();
     renderApp();
   });
 
+  model.on("change:_trajectory_data", () => {
+    embeddedTrajectory = parseTrajectory();
+    currentFrame = resolveFrame();
+    renderApp();
+  });
+
   model.on("change:frame_index", () => {
+    if (embeddedTrajectory) currentFrame = resolveFrame();
     renderApp();
   });
 

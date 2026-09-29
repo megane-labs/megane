@@ -346,6 +346,7 @@ Sources of truth: `crates/megane-wasm/src/lib.rs` (browser parsers), `crates/meg
 | Built-in file picker | ✓ | — | host | host | ✓ | n/a |
 | Visual pipeline editor | ✓ | — | ✓ | ✓ (`.megane.json`) | ✓ | n/a |
 | Trajectory timeline / scrubbing | ✓ | ✓ | ✓ | ✓ | ✓ | n/a |
+| Trajectory playback without a running backend (shared / reopened document) | ✓ | ✓⁷ | ✓ | ✓ | ✓ | n/a |
 | WebSocket trajectory streaming | ✓ | — | — | — | — | n/a |
 | Parsing in a Web Worker; trajectories and multi-frame XYZ / multi-MODEL PDB of 8 MB or more stream frames on demand | ✓ | — | — | — | — | n/a |
 | Multi-layer rendering | ✓ | ✓ (via pipeline) | ✓ | ✓ | ✓ | n/a |
@@ -371,6 +372,8 @@ Sources of truth: `crates/megane-wasm/src/lib.rs` (browser parsers), `crates/meg
 ⁵ Jupyter widget: export downloads work when the notebook runs in a browser (JupyterLab, Jupyter Notebook). Inside a VS Code notebook the widget renders in a sandboxed webview with no path to the extension host, so downloads are unavailable — see Known gaps.
 
 ⁶ GIF is the only export that runs in a Web Worker (gif.js encodes there; MP4 uses MediaRecorder on the main thread). The encoder source is inlined into each host bundle and loaded from a `blob:` URL, so it does not depend on the host's asset base path — resolving it as a URL broke JupyterLab (#497) and VS Code (#599), in both cases hanging the encode instead of erroring. Keep it worker-source-inlined when touching `resolveGifWorkerScript`.
+
+⁷ Jupyter widget: opt-in with `set_pipeline(pipe, embed_trajectory=True | "auto")` or `view_traj(..., embed_trajectory=...)`, which embeds every frame in the widget state. By default frames stay in the kernel and are sent one at a time, so playback needs a running kernel. The other hosts parse the file in the browser and never depend on a backend for frames.
 
 Notes:
 

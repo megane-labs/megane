@@ -12,6 +12,7 @@ const MAGIC = 0x4e47454d; // "MEGN" in little-endian
 export const MSG_SNAPSHOT = 0;
 export const MSG_FRAME = 1;
 export const MSG_METADATA = 2;
+export const MSG_TRAJECTORY = 3;
 
 const HAS_BOND_ORDERS = 0x01;
 const HAS_BOX = 0x02;
@@ -136,6 +137,28 @@ export function decodeFrame(buffer: ArrayBuffer): Frame {
   }
 
   return { frameId, nAtoms, positions, ...(elements ? { elements } : {}), ...(box ? { box } : {}) };
+}
+
+/** Every frame of a trajectory, decoded on demand from one MSG_TRAJECTORY message. */
+export interface EmbeddedTrajectory {
+  nFrames: number;
+  /** Decode frame `index`, or null when it is out of range. */
+  getFrame(index: number): Frame | null;
+}
+
+export function decodeTrajectory(buffer: ArrayBuffer): EmbeddedTrajectory {
+  const view = new DataView(buffer);
+  const nFrames = view.getUint32(8, true);
+  const offsetAt = (i: number) => view.getUint32(12 + 4 * i, true);
+  return {
+    nFrames,
+    getFrame(index: number): Frame | null {
+      if (!Number.isInteger(index) || index < 0 || index >= nFrames) return null;
+      // Each embedded frame is a complete MSG_FRAME message; slicing copies it
+      // into its own buffer so decodeFrame's typed-array views start at 0.
+      return decodeFrame(buffer.slice(offsetAt(index), offsetAt(index + 1)));
+    },
+  };
 }
 
 export function decodeMetadata(buffer: ArrayBuffer): TrajectoryMeta {

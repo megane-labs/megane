@@ -1,19 +1,22 @@
-"""Tests for encode_frame() and encode_metadata() in binary protocol."""
+"""Tests for encode_frame(), encode_metadata() and encode_trajectory() in binary protocol."""
 
 import struct
 
 import numpy as np
+import pytest
 
 from megane.protocol import (
     MAGIC,
     MSG_FRAME,
     MSG_METADATA,
     MSG_SNAPSHOT,
+    MSG_TRAJECTORY,
     HAS_BOND_ORDERS,
     HAS_BOX,
     encode_frame,
     encode_metadata,
     encode_snapshot,
+    encode_trajectory,
 )
 from megane.parsers.pdb import Structure
 
@@ -221,3 +224,40 @@ def test_encode_snapshot_with_box():
 
     flags = struct.unpack("<B", data[5:6])[0]
     assert flags & HAS_BOX
+
+
+# ─── encode_trajectory ─────────────────────────────────────────────────
+
+
+def test_encode_trajectory_layout():
+    """Header, frame count, offset table, then the frame messages back to back."""
+    frames = [
+        encode_frame(0, np.zeros((2, 3), dtype=np.float32)),
+        encode_frame(1, np.ones((3, 3), dtype=np.float32)),
+    ]
+    data = encode_trajectory(frames)
+
+    assert data[:4] == MAGIC
+    msg_type, flags, _ = struct.unpack_from("<BBH", data, 4)
+    assert (msg_type, flags) == (MSG_TRAJECTORY, 0)
+    n_frames, *offsets = struct.unpack_from("<4I", data, 8)
+    assert n_frames == 2
+    assert offsets == [24, 24 + len(frames[0]), len(data)]
+    assert data[offsets[0] : offsets[1]] == frames[0]
+    assert data[offsets[1] : offsets[2]] == frames[1]
+    assert all(o % 4 == 0 for o in offsets)
+
+
+def test_encode_trajectory_empty():
+    data = encode_trajectory([])
+    assert struct.unpack_from("<II", data, 8) == (0, 16)
+    assert len(data) == 16
+
+
+def test_encode_trajectory_rejects_over_4gib():
+    class _Huge(bytes):
+        def __len__(self) -> int:
+            return 3 * 1024**3
+
+    with pytest.raises(ValueError, match="4 GiB"):
+        encode_trajectory([_Huge(), _Huge()])

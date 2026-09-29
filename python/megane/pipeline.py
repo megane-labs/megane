@@ -1377,6 +1377,7 @@ def view_traj(
     bonds: Literal["auto", "distance", "structure", "file"] | None = "auto",
     perspective: bool = False,
     cell_axes_visible: bool = True,
+    embed_trajectory: bool | Literal["auto"] = False,
 ) -> "MolecularViewer":
     """Open a molecular viewer with a trajectory.
 
@@ -1403,6 +1404,9 @@ def view_traj(
             file, ``None`` disables bonds.
         perspective: Use perspective projection instead of orthographic.
         cell_axes_visible: Show unit cell axes.
+        embed_trajectory: Send every frame to the front end so playback
+            works without a kernel (e.g. in a shared notebook); see
+            :meth:`~megane.widget.MolecularViewer.set_pipeline`.
 
     Returns:
         A :class:`~megane.widget.MolecularViewer` widget ready for display.
@@ -1410,7 +1414,7 @@ def view_traj(
     Raises:
         ValueError: If more than one of *xtc*, *traj*, *xyz* is provided,
             or if none is provided and *path* isn't a self-contained
-            trajectory file.
+            trajectory file, or if *embed_trajectory* is invalid.
 
     Example::
 
@@ -1462,7 +1466,7 @@ def view_traj(
         pipe.add_edge(b.out.bond, v.inp.bond)
 
     viewer = MolecularViewer()
-    viewer.set_pipeline(pipe)
+    viewer.set_pipeline(pipe, embed_trajectory=embed_trajectory)
     return viewer
 
 
