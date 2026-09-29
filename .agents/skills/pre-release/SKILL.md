@@ -98,11 +98,16 @@ widget → lib → JupyterLab labextension. The labextension webpack bundle is
 where the `jupyterlab-megane` version is embedded — confirm it picked up
 the bump:
 ```bash
-grep -ohE 'megane-jupyterlab@[0-9.]+' \
+grep -ohE '"megane-jupyterlab","[0-9.]+"' \
   wheel-share/data/share/jupyter/labextensions/megane-jupyterlab/static/*.js \
   | head -1
 ```
-The version in the output must match the new release version.
+The version in the output must match the new release version. (webpack 5's
+module-federation share scope writes the name and version as two string
+arguments, `"megane-jupyterlab","X.Y.Z"`; the older `megane-jupyterlab@X.Y.Z`
+pattern no longer matches and prints nothing.) Run `npm run build` with
+`PATH="$(pwd)/.venv/bin:$PATH"` — the labextension step calls `jupyter` and
+fails with `jupyter: not found` otherwise.
 
 ### 2.2 Python wheel build
 ```bash
