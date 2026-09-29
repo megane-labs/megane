@@ -102,7 +102,7 @@ __all__ = [
     "view_traj",
     "write_structure",
 ]
-__version__ = "0.16.0"
+__version__ = "0.17.0"
 
 
 def __getattr__(name: str) -> object:

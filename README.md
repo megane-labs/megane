@@ -207,7 +207,7 @@ the terminal `SpectrumPlot` node instead of reaching the 3D renderer.
 | XTC | `.xtc` | GROMACS compressed trajectory |
 | DCD | `.dcd` | CHARMM/NAMD binary trajectory |
 | AMBER NetCDF | `.nc` | AMBER NetCDF trajectory |
-| LAMMPS dump | `.lammpstrj`, `.dump` | LAMMPS dump trajectory |
+| LAMMPS dump | `.lammpstrj`, `.dump`, `.trj` | LAMMPS dump trajectory |
 
 ## Development
 
@@ -280,7 +280,7 @@ crates/                  Rust workspace
   megane-python/         PyO3 Python extension
   megane-wasm/           WASM bindings (wasm-bindgen)
 python/megane/           Python backend
-  parsers/               Python wrappers for 22 of the 26 supported formats, plus the PSF / GROMACS .top topology sidecars (mmCIF and AMBER prmtop are accessible via the raw megane_parser PyO3 extension; Gaussian CUBE and OpenDX are browser-side only)
+  parsers/               Python readers for all 26 supported formats (`dispatch.py` maps every structure extension the web app opens), plus the PSF / GROMACS .top topology sidecars (Gaussian CUBE and OpenDX are browser-side only)
   pipeline.py            Pipeline builder (NetworkX-style DAG)
   protocol.py            Binary protocol encoder
   server.py              `megane serve` backend (FastAPI + WebSocket)
