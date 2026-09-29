@@ -303,6 +303,27 @@ The `measurement` dict contains: `type` (`"distance"`, `"angle"`, or `"dihedral"
 
 ## Troubleshooting
 
+### "Module anywidget, version ~0.9.\* is not registered, however, 0.11.0 is"
+
+The notebook was saved by megane 0.17 or older, which recorded the exact
+anywidget minor version it ran with, and the Jupyter opening it has another
+one. Newer megane records any anywidget front end from 0.9 on, so re-run the
+notebook with an up-to-date megane and save it again.
+
+### "No version of module anywidget is registered"
+
+The Jupyter server showing the page has no anywidget front end. This happens
+when megane is installed into the kernel's environment but JupyterLab runs from
+another one (common on hosted JupyterLab services), or when the page was opened
+before `pip install megane`. Install anywidget where JupyterLab itself runs and
+reload the browser tab; the server does not need a restart:
+
+```bash
+pip install anywidget   # in the environment that runs `jupyter lab`
+```
+
+`jupyter labextension list`, run in that environment, must list `anywidget`.
+
 ### VS Code: "Failed to load model class 'AnyModel' from module 'anywidget'"
 
 This is a [known issue](https://github.com/manzt/anywidget/issues/684) with VS Code's Jupyter extension and affects many anywidget-based projects.
