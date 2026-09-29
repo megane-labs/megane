@@ -95,6 +95,9 @@ export default function HeroViewer({ mode }: { mode: HeroMode }) {
       // orbit (one turn every ~43 s, the old OrbitControls autoRotateSpeed
       // 1.4) unless the visitor prefers reduced motion.
       renderer.setControlsEnabled(false);
+      // The rotation-centre cross is a control affordance, not part of the
+      // structure; a backdrop you cannot rotate has no use for it.
+      renderer.setPivotMarkerVisible(false);
       if (!prefersReducedMotion) {
         stopAutoRotate = startAutoRotate(renderer, 8.4);
       }
@@ -148,7 +151,29 @@ export default function HeroViewer({ mode }: { mode: HeroMode }) {
       try {
         const snapshot = await fetchSnapshot(resolvedSrc);
         if (cancelled || !rendererRef.current) return;
+        // The renderer is shared by every mode, and loadSnapshot keeps what
+        // the previous structure's overlays left behind (the app's pipeline
+        // resets them on every apply; this backdrop bypasses the pipeline).
+        // Without this, a crystal's boundary images, periodic-image atoms,
+        // coordination bonds and polyhedra stay drawn over the next
+        // structure. Clear them before loading, then give the new structure
+        // its own bonds.
+        renderer.setDrawingBoundary(null);
+        renderer.setBondPeriodicImages(null);
+        renderer.clearPolyhedra();
         renderer.loadSnapshot(snapshot);
+        renderer.updateBondsExt(
+          snapshot.bonds,
+          snapshot.bondOrders,
+          snapshot.positions,
+          snapshot.elements,
+          snapshot.nAtoms,
+        );
+        // A backdrop shows the structure only: no cell box or cell-axes
+        // inset. A structure without a cell does not replace the previous
+        // one's either, so hide them on every load.
+        renderer.setCellVisible(false);
+        renderer.setCellAxesVisible(false);
         // loadSnapshot may reset the clear color — keep the dark hero bg.
         renderer.setBackgroundColor(HERO_BG);
 
@@ -233,7 +258,6 @@ export default function HeroViewer({ mode }: { mode: HeroMode }) {
           }
         } else {
           renderer.setRepresentationType?.("atoms");
-          renderer.clearPolyhedra?.();
         }
         setReady(true);
       } catch {
