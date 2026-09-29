@@ -1,4 +1,4 @@
-/** The operations rail left of the view: File, Structure, Insert, Tools, Undo / Redo, theme. */
+/** The operations rail left of the view: File, Structure, Tools, Undo / Redo, theme. */
 
 import { describe, it, expect, vi, afterEach } from "vitest";
 import { render, screen, fireEvent, cleanup } from "@testing-library/react";
@@ -16,7 +16,6 @@ function renderRail(hasDocument = true) {
     <OperationsRail
       fileItems={menu("file")}
       structureItems={menu("structure")}
-      insertItems={menu("insert")}
       toolsItems={menu("tools")}
       hasDocument={hasDocument}
       canUndo={hasDocument}
@@ -37,7 +36,6 @@ describe("OperationsRail", () => {
     expect(buttons.map((b) => b.getAttribute("aria-label"))).toEqual([
       "File",
       "Structure",
-      "Insert",
       "Tools",
       "Undo",
       "Redo",
@@ -46,12 +44,14 @@ describe("OperationsRail", () => {
     expect(screen.getByTestId("builder-file").title).toContain("Ctrl+O");
     // Icons only: no caret, and the name is in the tooltip.
     expect(buttons[2].textContent).not.toContain("▼");
-    expect(buttons[2].title).toContain("Insert");
+    expect(buttons[2].title).toContain("Tools");
+    // The library is the Place tool's gallery, not a menu here as well.
+    expect(screen.queryByTestId("builder-insert")).toBeNull();
   });
 
   it("opens each menu to the right of its button, headed by its name", () => {
     const run = renderRail();
-    const trigger = screen.getByTestId("builder-insert");
+    const trigger = screen.getByTestId("builder-tools");
     vi.spyOn(trigger, "getBoundingClientRect").mockReturnValue({
       left: 12,
       right: 50,
@@ -62,15 +62,15 @@ describe("OperationsRail", () => {
     } as DOMRect);
     const closedBackground = trigger.style.background;
     fireEvent.click(trigger);
-    const menu = screen.getByTestId("builder-insert-menu");
+    const menu = screen.getByTestId("builder-tools-menu");
     expect(menu.style.left).toBe("58px");
     expect(menu.style.top).toBe("300px");
-    expect(screen.getByTestId("builder-insert-heading").textContent).toBe("Insert");
+    expect(screen.getByTestId("builder-tools-heading").textContent).toBe("Tools");
     // The open menu's button is highlighted like the active tool.
     expect(trigger.style.background).not.toBe(closedBackground);
-    fireEvent.click(screen.getByTestId("insert-item"));
-    expect(run).toHaveBeenCalledWith("insert");
-    expect(screen.queryByTestId("builder-insert-menu")).toBeNull();
+    fireEvent.click(screen.getByTestId("tools-item"));
+    expect(run).toHaveBeenCalledWith("tools");
+    expect(screen.queryByTestId("builder-tools-menu")).toBeNull();
   });
 
   it("keeps Structure disabled until a structure is open", () => {

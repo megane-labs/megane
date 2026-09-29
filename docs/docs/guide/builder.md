@@ -33,9 +33,8 @@ cell). Under them the **tool rail** picks the tool, one icon per tool, each
 marked with its key, and under that the **operations rail** holds every
 action, top to bottom: **File** (*Open…*, *New empty cell…* /
 *New bulk crystal…* and *Save* in each format); **Structure**, the operations
-on the cell and the crystal (see [Crystal](#crystal)), **Insert**, the
-molecule library (see [Library](#library)), and **Tools**, the Python tools
-(see [Python tools](#python-tools)); *Undo* and *Redo*; and the theme button
+on the cell and the crystal (see [Crystal](#crystal)), and **Tools**, the
+Python tools (see [Python tools](#python-tools)); *Undo* and *Redo*; and the theme button
 (Light → Dark → Auto, as in the viewer; the 3D view's background follows it).
 The menus open to the right of their button; hover a button for its name.
 
@@ -193,14 +192,14 @@ work as the viewer's Reset View and axis buttons.
 ## Library
 
 The **Library** keeps molecules ready to drop into the document. It is the
-**Place** tool's gallery: pick *Place* (P) — or **Insert › Molecule…** — and
+**Place** tool's gallery: pick *Place* (P) and
 the list opens in its settings in the Details panel; once you choose a
 molecule it closes, and the button there that names the molecule opens it
 again. It starts with a set of presets — water, ammonia, methane, carbon
 dioxide, methanol, ethanol, benzene, H₂, N₂, O₂ — with real 3D geometries,
 and grows with your own molecules:
 
-- **Sketch…** (in the gallery, or **Insert › Sketch molecule…**) opens [Ketcher](https://lifescience.opensource.epam.com/ketcher/),
+- **Sketch…** (in the gallery) opens [Ketcher](https://lifescience.opensource.epam.com/ketcher/),
   the open-source 2D structure editor, in a dialog (it runs entirely in the
   browser with its standalone Indigo engine, so it loads on first use and
   needs no server). Draw the molecule, give it a name (the formula is used
@@ -222,10 +221,9 @@ and grows with your own molecules:
   **Paste MOL** in the dialog takes a molfile from elsewhere instead of
   drawing (it is embedded the same way); it is also what the dialog falls
   back to if Ketcher cannot load.
-- **From file…** (or **Insert › Molecule from file…**) imports any structure file megane reads as a molecule (3D
+- **From file…** (in the gallery) imports any structure file megane reads as a molecule (3D
   coordinates are kept as they are).
-- **Save as fragment** in the Inspector (or **Insert › Save selection as
-  molecule**) keeps the selected atoms, with the bonds between them, as a
+- **Save as fragment** in the Inspector keeps the selected atoms, with the bonds between them, as a
   molecule — a quick way to lift a 3D fragment out of an opened file.
   A flat 2D file (a molfile without z coordinates) is only rescaled to
   ångström and marked *flat* in the list; the Builder never invents a
@@ -251,8 +249,8 @@ Each molecule has two ways into the document:
 *Place* closes the gallery; *Add* leaves it open, so several molecules can be
 added one after another.
 
-Neither needs an open document. With nothing open, *Place* (or **Insert ›
-Molecule…**) still shows the gallery, and the first molecule you place or add
+Neither needs an open document. With nothing open, *Place* still shows the
+gallery, and the first molecule you place or add
 starts an `untitled` document without a cell — build a molecule up from a
 library piece without making a cell first.
 

@@ -166,8 +166,7 @@ describe("BuilderApp — empty state", () => {
 
   it("Place works with nothing open: the gallery shows and the first click starts a document", () => {
     render(<BuilderApp />);
-    fireEvent.click(screen.getByTestId("builder-insert"));
-    fireEvent.click(screen.getByTestId("builder-insert-molecule"));
+    tool("place");
     expect(useBuilderStore.getState().tool).toBe("place");
     // The gallery takes the welcome card's place.
     expect(screen.getByTestId("builder-library")).toBeTruthy();
@@ -803,27 +802,24 @@ describe("BuilderApp — Structure and Tools menus", () => {
     expect(screen.queryByTestId("builder-tools-dialog")).toBeNull();
   });
 
-  it("Insert opens the molecule gallery, the sketch dialog and the file picker, and saves a selection", () => {
+  it("the library has one way in, the Place tool: no Insert menu repeats its gallery", () => {
     cu();
     render(<BuilderApp />);
-    menu("builder-insert", "builder-insert-molecule");
-    expect(useBuilderStore.getState().tool).toBe("place");
+    expect(screen.queryByTestId("builder-insert")).toBeNull();
+    tool("place");
     expect(screen.getByTestId("builder-library")).toBeTruthy();
-    menu("builder-insert", "builder-insert-sketch");
+    // The gallery holds what the Insert menu used to repeat: Sketch… and From file….
+    fireEvent.click(screen.getByTestId("builder-library-sketch"));
     expect(useLibraryUi.getState().sketch).toEqual({});
     act(() => useLibraryUi.getState().closeSketch());
     const input = screen.getByTestId("builder-library-import-input") as HTMLInputElement;
     const pickFile = vi.spyOn(input, "click");
-    menu("builder-insert", "builder-insert-import");
+    fireEvent.click(screen.getByTestId("builder-library-import"));
     expect(pickFile).toHaveBeenCalled();
-    // Save selection waits for a selection.
-    fireEvent.click(screen.getByTestId("builder-insert"));
-    expect(
-      (screen.getByTestId("builder-insert-save-selection") as HTMLButtonElement).disabled,
-    ).toBe(true);
-    fireEvent.click(screen.getByTestId("builder-insert"));
+    // …and the Inspector keeps a selection as a molecule.
+    tool("select");
     act(() => useBuilderStore.getState().setSelected([0, 1]));
-    menu("builder-insert", "builder-insert-save-selection");
+    fireEvent.click(screen.getByTestId("builder-library-save-selection"));
     expect(useBuilderStore.getState().notice?.text).toContain("to the library");
   });
 

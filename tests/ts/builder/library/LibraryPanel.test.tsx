@@ -2,7 +2,7 @@
  * The molecule library as the Place tool's gallery (presets and user
  * molecules, Place / Add, Edit / remove), the shared host that owns the one
  * sketch dialog and file input, and the library actions (import, save a
- * selection) the Insert menu and the Inspector reuse.
+ * selection) the Inspector reuses.
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";

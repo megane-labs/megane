@@ -145,7 +145,7 @@ what is on screen along the top. On the left: the viewer's Reset View and
 `ViewAxisControls` in the top-left corner with a floating tool rail under
 them (`ToolRail.tsx`, one icon per tool with its key) and, under that, the
 operations rail (`OperationsRail.tsx`: the *File* menu for the **document**
-(Open, New, Save; `topbarMenus.ts`); the *Structure*, *Insert* and *Tools*
+(Open, New, Save; `topbarMenus.ts`); the *Structure* and *Tools*
 menus for what acts on the structure (`crystal/structureMenu.ts`,
 `tools/ToolServer.tsx`); Undo / Redo; the viewer's `ThemeCycleButton` — its
 lists opening to the right). Along the top, beside Reset View where the
@@ -269,7 +269,7 @@ Structure preview starting or ending refits the camera (`resetView`, which
 keeps the orientation).
 
 **Library.** `src/builder/library/` holds the molecule library the Place
-tool's gallery offers (and the Insert menu and the Inspector's *Save as
+tool's gallery offers (and the Inspector's *Save as
 fragment*): `presets.ts` (small molecules with 3D geometries), a persisted
 `useLibraryStore` (`store.ts`, the user's molecules in `localStorage`,
 sanitized on read), `fragment.ts` (centring, Hill formulas, the flat-sketch

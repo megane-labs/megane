@@ -12,8 +12,8 @@
  * exactly one of them. Everything you *do* is on the left, everything you
  * *read* on the right. The **top-left corner** holds Reset View and the axis
  * buttons as in the viewer, with the **tool rail** under them and the
- * **operations rail** under that (File; Structure, Insert, Tools; Undo /
- * Redo; theme — menus open to the right). On the right, the viewer's
+ * **operations rail** under that (File; Structure, Tools; Undo / Redo;
+ * theme — menus open to the right). On the right, the viewer's
  * collapsible panels (where the viewer keeps its Pipeline): **Details**
  * shows the options of whatever was picked on the left — the current tool's
  * settings (`ContextBar`) and the selection, or the form a menu opened (a
@@ -65,7 +65,6 @@ import { SymmetryOffer } from "./crystal/SymmetryOffer";
 import { ToolRail, toolHint, toolInfo } from "./ToolRail";
 import { TOOL_RAIL_WIDTH } from "./rail";
 import { ContextBar } from "./ContextBar";
-import type { MenuItem } from "./Menu";
 import { OperationsRail } from "./OperationsRail";
 import { NewStructureDialog, type NewStructureKind } from "./NewStructureDialog";
 import { fileMenuItems } from "./topbarMenus";
@@ -78,7 +77,6 @@ import { useToolsStore } from "./tools/store";
 import { LibraryHost } from "./library/LibraryPanel";
 import { AtomMenu, type AtomMenuTarget } from "./AtomMenu";
 import { runCleanup } from "./cleanup";
-import { useLibraryActions, useLibraryUi } from "./library/ui";
 import { buttonStyle, hintStyle } from "./styles";
 import { trackEvent, trackFileOpen } from "../analytics";
 
@@ -133,11 +131,6 @@ export function BuilderApp() {
   const toolsConnection = useToolsStore((s) => s.connection);
   const openTool = useToolsStore((s) => s.openTool);
   const openForm = useToolsStore((s) => s.openForm);
-  const setTool = useBuilderStore((s) => s.setTool);
-  const openSketch = useLibraryUi((s) => s.openSketch);
-  const setGalleryOpen = useLibraryUi((s) => s.setGalleryOpen);
-  const importer = useLibraryUi((s) => s.importer);
-  const { saveSelection } = useLibraryActions();
 
   // `shown` is the document (what Save writes); `viewed` is what the view
   // draws, which is the preview of a Structure dialog's op while one is open.
@@ -348,38 +341,6 @@ export function BuilderApp() {
     rendererRef.current?.setViewInsets(0, panelInset);
   }, [panelInset]);
 
-  const insertItems: MenuItem[] = [
-    {
-      label: "Molecule…",
-      testId: "builder-insert-molecule",
-      title: "Choose a library molecule to place (P)",
-      onSelect: () => {
-        setTool("place");
-        setGalleryOpen(true);
-      },
-    },
-    {
-      label: "Sketch molecule…",
-      testId: "builder-insert-sketch",
-      title: "Draw a molecule in Ketcher and add it to the library",
-      onSelect: () => openSketch(),
-    },
-    {
-      label: "Molecule from file…",
-      testId: "builder-insert-import",
-      title: "Add a molecule to the library from a structure file",
-      onSelect: () => importer?.(),
-    },
-    { separator: true },
-    {
-      label: "Save selection as molecule",
-      testId: "builder-insert-save-selection",
-      disabled: selected.length === 0,
-      title: "Keep the selected atoms (and the bonds between them) in the library",
-      onSelect: saveSelection,
-    },
-  ];
-
   return (
     <div
       data-testid="megane-builder"
@@ -509,7 +470,6 @@ export function BuilderApp() {
               mod,
             })}
             structureItems={structureItems}
-            insertItems={insertItems}
             toolsItems={toolsItems}
             hasDocument={!!shown}
             canUndo={edits.length > 0}
