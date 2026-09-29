@@ -4,13 +4,17 @@
  * click, these act at once or through a menu or dialog. Top to bottom:
  *
  *   File                      — open, new, save (the document)
- *   Structure, Insert, Tools  — what acts on the structure as a whole
+ *   Structure, Tools          — what acts on the structure as a whole
  *   Undo, Redo                — the history
  *   Theme                     — Light → Dark → Auto, as in the viewer
  *
  * Menus open to the right of their button. The panel on the right of the
  * view shows details only (the current tool's settings, the selection or an
  * open form, and the history).
+ *
+ * The molecule library has no menu here: the Place tool is its one way in
+ * (its gallery holds Sketch… and From file…, and the Inspector holds Save as
+ * fragment), so the rail does not repeat what a tool already offers.
  */
 
 import type { ReactNode } from "react";
@@ -48,13 +52,6 @@ const IconStructure = (
   </RailIcon>
 );
 
-const IconInsert = (
-  <RailIcon>
-    <rect x="3.5" y="3.5" width="17" height="17" rx="3" />
-    <path d="M12 8v8M8 12h8" />
-  </RailIcon>
-);
-
 const IconTools = (
   <RailIcon>
     <path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z" />
@@ -88,7 +85,6 @@ function disabledRail(disabled: boolean): React.CSSProperties {
 export interface OperationsRailProps {
   fileItems: MenuItem[];
   structureItems: MenuItem[];
-  insertItems: MenuItem[];
   toolsItems: MenuItem[];
   /** Whether a structure is open (the Structure menu needs one). */
   hasDocument: boolean;
@@ -103,7 +99,6 @@ export interface OperationsRailProps {
 export function OperationsRail({
   fileItems,
   structureItems,
-  insertItems,
   toolsItems,
   hasDocument,
   canUndo,
@@ -137,13 +132,6 @@ export function OperationsRail({
         icon: IconStructure,
         items: structureItems,
         disabled: !hasDocument,
-      },
-      {
-        testId: "builder-insert",
-        label: "Insert",
-        title: "Insert: molecules from the library, a sketch or a file",
-        icon: IconInsert,
-        items: insertItems,
       },
       {
         testId: "builder-tools",

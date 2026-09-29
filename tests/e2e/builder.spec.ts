@@ -173,9 +173,8 @@ test.describe("builder: webapp", () => {
     await expect(theme).toHaveAttribute("aria-label", /current: Auto$/);
     await expect.poll(corner).toEqual([255, 255, 255]);
 
-    // Nothing open: Insert › Molecule… still shows the gallery.
-    await page.locator('[data-testid="builder-insert"]').click();
-    await page.locator('[data-testid="builder-insert-molecule"]').click();
+    // Nothing open: the Place tool still shows the gallery.
+    await page.locator('[data-testid="builder-tool-place"]').click();
     await expect(page.locator('[data-testid="builder-library"]')).toBeVisible();
     await expect(page.locator('[data-testid="builder-welcome"]')).toHaveCount(0);
     await page
@@ -340,12 +339,12 @@ test.describe("builder: webapp", () => {
     const root = page.locator('[data-testid="megane-builder"]');
     const library = page.locator('[data-testid="builder-library"]');
     const openLibrary = async () => {
-      await page.locator('[data-testid="builder-insert"]').click();
-      await page.locator('[data-testid="builder-insert-molecule"]').click();
+      await page.locator('[data-testid="builder-tool-place"]').click();
       await expect(library).toBeVisible();
     };
-    // The library opens from Insert › Molecule… (the Place tool's gallery)
-    // once a document is open.
+    // The library is the Place tool's gallery; the operations rail has no
+    // Insert menu repeating it.
+    await expect(page.locator('[data-testid="builder-insert"]')).toHaveCount(0);
     await expect(library).toHaveCount(0);
     await newEmptyCell(page);
     await waitForReady(page);
@@ -407,8 +406,8 @@ test.describe("builder: webapp", () => {
     // Sketch: Ketcher (the real standalone build) loads in the dialog; a
     // molecule set through its API is embedded in 3D by RDKit (the real
     // megane-rdkit WASM build, in a worker) with its implicit hydrogens.
-    await page.locator('[data-testid="builder-insert"]').click();
-    await page.locator('[data-testid="builder-insert-sketch"]').click();
+    await page.locator('[data-testid="builder-place-fragment"]').click();
+    await page.locator('[data-testid="builder-library-sketch"]').click();
     await expect(page.locator('[data-testid="sketch-modal"]')).toBeVisible();
     await page.waitForFunction(
       () => !!(window as unknown as { __megane_test_ketcher?: unknown }).__megane_test_ketcher,
@@ -429,7 +428,8 @@ test.describe("builder: webapp", () => {
     await page.locator('[data-testid="sketch-name"]').fill("Ethanol sketch");
     await page.locator('[data-testid="sketch-add"]').click();
     await expect(page.locator('[data-testid="sketch-modal"]')).toHaveCount(0, { timeout: 60_000 });
-    await page.locator('[data-testid="builder-place-fragment"]').click();
+    // The gallery the sketch was started from is still open, with the new molecule.
+    await expect(library).toBeVisible();
     await expect(page.locator('[data-testid="builder-library-count"]')).toHaveText("11 molecules");
     const sketched = page.locator('[data-testid="builder-library-item-name"]', {
       hasText: "Ethanol sketch",
@@ -605,8 +605,7 @@ test.describe("builder: webapp", () => {
     expect(slabBox[8]).toBeGreaterThan(20);
 
     // Adsorb water 2 Å above a surface atom with the Place tool.
-    await page.locator('[data-testid="builder-insert"]').click();
-    await page.locator('[data-testid="builder-insert-molecule"]').click();
+    await page.locator('[data-testid="builder-tool-place"]').click();
     await page
       .locator('[data-testid="builder-library-item-preset:water"]')
       .locator('[data-testid="builder-library-place"]')

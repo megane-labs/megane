@@ -3,11 +3,10 @@
  * user's molecules, each with *Place* (stamp it where the next click lands)
  * and *Add* (drop it beside the structure now), *Edit* / *×* for the user's
  * own; *Sketch…* opens Ketcher and *From file…* imports a structure file.
- * It opens in the Place tool's settings (the Details panel) and from
- * Insert › Molecule….
+ * It opens in the Place tool's settings (the Details panel).
  *
  * `LibraryHost` mounts the one sketch dialog and the one file input the
- * gallery, the Insert menu and the Inspector share.
+ * gallery and the Inspector share.
  */
 
 import { useEffect, useRef } from "react";
