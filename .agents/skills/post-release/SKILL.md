@@ -101,14 +101,25 @@ $VENV/bin/pip install "megane==X.Y.Z" jupyterlab
 
 # Make sure local Playwright project deps are present
 npm ci
-npx playwright install chromium
+npx playwright install chromium   # skip in the remote sandbox: Chromium is preinstalled
+
+# The spec refuses to start without python/megane/static/widget.js (a guard for
+# dev runs), but the kernel imports megane from the venv, so a local
+# `npm run build:widget` would never be exercised. Point the guard at the
+# widget bundle shipped in the PyPI wheel instead, and remove it afterwards.
+SITE=$($VENV/bin/python -c "import megane, pathlib; print(pathlib.Path(megane.__file__).parent)")
+ln -sf "$SITE/static/widget.js" python/megane/static/widget.js
 
 # Run the widget E2E project against the PyPI-installed megane.
 # PATH override ensures the venv `python`/`jupyter` are used, not the local dev install.
 PATH=$VENV/bin:$PATH MEGANE_E2E_MODE=1 npm run test:e2e:widget-jupyterlab
+
+rm python/megane/static/widget.js
 ```
 
-Expected: all `widget-jupyterlab` specs pass. Pixel diffs against `tests/e2e/baselines/widget-jupyterlab/` succeed (or are written fresh on first run). On failure, inspect `<name>.diff.png` / `<name>.new.png` next to the baseline.
+Confirm the kernel really uses the wheel: `cd /tmp && $VENV/bin/python -c "import megane; print(megane.__version__, megane.__file__)"` must print `X.Y.Z` and a path under `$VENV`, and `$VENV/bin/jupyter labextension list` must show `megane-jupyterlab vX.Y.Z enabled OK`.
+
+Expected: all `widget-jupyterlab` specs pass. Pixel diffs against `tests/e2e/baselines/widget-jupyterlab/` succeed (or are written fresh on first run). Each run's capture is written next to its baseline as `<name>.current.png`; on failure, inspect `<name>.diff.png` / `<name>.new.png` there too.
 
 This test verifies:
 - PyPI install succeeds and the PyO3 native extension loads
@@ -127,7 +138,15 @@ node tests/e2e/test_vscode_render.mjs X.Y.Z
 
 Expected: `PASS` for all assertions — canvas created in webview, non-white pixels rendered, no critical JS errors. Screenshot saved to `tests/e2e/screenshot_vscode_render.png`.
 
-If code-server is not installed, the script installs it automatically via `npm install -g code-server`.
+If code-server is not installed, the script tries `npm install -g code-server`. In the sandbox that fails or is blocked, so install it with the repo script first and put it on PATH:
+
+```bash
+sudo apt-get install -y libkrb5-dev
+MEGANE_CODE_SERVER_USE_NPM=1 bash scripts/install-code-server.sh
+PATH="$(pwd)/.code-server/node_modules/.bin:$PATH" node tests/e2e/test_vscode_render.mjs X.Y.Z
+```
+
+`install-code-server.sh` ends with `exit 1` ("no VSIX found under vscode-megane/") when no locally packaged VSIX exists. That is expected here: code-server itself is installed by then, and this phase must use the Marketplace VSIX, not a local one.
 
 This test verifies:
 - VSIX is available on VS Code Marketplace at version X.Y.Z
@@ -158,8 +177,9 @@ git log vPREV..vX.Y.Z --oneline --no-merges
 
 Also read the CHANGELOG entry for the new version:
 ```bash
-awk '/^## \[X\.Y\.Z\]/,/^## \[/' CHANGELOG.md | head -50
+awk '/^## \[X\.Y\.Z\]/{f=1;print;next} /^## \[/{if(f)exit} f' CHANGELOG.md
 ```
+(A plain `/start/,/^## \[/` range stops on its own header line, because the header matches both patterns, and prints nothing but the header.)
 
 Use these two sources to write human-readable release notes. Structure them as:
 
@@ -223,13 +243,16 @@ EOF
 
 Attach a small set of Phase 3 visual artefacts to the release as proof that rendering works after install.
 
-The Phase 3.1 Playwright run drops baselines/diffs under `tests/e2e/baselines/widget-jupyterlab/`. Pick one representative full-page baseline (e.g. `default.png`) plus the VSCode rendering screenshot from Phase 3.2:
+The Phase 3.1 Playwright run writes its captures as `<name>.current.png` under `tests/e2e/baselines/widget-jupyterlab/` (there is no `default.png`). Upload the full-page 1CRN capture from this run, not the committed baseline, together with the VSCode rendering screenshot from Phase 3.2:
 
 ```bash
+cp tests/e2e/baselines/widget-jupyterlab/legacy-pdb-1crn.current.png /tmp/widget-jupyterlab-default.png
 gh release upload vX.Y.Z \
-  tests/e2e/baselines/widget-jupyterlab/default.png \
+  /tmp/widget-jupyterlab-default.png \
   tests/e2e/screenshot_vscode_render.png
 ```
+
+Look at both images before uploading.
 
 If you want a hero capture in addition to the baselines, run `node scripts/capture-screenshots.mjs` and upload `docs/public/screenshots/hero.png`.
 
@@ -240,7 +263,9 @@ gh release view vX.Y.Z
 # Restore remote
 git remote set-url origin "$ORIG_REMOTE"
 ```
-Verify the notes look correct and the three screenshots are listed as assets. The release remains as a **draft** — hand off to the user to review and publish it manually.
+Verify the notes look correct and both screenshots are listed as assets (three if you added the hero capture). The release remains as a **draft** — hand off to the user to review and publish it manually.
+
+> **Remote (claude.ai) sessions cannot edit releases.** There, `gh release edit` / `gh release upload` and the equivalent `gh api` calls are refused with HTTP 403 ("Creating, editing, or deleting releases is not permitted for this session type"). This is a policy, not an auth problem, so do not retry it or route around it: write the notes to a file, send it and the two screenshots to the user, and let them paste the notes into the draft and attach the images.
 
 > **CRITICAL: Never publish the release.** Publishing (making the draft public) is a manual step performed exclusively by the user. Do NOT run `gh release edit vX.Y.Z --draft=false` or any equivalent command. Stop after confirming the draft looks correct.
 
@@ -254,20 +279,30 @@ gh run list --workflow=docs.yml --limit 1
 git remote set-url origin "$ORIG_REMOTE"
 ```
 
-Visit the docs site and verify the version shown matches `X.Y.Z`:
-- Check the version badge or footer
-- Verify new features/APIs mentioned in the release are documented
+The docs site (https://megane-labs.github.io/megane/) shows no version badge, so verify it by content instead:
+- The site's `last-modified` header (`curl -sSI https://megane-labs.github.io/megane/`) is after the tag's `docs.yml` run
+- New features/APIs mentioned in the release are documented (e.g. `curl -sSL <page>/ | grep <new API name>`; use the trailing slash, the bare path is a 301)
 
 ## Phase 6: Live Demo
 
-### 6.1 AWS ECS demo health
+### 6.1 Demo (S3 + CloudFront) health
 ```bash
 ORIG_REMOTE=$(git remote get-url origin)
 git remote set-url origin https://github.com/megane-labs/megane.git
 gh run list --workflow=deploy.yml --limit 1
 git remote set-url origin "$ORIG_REMOTE"
 ```
-If the demo was updated, verify it loads correctly in the browser.
+The demo is served at https://megane.tech-office-mori.com (the viewer at `/`, megane Builder at `/builder.html`). Verify it loads in a browser: the Welcome dialog shows `vX.Y.Z`, a structure renders, and the console has no errors. Check the docs landing hero and https://megane-labs.github.io/megane/app/ the same way.
+
+In the sandbox, headless Chromium rejects every HTTPS site with `ERR_CERT_AUTHORITY_INVALID` until the proxy CA is in its NSS store. Import it; never ignore certificate errors:
+
+```bash
+command -v certutil || sudo apt-get install -y libnss3-tools
+mkdir -p ~/.pki/nssdb
+certutil -A -d sql:$HOME/.pki/nssdb -n ccr-agent-proxy -t "C,," -i /root/.ccr/agent-proxy-ca.crt
+```
+
+Launch Chromium with `proxy: { server: process.env.HTTPS_PROXY }`. Wait on a fixed delay rather than `networkidle` for the Builder, because it keeps a connection open to the tools server and never goes idle.
 
 ## Phase 7: Announcement Checklist (manual)
 
