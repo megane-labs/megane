@@ -20,6 +20,8 @@ TEXT_PARSERS: dict[str, str] = {
     ".xyz": "parse_xyz",
     # Jmol's second extension for plain XYZ.
     ".jxyz": "parse_xyz",
+    # Extended XYZ (ASE's `extxyz` writer) — same grammar as `.xyz`.
+    ".extxyz": "parse_xyz",
     ".mol": "parse_mol",
     ".sdf": "parse_mol",
     ".mol2": "parse_mol2",

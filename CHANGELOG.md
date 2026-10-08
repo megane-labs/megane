@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+### Added
+
+- **`.extxyz` (extended XYZ) opens on every host.** ASE and ML-potential tools write extended XYZ under `.extxyz`; megane's XYZ reader already understood the grammar (`Lattice=` cells, `Properties=` columns such as forces, multi-frame blocks) but only under `.xyz`. The extension is now an alias to the XYZ reader in the web app, JupyterLab, VS Code and Python, and large multi-frame `.extxyz` files stream lazily in the web app just like `.xyz`.
+
 ## [0.17.0] - 2026-09-29
 
 ### Added

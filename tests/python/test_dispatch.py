@@ -32,6 +32,7 @@ def test_matches_the_web_app_extension_list():
         "water.gro",
         "si_diamond.xyz",
         "benzene.jxyz",
+        "water_md.extxyz",
         "methane.mol",
         "caffeine.sdf",
         "methanol.mol2",
