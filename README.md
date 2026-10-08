@@ -163,7 +163,7 @@ function App() {
 |--------|-----------|-------------|
 | PDB | `.pdb` | Protein Data Bank |
 | GRO | `.gro` | GROMACS structure file |
-| XYZ | `.xyz`, `.jxyz` | Cartesian coordinate format, incl. multi-frame and `Lattice=` extended XYZ. `.jxyz` is Jmol's second extension for the same format |
+| XYZ | `.xyz`, `.jxyz`, `.extxyz` | Cartesian coordinate format, incl. multi-frame and `Lattice=` extended XYZ. `.jxyz` (Jmol) and `.extxyz` (ASE extended XYZ) are second extensions for the same format |
 | MOL/SDF | `.mol`, `.sdf` | MDL Molfile (V2000) |
 | MOL2 | `.mol2` | Tripos MOL2 (multi-molecule, aromatic bonds) |
 | LAMMPS data | `.data`, `.lammps` | LAMMPS data file |

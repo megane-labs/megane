@@ -927,7 +927,7 @@ class Pipeline:
                 dcd=fname if ext == ".dcd" else None,
                 nc=fname if ext == ".nc" else None,
                 traj=fname if ext == ".traj" else None,
-                xyz=fname if ext == ".xyz" else None,
+                xyz=fname if ext in (".xyz", ".extxyz") else None,
                 lammpstrj=fname if ext in (".lammpstrj", ".dump", ".trj") else None,
             )
         elif ntype == "filter":
@@ -1435,7 +1435,7 @@ def view_traj(
         ext = pathlib.Path(path).suffix.lower()
         if ext == ".traj":
             traj = path
-        elif ext == ".xyz":
+        elif ext in (".xyz", ".extxyz"):
             xyz = path
         elif ext in (".lammpstrj", ".dump", ".trj"):
             # Self-contained LAMMPS dump: topology from LoadStructure(path),

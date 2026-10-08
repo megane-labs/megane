@@ -95,7 +95,7 @@ For multiple independent viewers per page (e.g. embedding in MDX docs), use
 |--------|-----------|-------------|
 | PDB | `.pdb` | Protein Data Bank — most common molecular structure format |
 | GRO | `.gro` | GROMACS structure file |
-| XYZ | `.xyz`, `.jxyz` | Simple cartesian coordinate format (single- or multi-frame); `.jxyz` is Jmol's second name for it |
+| XYZ | `.xyz`, `.jxyz`, `.extxyz` | Simple cartesian coordinate format (single- or multi-frame, incl. extended XYZ); `.jxyz` (Jmol) and `.extxyz` (ASE) are second names for it |
 | MOL | `.mol` | MDL Molfile (V2000) — small molecules with bond information |
 | SDF | `.sdf` | MDL SDfile — uses the MOL V2000 parser |
 | MOL2 | `.mol2` | Tripos MOL2 |

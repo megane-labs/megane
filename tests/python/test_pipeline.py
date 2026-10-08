@@ -1187,6 +1187,14 @@ class TestPipelineJsonImport:
         node2: LoadTrajectory = next(n for n, _ in pipe2._nodes.values() if isinstance(n, LoadTrajectory))
         assert node2.dcd == "run.dcd"
 
+    def test_load_trajectory_extxyz_round_trip(self):
+        """LoadTrajectory with an extended XYZ (.extxyz) survives to_dict → from_dict."""
+        pipe = Pipeline()
+        pipe.add_node(LoadTrajectory(xyz="md.extxyz"))
+        pipe2 = Pipeline.from_dict(pipe.to_dict())
+        node2: LoadTrajectory = next(n for n, _ in pipe2._nodes.values() if isinstance(n, LoadTrajectory))
+        assert node2.xyz == "md.extxyz"
+
     def test_load_trajectory_nc_round_trip(self):
         """LoadTrajectory with .nc survives to_dict → from_dict."""
         pipe = Pipeline()

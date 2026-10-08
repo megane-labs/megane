@@ -37,7 +37,7 @@ Legend:
 |---|---|:---:|:---:|:---:|:---:|:---:|:---:|
 | PDB | `.pdb` | ✓ | API | ✓ | ✓ | ✓ | ✓ |
 | GRO | `.gro` | ✓ | API | ✓ | ✓ | ✓ | ✓ |
-| XYZ | `.xyz`, `.jxyz` | ✓ | API | ✓ | ✓ | ✓ | ✓ |
+| XYZ | `.xyz`, `.jxyz`, `.extxyz` | ✓ | API | ✓ | ✓ | ✓ | ✓ |
 | MOL | `.mol` | ✓ | API | ✓ | ✓ | ✓ | ✓ |
 | SDF | `.sdf` | ✓ | API | ✓ | ✓ | ✓ | ✓ |
 | MOL2 | `.mol2` | ✓ | API | ✓ | ✓ | ✓ | ✓ |
@@ -219,6 +219,13 @@ blocks, `Lattice=` extended headers, and extra per-atom columns after x/y/z
 (an atom name and a partial charge in Jmol's output), which are kept as the
 per-atom label. It is registered on the same JupyterLab `IFileType` as `.xyz`
 for the same reason.
+
+Note: **`.extxyz`** is the extension ASE (and other ML-potential tooling) uses
+for extended XYZ. It is the same grammar as `.xyz`, so it is also an **alias**
+to the XYZ reader: `Lattice=` becomes the unit cell, `Properties=` columns
+(`forces`, `velocities`, scalar per-atom properties) become channels, and
+multi-frame files open as a trajectory — exactly as they do under `.xyz`,
+including lazy streaming of large files in the web app.
 
 Note: **Heterogeneous frames** — trajectories whose frames differ in atom count (adsorption/GCMC/reactions), unit cell (variable-cell / NPT), or elements — are supported by every multi-frame structure format: **ASE `.traj`**, **multi-frame / extended XYZ** (per-frame atom count and per-frame `Lattice=`), and **multi-MODEL PDB** (per-model atom count). Frame 0 defines the base topology; per-frame differences are carried alongside and the viewer swaps atoms, bonds, and cell as you scrub. Uniform trajectories (constant atoms/topology/cell, the common case) use an unchanged fast path and are unaffected. Large heterogeneous XYZ/PDB files that would otherwise stream lazily fall back to an eager parse so no frame is dropped.
 
