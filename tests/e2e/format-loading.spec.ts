@@ -107,6 +107,8 @@ const STRUCTURE_CASES: StructureCase[] = [
   // Jmol's `.jxyz` is plain XYZ under a second extension, with extra per-atom
   // columns after x/y/z that must not disturb the coordinate read.
   { name: "jxyz-benzene", file: "benzene.jxyz", mime: "chemical/x-xyz", expectedAtoms: 12 },
+  // ASE extended XYZ: `Lattice=` + `Properties=` headers, two frames.
+  { name: "extxyz-water-md", file: "water_md.extxyz", mime: "chemical/x-xyz", expectedAtoms: 3 },
   // Chem3D XML: <n> nodes carry explicit <b> bonds, so nothing is inferred.
   {
     name: "c3xml-3d-molecule",

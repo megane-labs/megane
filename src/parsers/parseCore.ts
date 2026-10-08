@@ -323,11 +323,14 @@ function getParserForExtension(ext: string): ParseFn {
     // Jmol writes plain XYZ under a second extension. megane's XYZ reader
     // already covers what Jmol's does -- multi-frame blocks, `Lattice=`
     // extended headers, and extra per-atom columns after x/y/z (kept as the
-    // atom label) -- so `.jxyz` is an alias, not a second parser. The labels
+    // atom label) -- so `.jxyz` is an alias, not a second parser. `.extxyz`
+    // (ASE / extended XYZ) is the same grammar too: `Lattice=` and
+    // `Properties=` headers are already read by the XYZ parser. The labels
     // stay adjacent because `no-fallthrough` counts a comment-only case body
     // as a fallthrough.
     case ".xyz":
     case ".jxyz":
+    case ".extxyz":
       return wasmModule!.parse_xyz;
     // XCrySDen. `.axsf` is the same grammar with an `ANIMSTEPS` header, so it
     // arrives as a multi-frame structure through the one parser.
@@ -920,7 +923,7 @@ export async function extractLabelsFromFile(file: File, nAtoms: number): Promise
     const format =
       ext === ".gro"
         ? "gro"
-        : ext === ".xyz"
+        : ext === ".xyz" || ext === ".extxyz"
           ? "xyz"
           : ext === ".data" || ext === ".lammps"
             ? "lammps_data"

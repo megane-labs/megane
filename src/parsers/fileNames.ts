@@ -78,6 +78,8 @@ export const STRUCTURE_EXTS: readonly string[] = [
   ".xyz",
   // Jmol's second extension for plain XYZ.
   ".jxyz",
+  // Extended XYZ (ASE's `extxyz` writer) — same grammar as `.xyz`.
+  ".extxyz",
   ".mol",
   ".sdf",
   ".mol2",

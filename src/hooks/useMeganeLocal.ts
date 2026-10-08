@@ -52,6 +52,7 @@ import type {
 /** File extensions eligible for lazy multi-frame structure streaming → decoder kind. */
 const LAZY_STRUCTURE_KIND: Record<string, LazyStructureKind> = {
   ".xyz": "xyz",
+  ".extxyz": "xyz",
   ".pdb": "pdb",
 };
 

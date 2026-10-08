@@ -123,7 +123,7 @@ fn parse_frame_block(
     // GRO is fixed-format per block: the first atom line fixes the field
     // width for every atom of the block.
     let width = if n_atoms > 0 {
-        detect_field_width(lines[start + 2]).map_err(&ctx)?
+        detect_field_width(lines[start + 2]).map_err(ctx)?
     } else {
         DEFAULT_FIELD_WIDTH
     };

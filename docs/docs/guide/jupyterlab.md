@@ -18,7 +18,7 @@ Double-click any supported file in the JupyterLab file browser and megane opens 
 
 | File type | Extensions |
 |-----------|-----------|
-| Structures | `.pdb`, `.gro`, `.xyz`, `.jxyz`, `.mol`, `.sdf`, `.mol2`, `.cif`, `.mmcif`, `.data`, `.lammps`, `.prmtop`, `.traj`, `.lammpstrj`, `.dump`, `.trj`, `POSCAR`, `CONTCAR`, `XDATCAR`, `.vasp`, `.molden`, `.xsf`, `.axsf`, `.cml`, `.c3xml`, `.xodydata`, `.odydata`, `.magres`, `.gamess`, `.phonon` |
+| Structures | `.pdb`, `.gro`, `.xyz`, `.jxyz`, `.extxyz`, `.mol`, `.sdf`, `.mol2`, `.cif`, `.mmcif`, `.data`, `.lammps`, `.prmtop`, `.traj`, `.lammpstrj`, `.dump`, `.trj`, `POSCAR`, `CONTCAR`, `XDATCAR`, `.vasp`, `.molden`, `.xsf`, `.axsf`, `.cml`, `.c3xml`, `.xodydata`, `.odydata`, `.magres`, `.gamess`, `.phonon` |
 | Trajectories | `.xtc`, `.dcd`, `.nc` |
 | Volumetric grids | `.cube`, `.cub`, `.dx` |
 | Spectra | `.jdx`, `.jcamp`, `.dx` |
