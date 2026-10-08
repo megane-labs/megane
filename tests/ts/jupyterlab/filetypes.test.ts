@@ -115,10 +115,10 @@ describe("jupyterlab filetypes", () => {
     expect(re.test("notes.txt")).toBe(false);
   });
 
-  it("registers .jxyz alongside .xyz on the XYZ filetype", () => {
+  it("registers .jxyz and .extxyz alongside .xyz on the XYZ filetype", () => {
     const xyz = STRUCTURE_FILETYPES_TEXT.find((f) => f.name === "megane-xyz");
     expect(xyz).toBeDefined();
-    expect(xyz?.extensions).toEqual([".xyz", ".jxyz"]);
+    expect(xyz?.extensions).toEqual([".xyz", ".jxyz", ".extxyz"]);
   });
 
   it("registers .molden for the Molden filetype", () => {

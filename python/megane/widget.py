@@ -188,7 +188,7 @@ class MolecularViewer(anywidget.AnyWidget):
         ext = pathlib.Path(pdb_path).suffix.lower()
 
         # Multi-frame XYZ: structure + trajectory come from the same file.
-        if ext == ".xyz":
+        if ext in (".xyz", ".extxyz"):
             from megane.parsers.xyz import load_xyz_trajectory
 
             structure, trajectory = load_xyz_trajectory(pdb_path)

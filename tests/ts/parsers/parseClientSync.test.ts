@@ -111,7 +111,10 @@ const { calls, wasmMock } = vi.hoisted(() => {
     parse_top_bonds_with_includes: () => new Uint32Array([0, 1]),
     parse_psf_bonds: () => new Uint32Array([0, 1]),
     parse_pdb_bonds: () => new Uint32Array([0, 1]),
-    extract_labels: () => "A\nB\nC",
+    extract_labels: (_text: string, format: string) => {
+      calls.push(`extract_labels:${format}`);
+      return "A\nB\nC";
+    },
     write_structure: () => "1\n\nC 0 0 0\n",
     XtcDecoder: class {
       n_atoms = 4;
@@ -228,6 +231,16 @@ describe("parseClientSync (main-thread path with mocked wasm)", () => {
     expect(calls).toContain("parse_xyz");
   });
 
+  it("routes a .extxyz file through the XYZ parser (extended XYZ)", async () => {
+    await sync.parseStructureFile(
+      fakeFile(
+        "water.extxyz",
+        '1\nLattice="5 0 0 0 5 0 0 0 5" Properties=species:S:1:pos:R:3\nO 0 0 0\n',
+      ),
+    );
+    expect(calls).toContain("parse_xyz");
+  });
+
   it("routes a Molden file through the Molden parser", async () => {
     await sync.parseStructureFile(
       fakeFile("water.molden", "[Molden Format]\n[Atoms] (Angs)\n O 1 8 0.0 0.0 0.0\n"),
@@ -329,6 +342,8 @@ describe("parseClientSync (main-thread path with mocked wasm)", () => {
     expect(labels).toHaveLength(2); // trimmed to nAtoms
     const txt = await core.extractLabelsFromFile(fakeFile("notes.txt", "a\nb"), 3);
     expect(txt).toEqual(["a", "b", ""]); // padded to nAtoms
+    await core.extractLabelsFromFile(fakeFile("md.extxyz"), 3);
+    expect(calls).toContain("extract_labels:xyz"); // extended XYZ reads as XYZ
   });
 
   it("degrades the lazy XTC exports to eager (worker-only feature)", async () => {
