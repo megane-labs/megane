@@ -34,10 +34,10 @@ export const STRUCTURE_FILETYPES_TEXT: DocumentRegistry.IFileType[] = [
   },
   {
     name: "megane-xyz",
-    // `.jxyz` is Jmol's second extension for the same format, so it belongs on
-    // this filetype rather than a second one.
+    // `.jxyz` (Jmol) and `.extxyz` (ASE extended XYZ) are second extensions
+    // for the same format, so they belong on this filetype rather than new ones.
     displayName: "XYZ",
-    extensions: [".xyz", ".jxyz"],
+    extensions: [".xyz", ".jxyz", ".extxyz"],
     mimeTypes: ["chemical/x-xyz"],
     fileFormat: "text",
     contentType: "file",

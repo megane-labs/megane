@@ -34,7 +34,7 @@ For a side-by-side comparison of which formats and UI features each distribution
 |--------|-----------|
 | Protein Data Bank | `.pdb` |
 | GROMACS structure | `.gro` |
-| XYZ (single- or multi-frame, incl. extended `Lattice=`) | `.xyz`, `.jxyz` |
+| XYZ (single- or multi-frame, incl. extended `Lattice=`) | `.xyz`, `.jxyz`, `.extxyz` |
 | MDL Molfile (V2000) | `.mol` |
 | MDL SDfile (parsed via the V2000 Molfile reader) | `.sdf` |
 | Tripos MOL2 | `.mol2` |
