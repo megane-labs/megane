@@ -55,6 +55,32 @@ def test_view_traj_single_path_xyz():
     assert viewer.total_frames == 3
 
 
+def test_load_extxyz_trajectory():
+    """An ASE extended XYZ (`.extxyz`) reads through the XYZ reader with its cell."""
+    structure, trajectory = load_xyz_trajectory(str(FIXTURES / "water_md.extxyz"))
+
+    assert structure.n_atoms == 3
+    assert trajectory.n_frames == 2
+    np.testing.assert_allclose(np.diag(structure.box), [10.0, 10.0, 10.0], atol=1e-6)
+
+
+def test_view_traj_single_path_extxyz():
+    """view_traj("file.extxyz") auto-detects the trajectory like a `.xyz`."""
+    import megane
+
+    viewer = megane.view_traj(str(FIXTURES / "water_md.extxyz"))
+    assert viewer.total_frames == 2
+
+
+def test_widget_load_extxyz_infers_trajectory():
+    """MolecularViewer.load("file.extxyz") takes the multi-frame XYZ path."""
+    from megane.widget import MolecularViewer
+
+    viewer = MolecularViewer()
+    viewer.load(str(FIXTURES / "water_md.extxyz"))
+    assert viewer.total_frames == 2
+
+
 def test_uniform_xyz_is_not_heterogeneous():
     """A constant-atom multi-frame XYZ keeps the uniform fast path."""
     _, trajectory = load_xyz_trajectory(str(FIXTURES / "water_multiframe.xyz"))
