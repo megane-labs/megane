@@ -70,7 +70,7 @@ export function useNodeLoadHandlers({
       // eager path below.
       const ext = file.name.toLowerCase().match(/\.[^.]+$/)?.[0] ?? "";
       const lazyKind: LazyStructureKind | null =
-        ext === ".xyz" ? "xyz" : ext === ".pdb" ? "pdb" : null;
+        ext === ".xyz" || ext === ".extxyz" ? "xyz" : ext === ".pdb" ? "pdb" : null;
       if (isPrimary && lazyKind && shouldUseLazyStructure(lazyKind, file.size)) {
         const streamIt = () => {
           clearNodeParseError(nodeId);
