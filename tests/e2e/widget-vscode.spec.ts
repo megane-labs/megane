@@ -31,6 +31,7 @@ import {
   openVscodeNotebook,
   type CodeServerHandle,
 } from "./lib/hosts/code-server";
+import { expectTooltipNearCursor } from "./lib/tooltip";
 
 const PLATFORM = "widget-vscode";
 
@@ -137,3 +138,15 @@ for (const f of FORMATS) {
     }
   });
 }
+
+test("widget hover tooltip renders beside the cursor", async ({ page }) => {
+  await page.addInitScript(() => {
+    (globalThis as { __MEGANE_TEST__?: boolean }).__MEGANE_TEST__ = true;
+  });
+  const nbName = "widget_vscode_pdb-1crn.ipynb";
+  const wv = await openVscodeNotebook(page, { port: PORT, file: nbName, notebook: nbName });
+  await assertDomContract(wv, [
+    ...defaultViewerContract({ expectedAtoms: 327, context: "widget-pipeline" }),
+  ]);
+  await expectTooltipNearCursor(page, wv);
+});

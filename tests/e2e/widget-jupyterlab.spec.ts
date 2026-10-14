@@ -30,6 +30,7 @@ import {
   type JupyterLabHandle,
   type NotebookSpec,
 } from "./lib/hosts/jupyterlab";
+import { expectTooltipNearCursor } from "./lib/tooltip";
 
 const PLATFORM = "widget-jupyterlab";
 
@@ -126,3 +127,15 @@ for (const f of FORMATS) {
     void nb;
   });
 }
+
+// Regression: notebook cells carry `contain: layout style paint`, which makes
+// the cell the containing block of the `position: fixed` hover tooltip — it
+// used to render offset by the cell's position in the notebook.
+test("widget hover tooltip renders beside the cursor", async ({ page }) => {
+  writeNotebook(NOTEBOOK_DIR, "widget_tooltip", legacyNotebook("1crn.pdb"));
+  await openLabNotebook(page, { port: PORT, token: TOKEN, notebook: "widget_tooltip.ipynb" });
+  await assertDomContract(page, [
+    ...defaultViewerContract({ expectedAtoms: 327, context: "widget-pipeline" }),
+  ]);
+  await expectTooltipNearCursor(page);
+});

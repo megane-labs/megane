@@ -20,6 +20,7 @@ import {
   getReadyState,
   waitForReady,
 } from "./lib/setup";
+import { expectTooltipNearCursor } from "./lib/tooltip";
 
 const PLATFORM = "webapp";
 const ATOM_COUNT_CAFFEINE = 3024;
@@ -91,6 +92,10 @@ test.describe("webapp: caffeine_water default", () => {
       .locator('[data-testid="megane-viewer"]')
       .getAttribute("data-megane-context");
     expect(ctx).toBe("webapp");
+  });
+
+  test("hover tooltip renders beside the cursor", async ({ page }) => {
+    await expectTooltipNearCursor(page);
   });
 });
 
