@@ -25,6 +25,7 @@ import {
   type JupyterLabHandle,
 } from "./lib/hosts/jupyterlab";
 import { expectGifFile, openRenderModal, useSmallGifExport } from "./lib/render-modal";
+import { expectTooltipNearCursor } from "./lib/tooltip";
 
 const PLATFORM = "jupyterlab-doc";
 
@@ -112,6 +113,20 @@ for (const f of FORMATS) {
     ).toHaveText(f.file);
   });
 }
+
+/**
+ * Regression: Lumino gives every dock panel `contain: strict`, which makes the
+ * panel (not the viewport) the containing block of the `position: fixed`
+ * hover tooltip, so it used to render a sidebar-and-menubar's distance away
+ * from the cursor.
+ */
+test("hover tooltip renders beside the cursor", async ({ page }) => {
+  await openLabFile(page, { port: PORT, token: TOKEN, file: "1crn.pdb" });
+  await assertDomContract(page, [
+    ...defaultViewerContract({ expectedAtoms: 327, context: "jupyterlab-doc" }),
+  ]);
+  await expectTooltipNearCursor(page);
+});
 
 /**
  * Regression: opening a second structure file after a first one used to

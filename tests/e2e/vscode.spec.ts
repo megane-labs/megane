@@ -32,6 +32,7 @@ import {
   openVscodeFile,
   type CodeServerHandle,
 } from "./lib/hosts/code-server";
+import { expectTooltipNearCursor } from "./lib/tooltip";
 
 const PLATFORM = "vscode";
 
@@ -114,6 +115,14 @@ for (const f of FORMATS) {
     }
   });
 }
+
+test("hover tooltip renders beside the cursor", async ({ page }) => {
+  const wv = await openVscodeFile(page, { port: PORT, file: "1crn.pdb" });
+  await assertDomContract(wv, [
+    ...defaultViewerContract({ expectedAtoms: 327, context: "vscode" }),
+  ]);
+  await expectTooltipNearCursor(page, wv);
+});
 
 test("render export is saved through the extension-host saveFile bridge", async ({ page }) => {
   // In MEGANE_E2E_MODE the extension host skips the native save dialog and
