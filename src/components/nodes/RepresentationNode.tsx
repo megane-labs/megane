@@ -9,28 +9,8 @@ import type { PipelineNodeData } from "../../pipeline/execute";
 import type { RepresentationMode, RepresentationParams } from "../../pipeline/types";
 import { useScopedPipelineStore } from "../../stores/MeganeProvider";
 import { NodeShell } from "./NodeShell";
-
-const rowStyle: React.CSSProperties = {
-  display: "flex",
-  alignItems: "center",
-  justifyContent: "space-between",
-  fontSize: 12,
-  fontWeight: 500,
-  color: "var(--megane-text-secondary)",
-  padding: "3px 0",
-};
-
-const selectStyle: React.CSSProperties = {
-  fontSize: 11,
-  color: "var(--megane-text-body)",
-  background: "var(--megane-surface-muted)",
-  border: "1px solid var(--megane-border-strong)",
-  borderRadius: 4,
-  padding: "3px 6px",
-  cursor: "pointer",
-  flex: 1,
-  marginLeft: 8,
-};
+import { Field } from "./form";
+import { selectStyle } from "./formStyles";
 
 const REPRESENTATION_OPTIONS: { value: RepresentationMode; label: string }[] = [
   { value: "atoms", label: "Atoms" },
@@ -48,8 +28,7 @@ export function RepresentationNode({ id, data }: NodeProps<Node<PipelineNodeData
 
   return (
     <NodeShell id={id} nodeType="representation" enabled={data.enabled}>
-      <div style={rowStyle}>
-        <span>Mode</span>
+      <Field label="Mode">
         <select
           data-testid="representation-node-mode"
           className="nodrag"
@@ -63,7 +42,7 @@ export function RepresentationNode({ id, data }: NodeProps<Node<PipelineNodeData
             </option>
           ))}
         </select>
-      </div>
+      </Field>
     </NodeShell>
   );
 }

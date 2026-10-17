@@ -56,12 +56,12 @@ Walk every item. The order roughly follows the data dependency.
 
 ### 5. React component — `src/components/nodes/<Name>Node.tsx`
 
-- [ ] Wrap the shared `NodeShell` (it draws the header, toggle, delete, error badge, and typed handles from `NODE_PORTS`). Render only the param body. Read/write params exclusively via `usePipelineStore((s) => s.updateNodeParams)` — never mutate `data.params`. Follow `FilterNode.tsx`.
+- [ ] Wrap the shared `NodeShell` (it draws the header, toggle, delete, error badge, and typed handles from `NODE_PORTS`). Render only the param body, laid out with the shared form kit — `FormStack`, `Field` (label left, control right), `SliderField`, `Section` and `FileDrop` from `nodes/form.tsx`, control styles from `nodes/formStyles.ts` — so every node's properties pane looks the same; do not add per-node input/label styles. Read/write params exclusively via `usePipelineStore((s) => s.updateNodeParams)` — never mutate `data.params`. Follow `ModifyNode.tsx` / `FilterNode.tsx`.
 
-### 6. Editor registration — `src/components/PipelineEditor.tsx`
+### 6. Editor registration — `src/components/PipelineEditor.tsx` and `src/components/PipelineRail.tsx`
 
-- [ ] Add the component to the `nodeTypes` map.
-- [ ] Add the node type to the correct `ADD_NODE_GROUPS` group so it shows up in the "Add Node" menu.
+- [ ] Add the component to the `nodeTypes` map in `PipelineEditor.tsx`.
+- [ ] Add the node type to the correct `ADD_NODE_GROUPS` group in `PipelineRail.tsx` so it shows up in the rail's "Add Node" menu.
 
 ### 7. JS builder (optional) — `src/pipeline/builder.ts`
 
@@ -93,7 +93,7 @@ Walk every item. The order roughly follows the data dependency.
 | Symptom | Missing step |
 |---|---|
 | `tsc` error "property 'xxx' is missing" | §1 or §2 — a `Record<PipelineNodeType, …>` table has no entry |
-| Node runs but isn't in the Add Node menu | §6 — `ADD_NODE_GROUPS` |
+| Node runs but isn't in the Add Node menu | §6 — `ADD_NODE_GROUPS` (`PipelineRail.tsx`) |
 | Node is in the menu but renders blank / throws | §5 — component not in `nodeTypes`, or wrong `nodeType` prop |
 | Node appears but does nothing at runtime | §4 — no `case` in `executePipeline()` |
 | `Pipeline(...).to_json()` omits the node's params | §8 — no `isinstance` branch in `_serialize_node()` |

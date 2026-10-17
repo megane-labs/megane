@@ -11,7 +11,8 @@ import type { LoadStructureParams } from "../../pipeline/types";
 import { useScopedPipelineStore, useLoadHandlers } from "../../stores/MeganeProvider";
 import { globalLoadHandlers, type StructureLoadHandler } from "../../stores/loadHandlers";
 import { NodeShell } from "./NodeShell";
-import { nodeButtonStyle, nodeFileNameStyle } from "./formStyles";
+import { FileDrop } from "./form";
+import { fileMetaStyle } from "./formStyles";
 import { useRef, useCallback } from "react";
 // The file-dialog filter can only express extensions, so VASP contributes
 // `.vasp` there. Its extensionless spellings (POSCAR / CONTCAR / XDATCAR) are
@@ -77,49 +78,41 @@ export function LoadStructureNode({ id, data }: NodeProps<Node<PipelineNodeData>
       enabled={data.enabled}
       disabledPorts={disabledPorts}
     >
-      <div onDrop={handleDrop} onDragOver={handleDragOver}>
-        {params.fileName ? (
-          <div data-testid="load-structure-filename" style={nodeFileNameStyle}>
-            {params.fileName}
-          </div>
-        ) : (
-          <div
-            data-testid="load-structure-filename"
-            style={{ fontSize: 13, color: "var(--megane-text-muted)", fontStyle: "italic" }}
-          >
-            No structure loaded
-          </div>
-        )}
+      <FileDrop
+        fileName={params.fileName}
+        emptyText="No structure loaded"
+        buttonLabel="Load structure..."
+        nameTestId="load-structure-filename"
+        onPick={() => inputRef.current?.click()}
+        onDrop={handleDrop}
+        onDragOver={handleDragOver}
+        fileInput={
+          <input
+            ref={inputRef}
+            data-testid="load-structure-input"
+            type="file"
+            accept={STRUCTURE_ACCEPT}
+            onChange={(e) => {
+              const file = e.target.files?.[0];
+              if (file) handleFile(file);
+              e.target.value = "";
+            }}
+            style={{ display: "none" }}
+          />
+        }
+      >
         {/* An edit history (from the Builder, the chat, or a builder script)
             rides on this node: it edits the input, not the view, so the graph
             shows only a count. */}
         {editCount > 0 && (
           <div
             data-testid="load-structure-edits"
-            style={{ marginTop: 4, fontSize: 12, color: "var(--megane-success-text)" }}
+            style={{ ...fileMetaStyle, color: "var(--megane-success-text)" }}
           >
             {editCount} edit{editCount === 1 ? "" : "s"}
           </div>
         )}
-        <button
-          onClick={() => inputRef.current?.click()}
-          style={{ ...nodeButtonStyle, marginTop: 6, width: "100%" }}
-        >
-          Load structure...
-        </button>
-        <input
-          ref={inputRef}
-          data-testid="load-structure-input"
-          type="file"
-          accept={STRUCTURE_ACCEPT}
-          onChange={(e) => {
-            const file = e.target.files?.[0];
-            if (file) handleFile(file);
-            e.target.value = "";
-          }}
-          style={{ display: "none" }}
-        />
-      </div>
+      </FileDrop>
     </NodeShell>
   );
 }

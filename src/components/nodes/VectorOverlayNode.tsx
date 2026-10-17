@@ -8,27 +8,7 @@ import type { PipelineNodeData } from "../../pipeline/execute";
 import type { VectorOverlayParams } from "../../pipeline/types";
 import { useScopedPipelineStore } from "../../stores/MeganeProvider";
 import { NodeShell } from "./NodeShell";
-
-const labelStyle: React.CSSProperties = {
-  fontSize: 12,
-  fontWeight: 500,
-  color: "var(--megane-text-secondary)",
-  marginBottom: 3,
-};
-
-const sliderStyle: React.CSSProperties = {
-  width: "100%",
-  height: 7,
-  cursor: "pointer",
-};
-
-const valueStyle: React.CSSProperties = {
-  fontSize: 12,
-  fontWeight: 500,
-  color: "var(--megane-primary)",
-  minWidth: 40,
-  textAlign: "right",
-};
+import { SliderField } from "./form";
 
 export function VectorOverlayNode({ id, data }: NodeProps<Node<PipelineNodeData>>) {
   const updateNodeParams = useScopedPipelineStore((s) => s.updateNodeParams);
@@ -36,20 +16,15 @@ export function VectorOverlayNode({ id, data }: NodeProps<Node<PipelineNodeData>
 
   return (
     <NodeShell id={id} nodeType="vector_overlay" enabled={data.enabled}>
-      <div style={labelStyle}>Scale</div>
-      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-        <input
-          className="nodrag"
-          type="range"
-          min={0.1}
-          max={5.0}
-          step={0.1}
-          value={params.scale}
-          onChange={(e) => updateNodeParams(id, { scale: parseFloat(e.target.value) })}
-          style={sliderStyle}
-        />
-        <span style={valueStyle}>{params.scale.toFixed(1)}</span>
-      </div>
+      <SliderField
+        label="Scale"
+        min={0.1}
+        max={5.0}
+        step={0.1}
+        value={params.scale}
+        format={(v) => v.toFixed(1)}
+        onChange={(v) => updateNodeParams(id, { scale: v })}
+      />
     </NodeShell>
   );
 }

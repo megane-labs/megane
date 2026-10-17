@@ -58,9 +58,8 @@ import { usePipelineStore } from "@/pipeline/store";
 import { defaultParams } from "@/pipeline/types";
 
 beforeEach(() => {
-  // The editor toolbar (theme button, dropdowns) is hidden on the Chat tab,
-  // which is now the default. These tests exercise the editor chrome, so pin
-  // the panel to the Editor tab.
+  // The Chat tab is the default; these tests exercise the editor, so pin the
+  // panel to the Editor tab.
   usePipelineUIStore.setState({ mode: "editor", pendingNotice: null });
 });
 
@@ -76,8 +75,8 @@ describe("PipelineEditor — theme button", () => {
 
     render(<PipelineEditor collapsed={false} onToggleCollapse={() => {}} />);
 
+    // The rail's theme button is icon-only: the theme is in its name.
     const themeBtn = screen.getByTestId("pipeline-editor-theme");
-    expect(themeBtn.textContent).toContain("Light");
     expect(themeBtn.getAttribute("aria-label")).toContain("Light");
   });
 
@@ -138,7 +137,7 @@ describe("PipelineEditor — theme button", () => {
     useThemeStore.setState({ theme: "system", resolvedTheme: "light" });
     render(<PipelineEditor collapsed={false} onToggleCollapse={() => {}} />);
     const themeBtn = screen.getByTestId("pipeline-editor-theme");
-    expect(themeBtn.textContent).toContain("Auto");
+    expect(themeBtn.getAttribute("aria-label")).toContain("Auto");
   });
 });
 
@@ -149,6 +148,12 @@ describe("PipelineEditor — collapsed state", () => {
     expect(screen.getByTestId("panel-pipeline-toggle")).toBeTruthy();
   });
 });
+
+/** Share lives in the rail's File menu. */
+function openShare() {
+  fireEvent.click(screen.getByTestId("pipeline-editor-file"));
+  fireEvent.click(screen.getByTestId("pipeline-editor-share"));
+}
 
 describe("PipelineEditor — Share button opens dialog", () => {
   let consoleErrorSpy: ReturnType<typeof vi.spyOn>;
@@ -172,7 +177,7 @@ describe("PipelineEditor — Share button opens dialog", () => {
     });
 
     render(<PipelineEditor collapsed={false} onToggleCollapse={() => {}} />);
-    fireEvent.click(screen.getByTestId("pipeline-editor-share"));
+    openShare();
 
     const input = await screen.findByTestId("share-dialog-url-input");
     expect((input as HTMLInputElement).value).toBe("http://example.test/#pipeline=abc");
@@ -186,7 +191,7 @@ describe("PipelineEditor — Share button opens dialog", () => {
     });
 
     render(<PipelineEditor collapsed={false} onToggleCollapse={() => {}} />);
-    fireEvent.click(screen.getByTestId("pipeline-editor-share"));
+    openShare();
 
     expect(await screen.findByTestId("share-dialog-warning")).toBeTruthy();
     const copyBtn = screen.getByTestId("share-dialog-copy") as HTMLButtonElement;
@@ -197,7 +202,7 @@ describe("PipelineEditor — Share button opens dialog", () => {
     shareCurrentPipelineMock.mockRejectedValue(new Error("boom"));
 
     render(<PipelineEditor collapsed={false} onToggleCollapse={() => {}} />);
-    fireEvent.click(screen.getByTestId("pipeline-editor-share"));
+    openShare();
 
     await waitFor(() => {
       expect(alertSpy).toHaveBeenCalled();
@@ -309,6 +314,67 @@ describe("PipelineEditor — properties pane", () => {
     expect(usePipelineStore.getState().nodes).toHaveLength(0);
   });
 
+  it("lists the selected node's errors and warnings under its header", () => {
+    usePipelineStore.setState({
+      nodes: [node("f1", "filter", true), node("w1", "wrap")],
+      edges: [],
+      layoutPending: false,
+      nodeErrors: {
+        f1: [
+          { message: "Filter returned 0 atoms", severity: "error" },
+          { message: "Query is slow", severity: "warning" },
+        ],
+        w1: [{ message: "not shown", severity: "error" }],
+      },
+    });
+    render(<PipelineEditor collapsed={false} onToggleCollapse={() => {}} />);
+    const messages = screen.getByTestId("pipeline-properties-messages");
+    expect(messages).toHaveTextContent("Filter returned 0 atoms");
+    expect(messages).toHaveTextContent("Query is slow");
+    expect(messages).not.toHaveTextContent("not shown");
+    expect(screen.getByRole("alert")).toHaveTextContent("Filter returned 0 atoms");
+  });
+
+  it("shows no message strip for a node without errors", () => {
+    usePipelineStore.setState({
+      nodes: [node("w1", "wrap", true)],
+      edges: [],
+      layoutPending: false,
+      nodeErrors: {},
+    });
+    render(<PipelineEditor collapsed={false} onToggleCollapse={() => {}} />);
+    expect(screen.queryByTestId("pipeline-properties-messages")).toBeNull();
+  });
+
+  it("fades the form of a node that is off and says so beside the switch", () => {
+    usePipelineStore.setState({
+      nodes: [node("w1", "wrap", true)],
+      edges: [],
+      layoutPending: false,
+    });
+    render(<PipelineEditor collapsed={false} onToggleCollapse={() => {}} />);
+    const body = screen.getByTestId("pipeline-properties-body");
+    expect(body.style.opacity).toBe("1");
+    expect(screen.getByTestId("pipeline-properties-header")).toHaveTextContent("On");
+    fireEvent.click(screen.getByRole("switch"));
+    expect(body.style.opacity).toBe("0.55");
+    expect(screen.getByTestId("pipeline-properties-header")).toHaveTextContent("Off");
+  });
+
+  it("tints the remove button while it is hovered", () => {
+    usePipelineStore.setState({
+      nodes: [node("w1", "wrap", true)],
+      edges: [],
+      layoutPending: false,
+    });
+    render(<PipelineEditor collapsed={false} onToggleCollapse={() => {}} />);
+    const remove = screen.getByTitle("Remove node");
+    fireEvent.mouseEnter(remove);
+    expect(remove.style.color).toBe("var(--megane-danger)");
+    fireEvent.mouseLeave(remove);
+    expect(remove.style.color).toBe("var(--megane-text-muted)");
+  });
+
   it("offers no remove button for the viewport", () => {
     usePipelineStore.setState({
       nodes: [node("v1", "viewport", true)],
@@ -328,7 +394,7 @@ describe("PipelineEditor — properties pane", () => {
     });
     render(<PipelineEditor collapsed={false} onToggleCollapse={() => {}} />);
     fireEvent.click(screen.getByTitle("Add Node"));
-    fireEvent.click(screen.getByRole("button", { name: "Filter" }));
+    fireEvent.click(screen.getByRole("menuitem", { name: "Filter" }));
     const nodes = usePipelineStore.getState().nodes;
     const added = nodes.find((n) => n.type === "filter")!;
     expect(added.selected).toBe(true);

@@ -11,20 +11,8 @@ import type { PipelineNodeData } from "../../pipeline/execute";
 import type { ViewportParams } from "../../pipeline/types";
 import { useScopedPipelineStore } from "../../stores/MeganeProvider";
 import { NodeShell } from "./NodeShell";
-
-const toggleRowStyle: React.CSSProperties = {
-  display: "flex",
-  alignItems: "center",
-  justifyContent: "space-between",
-  fontSize: 12,
-  color: "var(--megane-text-body)",
-  padding: "3px 0",
-};
-
-const toggleStyle: React.CSSProperties = {
-  cursor: "pointer",
-  accentColor: "#3b82f6",
-};
+import { Field, FormStack } from "./form";
+import { checkboxStyle } from "./formStyles";
 
 export function ViewportNode({ id, data }: NodeProps<Node<PipelineNodeData>>) {
   const updateNodeParams = useScopedPipelineStore((s) => s.updateNodeParams);
@@ -32,35 +20,32 @@ export function ViewportNode({ id, data }: NodeProps<Node<PipelineNodeData>>) {
 
   return (
     <NodeShell id={id} nodeType="viewport" enabled={data.enabled}>
-      <div style={{ display: "flex", flexDirection: "column", gap: 7 }}>
-        <label style={toggleRowStyle}>
-          Perspective
+      <FormStack>
+        <Field label="Perspective">
           <input
             type="checkbox"
             checked={params.perspective}
             onChange={(e) => updateNodeParams(id, { perspective: e.target.checked })}
-            style={toggleStyle}
+            style={checkboxStyle}
           />
-        </label>
-        <label style={toggleRowStyle}>
-          Cell axes
+        </Field>
+        <Field label="Cell axes">
           <input
             type="checkbox"
             checked={params.cellAxesVisible}
             onChange={(e) => updateNodeParams(id, { cellAxesVisible: e.target.checked })}
-            style={toggleStyle}
+            style={checkboxStyle}
           />
-        </label>
-        <label style={toggleRowStyle}>
-          Pivot marker
+        </Field>
+        <Field label="Pivot marker">
           <input
             type="checkbox"
             checked={params.pivotMarkerVisible}
             onChange={(e) => updateNodeParams(id, { pivotMarkerVisible: e.target.checked })}
-            style={toggleStyle}
+            style={checkboxStyle}
           />
-        </label>
-      </div>
+        </Field>
+      </FormStack>
     </NodeShell>
   );
 }

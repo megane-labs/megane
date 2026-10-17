@@ -10,75 +10,8 @@ import type { IsosurfaceParams, IsosurfaceColorMode, VolumeColormap } from "../.
 import { VOLUME_COLORMAP_LABELS } from "../../pipeline/executors/volumeColor";
 import { useScopedPipelineStore } from "../../stores/MeganeProvider";
 import { NodeShell } from "./NodeShell";
-
-const rowStyle: React.CSSProperties = {
-  display: "flex",
-  alignItems: "center",
-  justifyContent: "space-between",
-  gap: 8,
-  marginBottom: 8,
-};
-
-const labelStyle: React.CSSProperties = {
-  fontSize: 12,
-  fontWeight: 500,
-  color: "var(--megane-text-secondary)",
-  flex: 1,
-};
-
-const inputStyle: React.CSSProperties = {
-  width: 72,
-  padding: "3px 6px",
-  fontSize: 12,
-  border: "1px solid var(--megane-border-solid)",
-  borderRadius: 6,
-  background: "var(--megane-surface-raised)",
-  color: "inherit",
-  boxSizing: "border-box",
-};
-
-const colorStyle: React.CSSProperties = {
-  width: 40,
-  height: 26,
-  padding: 2,
-  border: "1px solid var(--megane-border-solid)",
-  borderRadius: 6,
-  cursor: "pointer",
-  background: "none",
-};
-
-const sliderStyle: React.CSSProperties = {
-  width: 90,
-  accentColor: "#06b6d4",
-};
-
-const valueStyle: React.CSSProperties = {
-  fontSize: 11,
-  color: "var(--megane-text-secondary)",
-  minWidth: 32,
-  textAlign: "right",
-};
-
-const checkboxRowStyle: React.CSSProperties = {
-  display: "flex",
-  alignItems: "center",
-  gap: 6,
-  marginBottom: 8,
-};
-
-const selectStyle: React.CSSProperties = {
-  fontSize: 11,
-  color: "var(--megane-text-body)",
-  background: "var(--megane-surface-muted)",
-  border: "1px solid var(--megane-border-strong)",
-  borderRadius: 6,
-  padding: "3px 6px",
-};
-
-const rangeInputStyle: React.CSSProperties = {
-  ...inputStyle,
-  width: 64,
-};
+import { Field, FormStack, SliderField } from "./form";
+import { checkboxStyle, colorInputStyle, inputStyle, selectStyle } from "./formStyles";
 
 export function IsosurfaceNode({ id, data }: NodeProps<Node<PipelineNodeData>>) {
   const updateNodeParams = useScopedPipelineStore((s) => s.updateNodeParams);
@@ -106,157 +39,144 @@ export function IsosurfaceNode({ id, data }: NodeProps<Node<PipelineNodeData>>) 
 
   return (
     <NodeShell id={id} nodeType="isosurface" enabled={data.enabled}>
-      {/* Iso level */}
-      <div style={rowStyle}>
-        <span style={labelStyle}>Iso level</span>
-        <input
-          type="number"
-          className="nodrag"
-          data-testid="isosurface-level"
-          value={params.isoLevel}
-          step={0.001}
-          style={inputStyle}
-          onChange={(e) => {
-            const v = parseFloat(e.target.value);
-            if (!isNaN(v)) updateNodeParams(id, { isoLevel: v });
-          }}
-        />
-      </div>
-
-      {/* Color mode: solid color vs. sampling the Color Volume input */}
-      <div style={rowStyle}>
-        <span style={labelStyle}>Color by</span>
-        <select
-          className="nodrag"
-          data-testid="isosurface-color-mode"
-          value={colorMode}
-          style={selectStyle}
-          onChange={(e) =>
-            updateNodeParams(id, { colorMode: e.target.value as IsosurfaceColorMode })
-          }
-        >
-          <option value="solid">Solid color</option>
-          <option value="volume">Color volume</option>
-        </select>
-      </div>
-
-      {/* Positive color (solid mode) */}
-      {colorMode === "solid" && (
-        <div style={rowStyle}>
-          <span style={labelStyle}>Color (+)</span>
+      <FormStack>
+        <Field label="Iso level">
           <input
-            type="color"
+            type="number"
             className="nodrag"
-            data-testid="isosurface-color"
-            value={params.color}
-            style={colorStyle}
-            onChange={(e) => updateNodeParams(id, { color: e.target.value })}
+            data-testid="isosurface-level"
+            value={params.isoLevel}
+            step={0.001}
+            style={inputStyle}
+            onChange={(e) => {
+              const v = parseFloat(e.target.value);
+              if (!isNaN(v)) updateNodeParams(id, { isoLevel: v });
+            }}
           />
-        </div>
-      )}
+        </Field>
 
-      {/* Colormap + range (volume mode) */}
-      {colorMode === "volume" && (
-        <>
-          <div style={rowStyle}>
-            <span style={labelStyle}>Colormap</span>
-            <select
-              className="nodrag"
-              data-testid="isosurface-colormap"
-              value={params.colormap ?? "rwb"}
-              style={selectStyle}
-              onChange={(e) => updateNodeParams(id, { colormap: e.target.value as VolumeColormap })}
-            >
-              {(Object.entries(VOLUME_COLORMAP_LABELS) as [VolumeColormap, string][]).map(
-                ([value, label]) => (
-                  <option key={value} value={value}>
-                    {label}
-                  </option>
-                ),
-              )}
-            </select>
-          </div>
-          <div style={rowStyle}>
-            <span style={labelStyle}>Range</span>
-            <input
-              type="number"
-              className="nodrag"
-              data-testid="isosurface-range-min"
-              placeholder="auto"
-              value={rangeMinText}
-              step={0.001}
-              style={rangeInputStyle}
-              onChange={(e) => {
-                setRangeMinText(e.target.value);
-                commitRange(e.target.value, rangeMaxText);
-              }}
-            />
-            <input
-              type="number"
-              className="nodrag"
-              data-testid="isosurface-range-max"
-              placeholder="auto"
-              value={rangeMaxText}
-              step={0.001}
-              style={rangeInputStyle}
-              onChange={(e) => {
-                setRangeMaxText(e.target.value);
-                commitRange(rangeMinText, e.target.value);
-              }}
-            />
-          </div>
-        </>
-      )}
+        {/* Color mode: solid color vs. sampling the Color Volume input */}
+        <Field label="Color by">
+          <select
+            className="nodrag"
+            data-testid="isosurface-color-mode"
+            value={colorMode}
+            style={selectStyle}
+            onChange={(e) =>
+              updateNodeParams(id, { colorMode: e.target.value as IsosurfaceColorMode })
+            }
+          >
+            <option value="solid">Solid color</option>
+            <option value="volume">Color volume</option>
+          </select>
+        </Field>
 
-      {/* Opacity */}
-      <div style={rowStyle}>
-        <span style={labelStyle}>Opacity</span>
-        <input
-          type="range"
-          className="nodrag"
-          data-testid="isosurface-opacity"
+        {/* Positive color (solid mode) */}
+        {colorMode === "solid" && (
+          <Field label="Color (+)">
+            <input
+              type="color"
+              className="nodrag"
+              data-testid="isosurface-color"
+              value={params.color}
+              style={colorInputStyle}
+              onChange={(e) => updateNodeParams(id, { color: e.target.value })}
+            />
+          </Field>
+        )}
+
+        {/* Colormap + range (volume mode) */}
+        {colorMode === "volume" && (
+          <>
+            <Field label="Colormap">
+              <select
+                className="nodrag"
+                data-testid="isosurface-colormap"
+                value={params.colormap ?? "rwb"}
+                style={selectStyle}
+                onChange={(e) =>
+                  updateNodeParams(id, { colormap: e.target.value as VolumeColormap })
+                }
+              >
+                {(Object.entries(VOLUME_COLORMAP_LABELS) as [VolumeColormap, string][]).map(
+                  ([value, label]) => (
+                    <option key={value} value={value}>
+                      {label}
+                    </option>
+                  ),
+                )}
+              </select>
+            </Field>
+            <Field label="Range">
+              <input
+                type="number"
+                className="nodrag"
+                data-testid="isosurface-range-min"
+                aria-label="Range minimum"
+                placeholder="auto"
+                value={rangeMinText}
+                step={0.001}
+                style={inputStyle}
+                onChange={(e) => {
+                  setRangeMinText(e.target.value);
+                  commitRange(e.target.value, rangeMaxText);
+                }}
+              />
+              <input
+                type="number"
+                className="nodrag"
+                data-testid="isosurface-range-max"
+                aria-label="Range maximum"
+                placeholder="auto"
+                value={rangeMaxText}
+                step={0.001}
+                style={inputStyle}
+                onChange={(e) => {
+                  setRangeMaxText(e.target.value);
+                  commitRange(rangeMinText, e.target.value);
+                }}
+              />
+            </Field>
+          </>
+        )}
+
+        <SliderField
+          label="Opacity"
+          testId="isosurface-opacity"
           min={0}
           max={1}
           step={0.05}
           value={params.opacity}
-          style={sliderStyle}
-          onChange={(e) => updateNodeParams(id, { opacity: parseFloat(e.target.value) })}
+          format={(v) => `${Math.round(v * 100)}%`}
+          onChange={(v) => updateNodeParams(id, { opacity: v })}
         />
-        <span style={valueStyle}>{Math.round(params.opacity * 100)}%</span>
-      </div>
 
-      {/* Dual contour toggle */}
-      <div style={checkboxRowStyle}>
-        <input
-          type="checkbox"
-          className="nodrag"
-          id={`${id}-neg`}
-          data-testid="isosurface-show-negative"
-          checked={params.showNegative}
-          onChange={(e) => updateNodeParams(id, { showNegative: e.target.checked })}
-        />
-        <label
-          htmlFor={`${id}-neg`}
-          style={{ fontSize: 12, color: "var(--megane-text-secondary)" }}
-        >
-          Show negative lobe
-        </label>
-      </div>
-
-      {/* Negative color (shown only when toggle is on and coloring is solid) */}
-      {params.showNegative && colorMode === "solid" && (
-        <div style={rowStyle}>
-          <span style={labelStyle}>Color (−)</span>
+        {/* Dual contour toggle */}
+        <Field label="Negative lobe">
           <input
-            type="color"
+            type="checkbox"
             className="nodrag"
-            data-testid="isosurface-negative-color"
-            value={params.negativeColor}
-            style={colorStyle}
-            onChange={(e) => updateNodeParams(id, { negativeColor: e.target.value })}
+            data-testid="isosurface-show-negative"
+            checked={params.showNegative}
+            style={checkboxStyle}
+            onChange={(e) => updateNodeParams(id, { showNegative: e.target.checked })}
           />
-        </div>
-      )}
+        </Field>
+
+        {/* Negative color (shown only when toggle is on and coloring is solid) */}
+        {params.showNegative && colorMode === "solid" && (
+          <Field label="Color (−)">
+            <input
+              type="color"
+              className="nodrag"
+              data-testid="isosurface-negative-color"
+              value={params.negativeColor}
+              style={colorInputStyle}
+              onChange={(e) => updateNodeParams(id, { negativeColor: e.target.value })}
+            />
+          </Field>
+        )}
+      </FormStack>
     </NodeShell>
   );
 }

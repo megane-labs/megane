@@ -9,7 +9,8 @@ import type { PipelineNodeData } from "../../pipeline/execute";
 import type { LoadSpectrumParams } from "../../pipeline/types";
 import { useScopedPipelineStore } from "../../stores/MeganeProvider";
 import { NodeShell } from "./NodeShell";
-import { nodeButtonStyle, nodeFileNameStyle } from "./formStyles";
+import { FileDrop } from "./form";
+import { errorTextStyle, fileMetaStyle } from "./formStyles";
 import { SPECTRUM_ACCEPT, isSpectrumFileName, parseSpectrum } from "../../parsers/spectrum";
 
 export function LoadSpectrumNode({ id, data }: NodeProps<Node<PipelineNodeData>>) {
@@ -64,55 +65,42 @@ export function LoadSpectrumNode({ id, data }: NodeProps<Node<PipelineNodeData>>
 
   return (
     <NodeShell id={id} nodeType="load_spectrum" enabled={data.enabled}>
-      <div data-testid="load-spectrum-dropzone" onDrop={handleDrop} onDragOver={handleDragOver}>
-        {params.fileName ? (
-          <div data-testid="load-spectrum-filename" style={nodeFileNameStyle}>
-            {params.fileName}
-          </div>
-        ) : (
-          <div
-            data-testid="load-spectrum-filename"
-            style={{ fontSize: 13, color: "var(--megane-text-muted)", fontStyle: "italic" }}
-          >
-            No spectrum loaded
-          </div>
-        )}
+      <FileDrop
+        testId="load-spectrum-dropzone"
+        fileName={params.fileName}
+        emptyText="No spectrum loaded"
+        buttonLabel="Load spectrum..."
+        nameTestId="load-spectrum-filename"
+        onPick={() => inputRef.current?.click()}
+        onDrop={handleDrop}
+        onDragOver={handleDragOver}
+        fileInput={
+          <input
+            ref={inputRef}
+            data-testid="load-spectrum-input"
+            type="file"
+            accept={SPECTRUM_ACCEPT}
+            onChange={(e) => {
+              const file = e.target.files?.[0];
+              if (file) handleFile(file);
+              e.target.value = "";
+            }}
+            style={{ display: "none" }}
+          />
+        }
+      >
         {params.fileName && !spectrum && (
-          <div
-            data-testid="load-spectrum-error"
-            style={{ fontSize: 11, color: "var(--megane-danger)", marginTop: 4 }}
-          >
+          <div data-testid="load-spectrum-error" style={errorTextStyle}>
             {params.parseError ?? "Parse error — check file format"}
           </div>
         )}
         {spectrum && (
-          <div
-            data-testid="load-spectrum-summary"
-            style={{ fontSize: 11, color: "var(--megane-text-secondary)", marginTop: 4 }}
-          >
+          <div data-testid="load-spectrum-summary" style={fileMetaStyle}>
             {spectrum.dataType || "spectrum"} · {spectrum.x.length} points
             {spectrum.xUnits ? ` · ${spectrum.xUnits}` : ""}
           </div>
         )}
-        <button
-          onClick={() => inputRef.current?.click()}
-          style={{ ...nodeButtonStyle, marginTop: 6, width: "100%" }}
-        >
-          Load spectrum...
-        </button>
-        <input
-          ref={inputRef}
-          data-testid="load-spectrum-input"
-          type="file"
-          accept={SPECTRUM_ACCEPT}
-          onChange={(e) => {
-            const file = e.target.files?.[0];
-            if (file) handleFile(file);
-            e.target.value = "";
-          }}
-          style={{ display: "none" }}
-        />
-      </div>
+      </FileDrop>
     </NodeShell>
   );
 }

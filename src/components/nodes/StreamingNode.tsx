@@ -9,6 +9,8 @@ import type { PipelineNodeData } from "../../pipeline/execute";
 import type { StreamingParams } from "../../pipeline/types";
 import { useScopedPipelineStore } from "../../stores/MeganeProvider";
 import { NodeShell } from "./NodeShell";
+import { FormStack } from "./form";
+import { fileMetaStyle, hintStyle } from "./formStyles";
 
 export function StreamingNode({ id, data }: NodeProps<Node<PipelineNodeData>>) {
   const params = data.params as StreamingParams;
@@ -27,38 +29,39 @@ export function StreamingNode({ id, data }: NodeProps<Node<PipelineNodeData>>) {
 
   return (
     <NodeShell id={id} nodeType="streaming" enabled={data.enabled} disabledPorts={disabledPorts}>
-      <div>
-        <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
+      <FormStack>
+        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
           <div
             style={{
-              width: 10,
-              height: 10,
+              width: 8,
+              height: 8,
               borderRadius: "50%",
               background: connected ? "#22c55e" : "#ef4444",
+              boxShadow: connected
+                ? "0 0 0 3px rgba(34, 197, 94, 0.18)"
+                : "0 0 0 3px rgba(239, 68, 68, 0.18)",
               flexShrink: 0,
             }}
           />
           <span
             style={{
               fontSize: 12,
-              fontWeight: 500,
-              color: connected ? "#22c55e" : "var(--megane-danger)",
+              fontWeight: 600,
+              color: connected ? "var(--megane-success-text)" : "var(--megane-danger)",
             }}
           >
             {connected ? "Connected" : "Disconnected"}
           </span>
         </div>
-        <div style={{ fontSize: 11, color: "var(--megane-text-muted)", fontStyle: "italic" }}>
-          WebSocket: same origin /ws
-        </div>
+        <div style={hintStyle}>WebSocket: same origin /ws</div>
         {hasSnapshot && (
-          <div style={{ fontSize: 11, color: "var(--megane-text-secondary)", marginTop: 4 }}>
+          <div style={fileMetaStyle}>
             {nodeStreamingData!.snapshot.nAtoms} atoms
             {hasBond && `, ${nodeStreamingData!.snapshot.nBonds} bonds`}
             {hasTrajectory && `, ${nodeStreamingData!.streamProvider!.meta.nFrames} frames`}
           </div>
         )}
-      </div>
+      </FormStack>
     </NodeShell>
   );
 }

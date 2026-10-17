@@ -9,32 +9,8 @@ import type { PipelineNodeData } from "../../pipeline/execute";
 import type { ReplicateParams } from "../../pipeline/types";
 import { useScopedPipelineStore } from "../../stores/MeganeProvider";
 import { NodeShell } from "./NodeShell";
-
-const rowStyle: React.CSSProperties = {
-  display: "flex",
-  alignItems: "center",
-  justifyContent: "space-between",
-  gap: 8,
-  marginBottom: 8,
-};
-
-const labelStyle: React.CSSProperties = {
-  fontSize: 12,
-  fontWeight: 500,
-  color: "var(--megane-text-secondary)",
-  flex: 1,
-};
-
-const inputStyle: React.CSSProperties = {
-  width: 72,
-  padding: "3px 6px",
-  fontSize: 12,
-  border: "1px solid var(--megane-border-solid)",
-  borderRadius: 6,
-  background: "var(--megane-surface-raised)",
-  color: "inherit",
-  boxSizing: "border-box",
-};
+import { Field } from "./form";
+import { inputStyle } from "./formStyles";
 
 type Axis = "nx" | "ny" | "nz";
 
@@ -50,24 +26,42 @@ export function ReplicateNode({ id, data }: NodeProps<Node<PipelineNodeData>>) {
 
   return (
     <NodeShell id={id} nodeType="replicate" enabled={data.enabled}>
-      {AXES.map(({ key, label, testId }) => (
-        <div style={rowStyle} key={key}>
-          <span style={labelStyle}>{label}</span>
-          <input
-            type="number"
-            className="nodrag"
-            data-testid={testId}
-            value={params[key]}
-            min={1}
-            step={1}
-            style={inputStyle}
-            onChange={(e) => {
-              const v = Math.floor(parseFloat(e.target.value));
-              if (!isNaN(v) && v >= 1) updateNodeParams(id, { [key]: v });
-            }}
-          />
+      <Field label="Repeats" group>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(3, minmax(0, 1fr))", gap: 6 }}>
+          {AXES.map(({ key, label, testId }) => (
+            <label key={key} style={{ position: "relative", display: "block" }}>
+              <span
+                style={{
+                  position: "absolute",
+                  left: 8,
+                  top: "50%",
+                  transform: "translateY(-50%)",
+                  fontSize: 11,
+                  fontWeight: 600,
+                  color: "var(--megane-text-muted)",
+                  pointerEvents: "none",
+                }}
+              >
+                {label}
+              </span>
+              <input
+                type="number"
+                className="nodrag"
+                data-testid={testId}
+                aria-label={`Repeats along ${label}`}
+                value={params[key]}
+                min={1}
+                step={1}
+                style={{ ...inputStyle, paddingLeft: 22 }}
+                onChange={(e) => {
+                  const v = Math.floor(parseFloat(e.target.value));
+                  if (!isNaN(v) && v >= 1) updateNodeParams(id, { [key]: v });
+                }}
+              />
+            </label>
+          ))}
         </div>
-      ))}
+      </Field>
     </NodeShell>
   );
 }
