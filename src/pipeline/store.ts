@@ -94,6 +94,13 @@ export interface PipelineStore {
   onNodesChange: OnNodesChange<Node<PipelineNodeData>>;
   onEdgesChange: OnEdgesChange;
   onConnect: (connection: Connection) => void;
+  /** Delete one edge (the editor's edge × button / drag-off disconnect). */
+  removeEdge: (id: string) => void;
+  /**
+   * Move an existing edge's endpoint to `connection`. Invalid targets
+   * (per `canConnect`) leave the edge untouched.
+   */
+  reconnectEdge: (oldEdge: Edge, connection: Connection) => void;
 
   // Node operations
   addNode: (type: PipelineNodeType, position?: { x: number; y: number }) => string;
@@ -421,6 +428,37 @@ export const pipelineStateCreator: StateCreator<PipelineStore> = (set, get, api)
         },
         state.edges,
       ),
+    }));
+    get().execute();
+  },
+
+  removeEdge: (id) => {
+    if (!get().edges.some((e) => e.id === id)) return;
+    set((state) => ({ edges: state.edges.filter((e) => e.id !== id) }));
+    get().execute();
+  },
+
+  reconnectEdge: (oldEdge, connection) => {
+    const { nodes } = get();
+    const sourceNode = nodes.find((n) => n.id === connection.source);
+    const targetNode = nodes.find((n) => n.id === connection.target);
+    if (!sourceNode?.type || !targetNode?.type) return;
+    if (
+      !canConnect(
+        sourceNode.type as PipelineNodeType,
+        connection.sourceHandle ?? null,
+        targetNode.type as PipelineNodeType,
+        connection.targetHandle ?? null,
+      )
+    ) {
+      return;
+    }
+    const id = `e-${connection.source}-${connection.sourceHandle}-${connection.target}-${connection.targetHandle}`;
+    set((state) => ({
+      edges: [
+        ...state.edges.filter((e) => e.id !== oldEdge.id && e.id !== id),
+        { ...oldEdge, ...connection, id },
+      ],
     }));
     get().execute();
   },
