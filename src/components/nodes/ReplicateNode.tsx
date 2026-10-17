@@ -19,7 +19,7 @@ const rowStyle: React.CSSProperties = {
 };
 
 const labelStyle: React.CSSProperties = {
-  fontSize: 17,
+  fontSize: 12,
   fontWeight: 500,
   color: "var(--megane-text-secondary)",
   flex: 1,
@@ -28,7 +28,7 @@ const labelStyle: React.CSSProperties = {
 const inputStyle: React.CSSProperties = {
   width: 72,
   padding: "3px 6px",
-  fontSize: 16,
+  fontSize: 12,
   border: "1px solid var(--megane-border-solid)",
   borderRadius: 6,
   background: "var(--megane-surface-raised)",

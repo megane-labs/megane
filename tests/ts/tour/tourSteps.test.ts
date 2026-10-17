@@ -98,15 +98,15 @@ describe("buildPipelineTutorialSteps", () => {
     expect(selectors).toContain('[data-testid="pipeline-node-viewport"]');
   });
 
-  it("walks through load → connect → toggle → viewport in order", () => {
+  it("walks through load → connect → edit → viewport in order", () => {
     const titles = steps.map((s) => s.popover?.title ?? "");
     const loadIdx = titles.findIndex((t) => t.includes("Load a structure"));
     const connectIdx = titles.findIndex((t) => t.includes("Connect outputs"));
-    const activeIdx = titles.findIndex((t) => t.includes("Active nodes"));
+    const editIdx = titles.findIndex((t) => t.includes("Select a node"));
     const viewportIdx = titles.findIndex((t) => t.includes("ends in the Viewport"));
     expect(loadIdx).toBeGreaterThan(-1);
     expect(connectIdx).toBeGreaterThan(loadIdx);
-    expect(activeIdx).toBeGreaterThan(connectIdx);
-    expect(viewportIdx).toBeGreaterThan(activeIdx);
+    expect(editIdx).toBeGreaterThan(connectIdx);
+    expect(viewportIdx).toBeGreaterThan(editIdx);
   });
 });

@@ -60,15 +60,18 @@ test.describe("pipeline-editor: webapp default graph", () => {
     await page.getByTitle("Add Node").click();
     await page.getByRole("button", { name: "Replicate", exact: true }).click();
 
-    // The node mounts with its nx/ny/nz repeat inputs.
-    const node = page.locator('[data-testid="pipeline-node-replicate"]').first();
-    await expect(node).toBeVisible();
-    await expect(page.locator('[data-testid="replicate-node-nx"]').first()).toBeVisible();
-    await expect(page.locator('[data-testid="replicate-node-ny"]').first()).toBeVisible();
-    await expect(page.locator('[data-testid="replicate-node-nz"]').first()).toBeVisible();
+    // The seed graph already has a Replicate node; the new one is selected,
+    // so its nx/ny/nz repeat inputs are the ones shown in the properties pane.
+    await expect(page.locator('[data-testid="pipeline-node-replicate"]')).toHaveCount(2);
+    await expect(
+      page.locator('[data-testid="pipeline-node-replicate"][data-selected="true"]'),
+    ).toBeVisible();
+    await expect(page.locator('[data-testid="replicate-node-nx"]:visible')).toHaveCount(1);
+    await expect(page.locator('[data-testid="replicate-node-ny"]:visible')).toHaveCount(1);
+    await expect(page.locator('[data-testid="replicate-node-nz"]:visible')).toHaveCount(1);
 
     // Repeat count edits are accepted.
-    const nx = page.locator('[data-testid="replicate-node-nx"]').first();
+    const nx = page.locator('[data-testid="replicate-node-nx"]:visible');
     await nx.fill("2");
     await expect(nx).toHaveValue("2");
   });
@@ -76,9 +79,11 @@ test.describe("pipeline-editor: webapp default graph", () => {
   test("seeded Wrap node exposes its mode toggle and accepts a change", async ({ page }) => {
     await page.locator('[data-testid="pipeline-editor-tab-editor"]').click();
 
-    // The default seed graph carries a pass-through Wrap node.
+    // The default seed graph carries a pass-through Wrap node; selecting its
+    // card opens its form in the properties pane.
     const node = page.locator('[data-testid="pipeline-node-wrap"]').first();
     await expect(node).toBeVisible();
+    await node.click();
     const mode = page.locator('[data-testid="wrap-node-mode"]').first();
     await expect(mode).toBeVisible();
     await expect(mode).toHaveValue("none");
@@ -109,6 +114,7 @@ test.describe("pipeline-editor: webapp default graph", () => {
     // Toggle the seeded Wrap node to unwrap and wait for the re-execute to
     // reach the renderer.
     await page.locator('[data-testid="pipeline-editor-tab-editor"]').click();
+    await page.locator('[data-testid="pipeline-node-wrap"]').first().click();
     const epoch = (await getReadyState(page)).renderEpoch;
     await page.locator('[data-testid="wrap-node-mode"]').first().selectOption("unwrap");
     await waitForReady(page, { untilEpoch: epoch + 1, timeout: 10_000 });
@@ -136,6 +142,7 @@ test.describe("pipeline-editor: webapp default graph", () => {
     // The default seed graph carries a Symmetry node in expand mode.
     const node = page.locator('[data-testid="pipeline-node-symmetry"]').first();
     await expect(node).toBeVisible();
+    await node.click();
     const mode = page.locator('[data-testid="symmetry-node-mode"]').first();
     await expect(mode).toBeVisible();
     await expect(mode).toHaveValue("expand");
@@ -303,10 +310,10 @@ test.describe("pipeline-editor: webapp default graph", () => {
   });
 });
 
-// Layout and compact mode. These assert geometry on the DOM rather than
+// Layout and properties pane. These assert geometry on the DOM rather than
 // pixels: the point is that nodes do not overlap, the graph fits the panel,
-// and collapsing actually shrinks it.
-test.describe("pipeline-editor: layout and compact mode", () => {
+// and the properties pane edits the selected node.
+test.describe("pipeline-editor: layout and properties pane", () => {
   type Box = { id: string; x: number; y: number; w: number; h: number };
 
   async function nodeBoxes(page: import("playwright/test").Page): Promise<Box[]> {
@@ -372,52 +379,43 @@ test.describe("pipeline-editor: layout and compact mode", () => {
     }
   });
 
-  test("Compact collapses every node to a summary and Expand restores the forms", async ({
-    page,
-  }) => {
-    const nodes = page.locator(".react-flow__node [data-testid^='pipeline-node-'][data-node-id]");
-    const count = await nodes.count();
+  test("selecting a card opens its form in the properties pane", async ({ page }) => {
+    await expect(page.locator('[data-testid="pipeline-properties-empty"]')).toBeVisible();
 
-    await page.locator('[data-testid="pipeline-editor-compact"]').click();
-    await expect(page.locator('[data-node-id][data-collapsed="true"]')).toHaveCount(count);
-    await expect(page.locator('[data-testid="pipeline-node-summary"]')).toHaveCount(count);
+    const card = page.locator(
+      '[data-node-id="protein-filter"][data-testid="pipeline-node-filter"]',
+    );
+    await expect(card.locator('[data-testid="pipeline-node-summary"]')).toHaveText(
+      'resname != "HOH"',
+    );
+    await card.click();
+    await expect(card).toHaveAttribute("data-selected", "true");
+
+    const header = page.locator('[data-testid="pipeline-properties-header"]');
+    await expect(header).toContainText("Filter");
+    const form = page.locator(
+      '[data-testid="pipeline-properties-form"][data-node-id="protein-filter"]',
+    );
+    await expect(form).toBeVisible();
+    // Only the selected node's form is shown.
     await expect(
-      page.locator('[data-node-id="protein-filter"] [data-testid="pipeline-node-summary"]'),
-    ).toHaveText('resname != "HOH"');
-    await expect(page.locator('[data-testid="pipeline-editor-compact"]')).toHaveText(/Expand/);
-    await settle(page);
-    expect(overlapping(await nodeBoxes(page))).toEqual([]);
+      page.locator('[data-testid="pipeline-properties-form"][data-node-id="water-filter"]'),
+    ).toBeHidden();
 
-    await page.locator('[data-testid="pipeline-editor-compact"]').click();
-    await expect(page.locator('[data-node-id][data-collapsed="false"]')).toHaveCount(count);
-    await expect(page.locator('[data-testid="pipeline-node-summary"]')).toHaveCount(0);
-    await settle(page);
-    expect(overlapping(await nodeBoxes(page))).toEqual([]);
+    // Editing in the pane updates the card's summary.
+    const query = form.locator("input").first();
+    await query.fill('resname == "ALA"');
+    await query.press("Enter");
+    await expect(card.locator('[data-testid="pipeline-node-summary"]')).toHaveText(
+      'resname == "ALA"',
+    );
   });
 
-  test("expanding one collapsed node pushes the nodes below it down", async ({ page }) => {
-    await page.locator('[data-testid="pipeline-editor-compact"]').click();
-    await settle(page);
-    const before = await nodeBoxes(page);
-    const target = before.find((b) => b.id === "protein-filter")!;
-
-    await page
-      .locator('[data-node-id="protein-filter"] [data-testid="pipeline-node-collapse"]')
-      .click();
-    await expect(page.locator('[data-node-id="protein-filter"]')).toHaveAttribute(
-      "data-collapsed",
-      "false",
-    );
-    await settle(page);
-    const after = await nodeBoxes(page);
-    expect(overlapping(after)).toEqual([]);
-
-    // Every node that started below the filter moved down; none above moved.
-    for (const b of before) {
-      const a = after.find((x) => x.id === b.id)!;
-      if (b.id === target.id) continue;
-      if (b.y >= target.y + target.h - 1) expect(a.y, b.id).toBeGreaterThan(b.y);
-      else expect(a.y, b.id).toBeCloseTo(b.y, 0);
-    }
+  test("the enable switch in the pane disables the node's card", async ({ page }) => {
+    const card = page.locator('[data-node-id="water-modify"]').first();
+    await card.click();
+    await page.locator('[data-testid="pipeline-properties-header"] [role="switch"]').click();
+    await expect(card).toHaveAttribute("data-enabled", "false");
+    await expect(card).toContainText("Off");
   });
 });

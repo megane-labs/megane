@@ -23,7 +23,7 @@ const sliderStyle: React.CSSProperties = {
 };
 
 const valueStyle: React.CSSProperties = {
-  fontSize: 19,
+  fontSize: 12,
   fontWeight: 500,
   color: "var(--megane-primary)",
   minWidth: 50,
@@ -31,7 +31,7 @@ const valueStyle: React.CSSProperties = {
 };
 
 const labelStyle: React.CSSProperties = {
-  fontSize: 17,
+  fontSize: 12,
   fontWeight: 500,
   color: "var(--megane-text-secondary)",
   marginBottom: 3,

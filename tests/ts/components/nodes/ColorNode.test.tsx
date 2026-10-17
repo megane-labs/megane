@@ -3,7 +3,7 @@ import { render, screen, fireEvent, cleanup } from "@testing-library/react";
 import { usePipelineStore } from "@/pipeline/store";
 import { ColorNode } from "@/components/nodes/ColorNode";
 import type { ColorParams } from "@/pipeline/types";
-import { seedPipelineStore } from "./_helpers";
+import { seedPipelineStore, renderCard } from "./_helpers";
 
 vi.mock("@xyflow/react", () => import("./_xyflowMock"));
 
@@ -82,7 +82,7 @@ describe("ColorNode", () => {
 
   it("renders inside a NodeShell with the Color title", () => {
     const seeded = seedPipelineStore("color", { id: "c1" });
-    render(<ColorNode {...nodeProps("c1", seeded.data.params as ColorParams)} />);
+    renderCard(<ColorNode {...nodeProps("c1", seeded.data.params as ColorParams)} />);
     expect(screen.getByText("Color")).toBeInTheDocument();
   });
 

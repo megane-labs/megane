@@ -40,7 +40,7 @@ export function StreamingNode({ id, data }: NodeProps<Node<PipelineNodeData>>) {
           />
           <span
             style={{
-              fontSize: 19,
+              fontSize: 12,
               fontWeight: 500,
               color: connected ? "#22c55e" : "var(--megane-danger)",
             }}

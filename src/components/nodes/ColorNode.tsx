@@ -11,14 +11,14 @@ import { useScopedPipelineStore } from "../../stores/MeganeProvider";
 import { NodeShell } from "./NodeShell";
 
 const labelStyle: React.CSSProperties = {
-  fontSize: 17,
+  fontSize: 12,
   fontWeight: 500,
   color: "var(--megane-text-secondary)",
   marginBottom: 3,
 };
 
 const selectStyle: React.CSSProperties = {
-  fontSize: 14,
+  fontSize: 11,
   color: "var(--megane-text-body)",
   background: "var(--megane-surface-muted)",
   border: "1px solid var(--megane-border-strong)",

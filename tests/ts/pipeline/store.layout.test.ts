@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach } from "vitest";
-import type { Node, NodeChange } from "@xyflow/react";
+import type { Node } from "@xyflow/react";
 import { usePipelineStore } from "@/pipeline/store";
 import type { PipelineNodeData } from "@/pipeline/execute";
 import type { SerializedPipeline } from "@/pipeline/types";
@@ -18,20 +18,11 @@ function node(id: string, y: number, height: number, x = 0): PNode {
 }
 
 function seed(nodes: PNode[]): void {
-  usePipelineStore.setState({ nodes, edges: [], pendingReflow: {}, layoutPending: false });
+  usePipelineStore.setState({ nodes, edges: [], layoutPending: false });
 }
 
 function byId(id: string): PNode {
   return usePipelineStore.getState().nodes.find((n) => n.id === id)!;
-}
-
-function resize(id: string, height: number): void {
-  const change: NodeChange<PNode> = {
-    type: "dimensions",
-    id,
-    dimensions: { width: 340, height },
-  };
-  usePipelineStore.getState().onNodesChange([change]);
 }
 
 const STACKED: SerializedPipeline = {
@@ -65,70 +56,29 @@ const STACKED: SerializedPipeline = {
   ],
 } as unknown as SerializedPipeline;
 
-describe("pipeline store — collapsing nodes", () => {
+describe("pipeline store — selectNode", () => {
   beforeEach(() => {
-    seed([node("a", 0, 200), node("b", 300, 100), node("side", 0, 150, 400)]);
+    seed([node("a", 0, 100), node("b", 200, 100)]);
   });
 
-  it("toggleNodeCollapsed flips the flag and queues a reflow", () => {
-    usePipelineStore.getState().toggleNodeCollapsed("a");
-    expect(byId("a").data.collapsed).toBe(true);
-    expect(usePipelineStore.getState().pendingReflow).toEqual({ a: true });
-    usePipelineStore.getState().toggleNodeCollapsed("a");
-    expect(byId("a").data.collapsed).toBe(false);
+  it("selects exactly one node and clears the selection with null", () => {
+    usePipelineStore.getState().selectNode("a");
+    expect(byId("a").selected).toBe(true);
+    expect(byId("b").selected).toBeFalsy();
+    const untouched = byId("a");
+    usePipelineStore.getState().selectNode("b");
+    expect(byId("a").selected).toBe(false);
+    expect(byId("b").selected).toBe(true);
+    expect(untouched).not.toBe(byId("a"));
+    usePipelineStore.getState().selectNode(null);
+    expect(usePipelineStore.getState().nodes.some((n) => n.selected)).toBe(false);
   });
 
-  it("pulls the nodes below up when a collapsed node shrinks", () => {
-    usePipelineStore.getState().toggleNodeCollapsed("a");
-    resize("a", 80);
-    expect(byId("a").measured?.height).toBe(80);
-    // b started below a's old bottom (200): moves up by 120.
-    expect(byId("b").position.y).toBe(180);
-    // side shares a's rank (same top): stays put.
-    expect(byId("side").position.y).toBe(0);
-    expect(usePipelineStore.getState().pendingReflow).toEqual({});
-  });
-
-  it("pushes the nodes below down when a node expands", () => {
-    usePipelineStore.getState().toggleNodeCollapsed("a");
-    resize("a", 350);
-    expect(byId("b").position.y).toBe(450);
-  });
-
-  it("does not reflow on resizes it did not ask for", () => {
-    resize("a", 80);
-    expect(byId("b").position.y).toBe(300);
-  });
-
-  it("ignores a pending reflow without a previous measurement or a size change", () => {
-    seed([{ ...node("a", 0, 200), measured: undefined }, node("b", 300, 100)]);
-    usePipelineStore.getState().toggleNodeCollapsed("a");
-    resize("a", 80);
-    expect(byId("b").position.y).toBe(300);
-
-    seed([node("a", 0, 200), node("b", 300, 100)]);
-    usePipelineStore.getState().toggleNodeCollapsed("a");
-    resize("a", 200);
-    expect(byId("b").position.y).toBe(300);
-    expect(usePipelineStore.getState().pendingReflow).toEqual({});
-  });
-
-  it("setAllNodesCollapsed collapses and expands every node", () => {
-    usePipelineStore.getState().toggleNodeCollapsed("a");
-    usePipelineStore.getState().setAllNodesCollapsed(true);
-    expect(usePipelineStore.getState().nodes.every((n) => n.data.collapsed === true)).toBe(true);
-    expect(usePipelineStore.getState().pendingReflow).toEqual({});
-    const unchanged = byId("a");
-    usePipelineStore.getState().setAllNodesCollapsed(true);
-    expect(byId("a")).toBe(unchanged);
-    usePipelineStore.getState().setAllNodesCollapsed(false);
-    expect(usePipelineStore.getState().nodes.every((n) => n.data.collapsed === false)).toBe(true);
-  });
-
-  it("does not serialize the collapsed flag", () => {
-    usePipelineStore.getState().setAllNodesCollapsed(true);
-    const json = JSON.stringify(usePipelineStore.getState().serialize());
-    expect(json).not.toContain("collapsed");
+  it("leaves nodes whose selection does not change untouched", () => {
+    usePipelineStore.getState().selectNode("a");
+    const b = byId("b");
+    usePipelineStore.getState().selectNode("a");
+    expect(byId("b")).toBe(b);
   });
 });
 

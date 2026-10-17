@@ -1,89 +1,88 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
-import { render, screen, fireEvent, cleanup } from "@testing-library/react";
+import { render, screen, cleanup } from "@testing-library/react";
 import { usePipelineStore } from "@/pipeline/store";
 import { NodeShell } from "@/components/nodes/NodeShell";
 import { NODE_TYPE_LABELS, NODE_PORTS, DATA_TYPE_COLORS } from "@/pipeline/types";
-import { seedPipelineStore } from "./_helpers";
+import { seedPipelineStore, renderCard } from "./_helpers";
 
 vi.mock("@xyflow/react", () => import("./_xyflowMock"));
 
-describe("NodeShell", () => {
+function shell(props: Partial<React.ComponentProps<typeof NodeShell>> = {}): React.ReactElement {
+  return (
+    <NodeShell id="n1" nodeType="filter" enabled {...props}>
+      {props.children ?? <div data-testid="child-content">form</div>}
+    </NodeShell>
+  );
+}
+
+describe("NodeShell — properties mode (default)", () => {
   beforeEach(() => {
     cleanup();
     seedPipelineStore("filter", { id: "n1" });
   });
 
-  it("renders the human-readable title for the node type", () => {
-    render(
-      <NodeShell id="n1" nodeType="filter" enabled>
-        <div>body</div>
-      </NodeShell>,
-    );
+  it("renders only the form, tagged with the node id", () => {
+    render(shell());
+    const form = screen.getByTestId("pipeline-properties-form");
+    expect(form).toHaveAttribute("data-node-id", "n1");
+    expect(screen.getByTestId("child-content")).toHaveTextContent("form");
+    expect(screen.queryByText(NODE_TYPE_LABELS.filter)).toBeNull();
+    expect(screen.queryAllByTestId(/^handle-/)).toHaveLength(0);
+  });
+});
+
+describe("NodeShell — card mode", () => {
+  beforeEach(() => {
+    cleanup();
+    seedPipelineStore("filter", { id: "n1", params: { query: 'resname == "HOH"' } });
+  });
+
+  it("renders the title and the parameter summary but not the form", () => {
+    renderCard(shell());
     expect(screen.getByText(NODE_TYPE_LABELS.filter)).toBeInTheDocument();
+    expect(screen.getByTestId("pipeline-node-summary")).toHaveTextContent('resname == "HOH"');
+    expect(screen.queryByTestId("child-content")).toBeNull();
   });
 
-  it("forwards children into the body", () => {
-    render(
-      <NodeShell id="n1" nodeType="filter" enabled>
-        <div data-testid="child-content">hello</div>
-      </NodeShell>,
-    );
-    expect(screen.getByTestId("child-content")).toHaveTextContent("hello");
-  });
-
-  it("sets data-testid, data-node-id, data-enabled attributes", () => {
-    render(
-      <NodeShell id="n1" nodeType="filter" enabled>
-        <div />
-      </NodeShell>,
-    );
+  it("sets data-testid, data-node-id, data-enabled and data-selected", () => {
+    renderCard(shell());
     const root = screen.getByTestId("pipeline-node-filter");
     expect(root).toHaveAttribute("data-node-id", "n1");
     expect(root).toHaveAttribute("data-enabled", "true");
+    expect(root).toHaveAttribute("data-selected", "false");
   });
 
-  it("reflects disabled state in data-enabled", () => {
-    render(
-      <NodeShell id="n1" nodeType="filter" enabled={false}>
-        <div />
-      </NodeShell>,
-    );
-    expect(screen.getByTestId("pipeline-node-filter")).toHaveAttribute("data-enabled", "false");
+  it("marks the selected node", () => {
+    usePipelineStore.setState({
+      nodes: usePipelineStore.getState().nodes.map((n) => ({ ...n, selected: true })),
+    });
+    renderCard(shell());
+    expect(screen.getByTestId("pipeline-node-filter")).toHaveAttribute("data-selected", "true");
+  });
+
+  it("shows an Off badge and a dashed border when disabled", () => {
+    renderCard(shell({ enabled: false }));
+    const root = screen.getByTestId("pipeline-node-filter");
+    expect(root).toHaveAttribute("data-enabled", "false");
+    expect(screen.getByText("Off")).toBeInTheDocument();
+    expect(root.style.border).toContain("dashed");
   });
 
   it("renders one Handle per input and output port from NODE_PORTS", () => {
     seedPipelineStore("viewport", { id: "v1" });
-    render(
-      <NodeShell id="v1" nodeType="viewport" enabled>
-        <div />
-      </NodeShell>,
-    );
-    const ports = NODE_PORTS.viewport;
-    for (const port of ports.inputs) {
+    renderCard(shell({ id: "v1", nodeType: "viewport" }));
+    for (const port of NODE_PORTS.viewport.inputs) {
       expect(screen.getByTestId(`handle-target-${port.name}`)).toBeInTheDocument();
     }
-    expect(ports.outputs).toHaveLength(0);
     expect(screen.queryAllByTestId(/^handle-source-/)).toHaveLength(0);
   });
 
-  it("renders source/target handles correctly for filter (1 in, 1 out)", () => {
-    render(
-      <NodeShell id="n1" nodeType="filter" enabled>
-        <div />
-      </NodeShell>,
-    );
-    expect(screen.getByTestId("handle-target-in")).toBeInTheDocument();
-    expect(screen.getByTestId("handle-source-out")).toBeInTheDocument();
-  });
-
-  it("colors handles by their port dataType", () => {
-    render(
-      <NodeShell id="n1" nodeType="filter" enabled>
-        <div />
-      </NodeShell>,
-    );
+  it("colors handles by their port dataType and names them on hover", () => {
+    renderCard(shell());
     const inHandle = screen.getByTestId("handle-target-in");
     expect(inHandle.style.background).toBe(toRgb(DATA_TYPE_COLORS.particle));
+    expect(inHandle).toHaveTextContent("In");
+    expect(screen.getByTestId("handle-source-out")).toBeInTheDocument();
   });
 
   it("grays out handles listed in disabledPorts", () => {
@@ -91,131 +90,31 @@ describe("NodeShell", () => {
       id: "ls1",
       params: { fileName: null, hasTrajectory: false, hasCell: false },
     });
-    render(
-      <NodeShell
-        id="ls1"
-        nodeType="load_structure"
-        enabled
-        disabledPorts={new Set(["trajectory", "cell"])}
-      >
-        <div />
-      </NodeShell>,
+    renderCard(
+      shell({ id: "ls1", nodeType: "load_structure", disabledPorts: new Set(["trajectory"]) }),
     );
-    const trajectoryHandle = screen.getByTestId("handle-source-trajectory");
-    const particleHandle = screen.getByTestId("handle-source-particle");
-    expect(trajectoryHandle.style.background).toBe("var(--megane-border-strong)");
-    expect(particleHandle.style.background).toBe(toRgb(DATA_TYPE_COLORS.particle));
+    expect(screen.getByTestId("handle-source-trajectory").style.background).toBe(
+      "var(--megane-border-strong)",
+    );
+    expect(screen.getByTestId("handle-source-particle").style.background).toBe(
+      toRgb(DATA_TYPE_COLORS.particle),
+    );
   });
 
-  it("clicking the enable toggle invokes toggleNode(id)", () => {
-    const toggleNode = vi.fn();
-    usePipelineStore.setState({ toggleNode });
-    render(
-      <NodeShell id="n1" nodeType="filter" enabled>
-        <div />
-      </NodeShell>,
-    );
-    const toggle = screen.getByTitle("Disable node");
-    fireEvent.click(toggle);
-    expect(toggleNode).toHaveBeenCalledTimes(1);
-    expect(toggleNode).toHaveBeenCalledWith("n1");
-  });
-
-  it("toggle title flips between Disable and Enable based on enabled flag", () => {
-    const { rerender } = render(
-      <NodeShell id="n1" nodeType="filter" enabled>
-        <div />
-      </NodeShell>,
-    );
-    expect(screen.getByTitle("Disable node")).toBeInTheDocument();
-    rerender(
-      <NodeShell id="n1" nodeType="filter" enabled={false}>
-        <div />
-      </NodeShell>,
-    );
-    expect(screen.getByTitle("Enable node")).toBeInTheDocument();
-  });
-
-  it("renders a delete button that calls removeNode(id)", () => {
-    const removeNode = vi.fn();
-    usePipelineStore.setState({ removeNode });
-    render(
-      <NodeShell id="n1" nodeType="filter" enabled>
-        <div />
-      </NodeShell>,
-    );
-    const deleteBtn = screen.getByTitle("Remove node");
-    fireEvent.click(deleteBtn);
-    expect(removeNode).toHaveBeenCalledWith("n1");
-  });
-
-  it("hides the delete button for the viewport node type", () => {
+  it("alternates port-name rows when a node has many ports", () => {
     seedPipelineStore("viewport", { id: "v1" });
-    render(
-      <NodeShell id="v1" nodeType="viewport" enabled>
-        <div />
-      </NodeShell>,
-    );
-    expect(screen.queryByTitle("Remove node")).toBeNull();
+    renderCard(shell({ id: "v1", nodeType: "viewport" }));
+    const first = screen.getByTestId("handle-target-particle").firstElementChild as HTMLElement;
+    const second = screen.getByTestId("handle-target-bond").firstElementChild as HTMLElement;
+    expect(first.style.top).not.toBe(second.style.top);
   });
 
-  it("shows no error indicator when nodeErrors is empty", () => {
-    render(
-      <NodeShell id="n1" nodeType="filter" enabled>
-        <div />
-      </NodeShell>,
-    );
-    // The error indicator renders a literal "!" character; absence asserted by text.
-    expect(screen.queryByText("!")).toBeNull();
+  it("shows no status dot without errors", () => {
+    renderCard(shell());
+    expect(screen.queryByTestId("pipeline-node-status")).toBeNull();
   });
 
-  it("shows error indicator when an error is registered for this node id", () => {
-    seedPipelineStore("filter", {
-      id: "n1",
-      errors: [{ severity: "error", message: "Invalid query" }],
-    });
-    render(
-      <NodeShell id="n1" nodeType="filter" enabled>
-        <div />
-      </NodeShell>,
-    );
-    expect(screen.getByText("!")).toBeInTheDocument();
-  });
-
-  it("error indicator tooltip toggles on hover", () => {
-    seedPipelineStore("filter", {
-      id: "n1",
-      errors: [{ severity: "error", message: "Invalid query" }],
-    });
-    render(
-      <NodeShell id="n1" nodeType="filter" enabled>
-        <div />
-      </NodeShell>,
-    );
-    expect(screen.queryByText("Invalid query")).toBeNull();
-    const indicator = screen.getByText("!");
-    fireEvent.mouseEnter(indicator);
-    expect(screen.getByText("Invalid query")).toBeInTheDocument();
-    fireEvent.mouseLeave(indicator);
-    expect(screen.queryByText("Invalid query")).toBeNull();
-  });
-
-  it("error indicator uses warning color when only warnings are present", () => {
-    seedPipelineStore("filter", {
-      id: "n1",
-      errors: [{ severity: "warning", message: "Just a warning" }],
-    });
-    render(
-      <NodeShell id="n1" nodeType="filter" enabled>
-        <div />
-      </NodeShell>,
-    );
-    const indicator = screen.getByText("!");
-    // Amber #f59e0b → rgb(245, 158, 11)
-    expect(indicator.style.color).toBe("rgb(245, 158, 11)");
-  });
-
-  it("error indicator uses error color when any severity is error", () => {
+  it("shows a red status dot listing the messages when an error is registered", () => {
     seedPipelineStore("filter", {
       id: "n1",
       errors: [
@@ -223,41 +122,28 @@ describe("NodeShell", () => {
         { severity: "error", message: "boom" },
       ],
     });
-    render(
-      <NodeShell id="n1" nodeType="filter" enabled>
-        <div />
-      </NodeShell>,
+    renderCard(shell());
+    const dot = screen.getByTestId("pipeline-node-status");
+    expect(dot.style.background).toBe("var(--megane-danger)");
+    expect(dot).toHaveAttribute("title", "warn\nboom");
+    expect(screen.getByTestId("pipeline-node-filter").style.border).toContain(
+      "var(--megane-danger)",
     );
-    const indicator = screen.getByText("!");
-    // The theme's danger red, so it follows dark mode.
-    expect(indicator.style.color).toBe("var(--megane-danger)");
   });
 
-  it("collapses to a one-line summary and expands back", () => {
-    seedPipelineStore("filter", { id: "n1", params: { query: 'resname == "HOH"' } });
-    render(
-      <NodeShell id="n1" nodeType="filter" enabled>
-        <div data-testid="child-content">form</div>
-      </NodeShell>,
-    );
-    const root = screen.getByTestId("pipeline-node-filter");
-    expect(root).toHaveAttribute("data-collapsed", "false");
-    expect(screen.queryByTestId("pipeline-node-summary")).toBeNull();
+  it("uses the warning color when only warnings are present", () => {
+    seedPipelineStore("filter", { id: "n1", errors: [{ severity: "warning", message: "w" }] });
+    renderCard(shell());
+    expect(screen.getByTestId("pipeline-node-status").style.background).toBe("rgb(245, 158, 11)");
+  });
 
-    const toggle = screen.getByTestId("pipeline-node-collapse");
-    expect(toggle).toHaveAttribute("aria-expanded", "true");
-    fireEvent.click(toggle);
-
-    expect(root).toHaveAttribute("data-collapsed", "true");
-    expect(screen.getByTestId("pipeline-node-summary")).toHaveTextContent('resname == "HOH"');
-    expect(screen.getByTestId("pipeline-node-collapse")).toHaveAttribute("aria-expanded", "false");
-    // The form stays mounted (so its local state survives) but is hidden.
-    expect(screen.getByTestId("child-content").parentElement!.style.display).toBe("none");
-    expect(usePipelineStore.getState().nodes[0].data.collapsed).toBe(true);
-
-    fireEvent.click(screen.getByTestId("pipeline-node-collapse"));
-    expect(root).toHaveAttribute("data-collapsed", "false");
-    expect(screen.getByTestId("child-content").parentElement!.style.display).toBe("");
+  it("uses a monospace summary only for query nodes", () => {
+    renderCard(shell());
+    expect(screen.getByTestId("pipeline-node-summary").style.fontFamily).toContain("monospace");
+    cleanup();
+    seedPipelineStore("wrap", { id: "w1" });
+    renderCard(shell({ id: "w1", nodeType: "wrap" }));
+    expect(screen.getByTestId("pipeline-node-summary").style.fontFamily).toBe("");
   });
 });
 

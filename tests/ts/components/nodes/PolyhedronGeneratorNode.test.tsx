@@ -23,7 +23,6 @@ describe("PolyhedronGeneratorNode", () => {
 
   it("contains mesh appearance controls but no coordination search controls", () => {
     render(<PolyhedronGeneratorNode {...props()} />);
-    expect(screen.getByText("Polyhedra")).toBeInTheDocument();
     expect(screen.getByLabelText("Opacity")).toBeInTheDocument();
     expect(screen.queryByLabelText("Neighbor search range")).toBeNull();
     expect(screen.queryByLabelText("Cutoff tolerance")).toBeNull();

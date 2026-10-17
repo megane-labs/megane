@@ -37,6 +37,19 @@ describe("summarizeNodeParams", () => {
     expect(summarizeNodeParams(params("load_volumetric", { fileName: "esp.cube" }))).toBe(
       "esp.cube",
     );
+    expect(
+      summarizeNodeParams(
+        params("load_volumetric", {
+          fileName: "esp.cube",
+          volumetricData: { type: "volumetric", nx: 40, ny: 41, nz: 42 },
+        }),
+      ),
+    ).toBe("esp.cube · 40×41×42 voxels");
+    expect(
+      summarizeNodeParams(
+        params("load_volumetric", { fileName: "spec.dx", parseError: "not a grid" }),
+      ),
+    ).toBe("spec.dx · load failed");
   });
 
   it("shows filter queries, defaulting to all atoms", () => {

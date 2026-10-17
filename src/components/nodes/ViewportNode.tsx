@@ -16,7 +16,7 @@ const toggleRowStyle: React.CSSProperties = {
   display: "flex",
   alignItems: "center",
   justifyContent: "space-between",
-  fontSize: 19,
+  fontSize: 12,
   color: "var(--megane-text-body)",
   padding: "3px 0",
 };

@@ -3,7 +3,7 @@ import { render, screen, fireEvent, cleanup } from "@testing-library/react";
 import { usePipelineStore } from "@/pipeline/store";
 import { RepresentationNode } from "@/components/nodes/RepresentationNode";
 import type { RepresentationParams } from "@/pipeline/types";
-import { seedPipelineStore } from "./_helpers";
+import { seedPipelineStore, renderCard } from "./_helpers";
 
 vi.mock("@xyflow/react", () => import("./_xyflowMock"));
 
@@ -71,7 +71,9 @@ describe("RepresentationNode", () => {
 
   it("renders inside a NodeShell with the Representation title", () => {
     const seeded = seedPipelineStore("representation", { id: "r1" });
-    render(<RepresentationNode {...nodeProps("r1", seeded.data.params as RepresentationParams)} />);
+    renderCard(
+      <RepresentationNode {...nodeProps("r1", seeded.data.params as RepresentationParams)} />,
+    );
     expect(screen.getByText("Representation")).toBeInTheDocument();
   });
 

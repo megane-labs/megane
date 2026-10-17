@@ -5,7 +5,7 @@ import { StreamingNode } from "@/components/nodes/StreamingNode";
 import type { StreamingParams } from "@/pipeline/types";
 import type { Snapshot } from "@/types";
 import type { FrameProvider } from "@/pipeline/types";
-import { seedPipelineStore } from "./_helpers";
+import { seedPipelineStore, renderCard } from "./_helpers";
 
 vi.mock("@xyflow/react", () => import("./_xyflowMock"));
 
@@ -57,7 +57,7 @@ describe("StreamingNode", () => {
 
   it("renders the Streaming title", () => {
     const seeded = seedPipelineStore("streaming", { id: "s1" });
-    render(<StreamingNode {...nodeProps("s1", seeded.data.params as StreamingParams)} />);
+    renderCard(<StreamingNode {...nodeProps("s1", seeded.data.params as StreamingParams)} />);
     expect(screen.getByText("Streaming")).toBeInTheDocument();
   });
 
@@ -135,7 +135,7 @@ describe("StreamingNode", () => {
 
   it("disables the bond / trajectory / cell handles when streaming data lacks them", () => {
     const seeded = seedPipelineStore("streaming", { id: "s1" });
-    render(<StreamingNode {...nodeProps("s1", seeded.data.params as StreamingParams)} />);
+    renderCard(<StreamingNode {...nodeProps("s1", seeded.data.params as StreamingParams)} />);
 
     const disabledColor = "var(--megane-border-strong)"; // theme-aware gray
     expect(screen.getByTestId("handle-source-bond").style.background).toBe(disabledColor);
@@ -159,7 +159,7 @@ describe("StreamingNode", () => {
         },
       },
     });
-    render(<StreamingNode {...nodeProps("s1", seeded.data.params as StreamingParams)} />);
+    renderCard(<StreamingNode {...nodeProps("s1", seeded.data.params as StreamingParams)} />);
 
     const disabledColor = "var(--megane-border-strong)";
     expect(screen.getByTestId("handle-source-bond").style.background).not.toBe(disabledColor);

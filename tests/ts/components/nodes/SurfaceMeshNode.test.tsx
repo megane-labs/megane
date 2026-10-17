@@ -3,7 +3,7 @@ import { render, screen, fireEvent, cleanup } from "@testing-library/react";
 import { usePipelineStore } from "@/pipeline/store";
 import { SurfaceMeshNode } from "@/components/nodes/SurfaceMeshNode";
 import type { SurfaceMeshParams } from "@/pipeline/types";
-import { seedPipelineStore } from "./_helpers";
+import { seedPipelineStore, renderCard } from "./_helpers";
 
 vi.mock("@xyflow/react", () => import("./_xyflowMock"));
 
@@ -29,7 +29,7 @@ describe("SurfaceMeshNode", () => {
 
   it("renders the Surface Mesh title", () => {
     const seeded = seedPipelineStore("surface_mesh", { id: "sm1" });
-    render(<SurfaceMeshNode {...nodeProps("sm1", seeded.data.params as SurfaceMeshParams)} />);
+    renderCard(<SurfaceMeshNode {...nodeProps("sm1", seeded.data.params as SurfaceMeshParams)} />);
     expect(screen.getByText("Surface Mesh")).toBeInTheDocument();
   });
 

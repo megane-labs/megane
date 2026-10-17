@@ -101,13 +101,10 @@ export interface PipelineStore {
   updateNodeParams: (id: string, params: Record<string, unknown>) => void;
   toggleNode: (id: string) => void;
   /**
-   * Collapse a node to its header and a one-line parameter summary, or expand
-   * it back to the full form. Nodes below it shift by the height difference
-   * once xyflow re-measures it, so the column neither overlaps nor gaps.
+   * Make `id` the only selected node (null clears the selection). The
+   * editor's properties pane edits the selected node.
    */
-  toggleNodeCollapsed: (id: string) => void;
-  /** Collapse or expand every node at once (the editor's Compact toggle). */
-  setAllNodesCollapsed: (collapsed: boolean) => void;
+  selectNode: (id: string | null) => void;
 
   // Pipeline execution
   execute: () => void;
@@ -170,11 +167,6 @@ export interface PipelineStore {
    * `autoLayout` once xyflow has measured every node, which clears it.
    */
   layoutPending: boolean;
-  /**
-   * Nodes whose collapse state just flipped and whose next re-measurement
-   * should push the nodes below them by the height difference.
-   */
-  pendingReflow: Record<string, true>;
 
   // Reset
   reset: () => void;
@@ -238,32 +230,6 @@ function deserializeAndPlace(json: SerializedPipeline): {
   return { nodes: getLayoutedElements(nodes, edges).nodes, edges, layoutPending: true };
 }
 
-/**
- * Shift every node that starts below `id`'s old bottom edge by the change in
- * its height, so expanding a node pushes the column down instead of drawing
- * over it, and collapsing one closes the gap. Side-by-side nodes in the same
- * rank start above that edge and stay put. `before` holds the pre-change
- * nodes, whose `measured` height is the old one.
- */
-function reflowBelow(
-  nodes: Node<PipelineNodeData>[],
-  before: Node<PipelineNodeData>[],
-  id: string,
-  newHeight: number,
-): Node<PipelineNodeData>[] {
-  const old = before.find((n) => n.id === id);
-  const oldHeight = old?.measured?.height;
-  if (!old || oldHeight === undefined) return nodes;
-  const delta = newHeight - oldHeight;
-  if (delta === 0) return nodes;
-  const oldBottom = old.position.y + oldHeight;
-  return nodes.map((n) =>
-    n.id !== id && n.position.y >= oldBottom - 1
-      ? { ...n, position: { x: n.position.x, y: n.position.y + delta } }
-      : n,
-  );
-}
-
 /** Free a lazy trajectory provider's worker decoder when it is replaced/cleared. */
 function disposeIfLazy(provider: FrameProvider | null | undefined): void {
   if (provider instanceof LazyFrameProvider) provider.dispose();
@@ -272,7 +238,6 @@ function disposeIfLazy(provider: FrameProvider | null | undefined): void {
 export const pipelineStateCreator: StateCreator<PipelineStore> = (set, get, api) => ({
   ...createInitialGraph(),
   layoutPending: true,
-  pendingReflow: {},
   viewportState: { ...DEFAULT_VIEWPORT_STATE },
   nodeErrors: {},
   editRevision: 0,
@@ -414,20 +379,9 @@ export const pipelineStateCreator: StateCreator<PipelineStore> = (set, get, api)
       return true;
     });
     if (filtered.length === 0) return;
-    set((state) => {
-      let next = applyNodeChanges(filtered, state.nodes);
-      let pendingReflow = state.pendingReflow;
-      for (const change of filtered) {
-        if (change.type !== "dimensions" || !change.dimensions) continue;
-        if (!pendingReflow[change.id]) continue;
-        const { [change.id]: _, ...rest } = pendingReflow;
-        pendingReflow = rest;
-        next = reflowBelow(next, state.nodes, change.id, change.dimensions.height);
-      }
-      return pendingReflow === state.pendingReflow
-        ? { nodes: next }
-        : { nodes: next, pendingReflow };
-    });
+    set((state) => ({
+      nodes: applyNodeChanges(filtered, state.nodes),
+    }));
     // Only re-execute pipeline for structural changes (node removal),
     // not for position/dimension/selection changes which don't affect pipeline logic.
     if (filtered.some((c) => c.type === "remove")) {
@@ -548,22 +502,11 @@ export const pipelineStateCreator: StateCreator<PipelineStore> = (set, get, api)
     get().execute();
   },
 
-  toggleNodeCollapsed: (id) => {
+  selectNode: (id) => {
     set((state) => ({
       nodes: state.nodes.map((n) =>
-        n.id === id ? { ...n, data: { ...n.data, collapsed: n.data.collapsed !== true } } : n,
+        (n.id === id) === (n.selected === true) ? n : { ...n, selected: n.id === id },
       ),
-      pendingReflow: { ...state.pendingReflow, [id]: true },
-    }));
-  },
-
-  setAllNodesCollapsed: (collapsed) => {
-    set((state) => ({
-      nodes: state.nodes.map((n) =>
-        (n.data.collapsed === true) === collapsed ? n : { ...n, data: { ...n.data, collapsed } },
-      ),
-      // The caller re-runs the whole layout, so no per-node reflow.
-      pendingReflow: {},
     }));
   },
 
@@ -642,7 +585,6 @@ export const pipelineStateCreator: StateCreator<PipelineStore> = (set, get, api)
       nodes,
       edges,
       layoutPending,
-      pendingReflow: {},
       viewportState: { ...DEFAULT_VIEWPORT_STATE },
       ...CLEARED_EXECUTION_CONTEXT,
     });
@@ -662,7 +604,6 @@ export const pipelineStateCreator: StateCreator<PipelineStore> = (set, get, api)
       nodes,
       edges,
       layoutPending,
-      pendingReflow: {},
       viewportState: { ...DEFAULT_VIEWPORT_STATE },
       ...CLEARED_EXECUTION_CONTEXT,
       nodeSnapshots: { ...nodeSnapshots },
@@ -754,7 +695,7 @@ export const pipelineStateCreator: StateCreator<PipelineStore> = (set, get, api)
   autoLayout: () => {
     const { nodes, edges } = get();
     const { nodes: layoutedNodes } = getLayoutedElements(nodes, edges);
-    set({ nodes: layoutedNodes, layoutPending: !allNodesMeasured(nodes), pendingReflow: {} });
+    set({ nodes: layoutedNodes, layoutPending: !allNodesMeasured(nodes) });
   },
 
   reset: () => {
@@ -765,7 +706,6 @@ export const pipelineStateCreator: StateCreator<PipelineStore> = (set, get, api)
       nodes: def.nodes,
       edges: def.edges,
       layoutPending: true,
-      pendingReflow: {},
       viewportState: { ...DEFAULT_VIEWPORT_STATE },
       ...CLEARED_EXECUTION_CONTEXT,
     });

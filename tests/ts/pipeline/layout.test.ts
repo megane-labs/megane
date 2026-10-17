@@ -5,7 +5,6 @@ import {
   allNodesMeasured,
   ESTIMATED_NODE_WIDTH,
   ESTIMATED_NODE_HEIGHT,
-  ESTIMATED_COLLAPSED_NODE_HEIGHT,
 } from "@/pipeline/layout";
 import type { Node, Edge } from "@xyflow/react";
 
@@ -194,14 +193,10 @@ describe("nodeSize", () => {
     });
   });
 
-  it("estimates an unmeasured node, smaller when collapsed", () => {
+  it("estimates an unmeasured node card", () => {
     expect(nodeSize(makeNode("a"))).toEqual({
       width: ESTIMATED_NODE_WIDTH,
       height: ESTIMATED_NODE_HEIGHT,
-    });
-    expect(nodeSize({ ...makeNode("a"), data: { collapsed: true } })).toEqual({
-      width: ESTIMATED_NODE_WIDTH,
-      height: ESTIMATED_COLLAPSED_NODE_HEIGHT,
     });
   });
 });

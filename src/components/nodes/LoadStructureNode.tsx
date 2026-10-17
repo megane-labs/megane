@@ -11,7 +11,7 @@ import type { LoadStructureParams } from "../../pipeline/types";
 import { useScopedPipelineStore, useLoadHandlers } from "../../stores/MeganeProvider";
 import { globalLoadHandlers, type StructureLoadHandler } from "../../stores/loadHandlers";
 import { NodeShell } from "./NodeShell";
-import { smallBtnStyle, fileNameStyle } from "../ui";
+import { nodeButtonStyle, nodeFileNameStyle } from "./formStyles";
 import { useRef, useCallback } from "react";
 // The file-dialog filter can only express extensions, so VASP contributes
 // `.vasp` there. Its extensionless spellings (POSCAR / CONTCAR / XDATCAR) are
@@ -79,13 +79,13 @@ export function LoadStructureNode({ id, data }: NodeProps<Node<PipelineNodeData>
     >
       <div onDrop={handleDrop} onDragOver={handleDragOver}>
         {params.fileName ? (
-          <div data-testid="load-structure-filename" style={fileNameStyle}>
+          <div data-testid="load-structure-filename" style={nodeFileNameStyle}>
             {params.fileName}
           </div>
         ) : (
           <div
             data-testid="load-structure-filename"
-            style={{ fontSize: 20, color: "var(--megane-text-muted)", fontStyle: "italic" }}
+            style={{ fontSize: 13, color: "var(--megane-text-muted)", fontStyle: "italic" }}
           >
             No structure loaded
           </div>
@@ -103,7 +103,7 @@ export function LoadStructureNode({ id, data }: NodeProps<Node<PipelineNodeData>
         )}
         <button
           onClick={() => inputRef.current?.click()}
-          style={{ ...smallBtnStyle, marginTop: 6, width: "100%" }}
+          style={{ ...nodeButtonStyle, marginTop: 6, width: "100%" }}
         >
           Load structure...
         </button>

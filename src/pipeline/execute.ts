@@ -67,11 +67,6 @@ import { executeViewport } from "./executors/viewport";
 export interface PipelineNodeData {
   params: PipelineNodeParams;
   enabled: boolean;
-  /**
-   * Editor-only: draw the node as its header plus a one-line summary. Not
-   * serialized — `serializePipeline` keeps only `params` and `enabled`.
-   */
-  collapsed?: boolean;
   [key: string]: unknown;
 }
 

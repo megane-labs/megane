@@ -1,4 +1,6 @@
 import type { Node, Edge } from "@xyflow/react";
+import { render } from "@testing-library/react";
+import { NodeShellModeContext } from "@/components/nodes/NodeShell";
 import { usePipelineStore } from "@/pipeline/store";
 import type { PipelineNodeData } from "@/pipeline/execute";
 import type { PipelineNodeType, PipelineNodeParams, NodeError } from "@/pipeline/types";
@@ -41,4 +43,12 @@ export function seedPipelineStore<T extends PipelineNodeType>(
   });
 
   return { id, data: { params, enabled } };
+}
+
+/**
+ * Render a node component as the editor graph does: as its compact card
+ * (title, summary, handles) instead of its form.
+ */
+export function renderCard(ui: React.ReactElement) {
+  return render(<NodeShellModeContext.Provider value="card">{ui}</NodeShellModeContext.Provider>);
 }

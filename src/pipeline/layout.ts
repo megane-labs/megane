@@ -16,31 +16,22 @@
 import type { Node, Edge } from "@xyflow/react";
 import Dagre from "@dagrejs/dagre";
 
-/** Fallback width for a node that has not been measured yet. */
-export const ESTIMATED_NODE_WIDTH = 340;
-/** Fallback height for an expanded node that has not been measured yet. */
-export const ESTIMATED_NODE_HEIGHT = 160;
-/** Fallback height for a collapsed (compact) node that has not been measured yet. */
-export const ESTIMATED_COLLAPSED_NODE_HEIGHT = 80;
+/** Fallback width for a node card that has not been measured yet. */
+export const ESTIMATED_NODE_WIDTH = 208;
+/** Fallback height for a node card that has not been measured yet. */
+export const ESTIMATED_NODE_HEIGHT = 52;
 /** Horizontal gap between nodes in the same rank. */
-const NODE_SEP = 40;
+const NODE_SEP = 24;
 /**
- * Vertical gap between ranks. Port labels hang 22px above inputs and below
- * outputs, so the gap must clear both plus room for the edge to bend.
+ * Vertical gap between ranks: room for the edge to bend, plus the port-name
+ * tags a hovered card shows above its inputs and below its outputs.
  */
-const RANK_SEP = 70;
-
-function isCollapsed(node: Node): boolean {
-  return (node.data as { collapsed?: unknown } | undefined)?.collapsed === true;
-}
+const RANK_SEP = 44;
 
 /** Best known size of a node: measured, then explicit, then estimated. */
 export function nodeSize(node: Node): { width: number; height: number } {
   const width = node.measured?.width ?? node.width ?? ESTIMATED_NODE_WIDTH;
-  const height =
-    node.measured?.height ??
-    node.height ??
-    (isCollapsed(node) ? ESTIMATED_COLLAPSED_NODE_HEIGHT : ESTIMATED_NODE_HEIGHT);
+  const height = node.measured?.height ?? node.height ?? ESTIMATED_NODE_HEIGHT;
   return { width, height };
 }
 

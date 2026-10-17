@@ -10,7 +10,7 @@ import { useScopedPipelineStore } from "../../stores/MeganeProvider";
 import { NodeShell } from "./NodeShell";
 
 const labelStyle: React.CSSProperties = {
-  fontSize: 17,
+  fontSize: 12,
   fontWeight: 500,
   color: "var(--megane-text-secondary)",
   marginBottom: 3,
@@ -23,7 +23,7 @@ const sliderStyle: React.CSSProperties = {
 };
 
 const valueStyle: React.CSSProperties = {
-  fontSize: 18,
+  fontSize: 12,
   fontWeight: 500,
   color: "var(--megane-primary)",
   minWidth: 40,

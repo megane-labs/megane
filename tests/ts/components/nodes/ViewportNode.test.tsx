@@ -3,7 +3,7 @@ import { render, screen, fireEvent, cleanup } from "@testing-library/react";
 import { usePipelineStore } from "@/pipeline/store";
 import { ViewportNode } from "@/components/nodes/ViewportNode";
 import type { ViewportParams } from "@/pipeline/types";
-import { seedPipelineStore } from "./_helpers";
+import { seedPipelineStore, renderCard } from "./_helpers";
 
 vi.mock("@xyflow/react", () => import("./_xyflowMock"));
 
@@ -86,7 +86,7 @@ describe("ViewportNode", () => {
 
   it("renders inside a NodeShell with the Viewport title and no delete button", () => {
     const seeded = seedPipelineStore("viewport", { id: "v1" });
-    render(<ViewportNode {...nodeProps("v1", seeded.data.params as ViewportParams)} />);
+    renderCard(<ViewportNode {...nodeProps("v1", seeded.data.params as ViewportParams)} />);
 
     expect(screen.getByText("Viewport")).toBeInTheDocument();
     expect(screen.queryByTitle("Remove node")).toBeNull();

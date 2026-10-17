@@ -9,14 +9,15 @@ import type { PipelineNodeData } from "../../pipeline/execute";
 import type { AddBondParams } from "../../pipeline/types";
 import { useScopedPipelineStore } from "../../stores/MeganeProvider";
 import { NodeShell } from "./NodeShell";
-import { TabSelector, smallBtnStyle, fileNameStyle } from "../ui";
+import { TabSelector } from "../ui";
+import { nodeButtonStyle, nodeFileNameStyle } from "./formStyles";
 import { parseTopBonds, parsePsfBonds } from "../../parsers/structure";
 import { DEFAULT_VDW_BOND_FACTOR } from "../../parsers/inferBondsJS";
 import type { BondSource } from "../../types";
 import { useRef, useCallback } from "react";
 
 const sectionLabelStyle: React.CSSProperties = {
-  fontSize: 17,
+  fontSize: 12,
   fontWeight: 600,
   color: "var(--megane-text-muted)",
   textTransform: "uppercase",
@@ -42,7 +43,7 @@ const thresholdRowStyle: React.CSSProperties = {
 };
 
 const thresholdLabelStyle: React.CSSProperties = {
-  fontSize: 16,
+  fontSize: 12,
   fontWeight: 500,
   color: "var(--megane-text-secondary)",
   flex: 1,
@@ -54,7 +55,7 @@ const thresholdSliderStyle: React.CSSProperties = {
 };
 
 const thresholdValueStyle: React.CSSProperties = {
-  fontSize: 15,
+  fontSize: 11,
   color: "var(--megane-text-secondary)",
   minWidth: 30,
   textAlign: "right",
@@ -87,6 +88,7 @@ export function AddBondNode({ id, data }: NodeProps<Node<PipelineNodeData>>) {
     <NodeShell id={id} nodeType="add_bond" enabled={data.enabled}>
       <div style={sectionLabelStyle}>Source</div>
       <TabSelector<BondSource>
+        size="compact"
         options={[
           { value: "structure", label: "File" },
           { value: "distance", label: "VDW" },
@@ -117,15 +119,15 @@ export function AddBondNode({ id, data }: NodeProps<Node<PipelineNodeData>>) {
       {params.bondSource === "file" && (
         <div style={{ marginTop: 4 }}>
           {params.bondFileName ? (
-            <div style={{ ...fileNameStyle, fontSize: 18 }}>{params.bondFileName}</div>
+            <div style={{ ...nodeFileNameStyle, fontSize: 12 }}>{params.bondFileName}</div>
           ) : (
-            <div style={{ fontSize: 18, color: "var(--megane-text-muted)", fontStyle: "italic" }}>
+            <div style={{ fontSize: 12, color: "var(--megane-text-muted)", fontStyle: "italic" }}>
               No topology loaded
             </div>
           )}
           <button
             onClick={() => inputRef.current?.click()}
-            style={{ ...smallBtnStyle, marginTop: 6, width: "100%" }}
+            style={{ ...nodeButtonStyle, marginTop: 6, width: "100%" }}
           >
             Load .top / .psf...
           </button>

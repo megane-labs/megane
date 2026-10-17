@@ -18,6 +18,7 @@ export function LabelGeneratorNode({ id, data }: NodeProps<Node<PipelineNodeData
   return (
     <NodeShell id={id} nodeType="label_generator" enabled={data.enabled}>
       <TabSelector<"element" | "resname" | "index">
+        size="compact"
         options={[
           { value: "element", label: "Element" },
           { value: "resname", label: "Resname" },

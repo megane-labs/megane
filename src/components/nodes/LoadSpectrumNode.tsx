@@ -9,7 +9,7 @@ import type { PipelineNodeData } from "../../pipeline/execute";
 import type { LoadSpectrumParams } from "../../pipeline/types";
 import { useScopedPipelineStore } from "../../stores/MeganeProvider";
 import { NodeShell } from "./NodeShell";
-import { smallBtnStyle, fileNameStyle } from "../ui";
+import { nodeButtonStyle, nodeFileNameStyle } from "./formStyles";
 import { SPECTRUM_ACCEPT, isSpectrumFileName, parseSpectrum } from "../../parsers/spectrum";
 
 export function LoadSpectrumNode({ id, data }: NodeProps<Node<PipelineNodeData>>) {
@@ -66,13 +66,13 @@ export function LoadSpectrumNode({ id, data }: NodeProps<Node<PipelineNodeData>>
     <NodeShell id={id} nodeType="load_spectrum" enabled={data.enabled}>
       <div data-testid="load-spectrum-dropzone" onDrop={handleDrop} onDragOver={handleDragOver}>
         {params.fileName ? (
-          <div data-testid="load-spectrum-filename" style={fileNameStyle}>
+          <div data-testid="load-spectrum-filename" style={nodeFileNameStyle}>
             {params.fileName}
           </div>
         ) : (
           <div
             data-testid="load-spectrum-filename"
-            style={{ fontSize: 20, color: "var(--megane-text-muted)", fontStyle: "italic" }}
+            style={{ fontSize: 13, color: "var(--megane-text-muted)", fontStyle: "italic" }}
           >
             No spectrum loaded
           </div>
@@ -80,7 +80,7 @@ export function LoadSpectrumNode({ id, data }: NodeProps<Node<PipelineNodeData>>
         {params.fileName && !spectrum && (
           <div
             data-testid="load-spectrum-error"
-            style={{ fontSize: 14, color: "var(--megane-danger)", marginTop: 4 }}
+            style={{ fontSize: 11, color: "var(--megane-danger)", marginTop: 4 }}
           >
             {params.parseError ?? "Parse error — check file format"}
           </div>
@@ -88,7 +88,7 @@ export function LoadSpectrumNode({ id, data }: NodeProps<Node<PipelineNodeData>>
         {spectrum && (
           <div
             data-testid="load-spectrum-summary"
-            style={{ fontSize: 13, color: "var(--megane-text-secondary)", marginTop: 4 }}
+            style={{ fontSize: 11, color: "var(--megane-text-secondary)", marginTop: 4 }}
           >
             {spectrum.dataType || "spectrum"} · {spectrum.x.length} points
             {spectrum.xUnits ? ` · ${spectrum.xUnits}` : ""}
@@ -96,7 +96,7 @@ export function LoadSpectrumNode({ id, data }: NodeProps<Node<PipelineNodeData>>
         )}
         <button
           onClick={() => inputRef.current?.click()}
-          style={{ ...smallBtnStyle, marginTop: 6, width: "100%" }}
+          style={{ ...nodeButtonStyle, marginTop: 6, width: "100%" }}
         >
           Load spectrum...
         </button>

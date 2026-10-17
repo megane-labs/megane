@@ -10,7 +10,7 @@ export function BoundaryCompletionNode({ id, data }: NodeProps<Node<PipelineNode
 
   return (
     <NodeShell id={id} nodeType="boundary_completion" enabled={data.enabled}>
-      <div style={{ display: "flex", flexDirection: "column", gap: 8, fontSize: 16 }}>
+      <div style={{ display: "flex", flexDirection: "column", gap: 8, fontSize: 12 }}>
         <label>
           Complete&nbsp;
           <select
@@ -27,7 +27,7 @@ export function BoundaryCompletionNode({ id, data }: NodeProps<Node<PipelineNode
             <option value="components">Finite connected components</option>
           </select>
         </label>
-        <div style={{ color: "var(--megane-text-secondary)", fontSize: 13, lineHeight: 1.3 }}>
+        <div style={{ color: "var(--megane-text-secondary)", fontSize: 11, lineHeight: 1.3 }}>
           Adds periodic display copies without changing structural coordinates. Infinite periodic
           networks are not expanded in component mode.
         </div>

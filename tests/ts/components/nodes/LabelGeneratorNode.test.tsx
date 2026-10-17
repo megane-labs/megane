@@ -3,7 +3,7 @@ import { render, screen, fireEvent, cleanup } from "@testing-library/react";
 import { usePipelineStore } from "@/pipeline/store";
 import { LabelGeneratorNode } from "@/components/nodes/LabelGeneratorNode";
 import type { LabelGeneratorParams } from "@/pipeline/types";
-import { seedPipelineStore } from "./_helpers";
+import { seedPipelineStore, renderCard } from "./_helpers";
 
 vi.mock("@xyflow/react", () => import("./_xyflowMock"));
 
@@ -40,7 +40,7 @@ describe("LabelGeneratorNode", () => {
 
   it("renders inside a NodeShell with the Labels title", () => {
     const seeded = seedPipelineStore("label_generator", { id: "lg1" });
-    render(
+    renderCard(
       <LabelGeneratorNode {...nodeProps("lg1", seeded.data.params as LabelGeneratorParams)} />,
     );
     expect(screen.getByText("Labels")).toBeInTheDocument();

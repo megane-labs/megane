@@ -36,8 +36,14 @@ export function summarizeNodeParams(params: PipelineNodeParams): string {
       return params.source === "structure"
         ? "Frames from structure"
         : file(params.fileName, "No trajectory");
+    case "load_volumetric": {
+      if (params.parseError) return `${file(params.fileName)} · load failed`;
+      const grid = params.volumetricData;
+      return grid
+        ? `${file(params.fileName)} · ${grid.nx}×${grid.ny}×${grid.nz} voxels`
+        : file(params.fileName);
+    }
     case "load_vector":
-    case "load_volumetric":
     case "load_spectrum":
       return file(params.fileName);
     case "streaming":

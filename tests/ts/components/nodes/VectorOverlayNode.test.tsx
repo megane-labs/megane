@@ -3,7 +3,7 @@ import { render, screen, fireEvent, cleanup } from "@testing-library/react";
 import { usePipelineStore } from "@/pipeline/store";
 import { VectorOverlayNode } from "@/components/nodes/VectorOverlayNode";
 import type { VectorOverlayParams } from "@/pipeline/types";
-import { seedPipelineStore } from "./_helpers";
+import { seedPipelineStore, renderCard } from "./_helpers";
 
 vi.mock("@xyflow/react", () => import("./_xyflowMock"));
 
@@ -29,8 +29,11 @@ describe("VectorOverlayNode", () => {
 
   it("renders the Vectors title and the Scale label", () => {
     const seeded = seedPipelineStore("vector_overlay", { id: "vo1" });
-    render(<VectorOverlayNode {...nodeProps("vo1", seeded.data.params as VectorOverlayParams)} />);
+    const props = nodeProps("vo1", seeded.data.params as VectorOverlayParams);
+    const card = renderCard(<VectorOverlayNode {...props} />);
     expect(screen.getByText("Vectors")).toBeInTheDocument();
+    card.unmount();
+    render(<VectorOverlayNode {...props} />);
     expect(screen.getByText("Scale")).toBeInTheDocument();
   });
 
