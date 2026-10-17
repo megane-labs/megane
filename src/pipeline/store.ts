@@ -26,7 +26,7 @@ import { validatePipeline } from "./validate";
 import { serializePipeline, deserializePipeline } from "./serialize";
 import { createDefaultPipeline, createDemoPipeline, createEmptyPipeline } from "./defaults";
 import { PIPELINE_TEMPLATES } from "./templates";
-import { getLayoutedElements } from "./layout";
+import { getLayoutedElements, allNodesMeasured } from "./layout";
 import { performOpenFile, type OpenFileOptions } from "./openFile";
 import { reconcileInspectorLayers, isInspectorId, type InspectorLayer } from "./inspectorSync";
 import { findPrimaryLoader, loaderEdits } from "./editHistory";
@@ -100,6 +100,14 @@ export interface PipelineStore {
   removeNode: (id: string) => void;
   updateNodeParams: (id: string, params: Record<string, unknown>) => void;
   toggleNode: (id: string) => void;
+  /**
+   * Collapse a node to its header and a one-line parameter summary, or expand
+   * it back to the full form. Nodes below it shift by the height difference
+   * once xyflow re-measures it, so the column neither overlaps nor gaps.
+   */
+  toggleNodeCollapsed: (id: string) => void;
+  /** Collapse or expand every node at once (the editor's Compact toggle). */
+  setAllNodesCollapsed: (collapsed: boolean) => void;
 
   // Pipeline execution
   execute: () => void;
@@ -156,6 +164,17 @@ export interface PipelineStore {
 
   // Layout
   autoLayout: () => void;
+  /**
+   * True while the graph was laid out with estimated node sizes (a template,
+   * the initial graph, a chat-generated pipeline). The editor re-runs
+   * `autoLayout` once xyflow has measured every node, which clears it.
+   */
+  layoutPending: boolean;
+  /**
+   * Nodes whose collapse state just flipped and whose next re-measurement
+   * should push the nodes below them by the height difference.
+   */
+  pendingReflow: Record<string, true>;
 
   // Reset
   reset: () => void;
@@ -197,6 +216,54 @@ const CLEARED_EXECUTION_CONTEXT = {
   nodeStreamingData: {} as Record<string, NodeStreamingData>,
 } as const;
 
+/**
+ * A saved pipeline keeps the user's own node positions, except when it has
+ * none worth keeping: the Python `Pipeline` builder writes every node at
+ * (0, 0), which would stack the whole graph on one spot. Lay such a graph out
+ * (from estimated sizes, refined by the editor once it is measured). The
+ * check reads the saved JSON, because `deserializePipeline` may inject nodes
+ * (an `add_bond`) at an offset that would hide the stacking.
+ */
+function deserializeAndPlace(json: SerializedPipeline): {
+  nodes: Node<PipelineNodeData>[];
+  edges: Edge[];
+  layoutPending: boolean;
+} {
+  const { nodes, edges } = deserializePipeline(json);
+  const positions = json.nodes.map((n) => n.position ?? { x: 0, y: 0 });
+  const [first, ...rest] = positions;
+  const stacked =
+    first !== undefined && rest.length > 0 && rest.every((p) => p.x === first.x && p.y === first.y);
+  if (!stacked) return { nodes, edges, layoutPending: false };
+  return { nodes: getLayoutedElements(nodes, edges).nodes, edges, layoutPending: true };
+}
+
+/**
+ * Shift every node that starts below `id`'s old bottom edge by the change in
+ * its height, so expanding a node pushes the column down instead of drawing
+ * over it, and collapsing one closes the gap. Side-by-side nodes in the same
+ * rank start above that edge and stay put. `before` holds the pre-change
+ * nodes, whose `measured` height is the old one.
+ */
+function reflowBelow(
+  nodes: Node<PipelineNodeData>[],
+  before: Node<PipelineNodeData>[],
+  id: string,
+  newHeight: number,
+): Node<PipelineNodeData>[] {
+  const old = before.find((n) => n.id === id);
+  const oldHeight = old?.measured?.height;
+  if (!old || oldHeight === undefined) return nodes;
+  const delta = newHeight - oldHeight;
+  if (delta === 0) return nodes;
+  const oldBottom = old.position.y + oldHeight;
+  return nodes.map((n) =>
+    n.id !== id && n.position.y >= oldBottom - 1
+      ? { ...n, position: { x: n.position.x, y: n.position.y + delta } }
+      : n,
+  );
+}
+
 /** Free a lazy trajectory provider's worker decoder when it is replaced/cleared. */
 function disposeIfLazy(provider: FrameProvider | null | undefined): void {
   if (provider instanceof LazyFrameProvider) provider.dispose();
@@ -204,6 +271,8 @@ function disposeIfLazy(provider: FrameProvider | null | undefined): void {
 
 export const pipelineStateCreator: StateCreator<PipelineStore> = (set, get, api) => ({
   ...createInitialGraph(),
+  layoutPending: true,
+  pendingReflow: {},
   viewportState: { ...DEFAULT_VIEWPORT_STATE },
   nodeErrors: {},
   editRevision: 0,
@@ -345,9 +414,20 @@ export const pipelineStateCreator: StateCreator<PipelineStore> = (set, get, api)
       return true;
     });
     if (filtered.length === 0) return;
-    set((state) => ({
-      nodes: applyNodeChanges(filtered, state.nodes),
-    }));
+    set((state) => {
+      let next = applyNodeChanges(filtered, state.nodes);
+      let pendingReflow = state.pendingReflow;
+      for (const change of filtered) {
+        if (change.type !== "dimensions" || !change.dimensions) continue;
+        if (!pendingReflow[change.id]) continue;
+        const { [change.id]: _, ...rest } = pendingReflow;
+        pendingReflow = rest;
+        next = reflowBelow(next, state.nodes, change.id, change.dimensions.height);
+      }
+      return pendingReflow === state.pendingReflow
+        ? { nodes: next }
+        : { nodes: next, pendingReflow };
+    });
     // Only re-execute pipeline for structural changes (node removal),
     // not for position/dimension/selection changes which don't affect pipeline logic.
     if (filtered.some((c) => c.type === "remove")) {
@@ -468,6 +548,25 @@ export const pipelineStateCreator: StateCreator<PipelineStore> = (set, get, api)
     get().execute();
   },
 
+  toggleNodeCollapsed: (id) => {
+    set((state) => ({
+      nodes: state.nodes.map((n) =>
+        n.id === id ? { ...n, data: { ...n.data, collapsed: n.data.collapsed !== true } } : n,
+      ),
+      pendingReflow: { ...state.pendingReflow, [id]: true },
+    }));
+  },
+
+  setAllNodesCollapsed: (collapsed) => {
+    set((state) => ({
+      nodes: state.nodes.map((n) =>
+        (n.data.collapsed === true) === collapsed ? n : { ...n, data: { ...n.data, collapsed } },
+      ),
+      // The caller re-runs the whole layout, so no per-node reflow.
+      pendingReflow: {},
+    }));
+  },
+
   execute: () => {
     const {
       nodes,
@@ -530,7 +629,7 @@ export const pipelineStateCreator: StateCreator<PipelineStore> = (set, get, api)
   },
 
   deserialize: (json) => {
-    const { nodes, edges } = deserializePipeline(json);
+    const { nodes, edges, layoutPending } = deserializeAndPlace(json);
     // Clear all execution context tied to the previous graph: per-node
     // snapshots are keyed by node ID and would orphan across opens, but
     // worse, the global snapshot/frames/vectors fields would silently
@@ -542,6 +641,8 @@ export const pipelineStateCreator: StateCreator<PipelineStore> = (set, get, api)
     set({
       nodes,
       edges,
+      layoutPending,
+      pendingReflow: {},
       viewportState: { ...DEFAULT_VIEWPORT_STATE },
       ...CLEARED_EXECUTION_CONTEXT,
     });
@@ -549,7 +650,7 @@ export const pipelineStateCreator: StateCreator<PipelineStore> = (set, get, api)
   },
 
   loadPipeline: (json, nodeSnapshots) => {
-    const { nodes, edges } = deserializePipeline(json);
+    const { nodes, edges, layoutPending } = deserializeAndPlace(json);
     // Pick a primary snapshot for the legacy `snapshot` field so the
     // Viewport's loadSnapshot path still has data to render. Iterate in
     // node-id order to be deterministic across hosts.
@@ -560,6 +661,8 @@ export const pipelineStateCreator: StateCreator<PipelineStore> = (set, get, api)
     set({
       nodes,
       edges,
+      layoutPending,
+      pendingReflow: {},
       viewportState: { ...DEFAULT_VIEWPORT_STATE },
       ...CLEARED_EXECUTION_CONTEXT,
       nodeSnapshots: { ...nodeSnapshots },
@@ -636,6 +739,7 @@ export const pipelineStateCreator: StateCreator<PipelineStore> = (set, get, api)
     set({
       nodes,
       edges,
+      layoutPending: true,
       viewportState: { ...DEFAULT_VIEWPORT_STATE },
       pendingTemplateId: templateId,
       ...CLEARED_EXECUTION_CONTEXT,
@@ -650,7 +754,7 @@ export const pipelineStateCreator: StateCreator<PipelineStore> = (set, get, api)
   autoLayout: () => {
     const { nodes, edges } = get();
     const { nodes: layoutedNodes } = getLayoutedElements(nodes, edges);
-    set({ nodes: layoutedNodes });
+    set({ nodes: layoutedNodes, layoutPending: !allNodesMeasured(nodes), pendingReflow: {} });
   },
 
   reset: () => {
@@ -660,6 +764,8 @@ export const pipelineStateCreator: StateCreator<PipelineStore> = (set, get, api)
     set({
       nodes: def.nodes,
       edges: def.edges,
+      layoutPending: true,
+      pendingReflow: {},
       viewportState: { ...DEFAULT_VIEWPORT_STATE },
       ...CLEARED_EXECUTION_CONTEXT,
     });

@@ -1,6 +1,8 @@
 import { describe, it, expect, vi, afterEach, beforeEach } from "vitest";
 import { render, screen, fireEvent, cleanup, waitFor } from "@testing-library/react";
 
+const fitViewMock = vi.hoisted(() => vi.fn());
+
 // Mock heavy children that depend on Three.js / WebGL / WASM so the editor
 // chrome (toolbar, theme button, dropdowns) renders cleanly under jsdom.
 vi.mock("@xyflow/react", async () => {
@@ -16,7 +18,7 @@ vi.mock("@xyflow/react", async () => {
     BackgroundVariant: { Dots: "dots" },
     useReactFlow: () => ({
       screenToFlowPosition: () => ({ x: 0, y: 0 }),
-      fitView: () => {},
+      fitView: fitViewMock,
       getZoom: () => 1,
     }),
     Handle: () => null,
@@ -52,6 +54,8 @@ vi.mock("@/pipeline/shareLink", async () => {
 import { PipelineEditor } from "@/components/PipelineEditor";
 import { useThemeStore } from "@/stores/useThemeStore";
 import { usePipelineUIStore } from "@/stores/usePipelineUIStore";
+import { usePipelineStore } from "@/pipeline/store";
+import { defaultParams } from "@/pipeline/types";
 
 beforeEach(() => {
   // The editor toolbar (theme button, dropdowns) is hidden on the Chat tab,
@@ -201,5 +205,74 @@ describe("PipelineEditor — Share button opens dialog", () => {
     expect(alertSpy.mock.calls[0][0]).toContain("Share failed");
     expect(screen.queryByTestId("share-dialog")).toBeNull();
     expect(consoleErrorSpy).toHaveBeenCalled();
+  });
+});
+
+describe("PipelineEditor — layout", () => {
+  const measuredNode = (id: string, y: number) => ({
+    id,
+    type: "filter",
+    position: { x: 0, y },
+    measured: { width: 340, height: 120 },
+    data: { params: defaultParams("filter"), enabled: true },
+  });
+
+  beforeEach(() => {
+    fitViewMock.mockClear();
+    vi.spyOn(window, "requestAnimationFrame").mockImplementation((cb) => {
+      cb(0);
+      return 0;
+    });
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("re-lays out a pending graph once every node is measured, then fits", () => {
+    usePipelineStore.setState({
+      nodes: [measuredNode("a", 0), measuredNode("b", 0)],
+      edges: [{ id: "e", source: "a", target: "b", sourceHandle: "out", targetHandle: "in" }],
+      layoutPending: true,
+    });
+    render(<PipelineEditor collapsed={false} onToggleCollapse={() => {}} />);
+    const state = usePipelineStore.getState();
+    expect(state.layoutPending).toBe(false);
+    const a = state.nodes.find((n) => n.id === "a")!;
+    const b = state.nodes.find((n) => n.id === "b")!;
+    expect(b.position.y).toBeGreaterThan(a.position.y + 120);
+    expect(fitViewMock).toHaveBeenCalled();
+  });
+
+  it("waits while some node is still unmeasured", () => {
+    usePipelineStore.setState({
+      nodes: [measuredNode("a", 0), { ...measuredNode("b", 0), measured: undefined }],
+      edges: [],
+      layoutPending: true,
+    });
+    render(<PipelineEditor collapsed={false} onToggleCollapse={() => {}} />);
+    expect(usePipelineStore.getState().layoutPending).toBe(true);
+    expect(usePipelineStore.getState().nodes[1].position).toEqual({ x: 0, y: 0 });
+  });
+
+  it("Compact collapses every node and Expand restores them", () => {
+    usePipelineStore.setState({
+      nodes: [measuredNode("a", 0), measuredNode("b", 300)],
+      edges: [],
+      layoutPending: false,
+    });
+    render(<PipelineEditor collapsed={false} onToggleCollapse={() => {}} />);
+    const button = screen.getByTestId("pipeline-editor-compact");
+    expect(button).toHaveTextContent("Compact");
+    expect(button).toHaveAttribute("aria-pressed", "false");
+
+    fireEvent.click(button);
+    expect(usePipelineStore.getState().nodes.every((n) => n.data.collapsed === true)).toBe(true);
+    expect(fitViewMock).toHaveBeenCalled();
+    expect(screen.getByTestId("pipeline-editor-compact")).toHaveTextContent("Expand");
+    expect(screen.getByTestId("pipeline-editor-compact")).toHaveAttribute("aria-pressed", "true");
+
+    fireEvent.click(screen.getByTestId("pipeline-editor-compact"));
+    expect(usePipelineStore.getState().nodes.every((n) => n.data.collapsed === false)).toBe(true);
   });
 });

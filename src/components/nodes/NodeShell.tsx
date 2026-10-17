@@ -15,6 +15,7 @@ import {
   NODE_CATEGORY_COLORS,
 } from "../../pipeline/types";
 import { useScopedPipelineStore } from "../../stores/MeganeProvider";
+import { summarizeNodeParams } from "../../pipeline/nodeSummary";
 
 interface NodeShellProps {
   id: string;
@@ -70,6 +71,22 @@ const iconBtnStyle: React.CSSProperties = {
 
 const bodyStyle: React.CSSProperties = {
   padding: "14px 17px",
+};
+
+const collapseBtnStyle: React.CSSProperties = {
+  ...iconBtnStyle,
+  fontSize: 15,
+  padding: "3px 4px",
+  marginRight: -4,
+};
+
+const summaryStyle: React.CSSProperties = {
+  padding: "8px 17px 10px",
+  fontSize: 16,
+  color: "var(--megane-text-secondary)",
+  whiteSpace: "nowrap",
+  overflow: "hidden",
+  textOverflow: "ellipsis",
 };
 
 const baseHandleStyle: React.CSSProperties = {
@@ -184,7 +201,11 @@ function getHandlePosition(index: number, total: number): string {
 export function NodeShell({ id, nodeType, enabled, children, disabledPorts }: NodeShellProps) {
   const toggleNode = useScopedPipelineStore((s) => s.toggleNode);
   const removeNode = useScopedPipelineStore((s) => s.removeNode);
+  const toggleNodeCollapsed = useScopedPipelineStore((s) => s.toggleNodeCollapsed);
   const errors = useScopedPipelineStore((s) => s.nodeErrors[id] ?? EMPTY_ERRORS);
+  const nodeData = useScopedPipelineStore((s) => s.nodes.find((n) => n.id === id)?.data);
+  const collapsed = nodeData?.collapsed === true;
+  const summary = collapsed && nodeData ? summarizeNodeParams(nodeData.params) : null;
   const ports = NODE_PORTS[nodeType];
   const categoryColor = NODE_CATEGORY_COLORS[NODE_CATEGORY[nodeType]];
 
@@ -209,6 +230,7 @@ export function NodeShell({ id, nodeType, enabled, children, disabledPorts }: No
       data-testid={`pipeline-node-${nodeType}`}
       data-node-id={id}
       data-enabled={enabled ? "true" : "false"}
+      data-collapsed={collapsed ? "true" : "false"}
     >
       {/* Input handles */}
       {ports.inputs.map((port, i) => {
@@ -240,7 +262,19 @@ export function NodeShell({ id, nodeType, enabled, children, disabledPorts }: No
         );
       })}
 
-      <div style={headerStyle}>
+      <div style={collapsed ? { ...headerStyle, borderBottom: "none" } : headerStyle}>
+        <button
+          type="button"
+          className="nodrag"
+          data-testid="pipeline-node-collapse"
+          onClick={() => toggleNodeCollapsed(id)}
+          style={collapseBtnStyle}
+          title={collapsed ? "Expand node" : "Collapse node"}
+          aria-label={collapsed ? "Expand node" : "Collapse node"}
+          aria-expanded={!collapsed}
+        >
+          {collapsed ? "\u25B8" : "\u25BE"}
+        </button>
         <span style={titleStyle}>{NODE_TYPE_LABELS[nodeType]}</span>
         {errors.length > 0 && <ErrorIndicator errors={errors} />}
         <div
@@ -276,7 +310,14 @@ export function NodeShell({ id, nodeType, enabled, children, disabledPorts }: No
           </button>
         )}
       </div>
-      <div style={bodyStyle}>{children}</div>
+      {summary !== null && (
+        <div style={summaryStyle} data-testid="pipeline-node-summary" title={summary}>
+          {summary}
+        </div>
+      )}
+      {/* Collapsing hides the form rather than unmounting it, so uncommitted
+          input state and hidden file inputs survive a collapse/expand. */}
+      <div style={collapsed ? { ...bodyStyle, display: "none" } : bodyStyle}>{children}</div>
 
       {/* Output handles */}
       {ports.outputs.map((port, i) => {

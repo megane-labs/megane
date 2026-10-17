@@ -232,6 +232,33 @@ describe("NodeShell", () => {
     // The theme's danger red, so it follows dark mode.
     expect(indicator.style.color).toBe("var(--megane-danger)");
   });
+
+  it("collapses to a one-line summary and expands back", () => {
+    seedPipelineStore("filter", { id: "n1", params: { query: 'resname == "HOH"' } });
+    render(
+      <NodeShell id="n1" nodeType="filter" enabled>
+        <div data-testid="child-content">form</div>
+      </NodeShell>,
+    );
+    const root = screen.getByTestId("pipeline-node-filter");
+    expect(root).toHaveAttribute("data-collapsed", "false");
+    expect(screen.queryByTestId("pipeline-node-summary")).toBeNull();
+
+    const toggle = screen.getByTestId("pipeline-node-collapse");
+    expect(toggle).toHaveAttribute("aria-expanded", "true");
+    fireEvent.click(toggle);
+
+    expect(root).toHaveAttribute("data-collapsed", "true");
+    expect(screen.getByTestId("pipeline-node-summary")).toHaveTextContent('resname == "HOH"');
+    expect(screen.getByTestId("pipeline-node-collapse")).toHaveAttribute("aria-expanded", "false");
+    // The form stays mounted (so its local state survives) but is hidden.
+    expect(screen.getByTestId("child-content").parentElement!.style.display).toBe("none");
+    expect(usePipelineStore.getState().nodes[0].data.collapsed).toBe(true);
+
+    fireEvent.click(screen.getByTestId("pipeline-node-collapse"));
+    expect(root).toHaveAttribute("data-collapsed", "false");
+    expect(screen.getByTestId("child-content").parentElement!.style.display).toBe("");
+  });
 });
 
 /**

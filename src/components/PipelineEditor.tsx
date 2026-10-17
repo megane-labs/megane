@@ -35,6 +35,7 @@ import {
 } from "../pipeline/types";
 import type { NodeCategory } from "../pipeline/types";
 import { PIPELINE_TEMPLATES } from "../pipeline/templates";
+import { allNodesMeasured } from "../pipeline/layout";
 import { CollapsiblePanel } from "./CollapsiblePanel";
 import { LoadStructureNode } from "./nodes/LoadStructureNode";
 import { LoadTrajectoryNode } from "./nodes/LoadTrajectoryNode";
@@ -169,6 +170,24 @@ const IconLayout = (
     <rect x="14" y="3" width="7" height="7" rx="1" />
     <rect x="3" y="14" width="7" height="7" rx="1" />
     <rect x="14" y="14" width="7" height="7" rx="1" />
+  </svg>
+);
+
+const IconCompact = (
+  <svg {...iconProps}>
+    <polyline points="4 14 10 14 10 20" />
+    <polyline points="20 10 14 10 14 4" />
+    <line x1="14" y1="10" x2="21" y2="3" />
+    <line x1="3" y1="21" x2="10" y2="14" />
+  </svg>
+);
+
+const IconExpand = (
+  <svg {...iconProps}>
+    <polyline points="15 3 21 3 21 9" />
+    <polyline points="9 21 3 21 3 15" />
+    <line x1="21" y1="3" x2="14" y2="10" />
+    <line x1="3" y1="21" x2="10" y2="14" />
   </svg>
 );
 
@@ -359,6 +378,7 @@ const addBtnStyle = tintedButtonStyle("59, 130, 246", "var(--megane-primary)");
 const renderBtnStyle = tintedButtonStyle("245, 158, 11", "#f59e0b");
 const templateBtnStyle = tintedButtonStyle("139, 92, 246", "#8b5cf6");
 const layoutBtnStyle = tintedButtonStyle("16, 185, 129", "#10b981");
+const compactBtnStyle = tintedButtonStyle("14, 165, 233", "#0ea5e9");
 const exportBtnStyle = tintedButtonStyle("6, 182, 212", "#06b6d4");
 const importBtnStyle = tintedButtonStyle("99, 102, 241", "#6366f1");
 const shareBtnStyle = tintedButtonStyle("16, 185, 129", "var(--megane-success-text)");
@@ -423,6 +443,12 @@ function PipelineEditorInner({
   const addNode = useScopedPipelineStore((s) => s.addNode);
   const applyTemplate = useScopedPipelineStore((s) => s.applyTemplate);
   const autoLayout = useScopedPipelineStore((s) => s.autoLayout);
+  const setAllNodesCollapsed = useScopedPipelineStore((s) => s.setAllNodesCollapsed);
+  const layoutPending = useScopedPipelineStore((s) => s.layoutPending);
+  const nodesMeasured = useScopedPipelineStore((s) => allNodesMeasured(s.nodes));
+  const allCollapsed = useScopedPipelineStore(
+    (s) => s.nodes.length > 0 && s.nodes.every((n) => n.data.collapsed === true),
+  );
   const deserialize = useScopedPipelineStore((s) => s.deserialize);
   const { fitView } = useReactFlow();
 
@@ -472,6 +498,20 @@ function PipelineEditorInner({
       window.cancelAnimationFrame(rafB);
     };
   }, [mode, fitView]);
+
+  // A template, the initial graph, or a chat pipeline is laid out before
+  // React has drawn it, from estimated node sizes. Once xyflow has measured
+  // every node, lay it out again with the real sizes and re-fit; the RAF lets
+  // ReactFlow adopt the new positions before fitView reads them. No cleanup
+  // cancels that frame: `autoLayout` clears `layoutPending`, which re-runs
+  // this effect right away and would cancel the fit it just scheduled.
+  useEffect(() => {
+    if (!layoutPending || !nodesMeasured) return;
+    autoLayout();
+    window.requestAnimationFrame(() => {
+      fitView({ padding: 0.1, maxZoom: 1.95 });
+    });
+  }, [layoutPending, nodesMeasured, autoLayout, fitView]);
 
   // Auto-dismiss the "pipeline applied" notice after a short delay.
   useEffect(() => {
@@ -582,6 +622,21 @@ function PipelineEditorInner({
       fitView({ padding: 0.1, maxZoom: 1.95, duration: 300 });
     });
   }, [autoLayout, fitView]);
+
+  // Collapse or expand every node, then re-layout once xyflow has
+  // re-measured them: the first frame applies the new DOM sizes (the
+  // ResizeObserver reports them), the second lays out with those sizes.
+  const handleToggleCompact = useCallback(() => {
+    setAllNodesCollapsed(!allCollapsed);
+    window.requestAnimationFrame(() => {
+      window.requestAnimationFrame(() => {
+        autoLayout();
+        window.requestAnimationFrame(() => {
+          fitView({ padding: 0.1, maxZoom: 1.95, duration: 300 });
+        });
+      });
+    });
+  }, [allCollapsed, setAllNodesCollapsed, autoLayout, fitView]);
 
   const handleExport = useCallback(() => {
     const serialized = pipelineApi.getState().serialize();
@@ -700,6 +755,15 @@ function PipelineEditorInner({
         aria-label="Auto Layout"
       >
         {IconLayout} Layout
+      </button>
+      <button
+        data-testid="pipeline-editor-compact"
+        onClick={handleToggleCompact}
+        style={compactBtnStyle}
+        title={allCollapsed ? "Expand all nodes" : "Collapse all nodes to a one-line summary"}
+        aria-pressed={allCollapsed}
+      >
+        {allCollapsed ? IconExpand : IconCompact} {allCollapsed ? "Expand" : "Compact"}
       </button>
       <div style={{ position: "relative" }}>
         <button
