@@ -8,11 +8,35 @@
  * load-structure → load-trajectory → viewport at minimum).
  */
 
-import { test, expect } from "playwright/test";
+import { test, expect, type Page } from "playwright/test";
 import { defaultViewerContract, assertDomContract, waitForReady, getReadyState } from "./lib/setup";
 import { getCameraState } from "./lib/render-utils";
 
 const ATOM_COUNT_CAFFEINE = 3024;
+
+/**
+ * Find an editor edge whose point at `fraction` of its length is not hidden
+ * under a node card, move the pointer there and return the edge id. The ×
+ * button appears at the midpoint on hover, so selecting by click should use
+ * a point away from 0.5.
+ */
+async function hoverExposedEdge(page: Page, fraction: number): Promise<string> {
+  const target = await page.evaluate((f) => {
+    for (const g of document.querySelectorAll<SVGGElement>(".react-flow__edge")) {
+      const path = g.querySelector<SVGPathElement>(".react-flow__edge-path");
+      const ctm = path?.getScreenCTM();
+      if (!path || !ctm) continue;
+      const p = path.getPointAtLength(path.getTotalLength() * f).matrixTransform(ctm);
+      if (g.contains(document.elementFromPoint(p.x, p.y))) {
+        return { id: g.getAttribute("data-id") ?? "", x: p.x, y: p.y };
+      }
+    }
+    return null;
+  }, fraction);
+  expect(target, "expected an edge that is not covered by a node").not.toBeNull();
+  await page.mouse.move(target!.x, target!.y);
+  return target!.id;
+}
 
 // The node kinds the editor surfaces; presence in the default seed
 // graph is not guaranteed for every kind, so the spec only asserts the
@@ -73,6 +97,35 @@ test.describe("pipeline-editor: webapp default graph", () => {
     const nx = page.locator('[data-testid="replicate-node-nx"]:visible');
     await nx.fill("2");
     await expect(nx).toHaveValue("2");
+  });
+
+  test("hovering an edge reveals a × button that deletes it", async ({ page }) => {
+    await page.locator('[data-testid="pipeline-editor-tab-editor"]').click();
+    const edges = page.locator(".react-flow__edge");
+    await expect(edges.first()).toBeVisible();
+    const before = await edges.count();
+
+    const edgeId = await hoverExposedEdge(page, 0.5);
+    const del = page.locator(`[data-testid="pipeline-edge-delete-${edgeId}"]`);
+    await expect(del).toBeVisible();
+    await del.click();
+
+    await expect(edges).toHaveCount(before - 1);
+    await expect(page.locator(`.react-flow__edge[data-id="${edgeId}"]`)).toHaveCount(0);
+  });
+
+  test("the Delete key removes a selected edge", async ({ page }) => {
+    await page.locator('[data-testid="pipeline-editor-tab-editor"]').click();
+    const edges = page.locator(".react-flow__edge");
+    await expect(edges.first()).toBeVisible();
+    const before = await edges.count();
+
+    await hoverExposedEdge(page, 0.25);
+    await page.mouse.down();
+    await page.mouse.up();
+    await expect(page.locator(".react-flow__edge.selected")).toHaveCount(1);
+    await page.keyboard.press("Delete");
+    await expect(edges).toHaveCount(before - 1);
   });
 
   test("seeded Wrap node exposes its mode toggle and accepts a change", async ({ page }) => {
@@ -287,9 +340,7 @@ test.describe("pipeline-editor: webapp default graph", () => {
     const railBox = await rail.boundingBox();
     expect(railBox?.width ?? 0).toBeGreaterThan(0);
     expect(railBox?.width ?? 0).toBeLessThan(60);
-    expect((railBox?.x ?? 0) + (railBox?.width ?? 0)).toBeLessThanOrEqual(
-      (editorBox?.x ?? 0) + 1,
-    );
+    expect((railBox?.x ?? 0) + (railBox?.width ?? 0)).toBeLessThanOrEqual((editorBox?.x ?? 0) + 1);
 
     // Back to Chat: editor pane hides again.
     await chatTab.click();

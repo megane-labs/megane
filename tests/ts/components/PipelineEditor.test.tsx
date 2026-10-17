@@ -2,14 +2,19 @@ import { describe, it, expect, vi, afterEach, beforeEach } from "vitest";
 import { render, screen, fireEvent, cleanup, waitFor } from "@testing-library/react";
 
 const fitViewMock = vi.hoisted(() => vi.fn());
+// Latest props handed to the mocked <ReactFlow>, so tests can drive its
+// callbacks (edge reconnect etc.) directly.
+const reactFlowProps = vi.hoisted(() => ({ current: {} as Record<string, unknown> }));
 
 // Mock heavy children that depend on Three.js / WebGL / WASM so the editor
 // chrome (toolbar, theme button, dropdowns) renders cleanly under jsdom.
 vi.mock("@xyflow/react", async () => {
   const React = await import("react");
   return {
-    ReactFlow: ({ children }: { children?: React.ReactNode }) =>
-      React.createElement("div", { "data-testid": "react-flow" }, children),
+    ReactFlow: (props: { children?: React.ReactNode }) => {
+      reactFlowProps.current = props;
+      return React.createElement("div", { "data-testid": "react-flow" }, props.children);
+    },
     ReactFlowProvider: ({ children }: { children?: React.ReactNode }) =>
       React.createElement("div", null, children),
     MiniMap: () => null,
@@ -444,5 +449,60 @@ describe("PipelineEditor — properties pane", () => {
     fireEvent.mouseDown(screen.getByRole("separator"));
     fireEvent.mouseMove(document, { clientY: 300 });
     expect(screen.getByTestId("pipeline-properties").style.flex).toContain("34%");
+  });
+});
+
+describe("PipelineEditor — edge deletion", () => {
+  type Edge = { id: string; source: string; target: string };
+  type FlowProps = {
+    edges: (Edge & { type?: string })[];
+    deleteKeyCode: string[];
+    onReconnectStart: () => void;
+    onReconnect: (oldEdge: Edge, connection: Record<string, string>) => void;
+    onReconnectEnd: (event: MouseEvent, edge: Edge) => void;
+  };
+  const flow = () => reactFlowProps.current as unknown as FlowProps;
+
+  const reconnectEdge = vi.fn();
+  const removeEdge = vi.fn();
+  beforeEach(() => {
+    reconnectEdge.mockReset();
+    removeEdge.mockReset();
+    usePipelineStore.setState({
+      reconnectEdge,
+      removeEdge,
+      edges: [{ id: "e-a-b", source: "a", target: "b", sourceHandle: "particle" }],
+    });
+  });
+
+  it("renders edges with the deletable edge type and both delete keys", () => {
+    render(<PipelineEditor collapsed={false} onToggleCollapse={() => {}} />);
+    expect(flow().edges.length).toBeGreaterThan(0);
+    expect(flow().edges.every((e) => e.type === "deletable")).toBe(true);
+    expect(flow().deleteKeyCode).toEqual(["Backspace", "Delete"]);
+  });
+
+  it("removes an edge dropped on empty canvas", () => {
+    render(<PipelineEditor collapsed={false} onToggleCollapse={() => {}} />);
+    const edge = flow().edges[0];
+    flow().onReconnectStart();
+    flow().onReconnectEnd(new MouseEvent("mouseup"), edge);
+    expect(removeEdge).toHaveBeenCalledWith(edge.id);
+  });
+
+  it("rewires (and keeps) an edge dropped on another handle", () => {
+    render(<PipelineEditor collapsed={false} onToggleCollapse={() => {}} />);
+    const edge = flow().edges[0];
+    const connection = {
+      source: edge.source,
+      target: "other",
+      sourceHandle: "a",
+      targetHandle: "b",
+    };
+    flow().onReconnectStart();
+    flow().onReconnect(edge, connection);
+    flow().onReconnectEnd(new MouseEvent("mouseup"), edge);
+    expect(reconnectEdge).toHaveBeenCalledWith(edge, connection);
+    expect(removeEdge).not.toHaveBeenCalled();
   });
 });

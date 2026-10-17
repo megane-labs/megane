@@ -19,7 +19,7 @@ import {
   useScopedPipelineUIStore,
   usePipelineStoreApi,
 } from "../stores/MeganeProvider";
-import type { Connection, Node } from "@xyflow/react";
+import type { Connection, Edge, Node } from "@xyflow/react";
 import type { PipelineNodeData } from "../pipeline/execute";
 import "@xyflow/react/dist/style.css";
 import { downloadBlob } from "../renderer/RenderCapture";
@@ -36,6 +36,7 @@ import { NODE_CATEGORY } from "../pipeline/types";
 import { summarizeNodeParams } from "../pipeline/nodeSummary";
 import { allNodesMeasured } from "../pipeline/layout";
 import { CollapsiblePanel } from "./CollapsiblePanel";
+import { edgeTypes } from "./DeletableEdge";
 import { LoadStructureNode } from "./nodes/LoadStructureNode";
 import { LoadTrajectoryNode } from "./nodes/LoadTrajectoryNode";
 import { AddBondNode } from "./nodes/AddBondNode";
@@ -119,6 +120,9 @@ const resizeHandleStyle: React.CSSProperties = {
   zIndex: 20,
   background: "transparent",
 };
+
+/** Backspace (macOS habit) and Delete (Windows/Linux habit) both delete. */
+const DELETE_KEY_CODES = ["Backspace", "Delete"];
 
 /**
  * Determine edge color from the source handle's data type.
@@ -489,6 +493,8 @@ function PipelineEditorInner({
   const onNodesChange = useScopedPipelineStore((s) => s.onNodesChange);
   const onEdgesChange = useScopedPipelineStore((s) => s.onEdgesChange);
   const onConnect = useScopedPipelineStore((s) => s.onConnect);
+  const removeEdge = useScopedPipelineStore((s) => s.removeEdge);
+  const reconnectEdge = useScopedPipelineStore((s) => s.reconnectEdge);
   const addNode = useScopedPipelineStore((s) => s.addNode);
   const applyTemplate = useScopedPipelineStore((s) => s.applyTemplate);
   const autoLayout = useScopedPipelineStore((s) => s.autoLayout);
@@ -644,6 +650,7 @@ function PipelineEditorInner({
       const color = getEdgeColor(sourceNode?.type, edge.sourceHandle ?? null);
       return {
         ...edge,
+        type: "deletable",
         animated: true,
         style: {
           stroke: color,
@@ -652,6 +659,27 @@ function PipelineEditorInner({
       };
     });
   }, [edges, nodes]);
+
+  // Dragging an edge's endpoint off its handle and dropping it on empty
+  // canvas disconnects it; dropping it on another valid handle rewires it.
+  const reconnectSucceeded = useRef(true);
+  const onReconnectStart = useCallback(() => {
+    reconnectSucceeded.current = false;
+  }, []);
+  const onReconnect = useCallback(
+    (oldEdge: Edge, connection: Connection) => {
+      reconnectSucceeded.current = true;
+      reconnectEdge(oldEdge, connection);
+    },
+    [reconnectEdge],
+  );
+  const onReconnectEnd = useCallback(
+    (_: MouseEvent | TouchEvent, edge: Edge) => {
+      if (!reconnectSucceeded.current) removeEdge(edge.id);
+      reconnectSucceeded.current = true;
+    },
+    [removeEdge],
+  );
 
   const handleAddNode = useCallback(
     (type: PipelineNodeType) => {
@@ -839,14 +867,19 @@ function PipelineEditorInner({
                     onNodesChange={onNodesChange}
                     onEdgesChange={onEdgesChange}
                     onConnect={onConnect}
+                    onReconnectStart={onReconnectStart}
+                    onReconnect={onReconnect}
+                    onReconnectEnd={onReconnectEnd}
                     isValidConnection={isValidConnection}
                     nodeTypes={memoizedNodeTypes}
+                    edgeTypes={edgeTypes}
+                    deleteKeyCode={DELETE_KEY_CODES}
                     fitView
                     fitViewOptions={{ padding: 0.1, maxZoom: 1.95 }}
                     minZoom={0.3}
                     maxZoom={2}
                     defaultEdgeOptions={{
-                      type: "bezier",
+                      type: "deletable",
                       animated: true,
                       style: { stroke: "#94a3b8", strokeWidth: 3 },
                     }}

@@ -81,6 +81,85 @@ describe("usePipelineStore", () => {
     });
   });
 
+  describe("removeEdge", () => {
+    const loaderEdge = () =>
+      usePipelineStore
+        .getState()
+        .edges.find(
+          (e) =>
+            e.source === "loader-1" && e.target === "viewport-1" && e.targetHandle === "particle",
+        );
+
+    it("removes only the given edge", () => {
+      const edge = loaderEdge()!;
+      const countBefore = usePipelineStore.getState().edges.length;
+      usePipelineStore.getState().removeEdge(edge.id);
+      expect(usePipelineStore.getState().edges.length).toBe(countBefore - 1);
+      expect(loaderEdge()).toBeUndefined();
+    });
+
+    it("ignores an unknown edge id", () => {
+      const edgesBefore = usePipelineStore.getState().edges;
+      usePipelineStore.getState().removeEdge("no-such-edge");
+      expect(usePipelineStore.getState().edges).toBe(edgesBefore);
+    });
+  });
+
+  describe("reconnectEdge", () => {
+    const loaderEdge = () =>
+      usePipelineStore
+        .getState()
+        .edges.find(
+          (e) =>
+            e.source === "loader-1" && e.target === "viewport-1" && e.targetHandle === "particle",
+        )!;
+
+    it("moves the edge to a new valid target", () => {
+      const filterId = usePipelineStore.getState().addNode("filter" as PipelineNodeType);
+      const old = loaderEdge();
+      const countBefore = usePipelineStore.getState().edges.length;
+      usePipelineStore.getState().reconnectEdge(old, {
+        source: "loader-1",
+        sourceHandle: "particle",
+        target: filterId,
+        targetHandle: "in",
+      });
+      const edges = usePipelineStore.getState().edges;
+      expect(edges.length).toBe(countBefore);
+      expect(edges.find((e) => e.id === old.id)).toBeUndefined();
+      const moved = edges.find((e) => e.target === filterId);
+      expect(moved).toMatchObject({
+        source: "loader-1",
+        sourceHandle: "particle",
+        targetHandle: "in",
+      });
+    });
+
+    it("leaves the edge alone when the new target is incompatible", () => {
+      const old = loaderEdge();
+      const edgesBefore = usePipelineStore.getState().edges;
+      usePipelineStore.getState().reconnectEdge(old, {
+        source: "loader-1",
+        sourceHandle: "particle",
+        target: "viewport-1",
+        targetHandle: "cell",
+      });
+      expect(usePipelineStore.getState().edges).toBe(edgesBefore);
+    });
+
+    it("ignores a connection to a missing node", () => {
+      const old = loaderEdge();
+      const edgesBefore = usePipelineStore.getState().edges;
+      usePipelineStore.getState().reconnectEdge(old, {
+        source: "loader-1",
+        sourceHandle: "particle",
+        target: "ghost",
+        targetHandle: "in",
+      });
+      expect(usePipelineStore.getState().edges).toBe(edgesBefore);
+    });
+  });
+
   describe("updateNodeParams", () => {
     it("updates params for a specific node", () => {
       const id = usePipelineStore.getState().addNode("filter" as PipelineNodeType);
@@ -427,7 +506,9 @@ describe("embedded vector channels (offer / opt-in)", () => {
       { frame: 1, vectors: Float32Array.from([4, 5, 6]) },
     ];
     // Same channel streamed in more frames: the active overlay follows.
-    usePipelineStore.getState().setEmbeddedVectorChannels([{ name: "velocity", frames: newFrames }]);
+    usePipelineStore
+      .getState()
+      .setEmbeddedVectorChannels([{ name: "velocity", frames: newFrames }]);
     expect(usePipelineStore.getState().fileVectors).toBe(newFrames);
     // A new file without the channel deactivates it.
     usePipelineStore.getState().setEmbeddedVectorChannels(null);
