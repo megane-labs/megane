@@ -302,3 +302,122 @@ test.describe("pipeline-editor: webapp default graph", () => {
     expect(reboundBox?.height ?? 0).toBeGreaterThan(100);
   });
 });
+
+// Layout and compact mode. These assert geometry on the DOM rather than
+// pixels: the point is that nodes do not overlap, the graph fits the panel,
+// and collapsing actually shrinks it.
+test.describe("pipeline-editor: layout and compact mode", () => {
+  type Box = { id: string; x: number; y: number; w: number; h: number };
+
+  async function nodeBoxes(page: import("playwright/test").Page): Promise<Box[]> {
+    return page.evaluate(() =>
+      [...document.querySelectorAll<HTMLElement>(".react-flow__node")].map((n) => {
+        const r = n.getBoundingClientRect();
+        return { id: n.dataset.id ?? "", x: r.x, y: r.y, w: r.width, h: r.height };
+      }),
+    );
+  }
+
+  function overlapping(boxes: Box[]): string[] {
+    const hits: string[] = [];
+    for (let i = 0; i < boxes.length; i++) {
+      for (let j = i + 1; j < boxes.length; j++) {
+        const a = boxes[i];
+        const b = boxes[j];
+        if (a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h) {
+          hits.push(`${a.id}/${b.id}`);
+        }
+      }
+    }
+    return hits;
+  }
+
+  async function settle(page: import("playwright/test").Page): Promise<void> {
+    // Layout runs after xyflow measures the nodes, then fitView animates;
+    // wait until two consecutive reads of the node boxes agree.
+    let prev = "";
+    await expect
+      .poll(async () => {
+        const cur = JSON.stringify(await nodeBoxes(page));
+        const stable = cur === prev;
+        prev = cur;
+        return stable;
+      })
+      .toBe(true);
+  }
+
+  test.beforeEach(async ({ page }) => {
+    await page.addInitScript(() => {
+      (globalThis as { __MEGANE_TEST__?: boolean }).__MEGANE_TEST__ = true;
+    });
+    await page.goto("/?test=1", { waitUntil: "domcontentloaded" });
+    await waitForReady(page);
+    await page.locator('[data-testid="pipeline-editor-tab-editor"]').click();
+    await page.locator('[data-testid="pipeline-editor-templates"]').click();
+    await page.locator('[data-testid="pipeline-template-protein"]').click();
+    await settle(page);
+  });
+
+  test("a template is laid out without overlaps and fitted into the panel", async ({ page }) => {
+    const boxes = await nodeBoxes(page);
+    expect(boxes.length).toBeGreaterThan(5);
+    expect(overlapping(boxes)).toEqual([]);
+
+    const flow = (await page.locator(".react-flow").first().boundingBox())!;
+    for (const b of boxes) {
+      expect(b.x, b.id).toBeGreaterThanOrEqual(flow.x - 1);
+      expect(b.y, b.id).toBeGreaterThanOrEqual(flow.y - 1);
+      expect(b.x + b.w, b.id).toBeLessThanOrEqual(flow.x + flow.width + 1);
+      expect(b.y + b.h, b.id).toBeLessThanOrEqual(flow.y + flow.height + 1);
+    }
+  });
+
+  test("Compact collapses every node to a summary and Expand restores the forms", async ({
+    page,
+  }) => {
+    const nodes = page.locator(".react-flow__node [data-testid^='pipeline-node-'][data-node-id]");
+    const count = await nodes.count();
+
+    await page.locator('[data-testid="pipeline-editor-compact"]').click();
+    await expect(page.locator('[data-node-id][data-collapsed="true"]')).toHaveCount(count);
+    await expect(page.locator('[data-testid="pipeline-node-summary"]')).toHaveCount(count);
+    await expect(
+      page.locator('[data-node-id="protein-filter"] [data-testid="pipeline-node-summary"]'),
+    ).toHaveText('resname != "HOH"');
+    await expect(page.locator('[data-testid="pipeline-editor-compact"]')).toHaveText(/Expand/);
+    await settle(page);
+    expect(overlapping(await nodeBoxes(page))).toEqual([]);
+
+    await page.locator('[data-testid="pipeline-editor-compact"]').click();
+    await expect(page.locator('[data-node-id][data-collapsed="false"]')).toHaveCount(count);
+    await expect(page.locator('[data-testid="pipeline-node-summary"]')).toHaveCount(0);
+    await settle(page);
+    expect(overlapping(await nodeBoxes(page))).toEqual([]);
+  });
+
+  test("expanding one collapsed node pushes the nodes below it down", async ({ page }) => {
+    await page.locator('[data-testid="pipeline-editor-compact"]').click();
+    await settle(page);
+    const before = await nodeBoxes(page);
+    const target = before.find((b) => b.id === "protein-filter")!;
+
+    await page
+      .locator('[data-node-id="protein-filter"] [data-testid="pipeline-node-collapse"]')
+      .click();
+    await expect(page.locator('[data-node-id="protein-filter"]')).toHaveAttribute(
+      "data-collapsed",
+      "false",
+    );
+    await settle(page);
+    const after = await nodeBoxes(page);
+    expect(overlapping(after)).toEqual([]);
+
+    // Every node that started below the filter moved down; none above moved.
+    for (const b of before) {
+      const a = after.find((x) => x.id === b.id)!;
+      if (b.id === target.id) continue;
+      if (b.y >= target.y + target.h - 1) expect(a.y, b.id).toBeGreaterThan(b.y);
+      else expect(a.y, b.id).toBeCloseTo(b.y, 0);
+    }
+  });
+});
