@@ -10,7 +10,7 @@ import type { LoadVectorParams } from "../../pipeline/types";
 import { useScopedPipelineStore, useLoadHandlers } from "../../stores/MeganeProvider";
 import { globalLoadHandlers, type VectorLoadHandler } from "../../stores/loadHandlers";
 import { NodeShell } from "./NodeShell";
-import { smallBtnStyle, fileNameStyle } from "../ui";
+import { nodeButtonStyle, nodeFileNameStyle } from "./formStyles";
 import { useRef, useCallback } from "react";
 
 const VECTOR_ACCEPT = ".vec";
@@ -89,15 +89,15 @@ export function LoadVectorNode({ id, data }: NodeProps<Node<PipelineNodeData>>) 
     <NodeShell id={id} nodeType="load_vector" enabled={data.enabled}>
       <div onDrop={handleDrop} onDragOver={handleDragOver}>
         {params.fileName ? (
-          <div style={fileNameStyle}>{params.fileName}</div>
+          <div style={nodeFileNameStyle}>{params.fileName}</div>
         ) : (
-          <div style={{ fontSize: 20, color: "var(--megane-text-muted)", fontStyle: "italic" }}>
+          <div style={{ fontSize: 13, color: "var(--megane-text-muted)", fontStyle: "italic" }}>
             No vector file loaded
           </div>
         )}
         <button
           onClick={() => inputRef.current?.click()}
-          style={{ ...smallBtnStyle, marginTop: 6, width: "100%" }}
+          style={{ ...nodeButtonStyle, marginTop: 6, width: "100%" }}
         >
           Load vectors...
         </button>
@@ -106,7 +106,7 @@ export function LoadVectorNode({ id, data }: NodeProps<Node<PipelineNodeData>>) 
             aria-label="Embedded vector channel"
             value={activeEmbedded ?? ""}
             onChange={(e) => handleEmbeddedSelect(e.target.value)}
-            style={{ marginTop: 6, width: "100%", fontSize: 18 }}
+            style={{ marginTop: 6, width: "100%", fontSize: 12 }}
           >
             <option value="">Embedded channel: off</option>
             {embeddedChannels.map((ch) => (

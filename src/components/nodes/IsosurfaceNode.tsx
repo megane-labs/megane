@@ -20,7 +20,7 @@ const rowStyle: React.CSSProperties = {
 };
 
 const labelStyle: React.CSSProperties = {
-  fontSize: 17,
+  fontSize: 12,
   fontWeight: 500,
   color: "var(--megane-text-secondary)",
   flex: 1,
@@ -29,7 +29,7 @@ const labelStyle: React.CSSProperties = {
 const inputStyle: React.CSSProperties = {
   width: 72,
   padding: "3px 6px",
-  fontSize: 16,
+  fontSize: 12,
   border: "1px solid var(--megane-border-solid)",
   borderRadius: 6,
   background: "var(--megane-surface-raised)",
@@ -53,7 +53,7 @@ const sliderStyle: React.CSSProperties = {
 };
 
 const valueStyle: React.CSSProperties = {
-  fontSize: 14,
+  fontSize: 11,
   color: "var(--megane-text-secondary)",
   minWidth: 32,
   textAlign: "right",
@@ -67,7 +67,7 @@ const checkboxRowStyle: React.CSSProperties = {
 };
 
 const selectStyle: React.CSSProperties = {
-  fontSize: 14,
+  fontSize: 11,
   color: "var(--megane-text-body)",
   background: "var(--megane-surface-muted)",
   border: "1px solid var(--megane-border-strong)",
@@ -237,7 +237,7 @@ export function IsosurfaceNode({ id, data }: NodeProps<Node<PipelineNodeData>>) 
         />
         <label
           htmlFor={`${id}-neg`}
-          style={{ fontSize: 17, color: "var(--megane-text-secondary)" }}
+          style={{ fontSize: 12, color: "var(--megane-text-secondary)" }}
         >
           Show negative lobe
         </label>

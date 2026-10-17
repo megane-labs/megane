@@ -3,7 +3,7 @@ import { render, screen, fireEvent, cleanup } from "@testing-library/react";
 import { usePipelineStore } from "@/pipeline/store";
 import { ReplicateNode } from "@/components/nodes/ReplicateNode";
 import type { ReplicateParams } from "@/pipeline/types";
-import { seedPipelineStore } from "./_helpers";
+import { seedPipelineStore, renderCard } from "./_helpers";
 
 vi.mock("@xyflow/react", () => import("./_xyflowMock"));
 
@@ -67,7 +67,7 @@ describe("ReplicateNode", () => {
 
   it("renders inside a NodeShell with the Replicate title", () => {
     const seeded = seedPipelineStore("replicate", { id: "r1" });
-    render(<ReplicateNode {...nodeProps("r1", seeded.data.params as ReplicateParams)} />);
+    renderCard(<ReplicateNode {...nodeProps("r1", seeded.data.params as ReplicateParams)} />);
     expect(screen.getByText("Replicate")).toBeInTheDocument();
   });
 });

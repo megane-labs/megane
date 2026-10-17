@@ -14,14 +14,14 @@ const rowStyle: React.CSSProperties = {
   display: "flex",
   alignItems: "center",
   justifyContent: "space-between",
-  fontSize: 17,
+  fontSize: 12,
   fontWeight: 500,
   color: "var(--megane-text-secondary)",
   padding: "3px 0",
 };
 
 const selectStyle: React.CSSProperties = {
-  fontSize: 14,
+  fontSize: 11,
   color: "var(--megane-text-body)",
   background: "var(--megane-surface-muted)",
   border: "1px solid var(--megane-border-strong)",

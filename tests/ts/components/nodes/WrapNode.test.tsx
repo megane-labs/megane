@@ -3,7 +3,7 @@ import { render, screen, fireEvent, cleanup } from "@testing-library/react";
 import { usePipelineStore } from "@/pipeline/store";
 import { WrapNode } from "@/components/nodes/WrapNode";
 import type { WrapParams } from "@/pipeline/types";
-import { seedPipelineStore } from "./_helpers";
+import { seedPipelineStore, renderCard } from "./_helpers";
 
 vi.mock("@xyflow/react", () => import("./_xyflowMock"));
 
@@ -61,7 +61,7 @@ describe("WrapNode", () => {
 
   it("renders inside a NodeShell with the Wrap / Unwrap title", () => {
     const seeded = seedPipelineStore("wrap", { id: "w1" });
-    render(<WrapNode {...nodeProps("w1", seeded.data.params as WrapParams)} />);
+    renderCard(<WrapNode {...nodeProps("w1", seeded.data.params as WrapParams)} />);
     expect(screen.getByText("Wrap / Unwrap")).toBeInTheDocument();
   });
 

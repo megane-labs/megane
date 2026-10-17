@@ -3,7 +3,7 @@ import { render, screen, fireEvent, cleanup } from "@testing-library/react";
 import { usePipelineStore } from "@/pipeline/store";
 import { SymmetryNode } from "@/components/nodes/SymmetryNode";
 import type { SymmetryParams } from "@/pipeline/types";
-import { seedPipelineStore } from "./_helpers";
+import { seedPipelineStore, renderCard } from "./_helpers";
 
 vi.mock("@xyflow/react", () => import("./_xyflowMock"));
 
@@ -60,7 +60,7 @@ describe("SymmetryNode", () => {
 
   it("renders inside a NodeShell with the Symmetry title", () => {
     const seeded = seedPipelineStore("symmetry", { id: "s1" });
-    render(<SymmetryNode {...nodeProps("s1", seeded.data.params as SymmetryParams)} />);
+    renderCard(<SymmetryNode {...nodeProps("s1", seeded.data.params as SymmetryParams)} />);
     expect(screen.getByText("Symmetry")).toBeInTheDocument();
   });
 

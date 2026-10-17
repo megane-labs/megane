@@ -11,7 +11,7 @@ import type { LoadTrajectoryParams } from "../../pipeline/types";
 import { useScopedPipelineStore, useLoadHandlers } from "../../stores/MeganeProvider";
 import { globalLoadHandlers, type TrajectoryLoadHandler } from "../../stores/loadHandlers";
 import { NodeShell } from "./NodeShell";
-import { smallBtnStyle, fileNameStyle } from "../ui";
+import { nodeButtonStyle, nodeFileNameStyle } from "./formStyles";
 import { useRef, useCallback } from "react";
 import { TRAJECTORY_ACCEPT, TRAJECTORY_EXTS } from "../../parsers/fileNames";
 
@@ -72,24 +72,24 @@ export function LoadTrajectoryNode({ id, data }: NodeProps<Node<PipelineNodeData
           // XYZ/PDB/.traj). Shown here — instead of removing the node — so
           // the routing decision stays visible; loading a trajectory file
           // switches back to it.
-          <div data-testid="load-trajectory-filename" style={fileNameStyle}>
+          <div data-testid="load-trajectory-filename" style={nodeFileNameStyle}>
             Frames from structure file
           </div>
         ) : params.fileName ? (
-          <div data-testid="load-trajectory-filename" style={fileNameStyle}>
+          <div data-testid="load-trajectory-filename" style={nodeFileNameStyle}>
             {params.fileName}
           </div>
         ) : (
           <div
             data-testid="load-trajectory-filename"
-            style={{ fontSize: 20, color: "var(--megane-text-muted)", fontStyle: "italic" }}
+            style={{ fontSize: 13, color: "var(--megane-text-muted)", fontStyle: "italic" }}
           >
             No trajectory loaded
           </div>
         )}
         <button
           onClick={() => inputRef.current?.click()}
-          style={{ ...smallBtnStyle, marginTop: 6, width: "100%" }}
+          style={{ ...nodeButtonStyle, marginTop: 6, width: "100%" }}
         >
           Load trajectory...
         </button>

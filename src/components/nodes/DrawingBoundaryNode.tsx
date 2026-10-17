@@ -11,7 +11,7 @@ const inputStyle: React.CSSProperties = {
   borderRadius: 5,
   background: "var(--megane-surface-raised)",
   color: "inherit",
-  fontSize: 16,
+  fontSize: 12,
 };
 
 const AXES = [
@@ -29,7 +29,7 @@ export function DrawingBoundaryNode({ id, data }: NodeProps<Node<PipelineNodeDat
       <div
         style={{
           color: "var(--megane-text-secondary)",
-          fontSize: 13,
+          fontSize: 11,
           lineHeight: 1.3,
           marginBottom: 8,
         }}
@@ -45,8 +45,8 @@ export function DrawingBoundaryNode({ id, data }: NodeProps<Node<PipelineNodeDat
         }}
       >
         <span />
-        <span style={{ fontSize: 14, color: "var(--megane-text-secondary)" }}>Min</span>
-        <span style={{ fontSize: 14, color: "var(--megane-text-secondary)" }}>Max</span>
+        <span style={{ fontSize: 11, color: "var(--megane-text-secondary)" }}>Min</span>
+        <span style={{ fontSize: 11, color: "var(--megane-text-secondary)" }}>Max</span>
         {AXES.map(([label, minKey, maxKey]) => (
           <div key={label} style={{ display: "contents" }}>
             <strong style={{ color: "var(--megane-text-body)" }}>{label}</strong>

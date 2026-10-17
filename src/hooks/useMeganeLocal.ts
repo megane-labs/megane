@@ -257,7 +257,7 @@ export function useMeganeLocal(): MeganeLocalState {
         if (!loaderNode) {
           const raw = createMinimalStructurePipeline();
           const { nodes, edges } = getLayoutedElements(raw.nodes, raw.edges);
-          pipelineApi.setState({ nodes, edges });
+          pipelineApi.setState({ nodes, edges, layoutPending: true });
           loaderNode = pipelineApi.getState().nodes.find((n) => n.type === "load_structure");
         }
         if (loaderNode) {

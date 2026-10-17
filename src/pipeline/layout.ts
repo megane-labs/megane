@@ -1,18 +1,44 @@
 /**
  * Auto-layout utility for pipeline DAG using dagre (Sugiyama algorithm).
  * Computes layered node positions optimized for top-to-bottom data flow.
- * Constrains layout to at most MAX_COLS nodes per rank row for a narrow,
- * vertically-oriented result that fits the pipeline panel.
+ *
+ * Node sizes come from xyflow's measured dimensions when the node has been
+ * rendered, and from a per-state estimate otherwise (a template or a chat
+ * pipeline is laid out before React has drawn it). The editor re-runs the
+ * layout once every node is measured — see `layoutPending` in the store — so
+ * the estimate only has to be close enough for the first frame.
+ *
+ * dagre's coordinates are kept as-is: each node sits under its parents, so
+ * the edges run straight down instead of zig-zagging across re-centred rows.
+ * Within a rank, nodes are top-aligned so their input handles line up.
  */
 
 import type { Node, Edge } from "@xyflow/react";
 import Dagre from "@dagrejs/dagre";
 
-const NODE_WIDTH = 380;
-const NODE_HEIGHT = 280;
-const HORIZONTAL_GAP = 30;
-const VERTICAL_GAP = 80;
-const MAX_COLS = 2;
+/** Fallback width for a node card that has not been measured yet. */
+export const ESTIMATED_NODE_WIDTH = 208;
+/** Fallback height for a node card that has not been measured yet. */
+export const ESTIMATED_NODE_HEIGHT = 52;
+/** Horizontal gap between nodes in the same rank. */
+const NODE_SEP = 24;
+/**
+ * Vertical gap between ranks: room for the edge to bend, plus the port-name
+ * tags a hovered card shows above its inputs and below its outputs.
+ */
+const RANK_SEP = 44;
+
+/** Best known size of a node: measured, then explicit, then estimated. */
+export function nodeSize(node: Node): { width: number; height: number } {
+  const width = node.measured?.width ?? node.width ?? ESTIMATED_NODE_WIDTH;
+  const height = node.measured?.height ?? node.height ?? ESTIMATED_NODE_HEIGHT;
+  return { width, height };
+}
+
+/** True once xyflow has measured every node, so a layout uses real sizes. */
+export function allNodesMeasured(nodes: Node[]): boolean {
+  return nodes.every((n) => n.measured?.width !== undefined && n.measured?.height !== undefined);
+}
 
 export function getLayoutedElements<T extends Node>(
   nodes: T[],
@@ -20,59 +46,42 @@ export function getLayoutedElements<T extends Node>(
 ): { nodes: T[]; edges: Edge[] } {
   if (nodes.length === 0) return { nodes, edges };
 
-  // Use dagre to assign ranks (layers) based on DAG topology
   const g = new Dagre.graphlib.Graph().setDefaultEdgeLabel(() => ({}));
-  g.setGraph({ rankdir: "TB", nodesep: 30, ranksep: 80 });
+  g.setGraph({ rankdir: "TB", nodesep: NODE_SEP, ranksep: RANK_SEP });
 
+  const sizes = new Map<string, { width: number; height: number }>();
   for (const node of nodes) {
-    g.setNode(node.id, { width: NODE_WIDTH, height: NODE_HEIGHT });
+    const size = nodeSize(node);
+    sizes.set(node.id, size);
+    g.setNode(node.id, size);
   }
+  const ids = new Set(nodes.map((n) => n.id));
   for (const edge of edges) {
-    g.setEdge(edge.source, edge.target);
+    // An edge to a node that is not in the graph would make dagre invent a
+    // zero-sized placeholder node and skew the ranks.
+    if (ids.has(edge.source) && ids.has(edge.target)) g.setEdge(edge.source, edge.target);
   }
 
   Dagre.layout(g);
 
-  // Group nodes by dagre-assigned rank (y coordinate rounded to avoid float drift)
-  const rankMap = new Map<number, string[]>();
+  // dagre centres every node vertically on its rank; top-align the rank
+  // instead so nodes of different heights keep their input handles level.
+  const rankTop = new Map<number, number>();
   for (const node of nodes) {
-    const dagreNode = g.node(node.id);
-    const rankKey = Math.round(dagreNode.y);
-    if (!rankMap.has(rankKey)) rankMap.set(rankKey, []);
-    rankMap.get(rankKey)!.push(node.id);
+    const { y } = g.node(node.id);
+    const { height } = sizes.get(node.id)!;
+    const key = Math.round(y);
+    rankTop.set(key, Math.min(rankTop.get(key) ?? Infinity, y - height / 2));
   }
 
-  // Sort ranks top-to-bottom, then within each rank keep dagre's x order
-  const sortedRanks = [...rankMap.entries()]
-    .sort(([a], [b]) => a - b)
-    .map(([, ids]) => ids.sort((a, b) => g.node(a).x - g.node(b).x));
-
-  // Place nodes row by row, wrapping ranks wider than MAX_COLS into sub-rows
-  const positionMap = new Map<string, { x: number; y: number }>();
-  let currentY = 0;
-
-  for (const rankIds of sortedRanks) {
-    // Split into chunks of MAX_COLS
-    for (let i = 0; i < rankIds.length; i += MAX_COLS) {
-      const chunk = rankIds.slice(i, i + MAX_COLS);
-      const totalWidth = chunk.length * NODE_WIDTH + (chunk.length - 1) * HORIZONTAL_GAP;
-      const startX = -totalWidth / 2;
-
-      for (let j = 0; j < chunk.length; j++) {
-        positionMap.set(chunk[j], {
-          x: startX + j * (NODE_WIDTH + HORIZONTAL_GAP),
-          y: currentY,
-        });
-      }
-
-      currentY += NODE_HEIGHT + VERTICAL_GAP;
-    }
-  }
-
-  const layoutedNodes: T[] = nodes.map((node) => ({
-    ...node,
-    position: positionMap.get(node.id) ?? node.position,
-  }));
+  const layoutedNodes: T[] = nodes.map((node) => {
+    const { x, y } = g.node(node.id);
+    const { width } = sizes.get(node.id)!;
+    return {
+      ...node,
+      position: { x: x - width / 2, y: rankTop.get(Math.round(y))! },
+    };
+  });
 
   return { nodes: layoutedNodes, edges };
 }

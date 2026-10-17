@@ -64,7 +64,7 @@ export function CoordinationGeneratorNode({ id, data }: NodeProps<Node<PipelineN
 
   return (
     <NodeShell id={id} nodeType="coordination_generator" enabled={data.enabled}>
-      <div style={{ display: "flex", flexDirection: "column", gap: 9, fontSize: 16 }}>
+      <div style={{ display: "flex", flexDirection: "column", gap: 9, fontSize: 12 }}>
         <div>
           <strong>Center atoms</strong>
           <ElementChoices
@@ -112,7 +112,7 @@ export function CoordinationGeneratorNode({ id, data }: NodeProps<Node<PipelineN
             <option value="inside">Visible atoms only</option>
           </select>
         </label>
-        <div style={{ color: "var(--megane-text-secondary)", fontSize: 13, lineHeight: 1.3 }}>
+        <div style={{ color: "var(--megane-text-secondary)", fontSize: 11, lineHeight: 1.3 }}>
           Complete visible centers includes bonded neighbors just outside the drawing boundary.
         </div>
       </div>

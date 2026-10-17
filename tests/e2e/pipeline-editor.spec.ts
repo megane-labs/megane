@@ -60,15 +60,18 @@ test.describe("pipeline-editor: webapp default graph", () => {
     await page.getByTitle("Add Node").click();
     await page.getByRole("button", { name: "Replicate", exact: true }).click();
 
-    // The node mounts with its nx/ny/nz repeat inputs.
-    const node = page.locator('[data-testid="pipeline-node-replicate"]').first();
-    await expect(node).toBeVisible();
-    await expect(page.locator('[data-testid="replicate-node-nx"]').first()).toBeVisible();
-    await expect(page.locator('[data-testid="replicate-node-ny"]').first()).toBeVisible();
-    await expect(page.locator('[data-testid="replicate-node-nz"]').first()).toBeVisible();
+    // The seed graph already has a Replicate node; the new one is selected,
+    // so its nx/ny/nz repeat inputs are the ones shown in the properties pane.
+    await expect(page.locator('[data-testid="pipeline-node-replicate"]')).toHaveCount(2);
+    await expect(
+      page.locator('[data-testid="pipeline-node-replicate"][data-selected="true"]'),
+    ).toBeVisible();
+    await expect(page.locator('[data-testid="replicate-node-nx"]:visible')).toHaveCount(1);
+    await expect(page.locator('[data-testid="replicate-node-ny"]:visible')).toHaveCount(1);
+    await expect(page.locator('[data-testid="replicate-node-nz"]:visible')).toHaveCount(1);
 
     // Repeat count edits are accepted.
-    const nx = page.locator('[data-testid="replicate-node-nx"]').first();
+    const nx = page.locator('[data-testid="replicate-node-nx"]:visible');
     await nx.fill("2");
     await expect(nx).toHaveValue("2");
   });
@@ -76,9 +79,11 @@ test.describe("pipeline-editor: webapp default graph", () => {
   test("seeded Wrap node exposes its mode toggle and accepts a change", async ({ page }) => {
     await page.locator('[data-testid="pipeline-editor-tab-editor"]').click();
 
-    // The default seed graph carries a pass-through Wrap node.
+    // The default seed graph carries a pass-through Wrap node; selecting its
+    // card opens its form in the properties pane.
     const node = page.locator('[data-testid="pipeline-node-wrap"]').first();
     await expect(node).toBeVisible();
+    await node.click();
     const mode = page.locator('[data-testid="wrap-node-mode"]').first();
     await expect(mode).toBeVisible();
     await expect(mode).toHaveValue("none");
@@ -109,6 +114,7 @@ test.describe("pipeline-editor: webapp default graph", () => {
     // Toggle the seeded Wrap node to unwrap and wait for the re-execute to
     // reach the renderer.
     await page.locator('[data-testid="pipeline-editor-tab-editor"]').click();
+    await page.locator('[data-testid="pipeline-node-wrap"]').first().click();
     const epoch = (await getReadyState(page)).renderEpoch;
     await page.locator('[data-testid="wrap-node-mode"]').first().selectOption("unwrap");
     await waitForReady(page, { untilEpoch: epoch + 1, timeout: 10_000 });
@@ -136,6 +142,7 @@ test.describe("pipeline-editor: webapp default graph", () => {
     // The default seed graph carries a Symmetry node in expand mode.
     const node = page.locator('[data-testid="pipeline-node-symmetry"]').first();
     await expect(node).toBeVisible();
+    await node.click();
     const mode = page.locator('[data-testid="symmetry-node-mode"]').first();
     await expect(mode).toBeVisible();
     await expect(mode).toHaveValue("expand");
@@ -300,5 +307,115 @@ test.describe("pipeline-editor: webapp default graph", () => {
     const reboundBox = await editorPanel.boundingBox();
     expect(reboundBox?.width ?? 0).toBeGreaterThan(100);
     expect(reboundBox?.height ?? 0).toBeGreaterThan(100);
+  });
+});
+
+// Layout and properties pane. These assert geometry on the DOM rather than
+// pixels: the point is that nodes do not overlap, the graph fits the panel,
+// and the properties pane edits the selected node.
+test.describe("pipeline-editor: layout and properties pane", () => {
+  type Box = { id: string; x: number; y: number; w: number; h: number };
+
+  async function nodeBoxes(page: import("playwright/test").Page): Promise<Box[]> {
+    return page.evaluate(() =>
+      [...document.querySelectorAll<HTMLElement>(".react-flow__node")].map((n) => {
+        const r = n.getBoundingClientRect();
+        return { id: n.dataset.id ?? "", x: r.x, y: r.y, w: r.width, h: r.height };
+      }),
+    );
+  }
+
+  function overlapping(boxes: Box[]): string[] {
+    const hits: string[] = [];
+    for (let i = 0; i < boxes.length; i++) {
+      for (let j = i + 1; j < boxes.length; j++) {
+        const a = boxes[i];
+        const b = boxes[j];
+        if (a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h) {
+          hits.push(`${a.id}/${b.id}`);
+        }
+      }
+    }
+    return hits;
+  }
+
+  async function settle(page: import("playwright/test").Page): Promise<void> {
+    // Layout runs after xyflow measures the nodes, then fitView animates;
+    // wait until two consecutive reads of the node boxes agree.
+    let prev = "";
+    await expect
+      .poll(async () => {
+        const cur = JSON.stringify(await nodeBoxes(page));
+        const stable = cur === prev;
+        prev = cur;
+        return stable;
+      })
+      .toBe(true);
+  }
+
+  test.beforeEach(async ({ page }) => {
+    await page.addInitScript(() => {
+      (globalThis as { __MEGANE_TEST__?: boolean }).__MEGANE_TEST__ = true;
+    });
+    await page.goto("/?test=1", { waitUntil: "domcontentloaded" });
+    await waitForReady(page);
+    await page.locator('[data-testid="pipeline-editor-tab-editor"]').click();
+    await page.locator('[data-testid="pipeline-editor-templates"]').click();
+    await page.locator('[data-testid="pipeline-template-protein"]').click();
+    await settle(page);
+  });
+
+  test("a template is laid out without overlaps and fitted into the panel", async ({ page }) => {
+    const boxes = await nodeBoxes(page);
+    expect(boxes.length).toBeGreaterThan(5);
+    expect(overlapping(boxes)).toEqual([]);
+
+    const flow = (await page.locator(".react-flow").first().boundingBox())!;
+    for (const b of boxes) {
+      expect(b.x, b.id).toBeGreaterThanOrEqual(flow.x - 1);
+      expect(b.y, b.id).toBeGreaterThanOrEqual(flow.y - 1);
+      expect(b.x + b.w, b.id).toBeLessThanOrEqual(flow.x + flow.width + 1);
+      expect(b.y + b.h, b.id).toBeLessThanOrEqual(flow.y + flow.height + 1);
+    }
+  });
+
+  test("selecting a card opens its form in the properties pane", async ({ page }) => {
+    await expect(page.locator('[data-testid="pipeline-properties-empty"]')).toBeVisible();
+
+    const card = page.locator(
+      '[data-node-id="protein-filter"][data-testid="pipeline-node-filter"]',
+    );
+    await expect(card.locator('[data-testid="pipeline-node-summary"]')).toHaveText(
+      'resname != "HOH"',
+    );
+    await card.click();
+    await expect(card).toHaveAttribute("data-selected", "true");
+
+    const header = page.locator('[data-testid="pipeline-properties-header"]');
+    await expect(header).toContainText("Filter");
+    const form = page.locator(
+      '[data-testid="pipeline-properties-form"][data-node-id="protein-filter"]',
+    );
+    await expect(form).toBeVisible();
+    // Only the selected node's form is shown.
+    await expect(
+      page.locator('[data-testid="pipeline-properties-form"][data-node-id="water-filter"]'),
+    ).toBeHidden();
+
+    // Editing in the pane updates the card's summary.
+    const query = form.locator("input").first();
+    await query.fill('resname == "ALA"');
+    await query.press("Enter");
+    await expect(card.locator('[data-testid="pipeline-node-summary"]')).toHaveText(
+      'resname == "ALA"',
+    );
+  });
+
+  test("the enable switch in the pane disables the node's card", async ({ page }) => {
+    const card = page.locator('[data-node-id="water-modify"]').first();
+    await card.click();
+    await page.locator('[data-testid="pipeline-properties-header"] [role="switch"]').click();
+    await expect(card).toHaveAttribute("data-enabled", "false");
+    await expect(card).toContainText("Off");
   });
 });

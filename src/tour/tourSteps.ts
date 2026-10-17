@@ -9,7 +9,7 @@
  *                                   (handled by MeganeTour.startTour's
  *                                   `onPopoverRender`).
  * - `buildPipelineTutorialSteps()` — focused walk-through of how a pipeline
- *                                    is wired up: load → connect → toggle
+ *                                    is wired up: load → connect → edit
  *                                    → viewport.
  *
  * Targets reference DOM nodes that already exist in the shared MeganeViewer:
@@ -151,7 +151,7 @@ export function buildTourSteps(): DriveStep[] {
       popover: {
         title: "Want a deeper walk-through?",
         description:
-          "Click the highlighted <strong>Tutorial</strong> button anytime for a step-by-step guide to building a pipeline — load → connect → toggle → viewport.",
+          "Click the highlighted <strong>Tutorial</strong> button anytime for a step-by-step guide to building a pipeline — load → connect → edit → viewport.",
         side: "bottom",
         align: "end",
       },
@@ -223,7 +223,7 @@ export function buildPipelineTutorialSteps(): DriveStep[] {
         title: "Pipeline tutorial",
         description: `
           <p class="megane-tour-paragraph">Let's see how a megane pipeline is wired up.</p>
-          <p class="megane-tour-paragraph">In four short steps we'll go from a structure file all the way to what you see in the 3D viewport — <strong>load → connect → toggle → viewport</strong>.</p>`,
+          <p class="megane-tour-paragraph">In four short steps we'll go from a structure file all the way to what you see in the 3D viewport — <strong>load → connect → edit → viewport</strong>.</p>`,
         side: "over",
         align: "center",
       },
@@ -251,9 +251,9 @@ export function buildPipelineTutorialSteps(): DriveStep[] {
     {
       element: '[data-testid="pipeline-node-add_bond"]',
       popover: {
-        title: "3. Active nodes light up",
+        title: "3. Select a node to edit it",
         description:
-          "Each node has a <strong>toggle switch</strong> in its header and a colored stripe down its left edge marking its category. Enabled nodes show in full color and contribute to the render; toggling one off greys it out (50% opacity) and skips its branch — handy for A/B comparing styles or muting a heavy step. A red or amber badge appears whenever a node has errors or warnings.",
+          "Each card shows its category icon, its name and a one-line summary of its settings. <strong>Click a card</strong> to open its parameters in the properties pane below the graph; the <strong>switch</strong> there turns the node on or off. A disabled node is drawn with a dashed outline and an <em>Off</em> tag and its branch is skipped — handy for A/B comparing styles or muting a heavy step. A red or amber dot appears whenever a node has errors or warnings.",
         side: "left",
         align: "start",
       },

@@ -1,6 +1,8 @@
 import { describe, it, expect, vi, afterEach, beforeEach } from "vitest";
 import { render, screen, fireEvent, cleanup, waitFor } from "@testing-library/react";
 
+const fitViewMock = vi.hoisted(() => vi.fn());
+
 // Mock heavy children that depend on Three.js / WebGL / WASM so the editor
 // chrome (toolbar, theme button, dropdowns) renders cleanly under jsdom.
 vi.mock("@xyflow/react", async () => {
@@ -16,7 +18,7 @@ vi.mock("@xyflow/react", async () => {
     BackgroundVariant: { Dots: "dots" },
     useReactFlow: () => ({
       screenToFlowPosition: () => ({ x: 0, y: 0 }),
-      fitView: () => {},
+      fitView: fitViewMock,
       getZoom: () => 1,
     }),
     Handle: () => null,
@@ -52,6 +54,8 @@ vi.mock("@/pipeline/shareLink", async () => {
 import { PipelineEditor } from "@/components/PipelineEditor";
 import { useThemeStore } from "@/stores/useThemeStore";
 import { usePipelineUIStore } from "@/stores/usePipelineUIStore";
+import { usePipelineStore } from "@/pipeline/store";
+import { defaultParams } from "@/pipeline/types";
 
 beforeEach(() => {
   // The editor toolbar (theme button, dropdowns) is hidden on the Chat tab,
@@ -201,5 +205,178 @@ describe("PipelineEditor — Share button opens dialog", () => {
     expect(alertSpy.mock.calls[0][0]).toContain("Share failed");
     expect(screen.queryByTestId("share-dialog")).toBeNull();
     expect(consoleErrorSpy).toHaveBeenCalled();
+  });
+});
+
+describe("PipelineEditor — layout", () => {
+  const measuredNode = (id: string, y: number) => ({
+    id,
+    type: "filter",
+    position: { x: 0, y },
+    measured: { width: 340, height: 120 },
+    data: { params: defaultParams("filter"), enabled: true },
+  });
+
+  beforeEach(() => {
+    fitViewMock.mockClear();
+    vi.spyOn(window, "requestAnimationFrame").mockImplementation((cb) => {
+      cb(0);
+      return 0;
+    });
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("re-lays out a pending graph once every node is measured, then fits", () => {
+    usePipelineStore.setState({
+      nodes: [measuredNode("a", 0), measuredNode("b", 0)],
+      edges: [{ id: "e", source: "a", target: "b", sourceHandle: "out", targetHandle: "in" }],
+      layoutPending: true,
+    });
+    render(<PipelineEditor collapsed={false} onToggleCollapse={() => {}} />);
+    const state = usePipelineStore.getState();
+    expect(state.layoutPending).toBe(false);
+    const a = state.nodes.find((n) => n.id === "a")!;
+    const b = state.nodes.find((n) => n.id === "b")!;
+    expect(b.position.y).toBeGreaterThan(a.position.y + 120);
+    expect(fitViewMock).toHaveBeenCalled();
+  });
+
+  it("waits while some node is still unmeasured", () => {
+    usePipelineStore.setState({
+      nodes: [measuredNode("a", 0), { ...measuredNode("b", 0), measured: undefined }],
+      edges: [],
+      layoutPending: true,
+    });
+    render(<PipelineEditor collapsed={false} onToggleCollapse={() => {}} />);
+    expect(usePipelineStore.getState().layoutPending).toBe(true);
+    expect(usePipelineStore.getState().nodes[1].position).toEqual({ x: 0, y: 0 });
+  });
+});
+
+describe("PipelineEditor — properties pane", () => {
+  const node = (id: string, type: "filter" | "wrap" | "viewport", selected = false) => ({
+    id,
+    type,
+    position: { x: 0, y: 0 },
+    selected,
+    data: { params: defaultParams(type), enabled: true },
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("asks for a selection when no node is selected", () => {
+    usePipelineStore.setState({ nodes: [node("f1", "filter")], edges: [], layoutPending: false });
+    render(<PipelineEditor collapsed={false} onToggleCollapse={() => {}} />);
+    expect(screen.getByTestId("pipeline-properties-empty")).toBeInTheDocument();
+    expect(screen.queryByTestId("pipeline-properties-header")).toBeNull();
+  });
+
+  it("shows the selected node's header and only its form", () => {
+    usePipelineStore.setState({
+      nodes: [node("f1", "filter"), node("w1", "wrap", true)],
+      edges: [],
+      layoutPending: false,
+    });
+    render(<PipelineEditor collapsed={false} onToggleCollapse={() => {}} />);
+    const header = screen.getByTestId("pipeline-properties-header");
+    expect(header).toHaveTextContent("Wrap / Unwrap");
+    expect(header).toHaveTextContent("none");
+    // Every form stays mounted; only the selected one is displayed.
+    const forms = screen.getAllByTestId("pipeline-properties-form");
+    expect(forms).toHaveLength(2);
+    const shown = forms.filter((f) => f.parentElement!.style.display !== "none");
+    expect(shown.map((f) => f.getAttribute("data-node-id"))).toEqual(["w1"]);
+  });
+
+  it("toggles and removes the selected node from the header", () => {
+    usePipelineStore.setState({
+      nodes: [node("w1", "wrap", true)],
+      edges: [],
+      layoutPending: false,
+    });
+    render(<PipelineEditor collapsed={false} onToggleCollapse={() => {}} />);
+    const toggle = screen.getByRole("switch");
+    expect(toggle).toHaveAttribute("aria-checked", "true");
+    fireEvent.click(toggle);
+    expect(usePipelineStore.getState().nodes[0].data.enabled).toBe(false);
+    expect(screen.getByRole("switch")).toHaveAttribute("aria-checked", "false");
+    fireEvent.click(screen.getByTitle("Remove node"));
+    expect(usePipelineStore.getState().nodes).toHaveLength(0);
+  });
+
+  it("offers no remove button for the viewport", () => {
+    usePipelineStore.setState({
+      nodes: [node("v1", "viewport", true)],
+      edges: [],
+      layoutPending: false,
+    });
+    render(<PipelineEditor collapsed={false} onToggleCollapse={() => {}} />);
+    expect(screen.getByTestId("pipeline-properties-header")).toHaveTextContent("Viewport");
+    expect(screen.queryByTitle("Remove node")).toBeNull();
+  });
+
+  it("selects a node added from the Add Node menu", () => {
+    usePipelineStore.setState({
+      nodes: [node("w1", "wrap", true)],
+      edges: [],
+      layoutPending: false,
+    });
+    render(<PipelineEditor collapsed={false} onToggleCollapse={() => {}} />);
+    fireEvent.click(screen.getByTitle("Add Node"));
+    fireEvent.click(screen.getByRole("button", { name: "Filter" }));
+    const nodes = usePipelineStore.getState().nodes;
+    const added = nodes.find((n) => n.type === "filter")!;
+    expect(added.selected).toBe(true);
+    expect(nodes.find((n) => n.id === "w1")!.selected).toBe(false);
+    expect(screen.getByTestId("pipeline-properties-header")).toHaveTextContent("Filter");
+  });
+
+  it("resizes the pane by dragging the separator", () => {
+    usePipelineStore.setState({
+      nodes: [node("w1", "wrap", true)],
+      edges: [],
+      layoutPending: false,
+    });
+    render(<PipelineEditor collapsed={false} onToggleCollapse={() => {}} />);
+    const separator = screen.getByRole("separator");
+    const pane = screen.getByTestId("pipeline-properties");
+    expect(pane.style.flex).toContain("34%");
+    vi.spyOn(separator.parentElement!, "getBoundingClientRect").mockReturnValue({
+      top: 0,
+      bottom: 1000,
+      height: 1000,
+      left: 0,
+      right: 400,
+      width: 400,
+      x: 0,
+      y: 0,
+      toJSON: () => ({}),
+    });
+    fireEvent.mouseDown(separator);
+    fireEvent.mouseMove(document, { clientY: 500 });
+    expect(pane.style.flex).toContain("50%");
+    // Clamped to 70% however far it is dragged.
+    fireEvent.mouseMove(document, { clientY: 0 });
+    expect(pane.style.flex).toContain("70%");
+    fireEvent.mouseUp(document);
+    fireEvent.mouseMove(document, { clientY: 900 });
+    expect(pane.style.flex).toContain("70%");
+  });
+
+  it("ignores a drag when the column has no height", () => {
+    usePipelineStore.setState({
+      nodes: [node("w1", "wrap", true)],
+      edges: [],
+      layoutPending: false,
+    });
+    render(<PipelineEditor collapsed={false} onToggleCollapse={() => {}} />);
+    fireEvent.mouseDown(screen.getByRole("separator"));
+    fireEvent.mouseMove(document, { clientY: 300 });
+    expect(screen.getByTestId("pipeline-properties").style.flex).toContain("34%");
   });
 });

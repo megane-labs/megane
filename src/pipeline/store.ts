@@ -26,7 +26,7 @@ import { validatePipeline } from "./validate";
 import { serializePipeline, deserializePipeline } from "./serialize";
 import { createDefaultPipeline, createDemoPipeline, createEmptyPipeline } from "./defaults";
 import { PIPELINE_TEMPLATES } from "./templates";
-import { getLayoutedElements } from "./layout";
+import { getLayoutedElements, allNodesMeasured } from "./layout";
 import { performOpenFile, type OpenFileOptions } from "./openFile";
 import { reconcileInspectorLayers, isInspectorId, type InspectorLayer } from "./inspectorSync";
 import { findPrimaryLoader, loaderEdits } from "./editHistory";
@@ -100,6 +100,11 @@ export interface PipelineStore {
   removeNode: (id: string) => void;
   updateNodeParams: (id: string, params: Record<string, unknown>) => void;
   toggleNode: (id: string) => void;
+  /**
+   * Make `id` the only selected node (null clears the selection). The
+   * editor's properties pane edits the selected node.
+   */
+  selectNode: (id: string | null) => void;
 
   // Pipeline execution
   execute: () => void;
@@ -156,6 +161,12 @@ export interface PipelineStore {
 
   // Layout
   autoLayout: () => void;
+  /**
+   * True while the graph was laid out with estimated node sizes (a template,
+   * the initial graph, a chat-generated pipeline). The editor re-runs
+   * `autoLayout` once xyflow has measured every node, which clears it.
+   */
+  layoutPending: boolean;
 
   // Reset
   reset: () => void;
@@ -197,6 +208,28 @@ const CLEARED_EXECUTION_CONTEXT = {
   nodeStreamingData: {} as Record<string, NodeStreamingData>,
 } as const;
 
+/**
+ * A saved pipeline keeps the user's own node positions, except when it has
+ * none worth keeping: the Python `Pipeline` builder writes every node at
+ * (0, 0), which would stack the whole graph on one spot. Lay such a graph out
+ * (from estimated sizes, refined by the editor once it is measured). The
+ * check reads the saved JSON, because `deserializePipeline` may inject nodes
+ * (an `add_bond`) at an offset that would hide the stacking.
+ */
+function deserializeAndPlace(json: SerializedPipeline): {
+  nodes: Node<PipelineNodeData>[];
+  edges: Edge[];
+  layoutPending: boolean;
+} {
+  const { nodes, edges } = deserializePipeline(json);
+  const positions = json.nodes.map((n) => n.position ?? { x: 0, y: 0 });
+  const [first, ...rest] = positions;
+  const stacked =
+    first !== undefined && rest.length > 0 && rest.every((p) => p.x === first.x && p.y === first.y);
+  if (!stacked) return { nodes, edges, layoutPending: false };
+  return { nodes: getLayoutedElements(nodes, edges).nodes, edges, layoutPending: true };
+}
+
 /** Free a lazy trajectory provider's worker decoder when it is replaced/cleared. */
 function disposeIfLazy(provider: FrameProvider | null | undefined): void {
   if (provider instanceof LazyFrameProvider) provider.dispose();
@@ -204,6 +237,7 @@ function disposeIfLazy(provider: FrameProvider | null | undefined): void {
 
 export const pipelineStateCreator: StateCreator<PipelineStore> = (set, get, api) => ({
   ...createInitialGraph(),
+  layoutPending: true,
   viewportState: { ...DEFAULT_VIEWPORT_STATE },
   nodeErrors: {},
   editRevision: 0,
@@ -468,6 +502,14 @@ export const pipelineStateCreator: StateCreator<PipelineStore> = (set, get, api)
     get().execute();
   },
 
+  selectNode: (id) => {
+    set((state) => ({
+      nodes: state.nodes.map((n) =>
+        (n.id === id) === (n.selected === true) ? n : { ...n, selected: n.id === id },
+      ),
+    }));
+  },
+
   execute: () => {
     const {
       nodes,
@@ -530,7 +572,7 @@ export const pipelineStateCreator: StateCreator<PipelineStore> = (set, get, api)
   },
 
   deserialize: (json) => {
-    const { nodes, edges } = deserializePipeline(json);
+    const { nodes, edges, layoutPending } = deserializeAndPlace(json);
     // Clear all execution context tied to the previous graph: per-node
     // snapshots are keyed by node ID and would orphan across opens, but
     // worse, the global snapshot/frames/vectors fields would silently
@@ -542,6 +584,7 @@ export const pipelineStateCreator: StateCreator<PipelineStore> = (set, get, api)
     set({
       nodes,
       edges,
+      layoutPending,
       viewportState: { ...DEFAULT_VIEWPORT_STATE },
       ...CLEARED_EXECUTION_CONTEXT,
     });
@@ -549,7 +592,7 @@ export const pipelineStateCreator: StateCreator<PipelineStore> = (set, get, api)
   },
 
   loadPipeline: (json, nodeSnapshots) => {
-    const { nodes, edges } = deserializePipeline(json);
+    const { nodes, edges, layoutPending } = deserializeAndPlace(json);
     // Pick a primary snapshot for the legacy `snapshot` field so the
     // Viewport's loadSnapshot path still has data to render. Iterate in
     // node-id order to be deterministic across hosts.
@@ -560,6 +603,7 @@ export const pipelineStateCreator: StateCreator<PipelineStore> = (set, get, api)
     set({
       nodes,
       edges,
+      layoutPending,
       viewportState: { ...DEFAULT_VIEWPORT_STATE },
       ...CLEARED_EXECUTION_CONTEXT,
       nodeSnapshots: { ...nodeSnapshots },
@@ -636,6 +680,7 @@ export const pipelineStateCreator: StateCreator<PipelineStore> = (set, get, api)
     set({
       nodes,
       edges,
+      layoutPending: true,
       viewportState: { ...DEFAULT_VIEWPORT_STATE },
       pendingTemplateId: templateId,
       ...CLEARED_EXECUTION_CONTEXT,
@@ -650,7 +695,7 @@ export const pipelineStateCreator: StateCreator<PipelineStore> = (set, get, api)
   autoLayout: () => {
     const { nodes, edges } = get();
     const { nodes: layoutedNodes } = getLayoutedElements(nodes, edges);
-    set({ nodes: layoutedNodes });
+    set({ nodes: layoutedNodes, layoutPending: !allNodesMeasured(nodes) });
   },
 
   reset: () => {
@@ -660,6 +705,7 @@ export const pipelineStateCreator: StateCreator<PipelineStore> = (set, get, api)
     set({
       nodes: def.nodes,
       edges: def.edges,
+      layoutPending: true,
       viewportState: { ...DEFAULT_VIEWPORT_STATE },
       ...CLEARED_EXECUTION_CONTEXT,
     });

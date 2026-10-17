@@ -16,8 +16,8 @@ import { isImeComposing } from "../../utils/ime";
 
 const inputStyle: React.CSSProperties = {
   width: "100%",
-  padding: "7px 10px",
-  fontSize: 19,
+  padding: "5px 8px",
+  fontSize: 12,
   fontFamily: "monospace",
   border: "1px solid var(--megane-border-solid)",
   borderRadius: 7,
@@ -34,14 +34,14 @@ const inputErrorStyle: React.CSSProperties = {
 };
 
 const errorStyle: React.CSSProperties = {
-  fontSize: 17,
+  fontSize: 12,
   color: "var(--megane-danger)",
   marginTop: 7,
   lineHeight: 1.3,
 };
 
 const hintStyle: React.CSSProperties = {
-  fontSize: 15,
+  fontSize: 11,
   color: "var(--megane-text-muted)",
   marginTop: 7,
   lineHeight: 1.3,

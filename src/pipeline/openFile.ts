@@ -198,6 +198,7 @@ function installMinimalGraph(api: StoreApi<PipelineStore>): void {
   api.setState({
     nodes: nodes as Node<PipelineNodeData>[],
     edges: edges as Edge[],
+    layoutPending: true,
     nodeSnapshots: {},
     nodeParseErrors: {},
     nodeStreamingData: {},

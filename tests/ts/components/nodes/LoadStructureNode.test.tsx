@@ -4,7 +4,7 @@ import { usePipelineStore } from "@/pipeline/store";
 import { usePipelineUIStore } from "@/stores/usePipelineUIStore";
 import { LoadStructureNode, setStructureLoadHandler } from "@/components/nodes/LoadStructureNode";
 import type { LoadStructureParams } from "@/pipeline/types";
-import { seedPipelineStore } from "./_helpers";
+import { seedPipelineStore, renderCard } from "./_helpers";
 
 vi.mock("@xyflow/react", () => import("./_xyflowMock"));
 
@@ -181,7 +181,9 @@ describe("LoadStructureNode", () => {
       id: "ls1",
       params: { fileName: "water.pdb", hasTrajectory: false, hasCell: false },
     });
-    render(<LoadStructureNode {...nodeProps("ls1", seeded.data.params as LoadStructureParams)} />);
+    renderCard(
+      <LoadStructureNode {...nodeProps("ls1", seeded.data.params as LoadStructureParams)} />,
+    );
 
     const trajectoryHandle = screen.getByTestId("handle-source-trajectory");
     const cellHandle = screen.getByTestId("handle-source-cell");
@@ -199,7 +201,9 @@ describe("LoadStructureNode", () => {
       id: "ls1",
       params: { fileName: "system.gro", hasTrajectory: true, hasCell: true },
     });
-    render(<LoadStructureNode {...nodeProps("ls1", seeded.data.params as LoadStructureParams)} />);
+    renderCard(
+      <LoadStructureNode {...nodeProps("ls1", seeded.data.params as LoadStructureParams)} />,
+    );
     const trajectoryHandle = screen.getByTestId("handle-source-trajectory");
     expect(trajectoryHandle.style.background).not.toBe("var(--megane-border-strong)");
   });

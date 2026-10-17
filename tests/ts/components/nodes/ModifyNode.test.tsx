@@ -3,7 +3,7 @@ import { render, screen, fireEvent, cleanup } from "@testing-library/react";
 import { usePipelineStore } from "@/pipeline/store";
 import { ModifyNode } from "@/components/nodes/ModifyNode";
 import type { ModifyParams } from "@/pipeline/types";
-import { seedPipelineStore } from "./_helpers";
+import { seedPipelineStore, renderCard } from "./_helpers";
 
 vi.mock("@xyflow/react", () => import("./_xyflowMock"));
 
@@ -86,7 +86,7 @@ describe("ModifyNode", () => {
 
   it("renders inside a NodeShell with the Modify title", () => {
     const seeded = seedPipelineStore("modify", { id: "m1" });
-    render(<ModifyNode {...nodeProps("m1", seeded.data.params as ModifyParams)} />);
+    renderCard(<ModifyNode {...nodeProps("m1", seeded.data.params as ModifyParams)} />);
     expect(screen.getByText("Modify")).toBeInTheDocument();
   });
 

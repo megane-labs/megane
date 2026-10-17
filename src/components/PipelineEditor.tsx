@@ -3,7 +3,7 @@
  * Typed data-flow pipeline with color-coded handles per data type.
  */
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ReactFlow,
   ReactFlowProvider,
@@ -21,7 +21,8 @@ import {
 } from "../stores/MeganeProvider";
 import type { PipelinePanelMode } from "../stores/usePipelineUIStore";
 import { TabSelector } from "./ui";
-import type { Connection } from "@xyflow/react";
+import type { Connection, Node } from "@xyflow/react";
+import type { PipelineNodeData } from "../pipeline/execute";
 import "@xyflow/react/dist/style.css";
 import { downloadBlob } from "../renderer/RenderCapture";
 import { shareCurrentPipeline } from "../pipeline/shareLink";
@@ -34,7 +35,10 @@ import {
   NODE_CATEGORY_COLORS,
 } from "../pipeline/types";
 import type { NodeCategory } from "../pipeline/types";
+import { NODE_CATEGORY } from "../pipeline/types";
+import { summarizeNodeParams } from "../pipeline/nodeSummary";
 import { PIPELINE_TEMPLATES } from "../pipeline/templates";
+import { allNodesMeasured } from "../pipeline/layout";
 import { CollapsiblePanel } from "./CollapsiblePanel";
 import { LoadStructureNode } from "./nodes/LoadStructureNode";
 import { LoadTrajectoryNode } from "./nodes/LoadTrajectoryNode";
@@ -60,6 +64,9 @@ import { LoadVolumetricNode } from "./nodes/LoadVolumetricNode";
 import { LoadSpectrumNode } from "./nodes/LoadSpectrumNode";
 import { SpectrumPlotNode } from "./nodes/SpectrumPlotNode";
 import { IsosurfaceNode } from "./nodes/IsosurfaceNode";
+import { NodeShellModeContext } from "./nodes/NodeShell";
+import { CATEGORY_ICONS } from "./nodes/categoryIcons";
+import { NODE_CARD_CSS } from "./nodes/NodeCard";
 import { PipelineChatBox } from "./PipelineChatBox";
 import { PipelineInspector } from "./PipelineInspector";
 import { RenderModal } from "./RenderModal";
@@ -228,127 +235,6 @@ const IconTutorial = (
   </svg>
 );
 
-/* Category icons for Add Node dropdown */
-const CATEGORY_ICONS: Record<NodeCategory, React.ReactNode> = {
-  data_load: (
-    <svg
-      width="12"
-      height="12"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      aria-hidden="true"
-      focusable="false"
-      style={{ flexShrink: 0 }}
-    >
-      <ellipse cx="12" cy="5" rx="9" ry="3" />
-      <path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3" />
-      <path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5" />
-    </svg>
-  ),
-  bond: (
-    <svg
-      width="12"
-      height="12"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      aria-hidden="true"
-      focusable="false"
-      style={{ flexShrink: 0 }}
-    >
-      <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71" />
-      <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71" />
-    </svg>
-  ),
-  filter: (
-    <svg
-      width="12"
-      height="12"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      aria-hidden="true"
-      focusable="false"
-      style={{ flexShrink: 0 }}
-    >
-      <polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3" />
-    </svg>
-  ),
-  modify: (
-    <svg
-      width="12"
-      height="12"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      aria-hidden="true"
-      focusable="false"
-      style={{ flexShrink: 0 }}
-    >
-      <line x1="4" y1="21" x2="4" y2="14" />
-      <line x1="4" y1="10" x2="4" y2="3" />
-      <line x1="12" y1="21" x2="12" y2="12" />
-      <line x1="12" y1="8" x2="12" y2="3" />
-      <line x1="20" y1="21" x2="20" y2="16" />
-      <line x1="20" y1="12" x2="20" y2="3" />
-      <line x1="1" y1="14" x2="7" y2="14" />
-      <line x1="9" y1="8" x2="15" y2="8" />
-      <line x1="17" y1="16" x2="23" y2="16" />
-    </svg>
-  ),
-  overlay: (
-    <svg
-      width="12"
-      height="12"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      aria-hidden="true"
-      focusable="false"
-      style={{ flexShrink: 0 }}
-    >
-      <polygon points="12 2 2 7 12 12 22 7 12 2" />
-      <polyline points="2 17 12 22 22 17" />
-      <polyline points="2 12 12 17 22 12" />
-    </svg>
-  ),
-  viewport: (
-    <svg
-      width="12"
-      height="12"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      aria-hidden="true"
-      focusable="false"
-      style={{ flexShrink: 0 }}
-    >
-      <rect x="2" y="3" width="20" height="14" rx="2" ry="2" />
-      <line x1="8" y1="21" x2="16" y2="21" />
-      <line x1="12" y1="17" x2="12" y2="21" />
-    </svg>
-  ),
-};
-
 /* ── Toolbar styles ────────────────────────────────────────────────── */
 
 const MIN_WIDTH = 320;
@@ -394,6 +280,229 @@ function getEdgeColor(sourceNodeType: string | undefined, sourceHandle: string |
   return DATA_TYPE_COLORS[port.dataType];
 }
 
+type NodeFormComponent = React.ComponentType<{
+  id: string;
+  data: PipelineNodeData;
+  type: string;
+}>;
+
+/**
+ * One node's form in the properties pane. Every node keeps its form mounted
+ * (only the selected one is shown) so a half-typed query survives a change of
+ * selection and the loaders' file inputs stay in the document. Memoised so
+ * dragging a card — which replaces the node object, not its data — does not
+ * re-render every form.
+ */
+const NodeForm = memo(function NodeForm({
+  id,
+  type,
+  data,
+  visible,
+}: {
+  id: string;
+  type: PipelineNodeType;
+  data: PipelineNodeData;
+  visible: boolean;
+}) {
+  const Component = nodeTypes[type] as unknown as NodeFormComponent | undefined;
+  if (!Component) return null;
+  return (
+    <div style={visible ? undefined : { display: "none" }}>
+      <Component id={id} data={data} type={type} />
+    </div>
+  );
+});
+
+/**
+ * The selected node's header and form, shown under the graph. The graph's
+ * cards stay compact; parameters are edited here.
+ */
+function PropertiesPane({ height }: { height: string }) {
+  const nodes = useScopedPipelineStore((s) => s.nodes);
+  const toggleNode = useScopedPipelineStore((s) => s.toggleNode);
+  const removeNode = useScopedPipelineStore((s) => s.removeNode);
+  const selected = nodes.find((n) => n.selected && n.type);
+  return (
+    <div
+      data-testid="pipeline-properties"
+      style={{
+        flex: `0 0 ${height}`,
+        minHeight: 0,
+        display: "flex",
+        flexDirection: "column",
+        background: "var(--megane-surface-solid)",
+      }}
+    >
+      {selected ? (
+        <PropertiesHeader
+          node={selected}
+          onToggle={() => toggleNode(selected.id)}
+          onRemove={() => removeNode(selected.id)}
+        />
+      ) : (
+        <div
+          data-testid="pipeline-properties-empty"
+          style={{
+            margin: "auto",
+            fontSize: 12,
+            color: "var(--megane-text-muted)",
+            textAlign: "center",
+            padding: 16,
+            lineHeight: 1.5,
+          }}
+        >
+          Select a node to edit its parameters
+        </div>
+      )}
+      <div
+        style={{
+          flex: 1,
+          overflow: "auto",
+          padding: "4px 14px 12px",
+          display: selected ? "block" : "none",
+        }}
+      >
+        {nodes.map((n) =>
+          n.type ? (
+            <NodeForm
+              key={n.id}
+              id={n.id}
+              type={n.type as PipelineNodeType}
+              data={n.data}
+              visible={n.id === selected?.id}
+            />
+          ) : null,
+        )}
+      </div>
+    </div>
+  );
+}
+
+function PropertiesHeader({
+  node,
+  onToggle,
+  onRemove,
+}: {
+  node: Node<PipelineNodeData>;
+  onToggle: () => void;
+  onRemove: () => void;
+}) {
+  const type = node.type as PipelineNodeType;
+  const category = NODE_CATEGORY[type];
+  const color = NODE_CATEGORY_COLORS[category];
+  const enabled = node.data.enabled;
+  return (
+    <div
+      data-testid="pipeline-properties-header"
+      style={{
+        display: "flex",
+        alignItems: "center",
+        gap: 10,
+        padding: "10px 12px 8px",
+      }}
+    >
+      <div
+        aria-hidden="true"
+        style={{
+          width: 28,
+          height: 28,
+          flexShrink: 0,
+          borderRadius: 8,
+          display: "grid",
+          placeItems: "center",
+          color,
+          background: `color-mix(in srgb, ${color} 14%, transparent)`,
+        }}
+      >
+        {CATEGORY_ICONS[category]}
+      </div>
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{ fontWeight: 600, fontSize: 13, color: "var(--megane-text)" }}>
+          {NODE_TYPE_LABELS[type]}
+        </div>
+        <div
+          style={{
+            fontSize: 11,
+            color: "var(--megane-text-muted)",
+            overflow: "hidden",
+            textOverflow: "ellipsis",
+            whiteSpace: "nowrap",
+          }}
+        >
+          {summarizeNodeParams(node.data.params)}
+        </div>
+      </div>
+      <button
+        type="button"
+        role="switch"
+        aria-checked={enabled}
+        aria-label={enabled ? "Disable node" : "Enable node"}
+        title={enabled ? "Disable node" : "Enable node"}
+        onClick={onToggle}
+        style={{
+          width: 30,
+          height: 17,
+          flexShrink: 0,
+          borderRadius: 9,
+          border: "none",
+          padding: 0,
+          cursor: "pointer",
+          position: "relative",
+          background: enabled ? "var(--megane-primary)" : "var(--megane-border-strong)",
+          transition: "background 0.15s",
+        }}
+      >
+        <span
+          style={{
+            position: "absolute",
+            top: 2,
+            left: enabled ? 15 : 2,
+            width: 13,
+            height: 13,
+            borderRadius: "50%",
+            background: "#fff",
+            boxShadow: "0 1px 2px rgba(0,0,0,0.2)",
+            transition: "left 0.15s",
+          }}
+        />
+      </button>
+      {type !== "viewport" && (
+        <button
+          type="button"
+          onClick={onRemove}
+          title="Remove node"
+          aria-label="Remove node"
+          style={{
+            border: "none",
+            background: "none",
+            cursor: "pointer",
+            color: "var(--megane-text-muted)",
+            padding: 4,
+            lineHeight: 0,
+          }}
+        >
+          <svg
+            width="14"
+            height="14"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            aria-hidden="true"
+          >
+            <polyline points="3 6 5 6 21 6" />
+            <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" />
+            <path d="M10 11v6M14 11v6" />
+            <path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2" />
+          </svg>
+        </button>
+      )}
+    </div>
+  );
+}
+
 function PipelineEditorInner({
   collapsed,
   onToggleCollapse,
@@ -423,6 +532,9 @@ function PipelineEditorInner({
   const addNode = useScopedPipelineStore((s) => s.addNode);
   const applyTemplate = useScopedPipelineStore((s) => s.applyTemplate);
   const autoLayout = useScopedPipelineStore((s) => s.autoLayout);
+  const selectNode = useScopedPipelineStore((s) => s.selectNode);
+  const layoutPending = useScopedPipelineStore((s) => s.layoutPending);
+  const nodesMeasured = useScopedPipelineStore((s) => allNodesMeasured(s.nodes));
   const deserialize = useScopedPipelineStore((s) => s.deserialize);
   const { fitView } = useReactFlow();
 
@@ -445,6 +557,26 @@ function PipelineEditorInner({
     onWidthChange?.(panelWidth);
   }, [panelWidth, onWidthChange]);
   const flowContainerRef = useRef<HTMLDivElement | null>(null);
+  // Share of the editor tab given to the properties pane (dragged by the
+  // separator above it).
+  const [paneFraction, setPaneFraction] = useState(0.34);
+  const handleSplitMouseDown = useCallback((e: React.MouseEvent) => {
+    e.preventDefault();
+    const column = (e.currentTarget as HTMLElement).parentElement;
+    if (!column) return;
+    const rect = column.getBoundingClientRect();
+    if (rect.height <= 0) return;
+    const onMove = (ev: MouseEvent) => {
+      const fraction = (rect.bottom - ev.clientY) / rect.height;
+      setPaneFraction(Math.max(0.15, Math.min(0.7, fraction)));
+    };
+    const onUp = () => {
+      document.removeEventListener("mousemove", onMove);
+      document.removeEventListener("mouseup", onUp);
+    };
+    document.addEventListener("mousemove", onMove);
+    document.addEventListener("mouseup", onUp);
+  }, []);
   const importInputRef = useRef<HTMLInputElement | null>(null);
 
   const resolvedTheme = useThemeStore((s) => s.resolvedTheme);
@@ -472,6 +604,20 @@ function PipelineEditorInner({
       window.cancelAnimationFrame(rafB);
     };
   }, [mode, fitView]);
+
+  // A template, the initial graph, or a chat pipeline is laid out before
+  // React has drawn it, from estimated node sizes. Once xyflow has measured
+  // every node, lay it out again with the real sizes and re-fit; the RAF lets
+  // ReactFlow adopt the new positions before fitView reads them. No cleanup
+  // cancels that frame: `autoLayout` clears `layoutPending`, which re-runs
+  // this effect right away and would cancel the fit it just scheduled.
+  useEffect(() => {
+    if (!layoutPending || !nodesMeasured) return;
+    autoLayout();
+    window.requestAnimationFrame(() => {
+      fitView({ padding: 0.1, maxZoom: 1.95 });
+    });
+  }, [layoutPending, nodesMeasured, autoLayout, fitView]);
 
   // Auto-dismiss the "pipeline applied" notice after a short delay.
   useEffect(() => {
@@ -551,21 +697,24 @@ function PipelineEditorInner({
 
   const handleAddNode = useCallback(
     (type: PipelineNodeType) => {
-      // Place the new node at the center of the current viewport
+      // Place the new node at the center of the current viewport and select
+      // it, so its form opens in the properties pane right away.
       const container = flowContainerRef.current;
+      let id: string;
       if (container) {
         const rect = container.getBoundingClientRect();
         const centerPosition = screenToFlowPosition({
           x: rect.left + rect.width / 2,
           y: rect.top + rect.height / 2,
         });
-        addNode(type, centerPosition);
+        id = addNode(type, centerPosition);
       } else {
-        addNode(type);
+        id = addNode(type);
       }
+      selectNode(id);
       setShowAddMenu(false);
     },
-    [addNode, screenToFlowPosition],
+    [addNode, selectNode, screenToFlowPosition],
   );
 
   const handleApplyTemplate = useCallback(
@@ -895,58 +1044,93 @@ function PipelineEditorInner({
           }}
         >
           {editorToolbar}
-          <div ref={flowContainerRef} style={{ flex: 1, position: "relative", minHeight: 0 }}>
-            <ReactFlow
-              nodes={nodes}
-              edges={styledEdges}
-              onNodesChange={onNodesChange}
-              onEdgesChange={onEdgesChange}
-              onConnect={onConnect}
-              isValidConnection={isValidConnection}
-              nodeTypes={memoizedNodeTypes}
-              fitView
-              fitViewOptions={{ padding: 0.1, maxZoom: 1.95 }}
-              minZoom={0.3}
-              maxZoom={2}
-              defaultEdgeOptions={{
-                type: "bezier",
-                animated: true,
-                style: { stroke: "#94a3b8", strokeWidth: 3 },
-              }}
-              proOptions={{ hideAttribution: true }}
-              colorMode={resolvedTheme}
-              // xyflow's dark mode paints its own #141414 canvas; let the
-              // panel's themed surface show through instead.
-              style={{ background: "transparent" }}
-            >
-              <Background
-                variant={BackgroundVariant.Dots}
-                gap={16}
-                size={1}
-                color="var(--megane-border-solid)"
-                bgColor="transparent"
-              />
-              <MiniMap
-                style={{
-                  background: "var(--megane-surface-solid)",
-                  border: "1px solid var(--megane-border-solid)",
-                  borderRadius: 6,
-                  width: 100,
-                  height: 70,
+          <div
+            ref={flowContainerRef}
+            className="megane-split-editor"
+            style={{ flex: 1, position: "relative", minHeight: 0 }}
+          >
+            <style>{NODE_CARD_CSS}</style>
+            <NodeShellModeContext.Provider value="card">
+              <ReactFlow
+                nodes={nodes}
+                edges={styledEdges}
+                onNodesChange={onNodesChange}
+                onEdgesChange={onEdgesChange}
+                onConnect={onConnect}
+                isValidConnection={isValidConnection}
+                nodeTypes={memoizedNodeTypes}
+                fitView
+                fitViewOptions={{ padding: 0.1, maxZoom: 1.95 }}
+                minZoom={0.3}
+                maxZoom={2}
+                defaultEdgeOptions={{
+                  type: "bezier",
+                  animated: true,
+                  style: { stroke: "#94a3b8", strokeWidth: 3 },
                 }}
-                nodeColor="var(--megane-primary)"
-                maskColor="rgba(59,130,246,0.05)"
-              />
-              <Controls
-                showInteractive={false}
-                style={{
-                  border: "1px solid var(--megane-border-solid)",
-                  borderRadius: 6,
-                  boxShadow: "none",
-                }}
-              />
-            </ReactFlow>
+                proOptions={{ hideAttribution: true }}
+                colorMode={resolvedTheme}
+                // xyflow's dark mode paints its own #141414 canvas; let the
+                // panel's themed surface show through instead.
+                style={{ background: "transparent" }}
+              >
+                <Background
+                  variant={BackgroundVariant.Dots}
+                  gap={16}
+                  size={1}
+                  color="var(--megane-border-solid)"
+                  bgColor="transparent"
+                />
+                <MiniMap
+                  style={{
+                    background: "var(--megane-surface-solid)",
+                    border: "1px solid var(--megane-border-solid)",
+                    borderRadius: 6,
+                    width: 72,
+                    height: 52,
+                  }}
+                  nodeColor={(n) =>
+                    n.type
+                      ? NODE_CATEGORY_COLORS[NODE_CATEGORY[n.type as PipelineNodeType]]
+                      : "var(--megane-primary)"
+                  }
+                  nodeBorderRadius={6}
+                  maskColor="rgba(100,116,139,0.08)"
+                />
+                <Controls
+                  showInteractive={false}
+                  style={{
+                    border: "1px solid var(--megane-border-solid)",
+                    borderRadius: 6,
+                    boxShadow: "none",
+                  }}
+                />
+              </ReactFlow>
+            </NodeShellModeContext.Provider>
           </div>
+          <div
+            role="separator"
+            aria-orientation="horizontal"
+            aria-label="Resize properties pane"
+            onMouseDown={handleSplitMouseDown}
+            style={{
+              flex: "0 0 7px",
+              cursor: "row-resize",
+              borderTop: "1px solid var(--megane-border-solid)",
+              display: "grid",
+              placeItems: "center",
+            }}
+          >
+            <span
+              style={{
+                width: 28,
+                height: 3,
+                borderRadius: 2,
+                background: "var(--megane-border-strong)",
+              }}
+            />
+          </div>
+          <PropertiesPane height={`${Math.round(paneFraction * 100)}%`} />
         </div>
         <div
           role="tabpanel"

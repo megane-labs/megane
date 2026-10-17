@@ -125,7 +125,7 @@ export function SpectrumPlotNode({ id, data }: NodeProps<Node<PipelineNodeData>>
         {!spectrum || !plot ? (
           <div
             data-testid="spectrum-plot-empty"
-            style={{ fontSize: 20, color: "var(--megane-text-muted)", fontStyle: "italic" }}
+            style={{ fontSize: 13, color: "var(--megane-text-muted)", fontStyle: "italic" }}
           >
             No spectrum connected
           </div>
@@ -133,7 +133,7 @@ export function SpectrumPlotNode({ id, data }: NodeProps<Node<PipelineNodeData>>
           <>
             <div
               data-testid="spectrum-plot-title"
-              style={{ fontSize: 14, color: "var(--megane-text-body)", marginBottom: 2 }}
+              style={{ fontSize: 11, color: "var(--megane-text-body)", marginBottom: 2 }}
             >
               {spectrum.title || spectrum.dataType || "Spectrum"}
             </div>
@@ -238,7 +238,7 @@ export function SpectrumPlotNode({ id, data }: NodeProps<Node<PipelineNodeData>>
             display: "flex",
             alignItems: "center",
             gap: 6,
-            fontSize: 14,
+            fontSize: 11,
             marginTop: 6,
             color: "var(--megane-text-body)",
           }}

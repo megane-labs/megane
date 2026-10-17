@@ -10,7 +10,7 @@ export function PolyhedronGeneratorNode({ id, data }: NodeProps<Node<PipelineNod
 
   return (
     <NodeShell id={id} nodeType="polyhedron_generator" enabled={data.enabled}>
-      <div style={{ display: "flex", flexDirection: "column", gap: 9, fontSize: 16 }}>
+      <div style={{ display: "flex", flexDirection: "column", gap: 9, fontSize: 12 }}>
         <label>
           Opacity&nbsp;
           <input
