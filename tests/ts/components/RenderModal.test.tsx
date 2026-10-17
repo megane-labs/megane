@@ -426,3 +426,42 @@ describe("RenderModal: animation export testids", () => {
     }
   });
 });
+
+describe("RenderModal: animation tab availability", () => {
+  function renderModal(totalFrames: number) {
+    return render(
+      <RenderModal
+        open
+        onClose={() => {}}
+        rendererRef={makeRendererRef()}
+        totalFrames={totalFrames}
+        currentFrame={0}
+        onSeek={() => {}}
+      />,
+    );
+  }
+
+  it("disables the Animation tab and explains why for a single-frame structure", () => {
+    renderModal(1);
+
+    const animationTab = screen.getByTestId("render-modal-tab-animation") as HTMLButtonElement;
+    expect(animationTab.disabled).toBe(true);
+    expect(animationTab.getAttribute("aria-disabled")).toBe("true");
+    expect(animationTab.title).toMatch(/only 1 frame/);
+    expect(screen.getByTestId("render-modal-animation-hint").textContent).toMatch(
+      /Load a trajectory \(2\+ frames\)/,
+    );
+
+    fireEvent.click(animationTab);
+    expect(animationTab.getAttribute("data-active")).toBe("false");
+  });
+
+  it("enables the Animation tab without a hint when a trajectory is loaded", () => {
+    renderModal(5);
+
+    const animationTab = screen.getByTestId("render-modal-tab-animation") as HTMLButtonElement;
+    expect(animationTab.disabled).toBe(false);
+    expect(animationTab.title).toBe("");
+    expect(screen.queryByTestId("render-modal-animation-hint")).toBeNull();
+  });
+});
