@@ -10,6 +10,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 - **`.extxyz` (extended XYZ) opens on every host.** ASE and ML-potential tools write extended XYZ under `.extxyz`; megane's XYZ reader already understood the grammar (`Lattice=` cells, `Properties=` columns such as forces, multi-frame blocks) but only under `.xyz`. The extension is now an alias to the XYZ reader in the web app, JupyterLab, VS Code and Python, and large multi-frame `.extxyz` files stream lazily in the web app just like `.xyz`.
 
+### Changed
+
+- **Render dialog: the Animation tab now says why it is unavailable.** With a single-frame structure the tab was clickable but did nothing. It is now visibly disabled, with a tooltip and an inline note explaining that the structure has only one frame and a trajectory (2+ frames) is needed for GIF/MP4 export.
+
 ## [0.17.0] - 2026-09-29
 
 ### Added

@@ -10,6 +10,7 @@
 import { test, expect } from "playwright/test";
 import { defaultViewerContract, assertDomContract, waitForReady } from "./lib/setup";
 import { expectGifFile, useSmallGifExport } from "./lib/render-modal";
+import { findNodeIdByType, removeNode } from "./lib/pipeline";
 
 const PLATFORM = "render-modal";
 
@@ -39,6 +40,20 @@ test.describe("render-modal: webapp", () => {
     await expect(page.locator('[data-testid="render-modal"]')).toBeHidden();
 
     void PLATFORM;
+  });
+
+  test("disables the Animation tab and explains why without a trajectory", async ({ page }) => {
+    // Dropping the demo's load_trajectory node leaves a single-frame structure.
+    await removeNode(page, await findNodeIdByType(page, "load_trajectory"));
+
+    await page.locator('[data-testid="pipeline-editor-render"]').click();
+    const modal = page.locator('[data-testid="render-modal"]');
+    await expect(modal).toHaveAttribute("data-mode", "snapshot-only");
+
+    const animationTab = page.locator('[data-testid="render-modal-tab-animation"]');
+    await expect(animationTab).toBeDisabled();
+    await expect(animationTab).toHaveAttribute("title", /only 1 frame/);
+    await expect(page.locator('[data-testid="render-modal-animation-hint"]')).toBeVisible();
   });
 
   // Regression coverage for issues #497 / #599: gif.js loads its encoder as a

@@ -19,6 +19,10 @@ type Mode = "snapshot" | "animation";
 type SnapshotFormat = "png" | "eps" | "svg" | "gltf" | "obj";
 type AnimationFormat = "gif" | "mp4";
 
+const ANIMATION_UNAVAILABLE_HINT =
+  "Animation is unavailable: the current structure has only 1 frame. " +
+  "Load a trajectory (2+ frames) to export GIF/MP4.";
+
 interface RenderModalProps {
   open: boolean;
   onClose: () => void;
@@ -93,26 +97,34 @@ function TabButton({
   active,
   onClick,
   testid,
+  disabled = false,
+  title,
 }: {
   label: string;
   active: boolean;
   onClick: () => void;
   testid?: string;
+  disabled?: boolean;
+  title?: string;
 }) {
   return (
     <button
-      onClick={active ? undefined : onClick}
+      onClick={active || disabled ? undefined : onClick}
       data-testid={testid}
       data-active={active}
+      disabled={disabled}
+      aria-disabled={disabled}
+      title={title}
       style={{
         flex: 1,
         background: active ? "rgba(59,130,246,0.08)" : "none",
         border: "none",
         padding: "7px 0",
-        cursor: active ? "default" : "pointer",
+        cursor: disabled ? "not-allowed" : active ? "default" : "pointer",
         fontSize: 12,
         fontWeight: 600,
         color: active ? "var(--megane-primary)" : "var(--megane-text-muted)",
+        opacity: disabled ? 0.4 : 1,
         transition: "all 0.15s",
       }}
     >
@@ -332,21 +344,21 @@ export function RenderModal({
             label="Animation"
             testid="render-modal-tab-animation"
             active={mode === "animation"}
-            onClick={() => {
-              if (hasAnimation) setMode("animation");
-            }}
+            disabled={!hasAnimation}
+            title={hasAnimation ? undefined : ANIMATION_UNAVAILABLE_HINT}
+            onClick={() => setMode("animation")}
           />
         </div>
         {!hasAnimation && mode === "snapshot" && (
           <div
+            data-testid="render-modal-animation-hint"
             style={{
               fontSize: 11,
               color: "var(--megane-text-muted)",
               marginBottom: 8,
-              fontStyle: "italic",
             }}
           >
-            Load a trajectory for animation export.
+            {ANIMATION_UNAVAILABLE_HINT}
           </div>
         )}
 
