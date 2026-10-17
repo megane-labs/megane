@@ -11,31 +11,7 @@ import type { PipelineNodeData } from "../../pipeline/execute";
 import type { ModifyParams } from "../../pipeline/types";
 import { useScopedPipelineStore } from "../../stores/MeganeProvider";
 import { NodeShell } from "./NodeShell";
-
-const sliderStyle: React.CSSProperties = {
-  width: "100%",
-  height: 7,
-  cursor: "pointer",
-  appearance: "none",
-  WebkitAppearance: "none",
-  borderRadius: 3,
-  outline: "none",
-};
-
-const valueStyle: React.CSSProperties = {
-  fontSize: 12,
-  fontWeight: 500,
-  color: "var(--megane-primary)",
-  minWidth: 50,
-  textAlign: "right",
-};
-
-const labelStyle: React.CSSProperties = {
-  fontSize: 12,
-  fontWeight: 500,
-  color: "var(--megane-text-secondary)",
-  marginBottom: 3,
-};
+import { FormStack, SliderField } from "./form";
 
 export function ModifyNode({ id, data }: NodeProps<Node<PipelineNodeData>>) {
   const updateNodeParams = useScopedPipelineStore((s) => s.updateNodeParams);
@@ -43,42 +19,28 @@ export function ModifyNode({ id, data }: NodeProps<Node<PipelineNodeData>>) {
 
   return (
     <NodeShell id={id} nodeType="modify" enabled={data.enabled}>
-      <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-        <div>
-          <div style={labelStyle}>Scale</div>
-          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-            <input
-              data-testid="modify-node-scale"
-              className="nodrag"
-              type="range"
-              min={0.1}
-              max={2.0}
-              step={0.01}
-              value={params.scale}
-              onChange={(e) => updateNodeParams(id, { scale: parseFloat(e.target.value) })}
-              style={sliderStyle}
-            />
-            <span style={valueStyle}>{params.scale.toFixed(2)}</span>
-          </div>
-        </div>
-        <div>
-          <div style={labelStyle}>Opacity</div>
-          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-            <input
-              data-testid="modify-node-opacity"
-              className="nodrag"
-              type="range"
-              min={0}
-              max={1}
-              step={0.01}
-              value={params.opacity}
-              onChange={(e) => updateNodeParams(id, { opacity: parseFloat(e.target.value) })}
-              style={sliderStyle}
-            />
-            <span style={valueStyle}>{`${Math.round(params.opacity * 100)}%`}</span>
-          </div>
-        </div>
-      </div>
+      <FormStack>
+        <SliderField
+          label="Scale"
+          testId="modify-node-scale"
+          min={0.1}
+          max={2.0}
+          step={0.01}
+          value={params.scale}
+          format={(v) => v.toFixed(2)}
+          onChange={(v) => updateNodeParams(id, { scale: v })}
+        />
+        <SliderField
+          label="Opacity"
+          testId="modify-node-opacity"
+          min={0}
+          max={1}
+          step={0.01}
+          value={params.opacity}
+          format={(v) => `${Math.round(v * 100)}%`}
+          onChange={(v) => updateNodeParams(id, { opacity: v })}
+        />
+      </FormStack>
     </NodeShell>
   );
 }

@@ -47,8 +47,6 @@ function makeFrameProvider(nFrames: number): FrameProvider {
   };
 }
 
-const ACTIVE_GREEN = "rgb(34, 197, 94)";
-
 describe("StreamingNode", () => {
   beforeEach(() => {
     cleanup();
@@ -82,7 +80,7 @@ describe("StreamingNode", () => {
 
     const status = screen.getByText("Connected");
     expect(status).toBeInTheDocument();
-    expect(status.style.color).toBe(ACTIVE_GREEN);
+    expect(status.style.color).toBe("var(--megane-success-text)");
   });
 
   it("shows the WebSocket origin hint", () => {

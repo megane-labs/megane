@@ -3,16 +3,8 @@ import type { PipelineNodeData } from "../../pipeline/execute";
 import type { DrawingBoundaryParams } from "../../pipeline/types";
 import { useScopedPipelineStore } from "../../stores/MeganeProvider";
 import { NodeShell } from "./NodeShell";
-
-const inputStyle: React.CSSProperties = {
-  width: 78,
-  padding: "4px 6px",
-  border: "1px solid var(--megane-border-strong)",
-  borderRadius: 5,
-  background: "var(--megane-surface-raised)",
-  color: "inherit",
-  fontSize: 12,
-};
+import { FormStack } from "./form";
+import { fieldLabelStyle, hintStyle, inputStyle, LABEL_WIDTH } from "./formStyles";
 
 const AXES = [
   ["a", "xMin", "xMax"],
@@ -26,59 +18,54 @@ export function DrawingBoundaryNode({ id, data }: NodeProps<Node<PipelineNodeDat
 
   return (
     <NodeShell id={id} nodeType="drawing_boundary" enabled={data.enabled}>
-      <div
-        style={{
-          color: "var(--megane-text-secondary)",
-          fontSize: 11,
-          lineHeight: 1.3,
-          marginBottom: 8,
-        }}
-      >
-        Show periodic atom images inside these inclusive fractional-coordinate ranges.
-      </div>
-      <div
-        style={{
-          display: "grid",
-          gridTemplateColumns: "24px 1fr 1fr",
-          alignItems: "center",
-          gap: "6px 8px",
-        }}
-      >
-        <span />
-        <span style={{ fontSize: 11, color: "var(--megane-text-secondary)" }}>Min</span>
-        <span style={{ fontSize: 11, color: "var(--megane-text-secondary)" }}>Max</span>
-        {AXES.map(([label, minKey, maxKey]) => (
-          <div key={label} style={{ display: "contents" }}>
-            <strong style={{ color: "var(--megane-text-body)" }}>{label}</strong>
-            <input
-              className="nodrag"
-              type="number"
-              step={0.1}
-              value={params[minKey]}
-              aria-label={`${label} minimum`}
-              data-testid={`drawing-boundary-${label}-min`}
-              style={inputStyle}
-              onChange={(event) => {
-                const value = Number(event.target.value);
-                if (Number.isFinite(value)) updateNodeParams(id, { [minKey]: value });
-              }}
-            />
-            <input
-              className="nodrag"
-              type="number"
-              step={0.1}
-              value={params[maxKey]}
-              aria-label={`${label} maximum`}
-              data-testid={`drawing-boundary-${label}-max`}
-              style={inputStyle}
-              onChange={(event) => {
-                const value = Number(event.target.value);
-                if (Number.isFinite(value)) updateNodeParams(id, { [maxKey]: value });
-              }}
-            />
-          </div>
-        ))}
-      </div>
+      <FormStack>
+        <div style={hintStyle}>
+          Show periodic atom images inside these inclusive fractional-coordinate ranges.
+        </div>
+        <div
+          style={{
+            display: "grid",
+            gridTemplateColumns: `${LABEL_WIDTH}px minmax(0, 1fr) minmax(0, 1fr)`,
+            alignItems: "center",
+            gap: "6px 10px",
+          }}
+        >
+          <span />
+          <span style={fieldLabelStyle}>Min</span>
+          <span style={fieldLabelStyle}>Max</span>
+          {AXES.map(([label, minKey, maxKey]) => (
+            <div key={label} style={{ display: "contents" }}>
+              <span style={fieldLabelStyle}>{label}</span>
+              <input
+                className="nodrag"
+                type="number"
+                step={0.1}
+                value={params[minKey]}
+                aria-label={`${label} minimum`}
+                data-testid={`drawing-boundary-${label}-min`}
+                style={inputStyle}
+                onChange={(event) => {
+                  const value = Number(event.target.value);
+                  if (Number.isFinite(value)) updateNodeParams(id, { [minKey]: value });
+                }}
+              />
+              <input
+                className="nodrag"
+                type="number"
+                step={0.1}
+                value={params[maxKey]}
+                aria-label={`${label} maximum`}
+                data-testid={`drawing-boundary-${label}-max`}
+                style={inputStyle}
+                onChange={(event) => {
+                  const value = Number(event.target.value);
+                  if (Number.isFinite(value)) updateNodeParams(id, { [maxKey]: value });
+                }}
+              />
+            </div>
+          ))}
+        </div>
+      </FormStack>
     </NodeShell>
   );
 }

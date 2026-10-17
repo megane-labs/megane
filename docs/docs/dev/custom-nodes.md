@@ -46,7 +46,7 @@ files into `Snapshot`s. Pipeline execution is 100% TypeScript.
 | 8 | Executor function | `src/pipeline/executors/<name>.ts` | Pure compute: `(params, inputs) => outputs` |
 | 9 | Dispatch `case` | `src/pipeline/execute.ts` | Wire the executor into `executePipeline()` |
 | 10 | React component | `src/components/nodes/<Name>Node.tsx` | The node UI, wrapping `NodeShell` |
-| 11 | `nodeTypes` map + `ADD_NODE_GROUPS` | `src/components/PipelineEditor.tsx` | Render the component + add it to the "Add Node" menu |
+| 11 | `nodeTypes` map + `ADD_NODE_GROUPS` | `src/components/PipelineEditor.tsx`, `src/components/PipelineRail.tsx` | Render the component + add it to the "Add Node" menu |
 | 12 | Builder subclass (optional) | `src/pipeline/builder.ts` | JS graph-construction API |
 | 13 | Python subclass (optional) | `python/megane/pipeline.py` | Python graph-construction API |
 
@@ -231,54 +231,53 @@ handles derived from `NODE_PORTS`. Your component only renders the _body_ (the
 param controls) and commits changes via the store's `updateNodeParams`.
 
 ```tsx
-import { useState, useEffect, useCallback } from "react";
 import type { NodeProps, Node } from "@xyflow/react";
 import type { PipelineNodeData } from "../../pipeline/execute";
 import type { FadeParams } from "../../pipeline/types";
 import { usePipelineStore } from "../../pipeline/store";
 import { NodeShell } from "./NodeShell";
+import { FormStack, SliderField } from "./form";
 
 export function FadeNode({ id, data }: NodeProps<Node<PipelineNodeData>>) {
   const updateNodeParams = usePipelineStore((s) => s.updateNodeParams);
   const params = data.params as FadeParams;
-  const [local, setLocal] = useState(params.opacity);
-
-  useEffect(() => {
-    setLocal(params.opacity);
-  }, [params.opacity]);
-
-  const commit = useCallback(
-    (value: number) => updateNodeParams(id, { opacity: value }),
-    [id, updateNodeParams],
-  );
 
   return (
     <NodeShell id={id} nodeType="fade" enabled={data.enabled}>
-      <label style={{ fontSize: 16, color: "#475569" }}>Opacity: {local.toFixed(2)}</label>
-      <input
-        type="range"
-        min={0}
-        max={1}
-        step={0.05}
-        value={local}
-        onChange={(e) => setLocal(Number(e.target.value))}
-        onMouseUp={() => commit(local)}
-        style={{ width: "100%" }}
-      />
+      <FormStack>
+        <SliderField
+          label="Opacity"
+          min={0}
+          max={1}
+          step={0.05}
+          value={params.opacity}
+          format={(v) => v.toFixed(2)}
+          onChange={(v) => updateNodeParams(id, { opacity: v })}
+        />
+      </FormStack>
     </NodeShell>
   );
 }
 ```
 
+Lay the form out with the shared kit in `src/components/nodes/form.tsx` —
+`FormStack` for the column, `Field` for a label-and-control row, `SliderField`,
+`Section` for a titled group, `FileDrop` for a loader — and take control styles
+(`inputStyle`, `selectStyle`, `checkboxStyle`, …) from `formStyles.ts`, so the
+new node's properties pane looks like every other one.
+
 Read/write params **only** through `updateNodeParams(id, partial)` — never mutate
-`data.params` directly. Keep a local state for smooth typing/dragging and commit
-on blur/`onMouseUp`/Enter, as `FilterNode.tsx` does.
+`data.params` directly. For a text field, keep a local state for smooth typing
+and commit on blur/Enter, as `FilterNode.tsx` does.
 
-### 11. Register the component in `src/components/PipelineEditor.tsx`
+### 11. Register the component
 
-Two edits: the React Flow `nodeTypes` map, and the "Add Node" palette groups.
+Two edits: the React Flow `nodeTypes` map in `src/components/PipelineEditor.tsx`,
+and the "Add Node" menu groups in `src/components/PipelineRail.tsx` (the icon
+rail down the Pipeline panel's left edge).
 
 ```typescript
+// src/components/PipelineEditor.tsx
 import { FadeNode } from "./nodes/FadeNode";
 
 const nodeTypes = {
@@ -286,8 +285,8 @@ const nodeTypes = {
   fade: FadeNode,
 };
 
-// Add "fade" to the appropriate ADD_NODE_GROUPS entry (the "Modify" group):
-const ADD_NODE_GROUPS: { category: NodeCategory; label: string; types: PipelineNodeType[] }[] = [
+// src/components/PipelineRail.tsx — add "fade" to the "Modify" group:
+export const ADD_NODE_GROUPS: { category: NodeCategory; label: string; types: PipelineNodeType[] }[] = [
   // …
   { category: "modify", label: "Modify", types: ["modify", "color", "representation", "replicate", "fade"] },
   // …

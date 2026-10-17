@@ -9,7 +9,8 @@ import type { PipelineNodeData } from "../../pipeline/execute";
 import type { LoadVolumetricParams } from "../../pipeline/types";
 import { useScopedPipelineStore } from "../../stores/MeganeProvider";
 import { NodeShell } from "./NodeShell";
-import { nodeButtonStyle, nodeFileNameStyle } from "./formStyles";
+import { FileDrop } from "./form";
+import { errorTextStyle, fileMetaStyle } from "./formStyles";
 import {
   VOLUMETRIC_ACCEPT,
   isVolumetricFileName,
@@ -65,45 +66,39 @@ export function LoadVolumetricNode({ id, data }: NodeProps<Node<PipelineNodeData
 
   return (
     <NodeShell id={id} nodeType="load_volumetric" enabled={data.enabled}>
-      <div data-testid="load-volumetric-dropzone" onDrop={handleDrop} onDragOver={handleDragOver}>
-        {params.fileName ? (
-          <div style={nodeFileNameStyle}>{params.fileName}</div>
-        ) : (
-          <div style={{ fontSize: 13, color: "var(--megane-text-muted)", fontStyle: "italic" }}>
-            No volumetric file loaded
-          </div>
-        )}
+      <FileDrop
+        testId="load-volumetric-dropzone"
+        fileName={params.fileName}
+        emptyText="No volumetric file loaded"
+        buttonLabel="Load volumetric file..."
+        onPick={() => inputRef.current?.click()}
+        onDrop={handleDrop}
+        onDragOver={handleDragOver}
+        fileInput={
+          <input
+            ref={inputRef}
+            type="file"
+            accept={VOLUMETRIC_ACCEPT}
+            onChange={(e) => {
+              const file = e.target.files?.[0];
+              if (file) handleFile(file);
+              e.target.value = "";
+            }}
+            style={{ display: "none" }}
+          />
+        }
+      >
         {params.fileName && !hasData && (
-          <div
-            data-testid="load-volumetric-error"
-            style={{ fontSize: 11, color: "var(--megane-danger)", marginTop: 4 }}
-          >
+          <div data-testid="load-volumetric-error" style={errorTextStyle}>
             {params.parseError ?? "Parse error — check file format"}
           </div>
         )}
         {hasData && params.volumetricData && (
-          <div style={{ fontSize: 11, color: "var(--megane-text-secondary)", marginTop: 4 }}>
+          <div style={fileMetaStyle}>
             {params.volumetricData.nx}×{params.volumetricData.ny}×{params.volumetricData.nz} voxels
           </div>
         )}
-        <button
-          onClick={() => inputRef.current?.click()}
-          style={{ ...nodeButtonStyle, marginTop: 6, width: "100%" }}
-        >
-          Load volumetric file...
-        </button>
-        <input
-          ref={inputRef}
-          type="file"
-          accept={VOLUMETRIC_ACCEPT}
-          onChange={(e) => {
-            const file = e.target.files?.[0];
-            if (file) handleFile(file);
-            e.target.value = "";
-          }}
-          style={{ display: "none" }}
-        />
-      </div>
+      </FileDrop>
     </NodeShell>
   );
 }

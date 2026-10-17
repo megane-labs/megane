@@ -21,7 +21,7 @@ import type { ReactNode } from "react";
 import { Fragment } from "react";
 import { Menu, type MenuItem } from "./Menu";
 import { ThemeCycleButton } from "../components/ThemeCycleButton";
-import { RailDivider, RailIcon, railButtonStyle, railCornerMarkStyle, railStyle } from "./rail";
+import { FlyoutMark, RailDivider, RailIcon, railButtonStyle, railStyle } from "./rail";
 
 const IconFile = (
   <RailIcon>
@@ -57,22 +57,6 @@ const IconTools = (
     <path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z" />
   </RailIcon>
 );
-
-/** The small ▸ in the corner that says "this opens a menu". */
-function FlyoutMark() {
-  return (
-    <span
-      aria-hidden="true"
-      style={{
-        ...railCornerMarkStyle,
-        fontSize: 8,
-        color: "var(--megane-text-muted, #94a3b8)",
-      }}
-    >
-      ▸
-    </span>
-  );
-}
 
 function disabledRail(disabled: boolean): React.CSSProperties {
   return {

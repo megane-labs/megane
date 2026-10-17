@@ -10,7 +10,8 @@ import type { LoadVectorParams } from "../../pipeline/types";
 import { useScopedPipelineStore, useLoadHandlers } from "../../stores/MeganeProvider";
 import { globalLoadHandlers, type VectorLoadHandler } from "../../stores/loadHandlers";
 import { NodeShell } from "./NodeShell";
-import { nodeButtonStyle, nodeFileNameStyle } from "./formStyles";
+import { Field, FileDrop, FormStack } from "./form";
+import { selectStyle } from "./formStyles";
 import { useRef, useCallback } from "react";
 
 const VECTOR_ACCEPT = ".vec";
@@ -87,47 +88,46 @@ export function LoadVectorNode({ id, data }: NodeProps<Node<PipelineNodeData>>) 
 
   return (
     <NodeShell id={id} nodeType="load_vector" enabled={data.enabled}>
-      <div onDrop={handleDrop} onDragOver={handleDragOver}>
-        {params.fileName ? (
-          <div style={nodeFileNameStyle}>{params.fileName}</div>
-        ) : (
-          <div style={{ fontSize: 13, color: "var(--megane-text-muted)", fontStyle: "italic" }}>
-            No vector file loaded
-          </div>
-        )}
-        <button
-          onClick={() => inputRef.current?.click()}
-          style={{ ...nodeButtonStyle, marginTop: 6, width: "100%" }}
-        >
-          Load vectors...
-        </button>
-        {embeddedChannels && embeddedChannels.length > 0 && (
-          <select
-            aria-label="Embedded vector channel"
-            value={activeEmbedded ?? ""}
-            onChange={(e) => handleEmbeddedSelect(e.target.value)}
-            style={{ marginTop: 6, width: "100%", fontSize: 12 }}
-          >
-            <option value="">Embedded channel: off</option>
-            {embeddedChannels.map((ch) => (
-              <option key={ch.name} value={ch.name}>
-                {ch.name} ({ch.frames.length} frame{ch.frames.length === 1 ? "" : "s"})
-              </option>
-            ))}
-          </select>
-        )}
-        <input
-          ref={inputRef}
-          type="file"
-          accept={VECTOR_ACCEPT}
-          onChange={(e) => {
-            const file = e.target.files?.[0];
-            if (file) handleFile(file);
-            e.target.value = "";
-          }}
-          style={{ display: "none" }}
+      <FormStack>
+        <FileDrop
+          fileName={params.fileName}
+          emptyText="No vector file loaded"
+          buttonLabel="Load vectors..."
+          onPick={() => inputRef.current?.click()}
+          onDrop={handleDrop}
+          onDragOver={handleDragOver}
+          fileInput={
+            <input
+              ref={inputRef}
+              type="file"
+              accept={VECTOR_ACCEPT}
+              onChange={(e) => {
+                const file = e.target.files?.[0];
+                if (file) handleFile(file);
+                e.target.value = "";
+              }}
+              style={{ display: "none" }}
+            />
+          }
         />
-      </div>
+        {embeddedChannels && embeddedChannels.length > 0 && (
+          <Field label="Embedded">
+            <select
+              aria-label="Embedded vector channel"
+              value={activeEmbedded ?? ""}
+              onChange={(e) => handleEmbeddedSelect(e.target.value)}
+              style={selectStyle}
+            >
+              <option value="">Embedded channel: off</option>
+              {embeddedChannels.map((ch) => (
+                <option key={ch.name} value={ch.name}>
+                  {ch.name} ({ch.frames.length} frame{ch.frames.length === 1 ? "" : "s"})
+                </option>
+              ))}
+            </select>
+          </Field>
+        )}
+      </FormStack>
     </NodeShell>
   );
 }
