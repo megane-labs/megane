@@ -10,6 +10,7 @@ import type { LabelGeneratorParams } from "../../pipeline/types";
 import { useScopedPipelineStore } from "../../stores/MeganeProvider";
 import { NodeShell } from "./NodeShell";
 import { TabSelector } from "../ui";
+import { Field } from "./form";
 
 export function LabelGeneratorNode({ id, data }: NodeProps<Node<PipelineNodeData>>) {
   const updateNodeParams = useScopedPipelineStore((s) => s.updateNodeParams);
@@ -17,16 +18,18 @@ export function LabelGeneratorNode({ id, data }: NodeProps<Node<PipelineNodeData
 
   return (
     <NodeShell id={id} nodeType="label_generator" enabled={data.enabled}>
-      <TabSelector<"element" | "resname" | "index">
-        size="compact"
-        options={[
-          { value: "element", label: "Element" },
-          { value: "resname", label: "Resname" },
-          { value: "index", label: "Index" },
-        ]}
-        value={params.source}
-        onChange={(v) => updateNodeParams(id, { source: v })}
-      />
+      <Field label="Source" group>
+        <TabSelector<"element" | "resname" | "index">
+          size="compact"
+          options={[
+            { value: "element", label: "Element" },
+            { value: "resname", label: "Resname" },
+            { value: "index", label: "Index" },
+          ]}
+          value={params.source}
+          onChange={(v) => updateNodeParams(id, { source: v })}
+        />
+      </Field>
     </NodeShell>
   );
 }

@@ -10,28 +10,8 @@ import type { PipelineNodeData } from "../../pipeline/execute";
 import type { WrapMode, WrapParams } from "../../pipeline/types";
 import { useScopedPipelineStore } from "../../stores/MeganeProvider";
 import { NodeShell } from "./NodeShell";
-
-const rowStyle: React.CSSProperties = {
-  display: "flex",
-  alignItems: "center",
-  justifyContent: "space-between",
-  fontSize: 12,
-  fontWeight: 500,
-  color: "var(--megane-text-secondary)",
-  padding: "3px 0",
-};
-
-const selectStyle: React.CSSProperties = {
-  fontSize: 11,
-  color: "var(--megane-text-body)",
-  background: "var(--megane-surface-muted)",
-  border: "1px solid var(--megane-border-strong)",
-  borderRadius: 4,
-  padding: "3px 6px",
-  cursor: "pointer",
-  flex: 1,
-  marginLeft: 8,
-};
+import { Field } from "./form";
+import { selectStyle } from "./formStyles";
 
 const WRAP_OPTIONS: { value: WrapMode; label: string }[] = [
   { value: "none", label: "None" },
@@ -45,8 +25,7 @@ export function WrapNode({ id, data }: NodeProps<Node<PipelineNodeData>>) {
 
   return (
     <NodeShell id={id} nodeType="wrap" enabled={data.enabled}>
-      <div style={rowStyle}>
-        <span>Mode</span>
+      <Field label="Mode">
         <select
           data-testid="wrap-node-mode"
           className="nodrag"
@@ -60,7 +39,7 @@ export function WrapNode({ id, data }: NodeProps<Node<PipelineNodeData>>) {
             </option>
           ))}
         </select>
-      </div>
+      </Field>
     </NodeShell>
   );
 }

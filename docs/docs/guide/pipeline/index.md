@@ -25,7 +25,7 @@ When a node encounters an error — for example, a parse failure in LoadStructur
 
 ## AI Pipeline Generator
 
-Describe the visualization you want in natural language, and megane builds the node graph for you. Open the AI chat panel from the pipeline editor toolbar and type a prompt like:
+Describe the visualization you want in natural language, and megane builds the node graph for you. Open the AI chat panel with the **Chat** button on the pipeline editor's left rail and type a prompt like:
 
 > Load protein.pdb with bonds and make water translucent
 

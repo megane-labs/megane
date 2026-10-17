@@ -53,12 +53,11 @@ test.describe("pipeline-editor: webapp default graph", () => {
   });
 
   test("Add Node menu adds a Replicate node with its controls", async ({ page }) => {
-    // Add Node lives in the editor toolbar; the Chat tab is the default, so
-    // switch to the Editor tab first.
+    // The Chat tab is the default, so switch to the Editor tab first.
     await page.locator('[data-testid="pipeline-editor-tab-editor"]').click();
     // Open the Add Node palette and add a Replicate (supercell builder) node.
     await page.getByTitle("Add Node").click();
-    await page.getByRole("button", { name: "Replicate", exact: true }).click();
+    await page.getByRole("menuitem", { name: "Replicate", exact: true }).click();
 
     // The seed graph already has a Replicate node; the new one is selected,
     // so its nx/ny/nz repeat inputs are the ones shown in the properties pane.
@@ -157,7 +156,7 @@ test.describe("pipeline-editor: webapp default graph", () => {
   test("Add Node menu adds a Symmetry node with its mode selector", async ({ page }) => {
     await page.locator('[data-testid="pipeline-editor-tab-editor"]').click();
     await page.getByTitle("Add Node").click();
-    await page.getByRole("button", { name: "Symmetry", exact: true }).click();
+    await page.getByRole("menuitem", { name: "Symmetry", exact: true }).click();
 
     // The seed graph already carries one symmetry node; adding makes it two.
     await expect(page.locator('[data-testid="pipeline-node-symmetry"]')).toHaveCount(2);
@@ -166,7 +165,7 @@ test.describe("pipeline-editor: webapp default graph", () => {
   test("Add Node menu adds a Wrap / Unwrap node with its mode selector", async ({ page }) => {
     await page.locator('[data-testid="pipeline-editor-tab-editor"]').click();
     await page.getByTitle("Add Node").click();
-    await page.getByRole("button", { name: "Wrap / Unwrap", exact: true }).click();
+    await page.getByRole("menuitem", { name: "Wrap / Unwrap", exact: true }).click();
 
     // The seed graph already carries one wrap node; adding makes it two.
     await expect(page.locator('[data-testid="pipeline-node-wrap"]')).toHaveCount(2);
@@ -180,9 +179,9 @@ test.describe("pipeline-editor: webapp default graph", () => {
 
     // Add both spectrum nodes from the Add Node palette.
     await page.getByTitle("Add Node").click();
-    await page.getByRole("button", { name: "Load Spectrum", exact: true }).click();
+    await page.getByRole("menuitem", { name: "Load Spectrum", exact: true }).click();
     await page.getByTitle("Add Node").click();
-    await page.getByRole("button", { name: "Spectrum Plot", exact: true }).click();
+    await page.getByRole("menuitem", { name: "Spectrum Plot", exact: true }).click();
 
     const loadNode = page.locator('[data-testid="pipeline-node-load_spectrum"]').first();
     const plotNode = page.locator('[data-testid="pipeline-node-spectrum_plot"]').first();
@@ -214,7 +213,7 @@ test.describe("pipeline-editor: webapp default graph", () => {
   test("Add Node menu adds an Isosurface node with color-by-volume controls", async ({ page }) => {
     await page.locator('[data-testid="pipeline-editor-tab-editor"]').click();
     await page.getByTitle("Add Node").click();
-    await page.getByRole("button", { name: "Isosurface", exact: true }).click();
+    await page.getByRole("menuitem", { name: "Isosurface", exact: true }).click();
 
     const node = page.locator('[data-testid="pipeline-node-isosurface"]').first();
     await expect(node).toBeVisible();
@@ -263,12 +262,12 @@ test.describe("pipeline-editor: webapp default graph", () => {
     // The editor pane stays in the layout (visibility:hidden) so ReactFlow
     // keeps its measurements; Playwright still treats it as hidden.
     await expect(editorPanel).toBeHidden();
-    // Templates button is inside the hidden editor tabpanel.
-    await expect(page.locator('[data-testid="pipeline-editor-templates"]')).toBeHidden();
-    // I/O row stays visible from Chat (Render/Share apply to the current pipeline).
+    // The rail sits beside the tab panels, so its buttons stay on every tab.
+    const rail = page.locator('[data-testid="pipeline-rail"]');
+    await expect(rail).toBeVisible();
+    await expect(page.locator('[data-testid="pipeline-editor-templates"]')).toBeVisible();
     await expect(page.locator('[data-testid="pipeline-editor-render"]')).toBeVisible();
-    // Editor-side Others row is unmounted on chat to give the input more room.
-    await expect(page.locator('[data-testid="pipeline-editor-theme"]')).toBeHidden();
+    await expect(page.locator('[data-testid="pipeline-editor-theme"]')).toBeVisible();
 
     // Switch to the Editor tab.
     await editorTab.click();
@@ -276,8 +275,6 @@ test.describe("pipeline-editor: webapp default graph", () => {
     await expect(chatTab).toHaveAttribute("aria-selected", "false");
     await expect(editorPanel).toBeVisible();
     await expect(chatPanel).toBeHidden();
-    // Pipeline-tab-only buttons (Templates) are visible when on Editor.
-    await expect(page.locator('[data-testid="pipeline-editor-templates"]')).toBeVisible();
 
     // Regression guard: the editor canvas must have non-zero size. Earlier
     // builds toggled with display:none, which collapsed ReactFlow to 0×0.
@@ -285,14 +282,14 @@ test.describe("pipeline-editor: webapp default graph", () => {
     expect(editorBox?.width ?? 0).toBeGreaterThan(100);
     expect(editorBox?.height ?? 0).toBeGreaterThan(100);
 
-    // Regression guard: the Pipeline toolbar row (Add Node / Layout /
-    // Templates) must take only its content height. A regression in the
-    // toolbar's flex basis previously made the row claim the entire pane
-    // height, leaving the buttons stranded inside an empty band. We assert
-    // the row height is well below the pane height so the canvas dominates.
-    const toolbarBox = await page.locator('[data-testid="pipeline-editor-row"]').boundingBox();
-    expect(toolbarBox?.height ?? 0).toBeGreaterThan(0);
-    expect(toolbarBox?.height ?? 0).toBeLessThan((editorBox?.height ?? 0) / 3);
+    // The rail is a narrow column down the panel's left edge, beside (not
+    // above) the editor pane, so the graph keeps the panel's full height.
+    const railBox = await rail.boundingBox();
+    expect(railBox?.width ?? 0).toBeGreaterThan(0);
+    expect(railBox?.width ?? 0).toBeLessThan(60);
+    expect((railBox?.x ?? 0) + (railBox?.width ?? 0)).toBeLessThanOrEqual(
+      (editorBox?.x ?? 0) + 1,
+    );
 
     // Back to Chat: editor pane hides again.
     await chatTab.click();

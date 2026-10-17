@@ -1,7 +1,8 @@
 /**
  * The pieces the Builder's two floating rails (tools, operations) are made
  * of: the frosted column, its 38 px icon buttons and 20 px stroke icons, the
- * rule between groups, and the small mark in a button's corner.
+ * rule between groups, and the small mark in a button's corner. The viewer's
+ * Pipeline panel builds its own rail from the same pieces.
  */
 
 import type { CSSProperties, ReactNode } from "react";
@@ -78,5 +79,21 @@ export function RailDivider() {
         background: "var(--megane-border-solid, #e2e8f0)",
       }}
     />
+  );
+}
+
+/** The small ▸ in the corner that says "this opens a menu". */
+export function FlyoutMark() {
+  return (
+    <span
+      aria-hidden="true"
+      style={{
+        ...railCornerMarkStyle,
+        fontSize: 8,
+        color: "var(--megane-text-muted, #94a3b8)",
+      }}
+    >
+      ▸
+    </span>
   );
 }

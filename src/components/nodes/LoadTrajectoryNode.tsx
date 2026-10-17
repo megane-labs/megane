@@ -11,7 +11,7 @@ import type { LoadTrajectoryParams } from "../../pipeline/types";
 import { useScopedPipelineStore, useLoadHandlers } from "../../stores/MeganeProvider";
 import { globalLoadHandlers, type TrajectoryLoadHandler } from "../../stores/loadHandlers";
 import { NodeShell } from "./NodeShell";
-import { nodeButtonStyle, nodeFileNameStyle } from "./formStyles";
+import { FileDrop } from "./form";
 import { useRef, useCallback } from "react";
 import { TRAJECTORY_ACCEPT, TRAJECTORY_EXTS } from "../../parsers/fileNames";
 
@@ -66,46 +66,33 @@ export function LoadTrajectoryNode({ id, data }: NodeProps<Node<PipelineNodeData
 
   return (
     <NodeShell id={id} nodeType="load_trajectory" enabled={data.enabled}>
-      <div onDrop={handleDrop} onDragOver={handleDragOver}>
-        {params.source === "structure" ? (
-          // The frames come from the structure file itself (multi-frame
-          // XYZ/PDB/.traj). Shown here — instead of removing the node — so
-          // the routing decision stays visible; loading a trajectory file
-          // switches back to it.
-          <div data-testid="load-trajectory-filename" style={nodeFileNameStyle}>
-            Frames from structure file
-          </div>
-        ) : params.fileName ? (
-          <div data-testid="load-trajectory-filename" style={nodeFileNameStyle}>
-            {params.fileName}
-          </div>
-        ) : (
-          <div
-            data-testid="load-trajectory-filename"
-            style={{ fontSize: 13, color: "var(--megane-text-muted)", fontStyle: "italic" }}
-          >
-            No trajectory loaded
-          </div>
-        )}
-        <button
-          onClick={() => inputRef.current?.click()}
-          style={{ ...nodeButtonStyle, marginTop: 6, width: "100%" }}
-        >
-          Load trajectory...
-        </button>
-        <input
-          ref={inputRef}
-          data-testid="load-trajectory-input"
-          type="file"
-          accept={TRAJECTORY_ACCEPT}
-          onChange={(e) => {
-            const file = e.target.files?.[0];
-            if (file) handleFile(file);
-            e.target.value = "";
-          }}
-          style={{ display: "none" }}
-        />
-      </div>
+      <FileDrop
+        // The frames come from the structure file itself (multi-frame
+        // XYZ/PDB/.traj). Shown here — instead of removing the node — so the
+        // routing decision stays visible; loading a trajectory file switches
+        // back to it.
+        fileName={params.source === "structure" ? "Frames from structure file" : params.fileName}
+        emptyText="No trajectory loaded"
+        buttonLabel="Load trajectory..."
+        nameTestId="load-trajectory-filename"
+        onPick={() => inputRef.current?.click()}
+        onDrop={handleDrop}
+        onDragOver={handleDragOver}
+        fileInput={
+          <input
+            ref={inputRef}
+            data-testid="load-trajectory-input"
+            type="file"
+            accept={TRAJECTORY_ACCEPT}
+            onChange={(e) => {
+              const file = e.target.files?.[0];
+              if (file) handleFile(file);
+              e.target.value = "";
+            }}
+            style={{ display: "none" }}
+          />
+        }
+      />
     </NodeShell>
   );
 }

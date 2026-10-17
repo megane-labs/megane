@@ -16,6 +16,8 @@ import type { NodeProps, Node } from "@xyflow/react";
 import type { PipelineNodeData } from "../../pipeline/execute";
 import { useScopedPipelineStore } from "../../stores/MeganeProvider";
 import { NodeShell } from "./NodeShell";
+import { Field, FormStack } from "./form";
+import { checkboxStyle, emptyFileStyle } from "./formStyles";
 import type { LoadSpectrumParams, SpectrumData, SpectrumPlotParams } from "../../pipeline/types";
 
 /**
@@ -121,19 +123,16 @@ export function SpectrumPlotNode({ id, data }: NodeProps<Node<PipelineNodeData>>
 
   return (
     <NodeShell id={id} nodeType="spectrum_plot" enabled={data.enabled}>
-      <div>
+      <FormStack>
         {!spectrum || !plot ? (
-          <div
-            data-testid="spectrum-plot-empty"
-            style={{ fontSize: 13, color: "var(--megane-text-muted)", fontStyle: "italic" }}
-          >
+          <div data-testid="spectrum-plot-empty" style={emptyFileStyle}>
             No spectrum connected
           </div>
         ) : (
-          <>
+          <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
             <div
               data-testid="spectrum-plot-title"
-              style={{ fontSize: 11, color: "var(--megane-text-body)", marginBottom: 2 }}
+              style={{ fontSize: 12, fontWeight: 600, color: "var(--megane-text-body)" }}
             >
               {spectrum.title || spectrum.dataType || "Spectrum"}
             </div>
@@ -145,8 +144,11 @@ export function SpectrumPlotNode({ id, data }: NodeProps<Node<PipelineNodeData>>
               role="img"
               aria-label={`${spectrum.dataType || "Spectrum"} plot`}
               style={{
+                width: "100%",
+                maxWidth: PLOT_W,
+                height: "auto",
                 background: "var(--megane-surface-raised)",
-                borderRadius: 4,
+                borderRadius: 6,
                 border: "1px solid var(--megane-border-solid)",
               }}
             >
@@ -231,27 +233,21 @@ export function SpectrumPlotNode({ id, data }: NodeProps<Node<PipelineNodeData>>
                 strokeWidth={1.2}
               />
             </svg>
-          </>
+          </div>
         )}
-        <label
-          style={{
-            display: "flex",
-            alignItems: "center",
-            gap: 6,
-            fontSize: 11,
-            marginTop: 6,
-            color: "var(--megane-text-body)",
-          }}
-        >
+        <Field label="Reverse X">
           <input
             data-testid="spectrum-plot-reverse"
             type="checkbox"
             checked={params.reverseX}
+            style={checkboxStyle}
             onChange={(e) => updateNodeParams(id, { reverseX: e.target.checked })}
           />
-          Reverse X (IR / NMR convention)
-        </label>
-      </div>
+          <span style={{ fontSize: 11, color: "var(--megane-text-muted)" }}>
+            IR / NMR convention
+          </span>
+        </Field>
+      </FormStack>
     </NodeShell>
   );
 }

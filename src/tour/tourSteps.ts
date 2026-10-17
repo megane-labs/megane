@@ -151,9 +151,9 @@ export function buildTourSteps(): DriveStep[] {
       popover: {
         title: "Want a deeper walk-through?",
         description:
-          "Click the highlighted <strong>Tutorial</strong> button anytime for a step-by-step guide to building a pipeline — load → connect → edit → viewport.",
-        side: "bottom",
-        align: "end",
+          "Click the highlighted <strong>Tutorial</strong> button on the panel's rail anytime for a step-by-step guide to building a pipeline — load → connect → edit → viewport.",
+        side: "left",
+        align: "center",
       },
     },
     {
@@ -162,8 +162,8 @@ export function buildTourSteps(): DriveStep[] {
         title: "Templates",
         description:
           "Pick a starter pipeline (molecule, solid, streaming) to see a working setup in one click.",
-        side: "bottom",
-        align: "end",
+        side: "left",
+        align: "center",
       },
     },
     {

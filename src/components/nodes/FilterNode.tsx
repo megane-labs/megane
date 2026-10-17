@@ -12,40 +12,9 @@ import type { FilterParams } from "../../pipeline/types";
 import { useScopedPipelineStore } from "../../stores/MeganeProvider";
 import { validateQuery, validateBondQuery } from "../../pipeline/selection";
 import { NodeShell } from "./NodeShell";
+import { FormStack, Section } from "./form";
+import { codeInputStyle, errorTextStyle, hintStyle, inputErrorStyle } from "./formStyles";
 import { isImeComposing } from "../../utils/ime";
-
-const inputStyle: React.CSSProperties = {
-  width: "100%",
-  padding: "5px 8px",
-  fontSize: 12,
-  fontFamily: "monospace",
-  border: "1px solid var(--megane-border-solid)",
-  borderRadius: 7,
-  outline: "none",
-  background: "var(--megane-surface-solid)",
-  color: "var(--megane-text)",
-  boxSizing: "border-box",
-};
-
-const inputErrorStyle: React.CSSProperties = {
-  ...inputStyle,
-  borderColor: "var(--megane-danger)",
-  background: "rgba(239, 68, 68, 0.08)",
-};
-
-const errorStyle: React.CSSProperties = {
-  fontSize: 12,
-  color: "var(--megane-danger)",
-  marginTop: 7,
-  lineHeight: 1.3,
-};
-
-const hintStyle: React.CSSProperties = {
-  fontSize: 11,
-  color: "var(--megane-text-muted)",
-  marginTop: 7,
-  lineHeight: 1.3,
-};
 
 export function FilterNode({ id, data }: NodeProps<Node<PipelineNodeData>>) {
   const updateNodeParams = useScopedPipelineStore((s) => s.updateNodeParams);
@@ -91,32 +60,42 @@ export function FilterNode({ id, data }: NodeProps<Node<PipelineNodeData>>) {
 
   return (
     <NodeShell id={id} nodeType="filter" enabled={data.enabled}>
-      <input
-        value={localQuery}
-        onChange={(e) => setLocalQuery(e.target.value)}
-        onBlur={handleCommit}
-        onKeyDown={handleKeyDown}
-        placeholder='element == "C"'
-        style={error ? inputErrorStyle : inputStyle}
-      />
-      {error && <div style={errorStyle}>{error}</div>}
-      {!error && !localQuery && (
-        <div style={hintStyle}>
-          element, index, x, y, z, resname, resid, chain, mass, molecule_id · within R of (…)
-        </div>
-      )}
-      <input
-        value={localBondQuery}
-        onChange={(e) => setLocalBondQuery(e.target.value)}
-        onBlur={handleBondCommit}
-        onKeyDown={handleBondKeyDown}
-        placeholder="both atom_index >= 24"
-        style={{ ...(bondError ? inputErrorStyle : inputStyle), marginTop: 6 }}
-      />
-      {bondError && <div style={errorStyle}>{bondError}</div>}
-      {!bondError && !localBondQuery && (
-        <div style={hintStyle}>bond_index, atom_index, element, molecule_id · "both" for AND</div>
-      )}
+      <FormStack>
+        <Section title="Atoms">
+          <input
+            value={localQuery}
+            onChange={(e) => setLocalQuery(e.target.value)}
+            onBlur={handleCommit}
+            onKeyDown={handleKeyDown}
+            placeholder='element == "C"'
+            aria-label="Atom query"
+            style={error ? { ...codeInputStyle, ...inputErrorStyle } : codeInputStyle}
+          />
+          {error && <div style={errorTextStyle}>{error}</div>}
+          {!error && !localQuery && (
+            <div style={hintStyle}>
+              element, index, x, y, z, resname, resid, chain, mass, molecule_id · within R of (…)
+            </div>
+          )}
+        </Section>
+        <Section title="Bonds">
+          <input
+            value={localBondQuery}
+            onChange={(e) => setLocalBondQuery(e.target.value)}
+            onBlur={handleBondCommit}
+            onKeyDown={handleBondKeyDown}
+            placeholder="both atom_index >= 24"
+            aria-label="Bond query"
+            style={bondError ? { ...codeInputStyle, ...inputErrorStyle } : codeInputStyle}
+          />
+          {bondError && <div style={errorTextStyle}>{bondError}</div>}
+          {!bondError && !localBondQuery && (
+            <div style={hintStyle}>
+              bond_index, atom_index, element, molecule_id · "both" for AND
+            </div>
+          )}
+        </Section>
+      </FormStack>
     </NodeShell>
   );
 }
