@@ -48,9 +48,9 @@ Describe the visualization you want in natural language, and megane builds the n
 
 The generator creates the appropriate LoadStructure, AddBond, Filter, Modify, and Viewport nodes, wires them together, and places them in the editor. You can then adjust parameters or add more nodes manually.
 
-Open **AI Settings** (the gear button in the chat input) to choose a provider (**Anthropic** or **OpenAI**), a model, and your API key; the key is kept in the browser. Builds configured with megane's shared proxy also offer a rate-limited free demo that needs no key — tick **Use my own API key** to switch to your own provider.
+Open **AI Settings** (the ⚙ button beside the chat input) to choose a provider (**Anthropic** or **OpenAI**), a model, and your API key. The provider and model are remembered in the browser; the API key is held only for the current session and is not saved. Builds configured with megane's shared proxy also offer a rate-limited free demo that needs no key — tick **Use my own API key** to use your own provider instead.
 
-The generator checks its own output before applying it: the pipeline schema, the selection-query syntax, edge types, and — when a structure is loaded — the errors the graph actually produces when executed (e.g. `Filter returned 0 atoms`). Any findings are sent back to the model to fix, for up to two repair rounds.
+The generator checks its own output after each generation: the pipeline schema, the selection-query syntax, edge types, and — when a structure is loaded — the errors the graph actually produces when executed (e.g. `Filter returned 0 atoms`). Any findings are sent back to the model to fix, for up to two repair rounds.
 
 ## VS Code Extension Auto-Setup
 
@@ -73,14 +73,14 @@ LoadStructure ──particle──→ AddBond ──bond──→ Viewport
 
 Use the **Templates** menu on the rail to replace the pipeline with a pre-built one:
 
-- **Molecule** — Caffeine (`caffeine_water.pdb`) with structure-based bonds and a vibration trajectory (`caffeine_water_vibration.xtc`). Nodes: `LoadStructure → Symmetry → Wrap → AddBond → Viewport`, with `LoadTrajectory` feeding the trajectory through `Symmetry → Wrap → Viewport`.
+- **Molecule** — Caffeine (`caffeine_water.pdb`) with structure-based bonds and a vibration trajectory (`caffeine_water_vibration.xtc`). Nodes: `LoadStructure → Symmetry → Wrap → AddBond → Viewport`, with `LoadTrajectory` feeding its frames through the same `Symmetry → Wrap` into the Viewport.
 - **Molecular Crystal** — Glycine (`glycine_csd.cif`) with atoms normalized into the home cell and finite molecules completed across its faces. Nodes: `LoadStructure → Symmetry → Wrap`, followed by parallel `AddBond` and `DrawingBoundary` branches that join at `BoundaryCompletion → Viewport`.
 - **Solid** — Perovskite SrTiO₃ 3×3×3 supercell with TiO₆ coordination polyhedra. Nodes: `LoadStructure → Symmetry → Wrap → DrawingBoundary → Coordination → PolyhedronGenerator → Viewport`. Coordination detects metal centers and neighboring anion-former atoms; its Bond output also renders the neighbor atoms required to complete boundary coordination environments.
-- **Surface Mesh** — Quartz SiO₂ 2×2×2 supercell (`quartz_sio2_2x2x2.xyz`) wrapped in an OVITO-style alpha-shape envelope. Nodes: `LoadStructure → Symmetry → Wrap → SurfaceMesh → Viewport (mesh)`.
+- **Surface Mesh** — Quartz SiO₂ 2×2×2 supercell (`quartz_sio2_2x2x2.xyz`) wrapped in an OVITO-style alpha-shape envelope. Nodes: `LoadStructure → Symmetry → Wrap → SurfaceMesh → Viewport (mesh)`, with the atoms also sent to the Viewport.
 - **Protein** — Ubiquitin (`1ubq.pdb`) as a cartoon ribbon with semi-transparent water. The protein branch is `Filter (resname != "HOH") → Modify (opacity 0) → Representation (both) → Viewport`, the water branch `Filter (resname == "HOH") → Modify (opacity 0.5) → Viewport`.
 - **ESP Isosurface** — Caffeine (`caffeine.sdf`) overlaid with its electrostatic potential read from a cube file (`caffeine_esp.cube`). Nodes: `LoadStructure → Symmetry → Wrap → AddBond → Viewport` alongside an independent `LoadVolumetric → Isosurface → Viewport (mesh)` branch. The two branches never meet in the graph — the molecule and the grid line up because they share a coordinate frame. The Isosurface node runs in dual-contour mode (`showNegative`), so it draws the potential at both `+isoLevel` (blue, over the methyl and imidazole hydrogens) and `−isoLevel` (red, over the two carbonyl oxygens), the usual chemistry convention. The default level, 0.03 Hartree/e, is where the potential sits on caffeine's van der Waals surface; lower it in the node to grow the lobes into a shell around the whole molecule.
 - **Coarse-Grained Overlay** — Ubiquitin before and after coarse-graining, superimposed: the all-atom model (`1ubq.pdb`) ghosted at 30 % opacity behind one bead per residue (`1ubq_cg.pdb`, each bead at its residue's heavy-atom center of mass). Two `LoadStructure` nodes feed one Viewport and render as separate structure layers. The all-atom side splits into two `Filter → Modify` branches — protein at opacity 0.3, the 58 crystallographic waters at opacity 0 — because a Modify behind a Filter writes its opacity only at the selected atoms and leaves the rest fully opaque. The bead side scales up ×3.2 and takes a uniform Color so it reads over the ghost, with its backbone drawn from the CG file's `CONECT` records.
-- **Streaming** — A `Streaming` node wired to the Viewport (particle, bond, trajectory, cell) for live WebSocket data from `megane serve`.
+- **Streaming** — A `Streaming` node wired to the Viewport (particle, bond, trajectory, cell) for live WebSocket data; the Streaming node only works on the standalone `megane serve` host.
 
 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
   <LiveViewer data="caffeine_water" height="300px" caption="Molecule template — caffeine in water" />
@@ -140,7 +140,7 @@ The Filter node accepts Python-like query expressions to select atoms.
 
 `all` — select all atoms, `none` — select no atoms
 
-`within R of (…)` — every atom within `R` Å of any atom the inner expression selects (the selected atoms included)
+`within R of (…)` — every atom within `R` Å of any atom the inner expression selects (including those atoms)
 
 ### Examples
 
@@ -154,7 +154,7 @@ element == "O" or element == "N"       # Oxygen or nitrogen
 mass > 32                              # Atoms heavier than sulfur
 molecule_id == 0                       # Atoms belonging to the first molecule
 not molecule_id == 0                   # Everything except the first molecule
-chain == "A" and resid < 50            # First 49 residues of chain A
+chain == "A" and resid < 50            # Chain A residues numbered below 50
 within 5 of (resname == "HEM")         # Everything within 5 Å of the heme
 ```
 

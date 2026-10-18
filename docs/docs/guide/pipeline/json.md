@@ -6,10 +6,10 @@ sidebar_label: JSON
 
 Pipelines serialize to the **SerializedPipeline v3** JSON format. This format is used by:
 
-- The **VS Code extension** (`megane.json` files)
-- The **pipeline editor** (import/export)
+- The **VS Code extension** (`*.megane.json` files open as a pipeline)
+- The **pipeline editor** (*File → Import pipeline… / Export pipeline*, which downloads `pipeline.megane.json`; *Copy share link…* embeds the same JSON, compressed, in the URL)
 - The TypeScript `pipe.toObject()` / `pipe.toJSON()` methods
-- The Python `pipe.to_dict()` method
+- The Python `pipe.to_dict()` / `pipe.to_json()` / `pipe.save(path)` methods, and `Pipeline.from_dict()` / `Pipeline.from_json()` / `Pipeline.load(path)` to read it back
 
 JSON pipelines can be saved, shared, and version-controlled. You can write them by hand or generate them from [Python](./python.md) or [TypeScript](./typescript.md).
 
@@ -57,7 +57,7 @@ For real-world examples, see the [Gallery](/gallery).
 
 | Field     | Type     | Description                            |
 | --------- | -------- | -------------------------------------- |
-| `version` | `number` | Always `3` for the current format      |
+| `version` | `number` | Always `3`; other versions are rejected |
 | `nodes`   | `array`  | Array of node objects                  |
 | `edges`   | `array`  | Array of edge objects connecting nodes |
 
@@ -72,27 +72,52 @@ Every node has the following common fields:
 | `position` | `{ x, y }` | Position in the pipeline editor canvas                         |
 | `enabled`  | `boolean?` | Optional. Set to `false` to bypass this node (default: `true`) |
 
+Any parameter a node leaves out takes its default (the defaults are listed in
+the [Node Reference](/reference/node-reference)). Ephemeral data — parsed
+topology bonds, volumetric grids, decoded spectra, trajectory frames — is never
+serialized; only file names are.
+
 ### Node Types and Parameters
 
 #### `load_structure`
 
-| Field           | Type      | Description                               |
-| --------------- | --------- | ----------------------------------------- |
-| `fileName`      | `string`  | Display name of the file                  |
-| `fileUrl`       | `string`  | Path or URL to the structure file         |
-| `hasTrajectory` | `boolean` | Whether the file contains trajectory data |
-| `hasCell`       | `boolean` | Whether the file contains unit cell data  |
+| Field           | Type             | Description                                                                                                                       |
+| --------------- | ---------------- | --------------------------------------------------------------------------------------------------------------------------------- |
+| `fileName`      | `string \| null` | Path/name of the structure file                                                                                                   |
+| `fileUrl`       | `string?`        | Optional URL the React `PipelineViewer` fetches the file from                                                                     |
+| `hasTrajectory` | `boolean`        | Whether the file contains trajectory data                                                                                         |
+| `hasCell`       | `boolean`        | Whether the file contains unit cell data                                                                                          |
+| `edits`         | `EditOp[]?`      | Optional structure edits replayed, in order, on the file as loaded — the [megane Builder](../builder.md) history format (see below) |
+
+Each `edits` entry is an object whose `op` is one of `add_atom`, `delete_atoms`,
+`move_atoms`, `set_element`, `add_bond`, `delete_bond`, `add_fragment`,
+`set_cell`, `supercell`, `slab`, `expand_symmetry`, `wrap`, or `center`. Atom
+references are either indices into the file's atoms (numbers) or the `id` of an
+atom created by an earlier op in the list (strings; the whole-structure ops
+`supercell` / `slab` / `expand_symmetry` re-key every atom as `<id>:<k>`).
+Elements are atomic numbers and positions are in Å:
+
+```json
+"edits": [
+  { "op": "set_element", "atoms": [3], "element": 7 },
+  { "op": "add_atom", "id": "h1", "element": 1, "position": [1.2, 0.0, 0.4], "bondTo": 3 }
+]
+```
+
+The full op schema is in the [Node Reference](/reference/node-reference#load_structure).
 
 #### `load_trajectory`
 
-| Field      | Type     | Description                         |
-| ---------- | -------- | ----------------------------------- |
-| `fileName` | `string` | Display name of the trajectory file |
-| `fileUrl`  | `string` | Path or URL to the trajectory file  |
+| Field      | Type                     | Description                                                                                                                         |
+| ---------- | ------------------------ | ----------------------------------------------------------------------------------------------------------------------------------- |
+| `fileName` | `string \| null`         | Path/name of the trajectory file (XTC, DCD, NetCDF, LAMMPS dump)                                                                    |
+| `source`   | `"file" \| "structure"`  | `"file"` (default) plays the trajectory file; `"structure"` forwards the frames embedded in a multi-frame structure file (XYZ/PDB/.traj) |
 
 #### `streaming`
 
-No additional parameters.
+| Field       | Type      | Description                                         |
+| ----------- | --------- | --------------------------------------------------- |
+| `connected` | `boolean` | Whether the WebSocket stream is connected (default `false`) |
 
 #### `load_vector`
 
@@ -111,8 +136,36 @@ No additional parameters.
 
 | Field     | Type     | Description                             |
 | --------- | -------- | --------------------------------------- |
-| `scale`   | `number` | Atom sphere radius multiplier (0.1–2.0) |
+| `scale`   | `number` | Atom sphere radius multiplier (the editor slider spans 0.1–2.0) |
 | `opacity` | `number` | Transparency (0–1)                      |
+
+#### `symmetry`
+
+Expands a CIF's asymmetric unit into the full unit cell using the space-group
+operations the parser captured. Structures without symmetry operations or
+without a cell pass through unchanged. Ports: `particle`, `trajectory` in and out.
+
+| Field  | Type                 | Description                                                          |
+| ------ | -------------------- | -------------------------------------------------------------------- |
+| `mode` | `"expand" \| "none"` | `"expand"` (default) applies the operations; `"none"` passes through |
+
+#### `wrap`
+
+Periodic-image coordinate mapping for the particle stream and its trajectory.
+Ports: `particle`, `trajectory` in and out.
+
+| Field  | Type                             | Description                                                                                                                          |
+| ------ | -------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
+| `mode` | `"none" \| "wrap" \| "unwrap"`   | `"none"` (default) passes through; `"wrap"` folds atoms into the home cell; `"unwrap"` makes molecules split across a periodic face whole |
+
+#### `replicate`
+
+Builds an `nx × ny × nz` supercell, copying atoms and bonds and enlarging the
+cell. Requires a unit cell. Ports: `particle`, `cell`, `trajectory` in and out.
+
+| Field              | Type     | Description                                                   |
+| ------------------ | -------- | ------------------------------------------------------------- |
+| `nx`, `ny`, `nz`   | `number` | Repeats along lattice vectors a, b, c (integers ≥ 1, default `1`) |
 
 #### `color`
 
@@ -140,7 +193,8 @@ handle and emits the tagged particle stream on `out`.
 
 | Field        | Type     | Description                                                                                                                                                                          |
 | ------------ | -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `bondSource` | `string` | `"distance"` or `"structure"`                                                                                                                                                        |
+| `bondSource` | `string` | `"structure"` (bonds from the structure file), `"distance"` (VDW inference, the default), `"file"` (a separate topology file), or `"none"`                                        |
+| `bondFileName` | `string?` | Optional. Name of the topology file used when `bondSource` is `"file"` (the parsed bonds themselves are not serialized)                                                    |
 | `vdwScale`   | `number` | Optional. Threshold scale for `"distance"` mode: atoms bond when their separation is `≤ (vdw_i + vdw_j) * vdwScale`. Higher loosens (more bonds), lower tightens. Defaults to `0.6`. |
 
 #### `label_generator`
@@ -208,7 +262,7 @@ outside the drawing range are handled upstream.
 
 | Field      | Type             | Description                                                                                        |
 | ---------- | ---------------- | -------------------------------------------------------------------------------------------------- |
-| `fileName` | `string \| null` | Display name of the CUBE file. Volumetric data (`volumetricData`) is ephemeral and not serialized. |
+| `fileName` | `string \| null` | Display name of the volumetric file (CUBE or OpenDX). Volumetric data (`volumetricData`) is ephemeral and not serialized. |
 
 #### `isosurface`
 
@@ -228,6 +282,24 @@ To color a charge-density isosurface by electrostatic potential, add a second
 the isosurface node's `colorVolumetric` input, then set `colorMode` to
 `"volume"`.
 
+#### `load_spectrum`
+
+Loads a JCAMP-DX spectrum (`.jdx` / `.jcamp`). A spectrum has no 3D
+coordinates, so its `spectrum` output feeds `spectrum_plot`, not the Viewport.
+
+| Field      | Type             | Description                                                                 |
+| ---------- | ---------------- | --------------------------------------------------------------------------- |
+| `fileName` | `string \| null` | Display name of the JCAMP-DX file. The decoded spectrum is not serialized. |
+
+#### `spectrum_plot`
+
+Terminal node that draws its `spectrum` input as a 2D line chart.
+
+| Field      | Type      | Description                                                             |
+| ---------- | --------- | ----------------------------------------------------------------------- |
+| `reverseX` | `boolean` | Draw the x axis high-to-low, the IR/NMR convention (default `true`)     |
+| `color`    | `string`  | Hex stroke color of the trace (default `"#84cc16"`)                     |
+
 #### `vector_overlay`
 
 | Field   | Type     | Description                    |
@@ -238,9 +310,9 @@ the isosurface node's `colorVolumetric` input, then set `colorMode` to
 
 | Field                | Type      | Description                           |
 | -------------------- | --------- | ------------------------------------- |
-| `perspective`        | `boolean` | Perspective / orthographic projection |
-| `cellAxesVisible`    | `boolean` | Show unit cell axes                   |
-| `pivotMarkerVisible` | `boolean` | Show rotation pivot marker            |
+| `perspective`        | `boolean` | Perspective (`true`) or orthographic (`false`, default) projection |
+| `cellAxesVisible`    | `boolean` | Show unit cell axes (default `true`)  |
+| `pivotMarkerVisible` | `boolean` | Show rotation pivot marker (default `true`) |
 
 ## Edge Fields
 

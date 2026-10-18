@@ -16,7 +16,7 @@ The docs describe megane along one axis: the **distribution** (host) you run it 
 
 | Platform | Entry | What it is |
 |---|---|---|
-| **Standalone web app** | `src/index.tsx`, served by `megane serve` | Full-featured viewer with pipeline editor, drag-and-drop, file dialogs, and WebSocket trajectory streaming. |
+| **Standalone web app** | `src/index.tsx`, served by `megane serve` | Full-featured viewer with pipeline editor, drag-and-drop, file dialogs, and Web Worker parsing with on-demand frame streaming for large files. |
 | **Jupyter widget** (anywidget) | `src/widget.ts` + `python/megane/widget.py` | Embedded viewer in a notebook cell, driven by Python (`MolecularViewer`). |
 | **JupyterLab extension** (labextension) | `jupyterlab-megane/src/index.ts` | Document-style viewer launched from the JupyterLab file browser. |
 | **VS Code extension** | `vscode-megane/webview/main.tsx` | Custom editor activated when a registered file type is opened in VS Code. |
@@ -254,9 +254,10 @@ Isosurface node consumes them interchangeably.
 
 **`.dx` is ambiguous.** OpenDX grids and JCAMP-DX spectra share the extension,
 so dispatch sniffs the content: OpenDX opens with `object … class
-gridpositions`, JCAMP-DX with `##TITLE=` / `##JCAMP-DX=`. A `.dx` that turns out
-to be a spectrum gets an explicit "megane has no 2D plot surface yet" message
-rather than a confusing parse failure.
+gridpositions`, JCAMP-DX with `##TITLE=` / `##JCAMP-DX=`. A `.dx` given to the
+Load Volumetric node that turns out to be a spectrum gets an explicit "not an
+OpenDX grid, looks like a JCAMP-DX spectrum" error rather than a confusing parse
+failure (and the Load Spectrum node does the mirror-image check).
 
 ### Trajectory formats
 
@@ -284,9 +285,9 @@ dump** additionally supports a **variable atom count** and per-frame atom type
 are mapped to elements via the loaded structure) and the viewer adds/removes atoms
 per frame. Constant-cell, constant-atom trajectories keep the fixed-stride fast
 path. Large variable-atom LAMMPS dumps that would otherwise stream lazily fall
-back to an eager parse so no frame is dropped. The Python-hosted viewers (Jupyter
-widget, JupyterLab) receive the per-frame elements/cell over the streaming
-protocol as well.
+back to an eager parse so no frame is dropped. The Jupyter widget,
+whose frames come from the Python kernel, receives the per-frame elements/cell
+over its binary protocol as well.
 
 ### Topology formats
 
@@ -298,9 +299,9 @@ with a GROMACS `.top`).
 | Format | Extensions | Standalone (Add Bond node) | React (npm) | Python |
 |---|---|:---:|:---:|:---:|
 | GROMACS topology | `.top` | ✓ | ✓ | ✓ |
-| CHARMM/NAMD PSF | `.psf` | ✓ | ✓ | API² |
+| CHARMM/NAMD PSF | `.psf` | ✓ | ✓ | ✓ |
 
-² Python `AddBonds` only wires GROMACS `.top` topology via the `top=` parameter. PSF bonds are accessible programmatically via `megane.parsers.psf.parse_psf_bonds(path)` or `megane_parser.parse_psf_bonds(text)`, but cannot be passed directly to an `AddBonds` pipeline node.
+Python passes either file to the `AddBonds` node as `top=` (`AddBonds(top="topol.top")` / `AddBonds(top="system.psf")`, or `build_pipeline(..., top=...)`); the parsers are also callable directly as `megane.parsers.top.parse_top_bonds(path)` and `megane.parsers.psf.parse_psf_bonds(path)`. The JupyterLab and VS Code hosts mount the same Add Bond node in their pipeline editor, and both also pick up a GROMACS topology automatically when a `.gro` is opened next to a `.top` with the same stem (`conf.gro` → `conf.top`).
 
 ### Spectrum formats
 
@@ -318,8 +319,10 @@ cannot be dispatched by extension alone. The Load Spectrum node sniffs the file
 head (`##TITLE=` / `##JCAMP-DX=` versus `object … class gridpositions`) and, when
 a `.dx` turns out to be an OpenDX grid, reports that instead of failing
 opaquely. Because the JupyterLab `IFileType` and VS Code `customEditors`
-registries can only match on extension, `.dx` is deliberately **not** registered
-with either host — only `.jdx` and `.jcamp` are.
+registries can only match on the name, both hosts register `.dx` as an OpenDX
+**volumetric** grid, and opening a `.dx` directly always shows the
+volumetric-grid message; only `.jdx` and `.jcamp` open as spectra. Load a
+JCAMP-DX `.dx` through the Load Spectrum node instead.
 
 ⁴ A spectrum has no coordinates, so opening one from the JupyterLab file browser
 or the VS Code editor surfaces an actionable message pointing at the Load
@@ -343,7 +346,7 @@ X variable's `##FIRST=` / `##LAST=` because Bruker writes the X column as a raw
 point counter. True nD data (`##NUM DIM=` ≥ 2, e.g. HMBC) has no 1D rendering
 and is rejected with a message that says so.
 
-Sources of truth: `crates/megane-wasm/src/lib.rs` (browser parsers), `crates/megane-python/src/lib.rs` (Python parsers), `src/components/nodes/LoadStructureNode.tsx` and `src/components/nodes/LoadTrajectoryNode.tsx` (standalone accept lists), `src/components/nodes/AddBondNode.tsx` (topology accept list), `src/parsers/fileNames.ts` (filename-based dispatch for extensionless VASP files), `src/pipeline/executors/parseVolumetric.ts` (volumetric accept list + `.dx` content sniffing), `src/parsers/spectrum.ts` (spectrum accept list and JCAMP-DX/OpenDX sniffing), `jupyterlab-megane/src/filetypes.ts` (JupyterLab `IFileType` registrations), `vscode-megane/package.json` (VS Code `customEditors`).
+Sources of truth: `crates/megane-wasm/src/lib.rs` (browser parsers), `crates/megane-python/src/lib.rs` (Python parsers), `python/megane/parsers/dispatch.py` (Python extension → parser dispatch used by `LoadStructure`), `src/parsers/fileNames.ts` (`STRUCTURE_EXTS` / `TRAJECTORY_EXTS`, the standalone accept lists that `src/components/nodes/LoadStructureNode.tsx` and `LoadTrajectoryNode.tsx` use, plus filename-based dispatch for extensionless VASP files), `src/components/nodes/AddBondNode.tsx` (topology accept list), `src/pipeline/executors/parseVolumetric.ts` (volumetric accept list + `.dx` content sniffing), `src/parsers/spectrum.ts` (spectrum accept list and JCAMP-DX/OpenDX sniffing), `jupyterlab-megane/src/filetypes.ts` (JupyterLab `IFileType` registrations), `jupyterlab-megane/src/trajectoryUtils.ts` (trajectory-, volumetric- and spectrum-only guards), `vscode-megane/package.json` (VS Code `customEditors`).
 
 ## UI features
 
@@ -351,10 +354,10 @@ Sources of truth: `crates/megane-wasm/src/lib.rs` (browser parsers), `crates/meg
 |---|:---:|:---:|:---:|:---:|:---:|:---:|
 | Drag-and-drop into viewer | ✓ | — | — | — | ✓ | n/a |
 | Built-in file picker | ✓ | — | host | host | ✓ | n/a |
-| Visual pipeline editor | ✓ | — | ✓ | ✓ (`.megane.json`) | ✓ | n/a |
+| Visual pipeline editor | ✓ | — | ✓ | ✓ | ✓ | n/a |
 | Trajectory timeline / scrubbing | ✓ | ✓ | ✓ | ✓ | ✓ | n/a |
 | Trajectory playback without a running backend (shared / reopened document) | ✓ | ✓⁷ | ✓ | ✓ | ✓ | n/a |
-| WebSocket trajectory streaming | ✓ | — | — | — | — | n/a |
+| WebSocket trajectory streaming | backend only¹⁰ | — | — | — | — | n/a |
 | Parsing in a Web Worker; trajectories and multi-frame XYZ / multi-MODEL PDB of 8 MB or more stream frames on demand | ✓ | — | — | — | — | n/a |
 | Multi-layer rendering | ✓ | ✓ (via pipeline) | ✓ | ✓ | ✓ | n/a |
 | Solvent-accessible surface (SAS) | ✓ | ✓ (via pipeline) | ✓ | ✓ | ✓ | n/a |
@@ -369,7 +372,7 @@ Sources of truth: `crates/megane-wasm/src/lib.rs` (browser parsers), `crates/meg
 | Edit-history replay on `load_structure.edits` (the Builder's history format, applied to the file as loaded) | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ (`LoadStructure(edits=…)`) |
 | Structure export (XYZ / PDB / MOL writer) | ✓ | — | ✓ | ✓ (save dialog) | ✓ | ✓ (`write_structure` / `save_structure`) |
 | `frame_change` callback | ✓ (React prop) | ✓ (Python event) | ✓ (status bar) | ✓ (status bar) | ✓ (React prop) | n/a |
-| `selection_change` / `measurement` events | ✓ (React props) | ✓ | ✓² | ✓² | ✓ (React props) | n/a |
+| `selection_change` / `measurement` events | ✓ (React props) | ✓⁹ | ✓² | ✓² | ✓ (React props) | n/a |
 | Programmatic frame seek (`frame_index = N`) | ✓ | ✓ | ✓³ | ✓⁴ | ✓ | n/a |
 | Export downloads (render output, pipeline JSON, measurement CSV/JSON) | ✓ | ✓⁵ | ✓ | ✓ (save dialog) | ✓ | n/a |
 | Animation export (GIF)⁶ | ✓ | ✓⁵ | ✓ | ✓ (save dialog) | ✓ | n/a |
@@ -386,13 +389,17 @@ Sources of truth: `crates/megane-wasm/src/lib.rs` (browser parsers), `crates/meg
 
 ⁸ megane Builder outside the web app: the **VS Code** extension adds a *megane* container to the activity bar whose *Builder* view has *New Structure* and *Open File in Builder…*, plus *Open in megane Builder* on structure files in the Explorer's context menu and in a megane viewer tab's title bar; each opens a Builder editor tab. The **JupyterLab** extension adds a *megane* panel to the left sidebar (*Open Builder* and the structure files of the file browser's folder), *Open in megane Builder* in the file browser's context menu, and a *megane Builder* launcher item; the Builder is one main-area tab. The **Jupyter widget** is `megane.Builder("file.sdf")` in a cell: Python opens files in it (`load`, `load_text`) and reads the edited structure back (`n_atoms`, `text("pdb")`, `save(path)`, `to_ase()`); RDKit's module is sent by the kernel on first use rather than shipped in every notebook. Each separate `Builder` edits its own document; showing the same one in two outputs moves it to the newer output. Keyboard shortcuts act only while the focus is in the Builder on the embedded hosts.
 
+⁹ Jupyter widget: `measurement` fires for every measurement the viewer computes, whether the atoms were picked by right-clicking in the viewer or set from Python. `selection_change` fires only when Python assigns `selected_atoms` — the front end never writes a click selection back to that traitlet, so right-clicking atoms updates `measurement` but not `selected_atoms`.
+
+¹⁰ The `megane serve` backend exposes the `/ws` WebSocket endpoint and its binary protocol (and the **Streaming** pipeline node consumes that data), but the bundled viewer page currently starts in its in-browser data mode and does not connect to `/ws`: files are opened and parsed in the browser. See [Standalone web app](guide/cli.md).
+
 Notes:
 
 - **host** means the parent app provides the file picker (the JupyterLab file browser, the VS Code explorer); megane itself does not render one.
 - The Jupyter widget intentionally does not mount the visual pipeline editor — pipelines are built in Python (`megane.Pipeline`) and pushed via `MolecularViewer.set_pipeline()`. Use the standalone app, JupyterLab extension, VS Code extension, or the npm `MeganeViewer` to edit pipelines visually.
-- The standalone app is the only platform with `megane serve` WebSocket streaming; other platforms load full trajectories into memory.
+- The standalone app is the only platform that parses in a Web Worker and streams the frames of large (≥ 8 MB) trajectories and multi-frame XYZ / PDB files on demand; the other platforms decode full trajectories into memory.
 - The standalone React `MeganeViewer` exposes an `onFrameChange?: (frame: number) => void` prop that fires on every trajectory frame transition — useful for keeping a host Plotly figure in sync.
-- The standalone React `MeganeViewer` also exposes `onSelectionChange?: (selection: SelectionState) => void` (fires on every atom selection change; data: `{ atoms: number[] }`) and `onMeasurementChange?: (measurement: Measurement | null) => void` (fires when a distance/angle/dihedral measurement is computed or cleared) — both mirror the Jupyter widget's `selection_change` and `measurement` events.
+- The standalone React `MeganeViewer` also exposes `onSelectionChange?: (selection: SelectionState) => void` (fires on every atom selection change; data: `{ atoms: number[] }`) and `onMeasurementChange?: (measurement: Measurement | null) => void` (fires when a distance/angle/dihedral measurement is computed or cleared). `onMeasurementChange` matches the Jupyter widget's `measurement` event; the widget's `selection_change` only reports selections set from Python (see ⁹).
 - ² On **JupyterLab**, `selection_change` / `measurement` events are surfaced via `MeganeReactView.subscribeSelectionChange` and `subscribeMeasurementChange` — consumable by other JupyterLab extensions. On **VS Code**, they are forwarded to the extension host as `selectionChange` / `measurementChange` webview messages and reflected in the status bar (atom count or measurement label).
 
 ## Load methods / APIs
@@ -401,12 +408,12 @@ How data gets into the viewer on each platform:
 
 | Platform | Primary load path | API surface |
 |---|---|---|
-| **Standalone** | Drag-and-drop, file dialog, `megane serve <file>`, WebSocket | `parseStructureFile(file)` (TypeScript), pipeline node `LoadStructure` / `LoadTrajectory` |
+| **Standalone** | Drag-and-drop, file dialog (the page does not yet load the file passed to `megane serve <file>`, see ¹⁰) | `parseStructureFile(file)` (TypeScript), pipeline node `LoadStructure` / `LoadTrajectory` |
 | **Jupyter widget** | Python only — no in-cell file picker | `MolecularViewer.load(pdb_path, xtc=, traj=)` (deprecated) or `MolecularViewer.set_pipeline(Pipeline)` (recommended) |
 | **JupyterLab** | Click a registered file type in the file browser | Internally reads `context.model` (`jupyterlab-megane/src/MeganeDocWidget.tsx`) |
 | **VS Code** | Open a registered file from the explorer; extension host posts `loadFile` / `loadPipeline` to the webview | `postMessage({ type: "loadFile", … })` (`vscode-megane/webview/main.tsx`) |
 | **React (npm)** | Host-wired upload/drag-drop into `MeganeViewer`, or a `pipeline` prop on `PipelineViewer` (`fileUrl` fetched at mount) | `parseStructureFile(file)` / `parseStructureText(text)`, `MoleculeRenderer.loadSnapshot(snapshot)` |
-| **Python** | `from megane import …` or `from megane.parsers import …` | Top-level `megane`: `load_pdb`, `load_cif`, `load_jcampdx` (JCAMP-DX spectra), `load_lammps_data`, `load_lammpstrj_structure`, `load_traj`, `load_trajectory` (XTC), `load_xyz_trajectory`. Full set via `megane.parsers`: additionally `load_gro`, `load_mol`, `load_sdf`, `load_mol2`, `load_dcd`, `load_netcdf`, `load_lammpstrj`, `load_vasp`, `load_molden`, `load_xsf`, `load_cml`, `load_c3xml`, `load_odydata`, `load_magres`, `load_gamess`, `load_phonon`. `load_jcampdx` returns a `Spectrum` (title/units/x/y) rather than a structure, since a spectrum has no atoms. Raw PyO3 functions (all formats including mmCIF and AMBER prmtop) are in the native extension `megane_parser`: `from megane import megane_parser; megane_parser.parse_mmcif(text)`, `megane_parser.parse_prmtop(text)`, etc. |
+| **Python** | `from megane import …` or `from megane.parsers import …` | Top-level `megane`: `load_pdb`, `load_cif`, `load_jcampdx` (JCAMP-DX spectra), `load_lammps_data`, `load_lammpstrj_structure`, `load_traj`, `load_trajectory` (XTC), `load_xyz_trajectory`, `load_vasp`, `load_molden`, `load_xsf`, `load_cml`, `load_c3xml`, `load_odydata`, `load_magres`, `load_gamess`, `load_phonon`. Full set via `megane.parsers`: additionally `load_gro`, `load_mol`, `load_sdf`, `load_mol2`, `load_dcd`, `load_netcdf`, `load_lammpstrj`. The `LoadStructure(path)` pipeline node reads every structure format by extension (`megane.parsers.dispatch`), mmCIF and AMBER prmtop included. `load_jcampdx` returns a `Spectrum` (title/units/x/y) rather than a structure, since a spectrum has no atoms. Raw PyO3 functions (all formats including mmCIF and AMBER prmtop) are in the native extension `megane_parser`: `from megane import megane_parser; megane_parser.parse_mmcif(text)`, `megane_parser.parse_prmtop(text)`, etc. |
 
 ## Known gaps
 

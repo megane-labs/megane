@@ -1,7 +1,8 @@
 # Selection Inspector
 
-The **Selection Inspector** is a lightweight third tab in the pipeline panel
-(alongside **Editor** and **Chat**) for the most common task in molecular
+The **Selection Inspector** is a lightweight tab in the pipeline panel — the
+**Inspector** button on the panel's rail, between **Editor** and **Chat** — for
+the most common task in molecular
 visualization: *select a subset of atoms and change how it looks*. It is
 inspired by OVITO's Expression Select, but you rarely have to type an
 expression — you build selections by clicking chips for the elements, residues,
@@ -15,7 +16,8 @@ end to the same pipeline — nothing is hidden or parallel.
 
 ## Layers
 
-Each **layer** is one "select these atoms, style them like this" rule. Add as
+Each **layer** is one "select these atoms, style them like this" rule. Click
+**+ Add selection** to create one, and the ✕ beside a layer to delete it. Add as
 many as you need — e.g. a layer that colors the protein backbone, another that
 draws the ligand as licorice, another that hides the solvent. Layers are drawn
 on top of the base structure, so atoms no layer selects keep their default
@@ -28,7 +30,8 @@ appearance.
 - **Within (Å)** — expand the current selection to every atom within a distance
   of it (`within R of (…)`), handy for "everything around the active site".
 - **Expression** — the raw selection expression is always shown and editable for
-  full control. Editing it directly overrides the chips.
+  full control. Editing it directly overrides the chips. Below it the panel
+  shows how many atoms the expression selects, or the syntax error.
 - **From the 3D view** — turn on **Box select** and drag a rectangle in the
   viewer to select atoms, or click an atom and choose *same element / same
   residue / same chain / same molecule / just this*. The current selection is
@@ -41,10 +44,13 @@ The selection language supports the fields `element`, `index`, `x`/`y`/`z`,
 ## Appearance
 
 For the active layer you can set the **color** (uniform or by
-element/residue/chain/B-factor/illustrative), the **representation** (ball,
-licorice, cartoon, surface, line, illustrative…), the atom **size** and
-**opacity**, and toggle
-**visibility**. Changes apply immediately and are reflected in the Editor tab.
+element/residue/chain/B-factor/property/illustrative), the **style**
+(representation: ball, licorice, cartoon, ball + stick, surface, line,
+illustrative), the atom **size** and **opacity**, and toggle **visibility**
+(a hidden layer drives its atoms to opacity 0). Color and style each have a
+checkbox; only the enabled ones add a `color` / `representation` node to the
+chain. Changes apply immediately and are reflected in the Editor tab — **Open
+generated nodes in Editor →** jumps there.
 
 ## Availability
 

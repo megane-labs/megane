@@ -4,7 +4,7 @@
 </h1>
 
 <p align="center">Spectacles for atomistic data.</p>
-<p align="center"><em>1M+ atoms at 60fps. Visual pipelines. Jupyter widget, standalone web app, React component, VS Code extension.</em></p>
+<p align="center"><em>1M+ atoms at 60fps. Visual pipelines. Jupyter widget, JupyterLab extension, standalone web app, React component, VS Code extension.</em></p>
 
 <p align="center">
   <a href="https://github.com/megane-labs/megane/actions/workflows/ci.yml"><img src="https://github.com/megane-labs/megane/actions/workflows/ci.yml/badge.svg" alt="CI" /></a>
@@ -31,17 +31,17 @@
 
 ## Features
 
-- **1M+ Atoms at 60fps** — Billboard impostor rendering scales from small molecules to massive complexes in real time. InstancedMesh for small systems auto-switches to GPU-accelerated billboard impostors for large systems. Stream XTC trajectories over WebSocket.
-- **Runs Everywhere** — Jupyter widget, standalone web app (`megane serve`), React component (npm), and VS Code extension. Rust-based parsers for 26 formats (PDB, GRO, XYZ, MOL/SDF, MOL2, CIF, mmCIF, CML, LAMMPS data, AMBER topology, GROMACS topology, CHARMM/NAMD PSF, XTC, DCD, ASE .traj, LAMMPS dump, AMBER NetCDF, VASP, Molden, XCrySDen XSF, JCAMP-DX, Chem3D XML, Odyssey, CASTEP magres, GAMESS output, CASTEP phonon) shared between Python (PyO3) and browser (WASM) — parse once, run anywhere.
-- **Visual Pipeline Editor** — Build visualization workflows by wiring nodes or let the AI generator build them from natural language. 19 node types with 9 typed data channels flowing through color-coded edges. Load multiple structures with layer-based rendering to compare systems side by side.
+- **1M+ Atoms at 60fps** — GPU billboard impostor rendering (ray-cast spheres and cylinders) scales from small molecules to massive complexes in real time. Stream XTC trajectories over WebSocket from `megane serve`.
+- **Runs Everywhere** — Jupyter widget, JupyterLab extension, standalone web app (`megane serve`), React component (npm), and VS Code extension. Rust-based parsers for 26 formats (PDB, GRO, XYZ, MOL/SDF, MOL2, CIF, mmCIF, CML, LAMMPS data, AMBER topology, GROMACS topology, CHARMM/NAMD PSF, XTC, DCD, ASE .traj, LAMMPS dump, AMBER NetCDF, VASP, Molden, XCrySDen XSF, JCAMP-DX, Chem3D XML, Odyssey, CASTEP magres, GAMESS output, CASTEP phonon) shared between Python (PyO3) and browser (WASM) — parse once, run anywhere.
+- **Visual Pipeline Editor** — Build visualization workflows by wiring nodes or let the AI generator build them from natural language. 24 node types with 10 typed data channels flowing through color-coded edges. Load multiple structures with layer-based rendering to compare systems side by side.
 - **megane Builder** — A structure editor next to the viewer (`/builder.html` in `megane serve`, the megane panel in VS Code's activity bar and JupyterLab's left sidebar, and `megane.Builder()` in notebooks): add, delete, move and re-element atoms, draw bonds, sketch molecules in Ketcher (embedded in 3D by RDKit), and build bulk crystals, supercells and slabs. Save as XYZ / PDB / MOL — also available from Python as `megane.save_structure()`.
 - **Embed & Integrate** — Control the viewer from Plotly via ipywidgets events. Embed in MDX / Next.js docs. React to `frame_change`, `selection_change`, and `measurement` events. Use the framework-agnostic renderer from Vue, Svelte, or vanilla JS.
 
 ### Scale
 
-megane renders over **1 million atoms at 60fps** in the browser. Small systems get high-quality InstancedMesh spheres and cylinders; large systems automatically switch to GPU-accelerated billboard impostors. No desktop app, no plugin — just a browser tab.
+megane renders over **1 million atoms at 60fps** in the browser. Atoms and bonds are GPU-accelerated billboard impostors at every atom count — screen-aligned quads ray-cast into spheres and cylinders in the fragment shader. No desktop app, no plugin — just a browser tab.
 
-Trajectory streaming works over WebSocket via a binary protocol. Load an XTC file and scrub through thousands of frames in real time, without reading everything into memory.
+Trajectory streaming works over WebSocket via a binary protocol from the `megane serve` backend. Load an XTC file and scrub through thousands of frames in real time, without reading everything into memory. Without a backend, the web app parses in a Web Worker and decodes trajectories and multi-frame XYZ / PDB files of 8 MB or more frame by frame on demand.
 
 ### Anywhere
 
@@ -53,7 +53,7 @@ One codebase, every environment.
 | **JupyterLab extension** | Open any supported structure, trajectory, volumetric, or spectrum file — plus `.megane.json` pipelines — straight from the file browser | `pip install megane` |
 | **Standalone web app** | `megane serve` in the browser | `pip install megane` |
 | **React component (npm)** | `<MeganeViewer />` component | `npm install megane-viewer` |
-| **VS Code extension** | Custom editor for the same file types, registered by extension and by VASP basename (`POSCAR`/`CONTCAR`/`XDATCAR`) | Extension |
+| **VS Code extension** | Custom editor for the same file types, registered by extension and by VASP basename (`POSCAR`/`CONTCAR`/`XDATCAR`) | VS Code Marketplace (`hodakamori.vscode-megane`) |
 
 For a per-platform breakdown of supported formats and UI features (including known gaps), see [Platform Support](https://megane-labs.github.io/megane/platform-support).
 
@@ -63,9 +63,9 @@ The secret: parsers for 26 formats (PDB, GRO, XYZ, MOL/SDF, MOL2, CIF, mmCIF, CM
 
 Wire nodes to build visualization workflows — no code required.
 
-**19 node types** across 5 categories: load data (structure, trajectory, streaming, vector, volumetric, spectrum), bonds, process (filter, modify, color, representation, replicate), overlay (labels, polyhedra, surface meshes, isosurfaces, vectors), and display in a 3D viewport or a 2D spectrum plot.
+**24 node types** across 6 categories: load data (structure, trajectory, streaming, vector, volumetric, spectrum), bonds (distance / file bonds, coordination), filter, modify (modify, color, representation, symmetry expansion, wrap / unwrap, replicate, drawing boundary, boundary completion), overlay (labels, polyhedra, surface meshes, isosurfaces, vectors), and display in a 3D viewport or a 2D spectrum plot.
 
-**9 typed data channels** — particle, bond, cell, label, mesh, trajectory, vector, volumetric, spectrum — flow through color-coded edges. Only matching types can connect.
+**10 typed data channels** — particle, bond, coordination, cell, label, mesh, trajectory, vector, volumetric, spectrum — flow through color-coded edges. Only matching types can connect.
 
 Pipelines serialize to JSON, so you can save, share, and version-control your visualization recipes.
 
@@ -115,7 +115,7 @@ viewer = megane.view_traj("protein.pdb", xtc="trajectory.xtc")
 viewer.frame_index = 50  # jump to frame 50
 ```
 
-For advanced usage (filtering, multi-layer rendering, custom pipelines), see the [Pipeline API](https://megane-labs.github.io/megane/guide/pipeline#python-pipeline-api).
+For advanced usage (filtering, multi-layer rendering, custom pipelines), see the [Python Pipeline API](https://megane-labs.github.io/megane/guide/pipeline/python).
 
 ### Standalone web app (`megane serve`)
 
@@ -164,13 +164,14 @@ function App() {
 | PDB | `.pdb` | Protein Data Bank |
 | GRO | `.gro` | GROMACS structure file |
 | XYZ | `.xyz`, `.jxyz`, `.extxyz` | Cartesian coordinate format, incl. multi-frame and `Lattice=` extended XYZ. `.jxyz` (Jmol) and `.extxyz` (ASE extended XYZ) are second extensions for the same format |
-| MOL/SDF | `.mol`, `.sdf` | MDL Molfile (V2000) |
-| MOL2 | `.mol2` | Tripos MOL2 (multi-molecule, aromatic bonds) |
+| MOL/SDF | `.mol`, `.sdf` | MDL Molfile / SDfile (V2000 and V3000) |
+| MOL2 | `.mol2` | Tripos MOL2 (aromatic bonds, optional `CRYSIN` unit cell; only the first molecule of a multi-molecule file is read) |
 | LAMMPS data | `.data`, `.lammps` | LAMMPS data file |
 | CIF | `.cif` | Crystallographic Information File |
 | mmCIF | `.mmcif` | Macromolecular CIF (PDBx/mmCIF) |
 | AMBER topology | `.prmtop` | AMBER parameter/topology file (atom names, elements, bonds) |
 | ASE .traj | `.traj` | ASE trajectory (ULM binary format) — self-contained with elements, bonds, and frames |
+| LAMMPS dump | `.lammpstrj`, `.dump`, `.trj` | Opens standalone as a multi-frame structure (the integer atom `type` stands in for the element); can also be attached to a topology, see Trajectory formats |
 | XCrySDen | `.xsf`, `.axsf` | XCrySDen structure; `.axsf` is a multi-frame animation with optional per-frame cell and per-atom forces |
 | CML | `.cml` | Chemical Markup Language (Open Babel / Avogadro / ChemDraw), with explicit bonds and optional crystal cell |
 | VASP | `POSCAR`, `CONTCAR`, `XDATCAR`, `.vasp` | VASP crystal structure; XDATCAR is multi-frame. Matched by filename as well as extension, since the standard names carry no extension |
@@ -191,6 +192,7 @@ function App() {
 A grid has no atoms of its own, so it is rendered as an isosurface over a
 separately-loaded structure. `.dx` is shared with JCAMP-DX spectra, so the
 loader sniffs the content and says so if the file is really a spectrum.
+
 ### Spectrum formats (`LoadSpectrum` node)
 
 A spectrum is a 2D (x, y) trace with no atoms or coordinates, so it is drawn by
@@ -274,6 +276,9 @@ src/                     TypeScript frontend
   logic/                 Bond / label / vector source logic
   components/            React UI components
   hooks/                 Custom React hooks
+  pipeline/              Pipeline graph, node executors, serialization
+  builder/               megane Builder (structure editor)
+  ai/                    LLM pipeline generator
   stream/                WebSocket client
 crates/                  Rust workspace
   megane-core/           Core parsers and bond inference
@@ -282,6 +287,9 @@ crates/                  Rust workspace
 python/megane/           Python backend
   parsers/               Python readers for all 26 supported formats (`dispatch.py` maps every structure extension the web app opens), plus the PSF / GROMACS .top topology sidecars (Gaussian CUBE and OpenDX are browser-side only)
   pipeline.py            Pipeline builder (NetworkX-style DAG)
+  builder.py             megane Builder Jupyter widget
+  writers.py             Structure writers (`save_structure`)
+  cli.py                 `megane` CLI entry point
   protocol.py            Binary protocol encoder
   server.py              `megane serve` backend (FastAPI + WebSocket)
   widget.py              anywidget Jupyter widget
