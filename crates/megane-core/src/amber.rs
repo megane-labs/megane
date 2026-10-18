@@ -7,7 +7,7 @@ use std::collections::HashMap;
 
 use crate::atomic::{element_from_atom_name_in_residue, mass_to_atomic_num};
 use crate::cell::cell_params_to_matrix;
-use crate::parser::ParsedStructure;
+use crate::structure::ParsedStructure;
 
 /// Parse an AMBER prmtop topology file.
 ///
@@ -530,7 +530,7 @@ water trunc oct
     fn test_parse_inpcrd_triclinic_box() {
         let result = parse(WATER_PRMTOP, WATER_INPCRD_TRICLINIC).expect("triclinic parse failed");
         let bm = result.box_matrix.expect("box should be present");
-        let expect = crate::parser::cell_params_to_matrix(
+        let expect = crate::cell::cell_params_to_matrix(
             20.0, 20.0, 20.0, 109.471_22, 109.471_22, 109.471_22,
         );
         for i in 0..9 {
@@ -556,7 +556,7 @@ water trunc oct
         );
         let result = parse_prmtop(&prmtop).expect("parse_prmtop failed");
         let bm = result.box_matrix.expect("box should be present");
-        let expect = crate::parser::cell_params_to_matrix(
+        let expect = crate::cell::cell_params_to_matrix(
             20.0, 21.0, 22.0, 109.471_22, 109.471_22, 109.471_22,
         );
         for i in 0..9 {

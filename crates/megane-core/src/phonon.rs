@@ -30,7 +30,7 @@
 
 use crate::atomic::{capitalize, symbol_to_atomic_num};
 use crate::bonds;
-use crate::parser::ParsedStructure;
+use crate::structure::ParsedStructure;
 use std::collections::HashSet;
 
 /// Auxiliary lattice-dynamics data carried alongside the structure.

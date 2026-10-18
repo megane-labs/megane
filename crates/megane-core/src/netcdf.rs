@@ -774,7 +774,7 @@ mod tests {
 
         let bm = result.box_matrix.expect("box_matrix should be present");
         let expect =
-            crate::parser::cell_params_to_matrix(10.0, 10.0, 10.0, 109.471, 109.471, 109.471);
+            crate::cell::cell_params_to_matrix(10.0, 10.0, 10.0, 109.471, 109.471, 109.471);
         for i in 0..9 {
             assert!(
                 (bm[i] - expect[i]).abs() < 1e-3,

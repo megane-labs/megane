@@ -344,7 +344,7 @@ mod tests {
         assert!(text.contains("ATOM      1  O   HOH A   1       0.000   0.000   0.000"));
         assert!(text.contains("CONECT    1    2    3\n"));
         assert!(text.ends_with("END\n"));
-        let parsed = crate::parser::parse(&text).unwrap();
+        let parsed = crate::pdb::parse(&text).unwrap();
         assert_eq!(parsed.n_atoms, 3);
         assert_eq!(parsed.elements, vec![8, 1, 1]);
         assert_eq!(parsed.n_file_bonds, 2);

@@ -31,7 +31,7 @@
 
 use crate::atomic::{capitalize, symbol_to_atomic_num};
 use crate::bonds;
-use crate::parser::{FrameChange, HeteroFramesBuilder, ParsedStructure};
+use crate::structure::{FrameChange, HeteroFramesBuilder, ParsedStructure};
 use std::collections::HashSet;
 
 /// 1 Bohr in Ångström (CODATA 2018).

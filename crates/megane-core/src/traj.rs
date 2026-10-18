@@ -5,7 +5,7 @@
 use std::collections::HashSet;
 
 use crate::bonds;
-use crate::parser::{FrameChange, HeteroFramesBuilder, ParsedStructure};
+use crate::structure::{FrameChange, HeteroFramesBuilder, ParsedStructure};
 
 const ULM_MAGIC: &[u8; 8] = b"- of Ulm";
 

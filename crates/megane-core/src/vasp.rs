@@ -33,7 +33,7 @@
 
 use crate::atomic::{capitalize, symbol_to_atomic_num};
 use crate::bonds;
-use crate::parser::{FrameChange, HeteroFramesBuilder, ParsedStructure};
+use crate::structure::{FrameChange, HeteroFramesBuilder, ParsedStructure};
 use crate::trajectory::{ScalarChannel, ScalarFrame};
 use std::collections::HashSet;
 

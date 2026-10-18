@@ -28,7 +28,7 @@ use std::collections::HashSet;
 
 use crate::atomic::element_from_atom_name_in_residue;
 use crate::bonds;
-use crate::parser::{FrameChange, HeteroFramesBuilder};
+use crate::structure::{FrameChange, HeteroFramesBuilder};
 use crate::trajectory::{VectorChannel, VectorFrame};
 
 /// Columns occupied by the fixed prefix: resnum(5) resname(5) atomname(5) atomnum(5).
@@ -216,7 +216,7 @@ fn parse_frame_block(
     })
 }
 
-pub fn parse(text: &str) -> Result<crate::parser::ParsedStructure, String> {
+pub fn parse(text: &str) -> Result<crate::structure::ParsedStructure, String> {
     let lines: Vec<&str> = text.lines().collect();
     if lines.len() < 3 {
         return Err("GRO file too short".into());
@@ -321,7 +321,7 @@ pub fn parse(text: &str) -> Result<crate::parser::ParsedStructure, String> {
     // constant cell keeps the uniform fast path (hetero = None).
     let (frame_positions_flat, hetero) = frames.finish(&elements, box_matrix);
 
-    Ok(crate::parser::ParsedStructure {
+    Ok(crate::structure::ParsedStructure {
         n_atoms,
         positions,
         elements,

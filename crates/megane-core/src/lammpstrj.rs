@@ -20,7 +20,7 @@
 /// lane additionally surfaces every remaining numeric per-atom column
 /// (q, mol, c_*/f_*/v_* computes, …) as a scalar channel.
 use crate::bonds;
-use crate::parser::{FrameChange, HeteroFramesBuilder, ParsedStructure};
+use crate::structure::{FrameChange, HeteroFramesBuilder, ParsedStructure};
 use crate::trajectory::{ScalarChannel, ScalarFrame, TrajectoryData, VectorChannel, VectorFrame};
 use std::collections::HashSet;
 
