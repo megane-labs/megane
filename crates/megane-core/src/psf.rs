@@ -7,7 +7,7 @@
 /// Supported variants: standard PSF, extended PSF (PSF EXT), XPLOR PSF.
 /// Unsupported sections (NTHETA, NPHI, NIMPHI, NDON, NACC, NNB, NGRP, NCRTERM)
 /// are silently skipped.
-use crate::atomic::{mass_to_atomic_num, symbol_to_atomic_num};
+use crate::atomic::{element_from_atom_name_in_residue, mass_to_atomic_num};
 use crate::parser::ParsedStructure;
 use std::collections::HashSet;
 
@@ -16,18 +16,6 @@ struct PsfAtom {
     res_id: u32,
     res_name: String,
     element: u8,
-}
-
-/// Derive element from a CHARMM atom name.
-/// Strips leading digits then takes the first character as a single-letter symbol.
-fn element_from_atom_name(name: &str) -> u8 {
-    let s = name.trim_start_matches(|c: char| c.is_ascii_digit());
-    let sym: String = s
-        .chars()
-        .next()
-        .map(|c| c.to_ascii_uppercase().to_string())
-        .unwrap_or_default();
-    symbol_to_atomic_num(&sym)
 }
 
 /// Parse a PSF ATOM section line (whitespace-split; handles both standard and EXT widths).
@@ -44,14 +32,14 @@ fn parse_atom_line(line: &str) -> Option<PsfAtom> {
     let _charge = parts.next();
     let mass: Option<f32> = parts.next().and_then(|s| s.parse().ok());
     // The mass column is the most authoritative element field a PSF carries
-    // (atom names like "CL"/"FE"/"ZN" are ambiguous under first-letter
-    // guessing). Fall back to the atom-name guess only when the mass is
-    // missing, non-positive, or matches no known element.
+    // (atom names like "CL"/"FE"/"ZN" are ambiguous). Fall back to the
+    // residue-aware atom-name guess only when the mass is missing,
+    // non-positive, or matches no known element.
     let element = mass
         .filter(|&m| m > 0.0)
         .map(mass_to_atomic_num)
         .filter(|&z| z != 0)
-        .unwrap_or_else(|| element_from_atom_name(&atom_name));
+        .unwrap_or_else(|| element_from_atom_name_in_residue(&atom_name, &res_name));
     Some(PsfAtom {
         segment,
         res_id,
@@ -482,19 +470,41 @@ PSF
 
     #[test]
     fn test_element_from_atom_name_leading_digit() {
-        // "1HB" → strip "1" → "H" → element 1
-        assert_eq!(element_from_atom_name("1HB"), 1);
-        // "2HD" → strip "2" → "H" → element 1
-        assert_eq!(element_from_atom_name("2HD"), 1);
+        // "1HB" → skip "1" → "H" → element 1
+        assert_eq!(element_from_atom_name_in_residue("1HB", "ALA"), 1);
+        // "2HD" → skip "2" → "H" → element 1
+        assert_eq!(element_from_atom_name_in_residue("2HD", "LEU"), 1);
     }
 
     #[test]
     fn test_element_from_atom_name_standard() {
-        assert_eq!(element_from_atom_name("N"), 7);
-        assert_eq!(element_from_atom_name("CA"), 6);
-        assert_eq!(element_from_atom_name("OH2"), 8);
-        assert_eq!(element_from_atom_name("S"), 16);
-        assert_eq!(element_from_atom_name("P"), 15);
+        assert_eq!(element_from_atom_name_in_residue("N", "ALA"), 7);
+        assert_eq!(element_from_atom_name_in_residue("CA", "ALA"), 6);
+        assert_eq!(element_from_atom_name_in_residue("OH2", "TIP3"), 8);
+        assert_eq!(element_from_atom_name_in_residue("SG", "CYS"), 16);
+        assert_eq!(element_from_atom_name_in_residue("P", "ADE"), 15);
+    }
+
+    #[test]
+    fn test_element_falls_back_to_residue_aware_name_without_mass() {
+        // Without a mass column, a protein Cα stays carbon while ion residues
+        // (whose name repeats the atom name) resolve to the two-letter element.
+        let text = "\
+PSF
+
+       1 !NTITLE
+ REMARKS no masses
+
+       4 !NATOM
+         1 PROA     1 ALA  CA   CT1
+         2 PROA     1 ALA  HG   HA
+         3 ION      2 CAL  CAL  CAL
+         4 ION      3 CLA  CLA  CLA
+
+       0 !NBOND: bonds
+";
+        let data = parse_psf(text).expect("parse failed");
+        assert_eq!(data.elements, vec![6, 1, 20, 17]);
     }
 
     #[test]

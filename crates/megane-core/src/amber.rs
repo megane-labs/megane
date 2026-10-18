@@ -5,6 +5,7 @@
 
 use std::collections::HashMap;
 
+use crate::atomic::{element_from_atom_name_in_residue, mass_to_atomic_num};
 use crate::parser::ParsedStructure;
 
 /// Parse an AMBER prmtop topology file.
@@ -25,17 +26,6 @@ pub fn parse_prmtop(text: &str) -> Result<ParsedStructure, String> {
         n_atoms,
     );
 
-    let elements: Vec<u8> = if let Some(sec) = sections.get("ATOMIC_NUMBER") {
-        let nums = parse_ints(sec)?;
-        nums.into_iter().map(|n| n.clamp(0, 255) as u8).collect()
-    } else {
-        // Fallback: guess from atom names (older prmtop without ATOMIC_NUMBER)
-        atom_names
-            .iter()
-            .map(|n| crate::atomic::element_from_atom_name(n))
-            .collect()
-    };
-
     let res_labels = parse_char4(
         sections
             .get("RESIDUE_LABEL")
@@ -49,6 +39,42 @@ pub fn parse_prmtop(text: &str) -> Result<ParsedStructure, String> {
             .map(String::as_str)
             .unwrap_or(""),
     )?;
+
+    let elements: Vec<u8> = if let Some(sec) = sections.get("ATOMIC_NUMBER") {
+        let nums = parse_ints(sec)?;
+        nums.into_iter().map(|n| n.clamp(0, 255) as u8).collect()
+    } else {
+        // Older prmtops carry no ATOMIC_NUMBER section. Next most
+        // authoritative is the (mandatory) MASS section; only atoms whose mass
+        // is missing or matches no element fall back to the residue-aware
+        // atom-name guess (a protein "CA" is carbon, an ion residue "CA" is
+        // calcium).
+        let masses: Vec<f32> = sections
+            .get("MASS")
+            .map(|sec| {
+                sec.split_whitespace()
+                    .map(|t| t.parse().unwrap_or(0.0))
+                    .collect()
+            })
+            .unwrap_or_default();
+        (0..n_atoms)
+            .map(|i| {
+                masses
+                    .get(i)
+                    .copied()
+                    .filter(|&m| m > 0.0)
+                    .map(mass_to_atomic_num)
+                    .filter(|&z| z != 0)
+                    .unwrap_or_else(|| {
+                        let name = atom_names.get(i).map(String::as_str).unwrap_or("");
+                        element_from_atom_name_in_residue(
+                            name,
+                            residue_name(i, &res_labels, &res_ptrs),
+                        )
+                    })
+            })
+            .collect()
+    };
 
     let atom_labels = build_atom_labels(&atom_names, &res_labels, &res_ptrs, n_atoms);
 
@@ -300,6 +326,15 @@ fn parse_bond_sections(
 }
 
 /// Build per-atom labels as `"RESNAME/ATOMNAME"` strings.
+/// Residue label of atom `i` (0-indexed), or `""` when the prmtop has none.
+fn residue_name<'a>(i: usize, res_labels: &'a [String], res_ptrs: &[i64]) -> &'a str {
+    // res_ptrs is 1-indexed; find the last pointer ≤ (i+1)
+    let res_idx = res_ptrs
+        .partition_point(|&p| p <= (i as i64 + 1))
+        .saturating_sub(1);
+    res_labels.get(res_idx).map(String::as_str).unwrap_or("")
+}
+
 fn build_atom_labels(
     atom_names: &[String],
     res_labels: &[String],
@@ -308,11 +343,7 @@ fn build_atom_labels(
 ) -> Vec<String> {
     (0..n_atoms)
         .map(|i| {
-            // res_ptrs is 1-indexed; find the last pointer ≤ (i+1)
-            let res_idx = res_ptrs
-                .partition_point(|&p| p <= (i as i64 + 1))
-                .saturating_sub(1);
-            let res_name = res_labels.get(res_idx).map(String::as_str).unwrap_or("");
+            let res_name = residue_name(i, res_labels, res_ptrs);
             let atom_name = atom_names.get(i).map(String::as_str).unwrap_or("");
             if res_name.is_empty() {
                 atom_name.to_string()
@@ -610,5 +641,45 @@ MOL
         assert_eq!(result.elements[1], 7); // N
         assert_eq!(result.bonds.len(), 1);
         assert!(result.bonds.contains(&(0, 1)));
+    }
+
+    /// Header shared by the ATOMIC_NUMBER-less prmtops below: 4 atoms in two
+    /// residues, an alanine (N, CA, HG-style name) and a calcium ion "CA".
+    const NO_Z_PRMTOP_HEAD: &str = "\
+%FLAG POINTERS
+%FORMAT(10I8)
+       4       0       0       0       0       0       0       0       0       0
+       0       2       0       0       0       0       0       0       0       0
+       0       0       0       0       0       0       0       0       0       0
+       0       0
+%FLAG ATOM_NAME
+%FORMAT(20a4)
+N   CA  HG  CA
+%FLAG RESIDUE_LABEL
+%FORMAT(20a4)
+ALA CA
+%FLAG RESIDUE_POINTER
+%FORMAT(10I8)
+       1       4
+";
+
+    #[test]
+    fn test_prmtop_fallback_name_is_residue_aware() {
+        // No ATOMIC_NUMBER and no MASS: the protein Cα must not become calcium,
+        // while the ion residue "CA" must.
+        let result = parse_prmtop(NO_Z_PRMTOP_HEAD).expect("parse_prmtop failed");
+        assert_eq!(result.elements, vec![7, 6, 1, 20]);
+    }
+
+    #[test]
+    fn test_prmtop_fallback_prefers_mass_over_name() {
+        // MASS outranks the name guess (CRITICAL RULE #11 b): an "HG" atom
+        // with a mercury mass is mercury even inside a standard residue. A
+        // zero / unparsable mass falls back to the residue-aware name guess.
+        let prmtop = format!(
+            "{NO_Z_PRMTOP_HEAD}%FLAG MASS\n%FORMAT(5E16.8)\n  1.40100000E+01  0.00000000E+00  2.00590000E+02  bogus\n"
+        );
+        let result = parse_prmtop(&prmtop).expect("parse_prmtop failed");
+        assert_eq!(result.elements, vec![7, 6, 80, 20]);
     }
 }
