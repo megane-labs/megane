@@ -106,7 +106,7 @@ const ENVIRONMENTS = [
     install: "Install from Marketplace",
     isCommand: false,
     description:
-      "Open .pdb, .gro, .xyz, .mol, .cif and every other supported structure format directly in VS Code with the megane extension.",
+      "Open .pdb, .gro, .xyz, .mol, .cif and every other supported structure format directly in VS Code with the Megane extension.",
     href: "/guide/vscode",
   },
 ];

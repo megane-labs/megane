@@ -7,7 +7,7 @@ import LiveViewer from '@site/src/components/LiveViewer';
 
 # Visual Pipeline Editor
 
-megane's pipeline editor lets you build visualization workflows by wiring nodes — no code required. The editor lives in the **Pipeline** panel on the right edge of the viewer; when the panel is collapsed, click its **Pipeline** tab to open it.
+Megane's pipeline editor lets you build visualization workflows by wiring nodes — no code required. The editor lives in the **Pipeline** panel on the right edge of the viewer; when the panel is collapsed, click its **Pipeline** tab to open it.
 
 <Figure src="/screenshots/pipeline-editor.png" alt="megane visual pipeline editor" caption="The visual pipeline editor: nodes on the canvas, live 3D beside it." />
 
@@ -42,19 +42,19 @@ To delete a connection, hover (or select) the edge and click the **×** at its m
 
 ## AI Pipeline Generator
 
-Describe the visualization you want in natural language, and megane builds the node graph for you. Open the AI chat panel with the **Chat** button on the pipeline editor's left rail and type a prompt like:
+Describe the visualization you want in natural language, and Megane builds the node graph for you. Open the AI chat panel with the **Chat** button on the pipeline editor's left rail and type a prompt like:
 
 > Load protein.pdb with bonds and make water translucent
 
 The generator creates the appropriate LoadStructure, AddBond, Filter, Modify, and Viewport nodes, wires them together, and places them in the editor. You can then adjust parameters or add more nodes manually.
 
-Open **AI Settings** (the ⚙ button beside the chat input) to choose a provider (**Anthropic** or **OpenAI**), a model, and your API key. The provider and model are remembered in the browser; the API key is held only for the current session and is not saved. Builds configured with megane's shared proxy also offer a rate-limited free demo that needs no key — tick **Use my own API key** to use your own provider instead.
+Open **AI Settings** (the ⚙ button beside the chat input) to choose a provider (**Anthropic** or **OpenAI**), a model, and your API key. The provider and model are remembered in the browser; the API key is held only for the current session and is not saved. Builds configured with Megane's shared proxy also offer a rate-limited free demo that needs no key — tick **Use my own API key** to use your own provider instead.
 
 The generator checks its own output after each generation: the pipeline schema, the selection-query syntax, edge types, and — when a structure is loaded — the errors the graph actually produces when executed (e.g. `Filter returned 0 atoms`). Any findings are sent back to the model to fix, for up to two repair rounds.
 
 ## VS Code Extension Auto-Setup
 
-When you open a supported molecular file (`.pdb`, `.gro`, `.xyz`, `.cif`, `.data`, `.lammpstrj`, POSCAR, and the rest of the formats listed in [Platform Support](/platform-support)) in the megane VS Code extension, it automatically creates a default pipeline consisting of `LoadStructure → Symmetry → Wrap → Replicate → AddBond → Viewport`. The AddBond source is picked from the format — bonds read from the file for formats that carry them (PDB, MOL/SDF, LAMMPS data, CML, …), distance-based inference otherwise. This gives you an immediate 3D view of the structure with bonds, without needing to build a pipeline manually. You can then modify the auto-generated pipeline in the editor as needed. A `.megane.json` file opens as the pipeline it describes (see [JSON](./json.md)).
+When you open a supported molecular file (`.pdb`, `.gro`, `.xyz`, `.cif`, `.data`, `.lammpstrj`, POSCAR, and the rest of the formats listed in [Platform Support](/platform-support)) in the Megane VS Code extension, it automatically creates a default pipeline consisting of `LoadStructure → Symmetry → Wrap → Replicate → AddBond → Viewport`. The AddBond source is picked from the format — bonds read from the file for formats that carry them (PDB, MOL/SDF, LAMMPS data, CML, …), distance-based inference otherwise. This gives you an immediate 3D view of the structure with bonds, without needing to build a pipeline manually. You can then modify the auto-generated pipeline in the editor as needed. A `.megane.json` file opens as the pipeline it describes (see [JSON](./json.md)).
 
 ## Getting Started
 
@@ -246,7 +246,7 @@ other molecule's atoms and bonds fade together — both Filter nodes derive
 ### Expand a Crystal's Asymmetric Unit
 
 A CIF lists only the crystallographic asymmetric unit plus the space-group
-operations, and megane's parser returns exactly that. The **Symmetry** node
+operations, and Megane's parser returns exactly that. The **Symmetry** node
 applies those operations to fill one unit cell with the symmetry-equivalent
 molecules, VESTA-style. Every default pipeline and structure template already
 carries one directly after `LoadStructure` in its `expand` mode, so a loaded

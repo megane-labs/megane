@@ -50,7 +50,7 @@ docker build -t megane .
 docker run --rm -p 8080:8080 megane
 ```
 
-Open http://localhost:8080 in your browser. megane Builder, the structure editor, is at http://localhost:8080/builder.html.
+Open http://localhost:8080 in your browser. Megane Builder, the structure editor, is at http://localhost:8080/builder.html.
 
 To view your own files, mount them into the container:
 
@@ -135,6 +135,6 @@ Not every host opens every extension from its native file picker — see
 - [React component (npm) guide](/guide/web) — Embedding in React applications, imperative renderer API
 - [Python Pipeline API](/guide/pipeline/python) — Full Python API documentation
 - [TypeScript Pipeline API](/guide/pipeline/typescript) — Full TypeScript API documentation
-- [megane Builder](/guide/builder) — Edit structures and build crystals, supercells and slabs
+- [Megane Builder](/guide/builder) — Edit structures and build crystals, supercells and slabs
 
 <CtaBridge />

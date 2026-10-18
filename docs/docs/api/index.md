@@ -1,12 +1,12 @@
 # API Reference
 
-megane provides APIs for both Python and TypeScript/JavaScript.
+Megane provides APIs for both Python and TypeScript/JavaScript.
 
 ## Python
 
 The Python API is used for:
 
-- **Jupyter widget** — Interactive viewer in a notebook cell (`MolecularViewer`), and the structure editor (`Builder`, see [megane Builder](/guide/builder#in-vs-code-jupyterlab-and-notebooks))
+- **Jupyter widget** — Interactive viewer in a notebook cell (`MolecularViewer`), and the structure editor (`Builder`, see [Megane Builder](/guide/builder#in-vs-code-jupyterlab-and-notebooks))
 - **Standalone web app** — Served by `megane serve` over WebSocket
 - **Python package** — Parse structure files, read trajectories, and write structures back out (`save_structure`) programmatically
 

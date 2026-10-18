@@ -4,7 +4,7 @@ import GalleryIndex from "../components/GalleryIndex";
 
 export default function GalleryPage() {
   return (
-    <Layout title="Gallery" description="A collection of megane visualization examples">
+    <Layout title="Gallery" description="A collection of Megane visualization examples">
       <main className="container margin-vert--lg">
         <h1>Gallery</h1>
         <p>

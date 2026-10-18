@@ -1,10 +1,10 @@
 # Platform Support
 
-megane ships in six distributions. They share the same Rust parser core (compiled to WASM and PyO3), but the host UI and the set of registered file types differ. This page is the single reference for **what works on which platform**, and it is descriptive of the current state — including known gaps.
+Megane ships in six distributions. They share the same Rust parser core (compiled to WASM and PyO3), but the host UI and the set of registered file types differ. This page is the single reference for **what works on which platform**, and it is descriptive of the current state — including known gaps.
 
 ## Terminology
 
-The docs describe megane along one axis: the **distribution** (host) you run it in. To keep names consistent everywhere:
+The docs describe Megane along one axis: the **distribution** (host) you run it in. To keep names consistent everywhere:
 
 - **Standalone web app** — the full viewer served by the `megane serve` command. `megane serve` is the CLI launcher and "the `megane serve` backend" is its FastAPI + WebSocket server; neither is a separate distribution, and Docker is just one way to run it. Do not call this host "CLI", "CLI server", or "Browser".
 - **Jupyter widget**, **JupyterLab extension**, **VS Code extension** — the three embedded-in-a-host viewers. Microsoft's editor is written "VS Code"; our distribution is the "VS Code extension".
@@ -67,13 +67,13 @@ Note: **XCrySDen** (`.xsf` / `.axsf`) is one format with two shapes. A static
 file carries a dimensionality keyword (`CRYSTAL`, `SLAB`, `POLYMER`, `MOLECULE`,
 or `ATOMS`), an optional `PRIMVEC` lattice, and a `PRIMCOORD`/`ATOMS` block;
 an animated `.axsf` opens with `ANIMSTEPS n` and repeats those blocks per step,
-which megane loads as a multi-frame structure — including **variable-cell**
+which Megane loads as a multi-frame structure — including **variable-cell**
 animations, where each step's `PRIMVEC` animates the box. The first column of an
 atom line may be an atomic number or an element symbol, and a negative number
 (XCrySDen's ghost-atom convention) is read as its magnitude. The optional
 per-atom **force** triple is exposed as a `force` vector channel, so the Vector
 Overlay node can draw it with no format-specific wiring. `CONVVEC` is consumed
-and discarded — `PRIMVEC` is the cell megane draws — and
+and discarded — `PRIMVEC` is the cell Megane draws — and
 `BEGIN_BLOCK_DATAGRID_*` volumetric blocks are skipped; mapping those onto the
 isosurface pipeline is a follow-up.
 Note: **CML** (Chemical Markup Language) is the first XML format in the core.
@@ -105,7 +105,7 @@ placeholder cell such as `0 0 0 90 90 90`, leaves the structure without a box
 and adds a parser warning rather than failing the load. Cell vectors are never
 written as a 3×3 matrix in MOL2, so no vector form is read.
 
-Note: **VASP** files are the one format megane dispatches by **filename**, not
+Note: **VASP** files are the one format Megane dispatches by **filename**, not
 only by extension: `POSCAR`, `CONTCAR`, and `XDATCAR` are conventionally written
 with no extension at all. `src/parsers/fileNames.ts` maps those bare names (and
 their common suffixed forms — `POSCAR.bak`, `CONTCAR_relaxed`, `XDATCAR-run2`)
@@ -154,7 +154,7 @@ projected 2D distances are meaningless. The binary `.cdx` and general `.cdxml`
 variants are out of scope. It shares `quick-xml` with the CML reader, so no new
 dependency.
 Note: **Odyssey** (Wavefunction Inc.'s teaching package, same vendor as
-Spartan) writes **two unrelated layouts** and megane reads both through one
+Spartan) writes **two unrelated layouts** and Megane reads both through one
 parser that picks by **content, not extension** — either layout turns up under
 either name. `.xodydata` is the modern XML default rooted at
 `<odyssey_simulation>`: `<atom>` carries `element` and `xyz`, `<bond>` carries
@@ -214,7 +214,7 @@ the issue asks for it to land separately.
 
 Note: **`.jxyz`** is Jmol's second extension for plain XYZ, not a separate
 format, so it is an **alias** to the XYZ reader rather than a second parser.
-megane's XYZ parser already covers everything Jmol's writes: multi-frame
+Megane's XYZ parser already covers everything Jmol's writes: multi-frame
 blocks, `Lattice=` extended headers, and extra per-atom columns after x/y/z
 (an atom name and a partial charge in Jmol's output), which are kept as the
 per-atom label. It is registered on the same JupyterLab `IFileType` as `.xyz`
@@ -242,7 +242,7 @@ the same guard the trajectory-only formats get.
 | Gaussian CUBE | `.cube`, `.cub` | ✓ | — | ✓⁶ | ✓⁶ | ✓ | — |
 | OpenDX | `.dx` | ✓ | — | ✓⁶ | ✓⁶ | ✓ | — |
 
-⁶ Registered so the file opens megane, which then explains that a grid needs a
+⁶ Registered so the file opens Megane, which then explains that a grid needs a
 structure to overlay. Load it through the **Load Volumetric** node in the
 pipeline editor.
 
@@ -365,7 +365,7 @@ Sources of truth: `crates/megane-wasm/src/lib.rs` (browser parsers), `crates/meg
 | Crystallographic symmetry expansion for CIF (asymmetric unit → full cell) | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ (`Symmetry`) |
 | Wrap / unwrap periodic coordinates (pipeline node) | ✓ | ✓ (via pipeline) | ✓ | ✓ | ✓ | ✓ (`Wrap`) |
 | Replicate supercell (pipeline node) | ✓ | ✓ (via pipeline) | ✓ | ✓ | ✓ | ✓ (`Replicate`) |
-| Structure editing — megane Builder (open a file by dialog or drop, or start a new document — empty cell or bulk crystal — from the File menu on the operations rail; add / delete / move atoms, bonds, elements with the tool's own settings and keyboard shortcuts; molecule library with presets, sketches, file imports and saved selections, placed with *Add* / the *Place* tool; Clean up with RDKit; save XYZ / PDB / MOL)⁸ | ✓ (`/builder.html`) | ✓ (`megane.Builder(path)`) | ✓ (megane sidebar panel) | ✓ (megane activity-bar view) | — | ✓ (`megane.Builder`: `load`, `text`, `save`, `to_ase`) |
+| Structure editing — Megane Builder (open a file by dialog or drop, or start a new document — empty cell or bulk crystal — from the File menu on the operations rail; add / delete / move atoms, bonds, elements with the tool's own settings and keyboard shortcuts; molecule library with presets, sketches, file imports and saved selections, placed with *Add* / the *Place* tool; Clean up with RDKit; save XYZ / PDB / MOL)⁸ | ✓ (`/builder.html`) | ✓ (`megane.Builder(path)`) | ✓ (Megane sidebar panel) | ✓ (Megane activity-bar view) | — | ✓ (`megane.Builder`: `load`, `text`, `save`, `to_ase`) |
 | Builder: where *Save* writes | download | kernel working directory (`save_dir`), never overwriting | server contents, asks before replacing | save dialog | — | n/a |
 | Builder: Ketcher sketcher (the library's *Sketch…*) | ✓ | — (*Paste MOL* / SMILES instead) | ✓ | ✓ | — | n/a |
 | Builder *Python tools*: *Tools*-menu entries backed by an MCP tool server (liquid box, polymer chain, solvate, … — see [Builder Tool Contract](dev/builder-tools.md)); Streamable HTTP servers only, stdio servers need a host bridge that is not built yet | ✓ | — | — | — | — | — |
@@ -379,7 +379,7 @@ Sources of truth: `crates/megane-wasm/src/lib.rs` (browser parsers), `crates/meg
 
 ³ JupyterLab: call `meganeReactView.seekFrame(N)` on a `MeganeReactView` instance obtained from the widget tracker. This delegates to `usePlaybackStore.seekFrame(N)` in the viewer.
 
-⁴ VS Code: call `vscode.commands.executeCommand('megane.seekFrame', N)` from another extension, or call `meganeEditorProvider.seekFrame(N)` on an `MeganeEditorProvider` reference. The command posts a `seekFrame` message to the most recently active megane webview panel.
+⁴ VS Code: call `vscode.commands.executeCommand('megane.seekFrame', N)` from another extension, or call `meganeEditorProvider.seekFrame(N)` on an `MeganeEditorProvider` reference. The command posts a `seekFrame` message to the most recently active Megane webview panel.
 
 ⁵ Jupyter widget: export downloads work when the notebook runs in a browser (JupyterLab, Jupyter Notebook). Inside a VS Code notebook the widget renders in a sandboxed webview with no path to the extension host, so downloads are unavailable — see Known gaps.
 
@@ -387,7 +387,7 @@ Sources of truth: `crates/megane-wasm/src/lib.rs` (browser parsers), `crates/meg
 
 ⁷ Jupyter widget: opt-in with `set_pipeline(pipe, embed_trajectory=True | "auto")` or `view_traj(..., embed_trajectory=...)`, which embeds every frame in the widget state. By default frames stay in the kernel and are sent one at a time, so playback needs a running kernel. The other hosts parse the file in the browser and never depend on a backend for frames.
 
-⁸ megane Builder outside the web app: the **VS Code** extension adds a *megane* container to the activity bar whose *Builder* view has *New Structure* and *Open File in Builder…*, plus *Open in megane Builder* on structure files in the Explorer's context menu and in a megane viewer tab's title bar; each opens a Builder editor tab. The **JupyterLab** extension adds a *megane* panel to the left sidebar (*Open Builder* and the structure files of the file browser's folder), *Open in megane Builder* in the file browser's context menu, and a *megane Builder* launcher item; the Builder is one main-area tab. The **Jupyter widget** is `megane.Builder("file.sdf")` in a cell: Python opens files in it (`load`, `load_text`) and reads the edited structure back (`n_atoms`, `text("pdb")`, `save(path)`, `to_ase()`); RDKit's module is sent by the kernel on first use rather than shipped in every notebook. Each separate `Builder` edits its own document; showing the same one in two outputs moves it to the newer output. Keyboard shortcuts act only while the focus is in the Builder on the embedded hosts.
+⁸ Megane Builder outside the web app: the **VS Code** extension adds a *Megane* container to the activity bar whose *Builder* view has *New Structure* and *Open File in Builder…*, plus *Open in Megane Builder* on structure files in the Explorer's context menu and in a Megane viewer tab's title bar; each opens a Builder editor tab. The **JupyterLab** extension adds a *Megane* panel to the left sidebar (*Open Builder* and the structure files of the file browser's folder), *Open in Megane Builder* in the file browser's context menu, and a *Megane Builder* launcher item; the Builder is one main-area tab. The **Jupyter widget** is `megane.Builder("file.sdf")` in a cell: Python opens files in it (`load`, `load_text`) and reads the edited structure back (`n_atoms`, `text("pdb")`, `save(path)`, `to_ase()`); RDKit's module is sent by the kernel on first use rather than shipped in every notebook. Each separate `Builder` edits its own document; showing the same one in two outputs moves it to the newer output. Keyboard shortcuts act only while the focus is in the Builder on the embedded hosts.
 
 ⁹ Jupyter widget: `measurement` fires for every measurement the viewer computes, whether the atoms were picked by right-clicking in the viewer or set from Python. `selection_change` fires only when Python assigns `selected_atoms` — the front end never writes a click selection back to that traitlet, so right-clicking atoms updates `measurement` but not `selected_atoms`.
 
@@ -395,7 +395,7 @@ Sources of truth: `crates/megane-wasm/src/lib.rs` (browser parsers), `crates/meg
 
 Notes:
 
-- **host** means the parent app provides the file picker (the JupyterLab file browser, the VS Code explorer); megane itself does not render one.
+- **host** means the parent app provides the file picker (the JupyterLab file browser, the VS Code explorer); Megane itself does not render one.
 - The Jupyter widget intentionally does not mount the visual pipeline editor — pipelines are built in Python (`megane.Pipeline`) and pushed via `MolecularViewer.set_pipeline()`. Use the standalone app, JupyterLab extension, VS Code extension, or the npm `MeganeViewer` to edit pipelines visually.
 - The standalone app is the only platform that parses in a Web Worker and streams the frames of large (≥ 8 MB) trajectories and multi-frame XYZ / PDB files on demand; the other platforms decode full trajectories into memory.
 - The standalone React `MeganeViewer` exposes an `onFrameChange?: (frame: number) => void` prop that fires on every trajectory frame transition — useful for keeping a host Plotly figure in sync.
@@ -422,7 +422,7 @@ These are formats or features that the parser layer supports but a given platfor
 - **Trajectory-only opens require a topology first.** On VS Code and JupyterLab, opening a `.xtc` / `.dcd` / `.nc` file before any structure is loaded surfaces a friendly error. The recommended flow is to open the structure first, or to use the pipeline editor (always mounted on these hosts) to wire a Load Structure node. (LAMMPS dump `.lammpstrj` / `.dump` / `.trj` is exempt — it opens standalone as a multi-frame structure.)
 - **Export downloads do not work for the Jupyter widget inside a VS Code notebook.** Browsers download exports via a synthetic `<a download>` click, and the VS Code custom editor relays them to the extension host (`saveFile` webview message → native save dialog). The anywidget running inside VS Code's notebook renderer webview can do neither — the sandbox ignores anchor downloads and provides no bridge to the extension host. Use JupyterLab (or the VS Code custom editor on a structure file) to export.
 - **Jupyter widget has no in-cell file picker or drag-and-drop.** This is intentional — the widget is Python-driven. Use `set_pipeline()` with a `Pipeline` to load any supported format. (The `megane.Builder` widget is the exception: it keeps the Builder's own *Open…* and drop.)
-- **megane Builder's Python tools (MCP) and Ketcher are not everywhere.** The *Tools* menu needs a tool server the page can reach, which only the web app can count on, so the VS Code, JupyterLab and Jupyter-widget Builders leave it out. The Jupyter widget also leaves out Ketcher (~20 MB per notebook); its sketch dialog takes a pasted MOL block or SMILES, which RDKit embeds in 3D as usual.
+- **Megane Builder's Python tools (MCP) and Ketcher are not everywhere.** The *Tools* menu needs a tool server the page can reach, which only the web app can count on, so the VS Code, JupyterLab and Jupyter-widget Builders leave it out. The Jupyter widget also leaves out Ketcher (~20 MB per notebook); its sketch dialog takes a pasted MOL block or SMILES, which RDKit embeds in 3D as usual.
 - **The Builder's edit history does not survive a reload.** On every host the document is the structure plus its edit list in the page; reloading the page (or, for the Jupyter widget, re-opening the notebook) brings back the last structure the widget wrote to Python, not its Undo history.
 - **The Replicate node does not replicate trajectory frames.** The `replicate` pipeline node builds a static supercell from the structure's particles, bonds, and cell, but trajectory frames keep the original atom count. With a trajectory connected and any replication count > 1, the static structure and playback frames differ in atom count. The default pipelines wire Replicate with `nx = ny = nz = 1` (identity), so this only surfaces once a user increases the counts on a structure that also has a trajectory. Replicate also requires a unit cell on the input — structures without a cell pass through unchanged.
 - **Jupyter widget has no visual pipeline editor.** The editor's React surface relies on host chrome (drag handles, side panel layout) that the anywidget cell cannot reliably render, so it is only shipped on the standalone app, JupyterLab extension, and VS Code extension. Build pipelines in Python with `megane.Pipeline` and push them via `MolecularViewer.set_pipeline()`.

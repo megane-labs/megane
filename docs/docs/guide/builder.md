@@ -1,7 +1,7 @@
-# megane Builder (Structure Editor)
+# Megane Builder (Structure Editor)
 
-**megane Builder** is a separate app for *making* structures: open a PDB (or
-any format megane reads) or start from an empty cell, add and delete atoms,
+**Megane Builder** is a separate app for *making* structures: open a PDB (or
+any format Megane reads) or start from an empty cell, add and delete atoms,
 drag them around, change elements, draw or remove bonds, and save the result
 as XYZ, PDB, or MOL. It lives beside the viewer at `/builder.html` — on the
 hosted demo ([megane-labs.github.io/megane/app/builder.html](https://megane-labs.github.io/megane/app/builder.html)), in the
@@ -217,7 +217,7 @@ and grows with your own molecules:
   MMFF94s minimisation (UFF when MMFF has no parameters for the molecule).
   Wedge bonds in the drawing set the stereochemistry of the conformer, and
   the same sketch always embeds to the same geometry. The result goes
-  through the same MOL parser every megane host uses and is centred; the
+  through the same MOL parser every Megane host uses and is centred; the
   molecule is a real 3D structure, with tetrahedral carbons and force-field
   bond lengths, not a flat drawing. Untick **Add hydrogens** to embed the
   bare skeleton you drew (hydrogens you drew explicitly in Ketcher are
@@ -227,7 +227,7 @@ and grows with your own molecules:
   **Paste MOL** in the dialog takes a molfile (or a SMILES string) from
   elsewhere instead of drawing (it is embedded the same way); it is also what
   the dialog falls back to if Ketcher cannot load.
-- **From file…** (in the gallery) imports any structure file megane reads as a molecule (3D
+- **From file…** (in the gallery) imports any structure file Megane reads as a molecule (3D
   coordinates are kept as they are).
   A flat 2D file (a molfile without z coordinates) is only rescaled to
   ångström and marked *flat* in the list; the Builder never invents a
@@ -398,19 +398,19 @@ The same Builder ships with the editor extensions and the Python package.
 Everything above works the same; what differs is how you get to it and
 where *Save* writes.
 
-**VS Code.** The megane extension adds a *megane* icon (a pair of glasses) to
+**VS Code.** The Megane extension adds a *Megane* icon (a pair of glasses) to
 the activity bar. Its *Builder* view has **New Structure** and **Open File in
-Builder…**; a structure file also has **Open in megane Builder** in the
-Explorer's context menu, and a megane viewer tab has the same button in its
+Builder…**; a structure file also has **Open in Megane Builder** in the
+Explorer's context menu, and a Megane viewer tab has the same button in its
 title bar. Each opens the Builder in an editor tab (one tab per file; asking
 again brings it back). *Save* asks where to write with VS Code's save dialog,
 starting beside the file you opened.
 
-**JupyterLab.** The megane extension adds a *megane* panel (the glasses icon)
+**JupyterLab.** The Megane extension adds a *Megane* panel (the glasses icon)
 to the left sidebar: **Open Builder**, and the structure files of the file
 browser's current folder — click one to edit it. Structure files also have
-**Open in megane Builder** in the file browser's context menu, and the
-launcher has a **megane Builder** card. The Builder is one main-area tab;
+**Open in Megane Builder** in the file browser's context menu, and the
+launcher has a **Megane Builder** card. The Builder is one main-area tab;
 opening another file replaces its document, as *File › Open…* does. *Save*
 asks for a path in the server's file tree (beside the opened file by default)
 and asks before replacing a file.

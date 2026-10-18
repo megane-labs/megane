@@ -12,6 +12,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ### Changed
 
+- **New Megane logo in the README and on the docs site.** The README header shows the full logo (with a white-text variant in dark mode), and the docs site's navbar and favicon use the new logomark. The README and the docs now write the product name as "Megane"; package names, commands and code (`pip install megane`, `megane serve`, `import megane`) are unchanged.
 - **Render dialog: the Animation tab now says why it is unavailable.** With a single-frame structure the tab was clickable but did nothing. It is now visibly disabled, with a tooltip and an inline note explaining that the structure has only one frame and a trajectory (2+ frames) is needed for GIF/MP4 export.
 
 ## [0.17.0] - 2026-09-29
