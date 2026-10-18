@@ -1,5 +1,6 @@
+use crate::atomic::symbol_to_atomic_num;
 use crate::bonds;
-use crate::parser::{symbol_to_atomic_num, FrameChange, HeteroFramesBuilder};
+use crate::structure::{FrameChange, HeteroFramesBuilder};
 use crate::trajectory::{ScalarChannel, ScalarFrame, VectorChannel, VectorFrame};
 /// XYZ text format parser.
 ///
@@ -188,7 +189,7 @@ fn record_channels(
     }
 }
 
-pub fn parse(text: &str) -> Result<crate::parser::ParsedStructure, String> {
+pub fn parse(text: &str) -> Result<crate::structure::ParsedStructure, String> {
     let lines: Vec<&str> = text.lines().collect();
     if lines.len() < 2 {
         return Err("XYZ file too short".into());
@@ -252,7 +253,7 @@ pub fn parse(text: &str) -> Result<crate::parser::ParsedStructure, String> {
             }
 
             // Element symbol
-            let sym = crate::parser::capitalize(parts[0]);
+            let sym = crate::atomic::capitalize(parts[0]);
             elements.push(symbol_to_atomic_num(&sym));
 
             // Extra fields after x y z as label
@@ -393,7 +394,7 @@ pub fn parse(text: &str) -> Result<crate::parser::ParsedStructure, String> {
         ));
     }
 
-    Ok(crate::parser::ParsedStructure {
+    Ok(crate::structure::ParsedStructure {
         n_atoms: first_n_atoms,
         positions,
         elements,
@@ -449,7 +450,7 @@ pub struct XyzIndex {
 /// Parse only the first frame of an XYZ file into a `ParsedStructure` (topology,
 /// elements, bonds, box, frame-0 coordinates), leaving `frame_positions_flat`
 /// empty. Used to build the lazy snapshot without decoding every frame.
-pub fn parse_frame0(text: &str) -> Result<crate::parser::ParsedStructure, String> {
+pub fn parse_frame0(text: &str) -> Result<crate::structure::ParsedStructure, String> {
     let lines: Vec<&str> = text.lines().collect();
     if lines.len() < 3 {
         return Err("XYZ file too short".into());
@@ -492,7 +493,7 @@ pub fn parse_frame0(text: &str) -> Result<crate::parser::ParsedStructure, String
         if parts.len() < 4 {
             return Err(format!("XYZ atom line {} too short", offset + i + 1));
         }
-        let sym = crate::parser::capitalize(parts[0]);
+        let sym = crate::atomic::capitalize(parts[0]);
         elements.push(symbol_to_atomic_num(&sym));
         let label = if parts.len() > 4 {
             parts[4..].join(" ")
@@ -559,7 +560,7 @@ pub fn parse_frame0(text: &str) -> Result<crate::parser::ParsedStructure, String
         None
     };
 
-    Ok(crate::parser::ParsedStructure {
+    Ok(crate::structure::ParsedStructure {
         n_atoms,
         positions,
         elements,

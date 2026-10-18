@@ -27,7 +27,7 @@ use crate::atomic::symbol_to_atomic_num;
 /// "C.3" → "C", "N.am" → "N", "O.co2" → "O", "Fe" → "Fe".
 fn element_from_mol2_type(atom_type: &str) -> String {
     let base = atom_type.split('.').next().unwrap_or(atom_type);
-    crate::parser::capitalize(base)
+    crate::atomic::capitalize(base)
 }
 
 /// Convert a MOL2 bond type token to a numeric bond order.
@@ -104,11 +104,11 @@ fn parse_crysin(params: &[f32]) -> Crysin {
     Crysin::Cell(m)
 }
 
-pub fn parse(text: &str) -> Result<crate::parser::ParsedStructure, String> {
+pub fn parse(text: &str) -> Result<crate::structure::ParsedStructure, String> {
     parse_first_molecule(text)
 }
 
-fn parse_first_molecule(text: &str) -> Result<crate::parser::ParsedStructure, String> {
+fn parse_first_molecule(text: &str) -> Result<crate::structure::ParsedStructure, String> {
     #[derive(PartialEq)]
     enum Section {
         None,
@@ -332,7 +332,7 @@ fn parse_first_molecule(text: &str) -> Result<crate::parser::ParsedStructure, St
         ));
     }
 
-    Ok(crate::parser::ParsedStructure {
+    Ok(crate::structure::ParsedStructure {
         n_atoms,
         positions,
         elements,

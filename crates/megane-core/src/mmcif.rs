@@ -11,8 +11,9 @@ use std::collections::{HashMap, HashSet};
 
 use crate::atomic::element_from_symbol;
 use crate::bonds;
+use crate::cell::cell_params_to_matrix;
 use crate::cif_lex::{field, starts_with_ci, Document, Value};
-use crate::parser::{cell_params_to_matrix, FrameChange, HeteroFramesBuilder, ParsedStructure};
+use crate::structure::{ss_type_at, FrameChange, HeteroFramesBuilder, ParsedStructure, SsRange};
 
 // ---------------------------------------------------------------------------
 // Detection
@@ -156,14 +157,6 @@ fn resolve_conn_partner(
 // ---------------------------------------------------------------------------
 // _struct_conf / _struct_sheet_range (secondary structure)
 // ---------------------------------------------------------------------------
-
-/// Secondary-structure range from `_struct_conf` or `_struct_sheet_range`.
-struct SsRange {
-    chain_id: u8,
-    start: u32,
-    end: u32,
-    ss_type: u8, // 1 = helix, 2 = sheet
-}
 
 /// Build one SS range, preferring label_* addressing and falling back to
 /// auth_* when the label sequence ids are missing.
@@ -551,19 +544,11 @@ pub(crate) fn parse_document(text: &str, doc: &Document) -> Result<ParsedStructu
     // Secondary structure from _struct_conf / _struct_sheet_range ranges,
     // matched by chain byte + residue number exactly like PDB HELIX/SHEET.
     let ss_ranges = extract_ss_ranges(doc);
-    let mut ca_ss_type: Vec<u8> = Vec::with_capacity(ca_indices.len());
-    for k in 0..ca_indices.len() {
-        let ss = ss_ranges
-            .iter()
-            .find(|r| {
-                r.chain_id == ca_chain_ids[k]
-                    && ca_res_nums[k] >= r.start
-                    && ca_res_nums[k] <= r.end
-            })
-            .map(|r| r.ss_type)
-            .unwrap_or(0);
-        ca_ss_type.push(ss);
-    }
+    let ca_ss_type: Vec<u8> = ca_chain_ids
+        .iter()
+        .zip(&ca_res_nums)
+        .map(|(&chain_id, &res_num)| ss_type_at(&ss_ranges, chain_id, res_num))
+        .collect();
 
     let has_chain_ids = chain_ids.iter().any(|&c| c != b' ');
     let has_bfactors = bfactors.iter().any(|&b| b != 0.0);

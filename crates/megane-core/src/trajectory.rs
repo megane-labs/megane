@@ -45,7 +45,7 @@ pub struct ScalarChannel {
 /// case): a fixed atom count and a single `box_matrix` for the whole run, and
 /// nothing here is allocated.
 ///
-/// Unlike [`crate::parser::HeteroFrames`] (structure lane), the trajectory lane
+/// Unlike [`crate::structure::HeteroFrames`] (structure lane), the trajectory lane
 /// keeps frame 0 *inside* `frame_positions_flat`, so every index here addresses
 /// ALL frames (`atom_offsets` has length `n_frames + 1`). Each channel is
 /// independently optional. Bonds are deliberately omitted — topology comes from
@@ -105,7 +105,7 @@ pub struct TrajectoryData {
     pub timestep_ps: f32,
     pub box_matrix: Option<[f32; 9]>,
     /// World-space lower corner of the simulation box (see
-    /// [`crate::parser::ParsedStructure::box_origin`]). `None` ⇒ origin at
+    /// [`crate::structure::ParsedStructure::box_origin`]). `None` ⇒ origin at
     /// `(0,0,0)`. Set only by formats that store an explicit box origin
     /// (LAMMPS dump); constant across frames (frame-0 origin).
     pub box_origin: Option<[f32; 3]>,

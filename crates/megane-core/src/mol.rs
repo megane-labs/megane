@@ -57,7 +57,7 @@ fn nonzero_channel(name: &str, values: Vec<f32>) -> Option<ScalarChannel> {
 ///
 /// Handles line continuation (trailing ` -` on a V30 property line signals that
 /// the next `M  V30` line continues the same logical record).
-fn parse_v3000_ctab(lines: &[&str]) -> Result<crate::parser::ParsedStructure, String> {
+fn parse_v3000_ctab(lines: &[&str]) -> Result<crate::structure::ParsedStructure, String> {
     let mut n_atoms_expected = 0usize;
     let mut in_atom_block = false;
     let mut in_bond_block = false;
@@ -152,7 +152,7 @@ fn parse_v3000_ctab(lines: &[&str]) -> Result<crate::parser::ParsedStructure, St
             } else {
                 sym_raw
             };
-            let sym = crate::parser::capitalize(sym_str);
+            let sym = crate::atomic::capitalize(sym_str);
             let x: f32 = parts[2]
                 .parse()
                 .map_err(|_| "bad x coord in V3000 atom block")?;
@@ -212,7 +212,7 @@ fn parse_v3000_ctab(lines: &[&str]) -> Result<crate::parser::ParsedStructure, St
     scalar_channels.extend(nonzero_channel("isotope_mass_delta", isotopes));
 
     let n_file_bonds = bond_orders.len();
-    Ok(crate::parser::ParsedStructure {
+    Ok(crate::structure::ParsedStructure {
         n_atoms,
         positions,
         elements,
@@ -256,7 +256,7 @@ fn extra_records_warning(extra: usize) -> Option<String> {
     })
 }
 
-pub fn parse(text: &str) -> Result<crate::parser::ParsedStructure, String> {
+pub fn parse(text: &str) -> Result<crate::structure::ParsedStructure, String> {
     let lines: Vec<&str> = text.lines().collect();
     if lines.len() < 5 {
         return Err("MOL file too short".into());
@@ -316,7 +316,7 @@ pub fn parse(text: &str) -> Result<crate::parser::ParsedStructure, String> {
             let z: f32 = parts[2]
                 .parse()
                 .map_err(|_| format!("bad z at atom {}", i + 1))?;
-            let sym = crate::parser::capitalize(parts[3]);
+            let sym = crate::atomic::capitalize(parts[3]);
             positions.push(x);
             positions.push(y);
             positions.push(z);
@@ -344,7 +344,7 @@ pub fn parse(text: &str) -> Result<crate::parser::ParsedStructure, String> {
                 .trim()
                 .parse()
                 .map_err(|_| format!("bad z at atom {}", i + 1))?;
-            let sym = crate::parser::capitalize(line[31..34].trim());
+            let sym = crate::atomic::capitalize(line[31..34].trim());
             positions.push(x);
             positions.push(y);
             positions.push(z);
@@ -436,7 +436,7 @@ pub fn parse(text: &str) -> Result<crate::parser::ParsedStructure, String> {
 
     let warnings: Vec<String> = extra_records_warning(extra_records).into_iter().collect();
 
-    Ok(crate::parser::ParsedStructure {
+    Ok(crate::structure::ParsedStructure {
         n_atoms,
         positions,
         elements,

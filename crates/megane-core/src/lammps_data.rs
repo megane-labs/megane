@@ -6,7 +6,7 @@ use std::collections::{HashMap, HashSet};
 
 use crate::atomic::mass_to_atomic_num;
 use crate::bonds;
-use crate::parser::ParsedStructure;
+use crate::structure::ParsedStructure;
 use crate::trajectory::{ScalarChannel, ScalarFrame};
 
 // ── Atom style ────────────────────────────────────────────────────────────

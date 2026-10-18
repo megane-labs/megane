@@ -783,7 +783,7 @@ mod tests {
         let blob = build_single_frame_raw_cell(true, [10.0, -0.5, 11.0, 0.0, 0.0, 12.0]);
         let r = parse_dcd(&blob).expect("cosine-convention DCD");
         let bx = r.box_matrix.expect("cell present");
-        let expect = crate::parser::cell_params_to_matrix(10.0, 11.0, 12.0, 90.0, 90.0, 120.0);
+        let expect = crate::cell::cell_params_to_matrix(10.0, 11.0, 12.0, 90.0, 90.0, 120.0);
         for i in 0..9 {
             assert!(
                 (bx[i] - expect[i]).abs() < 1e-3,
@@ -807,7 +807,7 @@ mod tests {
         let blob = build_single_frame_raw_cell(true, [10.0, 120.0, 11.0, 90.0, 90.0, 12.0]);
         let r = parse_dcd(&blob).expect("degree-convention DCD");
         let bx = r.box_matrix.expect("cell present");
-        let expect = crate::parser::cell_params_to_matrix(10.0, 11.0, 12.0, 90.0, 90.0, 120.0);
+        let expect = crate::cell::cell_params_to_matrix(10.0, 11.0, 12.0, 90.0, 90.0, 120.0);
         for i in 0..9 {
             assert!(
                 (bx[i] - expect[i]).abs() < 1e-3,

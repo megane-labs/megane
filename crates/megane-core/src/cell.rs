@@ -259,8 +259,7 @@ mod format_regressions {
 
     #[test]
     fn pdb_cryst1() {
-        let s =
-            crate::parser::parse(include_str!("../../../tests/fixtures/empty_box.pdb")).unwrap();
+        let s = crate::pdb::parse(include_str!("../../../tests/fixtures/empty_box.pdb")).unwrap();
         assert_diagonal(s.box_matrix, 10.0, 10.0, 10.0);
     }
 

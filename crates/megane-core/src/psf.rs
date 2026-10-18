@@ -8,7 +8,7 @@
 /// Unsupported sections (NTHETA, NPHI, NIMPHI, NDON, NACC, NNB, NGRP, NCRTERM)
 /// are silently skipped.
 use crate::atomic::{element_from_atom_name_in_residue, mass_to_atomic_num};
-use crate::parser::ParsedStructure;
+use crate::structure::ParsedStructure;
 use std::collections::HashSet;
 
 struct PsfAtom {
