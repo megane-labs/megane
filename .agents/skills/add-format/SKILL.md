@@ -28,14 +28,13 @@ Walk every item. Skipping one means the format silently fails on at least one ho
 
 ### 2. TypeScript parser dispatch (shared by **all** browser hosts)
 
-- [ ] `src/parsers/structure.ts` — add the new export to the `WasmModule` interface, hook it up in the dynamic `import("../../crates/megane-wasm/pkg/megane_wasm.js")` block, and add a `case ".<ext>":` to `getParserForExtension`. (Trajectory formats: `src/parsers/trajectory.ts` instead.)
+- [ ] `src/parsers/parseCore.ts` — add the new export to the `WasmModule` interface and add a `case ".<ext>":` to `getParserForExtension`. (Trajectory formats: extend `TrajectoryKind` and the `switch` in `parseTrajectoryCore` / `indexTrajectoryCore` in the same file instead.) `parseCore.ts` runs both in the parse Web Worker (`parse.worker.ts`) and on the main thread (`parseClientSync.ts`), so one edit covers both paths.
 
 This is the only file that knows how to dispatch by extension; every host below relies on it.
 
 ### 3. Standalone webapp openers
 
-- [ ] `src/components/nodes/LoadStructureNode.tsx` — append `.<ext>` to **both** `STRUCTURE_ACCEPT` (file dialog filter) and `STRUCTURE_EXTS` (drag-drop guard).
-- [ ] `src/components/nodes/LoadTrajectoryNode.tsx` — same, if it is a trajectory format.
+- [ ] `src/parsers/fileNames.ts` — append `.<ext>` to `STRUCTURE_EXTS` (or `TRAJECTORY_EXTS` for a trajectory format). `STRUCTURE_ACCEPT` / `TRAJECTORY_ACCEPT` (file dialog filters) are derived from these, and `LoadStructureNode.tsx` / `LoadTrajectoryNode.tsx` import both, so this one list drives the dialog and the drag-drop guard.
 
 ### 4. JupyterLab labextension
 
@@ -81,7 +80,7 @@ This is the only file that knows how to dispatch by extension; every host below 
 These match AGENTS.md CRITICAL RULE #6:
 
 - Browser parsers: `crates/megane-wasm/src/lib.rs`
-- Standalone accept lists: `src/components/nodes/LoadStructureNode.tsx`, `src/components/nodes/LoadTrajectoryNode.tsx`
+- Standalone accept lists: `src/parsers/fileNames.ts` (`STRUCTURE_EXTS` / `TRAJECTORY_EXTS`, consumed by `LoadStructureNode.tsx` / `LoadTrajectoryNode.tsx`)
 - JupyterLab filetypes: `jupyterlab-megane/src/filetypes.ts`
 - VSCode customEditors: `vscode-megane/package.json`
 - Cross-host status: `docs/docs/platform-support.md`
