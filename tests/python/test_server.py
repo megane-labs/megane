@@ -17,13 +17,13 @@ def _reset_state():
     """Reset server state before each test."""
     _state.structure = None
     _state.snapshot_bytes = b""
-    _state.pdb_path = ""
+    _state.structure_path = ""
     _state.xtc_path = None
     _state.trajectory = None
     yield
     _state.structure = None
     _state.snapshot_bytes = b""
-    _state.pdb_path = ""
+    _state.structure_path = ""
     _state.xtc_path = None
     _state.trajectory = None
 
@@ -56,11 +56,136 @@ def test_configure_loads_pdb():
     assert _state.snapshot_bytes[:4] == MAGIC
 
 
-def test_configure_sets_pdb_path():
-    """configure() records the PDB path."""
+def test_configure_sets_structure_path():
+    """configure() records the structure path."""
     pdb_path = str(FIXTURES / "1crn.pdb")
     configure(pdb_path)
-    assert _state.pdb_path == pdb_path
+    assert _state.structure_path == pdb_path
+
+
+# Every structure format, not only PDB: configure() dispatches on the extension
+# exactly as LoadStructure and the widget do.
+@pytest.mark.parametrize(
+    "name",
+    ["high_precision.gro", "nacl.cif", "si_diamond.xyz", "methanol.mol2", "1ala.mmcif", "POSCAR_si_diamond"],
+)
+def test_configure_loads_any_structure_format(name):
+    """configure() reads a non-PDB structure with its own parser."""
+    from megane.parsers.dispatch import load_structure_file
+
+    path = str(FIXTURES / name)
+    configure(path)
+
+    expected = load_structure_file(path)
+    assert _state.structure.n_atoms == expected.n_atoms
+    assert _state.structure.positions.tolist() == expected.positions.tolist()
+    assert _state.structure.elements.tolist() == expected.elements.tolist()
+    assert _state.structure_path == path
+    assert _state.snapshot_bytes[:4] == MAGIC
+
+
+def test_configure_gro_reads_nanometres_as_angstroms():
+    """A .gro goes through the GRO parser (nm -> Å), not the PDB one."""
+    configure(str(FIXTURES / "high_precision.gro"))
+    assert _state.structure.n_atoms == 11
+    first_line = (FIXTURES / "high_precision.gro").read_text().splitlines()[2]
+    x_nm = float(first_line[20:].split()[0])
+    assert _state.structure.positions[0][0] == pytest.approx(x_nm * 10, abs=1e-3)
+
+
+def test_configure_unsupported_extension_keeps_state(tmp_path):
+    """An unsupported extension raises and leaves the loaded structure alone."""
+    configure(str(FIXTURES / "1crn.pdb"))
+    before = _state.snapshot_bytes
+    bad = tmp_path / "notes.txt"
+    bad.write_text("hello")
+
+    with pytest.raises(ValueError, match="Unsupported structure format"):
+        configure(str(bad))
+
+    assert _state.snapshot_bytes == before
+    assert _state.structure_path == str(FIXTURES / "1crn.pdb")
+
+
+def test_configure_extensionless_reads_pdb(tmp_path):
+    """An extension-less file keeps the historic PDB reading."""
+    plain = tmp_path / "structure"
+    plain.write_bytes((FIXTURES / "1crn.pdb").read_bytes())
+    configure(str(plain))
+    assert _state.structure.n_atoms == 327
+
+
+def test_configure_positional_traj_loads_frames():
+    """A .traj passed as the structure loads every frame, like traj_path=."""
+    path = str(FIXTURES / "bond_change.traj")
+    configure(path)
+    assert _state.trajectory is not None
+    assert _state.trajectory.n_frames > 1
+    assert _state.structure_path == path
+    assert _state.xtc_path is None
+
+
+def test_configure_traj_path():
+    """traj_path= loads topology and frames from the .traj."""
+    path = str(FIXTURES / "bond_change.traj")
+    configure("", traj_path=path)
+    assert _state.trajectory is not None
+    assert _state.structure.n_atoms == _state.trajectory.n_atoms
+    assert _state.structure_path == path
+
+
+def test_configure_xtc_with_pdb_topology():
+    """PDB topology + XTC loads the trajectory."""
+    pdb = str(FIXTURES / "caffeine_water.pdb")
+    xtc = str(FIXTURES / "caffeine_water_vibration.xtc")
+    configure(pdb, xtc)
+    assert _state.trajectory is not None
+    assert _state.trajectory.n_atoms == 3024
+    assert _state.xtc_path == xtc
+
+
+def test_configure_xtc_with_non_pdb_topology(tmp_path):
+    """An XTC pairs with any structure format as its topology."""
+    from megane.parsers.pdb import load_pdb
+    from megane.writers import save_structure
+
+    xyz = tmp_path / "caffeine_water.xyz"
+    save_structure(load_pdb(str(FIXTURES / "caffeine_water.pdb")), xyz)
+    xtc = str(FIXTURES / "caffeine_water_vibration.xtc")
+
+    configure(str(xyz), xtc)
+
+    assert _state.structure.n_atoms == 3024
+    assert _state.trajectory is not None
+    assert _state.trajectory.n_atoms == 3024
+
+
+def test_configure_xtc_atom_count_mismatch_keeps_state():
+    """A topology / XTC atom-count mismatch raises before state changes."""
+    configure(str(FIXTURES / "caffeine_water.pdb"), str(FIXTURES / "caffeine_water_vibration.xtc"))
+    traj = _state.trajectory
+
+    with pytest.raises(ValueError, match="Atom count mismatch: topology has 11 atoms"):
+        configure(str(FIXTURES / "high_precision.gro"), str(FIXTURES / "caffeine_water_vibration.xtc"))
+
+    assert _state.trajectory is traj
+    assert _state.structure.n_atoms == 3024
+
+
+def test_configure_pdb_path_keyword_is_deprecated():
+    """The old pdb_path= keyword still works but warns."""
+    path = str(FIXTURES / "1crn.pdb")
+    with pytest.warns(DeprecationWarning, match="pdb_path"):
+        configure(pdb_path=path)
+    assert _state.structure.n_atoms == 327
+    assert _state.structure_path == path
+
+
+def test_configure_rejects_both_path_spellings():
+    """structure_path and the deprecated pdb_path= cannot both be given."""
+    path = str(FIXTURES / "1crn.pdb")
+    with pytest.warns(DeprecationWarning), pytest.raises(TypeError, match="both"):
+        configure(path, pdb_path=path)
 
 
 def test_configure_without_xtc():
@@ -115,6 +240,22 @@ def test_upload_pdb(client):
     data = response.json()
     assert data["nAtoms"] == 327
     assert data["nBonds"] > 0
+
+
+def test_upload_gro(client):
+    """POST /api/upload dispatches on the uploaded file name's extension."""
+    content = (FIXTURES / "high_precision.gro").read_bytes()
+    response = client.post("/api/upload", files={"pdb": ("water.gro", content, "text/plain")})
+    assert response.status_code == 200
+    assert response.json()["nAtoms"] == 11
+    assert _state.structure.n_atoms == 11
+
+
+def test_upload_unsupported_extension_is_400(client):
+    """An upload no parser reads is a client error, not a server crash."""
+    response = client.post("/api/upload", files={"pdb": ("notes.txt", b"hello", "text/plain")})
+    assert response.status_code == 400
+    assert "Unsupported structure format" in response.json()["detail"]
 
 
 # ─── _build_metadata_bytes ──────────────────────────────────────────
