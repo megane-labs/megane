@@ -4,14 +4,13 @@
  * that users can load from the Templates dropdown.
  */
 
-import type { Node, Edge } from "@xyflow/react";
-import type { PipelineNodeData } from "./execute";
+import { edges, exactNode, node, type PipelineGraph } from "./graphFactory";
 
 export interface PipelineTemplate {
   id: string;
   label: string;
   description: string;
-  create: () => { nodes: Node<PipelineNodeData>[]; edges: Edge[] };
+  create: () => PipelineGraph;
 }
 
 /**
@@ -22,161 +21,28 @@ export interface PipelineTemplate {
  * operations); the Wrap node defaults to mode "none" (pass-through) so
  * wrap/unwrap is a one-click toggle.
  */
-function createMoleculeTemplate(): {
-  nodes: Node<PipelineNodeData>[];
-  edges: Edge[];
-} {
+function createMoleculeTemplate(): PipelineGraph {
   return {
     nodes: [
-      {
-        id: "loader-1",
-        type: "load_structure",
-        position: { x: 425, y: 0 },
-        data: {
-          params: {
-            type: "load_structure",
-            fileName: "caffeine_water.pdb",
-            hasTrajectory: false,
-            hasCell: true,
-          },
-          enabled: true,
-        },
-      },
-      {
-        id: "traj-1",
-        type: "load_trajectory",
-        position: { x: 85, y: 155 },
-        data: {
-          params: {
-            type: "load_trajectory",
-            fileName: "caffeine_water_vibration.xtc",
-          },
-          enabled: true,
-        },
-      },
-      {
-        id: "symmetry-1",
-        type: "symmetry",
-        position: { x: 425, y: 155 },
-        data: {
-          params: {
-            type: "symmetry",
-            mode: "expand",
-          },
-          enabled: true,
-        },
-      },
-      {
-        id: "wrap-1",
-        type: "wrap",
-        position: { x: 425, y: 360 },
-        data: {
-          params: {
-            type: "wrap",
-            mode: "none",
-          },
-          enabled: true,
-        },
-      },
-      {
-        id: "addbond-1",
-        type: "add_bond",
-        position: { x: 425, y: 615 },
-        data: {
-          params: {
-            type: "add_bond",
-            bondSource: "structure",
-          },
-          enabled: true,
-        },
-      },
-      {
-        id: "viewport-1",
-        type: "viewport",
-        position: { x: 425, y: 920 },
-        data: {
-          params: {
-            type: "viewport",
-            perspective: false,
-            cellAxesVisible: true,
-            pivotMarkerVisible: true,
-          },
-          enabled: true,
-        },
-      },
+      node("loader-1", "load_structure", { fileName: "caffeine_water.pdb", hasCell: true }),
+      exactNode("traj-1", { type: "load_trajectory", fileName: "caffeine_water_vibration.xtc" }),
+      node("symmetry-1", "symmetry"),
+      node("wrap-1", "wrap"),
+      node("addbond-1", "add_bond", { bondSource: "structure" }),
+      node("viewport-1", "viewport"),
     ],
-    edges: [
-      {
-        id: "e1",
-        source: "loader-1",
-        target: "symmetry-1",
-        sourceHandle: "particle",
-        targetHandle: "particle",
-      },
-      {
-        id: "e2",
-        source: "loader-1",
-        target: "traj-1",
-        sourceHandle: "particle",
-        targetHandle: "particle",
-      },
-      {
-        id: "e3",
-        source: "traj-1",
-        target: "symmetry-1",
-        sourceHandle: "trajectory",
-        targetHandle: "trajectory",
-      },
-      {
-        id: "e4",
-        source: "symmetry-1",
-        target: "wrap-1",
-        sourceHandle: "particle",
-        targetHandle: "particle",
-      },
-      {
-        id: "e5",
-        source: "symmetry-1",
-        target: "wrap-1",
-        sourceHandle: "trajectory",
-        targetHandle: "trajectory",
-      },
-      {
-        id: "e6",
-        source: "wrap-1",
-        target: "addbond-1",
-        sourceHandle: "particle",
-        targetHandle: "particle",
-      },
-      {
-        id: "e7",
-        source: "wrap-1",
-        target: "viewport-1",
-        sourceHandle: "particle",
-        targetHandle: "particle",
-      },
-      {
-        id: "e8",
-        source: "loader-1",
-        target: "viewport-1",
-        sourceHandle: "cell",
-        targetHandle: "cell",
-      },
-      {
-        id: "e9",
-        source: "addbond-1",
-        target: "viewport-1",
-        sourceHandle: "bond",
-        targetHandle: "bond",
-      },
-      {
-        id: "e10",
-        source: "wrap-1",
-        target: "viewport-1",
-        sourceHandle: "trajectory",
-        targetHandle: "trajectory",
-      },
-    ],
+    edges: edges(
+      ["loader-1", "symmetry-1", "particle"],
+      ["loader-1", "traj-1", "particle"],
+      ["traj-1", "symmetry-1", "trajectory"],
+      ["symmetry-1", "wrap-1", "particle"],
+      ["symmetry-1", "wrap-1", "trajectory"],
+      ["wrap-1", "addbond-1", "particle"],
+      ["wrap-1", "viewport-1", "particle"],
+      ["loader-1", "viewport-1", "cell"],
+      ["addbond-1", "viewport-1", "bond"],
+      ["wrap-1", "viewport-1", "trajectory"],
+    ),
   };
 }
 
@@ -193,171 +59,28 @@ function createMoleculeTemplate(): {
  * structure. Boundary Completion follows the periodic bond topology and adds
  * whole finite molecules that intersect the selected drawing range.
  */
-function createMolecularCrystalTemplate(): {
-  nodes: Node<PipelineNodeData>[];
-  edges: Edge[];
-} {
+function createMolecularCrystalTemplate(): PipelineGraph {
   return {
     nodes: [
-      {
-        id: "loader-1",
-        type: "load_structure",
-        position: { x: 425, y: 0 },
-        data: {
-          params: {
-            type: "load_structure",
-            fileName: "glycine_csd.cif",
-            hasTrajectory: false,
-            hasCell: true,
-          },
-          enabled: true,
-        },
-      },
-      {
-        id: "symmetry-1",
-        type: "symmetry",
-        position: { x: 425, y: 155 },
-        data: {
-          params: {
-            type: "symmetry",
-            mode: "expand",
-          },
-          enabled: true,
-        },
-      },
-      {
-        id: "wrap-1",
-        type: "wrap",
-        position: { x: 425, y: 340 },
-        data: {
-          params: {
-            type: "wrap",
-            mode: "wrap",
-          },
-          enabled: true,
-        },
-      },
-      {
-        id: "addbond-1",
-        type: "add_bond",
-        position: { x: 170, y: 525 },
-        data: {
-          params: {
-            type: "add_bond",
-            bondSource: "distance",
-          },
-          enabled: true,
-        },
-      },
-      {
-        id: "drawing-boundary-1",
-        type: "drawing_boundary",
-        position: { x: 680, y: 525 },
-        data: {
-          params: {
-            type: "drawing_boundary",
-            xMin: 0,
-            xMax: 1,
-            yMin: 0,
-            yMax: 1,
-            zMin: 0,
-            zMax: 1,
-          },
-          enabled: true,
-        },
-      },
-      {
-        id: "boundary-completion-1",
-        type: "boundary_completion",
-        position: { x: 425, y: 735 },
-        data: {
-          params: {
-            type: "boundary_completion",
-            mode: "components",
-          },
-          enabled: true,
-        },
-      },
-      {
-        id: "viewport-1",
-        type: "viewport",
-        position: { x: 425, y: 980 },
-        data: {
-          params: {
-            type: "viewport",
-            perspective: false,
-            cellAxesVisible: true,
-            pivotMarkerVisible: true,
-          },
-          enabled: true,
-        },
-      },
+      node("loader-1", "load_structure", { fileName: "glycine_csd.cif", hasCell: true }),
+      node("symmetry-1", "symmetry"),
+      node("wrap-1", "wrap", { mode: "wrap" }),
+      node("addbond-1", "add_bond"),
+      node("drawing-boundary-1", "drawing_boundary"),
+      node("boundary-completion-1", "boundary_completion", { mode: "components" }),
+      node("viewport-1", "viewport"),
     ],
-    edges: [
-      {
-        id: "e1",
-        source: "loader-1",
-        target: "symmetry-1",
-        sourceHandle: "particle",
-        targetHandle: "particle",
-      },
-      {
-        id: "e2",
-        source: "symmetry-1",
-        target: "wrap-1",
-        sourceHandle: "particle",
-        targetHandle: "particle",
-      },
-      {
-        id: "e3",
-        source: "wrap-1",
-        target: "addbond-1",
-        sourceHandle: "particle",
-        targetHandle: "particle",
-      },
-      {
-        id: "e4",
-        source: "wrap-1",
-        target: "drawing-boundary-1",
-        sourceHandle: "particle",
-        targetHandle: "particle",
-      },
-      {
-        id: "e5",
-        source: "drawing-boundary-1",
-        target: "boundary-completion-1",
-        sourceHandle: "particle",
-        targetHandle: "particle",
-      },
-      {
-        id: "e6",
-        source: "addbond-1",
-        target: "boundary-completion-1",
-        sourceHandle: "bond",
-        targetHandle: "bond",
-      },
-      {
-        id: "e7",
-        source: "boundary-completion-1",
-        target: "viewport-1",
-        sourceHandle: "particle",
-        targetHandle: "particle",
-      },
-      {
-        id: "e8",
-        source: "boundary-completion-1",
-        target: "viewport-1",
-        sourceHandle: "bond",
-        targetHandle: "bond",
-      },
-      {
-        id: "e9",
-        source: "loader-1",
-        target: "viewport-1",
-        sourceHandle: "cell",
-        targetHandle: "cell",
-      },
-    ],
+    edges: edges(
+      ["loader-1", "symmetry-1", "particle"],
+      ["symmetry-1", "wrap-1", "particle"],
+      ["wrap-1", "addbond-1", "particle"],
+      ["wrap-1", "drawing-boundary-1", "particle"],
+      ["drawing-boundary-1", "boundary-completion-1", "particle"],
+      ["addbond-1", "boundary-completion-1", "bond"],
+      ["boundary-completion-1", "viewport-1", "particle"],
+      ["boundary-completion-1", "viewport-1", "bond"],
+      ["loader-1", "viewport-1", "cell"],
+    ),
   };
 }
 
@@ -366,177 +89,31 @@ function createMolecularCrystalTemplate(): {
  * LoadStructure → Symmetry → Wrap → DrawingBoundary → Coordination → Polyhedra → Viewport
  *                                                        └──────────→ Viewport (bond)
  */
-function createSolidTemplate(): {
-  nodes: Node<PipelineNodeData>[];
-  edges: Edge[];
-} {
+function createSolidTemplate(): PipelineGraph {
   return {
     nodes: [
-      {
-        id: "loader-1",
-        type: "load_structure",
-        position: { x: 425, y: 0 },
-        data: {
-          params: {
-            type: "load_structure",
-            fileName: "perovskite_srtio3_3x3x3.xyz",
-            hasTrajectory: false,
-            hasCell: true,
-          },
-          enabled: true,
-        },
-      },
-      {
-        id: "symmetry-1",
-        type: "symmetry",
-        position: { x: 425, y: 155 },
-        data: {
-          params: {
-            type: "symmetry",
-            mode: "expand",
-          },
-          enabled: true,
-        },
-      },
-      {
-        id: "wrap-1",
-        type: "wrap",
-        position: { x: 425, y: 330 },
-        data: {
-          params: {
-            type: "wrap",
-            mode: "none",
-          },
-          enabled: true,
-        },
-      },
-      {
-        id: "drawing-boundary-1",
-        type: "drawing_boundary",
-        position: { x: 425, y: 505 },
-        data: {
-          params: {
-            type: "drawing_boundary",
-            xMin: 0,
-            xMax: 1,
-            yMin: 0,
-            yMax: 1,
-            zMin: 0,
-            zMax: 1,
-          },
-          enabled: true,
-        },
-      },
-      {
-        id: "coordination-1",
-        type: "coordination_generator",
-        position: { x: 425, y: 685 },
-        data: {
-          params: {
-            type: "coordination_generator",
-            excludedCenters: [],
-            excludedLigands: [],
-            cutoffTolerance: 1.15,
-            boundaryMode: "complete",
-          },
-          enabled: true,
-        },
-      },
-      {
-        id: "polyhedron-1",
-        type: "polyhedron_generator",
-        position: { x: 680, y: 860 },
-        data: {
-          params: {
-            type: "polyhedron_generator",
-            opacity: 0.5,
-            showEdges: false,
-            edgeColor: "#dddddd",
-            edgeWidth: 3,
-          },
-          enabled: true,
-        },
-      },
-      {
-        id: "viewport-1",
-        type: "viewport",
-        position: { x: 425, y: 1075 },
-        data: {
-          params: {
-            type: "viewport",
-            perspective: false,
-            cellAxesVisible: true,
-            pivotMarkerVisible: true,
-          },
-          enabled: true,
-        },
-      },
+      node("loader-1", "load_structure", {
+        fileName: "perovskite_srtio3_3x3x3.xyz",
+        hasCell: true,
+      }),
+      node("symmetry-1", "symmetry"),
+      node("wrap-1", "wrap"),
+      node("drawing-boundary-1", "drawing_boundary"),
+      node("coordination-1", "coordination_generator"),
+      node("polyhedron-1", "polyhedron_generator"),
+      node("viewport-1", "viewport"),
     ],
-    edges: [
-      {
-        id: "e1",
-        source: "loader-1",
-        target: "symmetry-1",
-        sourceHandle: "particle",
-        targetHandle: "particle",
-      },
-      {
-        id: "e2",
-        source: "symmetry-1",
-        target: "wrap-1",
-        sourceHandle: "particle",
-        targetHandle: "particle",
-      },
-      {
-        id: "e3",
-        source: "wrap-1",
-        target: "drawing-boundary-1",
-        sourceHandle: "particle",
-        targetHandle: "particle",
-      },
-      {
-        id: "e4",
-        source: "drawing-boundary-1",
-        target: "coordination-1",
-        sourceHandle: "particle",
-        targetHandle: "particle",
-      },
-      {
-        id: "e5",
-        source: "drawing-boundary-1",
-        target: "viewport-1",
-        sourceHandle: "particle",
-        targetHandle: "particle",
-      },
-      {
-        id: "e6",
-        source: "loader-1",
-        target: "viewport-1",
-        sourceHandle: "cell",
-        targetHandle: "cell",
-      },
-      {
-        id: "e7",
-        source: "coordination-1",
-        target: "viewport-1",
-        sourceHandle: "bond",
-        targetHandle: "bond",
-      },
-      {
-        id: "e8",
-        source: "coordination-1",
-        target: "polyhedron-1",
-        sourceHandle: "coordination",
-        targetHandle: "coordination",
-      },
-      {
-        id: "e9",
-        source: "polyhedron-1",
-        target: "viewport-1",
-        sourceHandle: "mesh",
-        targetHandle: "mesh",
-      },
-    ],
+    edges: edges(
+      ["loader-1", "symmetry-1", "particle"],
+      ["symmetry-1", "wrap-1", "particle"],
+      ["wrap-1", "drawing-boundary-1", "particle"],
+      ["drawing-boundary-1", "coordination-1", "particle"],
+      ["drawing-boundary-1", "viewport-1", "particle"],
+      ["loader-1", "viewport-1", "cell"],
+      ["coordination-1", "viewport-1", "bond"],
+      ["coordination-1", "polyhedron-1", "coordination"],
+      ["polyhedron-1", "viewport-1", "mesh"],
+    ),
   };
 }
 
@@ -559,116 +136,22 @@ function createSolidTemplate(): {
  * space-group operations); the Wrap node defaults to mode "none"
  * (pass-through).
  */
-function createSurfaceMeshTemplate(): {
-  nodes: Node<PipelineNodeData>[];
-  edges: Edge[];
-} {
+function createSurfaceMeshTemplate(): PipelineGraph {
   return {
     nodes: [
-      {
-        id: "loader-1",
-        type: "load_structure",
-        position: { x: 425, y: 0 },
-        data: {
-          params: {
-            type: "load_structure",
-            fileName: "au_nanoparticle.xyz",
-            hasTrajectory: false,
-            hasCell: false,
-          },
-          enabled: true,
-        },
-      },
-      {
-        id: "symmetry-1",
-        type: "symmetry",
-        position: { x: 425, y: 155 },
-        data: {
-          params: {
-            type: "symmetry",
-            mode: "expand",
-          },
-          enabled: true,
-        },
-      },
-      {
-        id: "wrap-1",
-        type: "wrap",
-        position: { x: 425, y: 360 },
-        data: {
-          params: {
-            type: "wrap",
-            mode: "none",
-          },
-          enabled: true,
-        },
-      },
-      {
-        id: "surface-1",
-        type: "surface_mesh",
-        position: { x: 680, y: 615 },
-        data: {
-          params: {
-            type: "surface_mesh",
-            alphaRadius: 3.0,
-            color: "#38bdf8",
-            opacity: 0.45,
-          },
-          enabled: true,
-        },
-      },
-      {
-        id: "viewport-1",
-        type: "viewport",
-        position: { x: 425, y: 920 },
-        data: {
-          params: {
-            type: "viewport",
-            perspective: false,
-            cellAxesVisible: true,
-            pivotMarkerVisible: true,
-          },
-          enabled: true,
-        },
-      },
+      node("loader-1", "load_structure", { fileName: "au_nanoparticle.xyz" }),
+      node("symmetry-1", "symmetry"),
+      node("wrap-1", "wrap"),
+      node("surface-1", "surface_mesh", { color: "#38bdf8", opacity: 0.45 }),
+      node("viewport-1", "viewport"),
     ],
-    edges: [
-      {
-        id: "e1",
-        source: "loader-1",
-        target: "symmetry-1",
-        sourceHandle: "particle",
-        targetHandle: "particle",
-      },
-      {
-        id: "e2",
-        source: "symmetry-1",
-        target: "wrap-1",
-        sourceHandle: "particle",
-        targetHandle: "particle",
-      },
-      {
-        id: "e3",
-        source: "wrap-1",
-        target: "surface-1",
-        sourceHandle: "particle",
-        targetHandle: "particle",
-      },
-      {
-        id: "e4",
-        source: "wrap-1",
-        target: "viewport-1",
-        sourceHandle: "particle",
-        targetHandle: "particle",
-      },
-      {
-        id: "e5",
-        source: "surface-1",
-        target: "viewport-1",
-        sourceHandle: "mesh",
-        targetHandle: "mesh",
-      },
-    ],
+    edges: edges(
+      ["loader-1", "symmetry-1", "particle"],
+      ["symmetry-1", "wrap-1", "particle"],
+      ["wrap-1", "surface-1", "particle"],
+      ["wrap-1", "viewport-1", "particle"],
+      ["surface-1", "viewport-1", "mesh"],
+    ),
   };
 }
 
@@ -676,69 +159,15 @@ function createSurfaceMeshTemplate(): {
  * Streaming template: WebSocket streaming with bonds and trajectory.
  * Streaming → Viewport (particle, bond, trajectory, cell)
  */
-function createStreamingTemplate(): {
-  nodes: Node<PipelineNodeData>[];
-  edges: Edge[];
-} {
+function createStreamingTemplate(): PipelineGraph {
   return {
-    nodes: [
-      {
-        id: "streaming-1",
-        type: "streaming",
-        position: { x: 425, y: 0 },
-        data: {
-          params: {
-            type: "streaming",
-            connected: false,
-          },
-          enabled: true,
-        },
-      },
-      {
-        id: "viewport-1",
-        type: "viewport",
-        position: { x: 425, y: 310 },
-        data: {
-          params: {
-            type: "viewport",
-            perspective: false,
-            cellAxesVisible: true,
-            pivotMarkerVisible: true,
-          },
-          enabled: true,
-        },
-      },
-    ],
-    edges: [
-      {
-        id: "e1",
-        source: "streaming-1",
-        target: "viewport-1",
-        sourceHandle: "particle",
-        targetHandle: "particle",
-      },
-      {
-        id: "e2",
-        source: "streaming-1",
-        target: "viewport-1",
-        sourceHandle: "bond",
-        targetHandle: "bond",
-      },
-      {
-        id: "e3",
-        source: "streaming-1",
-        target: "viewport-1",
-        sourceHandle: "trajectory",
-        targetHandle: "trajectory",
-      },
-      {
-        id: "e4",
-        source: "streaming-1",
-        target: "viewport-1",
-        sourceHandle: "cell",
-        targetHandle: "cell",
-      },
-    ],
+    nodes: [node("streaming-1", "streaming"), node("viewport-1", "viewport")],
+    edges: edges(
+      ["streaming-1", "viewport-1", "particle"],
+      ["streaming-1", "viewport-1", "bond"],
+      ["streaming-1", "viewport-1", "trajectory"],
+      ["streaming-1", "viewport-1", "cell"],
+    ),
   };
 }
 
@@ -777,330 +206,54 @@ function createStreamingTemplate(): {
  * no-op: PDB input carries no symmetry operations); the Wrap node defaults to
  * mode "none" (pass-through).
  */
-function createProteinTemplate(): {
-  nodes: Node<PipelineNodeData>[];
-  edges: Edge[];
-} {
+function createProteinTemplate(): PipelineGraph {
   return {
     nodes: [
-      {
-        id: "loader-1",
-        type: "load_structure",
-        position: { x: 595, y: 0 },
-        data: {
-          params: {
-            type: "load_structure",
-            fileName: "1hsg.pdb",
-            hasTrajectory: false,
-            hasCell: false,
-          },
-          enabled: true,
-        },
-      },
-      {
-        id: "symmetry-1",
-        type: "symmetry",
-        position: { x: 595, y: 130 },
-        data: {
-          params: {
-            type: "symmetry",
-            mode: "expand",
-          },
-          enabled: true,
-        },
-      },
-      {
-        id: "wrap-1",
-        type: "wrap",
-        position: { x: 595, y: 305 },
-        data: {
-          params: {
-            type: "wrap",
-            mode: "none",
-          },
-          enabled: true,
-        },
-      },
-      {
-        id: "protein-filter",
+      node("loader-1", "load_structure", { fileName: "1hsg.pdb" }),
+      node("symmetry-1", "symmetry"),
+      node("wrap-1", "wrap"),
+      exactNode("protein-filter", {
         type: "filter",
-        position: { x: 0, y: 505 },
-        data: {
-          params: {
-            type: "filter",
-            query: 'resname != "HOH" and resname != "MK1"',
-          },
-          enabled: true,
-        },
-      },
-      {
-        id: "protein-modify",
-        type: "modify",
-        position: { x: 0, y: 665 },
-        data: {
-          params: {
-            type: "modify",
-            scale: 1,
-            opacity: 0,
-          },
-          enabled: true,
-        },
-      },
-      {
-        id: "protein-rep",
-        type: "representation",
-        position: { x: 0, y: 825 },
-        data: {
-          params: {
-            type: "representation",
-            mode: "both",
-          },
-          enabled: true,
-        },
-      },
-      {
-        id: "ligand-filter",
+        query: 'resname != "HOH" and resname != "MK1"',
+      }),
+      node("protein-modify", "modify", { opacity: 0 }),
+      node("protein-rep", "representation", { mode: "both" }),
+      exactNode("ligand-filter", { type: "filter", query: 'resname == "MK1"' }),
+      exactNode("water-filter", {
         type: "filter",
-        position: { x: 340, y: 505 },
-        data: {
-          params: {
-            type: "filter",
-            query: 'resname == "MK1"',
-          },
-          enabled: true,
-        },
-      },
-      {
-        id: "water-filter",
+        query: 'resname == "HOH" and within 3.5 of (resname == "MK1")',
+      }),
+      node("water-modify", "modify", { scale: 0.7 }),
+      exactNode("bulk-water-filter", {
         type: "filter",
-        position: { x: 680, y: 505 },
-        data: {
-          params: {
-            type: "filter",
-            query: 'resname == "HOH" and within 3.5 of (resname == "MK1")',
-          },
-          enabled: true,
-        },
-      },
-      {
-        id: "water-modify",
-        type: "modify",
-        position: { x: 680, y: 665 },
-        data: {
-          params: {
-            type: "modify",
-            scale: 0.7,
-            opacity: 1,
-          },
-          enabled: true,
-        },
-      },
-      {
-        id: "bulk-water-filter",
-        type: "filter",
-        position: { x: 1020, y: 505 },
-        data: {
-          params: {
-            type: "filter",
-            query: 'resname == "HOH" and not within 3.5 of (resname == "MK1")',
-          },
-          enabled: true,
-        },
-      },
-      {
-        id: "bulk-water-modify",
-        type: "modify",
-        position: { x: 1020, y: 665 },
-        data: {
-          params: {
-            type: "modify",
-            scale: 1,
-            opacity: 0,
-          },
-          enabled: true,
-        },
-      },
-      {
-        id: "addbond-1",
-        type: "add_bond",
-        position: { x: 1360, y: 505 },
-        data: {
-          params: {
-            type: "add_bond",
-            bondSource: "structure",
-          },
-          enabled: true,
-        },
-      },
-      {
-        id: "bond-filter",
-        type: "filter",
-        position: { x: 1360, y: 665 },
-        data: {
-          params: {
-            type: "filter",
-            query: "",
-            bond_query: "not both atom_index >= 1514",
-          },
-          enabled: true,
-        },
-      },
-      {
-        id: "bond-modify",
-        type: "modify",
-        position: { x: 1360, y: 825 },
-        data: {
-          params: {
-            type: "modify",
-            scale: 1,
-            opacity: 0,
-          },
-          enabled: true,
-        },
-      },
-      {
-        id: "viewport-1",
-        type: "viewport",
-        position: { x: 595, y: 1005 },
-        data: {
-          params: {
-            type: "viewport",
-            perspective: false,
-            cellAxesVisible: true,
-            pivotMarkerVisible: true,
-          },
-          enabled: true,
-        },
-      },
+        query: 'resname == "HOH" and not within 3.5 of (resname == "MK1")',
+      }),
+      node("bulk-water-modify", "modify", { opacity: 0 }),
+      node("addbond-1", "add_bond", { bondSource: "structure" }),
+      node("bond-filter", "filter", { bond_query: "not both atom_index >= 1514" }),
+      node("bond-modify", "modify", { opacity: 0 }),
+      node("viewport-1", "viewport"),
     ],
-    edges: [
-      {
-        id: "e1",
-        source: "loader-1",
-        target: "symmetry-1",
-        sourceHandle: "particle",
-        targetHandle: "particle",
-      },
-      {
-        id: "e2",
-        source: "symmetry-1",
-        target: "wrap-1",
-        sourceHandle: "particle",
-        targetHandle: "particle",
-      },
-      {
-        id: "e3",
-        source: "wrap-1",
-        target: "protein-filter",
-        sourceHandle: "particle",
-        targetHandle: "in",
-      },
-      {
-        id: "e4",
-        source: "protein-filter",
-        target: "protein-modify",
-        sourceHandle: "out",
-        targetHandle: "in",
-      },
-      {
-        id: "e5",
-        source: "protein-modify",
-        target: "protein-rep",
-        sourceHandle: "out",
-        targetHandle: "in",
-      },
-      {
-        id: "e6",
-        source: "protein-rep",
-        target: "viewport-1",
-        sourceHandle: "out",
-        targetHandle: "particle",
-      },
-      {
-        id: "e7",
-        source: "wrap-1",
-        target: "ligand-filter",
-        sourceHandle: "particle",
-        targetHandle: "in",
-      },
-      {
-        id: "e8",
-        source: "ligand-filter",
-        target: "viewport-1",
-        sourceHandle: "out",
-        targetHandle: "particle",
-      },
-      {
-        id: "e9",
-        source: "wrap-1",
-        target: "water-filter",
-        sourceHandle: "particle",
-        targetHandle: "in",
-      },
-      {
-        id: "e10",
-        source: "water-filter",
-        target: "water-modify",
-        sourceHandle: "out",
-        targetHandle: "in",
-      },
-      {
-        id: "e11",
-        source: "water-modify",
-        target: "viewport-1",
-        sourceHandle: "out",
-        targetHandle: "particle",
-      },
-      {
-        id: "e12",
-        source: "wrap-1",
-        target: "bulk-water-filter",
-        sourceHandle: "particle",
-        targetHandle: "in",
-      },
-      {
-        id: "e13",
-        source: "bulk-water-filter",
-        target: "bulk-water-modify",
-        sourceHandle: "out",
-        targetHandle: "in",
-      },
-      {
-        id: "e14",
-        source: "bulk-water-modify",
-        target: "viewport-1",
-        sourceHandle: "out",
-        targetHandle: "particle",
-      },
-      {
-        id: "e15",
-        source: "wrap-1",
-        target: "addbond-1",
-        sourceHandle: "particle",
-        targetHandle: "particle",
-      },
-      {
-        id: "e16",
-        source: "addbond-1",
-        target: "bond-filter",
-        sourceHandle: "bond",
-        targetHandle: "in",
-      },
-      {
-        id: "e17",
-        source: "bond-filter",
-        target: "bond-modify",
-        sourceHandle: "out",
-        targetHandle: "in",
-      },
-      {
-        id: "e18",
-        source: "bond-modify",
-        target: "viewport-1",
-        sourceHandle: "out",
-        targetHandle: "bond",
-      },
-    ],
+    edges: edges(
+      ["loader-1", "symmetry-1", "particle"],
+      ["symmetry-1", "wrap-1", "particle"],
+      ["wrap-1", "protein-filter", "particle", "in"],
+      ["protein-filter", "protein-modify", "out", "in"],
+      ["protein-modify", "protein-rep", "out", "in"],
+      ["protein-rep", "viewport-1", "out", "particle"],
+      ["wrap-1", "ligand-filter", "particle", "in"],
+      ["ligand-filter", "viewport-1", "out", "particle"],
+      ["wrap-1", "water-filter", "particle", "in"],
+      ["water-filter", "water-modify", "out", "in"],
+      ["water-modify", "viewport-1", "out", "particle"],
+      ["wrap-1", "bulk-water-filter", "particle", "in"],
+      ["bulk-water-filter", "bulk-water-modify", "out", "in"],
+      ["bulk-water-modify", "viewport-1", "out", "particle"],
+      ["wrap-1", "addbond-1", "particle"],
+      ["addbond-1", "bond-filter", "bond", "in"],
+      ["bond-filter", "bond-modify", "out", "in"],
+      ["bond-modify", "viewport-1", "out", "bond"],
+    ),
   };
 }
 
@@ -1136,178 +289,35 @@ function createProteinTemplate(): {
  * carries no unit cell, so neither loader emits cell data and nothing is wired
  * to the Viewport's cell input.
  */
-function createEspTemplate(): {
-  nodes: Node<PipelineNodeData>[];
-  edges: Edge[];
-} {
+function createEspTemplate(): PipelineGraph {
   return {
     nodes: [
-      {
-        id: "loader-1",
-        type: "load_structure",
-        position: { x: 170, y: 0 },
-        data: {
-          params: {
-            type: "load_structure",
-            fileName: "caffeine_b3lyp.sdf",
-            hasTrajectory: false,
-            hasCell: false,
-          },
-          enabled: true,
-        },
-      },
-      {
-        id: "symmetry-1",
-        type: "symmetry",
-        position: { x: 170, y: 155 },
-        data: {
-          params: {
-            type: "symmetry",
-            mode: "expand",
-          },
-          enabled: true,
-        },
-      },
-      {
-        id: "wrap-1",
-        type: "wrap",
-        position: { x: 170, y: 360 },
-        data: {
-          params: {
-            type: "wrap",
-            mode: "none",
-          },
-          enabled: true,
-        },
-      },
-      {
-        id: "addbond-1",
-        type: "add_bond",
-        position: { x: 170, y: 615 },
-        data: {
-          params: {
-            type: "add_bond",
-            bondSource: "structure",
-          },
-          enabled: true,
-        },
-      },
-      {
-        id: "volumetric-1",
-        type: "load_volumetric",
-        position: { x: 680, y: 0 },
-        data: {
-          params: {
-            type: "load_volumetric",
-            fileName: "caffeine_b3lyp_density.cube",
-          },
-          enabled: true,
-        },
-      },
-      {
-        id: "volumetric-esp",
-        type: "load_volumetric",
-        position: { x: 1020, y: 0 },
-        data: {
-          params: {
-            type: "load_volumetric",
-            fileName: "caffeine_b3lyp_esp.cube",
-          },
-          enabled: true,
-        },
-      },
-      {
-        id: "isosurface-1",
-        type: "isosurface",
-        position: { x: 680, y: 440 },
-        data: {
-          params: {
-            type: "isosurface",
-            isoLevel: 0.002,
-            color: "#e5e7eb",
-            opacity: 0.8,
-            showNegative: false,
-            negativeColor: "#ef4444",
-            colorMode: "volume",
-            colormap: "rwb",
-            colorRange: [-0.04, 0.04],
-          },
-          enabled: true,
-        },
-      },
-      {
-        id: "viewport-1",
-        type: "viewport",
-        position: { x: 425, y: 920 },
-        data: {
-          params: {
-            type: "viewport",
-            perspective: false,
-            cellAxesVisible: true,
-            pivotMarkerVisible: true,
-          },
-          enabled: true,
-        },
-      },
+      node("loader-1", "load_structure", { fileName: "caffeine_b3lyp.sdf" }),
+      node("symmetry-1", "symmetry"),
+      node("wrap-1", "wrap"),
+      node("addbond-1", "add_bond", { bondSource: "structure" }),
+      node("volumetric-1", "load_volumetric", { fileName: "caffeine_b3lyp_density.cube" }),
+      node("volumetric-esp", "load_volumetric", { fileName: "caffeine_b3lyp_esp.cube" }),
+      node("isosurface-1", "isosurface", {
+        isoLevel: 0.002,
+        color: "#e5e7eb",
+        opacity: 0.8,
+        negativeColor: "#ef4444",
+        colorMode: "volume",
+        colorRange: [-0.04, 0.04],
+      }),
+      node("viewport-1", "viewport"),
     ],
-    edges: [
-      {
-        id: "e1",
-        source: "loader-1",
-        target: "symmetry-1",
-        sourceHandle: "particle",
-        targetHandle: "particle",
-      },
-      {
-        id: "e2",
-        source: "symmetry-1",
-        target: "wrap-1",
-        sourceHandle: "particle",
-        targetHandle: "particle",
-      },
-      {
-        id: "e3",
-        source: "wrap-1",
-        target: "addbond-1",
-        sourceHandle: "particle",
-        targetHandle: "particle",
-      },
-      {
-        id: "e4",
-        source: "wrap-1",
-        target: "viewport-1",
-        sourceHandle: "particle",
-        targetHandle: "particle",
-      },
-      {
-        id: "e5",
-        source: "addbond-1",
-        target: "viewport-1",
-        sourceHandle: "bond",
-        targetHandle: "bond",
-      },
-      {
-        id: "e6",
-        source: "volumetric-1",
-        target: "isosurface-1",
-        sourceHandle: "volumetric",
-        targetHandle: "volumetric",
-      },
-      {
-        id: "e7",
-        source: "volumetric-esp",
-        target: "isosurface-1",
-        sourceHandle: "volumetric",
-        targetHandle: "colorVolumetric",
-      },
-      {
-        id: "e8",
-        source: "isosurface-1",
-        target: "viewport-1",
-        sourceHandle: "mesh",
-        targetHandle: "mesh",
-      },
-    ],
+    edges: edges(
+      ["loader-1", "symmetry-1", "particle"],
+      ["symmetry-1", "wrap-1", "particle"],
+      ["wrap-1", "addbond-1", "particle"],
+      ["wrap-1", "viewport-1", "particle"],
+      ["addbond-1", "viewport-1", "bond"],
+      ["volumetric-1", "isosurface-1", "volumetric"],
+      ["volumetric-esp", "isosurface-1", "volumetric", "colorVolumetric"],
+      ["isosurface-1", "viewport-1", "mesh"],
+    ),
   };
 }
 
@@ -1350,260 +360,37 @@ function createEspTemplate(): {
  * 1ubq.pdb's crystallographic cell is deliberately left unwired: it belongs to
  * the all-atom model only and its box would dwarf the comparison.
  */
-function createCoarseGrainedTemplate(): {
-  nodes: Node<PipelineNodeData>[];
-  edges: Edge[];
-} {
+function createCoarseGrainedTemplate(): PipelineGraph {
   return {
     nodes: [
-      {
-        id: "loader-aa",
-        type: "load_structure",
-        position: { x: 170, y: 0 },
-        data: {
-          params: {
-            type: "load_structure",
-            fileName: "1ubq.pdb",
-            hasTrajectory: false,
-            hasCell: true,
-          },
-          enabled: true,
-        },
-      },
-      {
-        id: "symmetry-1",
-        type: "symmetry",
-        position: { x: 170, y: 130 },
-        data: {
-          params: {
-            type: "symmetry",
-            mode: "expand",
-          },
-          enabled: true,
-        },
-      },
-      {
-        id: "wrap-1",
-        type: "wrap",
-        position: { x: 170, y: 305 },
-        data: {
-          params: {
-            type: "wrap",
-            mode: "none",
-          },
-          enabled: true,
-        },
-      },
-      {
-        id: "aa-filter",
-        type: "filter",
-        position: { x: 170, y: 480 },
-        data: {
-          params: {
-            type: "filter",
-            query: 'resname != "HOH"',
-          },
-          enabled: true,
-        },
-      },
-      {
-        id: "aa-modify",
-        type: "modify",
-        position: { x: 170, y: 640 },
-        data: {
-          params: {
-            type: "modify",
-            scale: 1,
-            opacity: 0.3,
-          },
-          enabled: true,
-        },
-      },
-      {
-        id: "water-filter",
-        type: "filter",
-        position: { x: 425, y: 480 },
-        data: {
-          params: {
-            type: "filter",
-            query: 'resname == "HOH"',
-          },
-          enabled: true,
-        },
-      },
-      {
-        id: "water-modify",
-        type: "modify",
-        position: { x: 425, y: 640 },
-        data: {
-          params: {
-            type: "modify",
-            scale: 1,
-            opacity: 0,
-          },
-          enabled: true,
-        },
-      },
-      {
-        id: "loader-cg",
-        type: "load_structure",
-        position: { x: 850, y: 0 },
-        data: {
-          params: {
-            type: "load_structure",
-            fileName: "1ubq_cg.pdb",
-            hasTrajectory: false,
-            hasCell: false,
-          },
-          enabled: true,
-        },
-      },
-      {
-        id: "cg-modify",
-        type: "modify",
-        position: { x: 680, y: 305 },
-        data: {
-          params: {
-            type: "modify",
-            scale: 3.2,
-            opacity: 1,
-          },
-          enabled: true,
-        },
-      },
-      {
-        id: "cg-color",
-        type: "color",
-        position: { x: 680, y: 480 },
-        data: {
-          params: {
-            type: "color",
-            mode: "uniform",
-            uniformColor: "#f97316",
-          },
-          enabled: true,
-        },
-      },
-      {
-        id: "cg-addbond",
-        type: "add_bond",
-        position: { x: 1020, y: 305 },
-        data: {
-          params: {
-            type: "add_bond",
-            bondSource: "structure",
-          },
-          enabled: true,
-        },
-      },
-      {
-        id: "viewport-1",
-        type: "viewport",
-        position: { x: 510, y: 980 },
-        data: {
-          params: {
-            type: "viewport",
-            perspective: false,
-            cellAxesVisible: true,
-            pivotMarkerVisible: true,
-          },
-          enabled: true,
-        },
-      },
+      node("loader-aa", "load_structure", { fileName: "1ubq.pdb", hasCell: true }),
+      node("symmetry-1", "symmetry"),
+      node("wrap-1", "wrap"),
+      exactNode("aa-filter", { type: "filter", query: 'resname != "HOH"' }),
+      node("aa-modify", "modify", { opacity: 0.3 }),
+      exactNode("water-filter", { type: "filter", query: 'resname == "HOH"' }),
+      node("water-modify", "modify", { opacity: 0 }),
+      node("loader-cg", "load_structure", { fileName: "1ubq_cg.pdb" }),
+      node("cg-modify", "modify", { scale: 3.2 }),
+      node("cg-color", "color", { uniformColor: "#f97316" }),
+      node("cg-addbond", "add_bond", { bondSource: "structure" }),
+      node("viewport-1", "viewport"),
     ],
-    edges: [
-      {
-        id: "e1",
-        source: "loader-aa",
-        target: "symmetry-1",
-        sourceHandle: "particle",
-        targetHandle: "particle",
-      },
-      {
-        id: "e2",
-        source: "symmetry-1",
-        target: "wrap-1",
-        sourceHandle: "particle",
-        targetHandle: "particle",
-      },
-      {
-        id: "e3",
-        source: "wrap-1",
-        target: "aa-filter",
-        sourceHandle: "particle",
-        targetHandle: "in",
-      },
-      {
-        id: "e4",
-        source: "aa-filter",
-        target: "aa-modify",
-        sourceHandle: "out",
-        targetHandle: "in",
-      },
-      {
-        id: "e5",
-        source: "aa-modify",
-        target: "viewport-1",
-        sourceHandle: "out",
-        targetHandle: "particle",
-      },
-      {
-        id: "e6",
-        source: "wrap-1",
-        target: "water-filter",
-        sourceHandle: "particle",
-        targetHandle: "in",
-      },
-      {
-        id: "e7",
-        source: "water-filter",
-        target: "water-modify",
-        sourceHandle: "out",
-        targetHandle: "in",
-      },
-      {
-        id: "e8",
-        source: "water-modify",
-        target: "viewport-1",
-        sourceHandle: "out",
-        targetHandle: "particle",
-      },
-      {
-        id: "e9",
-        source: "loader-cg",
-        target: "cg-modify",
-        sourceHandle: "particle",
-        targetHandle: "in",
-      },
-      {
-        id: "e10",
-        source: "cg-modify",
-        target: "cg-color",
-        sourceHandle: "out",
-        targetHandle: "in",
-      },
-      {
-        id: "e11",
-        source: "cg-color",
-        target: "viewport-1",
-        sourceHandle: "out",
-        targetHandle: "particle",
-      },
-      {
-        id: "e12",
-        source: "loader-cg",
-        target: "cg-addbond",
-        sourceHandle: "particle",
-        targetHandle: "particle",
-      },
-      {
-        id: "e13",
-        source: "cg-addbond",
-        target: "viewport-1",
-        sourceHandle: "bond",
-        targetHandle: "bond",
-      },
-    ],
+    edges: edges(
+      ["loader-aa", "symmetry-1", "particle"],
+      ["symmetry-1", "wrap-1", "particle"],
+      ["wrap-1", "aa-filter", "particle", "in"],
+      ["aa-filter", "aa-modify", "out", "in"],
+      ["aa-modify", "viewport-1", "out", "particle"],
+      ["wrap-1", "water-filter", "particle", "in"],
+      ["water-filter", "water-modify", "out", "in"],
+      ["water-modify", "viewport-1", "out", "particle"],
+      ["loader-cg", "cg-modify", "particle", "in"],
+      ["cg-modify", "cg-color", "out", "in"],
+      ["cg-color", "viewport-1", "out", "particle"],
+      ["loader-cg", "cg-addbond", "particle"],
+      ["cg-addbond", "viewport-1", "bond"],
+    ),
   };
 }
 
