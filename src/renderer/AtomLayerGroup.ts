@@ -69,8 +69,12 @@ export interface AtomLayerState {
 
 const SECONDARY_KINDS: readonly SecondaryAtomLayerKind[] = ["drawingBoundary", "bondPeriodic"];
 
-export class AtomLayerGroup {
-  private primaryRenderer: AtomRenderer | null = null;
+/**
+ * @typeParam P the primary renderer's concrete type, so a caller that always
+ *   creates the same mesh class gets it back from {@link primary} without a cast.
+ */
+export class AtomLayerGroup<P extends AtomRenderer = AtomRenderer> {
+  private primaryRenderer: P | null = null;
   private readonly secondaries = new Map<SecondaryAtomLayerKind, DrawingBoundaryAtomRenderer>();
   private readonly current: AtomLayerState = {
     scale: 1,
@@ -92,7 +96,7 @@ export class AtomLayerGroup {
   constructor(private readonly attach: (object: THREE.Object3D) => void) {}
 
   /** The primary (pickable, topology-owning) atom renderer, if created. */
-  get primary(): AtomRenderer | null {
+  get primary(): P | null {
     return this.primaryRenderer;
   }
 
@@ -100,7 +104,7 @@ export class AtomLayerGroup {
    * Adopt a newly created primary renderer (the previous one is the caller's
    * to remove and dispose). No state is replayed onto it; see the class note.
    */
-  setPrimary(renderer: AtomRenderer | null): void {
+  setPrimary(renderer: P | null): void {
     this.primaryRenderer = renderer;
   }
 

@@ -12,7 +12,7 @@ use std::collections::{HashMap, HashSet};
 use crate::atomic::element_from_symbol;
 use crate::bonds;
 use crate::cif_lex::{field, starts_with_ci, Document, Value};
-use crate::parser::{cell_params_to_matrix, HeteroFrames, ParsedStructure};
+use crate::parser::{cell_params_to_matrix, FrameChange, HeteroFramesBuilder, ParsedStructure};
 
 // ---------------------------------------------------------------------------
 // Detection
@@ -441,60 +441,21 @@ pub(crate) fn parse_document(text: &str, doc: &Document) -> Result<ParsedStructu
 
     let mut pos_iter = model_positions.into_iter();
     let positions = pos_iter.next().unwrap();
-    let extra_positions: Vec<Vec<f32>> = pos_iter.collect();
     let mut elem_iter = model_elements.into_iter();
     let elements = elem_iter.next().unwrap();
-    let extra_elements: Vec<Vec<u8>> = elem_iter.collect();
 
     // Extra models become trajectory frames. Uniform atom counts (the NMR
     // norm) keep the fixed-stride fast path; jagged ensembles get a
-    // `HeteroFrames` side table, mirroring the PDB parser.
-    let mut frame_positions_flat: Vec<f32> = Vec::new();
-    let mut atom_offsets: Vec<u32> = vec![0];
-    let mut varies_atoms = false;
-    let mut max_atoms = n_atoms;
-    for pos in &extra_positions {
-        let m_atoms = pos.len() / 3;
-        frame_positions_flat.extend_from_slice(pos);
-        let last = *atom_offsets.last().unwrap();
-        atom_offsets.push(last + m_atoms as u32);
-        max_atoms = max_atoms.max(m_atoms);
-        if m_atoms != n_atoms {
-            varies_atoms = true;
-        }
+    // `HeteroFrames` side table, mirroring the PDB parser: only an atom-count
+    // change makes the ensemble heterogeneous (no topology verdict), and a
+    // single global cell never varies per model. Every model's elements are
+    // already in hand, so the side table records each model's own (eager)
+    // rather than backfilling the leading models with model 0's.
+    let mut frames = HeteroFramesBuilder::new(n_atoms).eager_elements();
+    for (pos, elems) in pos_iter.zip(elem_iter) {
+        frames.push_frame(&pos, move || elems, None, FrameChange::default());
     }
-    let hetero = if varies_atoms {
-        let empty_bonds: HashSet<(u32, u32)> = HashSet::new();
-        let mut elements_flat: Vec<u8> = Vec::new();
-        let mut bonds_flat: Vec<u32> = Vec::new();
-        let mut bond_offsets: Vec<u32> = vec![0];
-        for (k, elems) in extra_elements.iter().enumerate() {
-            let a = atom_offsets[k] as usize * 3;
-            let b = atom_offsets[k + 1] as usize * 3;
-            let fpos = &frame_positions_flat[a..b];
-            let fbonds = bonds::infer_bonds(fpos, elems, elems.len(), &empty_bonds);
-            for (u, v) in &fbonds {
-                bonds_flat.push(*u);
-                bonds_flat.push(*v);
-            }
-            let last = *bond_offsets.last().unwrap();
-            bond_offsets.push(last + fbonds.len() as u32);
-            elements_flat.extend_from_slice(elems);
-        }
-        Some(HeteroFrames {
-            atom_offsets,
-            elements_flat,
-            cells_flat: Vec::new(),
-            bond_offsets,
-            bonds_flat,
-            varies_atoms: true,
-            varies_cell: false,
-            varies_topology: true,
-            max_atoms: max_atoms as u32,
-        })
-    } else {
-        None
-    };
+    let (frame_positions_flat, hetero) = frames.finish(&elements, None);
 
     // File-declared connectivity from _struct_conn (disulfides, covalent
     // ligand links, metal coordination). mmCIF carries no routine polymer
@@ -820,6 +781,36 @@ ATOM 3 O O  A 1 2.0 0.0 0.0 2
         assert!(h.varies_topology);
         assert_eq!(h.max_atoms, 2);
         assert_eq!(h.elements_flat, vec![8]);
+    }
+
+    #[test]
+    fn test_jagged_models_keep_each_models_own_elements() {
+        // Model 2 keeps the atom count but swaps H -> N; model 3 drops an atom.
+        // The side table must carry model 2's own elements, not model 1's.
+        let mmcif = r#"data_jagged
+loop_
+_atom_site.group_PDB
+_atom_site.id
+_atom_site.type_symbol
+_atom_site.label_atom_id
+_atom_site.label_asym_id
+_atom_site.label_seq_id
+_atom_site.Cartn_x
+_atom_site.Cartn_y
+_atom_site.Cartn_z
+_atom_site.pdbx_PDB_model_num
+ATOM 1 O O  A 1 0.0 0.0 0.0 1
+ATOM 2 H H1 A 1 0.96 0.0 0.0 1
+ATOM 3 O O  A 1 0.0 0.0 0.1 2
+ATOM 4 N N1 A 1 0.96 0.0 0.1 2
+ATOM 5 O O  A 1 0.0 0.0 0.2 3
+#
+"#;
+        let result = parse(mmcif).expect("parse failed");
+        let h = result.hetero.as_ref().expect("hetero side table");
+        assert_eq!(h.atom_offsets, vec![0, 2, 3]);
+        assert_eq!(h.elements_flat, vec![8, 7, 8]);
+        assert_eq!(h.bond_offsets.len(), 3);
     }
 
     #[test]

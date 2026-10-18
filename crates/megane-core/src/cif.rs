@@ -59,15 +59,9 @@ impl AtomSiteColumns {
     }
 }
 
-/// Convert fractional coordinates to Cartesian using the cell matrix (row-major 3x3).
-/// matrix rows: va, vb, vc
-/// Cartesian = frac_a * va + frac_b * vb + frac_c * vc
-fn fract_to_cart(fx: f32, fy: f32, fz: f32, matrix: &[f32; 9]) -> (f32, f32, f32) {
-    let x = fx * matrix[0] + fy * matrix[3] + fz * matrix[6];
-    let y = fx * matrix[1] + fy * matrix[4] + fz * matrix[7];
-    let z = fx * matrix[2] + fy * matrix[5] + fz * matrix[8];
-    (x, y, z)
-}
+// Fractional → Cartesian with the row-major cell matrix (rows va, vb, vc);
+// the shared implementation lives in `crate::cell`.
+use crate::cell::frac_to_cart as fract_to_cart;
 
 /// CIF/mmCIF loop tags whose column holds a symmetry operation string.
 const SYMOP_TAGS: [&str; 2] = [

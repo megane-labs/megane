@@ -133,14 +133,14 @@ describe("MoleculeRenderer — illustrative representation", () => {
 
     renderer.setRepresentationType("atoms");
     renderer.toggleAtomSelection(0);
-    const ballAndStickR = internals.selectionGroup.children[0].geometry.parameters.radius;
+    const ballAndStickR = internals.selection.selectionGroup.children[0].geometry.parameters.radius;
 
     renderer.setRepresentationType("illustrative");
     renderer.toggleAtomSelection(0); // deselect
     renderer.toggleAtomSelection(0); // reselect, now redrawn spacefill
-    const spacefillR = internals.selectionGroup.children[0].geometry.parameters.radius;
+    const spacefillR = internals.selection.selectionGroup.children[0].geometry.parameters.radius;
 
-    expect(internals.selectionGroup.children.length).toBe(1);
+    expect(internals.selection.selectionGroup.children.length).toBe(1);
     expect(spacefillR / ballAndStickR).toBeCloseTo(SPACEFILL_ATOM_SCALE / BALL_STICK_ATOM_SCALE, 4);
   });
 
