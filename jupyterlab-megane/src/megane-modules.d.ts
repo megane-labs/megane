@@ -50,6 +50,16 @@ declare module "@megane/stores/usePlaybackStore" {
   };
 }
 
+declare module "@megane/hosts/classifyStandaloneFile" {
+  export interface StandaloneFileClassification {
+    kind: "structure" | "trajectory-only" | "spectrum" | "volumetric";
+    errorMessage?: string;
+    loadFailureHint?: string;
+  }
+  export function classifyStandaloneFile(fileName: string): StandaloneFileClassification;
+  export function siblingTopologyName(fileName: string): string | null;
+}
+
 declare module "@megane/styles/megane.css";
 
 declare module "@megane/tour/useTour" {
