@@ -33,7 +33,7 @@
 
 use crate::atomic::{capitalize, symbol_to_atomic_num};
 use crate::bonds;
-use crate::parser::{HeteroFrames, ParsedStructure};
+use crate::parser::{FrameChange, HeteroFramesBuilder, ParsedStructure};
 use crate::trajectory::{ScalarChannel, ScalarFrame};
 use std::collections::HashSet;
 
@@ -325,9 +325,10 @@ pub fn parse(text: &str) -> Result<ParsedStructure, String> {
     let i = header.next;
 
     let mut first_positions: Option<Vec<f32>> = None;
-    let mut frame_positions_flat: Vec<f32> = Vec::new();
-    let mut per_frame_cells: Vec<[f32; 9]> = Vec::new();
-    let mut varies_cell = false;
+    // VASP never changes the atom count (an XDATCAR that tries is an error
+    // below) and never reports a topology change; only a re-emitted header
+    // whose cell differs from frame 0's makes the run heterogeneous.
+    let mut frames = HeteroFramesBuilder::new(n_atoms);
     let base_cell = cell;
 
     let (mut direct, mut ci, selective) =
@@ -352,11 +353,15 @@ pub fn parse(text: &str) -> Result<ParsedStructure, String> {
         if first_positions.is_none() {
             first_positions = Some(positions);
         } else {
-            frame_positions_flat.extend_from_slice(&positions);
-            if cell != base_cell {
-                varies_cell = true;
-            }
-            per_frame_cells.push(cell);
+            frames.push_frame(
+                &positions,
+                Vec::new, // never called: topology is fixed
+                Some(cell),
+                FrameChange {
+                    topology: false,
+                    cell: cell != base_cell,
+                },
+            );
         }
 
         // Look for another frame. Three things can follow a coordinate block:
@@ -405,29 +410,7 @@ pub fn parse(text: &str) -> Result<ParsedStructure, String> {
     let empty_bonds = HashSet::new();
     let bonds = bonds::infer_bonds(&positions, &elements, n_atoms, &empty_bonds);
 
-    let hetero = if varies_cell {
-        let mut cells_flat = Vec::with_capacity(per_frame_cells.len() * 9);
-        for c in &per_frame_cells {
-            cells_flat.extend_from_slice(c);
-        }
-        let mut atom_offsets = Vec::with_capacity(per_frame_cells.len() + 1);
-        for k in 0..=per_frame_cells.len() {
-            atom_offsets.push((k * n_atoms) as u32);
-        }
-        Some(HeteroFrames {
-            atom_offsets,
-            elements_flat: Vec::new(),
-            cells_flat,
-            bond_offsets: Vec::new(),
-            bonds_flat: Vec::new(),
-            varies_atoms: false,
-            varies_cell: true,
-            varies_topology: false,
-            max_atoms: n_atoms as u32,
-        })
-    } else {
-        None
-    };
+    let (frame_positions_flat, hetero) = frames.finish(&elements, Some(base_cell));
 
     let scalar_channels = match sd_flags {
         Some(values) => vec![ScalarChannel {

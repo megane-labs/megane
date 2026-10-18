@@ -5,7 +5,7 @@
 use std::collections::HashSet;
 
 use crate::bonds;
-use crate::parser::{HeteroFrames, ParsedStructure};
+use crate::parser::{FrameChange, HeteroFramesBuilder, ParsedStructure};
 
 const ULM_MAGIC: &[u8; 8] = b"- of Ulm";
 
@@ -419,21 +419,9 @@ pub fn parse_traj(data: &[u8]) -> Result<ParsedStructure, String> {
     let cell0_bytes: Option<Vec<u8>> = cell_raw_bytes(data, &first_json).map(<[u8]>::to_vec);
     let cell0_inline: Option<serde_json::Value> = first_json.get("cell").cloned();
 
-    let mut varies_atoms = false;
-    let mut varies_cell = false;
-    let mut varies_topology = false;
-    let mut max_atoms = n_atoms;
-
     let extra = nitems.saturating_sub(1);
     let mut positions: Vec<f32> = Vec::new();
-    let mut frame_positions_flat: Vec<f32> = Vec::with_capacity(extra * n_atoms * 3);
-    let mut atom_offsets: Vec<u32> = Vec::with_capacity(extra + 1);
-    atom_offsets.push(0);
-    // Per-extra-frame snapshots (populated only after variation is detected).
-    let mut per_frame_elements: Vec<Vec<u8>> = Vec::new();
-    let mut per_frame_cells: Vec<[f32; 9]> = Vec::new();
-    let mut recording_topo = false;
-    let mut recording_cell = false;
+    let mut frames = HeteroFramesBuilder::with_capacity(n_atoms, extra);
 
     for (i, &off) in offsets.iter().enumerate() {
         let json = if i == 0 {
@@ -447,13 +435,17 @@ pub fn parse_traj(data: &[u8]) -> Result<ParsedStructure, String> {
             .unwrap_or(true);
 
         // Refresh carry-forward numbers/cell when this frame re-emits them.
+        // These are this frame's variation verdicts (a numbers change against
+        // the carried-forward list; a cell whose raw bytes / inline value
+        // differ from frame 0's), handed to the builder below.
+        let mut change = FrameChange::default();
         if i > 0 {
             // `numbers` appears only in header frames (rare), so a single
             // presence check keeps the uniform path a cheap O(1) miss.
             if json.get("numbers.").is_some() || json.get("numbers").is_some() {
                 if let Ok(nums) = extract_numbers(data, &json, frame_le) {
                     if nums != cur_numbers {
-                        varies_topology = true;
+                        change.topology = true;
                     }
                     cur_numbers = nums;
                 }
@@ -471,7 +463,7 @@ pub fn parse_traj(data: &[u8]) -> Result<ParsedStructure, String> {
                     json.get("cell") != cell0_inline.as_ref()
                 };
                 if changed {
-                    varies_cell = true;
+                    change.cell = true;
                     cur_cell = extract_cell(data, &json, frame_le);
                 } else {
                     cur_cell = box_matrix; // byte/value-identical to frame 0
@@ -487,54 +479,16 @@ pub fn parse_traj(data: &[u8]) -> Result<ParsedStructure, String> {
                 pos.len()
             ));
         }
-        let frame_atoms = pos.len() / 3;
-        if frame_atoms > max_atoms {
-            max_atoms = frame_atoms;
-        }
-
         if i == 0 {
             positions = pos;
             continue;
         }
 
-        // Extra frame `ei` (overall frame `i`).
-        let ei = i - 1;
-        if frame_atoms != n_atoms {
-            varies_atoms = true;
-        }
-        frame_positions_flat.extend_from_slice(&pos);
-        let last = *atom_offsets.last().unwrap();
-        atom_offsets.push(last + frame_atoms as u32);
-
-        // Lazily record per-frame topology once it (or the atom count) varies.
-        if (varies_atoms || varies_topology) && !recording_topo {
-            // Backfill earlier extra frames — all had frame-0 topology/count.
-            for _ in 0..ei {
-                per_frame_elements.push(elements.clone());
-            }
-            recording_topo = true;
-        }
-        if recording_topo {
-            let mut snap = cur_numbers.clone();
-            // Keep element slices aligned with `atom_offsets` even if a header
-            // is malformed (ASE always co-writes numbers with a count change).
-            if snap.len() != frame_atoms {
-                snap.resize(frame_atoms, 0);
-            }
-            per_frame_elements.push(snap);
-        }
-
-        // Lazily record per-frame cell once it varies.
-        if varies_cell && !recording_cell {
-            let base = box_matrix.unwrap_or([0.0; 9]);
-            for _ in 0..ei {
-                per_frame_cells.push(base);
-            }
-            recording_cell = true;
-        }
-        if recording_cell {
-            per_frame_cells.push(cur_cell.unwrap_or([0.0; 9]));
-        }
+        // Extra frame `i - 1`. Per-frame elements are the carried-forward
+        // numbers (the builder keeps the snapshot aligned with the frame's atom
+        // count even if a header is malformed — ASE always co-writes numbers
+        // with a count change).
+        frames.push_frame(&pos, || cur_numbers.clone(), cur_cell, change);
     }
 
     // Infer bonds from first frame (frame-0 topology lives on the struct).
@@ -542,53 +496,7 @@ pub fn parse_traj(data: &[u8]) -> Result<ParsedStructure, String> {
     let bonds = bonds::infer_bonds(&positions, &elements, n_atoms, &empty_bonds);
 
     // Assemble the heterogeneous side-table only when some channel varies.
-    let hetero = if varies_atoms || varies_cell || varies_topology {
-        let (elements_flat, bonds_flat, bond_offsets) = if varies_atoms || varies_topology {
-            let mut elements_flat: Vec<u8> = Vec::new();
-            let mut bonds_flat: Vec<u32> = Vec::new();
-            let mut bond_offsets: Vec<u32> = Vec::with_capacity(extra + 1);
-            bond_offsets.push(0);
-            for (k, elems) in per_frame_elements.iter().enumerate() {
-                let a = atom_offsets[k] as usize * 3;
-                let b = atom_offsets[k + 1] as usize * 3;
-                let fpos = &frame_positions_flat[a..b];
-                let fatoms = elems.len();
-                let fbonds = bonds::infer_bonds(fpos, elems, fatoms, &empty_bonds);
-                for (u, v) in &fbonds {
-                    bonds_flat.push(*u);
-                    bonds_flat.push(*v);
-                }
-                let last = *bond_offsets.last().unwrap();
-                bond_offsets.push(last + fbonds.len() as u32);
-                elements_flat.extend_from_slice(elems);
-            }
-            (elements_flat, bonds_flat, bond_offsets)
-        } else {
-            (Vec::new(), Vec::new(), Vec::new())
-        };
-        let cells_flat = if varies_cell {
-            let mut cf = Vec::with_capacity(per_frame_cells.len() * 9);
-            for c in &per_frame_cells {
-                cf.extend_from_slice(c);
-            }
-            cf
-        } else {
-            Vec::new()
-        };
-        Some(HeteroFrames {
-            atom_offsets,
-            elements_flat,
-            cells_flat,
-            bond_offsets,
-            bonds_flat,
-            varies_atoms,
-            varies_cell,
-            varies_topology,
-            max_atoms: max_atoms as u32,
-        })
-    } else {
-        None
-    };
+    let (frame_positions_flat, hetero) = frames.finish(&elements, box_matrix);
 
     Ok(ParsedStructure {
         n_atoms,
