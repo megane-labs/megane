@@ -189,6 +189,68 @@ def test_main_serve_no_pdb(mock_configure, mock_webbrowser, mock_uvicorn_run, ca
     assert any("Waiting for file upload" in r.message for r in caplog.records)
 
 
+@patch("uvicorn.run")
+@patch("megane.cli.webbrowser")
+@patch("megane.server.configure")
+def test_main_serve_non_pdb_structure_with_xtc(mock_configure, mock_webbrowser, mock_uvicorn_run):
+    """main() passes any structure file (not only PDB) and its XTC to configure."""
+    from megane.cli import main
+
+    with patch("sys.argv", ["megane", "serve", "conf.gro", "--xtc", "traj.xtc", "--no-browser"]):
+        main()
+
+    mock_configure.assert_called_once_with("conf.gro", "traj.xtc")
+
+
+@patch("uvicorn.run")
+@patch("megane.cli.webbrowser")
+def test_main_serve_loads_gro_into_server_state(mock_webbrowser, mock_uvicorn_run):
+    """`megane serve x.gro` reads the file with the GRO parser."""
+    from pathlib import Path
+
+    from megane.cli import main
+    from megane.server import _state
+
+    gro = str(Path(__file__).parent.parent / "fixtures" / "high_precision.gro")
+    with patch("sys.argv", ["megane", "serve", gro, "--no-browser", "--no-files"]):
+        main()
+
+    assert _state.structure.n_atoms == 11
+    assert _state.structure_path == gro
+    mock_uvicorn_run.assert_called_once()
+
+
+@patch("uvicorn.run")
+@patch("megane.cli.webbrowser")
+def test_main_serve_unsupported_extension_is_usage_error(mock_webbrowser, mock_uvicorn_run, tmp_path, capsys):
+    """An unreadable extension exits with a usage error instead of a traceback."""
+    from megane.cli import main
+
+    bad = tmp_path / "notes.txt"
+    bad.write_text("hello")
+    with patch("sys.argv", ["megane", "serve", str(bad), "--no-browser"]):
+        with pytest.raises(SystemExit) as exc:
+            main()
+
+    assert exc.value.code == 2
+    assert "Unsupported structure format" in capsys.readouterr().err
+    mock_uvicorn_run.assert_not_called()
+
+
+def test_main_help_names_structure_formats(capsys):
+    """--help describes the positional as a structure file, not a PDB."""
+    from megane.cli import main
+
+    with patch("sys.argv", ["megane", "serve", "--help"]):
+        with pytest.raises(SystemExit) as exc:
+            main()
+
+    assert exc.value.code == 0
+    out = capsys.readouterr().out
+    assert "STRUCTURE_FILE" in out
+    assert "GRO" in out
+
+
 def test_main_no_args():
     """main() with no arguments raises SystemExit."""
     from megane.cli import main

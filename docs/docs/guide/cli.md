@@ -53,7 +53,7 @@ megane serve protein.pdb
 ## Usage
 
 ```bash
-megane serve [PDB_FILE] [OPTIONS]
+megane serve [STRUCTURE_FILE] [OPTIONS]
 ```
 
 `serve` is currently the only subcommand.
@@ -62,14 +62,14 @@ megane serve [PDB_FILE] [OPTIONS]
 
 | Argument | Description |
 |----------|-------------|
-| `PDB_FILE` | Path to a PDB file (optional). The backend only reads `.pdb` from this positional argument — to start with an ASE trajectory, use `--traj` instead. In the browser, drag-and-drop and the file dialogs accept every supported structure format (PDB, GRO, XYZ, MOL/SDF, MOL2, CIF, mmCIF, LAMMPS data, AMBER prmtop, ASE `.traj`, VASP, …); see [Platform Support](/platform-support). |
+| `STRUCTURE_FILE` | Path to a structure file (optional). Every structure format the viewer opens is accepted — PDB, GRO, XYZ, MOL/SDF, MOL2, CIF, mmCIF, LAMMPS data, AMBER prmtop, VASP (including bare `POSCAR` / `CONTCAR`), …; the extension picks the parser, exactly as for the Python `LoadStructure` node and the Jupyter widget (see [Platform Support](/platform-support)). An ASE `.traj` here loads all of its frames, the same as `--traj`. A file with no extension is read as PDB. An unsupported extension exits with a usage error. |
 
 ## Options
 
 | Option | Default | Description |
 |--------|---------|-------------|
-| `--xtc PATH` | — | Path to an XTC trajectory file (paired with `PDB_FILE` for topology) |
-| `--traj PATH` | — | Path to an ASE `.traj` file. Loads both topology and frames from the trajectory; do not pass `PDB_FILE` when using this. |
+| `--xtc PATH` | — | Path to an XTC trajectory file (paired with `STRUCTURE_FILE`, in any structure format, for topology; the atom counts must match) |
+| `--traj PATH` | — | Path to an ASE `.traj` file. Loads both topology and frames from the trajectory; do not pass `STRUCTURE_FILE` when using this. |
 | `--port PORT` | `8765` | Server port. The server listens on all interfaces (`0.0.0.0`). |
 | `--no-browser` | `false` | Don't automatically open the browser |
 | `--files-root DIR` | current directory | Folder the Load nodes' *Open from server…* dialog browses |
@@ -118,6 +118,9 @@ Starts the backend with `protein.pdb` loaded and opens `http://localhost:8765` i
 # PDB topology + XTC frames
 megane serve protein.pdb --xtc trajectory.xtc
 
+# GROMACS .gro topology + XTC frames
+megane serve conf.gro --xtc trajectory.xtc
+
 # ASE .traj (topology + frames in one file)
 megane serve --traj simulation.traj
 ```
@@ -152,7 +155,7 @@ In development mode, `megane serve` does not open a browser; start the Vite dev 
 
 - **Static file serving** — The built frontend from `megane/static/app/` (the viewer at `/`, Megane Builder at `/builder.html`). Set the `MEGANE_STATIC_DIR` environment variable to serve a different build directory.
 - **WebSocket endpoint** (`/ws`) — Binary protocol streaming for molecular data. On connect it sends the loaded snapshot and metadata; clients can then send `request_frame`, `stream` (`start`, `end`, `stride`, `fps`), and `stop` JSON commands.
-- **Upload endpoint** (`POST /api/upload`) — Accepts a `pdb` file (plus an optional `xtc`) as multipart form data, loads it, and broadcasts it to every connected WebSocket client.
+- **Upload endpoint** (`POST /api/upload`) — Accepts a structure file in the `pdb` form field (any structure format; the uploaded file name's extension picks the parser, and an unsupported one is a `400`) plus an optional `xtc`, as multipart form data, loads it, and broadcasts it to every connected WebSocket client.
 - **Health check** (`GET /health`) — Returns `{"status": "ok"}`, for load balancers and container orchestrators.
 
 Data is encoded using Megane's binary protocol for efficient transfer:

@@ -16,12 +16,14 @@ def main() -> None:
     )
     parser.add_argument("command", choices=["serve"], help="Command to run")
     parser.add_argument(
-        "pdb",
+        "structure",
         nargs="?",
         default=None,
-        help="Path to PDB file (optional; can upload from browser)",
+        metavar="STRUCTURE_FILE",
+        help="Structure file to serve: PDB, GRO, XYZ, CIF, mmCIF, MOL/SDF, MOL2, LAMMPS data, "
+        "AMBER prmtop, VASP, ASE .traj, ... (optional; can upload from browser)",
     )
-    parser.add_argument("--xtc", help="Path to XTC trajectory file")
+    parser.add_argument("--xtc", help="Path to XTC trajectory file (topology: STRUCTURE_FILE)")
     parser.add_argument("--traj", help="Path to ASE .traj trajectory file")
     parser.add_argument("--port", type=int, default=8765, help="Server port")
     parser.add_argument("--no-browser", action="store_true", help="Don't open browser")
@@ -53,12 +55,15 @@ def main() -> None:
     if args.command == "serve":
         from megane.server import app, configure, configure_files
 
-        if args.traj:
-            configure("", traj_path=args.traj)
-        elif args.pdb:
-            configure(args.pdb, args.xtc)
-        else:
-            logging.info("No PDB file specified. Waiting for file upload from browser...")
+        try:
+            if args.traj:
+                configure("", traj_path=args.traj)
+            elif args.structure:
+                configure(args.structure, args.xtc)
+            else:
+                logging.info("No structure file specified. Waiting for file upload from browser...")
+        except ValueError as e:
+            parser.error(str(e))
 
         if args.no_files:
             configure_files(None)

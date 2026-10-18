@@ -11,12 +11,15 @@ logger = logging.getLogger(__name__)
 
 
 def load_trajectory(pdb_path: str, xtc_path: str) -> InMemoryTrajectory:
-    """Load a trajectory from PDB topology + XTC coordinates.
+    """Load a trajectory from a topology file + XTC coordinates.
 
     Uses the Rust XTC parser (megane-core) instead of MDAnalysis.
 
     Args:
-        pdb_path: Path to PDB file (topology, used for atom count validation).
+        pdb_path: Path to the topology, used for atom count validation. Any
+            structure format ``megane.parsers.dispatch`` reads (PDB, GRO,
+            CIF, ...); an extension-less path is read as PDB. The name is
+            kept for backward compatibility.
         xtc_path: Path to XTC file (trajectory).
 
     Returns:
@@ -24,10 +27,7 @@ def load_trajectory(pdb_path: str, xtc_path: str) -> InMemoryTrajectory:
     """
     logger.debug("Loading XTC trajectory: %s (topology: %s)", xtc_path, pdb_path)
 
-    # Parse PDB for atom count validation
-    with open(pdb_path) as f:
-        pdb_text = f.read()
-    pdb_result = megane_parser.parse_pdb(pdb_text)
+    topology_atoms = _topology_n_atoms(pdb_path)
 
     # Parse XTC binary
     with open(xtc_path, "rb") as f:
@@ -35,8 +35,8 @@ def load_trajectory(pdb_path: str, xtc_path: str) -> InMemoryTrajectory:
     result = megane_parser.parse_xtc(xtc_bytes)
 
     n_atoms = result.n_atoms
-    if n_atoms != pdb_result.n_atoms:
-        raise ValueError(f"Atom count mismatch: PDB has {pdb_result.n_atoms} atoms, XTC has {n_atoms} atoms.")
+    if n_atoms != topology_atoms:
+        raise ValueError(f"Atom count mismatch: topology has {topology_atoms} atoms, XTC has {n_atoms} atoms.")
 
     trajectory = trajectory_from_traj_result(result)
     logger.info(
@@ -46,3 +46,13 @@ def load_trajectory(pdb_path: str, xtc_path: str) -> InMemoryTrajectory:
         " (variable cell)" if trajectory.heterogeneous else "",
     )
     return trajectory
+
+
+def _topology_n_atoms(path: str) -> int:
+    """Atom count of a topology file, read with the matching structure parser."""
+    from megane.parsers.dispatch import load_structure_file, structure_ext
+
+    if structure_ext(path) in ("", ".pdb"):
+        with open(path) as f:
+            return megane_parser.parse_pdb(f.read()).n_atoms
+    return load_structure_file(path).n_atoms
