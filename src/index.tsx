@@ -24,14 +24,17 @@ import { MemoryFrameProvider } from "./pipeline/types";
 import defaultPDB from "../tests/fixtures/caffeine_water.pdb?raw";
 import defaultXtcUrl from "../tests/fixtures/caffeine_water_vibration.xtc?url";
 import perovskiteXYZ from "../tests/fixtures/perovskite_srtio3_3x3x3.xyz?raw";
-import quartzXYZ from "../tests/fixtures/quartz_sio2_2x2x2.xyz?raw";
+import auNanoparticleXYZ from "../tests/fixtures/au_nanoparticle.xyz?raw";
 import ubiquitinPDB from "../tests/fixtures/1ubq.pdb?raw";
 import ubiquitinCgPDB from "../tests/fixtures/1ubq_cg.pdb?raw";
 import glycineCIF from "../tests/fixtures/glycine_csd.cif?raw";
-import caffeineSDF from "../tests/fixtures/caffeine.sdf?raw";
-// The ESP grid is fetched rather than inlined: ~150 kB of text belongs in an
-// emitted asset, not in the entry bundle every visitor downloads.
-import caffeineEspCubeUrl from "../tests/fixtures/caffeine_esp.cube?url";
+import caffeineB3lypSDF from "../tests/fixtures/caffeine_b3lyp.sdf?raw";
+// The larger template files are fetched rather than inlined: a 170 kB PDB entry
+// and two ~460 kB DFT grids belong in emitted assets, not in the entry bundle
+// every visitor downloads.
+import proteasePdbUrl from "../tests/fixtures/1hsg.pdb?url";
+import caffeineDensityCubeUrl from "../tests/fixtures/caffeine_b3lyp_density.cube?url";
+import caffeineEspCubeUrl from "../tests/fixtures/caffeine_b3lyp_esp.cube?url";
 import "./styles/megane.css";
 import { ThemeSync } from "./components/ThemeSync";
 import { ErrorBoundary } from "./components/ErrorBoundary";
@@ -43,7 +46,8 @@ export type { DataMode };
 
 /** Bundled fixtures for the templates that load more than one file. */
 const TEMPLATE_ASSETS: TemplateAssetSources = {
-  caffeineSdf: caffeineSDF,
+  caffeineB3lypSdf: caffeineB3lypSDF,
+  caffeineDensityCubeUrl,
   caffeineEspCubeUrl,
   ubiquitinPdb: ubiquitinPDB,
   ubiquitinCgPdb: ubiquitinCgPDB,
@@ -96,9 +100,10 @@ function App() {
       } else if (pendingTemplateId === "molecular_crystal") {
         await ds.local.loadText(glycineCIF, "glycine_csd.cif");
       } else if (pendingTemplateId === "surface_mesh") {
-        await ds.local.loadText(quartzXYZ, "quartz_sio2_2x2x2.xyz");
+        await ds.local.loadText(auNanoparticleXYZ, "au_nanoparticle.xyz");
       } else if (pendingTemplateId === "protein") {
-        await ds.local.loadText(ubiquitinPDB, "1ubq.pdb");
+        const proteasePdb = await (await fetch(proteasePdbUrl)).text();
+        await ds.local.loadText(proteasePdb, "1hsg.pdb");
       } else if (pendingTemplateId === "streaming") {
         // Load via ds.local so ds.snapshot updates → Viewport.loadSnapshot uses caffeine atoms
         const result = await ds.local.loadText(defaultPDB, "caffeine_water.pdb");

@@ -27,24 +27,27 @@ export interface TemplateAssetStore {
 }
 
 /**
- * Fetch `url` and hand the parsed grid to the template's `load_volumetric`
- * node.
+ * Fetch `url` and hand the parsed grid to a `load_volumetric` node of the
+ * template: the one with id `nodeId`, or the graph's first one when omitted.
  *
  * The grid lands in the node's ephemeral `volumetricData` param — the same
  * slot `LoadVolumetricNode` writes when a user drops a file on it — so the
  * Isosurface node downstream sees it exactly as if it had been opened by hand.
+ * Addressing by id is what lets a template feed two grids, e.g. a density to
+ * contour and a potential to color it by.
  */
 export async function loadTemplateVolumetric(
   getState: () => TemplateAssetStore,
   url: string,
   fileName: string,
+  nodeId?: string,
 ): Promise<void> {
-  const nodeId = getState().nodes.find((n) => n.type === "load_volumetric")?.id;
-  if (!nodeId) return;
+  const targetId = nodeId ?? getState().nodes.find((n) => n.type === "load_volumetric")?.id;
+  if (!targetId || !getState().nodes.some((n) => n.id === targetId)) return;
   const text = await (await fetch(url)).text();
   const store = getState();
-  if (!store.nodes.some((n) => n.id === nodeId)) return;
-  store.updateNodeParams(nodeId, {
+  if (!store.nodes.some((n) => n.id === targetId)) return;
+  store.updateNodeParams(targetId, {
     fileName,
     volumetricData: parseVolumetric(fileName, text),
     parseError: null,
@@ -84,13 +87,15 @@ export async function loadTemplateStructureInto(
 
 /**
  * The bundled fixtures the multi-file templates need, as the host's bundler
- * resolves them: structures inline as text, the ESP grid as a URL (~150 kB of
- * text belongs in an emitted asset, not the entry bundle).
+ * resolves them: small structures inline as text, the DFT grids as URLs
+ * (~460 kB of text each belongs in an emitted asset, not the entry bundle).
  */
 export interface TemplateAssetSources {
-  /** Raw text of `caffeine.sdf`. */
-  caffeineSdf: string;
-  /** URL of `caffeine_esp.cube`. */
+  /** Raw text of `caffeine_b3lyp.sdf`, the frame the two DFT grids share. */
+  caffeineB3lypSdf: string;
+  /** URL of `caffeine_b3lyp_density.cube`. */
+  caffeineDensityCubeUrl: string;
+  /** URL of `caffeine_b3lyp_esp.cube`. */
   caffeineEspCubeUrl: string;
   /** Raw text of `1ubq.pdb`. */
   ubiquitinPdb: string;
@@ -114,8 +119,21 @@ export async function loadMultiFileTemplate(
   loadPrimary: (text: string, fileName: string) => Promise<unknown>,
 ): Promise<boolean> {
   if (templateId === "esp") {
-    await loadPrimary(sources.caffeineSdf, "caffeine.sdf");
-    await loadTemplateVolumetric(getState, sources.caffeineEspCubeUrl, "caffeine_esp.cube");
+    // The density is contoured; the potential only colors the contour, so it
+    // goes into the second loader, the one wired to `colorVolumetric`.
+    await loadPrimary(sources.caffeineB3lypSdf, "caffeine_b3lyp.sdf");
+    await loadTemplateVolumetric(
+      getState,
+      sources.caffeineDensityCubeUrl,
+      "caffeine_b3lyp_density.cube",
+      "volumetric-1",
+    );
+    await loadTemplateVolumetric(
+      getState,
+      sources.caffeineEspCubeUrl,
+      "caffeine_b3lyp_esp.cube",
+      "volumetric-esp",
+    );
     return true;
   }
   if (templateId === "coarse_grained") {
