@@ -398,7 +398,7 @@ The same Builder ships with the editor extensions and the Python package.
 Everything above works the same; what differs is how you get to it and
 where *Save* writes.
 
-**VS Code.** The Megane extension adds a *Megane* icon (a pair of glasses) to
+**VS Code.** The Megane extension adds a *Megane* icon (the Megane logo) to
 the activity bar. Its *Builder* view has **New Structure** and **Open File in
 Builder…**; a structure file also has **Open in Megane Builder** in the
 Explorer's context menu, and a Megane viewer tab has the same button in its
@@ -406,7 +406,7 @@ title bar. Each opens the Builder in an editor tab (one tab per file; asking
 again brings it back). *Save* asks where to write with VS Code's save dialog,
 starting beside the file you opened.
 
-**JupyterLab.** The Megane extension adds a *Megane* panel (the glasses icon)
+**JupyterLab.** The Megane extension adds a *Megane* panel (the logo icon)
 to the left sidebar: **Open Builder**, and the structure files of the file
 browser's current folder — click one to edit it. Structure files also have
 **Open in Megane Builder** in the file browser's context menu, and the

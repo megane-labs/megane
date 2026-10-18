@@ -1373,6 +1373,9 @@ describe("megane Builder", () => {
     expect(created.options.localResourceRoots!.map((u) => u.path)).toEqual(["/ext/media"]);
     expect(created.panel.webview.html).toContain("media/builder/builder.js");
     expect(created.panel.webview.html).toContain("media/builder/builder.css");
+    expect((created.panel.iconPath as { path: string }).path).toBe(
+      "/ext/resources/megane-color.svg",
+    );
   });
 
   it("an empty Builder posts nothing when ready", async () => {
@@ -1517,9 +1520,9 @@ describe("megane Builder manifest", () => {
     expect(c.viewsContainers.activitybar).toEqual([
       expect.objectContaining({ id: "megane", icon: "resources/megane.svg" }),
     ]);
-    expect(existsSync(resolve(__dirname, "../../../vscode-megane/resources/megane.svg"))).toBe(
-      true,
-    );
+    for (const icon of ["megane.svg", "megane-color.svg"]) {
+      expect(existsSync(resolve(__dirname, `../../../vscode-megane/resources/${icon}`))).toBe(true);
+    }
     expect(c.views.megane.map((v) => v.id)).toEqual(["megane.builderView"]);
     const welcome = c.viewsWelcome.find((w) => w.view === "megane.builderView")!;
     expect(welcome.contents).toContain("command:megane.builder.new");
