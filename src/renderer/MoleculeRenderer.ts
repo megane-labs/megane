@@ -1,6 +1,9 @@
 /**
  * Main molecular viewer class.
- * Owns the Three.js scene, camera, renderer, and controls.
+ * Owns the Three.js scene, the WebGL renderer and every sub-renderer.
+ * Camera and camera interaction are delegated to `CameraController`,
+ * picking and the selection overlays to `SelectionController`, and the E2E
+ * hooks live in `testApi.ts`.
  * Imperative API - framework agnostic.
  *
  * Uses billboard impostor rendering (2-triangle quads + shader) for all
@@ -8,17 +11,8 @@
  */
 
 import * as THREE from "three";
-import { CameraControls, isShiftPanGesture } from "./CameraControls";
-import type {
-  Snapshot,
-  Frame,
-  AtomRenderer,
-  BondRenderer,
-  HoverInfo,
-  SelectionState,
-  Measurement,
-} from "../types";
-// (HoverInfo/Measurement used via return types; keep imports for type compatibility)
+import type { CameraControls } from "./CameraControls";
+import type { Snapshot, Frame, HoverInfo, SelectionState, Measurement } from "../types";
 import { ImpostorAtomMesh } from "./ImpostorAtomMesh";
 import { ImpostorBondMesh } from "./ImpostorBondMesh";
 import { CellRenderer } from "./CellRenderer";
@@ -36,267 +30,69 @@ import { representationFlags, type RepresentationType } from "./representation";
 import type { DrawingBoundaryData, PeriodicAtomImageData } from "../pipeline/types";
 import { generateDrawingBoundaryImages } from "../logic/cellBoundaryImages";
 import type { MeshData } from "../pipeline/types";
-import { getRadius, BALL_STICK_ATOM_SCALE } from "../constants";
-import {
-  pickAtPixel,
-  projectToScreen,
-  atomsInRect,
-  screenToWorldOnPlane,
-  screenDragToWorldDelta,
-  type ClientRect,
-} from "./Picking";
-import { computeMeasurement } from "./Selection";
+import type { ClientRect } from "./Picking";
 import { FpsCounter } from "./FpsCounter";
 import { perfMark, perfMeasure, perfPushFrame, perfRendererReady } from "../perf";
 import {
-  computeViewBounds,
-  fitCameraToView,
-  applyFrustumInsets,
-  createSwitchedCamera,
-  updatePerspectiveClipping,
-  zoomOrthographicAroundTarget,
-  wheelZoomFactor,
-  dollyPerspectiveTowardTarget,
-  orientCamera,
-  currentOrientation,
-  type ViewExtent,
-} from "./CameraManager";
-import { axisOrientation, turntableUpAxis, type ViewAxis } from "./cameraOrientation";
+  CameraController,
+  type MeganeCameraMode,
+  type MeganeCameraState,
+} from "./CameraController";
+import { SelectionController, type MeganeProjectedAtom } from "./SelectionController";
+import type { ViewAxis } from "./cameraOrientation";
+import {
+  getTestReady,
+  releaseActiveRenderer,
+  setActiveRenderer,
+  signalRender,
+  type MeganeSubsystemVisibility,
+} from "./testApi";
 
-const _testMode = (() => {
-  try {
-    const g = globalThis as { __MEGANE_TEST__?: boolean };
-    if (g.__MEGANE_TEST__) return true;
-    if (typeof window !== "undefined" && window.location?.search) {
-      const p = new URLSearchParams(window.location.search);
-      if (p.get("test") === "1") return true;
-    }
-    // E2E hosts (notably ms-toolsai.jupyter widget output and the
-    // VSCode webview) render the megane bundle inside a nested iframe
-    // that the test runner can only reach via Page.addInitScript on the
-    // outer page. Inherit the flag from the parent window when the same
-    // origin allows it. Cross-origin access throws; we silently fall
-    // back to false.
-    if (typeof window !== "undefined" && window.parent && window.parent !== window) {
-      const pg = (window.parent as Window & { __MEGANE_TEST__?: boolean }).__MEGANE_TEST__;
-      if (pg) return true;
-    }
-  } catch {
-    /* noop */
-  }
-  return false;
-})();
-
-/**
- * True when running under E2E (via `?test=1`, `__MEGANE_TEST__`, or an iframed
- * host inheriting it from the parent). Consumers use this to keep non-
- * deterministic UI (e.g. the live FPS readout) stable for screenshot baselines.
- */
-export function isMeganeTestMode(): boolean {
-  return _testMode;
-}
-
-/** Remove and dispose every child of a THREE.Group (meshes and lines). */
-function clearGroup(group: THREE.Group): void {
-  while (group.children.length > 0) {
-    const child = group.children[0];
-    group.remove(child);
-    if (child instanceof THREE.Mesh || child instanceof THREE.Line) {
-      child.geometry.dispose();
-      if (Array.isArray(child.material)) child.material.forEach((m) => m.dispose());
-      else child.material.dispose();
-    }
-  }
-}
-
-/**
- * Draw translucent highlight spheres (1.6× atom radius) over the given atoms.
- * `radiusScale` must match the fraction of the vdW radius the atoms are drawn
- * at, or the highlight ends up buried inside a spacefill sphere.
- */
-function drawHighlightSpheres(
-  group: THREE.Group,
-  atomIndices: number[],
-  positions: Float32Array,
-  elements: Uint8Array,
-  color: number,
-  opacity: number,
-  radiusScale: number = BALL_STICK_ATOM_SCALE,
-): void {
-  for (const atomIdx of atomIndices) {
-    const r = getRadius(elements[atomIdx]) * radiusScale * 1.6;
-    const geo = new THREE.SphereGeometry(r, 16, 16);
-    const mat = new THREE.MeshBasicMaterial({
-      color,
-      transparent: true,
-      opacity,
-      depthWrite: false,
-    });
-    const sphere = new THREE.Mesh(geo, mat);
-    sphere.position.set(
-      positions[atomIdx * 3],
-      positions[atomIdx * 3 + 1],
-      positions[atomIdx * 3 + 2],
-    );
-    group.add(sphere);
-  }
-}
-
-interface MeganeTestReady {
-  firstFrame: boolean;
-  dataLoaded: boolean;
-  frame: number;
-  renderEpoch: number;
-  atomCount?: number;
-  /**
-   * Count of trajectory frames applied via updateFrame(). E2E capture
-   * helpers gate on `framesApplied >= 1` before screenshotting a
-   * multi-frame structure: lazily decoded trajectories (XTC worker) apply
-   * frame 0 asynchronously after load, so without the gate a capture races
-   * the decode and lands on either the base snapshot or the frame-0
-   * positions nondeterministically.
-   */
-  framesApplied?: number;
-}
-
-export interface MeganeProjectedAtom {
-  index: number;
-  sx: number;
-  sy: number;
-  depth: number;
-  element: number;
-}
-
-export type MeganeCameraMode = "perspective" | "orthographic";
-
-export interface MeganeCameraState {
-  mode: MeganeCameraMode;
-  position: [number, number, number];
-  target: [number, number, number];
-  zoom: number;
-  /**
-   * Camera up vector. The controls tilt `up` with the view (and over the
-   * poles it points away from the turntable axis), so the orientation is only fully described together with `up`. Optional for
-   * backward compatibility with states saved before it existed (those are
-   * restored with whatever up the camera currently has).
-   */
-  up?: [number, number, number];
-}
-
-export interface MeganeSubsystemVisibility {
-  atoms: boolean;
-  bonds: boolean;
-  cell: boolean;
-  cellAxes: boolean;
-  vectors: boolean;
-  labels: boolean;
-  polyhedra: boolean;
-  cartoon: boolean;
-  surface: boolean;
-  line: boolean;
-}
-
+export { isMeganeTestMode } from "./testApi";
+export type { MeganeSubsystemVisibility, MeganeRendererMemory, MeganeTestApi } from "./testApi";
+export type { MeganeCameraMode, MeganeCameraState } from "./CameraController";
+export type { MeganeProjectedAtom } from "./SelectionController";
 export type { RepresentationType } from "./representation";
-
-export interface MeganeRendererMemory {
-  geometries: number;
-  textures: number;
-}
-
-export interface MeganeTestApi {
-  getProjectedAtomPositions: () => MeganeProjectedAtom[];
-  getCameraState: () => MeganeCameraState | null;
-  getVisibleSubsystems: () => MeganeSubsystemVisibility;
-  setCameraMode: (mode: MeganeCameraMode) => void;
-  resetCamera: () => void;
-  alignCamera: (axis: ViewAxis) => void;
-  getRendererMemory: () => MeganeRendererMemory | null;
-}
-
-let _activeRenderer: MoleculeRenderer | null = null;
-
-function _setActiveRenderer(r: MoleculeRenderer | null): void {
-  _activeRenderer = r;
-  if (!_testMode || typeof window === "undefined") return;
-  const w = window as Window & { __megane_test?: MeganeTestApi };
-  if (r === null) {
-    delete w.__megane_test;
-    return;
-  }
-  if (!w.__megane_test) {
-    w.__megane_test = {
-      getProjectedAtomPositions: () =>
-        _activeRenderer ? _activeRenderer.testGetProjectedAtomPositions() : [],
-      getCameraState: () => (_activeRenderer ? _activeRenderer.testGetCameraState() : null),
-      getVisibleSubsystems: () =>
-        _activeRenderer
-          ? _activeRenderer.testGetVisibleSubsystems()
-          : {
-              atoms: false,
-              bonds: false,
-              cell: false,
-              cellAxes: false,
-              vectors: false,
-              labels: false,
-              polyhedra: false,
-              cartoon: false,
-              surface: false,
-              line: false,
-            },
-      setCameraMode: (mode) => _activeRenderer?.setCameraMode(mode),
-      resetCamera: () => _activeRenderer?.resetCamera(),
-      alignCamera: (axis) => _activeRenderer?.alignCameraToAxis(axis),
-      getRendererMemory: () => {
-        const info = _activeRenderer?.getRenderer().info.memory;
-        return info ? { geometries: info.geometries, textures: info.textures } : null;
-      },
-    };
-  }
-}
-
-function _getTestReady(): MeganeTestReady | null {
-  if (!_testMode) return null;
-  if (typeof window === "undefined") return null;
-  const w = window as Window & { __megane_test_ready?: MeganeTestReady };
-  if (!w.__megane_test_ready) {
-    w.__megane_test_ready = {
-      firstFrame: false,
-      dataLoaded: false,
-      frame: 0,
-      renderEpoch: 0,
-    };
-  }
-  return w.__megane_test_ready;
-}
-
-function _signalRender(hasSnapshot: boolean): void {
-  const r = _getTestReady();
-  if (!r || !hasSnapshot) return;
-  r.firstFrame = true;
-  r.renderEpoch = (r.renderEpoch ?? 0) + 1;
-}
 
 export class MoleculeRenderer {
   private container: HTMLElement | null = null;
   private renderer!: THREE.WebGLRenderer;
   private scene!: THREE.Scene;
-  private camera!: THREE.OrthographicCamera | THREE.PerspectiveCamera;
-  private controls!: CameraControls;
-  private perspectiveMode = false;
+  /**
+   * Camera, turntable controls and the camera interactions on top of them
+   * (pivot animation, custom pan, wheel zoom, frustum insets, projection
+   * switch). Reads the container, canvas and structure from this renderer.
+   */
+  private readonly cameraController = new CameraController({
+    getContainer: () => this.container,
+    getCanvas: () => this.renderer.domElement,
+    getSnapshot: () => this.snapshot,
+    getCurrentPositions: () => this.getCurrentPositions(),
+  });
+  /** The active camera (owned by `cameraController`). */
+  private get camera(): THREE.OrthographicCamera | THREE.PerspectiveCamera {
+    return this.cameraController.camera;
+  }
+  /** The camera's turntable controls (owned by `cameraController`). */
+  private get controls(): CameraControls {
+    return this.cameraController.controls;
+  }
   /**
    * The primary atom renderer plus the display-only periodic-copy layers
    * (Drawing Boundary copies, bond-stream neighbour images). Every atom
    * appearance setter goes through it so the layers stay in sync.
    */
-  private readonly atomLayers = new AtomLayerGroup((object) => this.scene.add(object));
+  private readonly atomLayers = new AtomLayerGroup<ImpostorAtomMesh>((object) =>
+    this.scene.add(object),
+  );
   /** The primary (pickable) atom renderer, owned by `atomLayers`. */
-  private get atomRenderer(): AtomRenderer | null {
+  private get atomRenderer(): ImpostorAtomMesh | null {
     return this.atomLayers.primary;
   }
-  private set atomRenderer(renderer: AtomRenderer | null) {
+  private set atomRenderer(renderer: ImpostorAtomMesh | null) {
     this.atomLayers.setPrimary(renderer);
   }
-  private bondRenderer: BondRenderer | null = null;
+  private bondRenderer: ImpostorBondMesh | null = null;
   private cellRenderer: CellRenderer | null = null;
   private currentDrawingBoundary: DrawingBoundaryData | null = null;
   private currentBondPeriodicImages: PeriodicAtomImageData | null = null;
@@ -307,11 +103,9 @@ export class MoleculeRenderer {
   private arrowRenderer: ArrowRenderer | null = null;
   private polyhedronRenderer: PolyhedronRenderer | null = null;
   private pivotMarker: PivotMarker | null = null;
-  private useImpostor = false;
   private animationId: number | null = null;
   private fpsCounter = new FpsCounter();
   private snapshot: Snapshot | null = null;
-  private lastExtent: ViewExtent = { maxExtent: 1, extentX: 1, extentY: 1 };
   private currentPositions: Float32Array | null = null;
   /**
    * Bonds pushed via updateBondsExt before a snapshot/bondRenderer existed.
@@ -340,48 +134,14 @@ export class MoleculeRenderer {
    */
   private bondsAvailable = false;
   private currentLabels: string[] | null = null;
-  private viewInsetLeft = 0;
-  private viewInsetRight = 0;
   private dprMediaQuery: MediaQueryList | null = null;
   private dprChangeHandler: (() => void) | null = null;
   // Cached dimensions for frame-synchronous resize detection
   private lastContainerW = 0;
   private lastContainerH = 0;
   private lastDpr = 1;
-  /** Duration of the smooth pivot animation in milliseconds. */
-  private static readonly PIVOT_ANIM_DURATION_MS = 400;
-  /** Smooth pivot animation state (set by setRotationCenter). */
-  private pivotAnim: {
-    startTarget: THREE.Vector3;
-    endTarget: THREE.Vector3;
-    startCameraPos: THREE.Vector3;
-    endCameraPos: THREE.Vector3;
-    startTime: number;
-    duration: number;
-  } | null = null;
-
-  /** Custom pan handler state (right-mouse drag, replaces the controls' built-in pan). */
-  private customPanActive = false;
-  private customPanLastX = 0;
-  private customPanLastY = 0;
-  private customPanPointerId: number | null = null;
-  private customPanCleanup: (() => void) | null = null;
-  // Reusable temp vectors for applyCustomPan perspective branch.
-  private readonly _panRight = new THREE.Vector3();
-  private readonly _panUp = new THREE.Vector3();
-  private readonly _panDelta = new THREE.Vector3();
-  // Accumulated frustum shift for orthographic pan (camera.left/right/top/bottom units).
-  // Re-applied after doApplyFrustumInsets; reset when a new rotation center is set.
-  private _frustumPanX = 0;
-  private _frustumPanY = 0;
-
-  private wheelZoomHandler: ((e: WheelEvent) => void) | null = null;
-
   /** True until the first frame has been rendered after mount; used for perf hook. */
   private firstFramePending = true;
-
-  /** Called when the user finishes a camera interaction (drag end). */
-  private _cameraChangeCallback: (() => void) | null = null;
 
   /** Structure layers for multi-structure overlay rendering. */
   private layers = new Map<string, StructureLayer>();
@@ -396,14 +156,20 @@ export class MoleculeRenderer {
   /** Per-atom representation override (see setRepresentationByAtom). */
   private representationByAtom: RepresentationType[] | null = null;
 
-  // (screen-space picking replaces Three.js raycasting)
-
-  // Atom selection & measurement
-  private selectedAtoms: number[] = [];
-  private selectionGroup = new THREE.Group();
-  // Inspector preview highlight — an arbitrary-size, uncapped set drawn in a
-  // distinct color, independent of the 4-atom measurement selection above.
-  private previewSelectionGroup = new THREE.Group();
+  /**
+   * Screen-space picking and the atom selection overlays (measurement
+   * selection, Inspector preview highlight).
+   */
+  private readonly selection = new SelectionController({
+    getCamera: () => this.camera,
+    getContainer: () => this.container,
+    getSnapshot: () => this.snapshot,
+    getCurrentPositions: () => this.getCurrentPositions(),
+    getAtomState: () => this.atomLayers.state,
+    getDrawingBoundary: () => this.currentDrawingBoundary,
+    getBondPeriodicImages: () => this.currentBondPeriodicImages,
+    getAtomRadiusScale: () => this.atomRadiusScale(),
+  });
 
   /** Mount the viewer into a DOM element. */
   mount(container: HTMLElement): void {
@@ -457,26 +223,8 @@ export class MoleculeRenderer {
     this.scene = new THREE.Scene();
     this.scene.background = new THREE.Color(0xffffff);
 
-    // Camera (orthographic by default, like OVITO)
-    const aspect = container.clientWidth / container.clientHeight;
-    const frustumSize = 50;
-    this.camera = new THREE.OrthographicCamera(
-      (-frustumSize * aspect) / 2,
-      (frustumSize * aspect) / 2,
-      frustumSize / 2,
-      -frustumSize / 2,
-      0.1,
-      10000,
-    );
-    this.camera.position.set(0, -50, 0);
-    this.camera.up.set(0, 0, 1);
-
-    // Controls (turntable about +c / +z, no pole clamp). Built-in pan is off;
-    // right-drag and Shift+left-drag are handled by attachCustomPanListener(),
-    // which keeps the rotation pivot fixed in world space.
-    this.controls = this.createControls();
-    this.attachWheelZoomListener();
-    this.attachCustomPanListener();
+    // Camera, controls, wheel zoom and custom pan.
+    this.cameraController.mount();
 
     // Lighting - hemisphere + 3-point
     const hemi = new THREE.HemisphereLight(0xddeeff, 0x997744, 0.4);
@@ -495,8 +243,8 @@ export class MoleculeRenderer {
     this.scene.add(rimLight);
 
     // Selection overlay group
-    this.scene.add(this.selectionGroup);
-    this.scene.add(this.previewSelectionGroup);
+    this.scene.add(this.selection.selectionGroup);
+    this.scene.add(this.selection.previewSelectionGroup);
 
     // Pivot marker (3D crosshair at rotation center)
     this.pivotMarker = new PivotMarker();
@@ -512,8 +260,8 @@ export class MoleculeRenderer {
     // Start render loop
     this.animate();
 
-    // Expose this instance to the test API (no-op outside _testMode).
-    _setActiveRenderer(this);
+    // Expose this instance to the test API (no-op outside test mode).
+    setActiveRenderer(this);
   }
 
   /**
@@ -527,23 +275,23 @@ export class MoleculeRenderer {
   loadSnapshot(snapshot: Snapshot, opts: { fit?: boolean } = {}): void {
     this.snapshot = snapshot;
     this.currentPositions = new Float32Array(snapshot.positions);
-    this.controls?.upAxis.set(...turntableUpAxis(snapshot.box));
+    this.cameraController.syncUpAxis(snapshot.box);
 
-    const _ready = _getTestReady();
+    const _ready = getTestReady();
     if (_ready) {
       _ready.dataLoaded = true;
       _ready.atomCount = snapshot.nAtoms;
     }
 
-    // Always use impostor rendering for consistent behavior at any atom count
-    if (this.atomRenderer === null || !this.useImpostor) {
-      this.swapRenderers(true);
+    // Impostor meshes for every atom count, created on the first load.
+    if (this.atomRenderer === null) {
+      this.swapRenderers();
     }
 
     const atomState = this.atomLayers.state;
     this.atomRenderer!.loadSnapshot(snapshot);
     if (atomState.colorOverrides) {
-      (this.atomRenderer as ImpostorAtomMesh).applyColorOverrides(atomState.colorOverrides);
+      this.atomRenderer!.applyColorOverrides(atomState.colorOverrides);
     }
     // Bond loading is handled exclusively by the pipeline via updateBondsExt/updateBonds
     // (called from applyViewportState). This avoids race conditions between
@@ -554,7 +302,7 @@ export class MoleculeRenderer {
     this.flushPendingBonds();
 
     // Re-apply stored scale after loading snapshot data
-    if (atomState.scale !== 1.0 && this.atomRenderer!.setScale) {
+    if (atomState.scale !== 1.0) {
       this.atomRenderer!.setScale(atomState.scale, snapshot);
     }
 
@@ -641,15 +389,11 @@ export class MoleculeRenderer {
     }
 
     if (opts.fit !== false) {
-      this.fitToView(snapshot);
+      this.cameraController.fitToView(snapshot);
     } else {
       // Camera untouched, but the extent drives zoom clamping elsewhere —
-      // keep it in sync with the new positions (measured in the view the
-      // camera is actually in, not the standard orientation).
-      this.lastExtent = computeViewBounds(
-        snapshot,
-        currentOrientation(this.camera, this.controls) ?? undefined,
-      ).extent;
+      // keep it in sync with the new positions.
+      this.cameraController.syncExtent(snapshot);
     }
   }
 
@@ -714,11 +458,11 @@ export class MoleculeRenderer {
     if (this.lineRenderer?.mesh.visible) {
       this.lineRenderer.updatePositions(frame.positions);
     }
-    if (this.selectedAtoms.length > 0) {
-      this.updateSelectionVisuals();
+    if (this.selection.hasSelection) {
+      this.selection.refresh();
     }
 
-    const _ready = _getTestReady();
+    const _ready = getTestReady();
     if (_ready) {
       const idx = (frame as Frame & { index?: number }).index;
       _ready.frame = typeof idx === "number" ? idx : (_ready.frame ?? 0);
@@ -750,9 +494,9 @@ export class MoleculeRenderer {
     const atomState = this.atomLayers.state;
     this.atomRenderer!.loadSnapshot(synth);
     if (atomState.colorOverrides) {
-      (this.atomRenderer as ImpostorAtomMesh).applyColorOverrides?.(atomState.colorOverrides);
+      this.atomRenderer!.applyColorOverrides(atomState.colorOverrides);
     }
-    if (atomState.scale !== 1.0 && this.atomRenderer!.setScale) {
+    if (atomState.scale !== 1.0) {
       this.atomRenderer!.setScale(atomState.scale, synth);
     }
     this.labelOverlay?.setAtomData(elements, frame.nAtoms);
@@ -798,7 +542,7 @@ export class MoleculeRenderer {
     };
     this.snapshot = updated;
     this.bondRenderer.loadSnapshot({ ...updated, positions });
-    if (this.bondScale !== 1.0 && this.bondRenderer.setScale) {
+    if (this.bondScale !== 1.0) {
       this.bondRenderer.setScale(this.bondScale, updated);
     }
     this.syncBondColorsToAtoms();
@@ -839,7 +583,7 @@ export class MoleculeRenderer {
       elements: elems,
     };
     this.bondRenderer.loadSnapshot(extSnap);
-    if (this.bondScale !== 1.0 && this.bondRenderer.setScale) {
+    if (this.bondScale !== 1.0) {
       this.bondRenderer.setScale(this.bondScale, this.snapshot);
     }
     this.syncBondColorsToAtoms(extSnap);
@@ -900,7 +644,7 @@ export class MoleculeRenderer {
           this.drawingBoundaryHiddenMask?.[atom] || this.representationHiddenMask?.[atom] ? 1 : 0;
       }
     }
-    this.atomRenderer?.setHiddenMask?.(combined);
+    this.atomRenderer?.setHiddenMask(combined);
     // Drawing Boundary copies are already range-filtered; only representation
     // hiding is mapped from their source atom.
     this.atomLayers.setSecondaryHiddenMask(this.representationHiddenMask);
@@ -1035,7 +779,7 @@ export class MoleculeRenderer {
 
     // Use the first snapshot for fitToView (simple approach)
     // TODO: merge bounding boxes from all snapshots for true fit
-    this.fitToView(snapshots[0]);
+    this.cameraController.fitToView(snapshots[0]);
   }
 
   /** Set atom radius scale multiplier. */
@@ -1066,7 +810,7 @@ export class MoleculeRenderer {
   /** Set bond radius scale multiplier. */
   setBondScale(scale: number): void {
     this.bondScale = scale;
-    if (this.bondRenderer?.setScale && this.snapshot) {
+    if (this.bondRenderer && this.snapshot) {
       this.bondRenderer.setScale(scale, this.snapshot);
     }
   }
@@ -1074,7 +818,7 @@ export class MoleculeRenderer {
   /** Set bond opacity (independent of atoms). */
   setBondOpacity(opacity: number): void {
     this.bondOpacity = opacity;
-    this.bondRenderer?.setOpacity?.(opacity);
+    this.bondRenderer?.setOpacity(opacity);
   }
 
   /**
@@ -1092,11 +836,11 @@ export class MoleculeRenderer {
     // Reset to base CPK by re-loading the snapshot with no color context.
     const scale = this.atomLayers.state.scale;
     this.atomRenderer.loadSnapshot(this.snapshot);
-    if (scale !== 1.0 && this.atomRenderer.setScale) {
+    if (scale !== 1.0) {
       this.atomRenderer.setScale(scale, this.snapshot);
     }
     if (overrides) {
-      (this.atomRenderer as ImpostorAtomMesh).applyColorOverrides(overrides);
+      this.atomRenderer.applyColorOverrides(overrides);
     }
     this.restoreAtomPerAtomState();
     this.syncBondColorsToAtoms();
@@ -1120,10 +864,10 @@ export class MoleculeRenderer {
   private restoreAtomPerAtomState(): void {
     const { scaleOverrides, opacityOverrides } = this.atomLayers.state;
     if (scaleOverrides) {
-      this.atomRenderer?.setScaleOverrides?.(scaleOverrides);
+      this.atomRenderer?.setScaleOverrides(scaleOverrides);
     }
     if (opacityOverrides) {
-      this.atomRenderer?.setOpacityOverrides?.(opacityOverrides);
+      this.atomRenderer?.setOpacityOverrides(opacityOverrides);
     }
     if (this.drawingBoundaryHiddenMask || this.representationHiddenMask) {
       this.applyCombinedAtomHiddenMask();
@@ -1139,19 +883,17 @@ export class MoleculeRenderer {
     const snap = snapshotOverride ?? this.snapshot;
     if (!snap || !this.atomRenderer || !this.bondRenderer) return;
     if (snap.nBonds === 0) return;
-    const atom = this.atomRenderer as ImpostorAtomMesh;
-    const bond = this.bondRenderer as ImpostorBondMesh;
-    bond.recomputeColorsFromAtomBuffer(atom.getColorBuffer(), snap);
+    this.bondRenderer.recomputeColorsFromAtomBuffer(this.atomRenderer.getColorBuffer(), snap);
   }
 
   /** Apply per-bond opacity overrides (one value per logical bond). */
   setBondOpacityOverrides(overrides: Float32Array): void {
-    this.bondRenderer?.setBondOpacityOverrides?.(overrides);
+    this.bondRenderer?.setBondOpacityOverrides(overrides);
   }
 
   /** Clear per-bond opacity overrides, reverting to global opacity. */
   clearBondOpacityOverrides(): void {
-    this.bondRenderer?.clearBondOpacityOverrides?.();
+    this.bondRenderer?.clearBondOpacityOverrides();
   }
 
   /** Toggle atom visibility. */
@@ -1186,7 +928,7 @@ export class MoleculeRenderer {
     // layers created later.
     this.atomLayers.setRepresentation(type, this.snapshot);
     if (this.snapshot) {
-      this.bondRenderer?.setUniformRadius?.(uniformRadius, this.snapshot);
+      this.bondRenderer?.setUniformRadius(uniformRadius, this.snapshot);
     }
     // Bonds also depend on whether the pipeline emits any bonds; otherwise
     // stale geometry from a previous structure would resurface here.
@@ -1230,10 +972,10 @@ export class MoleculeRenderer {
     this.representationByAtom = modes;
 
     if (!modes) {
-      this.atomRenderer?.setHiddenMask?.(null);
+      this.atomRenderer?.setHiddenMask(null);
       this.representationHiddenMask = null;
       this.applyCombinedAtomHiddenMask();
-      this.bondRenderer?.setHiddenMask?.(null);
+      this.bondRenderer?.setHiddenMask(null);
       if (this.lineRenderer && this.snapshot) {
         this.lineRenderer.loadSnapshot(this.snapshot);
         this.lineRenderer.setVisible(representationFlags(this.representationType).showLine);
@@ -1253,10 +995,10 @@ export class MoleculeRenderer {
 
     // Hide the line atoms (and their bonds) from the mesh renderers; the line
     // renderer draws just that subset instead.
-    this.atomRenderer?.setHiddenMask?.(anyLine ? lineMask : null);
+    this.atomRenderer?.setHiddenMask(anyLine ? lineMask : null);
     this.representationHiddenMask = anyLine ? lineMask : null;
     this.applyCombinedAtomHiddenMask();
-    this.bondRenderer?.setHiddenMask?.(anyLine ? lineMask : null);
+    this.bondRenderer?.setHiddenMask(anyLine ? lineMask : null);
     if (this.lineRenderer && this.snapshot) {
       this.lineRenderer.loadSnapshot(this.snapshot, anyLine ? lineMask : null);
       // Keep lines visible for the subset even when the base mesh mode isn't
@@ -1353,8 +1095,11 @@ export class MoleculeRenderer {
     return this.cellAxesRenderer !== null;
   }
 
-  /** Swap between InstancedMesh and Impostor renderers. */
-  private swapRenderers(impostor: boolean): void {
+  /**
+   * Replace the primary atom and bond meshes with fresh impostor meshes
+   * (disposing any previous pair) and re-apply the stored global opacities.
+   */
+  private swapRenderers(): void {
     // Remove old renderers
     if (this.atomRenderer) {
       this.scene.remove(this.atomRenderer.mesh);
@@ -1365,15 +1110,13 @@ export class MoleculeRenderer {
       this.bondRenderer.dispose();
     }
 
-    this.useImpostor = impostor;
-
     const atoms = new ImpostorAtomMesh();
     const bonds = new ImpostorBondMesh();
     this.atomRenderer = atoms;
     this.bondRenderer = bonds;
 
-    this.scene.add(this.atomRenderer.mesh);
-    this.scene.add(this.bondRenderer.mesh);
+    this.scene.add(atoms.mesh);
+    this.scene.add(bonds.mesh);
 
     // Keep the bond shader's copy of the ball sizes current so each stick is
     // trimmed where it enters a ball (see the CSG union note in shaders.ts).
@@ -1387,73 +1130,29 @@ export class MoleculeRenderer {
     // Re-apply stored appearance settings
     const atomOpacity = this.atomLayers.state.opacity;
     if (atomOpacity !== 1.0) {
-      this.atomRenderer.setOpacity?.(atomOpacity);
+      atoms.setOpacity(atomOpacity);
     }
     if (this.bondOpacity !== 1.0) {
-      this.bondRenderer.setOpacity?.(this.bondOpacity);
-    }
-  }
-
-  /** Fit camera to show all atoms (or simulation cell if present). */
-  private fitToView(snapshot: Snapshot): void {
-    this.lastExtent = fitCameraToView(this.camera, this.controls, snapshot);
-    // A fit centres the model: drop any pan / off-centre orbit-center shift
-    // accumulated in the frustum, or the re-applied insets would keep it.
-    this._frustumPanX = 0;
-    this._frustumPanY = 0;
-    if (this.camera instanceof THREE.OrthographicCamera) {
-      this.doApplyFrustumInsets();
+      bonds.setOpacity(this.bondOpacity);
     }
   }
 
   /** Reset view to fit all atoms. */
   resetView(): void {
     if (this.snapshot) {
-      this.fitToView(this.snapshot);
+      this.cameraController.fitToView(this.snapshot);
     }
   }
 
   /**
    * Set the rotation center (controls target) to the given world point.
-   *
-   * Orthographic cameras follow OVITO: the view does not move, the scene
-   * simply starts orbiting around the new point wherever it is on screen.
-   * The camera is translated so it looks at the point and the frustum is
-   * shifted back by the same screen-space offset (booked as frustum pan, so
-   * resize and wheel zoom keep it).
-   *
-   * Perspective cameras cannot shift their view that way without changing
-   * the picture (parallax), so they pan the point to the screen center —
-   * smoothly over PIVOT_ANIM_DURATION_MS when `animate` is true (default).
+   * Orthographic cameras keep the image and start orbiting around the point
+   * where it is on screen (OVITO); perspective cameras pan it to the screen
+   * center, smoothly when `animate` is true (default). See
+   * {@link CameraController.setRotationCenter}.
    */
   setRotationCenter(x: number, y: number, z: number, animate = true): void {
-    this.snapPivotAnimToEnd();
-    const endTarget = new THREE.Vector3(x, y, z);
-    if (this.camera instanceof THREE.OrthographicCamera) {
-      this.moveOrbitCenterInPlace(this.camera, endTarget);
-      return;
-    }
-    if (!animate) {
-      this.camera.position.add(endTarget.clone().sub(this.controls.target));
-      this.controls.target.copy(endTarget);
-      this.controls.syncImmediate();
-      return;
-    }
-    const startTarget = this.controls.target.clone();
-    const delta = endTarget.clone().sub(startTarget);
-    const startCameraPos = this.camera.position.clone();
-    const endCameraPos = startCameraPos.clone().add(delta);
-
-    // Translate both controls.target and camera.position by the same delta
-    // so the scene pans smoothly to center the clicked point on screen.
-    this.pivotAnim = {
-      startTarget,
-      endTarget,
-      startCameraPos,
-      endCameraPos,
-      startTime: performance.now(),
-      duration: MoleculeRenderer.PIVOT_ANIM_DURATION_MS,
-    };
+    this.cameraController.setRotationCenter(x, y, z, animate);
   }
 
   /**
@@ -1462,261 +1161,17 @@ export class MoleculeRenderer {
    * keeping the view as {@link setRotationCenter} does.
    */
   resetRotationCenter(): void {
-    if (!this.snapshot) return;
-    const { center } = computeViewBounds({
-      ...this.snapshot,
-      positions: this.getCurrentPositions(),
-    });
-    this.setRotationCenter(center[0], center[1], center[2]);
-  }
-
-  /** Orthographic half of {@link setRotationCenter}: re-pivot without moving the image. */
-  private moveOrbitCenterInPlace(camera: THREE.OrthographicCamera, pivot: THREE.Vector3): void {
-    camera.updateMatrixWorld();
-    const delta = pivot.clone().sub(this.controls.target);
-    const shiftX = delta.dot(this._panRight.setFromMatrixColumn(camera.matrixWorld, 0));
-    const shiftY = delta.dot(this._panUp.setFromMatrixColumn(camera.matrixWorld, 1));
-    // Moving the camera by `delta` keeps its direction (it still looks at the
-    // target, now the pivot) but slides every point by -shift on screen;
-    // moving the frustum window by -shift slides them back.
-    camera.position.add(delta);
-    this.controls.target.copy(pivot);
-    camera.left -= shiftX;
-    camera.right -= shiftX;
-    camera.top -= shiftY;
-    camera.bottom -= shiftY;
-    this._frustumPanX -= shiftX;
-    this._frustumPanY -= shiftY;
-    camera.updateProjectionMatrix();
-    this.controls.syncImmediate();
-  }
-
-  /** Immediately snap any in-progress pivot animation to its final state.
-   * Called before zoom or rotation so the interaction always starts from the
-   * atom position rather than an intermediate mid-animation position.
-   */
-  private snapPivotAnimToEnd(): void {
-    if (!this.pivotAnim) return;
-    this.controls.target.copy(this.pivotAnim.endTarget);
-    this.camera.position.copy(this.pivotAnim.endCameraPos);
-    this.pivotAnim = null;
-    // Sync camera world matrices and the controls' internal state so that
-    // subsequent project()/unproject() calls and interaction math use the
-    // snapped end pose rather than the mid-animation matrices.
-    this.camera.updateMatrixWorld(true);
-    this.controls.syncImmediate();
-  }
-
-  /**
-   * Build turntable controls for the current camera and wire the renderer's
-   * interaction hooks: a starting drag snaps any pivot animation to its end
-   * pose, and a finished interaction notifies the camera-change callback.
-   */
-  private createControls(): CameraControls {
-    const controls = new CameraControls(this.camera, this.renderer.domElement);
-    controls.upAxis.set(...turntableUpAxis(this.snapshot?.box ?? null));
-    controls.addEventListener("start", () => {
-      this.snapPivotAnimToEnd();
-    });
-    controls.addEventListener("end", () => {
-      this._cameraChangeCallback?.();
-    });
-    return controls;
-  }
-
-  /** Zoom the camera around controls.target using the mouse wheel.
-   *
-   * Registered on the container in capture phase so it fires before the
-   * controls' own wheel listener and replaces it for both projection modes,
-   * while leaving touch/pinch zoom (handled by the controls' pointer events)
-   * fully intact. Orthographic cameras zoom the frustum around the target;
-   * perspective cameras dolly toward it. Both use the same reversible ramp.
-   */
-  private attachWheelZoomListener(): void {
-    const el = this.container!;
-    if (this.wheelZoomHandler) {
-      el.removeEventListener("wheel", this.wheelZoomHandler, true);
-    }
-    this.wheelZoomHandler = (e: WheelEvent) => {
-      e.preventDefault();
-      e.stopPropagation(); // prevent the controls from also processing this
-
-      // Snap pivot animation to its end state so zoom is always centered on
-      // the clicked atom, not on an intermediate position mid-animation.
-      this.snapPivotAnimToEnd();
-
-      const zoomFactor = wheelZoomFactor(e.deltaY, e.deltaMode, this.controls.zoomSpeed);
-
-      if (this.camera instanceof THREE.OrthographicCamera) {
-        // Zoom around controls.target, keeping it fixed on screen. The helper
-        // applies a reversible frustum shift; accumulate it into our pan
-        // bookkeeping so resize re-applies the same offset.
-        const { shiftX, shiftY } = zoomOrthographicAroundTarget(
-          this.camera,
-          this.controls.target,
-          zoomFactor,
-        );
-        this._frustumPanX += shiftX;
-        this._frustumPanY += shiftY;
-      } else {
-        dollyPerspectiveTowardTarget(this.camera, this.controls.target, zoomFactor);
-      }
-      this._cameraChangeCallback?.();
-    };
-    el.addEventListener("wheel", this.wheelZoomHandler, { capture: true, passive: false });
-  }
-
-  /**
-   * Attach a custom pan listener (right-drag, or Shift+left-drag as in OVITO)
-   * that translates only the camera (not controls.target) so the rotation
-   * center remains fixed in world space.
-   *
-   * For orthographic cameras the pan is implemented as a frustum shift so
-   * the view direction never changes.  For perspective cameras the camera
-   * position is moved directly (the camera tilts slightly to keep looking at
-   * the fixed target, which is imperceptible for typical pan magnitudes).
-   */
-  private attachCustomPanListener(): void {
-    const el = this.renderer.domElement;
-
-    const onPointerDown = (e: PointerEvent) => {
-      // Shift+left shares the left button with rotation, box selection and
-      // Builder drags; those suspend the controls, and so suspend this pan.
-      const shiftPan = isShiftPanGesture(e) && this.controls.enabled;
-      if (e.button !== 2 && !shiftPan) return;
-      if (this.customPanActive) return;
-      this.snapPivotAnimToEnd();
-      this.customPanActive = true;
-      this.customPanLastX = e.clientX;
-      this.customPanLastY = e.clientY;
-      this.customPanPointerId = e.pointerId;
-      el.setPointerCapture(e.pointerId);
-    };
-
-    const onPointerMove = (e: PointerEvent) => {
-      if (!this.customPanActive || e.pointerId !== this.customPanPointerId) return;
-      const dx = e.clientX - this.customPanLastX;
-      const dy = e.clientY - this.customPanLastY;
-      this.customPanLastX = e.clientX;
-      this.customPanLastY = e.clientY;
-      // A Builder atom drag that began on the same press disables the
-      // controls after this listener ran; the atom drag wins.
-      if (!this.controls.enabled) return;
-      this.applyCustomPan(dx, dy);
-    };
-
-    const onPointerEnd = (e: PointerEvent) => {
-      if (e.pointerId === this.customPanPointerId) {
-        this.customPanActive = false;
-        this.customPanPointerId = null;
-      }
-    };
-
-    el.addEventListener("pointerdown", onPointerDown);
-    el.addEventListener("pointermove", onPointerMove);
-    el.addEventListener("pointerup", onPointerEnd);
-    el.addEventListener("pointercancel", onPointerEnd);
-
-    this.customPanCleanup = () => {
-      el.removeEventListener("pointerdown", onPointerDown);
-      el.removeEventListener("pointermove", onPointerMove);
-      el.removeEventListener("pointerup", onPointerEnd);
-      el.removeEventListener("pointercancel", onPointerEnd);
-    };
-  }
-
-  /** Apply a screen-space pan delta.
-   * For OrthographicCamera: shifts the projection frustum (camera.left/right/top/bottom),
-   * giving a true screen-space pan without touching camera.position or controls.target.
-   * For PerspectiveCamera: translates both camera.position and controls.target together
-   * (standard orbit-style pan). */
-  private applyCustomPan(screenDx: number, screenDy: number): void {
-    if (!this.container) return;
-    const W = this.container.clientWidth;
-    const H = this.container.clientHeight;
-    if (W === 0 || H === 0) return;
-
-    if (this.camera instanceof THREE.OrthographicCamera) {
-      const frustumW = (this.camera.right - this.camera.left) / this.camera.zoom;
-      const frustumH = (this.camera.top - this.camera.bottom) / this.camera.zoom;
-      const worldDx = -screenDx * (frustumW / W);
-      const worldDy = screenDy * (frustumH / H);
-      this.camera.left += worldDx;
-      this.camera.right += worldDx;
-      this.camera.top += worldDy;
-      this.camera.bottom += worldDy;
-      this._frustumPanX += worldDx;
-      this._frustumPanY += worldDy;
-      this.camera.updateProjectionMatrix();
-    } else if (this.camera instanceof THREE.PerspectiveCamera) {
-      const right = this._panRight.setFromMatrixColumn(this.camera.matrix, 0);
-      const up = this._panUp.setFromMatrixColumn(this.camera.matrix, 1);
-      const distance = this.camera.position.distanceTo(this.controls.target);
-      const vFov = (this.camera.fov * Math.PI) / 180;
-      const worldH = 2 * Math.tan(vFov / 2) * distance;
-      const worldW = worldH * (W / H);
-      const delta = this._panDelta
-        .copy(right)
-        .multiplyScalar(-screenDx * (worldW / W))
-        .addScaledVector(up, screenDy * (worldH / H));
-      this.camera.position.add(delta);
-      this.controls.target.add(delta);
-    }
+    this.cameraController.resetRotationCenter();
   }
 
   /** Set pixel insets for overlay panels that occlude viewport edges. */
   setViewInsets(left: number, right: number): void {
-    this.viewInsetLeft = left;
-    this.viewInsetRight = right;
-    this.doApplyFrustumInsets();
-  }
-
-  /** Recalculate the orthographic frustum accounting for overlay insets. */
-  private doApplyFrustumInsets(): void {
-    if (!(this.camera instanceof THREE.OrthographicCamera)) return;
-    if (!this.container) return;
-    applyFrustumInsets(
-      this.camera,
-      this.container.clientWidth,
-      this.container.clientHeight,
-      this.viewInsetLeft,
-      this.viewInsetRight,
-      this.lastExtent,
-    );
-    // Re-apply accumulated frustum pan so the view doesn't jump on resize.
-    if (this._frustumPanX !== 0 || this._frustumPanY !== 0) {
-      this.camera.left += this._frustumPanX;
-      this.camera.right += this._frustumPanX;
-      this.camera.top += this._frustumPanY;
-      this.camera.bottom += this._frustumPanY;
-      this.camera.updateProjectionMatrix();
-    }
+    this.cameraController.setViewInsets(left, right);
   }
 
   /** Switch between orthographic and perspective projection. */
   setPerspective(enabled: boolean): void {
-    if (this.perspectiveMode === enabled) return;
-    this.perspectiveMode = enabled;
-    if (!this.container) return;
-
-    const target = this.controls.target.clone();
-    const newCamera = createSwitchedCamera(
-      this.camera,
-      enabled,
-      this.container.clientWidth,
-      this.container.clientHeight,
-    );
-
-    // Recreate controls with new camera
-    this.controls.dispose();
-    this.camera = newCamera;
-    this.controls = this.createControls();
-    this.controls.target.copy(target);
-    this.controls.update();
-
-    if (this.snapshot) {
-      this.fitToView(this.snapshot);
-    }
+    this.cameraController.setPerspective(enabled);
   }
 
   /** Get the canvas element for event listener attachment. */
@@ -1788,7 +1243,7 @@ export class MoleculeRenderer {
       this.labelOverlay.render(this.camera, _size.x, _size.y, _dpr);
     }
 
-    _signalRender(this.snapshot != null);
+    signalRender(this.snapshot != null);
   }
 
   /**
@@ -1804,17 +1259,7 @@ export class MoleculeRenderer {
     this.renderer.setPixelRatio(1);
     this.renderer.setSize(width, height, false);
     this.labelOverlay?.resize(width, height, 1);
-
-    if (this.camera instanceof THREE.OrthographicCamera) {
-      const aspect = width / height;
-      const frustumHalf = (this.camera.top - this.camera.bottom) / 2;
-      this.camera.left = -frustumHalf * aspect;
-      this.camera.right = frustumHalf * aspect;
-      this.camera.updateProjectionMatrix();
-    } else {
-      this.camera.aspect = width / height;
-      this.camera.updateProjectionMatrix();
-    }
+    this.cameraController.resizeForCapture(width, height);
 
     // Update cached values to prevent animate() from overriding
     this.lastContainerW = width;
@@ -1846,52 +1291,23 @@ export class MoleculeRenderer {
     return this.currentPositions ?? this.snapshot!.positions;
   }
 
-  // ---- Raycasting ----
+  // ---- Picking ----
 
   /** Perform a pick at the given screen coordinates using CPU screen-space projection. */
   raycastAtPixel(clientX: number, clientY: number): HoverInfo {
-    if (!this.container || !this.snapshot) return null;
-    return pickAtPixel(
-      this.camera,
-      this.container,
-      this.snapshot,
-      this.getCurrentPositions(),
-      this.atomLayers.state.scale,
-      clientX,
-      clientY,
-      this.currentDrawingBoundary,
-      this.currentBondPeriodicImages,
-      this.atomRadiusScale(),
-      {
-        globalOpacity: this.atomLayers.state.opacity,
-        opacity: this.atomLayers.state.opacityOverrides,
-        scale: this.atomLayers.state.scaleOverrides,
-      },
-    );
+    return this.selection.pickAtPixel(clientX, clientY);
   }
 
   // ---- Selection & Measurement ----
 
   /** Toggle atom selection (right-click). Returns new selection state. */
   toggleAtomSelection(atomIndex: number): SelectionState {
-    const idx = this.selectedAtoms.indexOf(atomIndex);
-    if (idx >= 0) {
-      this.selectedAtoms.splice(idx, 1);
-    } else {
-      if (this.selectedAtoms.length >= 4) {
-        this.selectedAtoms.shift();
-      }
-      this.selectedAtoms.push(atomIndex);
-    }
-    this.updateSelectionVisuals();
-    return { atoms: [...this.selectedAtoms] };
+    return this.selection.toggle(atomIndex);
   }
 
   /** Set selected atoms directly (for external triggers). Returns new selection state. */
   setSelection(atomIndices: number[]): SelectionState {
-    this.selectedAtoms = atomIndices.slice(0, 4);
-    this.updateSelectionVisuals();
-    return { atoms: [...this.selectedAtoms] };
+    return this.selection.set(atomIndices);
   }
 
   /**
@@ -1900,31 +1316,12 @@ export class MoleculeRenderer {
    * measurement selection. Pass `null` or `[]` to clear.
    */
   setPreviewSelection(atomIndices: number[] | null): void {
-    clearGroup(this.previewSelectionGroup);
-    if (!this.snapshot || !atomIndices || atomIndices.length === 0) return;
-    drawHighlightSpheres(
-      this.previewSelectionGroup,
-      atomIndices,
-      this.getCurrentPositions(),
-      this.snapshot.elements,
-      0x22c55e,
-      0.3,
-      this.atomRadiusScale(),
-    );
+    this.selection.setPreview(atomIndices);
   }
 
   /** Return the indices of atoms whose centers fall inside a screen rectangle. */
   selectAtomsInRect(rect: ClientRect): number[] {
-    if (!this.container || !this.snapshot) return [];
-    return atomsInRect(
-      this.camera,
-      this.container,
-      this.snapshot,
-      this.getCurrentPositions(),
-      rect,
-      this.currentDrawingBoundary,
-      this.currentBondPeriodicImages,
-    );
+    return this.selection.atomsInRect(rect);
   }
 
   /**
@@ -1938,16 +1335,7 @@ export class MoleculeRenderer {
     toX: number,
     toY: number,
   ): [number, number, number] | null {
-    if (!this.container || !this.snapshot || atomIndex < 0 || atomIndex >= this.snapshot.nAtoms) {
-      return null;
-    }
-    const pos = this.getCurrentPositions();
-    const anchor: [number, number, number] = [
-      pos[atomIndex * 3],
-      pos[atomIndex * 3 + 1],
-      pos[atomIndex * 3 + 2],
-    ];
-    return screenDragToWorldDelta(this.camera, this.container, anchor, fromX, fromY, toX, toY);
+    return this.selection.dragDeltaForAtom(atomIndex, fromX, fromY, toX, toY);
   }
 
   /**
@@ -1956,61 +1344,22 @@ export class MoleculeRenderer {
    * a new atom on empty space. Null when nothing is mounted.
    */
   screenToWorldAtPivot(clientX: number, clientY: number): [number, number, number] | null {
-    if (!this.container || !this.controls) return null;
-    const t = this.controls.target;
-    return screenToWorldOnPlane(this.camera, this.container, [t.x, t.y, t.z], clientX, clientY);
+    return this.cameraController.screenToWorldAtPivot(clientX, clientY);
   }
 
   /** Enable/disable camera controls (used to suspend camera rotation during a box drag). */
   setControlsEnabled(enabled: boolean): void {
-    if (this.controls) this.controls.enabled = enabled;
+    this.cameraController.setControlsEnabled(enabled);
   }
 
   /** Clear all selected atoms. */
   clearSelection(): void {
-    this.selectedAtoms = [];
-    this.updateSelectionVisuals();
+    this.selection.clear();
   }
 
   /** Compute the current geometric measurement based on selected atoms. */
   getMeasurement(): Measurement | null {
-    if (!this.snapshot || this.selectedAtoms.length < 2) return null;
-    return computeMeasurement(this.getCurrentPositions(), this.selectedAtoms);
-  }
-
-  private updateSelectionVisuals(): void {
-    clearGroup(this.selectionGroup);
-
-    if (!this.snapshot || this.selectedAtoms.length === 0) return;
-
-    const pos = this.getCurrentPositions();
-    const elements = this.snapshot.elements;
-
-    // Highlight spheres
-    drawHighlightSpheres(
-      this.selectionGroup,
-      this.selectedAtoms,
-      pos,
-      elements,
-      0x4285f4,
-      0.35,
-      this.atomRadiusScale(),
-    );
-
-    // Connecting lines
-    if (this.selectedAtoms.length >= 2) {
-      const points = this.selectedAtoms.map(
-        (i) => new THREE.Vector3(pos[i * 3], pos[i * 3 + 1], pos[i * 3 + 2]),
-      );
-      const lineGeo = new THREE.BufferGeometry().setFromPoints(points);
-      const lineMat = new THREE.LineBasicMaterial({
-        color: 0x4285f4,
-        depthTest: false,
-      });
-      const line = new THREE.Line(lineGeo, lineMat);
-      line.renderOrder = 999;
-      this.selectionGroup.add(line);
-    }
+    return this.selection.getMeasurement();
   }
 
   private setupDprListener(): void {
@@ -2041,16 +1390,7 @@ export class MoleculeRenderer {
     this.lastDpr = dpr;
 
     this.renderer.setPixelRatio(dpr);
-
-    if (this.camera instanceof THREE.OrthographicCamera) {
-      // Recalculate full frustum accounting for overlay insets so the view
-      // stays correct when the container aspect ratio changes.
-      // camera.zoom is left untouched so the user's zoom level is preserved.
-      this.doApplyFrustumInsets();
-    } else {
-      this.camera.aspect = w / h;
-      this.camera.updateProjectionMatrix();
-    }
+    this.cameraController.resize(w, h);
     this.renderer.setSize(w, h, false);
     this.labelOverlay?.resize(w, h, dpr);
     // The controls normalise pointer travel by the canvas rect, so they have
@@ -2078,34 +1418,8 @@ export class MoleculeRenderer {
       }
     }
 
-    // Tick smooth pivot animation (set by setRotationCenter).
-    // Both controls.target and camera.position are translated by the same
-    // delta so the scene pans to center the clicked atom on screen.
-    // Damping momentum is dropped so a decaying rotation from a prior drag
-    // does not add unwanted motion.
-    if (this.pivotAnim) {
-      const t = Math.min(
-        (performance.now() - this.pivotAnim.startTime) / this.pivotAnim.duration,
-        1,
-      );
-      const ease = 1 - Math.pow(1 - t, 3); // ease-out cubic
-      this.controls.target.lerpVectors(this.pivotAnim.startTarget, this.pivotAnim.endTarget, ease);
-      this.camera.position.lerpVectors(
-        this.pivotAnim.startCameraPos,
-        this.pivotAnim.endCameraPos,
-        ease,
-      );
-      if (t >= 1) this.pivotAnim = null;
-      // Sync without momentum so the controls cannot override the
-      // manually-set camera position.
-      this.controls.syncImmediate();
-    } else {
-      this.controls.update();
-    }
-
-    // Keep perspective near/far tracking the dolly distance so zooming out
-    // always brings the model back into the frustum (no-op for orthographic).
-    updatePerspectiveClipping(this.camera, this.controls, this.lastExtent);
+    // Pivot animation / drag momentum, perspective clipping.
+    this.cameraController.tick();
 
     // Update pivot marker position and scale
     if (this.pivotMarker) {
@@ -2143,7 +1457,7 @@ export class MoleculeRenderer {
       this.labelOverlay.render(this.camera, _size.x, _size.y, _dpr);
     }
 
-    _signalRender(this.snapshot != null);
+    signalRender(this.snapshot != null);
 
     // Update the live FPS counter (drives the performance HUD; cheap and
     // always on, unlike the __MEGANE_PERF__-gated frame buffer below).
@@ -2185,55 +1499,32 @@ export class MoleculeRenderer {
     if (this.dprMediaQuery && this.dprChangeHandler) {
       this.dprMediaQuery.removeEventListener("change", this.dprChangeHandler);
     }
-    if (this.wheelZoomHandler && this.container) {
-      this.container.removeEventListener("wheel", this.wheelZoomHandler, true);
-      this.wheelZoomHandler = null;
-    }
-    this.customPanCleanup?.();
-    this.customPanCleanup = null;
     // mount() can throw part-way (no WebGL context, a controls constructor
     // failure), leaving these unset. dispose() still runs from the host's
     // unmount cleanup, so it must not throw there: an exception in a React
     // effect cleanup takes down the page being navigated to.
-    this.controls?.dispose();
+    this.cameraController.dispose();
     this.renderer?.dispose();
     if (this.container && this.renderer?.domElement.parentNode) {
       this.container.removeChild(this.renderer.domElement);
     }
-    if (_activeRenderer === this) {
-      _setActiveRenderer(null);
-    }
+    releaseActiveRenderer(this);
   }
 
-  // ---- Test-only API (gated on _testMode via _setActiveRenderer) ----
+  // ---- Test-only API (gated on test mode via setActiveRenderer) ----
   // These methods exist so Playwright specs can observe renderer state
   // without driving non-deterministic mouse paths. They are wired to
-  // window.__megane_test only when _testMode is true; outside tests they
+  // window.__megane_test only in test mode; outside tests they
   // are harmless instance methods.
 
   /** Switch projection mode by name (wraps setPerspective for symmetry). */
   setCameraMode(mode: MeganeCameraMode): void {
-    this.setPerspective(mode === "perspective");
-    this._cameraChangeCallback?.();
+    this.cameraController.setCameraMode(mode);
   }
 
   /** Re-fit the camera to the current snapshot's bounding box. */
   resetCamera(): void {
-    if (!this.snapshot) return;
-    this.lastExtent = fitCameraToView(this.camera, this.controls, this.snapshot);
-    if (this.camera instanceof THREE.OrthographicCamera && this.container) {
-      applyFrustumInsets(
-        this.camera,
-        this.container.clientWidth,
-        this.container.clientHeight,
-        this.viewInsetLeft,
-        this.viewInsetRight,
-        this.lastExtent,
-      );
-    }
-    this._frustumPanX = 0;
-    this._frustumPanY = 0;
-    this._cameraChangeCallback?.();
+    this.cameraController.resetCamera();
   }
 
   /**
@@ -2244,51 +1535,22 @@ export class MoleculeRenderer {
    * and up-vector conventions.
    */
   alignCameraToAxis(axis: ViewAxis): void {
-    if (!this.camera || !this.controls) return;
-    const orientation = axisOrientation(axis, this.snapshot?.box ?? null);
-    orientCamera(this.camera, this.controls, orientation);
-    if (this.snapshot) {
-      // Resize / inset handling re-fits the orthographic frustum from
-      // lastExtent, which is measured along the screen axes.
-      this.lastExtent = computeViewBounds(this.snapshot, orientation).extent;
-    }
-    this._cameraChangeCallback?.();
+    this.cameraController.alignCameraToAxis(axis);
   }
 
   /** Register a callback invoked after each user camera interaction ends. */
   setCameraChangeCallback(cb: (() => void) | null): void {
-    this._cameraChangeCallback = cb;
+    this.cameraController.setCameraChangeCallback(cb);
   }
 
   /** Read current camera state. Returns null before mount. */
   getCameraState(): MeganeCameraState | null {
-    if (!this.camera || !this.controls) return null;
-    const pos = this.camera.position;
-    const tgt = this.controls.target;
-    const up = this.camera.up;
-    return {
-      mode: this.perspectiveMode ? "perspective" : "orthographic",
-      position: [pos.x, pos.y, pos.z],
-      target: [tgt.x, tgt.y, tgt.z],
-      zoom: this.camera.zoom,
-      up: [up.x, up.y, up.z],
-    };
+    return this.cameraController.getCameraState();
   }
 
   /** Restore camera to a previously saved state. */
   applyCameraState(state: MeganeCameraState): void {
-    if (!this.camera || !this.controls) return;
-    if ((state.mode === "perspective") !== this.perspectiveMode) {
-      this.setPerspective(state.mode === "perspective");
-    }
-    this.camera.position.set(...state.position);
-    this.controls.target.set(...state.target);
-    if (state.up) this.camera.up.set(...state.up);
-    this.camera.zoom = state.zoom;
-    this.camera.updateProjectionMatrix();
-    this.controls.syncImmediate();
-    this._frustumPanX = 0;
-    this._frustumPanY = 0;
+    this.cameraController.applyCameraState(state);
   }
 
   /** Read camera state for tests. Returns null before mount/snapshot. */
@@ -2315,24 +1577,6 @@ export class MoleculeRenderer {
 
   /** Project every atom of the primary snapshot to viewer-space pixels. */
   testGetProjectedAtomPositions(): MeganeProjectedAtom[] {
-    if (!this.snapshot || !this.container) return [];
-    const positions = this.currentPositions ?? this.snapshot.positions;
-    const elements = this.snapshot.elements;
-    const n = this.snapshot.nAtoms;
-    const w = this.container.clientWidth;
-    const h = this.container.clientHeight;
-    const out: MeganeProjectedAtom[] = new Array(n);
-    for (let i = 0; i < n; i++) {
-      const { sx, sy, depth } = projectToScreen(
-        this.camera,
-        positions[i * 3],
-        positions[i * 3 + 1],
-        positions[i * 3 + 2],
-        w,
-        h,
-      );
-      out[i] = { index: i, sx, sy, depth, element: elements[i] };
-    }
-    return out;
+    return this.selection.projectAtoms();
   }
 }

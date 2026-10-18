@@ -116,15 +116,39 @@ export const STRUCTURE_EXTS: readonly string[] = [
   ".phonon",
 ];
 
+/** Trajectory formats handled by the binary/text trajectory parsers. */
+export type TrajectoryKind = "xtc" | "dcd" | "lammpstrj" | "netcdf";
+
+/**
+ * Trajectory extension → parser kind. The single table every trajectory open
+ * path dispatches through (`trajectoryKindFromFileName`), and the source of
+ * `TRAJECTORY_EXTS` below, so the accept lists and the dispatch cannot drift.
+ */
+const TRAJECTORY_KIND_BY_EXT: ReadonlyMap<string, TrajectoryKind> = new Map([
+  [".xtc", "xtc"],
+  // LAMMPS dump spellings.
+  [".lammpstrj", "lammpstrj"],
+  [".dump", "lammpstrj"],
+  [".trj", "lammpstrj"],
+  [".dcd", "dcd"],
+  // AMBER NetCDF.
+  [".nc", "netcdf"],
+]);
+
 /** Every extension a trajectory file attached to a loaded topology is opened by. */
-export const TRAJECTORY_EXTS: readonly string[] = [
-  ".xtc",
-  ".lammpstrj",
-  ".dump",
-  ".trj",
-  ".dcd",
-  ".nc",
-];
+export const TRAJECTORY_EXTS: readonly string[] = [...TRAJECTORY_KIND_BY_EXT.keys()];
+
+/**
+ * Resolve which trajectory parser a file name dispatches to, or `null` when the
+ * extension is not a trajectory format (matched case-insensitively against the
+ * basename's last extension).
+ */
+export function trajectoryKindFromFileName(name: string): TrajectoryKind | null {
+  const ext = basename(name)
+    .toLowerCase()
+    .match(/\.[^.]+$/)?.[0];
+  return (ext && TRAJECTORY_KIND_BY_EXT.get(ext)) || null;
+}
 
 /** `STRUCTURE_EXTS` as a file-input `accept` attribute. */
 export const STRUCTURE_ACCEPT = STRUCTURE_EXTS.join(",");

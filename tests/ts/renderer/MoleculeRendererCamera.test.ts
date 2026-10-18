@@ -32,7 +32,8 @@ function makeControls(): ControlsStub {
 /**
  * Build a renderer instance with just enough state for the camera-state API.
  * We bypass mount() (which needs WebGL) by directly assigning the private
- * `camera`/`controls`/`perspectiveMode` fields via a typed cast.
+ * `camera`/`controls`/`perspectiveMode` fields of the renderer's camera
+ * controller via a typed cast.
  */
 function makeRenderer(opts: {
   camera: THREE.OrthographicCamera | THREE.PerspectiveCamera;
@@ -41,10 +42,10 @@ function makeRenderer(opts: {
 }): MoleculeRenderer {
   const r = new MoleculeRenderer();
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const internals = r as any;
-  internals.camera = opts.camera;
-  internals.controls = opts.controls;
-  internals.perspectiveMode = opts.perspectiveMode;
+  const ctl = (r as any).cameraController;
+  ctl.camera = opts.camera;
+  ctl.controls = opts.controls;
+  ctl.perspectiveMode = opts.perspectiveMode;
   return r;
 }
 
@@ -57,7 +58,7 @@ describe("MoleculeRenderer.getCameraState", () => {
   it("returns null when controls are missing", () => {
     const r = new MoleculeRenderer();
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    (r as any).camera = new THREE.OrthographicCamera();
+    (r as any).cameraController.camera = new THREE.OrthographicCamera();
     // controls is still undefined
     expect(r.getCameraState()).toBeNull();
   });
@@ -190,8 +191,8 @@ describe("MoleculeRenderer.applyCameraState", () => {
     const r = makeRenderer({ camera: cam, controls: ctrls, perspectiveMode: false });
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const internals = r as any;
-    internals._frustumPanX = 12;
-    internals._frustumPanY = -7;
+    internals.cameraController._frustumPanX = 12;
+    internals.cameraController._frustumPanY = -7;
 
     r.applyCameraState({
       mode: "orthographic",
@@ -200,8 +201,8 @@ describe("MoleculeRenderer.applyCameraState", () => {
       zoom: 1,
     });
 
-    expect(internals._frustumPanX).toBe(0);
-    expect(internals._frustumPanY).toBe(0);
+    expect(internals.cameraController._frustumPanX).toBe(0);
+    expect(internals.cameraController._frustumPanY).toBe(0);
   });
 
   it("calls setPerspective when the requested mode differs from the current mode", () => {
@@ -220,14 +221,15 @@ describe("MoleculeRenderer.applyCameraState", () => {
       zoom: 1,
     });
 
-    expect(internals.perspectiveMode).toBe(true);
+    expect(internals.cameraController.perspectiveMode).toBe(true);
   });
 
   it("skips setPerspective when the requested mode matches the current mode", () => {
     const cam = new THREE.OrthographicCamera();
     const ctrls = makeControls();
     const r = makeRenderer({ camera: cam, controls: ctrls, perspectiveMode: false });
-    const setPerspectiveSpy = vi.spyOn(r, "setPerspective");
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const setPerspectiveSpy = vi.spyOn((r as any).cameraController, "setPerspective");
 
     r.applyCameraState({
       mode: "orthographic",
@@ -287,8 +289,8 @@ describe("MoleculeRenderer.alignCameraToAxis", () => {
     expect(ctrls.update).toHaveBeenCalled();
     expect(cb).toHaveBeenCalledTimes(1);
     // The frustum-fit extent follows the new view.
-    expect(internals.lastExtent).toBeDefined();
-    expect(internals.lastExtent.maxExtent).toBeCloseTo(15, 5);
+    expect(internals.cameraController.lastExtent).toBeDefined();
+    expect(internals.cameraController.lastExtent.maxExtent).toBeCloseTo(15, 5);
   });
 
   it("falls back to the Cartesian axes without a snapshot", () => {
@@ -313,7 +315,7 @@ describe("MoleculeRenderer.setCameraChangeCallback", () => {
     const cb = vi.fn();
     r.setCameraChangeCallback(cb);
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    expect((r as any)._cameraChangeCallback).toBe(cb);
+    expect((r as any).cameraController._cameraChangeCallback).toBe(cb);
   });
 
   it("setCameraMode fires the registered callback", () => {

@@ -25,7 +25,7 @@ import type { StoreApi } from "zustand";
 import type { Node, Edge } from "@xyflow/react";
 import { parseStructureFile, parseTopBonds, parsePsfBonds } from "../parsers/structure";
 import { basename, isVaspBareName, STRUCTURE_EXTS, TRAJECTORY_EXTS } from "../parsers/fileNames";
-import { parseXTCFile, parseLammpstrjFile, parseDCDFile, parseNetCDFFile } from "../parsers/xtc";
+import { parseTrajectoryByName } from "../parsers/trajectoryDispatch";
 import { parseSpectrum } from "../parsers/spectrum";
 import { loadVectorFileData } from "../logic/vectorSourceLogic";
 import { companionFileName } from "./companionFiles";
@@ -296,19 +296,11 @@ async function openTrajectory(
     );
   }
 
-  const lower = file.name.toLowerCase();
-  const isLammps =
-    lower.endsWith(".lammpstrj") || lower.endsWith(".dump") || lower.endsWith(".trj");
-  const isDcd = lower.endsWith(".dcd");
-  const isNetcdf = lower.endsWith(".nc");
-  const parseFn = isLammps
-    ? parseLammpstrjFile
-    : isDcd
-      ? parseDCDFile
-      : isNetcdf
-        ? parseNetCDFFile
-        : parseXTCFile;
-  const { frames, meta } = await parseFn(file, loaderSnapshot.nAtoms);
+  const { frames, meta } = await parseTrajectoryByName(
+    file,
+    loaderSnapshot.nAtoms,
+    loaderSnapshot.elements,
+  );
 
   state.setFileFrames(frames, meta ?? null);
 
@@ -373,19 +365,11 @@ async function openPipeline(
     const name = basename(fname);
     const f = fileMap.get(name);
     if (!f) continue;
-    const lower = name.toLowerCase();
-    const isLammps =
-      lower.endsWith(".lammpstrj") || lower.endsWith(".dump") || lower.endsWith(".trj");
-    const isDcd = lower.endsWith(".dcd");
-    const isNetcdf = lower.endsWith(".nc");
-    const parseFn = isLammps
-      ? parseLammpstrjFile
-      : isDcd
-        ? parseDCDFile
-        : isNetcdf
-          ? parseNetCDFFile
-          : parseXTCFile;
-    const { frames, meta } = await parseFn(f, firstSnapshot.nAtoms);
+    const { frames, meta } = await parseTrajectoryByName(
+      f,
+      firstSnapshot.nAtoms,
+      firstSnapshot.elements,
+    );
     const state = api.getState();
     state.setFileFrames(frames, meta ?? null);
     state.updateNodeParams(node.id, { fileName: name });
