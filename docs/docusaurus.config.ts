@@ -53,6 +53,7 @@ const config: Config = {
   ],
 
   themeConfig: {
+    image: "brand/megane-social-preview.png",
     navbar: {
       title: "Megane",
       logo: {
