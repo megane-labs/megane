@@ -209,6 +209,15 @@ export function axisOrientation(
 }
 
 /**
+ * World axis the turntable camera keeps upright: +c (+z without a cell), the
+ * same axis {@link standardOrientation} puts up the screen, so a horizontal
+ * drag from the default view spins the model about its vertical axis.
+ */
+export function turntableUpAxis(box: ArrayLike<number> | null | undefined): Vec3 {
+  return unit((latticeVectors(box) ?? CARTESIAN_LATTICE).c);
+}
+
+/**
  * Screen-right direction of an orientation (`up × eye`), completing the
  * right-handed screen frame (right, up, eye).
  */

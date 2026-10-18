@@ -8,7 +8,7 @@
  */
 
 import * as THREE from "three";
-import { CameraControls } from "./CameraControls";
+import { CameraControls, isShiftPanGesture } from "./CameraControls";
 import type {
   Snapshot,
   Frame,
@@ -65,7 +65,7 @@ import {
   currentOrientation,
   type ViewExtent,
 } from "./CameraManager";
-import { axisOrientation, type ViewAxis } from "./cameraOrientation";
+import { axisOrientation, turntableUpAxis, type ViewAxis } from "./cameraOrientation";
 
 const _testMode = (() => {
   try {
@@ -179,8 +179,8 @@ export interface MeganeCameraState {
   target: [number, number, number];
   zoom: number;
   /**
-   * Camera up vector. The trackball controls roll the camera freely, so the
-   * orientation is only fully described together with `up`. Optional for
+   * Camera up vector. The controls tilt `up` with the view (and over the
+   * poles it points away from the turntable axis), so the orientation is only fully described together with `up`. Optional for
    * backward compatibility with states saved before it existed (those are
    * restored with whatever up the camera currently has).
    */
@@ -485,9 +485,9 @@ export class MoleculeRenderer {
     this.camera.position.set(0, -50, 0);
     this.camera.up.set(0, 0, 1);
 
-    // Controls (trackball: unrestricted rotation, no pole clamp). Built-in
-    // pan is off; right-drag is handled by attachCustomPanListener(), which
-    // keeps the rotation pivot at the screen center.
+    // Controls (turntable about +c / +z, no pole clamp). Built-in pan is off;
+    // right-drag and Shift+left-drag are handled by attachCustomPanListener(),
+    // which keeps the rotation pivot fixed in world space.
     this.controls = this.createControls();
     this.attachWheelZoomListener();
     this.attachCustomPanListener();
@@ -541,6 +541,7 @@ export class MoleculeRenderer {
   loadSnapshot(snapshot: Snapshot, opts: { fit?: boolean } = {}): void {
     this.snapshot = snapshot;
     this.currentPositions = new Float32Array(snapshot.positions);
+    this.controls?.upAxis.set(...turntableUpAxis(snapshot.box));
 
     const _ready = _getTestReady();
     if (_ready) {
@@ -1510,24 +1511,30 @@ export class MoleculeRenderer {
     }
   }
 
-  /** Set the rotation center (controls target) to the given world coordinates.
-   * @param animate  - When true (default), smoothly animates the transition over
-   *   PIVOT_ANIM_DURATION_MS.  Pass false to update synchronously (legacy behaviour).
-   * The clicked atom is animated to the screen center.
+  /**
+   * Set the rotation center (controls target) to the given world point.
+   *
+   * Orthographic cameras follow OVITO: the view does not move, the scene
+   * simply starts orbiting around the new point wherever it is on screen.
+   * The camera is translated so it looks at the point and the frustum is
+   * shifted back by the same screen-space offset (booked as frustum pan, so
+   * resize and wheel zoom keep it).
+   *
+   * Perspective cameras cannot shift their view that way without changing
+   * the picture (parallax), so they pan the point to the screen center —
+   * smoothly over PIVOT_ANIM_DURATION_MS when `animate` is true (default).
    */
   setRotationCenter(x: number, y: number, z: number, animate = true): void {
-    // Clear accumulated frustum pan so the new rotation center is centered in
-    // the viewport after the animation completes.
-    this._frustumPanX = 0;
-    this._frustumPanY = 0;
-    if (this.camera instanceof THREE.OrthographicCamera) {
-      this.doApplyFrustumInsets(); // snap frustum back to clean state
-    }
+    this.snapPivotAnimToEnd();
     const endTarget = new THREE.Vector3(x, y, z);
+    if (this.camera instanceof THREE.OrthographicCamera) {
+      this.moveOrbitCenterInPlace(this.camera, endTarget);
+      return;
+    }
     if (!animate) {
-      this.pivotAnim = null;
+      this.camera.position.add(endTarget.clone().sub(this.controls.target));
       this.controls.target.copy(endTarget);
-      this.controls.update();
+      this.controls.syncImmediate();
       return;
     }
     const startTarget = this.controls.target.clone();
@@ -1536,9 +1543,7 @@ export class MoleculeRenderer {
     const endCameraPos = startCameraPos.clone().add(delta);
 
     // Translate both controls.target and camera.position by the same delta
-    // so the scene pans smoothly to center the clicked atom on screen.
-    // Damping momentum is dropped during animation frames (see render loop)
-    // so a decaying drag rotation cannot add unwanted motion.
+    // so the scene pans smoothly to center the clicked point on screen.
     this.pivotAnim = {
       startTarget,
       endTarget,
@@ -1547,6 +1552,41 @@ export class MoleculeRenderer {
       startTime: performance.now(),
       duration: MoleculeRenderer.PIVOT_ANIM_DURATION_MS,
     };
+  }
+
+  /**
+   * Reset the rotation center to the model center — the point a fresh fit
+   * orbits around (cell center, or the atoms' centroid without a cell) —
+   * keeping the view as {@link setRotationCenter} does.
+   */
+  resetRotationCenter(): void {
+    if (!this.snapshot) return;
+    const { center } = computeViewBounds({
+      ...this.snapshot,
+      positions: this.getCurrentPositions(),
+    });
+    this.setRotationCenter(center[0], center[1], center[2]);
+  }
+
+  /** Orthographic half of {@link setRotationCenter}: re-pivot without moving the image. */
+  private moveOrbitCenterInPlace(camera: THREE.OrthographicCamera, pivot: THREE.Vector3): void {
+    camera.updateMatrixWorld();
+    const delta = pivot.clone().sub(this.controls.target);
+    const shiftX = delta.dot(this._panRight.setFromMatrixColumn(camera.matrixWorld, 0));
+    const shiftY = delta.dot(this._panUp.setFromMatrixColumn(camera.matrixWorld, 1));
+    // Moving the camera by `delta` keeps its direction (it still looks at the
+    // target, now the pivot) but slides every point by -shift on screen;
+    // moving the frustum window by -shift slides them back.
+    camera.position.add(delta);
+    this.controls.target.copy(pivot);
+    camera.left -= shiftX;
+    camera.right -= shiftX;
+    camera.top -= shiftY;
+    camera.bottom -= shiftY;
+    this._frustumPanX -= shiftX;
+    this._frustumPanY -= shiftY;
+    camera.updateProjectionMatrix();
+    this.controls.syncImmediate();
   }
 
   /** Immediately snap any in-progress pivot animation to its final state.
@@ -1566,12 +1606,13 @@ export class MoleculeRenderer {
   }
 
   /**
-   * Build trackball controls for the current camera and wire the renderer's
+   * Build turntable controls for the current camera and wire the renderer's
    * interaction hooks: a starting drag snaps any pivot animation to its end
    * pose, and a finished interaction notifies the camera-change callback.
    */
   private createControls(): CameraControls {
     const controls = new CameraControls(this.camera, this.renderer.domElement);
+    controls.upAxis.set(...turntableUpAxis(this.snapshot?.box ?? null));
     controls.addEventListener("start", () => {
       this.snapPivotAnimToEnd();
     });
@@ -1624,9 +1665,9 @@ export class MoleculeRenderer {
   }
 
   /**
-   * Attach a custom right-mouse-drag pan listener that translates only the
-   * camera (not controls.target) so the rotation center remains fixed in
-   * world space.
+   * Attach a custom pan listener (right-drag, or Shift+left-drag as in OVITO)
+   * that translates only the camera (not controls.target) so the rotation
+   * center remains fixed in world space.
    *
    * For orthographic cameras the pan is implemented as a frustum shift so
    * the view direction never changes.  For perspective cameras the camera
@@ -1637,7 +1678,10 @@ export class MoleculeRenderer {
     const el = this.renderer.domElement;
 
     const onPointerDown = (e: PointerEvent) => {
-      if (e.button !== 2) return;
+      // Shift+left shares the left button with rotation, box selection and
+      // Builder drags; those suspend the controls, and so suspend this pan.
+      const shiftPan = isShiftPanGesture(e) && this.controls.enabled;
+      if (e.button !== 2 && !shiftPan) return;
       if (this.customPanActive) return;
       this.snapPivotAnimToEnd();
       this.customPanActive = true;
@@ -1653,6 +1697,9 @@ export class MoleculeRenderer {
       const dy = e.clientY - this.customPanLastY;
       this.customPanLastX = e.clientX;
       this.customPanLastY = e.clientY;
+      // A Builder atom drag that began on the same press disables the
+      // controls after this listener ran; the atom drag wins.
+      if (!this.controls.enabled) return;
       this.applyCustomPan(dx, dy);
     };
 
@@ -1913,6 +1960,11 @@ export class MoleculeRenderer {
       this.currentDrawingBoundary,
       this.currentBondPeriodicImages,
       this.atomRadiusScale(),
+      {
+        globalOpacity: this.atomOpacity,
+        opacity: this.currentAtomOpacityOverrides,
+        scale: this.currentAtomScaleOverrides,
+      },
     );
   }
 
@@ -2099,8 +2151,8 @@ export class MoleculeRenderer {
     }
     this.renderer.setSize(w, h, false);
     this.labelOverlay?.resize(w, h, dpr);
-    // The trackball maps pointer travel onto a virtual sphere sized from the
-    // canvas rect, so it has to learn the new dimensions.
+    // The controls normalise pointer travel by the canvas rect, so they have
+    // to learn the new dimensions.
     this.controls.handleResize();
   }
 

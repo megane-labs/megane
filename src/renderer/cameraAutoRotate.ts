@@ -2,10 +2,10 @@
  * Slow, continuous orbit of a `MoleculeRenderer` camera around its target —
  * the decorative auto-rotation used by the docs landing hero and demo embeds.
  *
- * The viewer's camera controls are a trackball (`CameraControls`), and
- * three.js `TrackballControls` has no `autoRotate` option (that was an
+ * The viewer's camera controls (`CameraControls`) build on three.js
+ * `TrackballControls`, which has no `autoRotate` option (that was an
  * `OrbitControls` feature). Each frame this spins the camera position around
- * the target about the camera's own up vector; the trackball re-derives its
+ * the target about the camera's own up vector; the controls re-derive their
  * eye vector from `camera.position − target` on every `update()`, so the
  * externally applied rotation persists and stays interaction-free.
  *

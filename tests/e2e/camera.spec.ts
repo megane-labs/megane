@@ -5,9 +5,9 @@
  * (`window.__megane_test.{setCameraMode,resetCamera,getCameraState}`).
  * The pixel cases deliberately avoid mouse-driven camera input (pointer
  * event batching makes a drag's exact end pose timing-dependent) and
- * assert state transitions through the programmatic API; the
- * pole-crossing case drags for real but only asserts camera state, never
- * pixels.
+ * assert state transitions through the programmatic API; the mouse-driven
+ * cases drag for real but only assert camera state and projected atom
+ * positions, never pixels.
  *
  * Cases:
  *   - Initial state: orthographic, target near origin, VESTA standard
@@ -17,6 +17,9 @@
  *   - alignCamera('+c') / the ±a…±z buttons turn the camera onto an axis
  *     keeping the distance (issue #661)
  *   - a vertical left-drag rotates past the pole (issue #662)
+ *   - OVITO-style navigation: double-click sets the orbit center without
+ *     moving the view (empty space resets it), Shift + left drag pans, and
+ *     left drags never roll the model off its c axis
  *
  * Widget hosts skip — WidgetViewer also exposes the renderer test API,
  * but the widget-jupyterlab/widget-vscode boots add ~30s+ overhead per
@@ -288,7 +291,7 @@ test("camera: orthographic wheel zoom-out restores atoms (no reset needed)", asy
  * sits slightly above the ab plane with c up; a vertical left-drag tilts the
  * camera over the c pole. OrbitControls clamped the polar angle there, so
  * the camera could never reach the far side of the cell (its horizontal
- * offset from the target flipped sign). The trackball controls keep turning,
+ * offset from the target flipped sign). The turntable controls keep turning,
  * so repeated upward drags eventually put it there.
  */
 test("camera: left-drag rotates continuously across the pole", async () => {
@@ -381,4 +384,202 @@ test("camera: left-drag rotates continuously across the pole", async () => {
   expect(end.target[0]).toBeCloseTo(start.target[0], 3);
   expect(end.target[1]).toBeCloseTo(start.target[1], 3);
   expect(end.target[2]).toBeCloseTo(start.target[2], 3);
+});
+
+/** Page-space geometry of the viewer canvas plus an unobstructed-pixel probe. */
+async function canvasGeometry(scope: HostBoot["scope"]) {
+  const page = "page" in scope ? scope.page() : scope;
+  const canvas = scope.locator('[data-testid="viewer-root"] canvas').first();
+  await canvas.scrollIntoViewIfNeeded();
+  const box = (await canvas.boundingBox())!;
+  // VSCode hosts: page (mouse) coordinates vs. frame-local (elementFromPoint).
+  const local = await canvas.evaluate((el) => {
+    const r = el.getBoundingClientRect();
+    return { x: r.x, y: r.y };
+  });
+  const offX = box.x - local.x;
+  const offY = box.y - local.y;
+  const viewportH = page.viewportSize()?.height ?? box.y + box.height;
+  /** Which of the given page points land on the WebGL canvas (not a panel). */
+  const onCanvas = (points: { x: number; y: number }[]) =>
+    scope.evaluate(
+      ({ points, offX, offY, viewportH }) =>
+        points.map(({ x, y }) => {
+          if (y < 0 || y > viewportH) return false;
+          const el = document.elementFromPoint(x - offX, y - offY);
+          return el?.tagName === "CANVAS" && !!el.closest('[data-testid="viewer-root"]');
+        }),
+      { points, offX, offY, viewportH },
+    );
+  return { page, box, onCanvas };
+}
+
+/** Distance of each atom's projection from the corresponding one in `ref`. */
+function maxScreenShift(a: { sx: number; sy: number }[], b: { sx: number; sy: number }[]) {
+  let max = 0;
+  for (let i = 0; i < a.length; i++) {
+    max = Math.max(max, Math.hypot(a[i].sx - b[i].sx, a[i].sy - b[i].sy));
+  }
+  return max;
+}
+
+/**
+ * OVITO orbit center: double-clicking an atom makes it the pivot without
+ * moving the view (the old behaviour panned it to the screen centre), and the
+ * scene then orbits around it — the picked atom stays under the pointer while
+ * everything else turns. Double-clicking empty space resets the pivot to the
+ * model centre, again without moving the view.
+ */
+test("camera: double-click sets the orbit center in place; empty space resets it", async () => {
+  if (!boot) test.skip(true, "boot not initialised");
+  const scope = boot!.scope;
+  await setCameraMode(scope, "orthographic");
+  await resetCamera(scope);
+  await scope.waitForTimeout(200);
+  const { page, box, onCanvas } = await canvasGeometry(scope);
+  const home = (await getCameraState(scope))!;
+
+  // An atom whose centre pixel is unobstructed, not covered by a nearer
+  // atom, and well away from the canvas centre.
+  const atoms = await getProjectedAtoms(scope);
+  const byDepth = [...atoms].sort((p, q) => p.depth - q.depth);
+  const candidates = byDepth.filter(
+    (a, i) =>
+      a.sx > 40 &&
+      a.sy > 40 &&
+      a.sx < box.width - 40 &&
+      a.sy < box.height - 40 &&
+      Math.hypot(a.sx - box.width / 2, a.sy - box.height / 2) > 60 &&
+      !byDepth.slice(0, i).some((b) => Math.hypot(a.sx - b.sx, a.sy - b.sy) < 15),
+  );
+  const ok = await onCanvas(
+    candidates.slice(0, 200).map((a) => ({ x: box.x + a.sx, y: box.y + a.sy })),
+  );
+  const atom = candidates[ok.indexOf(true)];
+  expect(atom).toBeDefined();
+  const click = { x: box.x + atom.sx, y: box.y + atom.sy };
+
+  await page.mouse.dblclick(click.x, click.y);
+  await scope.waitForTimeout(300);
+  const pivoted = (await getCameraState(scope))!;
+  expect(distanceOf(pivoted)).toBeGreaterThan(0);
+  expect(Math.hypot(...pivoted.target.map((t, i) => t - home.target[i]))).toBeGreaterThan(1);
+  // The view itself did not move.
+  expect(maxScreenShift(await getProjectedAtoms(scope), atoms)).toBeLessThan(0.5);
+  expectVec(eyeOf(pivoted), eyeOf(home), 6);
+
+  // Orbit: the picked atom stays put, the rest of the scene turns.
+  await page.mouse.move(click.x, click.y);
+  await page.mouse.down();
+  await page.mouse.move(click.x + 40, click.y + 20, { steps: 8 });
+  await page.mouse.up();
+  await scope.waitForTimeout(200);
+  const turned = await getProjectedAtoms(scope);
+  expect(Math.hypot(turned[atom.index].sx - atom.sx, turned[atom.index].sy - atom.sy)).toBeLessThan(
+    1,
+  );
+  expect(maxScreenShift(turned, atoms)).toBeGreaterThan(10);
+
+  // Empty space: farther than any atom's radius from every projection.
+  const grid: { x: number; y: number }[] = [];
+  for (let fy = 0.05; fy < 1; fy += 0.05) {
+    for (let fx = 0.02; fx < 1; fx += 0.04) {
+      const sx = box.width * fx;
+      const sy = box.height * fy;
+      if (turned.every((a) => Math.hypot(a.sx - sx, a.sy - sy) > 40)) {
+        grid.push({ x: box.x + sx, y: box.y + sy });
+      }
+    }
+  }
+  const emptyOk = await onCanvas(grid);
+  const empty = grid[emptyOk.indexOf(true)];
+  expect(empty).toBeDefined();
+  await page.mouse.dblclick(empty.x, empty.y);
+  await scope.waitForTimeout(300);
+  const reset = (await getCameraState(scope))!;
+  expectVec(reset.target, home.target, 2);
+  expect(maxScreenShift(await getProjectedAtoms(scope), turned)).toBeLessThan(0.5);
+});
+
+/** OVITO's Shift + left-drag pans instead of rotating. */
+test("camera: Shift + left drag pans without rotating", async () => {
+  if (!boot) test.skip(true, "boot not initialised");
+  const scope = boot!.scope;
+  await setCameraMode(scope, "orthographic");
+  await resetCamera(scope);
+  await scope.waitForTimeout(200);
+  const { page, box, onCanvas } = await canvasGeometry(scope);
+  const before = (await getCameraState(scope))!;
+  const atoms = await getProjectedAtoms(scope);
+
+  const starts = [0.5, 0.3, 0.2].map((f) => ({
+    x: box.x + box.width * f,
+    y: box.y + Math.min(box.height, 400) / 2,
+  }));
+  const ends = starts.map((p) => ({ x: p.x + 60, y: p.y }));
+  const okStart = await onCanvas(starts);
+  const okEnd = await onCanvas(ends);
+  const i = okStart.findIndex((ok, k) => ok && okEnd[k]);
+  expect(i).toBeGreaterThanOrEqual(0);
+
+  await page.mouse.move(starts[i].x, starts[i].y);
+  await page.keyboard.down("Shift");
+  await page.mouse.down();
+  await page.mouse.move(ends[i].x, ends[i].y, { steps: 6 });
+  await page.mouse.up();
+  await page.keyboard.up("Shift");
+  await scope.waitForTimeout(200);
+
+  const after = (await getCameraState(scope))!;
+  expectVec(eyeOf(after), eyeOf(before), 6);
+  expectVec(after.up!, before.up!, 6);
+  expectVec(after.target, before.target, 4);
+  // Every atom slid 60 px to the right with the pointer.
+  const moved = await getProjectedAtoms(scope);
+  for (const k of [0, Math.floor(atoms.length / 2), atoms.length - 1]) {
+    expect(moved[k].sx - atoms[k].sx).toBeCloseTo(60, 0);
+    expect(moved[k].sy - atoms[k].sy).toBeCloseTo(0, 0);
+  }
+});
+
+/**
+ * Turntable rotation (OVITO orbit mode): however the pointer wanders, screen
+ * right stays perpendicular to the cell's c axis, i.e. the model never rolls.
+ */
+test("camera: left drags never roll the model off its c axis", async () => {
+  if (!boot) test.skip(true, "boot not initialised");
+  const scope = boot!.scope;
+  await setCameraMode(scope, "orthographic");
+  await resetCamera(scope);
+  await scope.waitForTimeout(200);
+  const { page, box, onCanvas } = await canvasGeometry(scope);
+  const home = eyeOf((await getCameraState(scope))!);
+  const visH = Math.min(box.height, 400);
+  const path = [
+    [0.3, 0.8],
+    [0.6, 0.2],
+    [0.2, 0.5],
+    [0.5, 0.7],
+  ].map(([fx, fy]) => ({ x: box.x + box.width * fx * 0.5, y: box.y + visH * fy }));
+  expect((await onCanvas(path)).every(Boolean)).toBe(true);
+
+  await page.mouse.move(path[0].x, path[0].y);
+  await page.mouse.down();
+  for (const p of path.slice(1)) await page.mouse.move(p.x, p.y, { steps: 10 });
+  await page.mouse.up();
+  await scope.waitForTimeout(200);
+
+  const s = (await getCameraState(scope))!;
+  const eye = eyeOf(s);
+  const up = s.up!;
+  // right = up × eye; the fixture's c axis is +z.
+  const rightZ = up[0] * eye[1] - up[1] * eye[0];
+  const rightLen = Math.hypot(
+    up[1] * eye[2] - up[2] * eye[1],
+    up[2] * eye[0] - up[0] * eye[2],
+    rightZ,
+  );
+  expect(Math.abs(rightZ / rightLen)).toBeLessThan(1e-4);
+  // ...and the drag really turned the camera.
+  expect(Math.hypot(eye[0] - home[0], eye[1] - home[1], eye[2] - home[2])).toBeGreaterThan(0.1);
 });

@@ -49,6 +49,28 @@ export function screenRadius(
   return worldRadius * pxPerUnit;
 }
 
+/**
+ * Per-atom drawing state that decides whether, and how large, an atom can be
+ * picked — mirroring what the atom renderer actually draws, so a click never
+ * lands on an atom the user cannot see.
+ */
+export interface AtomPickVisibility {
+  /** Global atom opacity; at 0 no atom is drawn. */
+  globalOpacity: number;
+  /** Per-atom opacity overrides (Modify node); atoms at 0 are not drawn. */
+  opacity: Float32Array | null;
+  /** Per-atom scale overrides (Modify node); scales the pick radius. */
+  scale: Float32Array | null;
+}
+
+/** Pick-radius multiplier for atom `i`: 0 when the atom is not drawn. */
+function pickRadiusFactor(visibility: AtomPickVisibility | null, i: number): number {
+  if (!visibility) return 1;
+  if (visibility.globalOpacity <= 0) return 0;
+  if (visibility.opacity && visibility.opacity[i] <= 0) return 0;
+  return visibility.scale ? visibility.scale[i] : 1;
+}
+
 /** Perform a pick at the given screen coordinates using CPU screen-space projection. */
 export function pickAtPixel(
   camera: THREE.OrthographicCamera | THREE.PerspectiveCamera,
@@ -66,6 +88,7 @@ export function pickAtPixel(
    * radius stops matching the sphere the user is actually clicking on.
    */
   radiusScale: number = BALL_STICK_ATOM_SCALE,
+  visibility: AtomPickVisibility | null = null,
 ): HoverInfo {
   const rect = container.getBoundingClientRect();
   const mx = clientX - rect.left; // mouse in pixels relative to container
@@ -93,8 +116,10 @@ export function pickAtPixel(
       h,
     );
     if (depth <= 0) continue; // behind camera
+    const factor = pickRadiusFactor(visibility, i);
+    if (factor <= 0) continue; // not drawn
 
-    const worldR = getRadius(elements[i]) * radiusScale * atomScale;
+    const worldR = getRadius(elements[i]) * radiusScale * atomScale * factor;
     const screenR = screenRadius(camera, worldR, depth, h);
     const dx = mx - sx;
     const dy = my - sy;
@@ -121,7 +146,9 @@ export function pickAtPixel(
         h,
       );
       if (depth <= 0) continue;
-      const worldR = getRadius(elements[source]) * radiusScale * atomScale;
+      const factor = pickRadiusFactor(visibility, source);
+      if (factor <= 0) continue;
+      const worldR = getRadius(elements[source]) * radiusScale * atomScale * factor;
       const screenR = screenRadius(camera, worldR, depth, h);
       const dx = mx - sx;
       const dy = my - sy;

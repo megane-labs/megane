@@ -125,6 +125,24 @@ standardOrientation(snapshot.box); // VESTA standard orientation
 axisOrientation("-b", snapshot.box); // camera on the −b side, c up
 ```
 
+### Mouse controls
+
+The camera follows OVITO's orbit mode on every host:
+
+| Input | Action |
+| --- | --- |
+| Left drag | Orbit around the rotation center. Horizontal motion spins about +c (+z without a cell), vertical motion tilts; the model never rolls, and the tilt keeps going over the poles instead of stopping there |
+| Right drag, or <kbd>Shift</kbd> + left drag | Pan |
+| Middle drag, wheel | Zoom |
+| Double-click an atom or bond | Make it the rotation center (marked by a 3D cross). In the default orthographic projection the view does not move; with perspective on, the point is panned to the center |
+| Double-click empty space | Reset the rotation center to the model center |
+
+A periodic image counts as the atom you see: double-clicking it pivots on that
+copy, not on the original in the home cell. Atoms hidden with a Modify node's
+`opacity: 0` cannot be picked, so they never steal a double-click, hover or
+selection from the atoms behind them. `renderer.setRotationCenter(x, y, z)` and
+`renderer.resetRotationCenter()` expose the same operations.
+
 See the [TypeScript Pipeline API](/guide/pipeline/typescript) for the complete interface.
 
 ---

@@ -2,12 +2,13 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import * as THREE from "three";
 import {
   CameraControls,
-  TRACKBALL_ROTATE_SPEED,
+  ORBIT_SPEED,
   TRACKBALL_ZOOM_SPEED,
+  isShiftPanGesture,
 } from "@/renderer/CameraControls";
 
 /**
- * Trackball camera controls (issue #662).
+ * Turntable (OVITO orbit-mode) camera controls.
  *
  * The controls are driven with real pointer events on a jsdom element so the
  * rotation math is exercised end-to-end. jsdom has no PointerEvent or
@@ -32,8 +33,8 @@ function makeCamera(): THREE.OrthographicCamera {
   return cam;
 }
 
-function pointer(type: string, x: number, y: number, button = 0): MouseEvent {
-  return new MouseEvent(type, { clientX: x, clientY: y, button, bubbles: true });
+function pointer(type: string, x: number, y: number, button = 0, shiftKey = false): MouseEvent {
+  return new MouseEvent(type, { clientX: x, clientY: y, button, shiftKey, bubbles: true });
 }
 
 /**
@@ -47,8 +48,9 @@ function drag(
   from: [number, number],
   to: [number, number],
   steps = 20,
+  shiftKey = false,
 ): void {
-  el.dispatchEvent(pointer("pointerdown", from[0], from[1]));
+  el.dispatchEvent(pointer("pointerdown", from[0], from[1], 0, shiftKey));
   for (let i = 1; i <= steps; i++) {
     const t = i / steps;
     const x = from[0] + (to[0] - from[0]) * t;
@@ -65,10 +67,10 @@ describe("CameraControls defaults", () => {
     el = makeElement();
   });
 
-  it("applies the viewer's trackball tuning", () => {
+  it("applies the viewer's tuning", () => {
     const controls = new CameraControls(makeCamera(), el);
-    expect(controls.rotateSpeed).toBe(TRACKBALL_ROTATE_SPEED);
     expect(controls.zoomSpeed).toBe(TRACKBALL_ZOOM_SPEED);
+    expect(controls.upAxis.toArray()).toEqual([0, 0, 1]);
     // Static motion: no inertial glide after release.
     expect(controls.staticMoving).toBe(true);
     controls.dispose();
@@ -121,42 +123,131 @@ describe("CameraControls rotation", () => {
     expect(end).toHaveBeenCalledTimes(1);
   });
 
+  /** Angle (rad) of the camera around the target in the plane ⟂ to z. */
+  const azimuth = () => Math.atan2(camera.position.x, -camera.position.y);
+
+  it("rotates ORBIT_SPEED radians per viewport height of travel", () => {
+    // 120 px up of 600 px height → 1 rad of tilt. Dragging up rolls the
+    // near side of the model upward, so the camera swings below it.
+    drag(controls, el, [400, 400], [400, 280], 12);
+    const tilt = Math.atan2(-camera.position.z, -camera.position.y);
+    expect(tilt).toBeCloseTo((ORBIT_SPEED * 120) / SCREEN.height, 6);
+    // Horizontal travel uses the same per-pixel rate.
+    const h = makeCamera();
+    const hc = new CameraControls(h, makeElement());
+    hc.screen = { ...SCREEN };
+    drag(hc, hc.domElement as HTMLElement, [400, 300], [460, 300], 6);
+    expect(Math.abs(Math.atan2(h.position.x, -h.position.y))).toBeCloseTo(
+      (ORBIT_SPEED * 60) / SCREEN.height,
+      6,
+    );
+    hc.dispose();
+  });
+
   it("rotates continuously across the pole instead of clamping there", () => {
-    // Camera starts below the target on -y, looking along +y with z up.
-    // A vertical drag tilts the view over the ±z pole. OrbitControls clamps
-    // the polar angle so camera.position.y could never become positive; a
-    // trackball keeps going and comes out on the far side.
+    // Camera starts on -y looking along +y with z up. A vertical drag tilts
+    // the view over the +z pole; OrbitControls would clamp the polar angle
+    // so camera.position.y could never become positive.
     const target = controls.target.clone();
     const startDistance = camera.position.distanceTo(target);
 
-    // 600 px of vertical travel = 1.5 trackball units × rotateSpeed rad,
-    // comfortably more than the 90° needed to reach the pole.
-    drag(controls, el, [400, 550], [400, 250], 30);
-    drag(controls, el, [400, 550], [400, 250], 30);
+    // 200 px = 5/3 rad ≈ 95°: just past the pole.
+    drag(controls, el, [400, 500], [400, 300], 20);
     controls.syncImmediate();
 
     expect(camera.position.y).toBeGreaterThan(0);
+    expect(camera.position.z).toBeLessThan(0);
+    // Upside down now: screen-up points away from world +z.
+    expect(camera.up.z).toBeLessThan(0);
     // Distance to the pivot is preserved by a pure rotation.
     expect(camera.position.distanceTo(target)).toBeCloseTo(startDistance, 5);
   });
 
-  it("keeps camera.up unit-length and perpendicular to the view direction", () => {
+  it("never rolls: screen-up stays in the plane of the up axis and the view", () => {
+    // A diagonal scribble rolls a free trackball; a turntable keeps screen
+    // right horizontal (⟂ to the up axis) whatever the path.
     drag(controls, el, [200, 500], [600, 100], 25);
+    drag(controls, el, [600, 100], [300, 400], 25);
+    drag(controls, el, [300, 400], [500, 200], 25);
     controls.syncImmediate();
     const eye = camera.position.clone().sub(controls.target).normalize();
+    const right = new THREE.Vector3().crossVectors(camera.up, eye);
+    expect(Math.abs(right.dot(controls.upAxis))).toBeLessThan(1e-9);
     expect(camera.up.length()).toBeCloseTo(1, 6);
     expect(Math.abs(camera.up.dot(eye))).toBeLessThan(1e-6);
-    // The roll is free: `up` is no longer pinned to world z.
-    expect(camera.up.distanceTo(new THREE.Vector3(0, 0, 1))).toBeGreaterThan(1e-3);
   });
 
-  it("a horizontal drag orbits around the current up axis", () => {
-    drag(controls, el, [200, 300], [600, 300], 20);
+  it("a horizontal drag spins around the up axis", () => {
+    drag(controls, el, [300, 300], [360, 300], 20);
     controls.syncImmediate();
-    // Rotation about world z leaves z untouched and keeps up at +z.
     expect(camera.position.z).toBeCloseTo(0, 6);
     expect(camera.up.distanceTo(new THREE.Vector3(0, 0, 1))).toBeLessThan(1e-6);
-    expect(camera.position.x).not.toBeCloseTo(0, 3);
+    // Dragging right turns the model right: the camera swings toward -x.
+    expect(azimuth()).toBeLessThan(0);
+  });
+
+  it("honours a custom up axis", () => {
+    camera.position.set(0, 0, 50);
+    camera.up.set(0, 1, 0);
+    controls.upAxis.set(0, 1, 0);
+    controls.update();
+    drag(controls, el, [200, 300], [600, 300], 20);
+    controls.syncImmediate();
+    expect(camera.position.y).toBeCloseTo(0, 6);
+    expect(camera.up.distanceTo(new THREE.Vector3(0, 1, 0))).toBeLessThan(1e-6);
+  });
+
+  it("keeps the horizontal direction under the pointer when upside down", () => {
+    // Flip over the pole first (camera.up now points down world z).
+    drag(controls, el, [400, 500], [400, 300], 20);
+    controls.syncImmediate();
+    expect(camera.up.z).toBeLessThan(0);
+    // The model must still turn right on a rightward drag, i.e. the camera
+    // moves toward screen-left. Measure it in the camera's own frame.
+    const eye = camera.position.clone().sub(controls.target);
+    const screenLeft = new THREE.Vector3().crossVectors(eye, camera.up).normalize();
+    const before = camera.position.clone();
+    drag(controls, el, [400, 300], [420, 300], 4);
+    controls.syncImmediate();
+    expect(camera.position.clone().sub(before).dot(screenLeft)).toBeGreaterThan(0);
+  });
+
+  it("latches the horizontal direction for the whole drag across a pole", () => {
+    // One drag: over the pole, then sideways. Same travel split into two
+    // drags flips the yaw for the second one (it starts upside down).
+    drag(controls, el, [400, 500], [400, 300], 20);
+    const single = makeCamera();
+    const sc = new CameraControls(single, makeElement());
+    sc.screen = { ...SCREEN };
+    const sel = sc.domElement as HTMLElement;
+    sel.dispatchEvent(pointer("pointerdown", 400, 500));
+    for (let i = 1; i <= 20; i++) {
+      document.dispatchEvent(pointer("pointermove", 400, 500 - 10 * i));
+      sc.update();
+    }
+    for (let i = 1; i <= 4; i++) {
+      document.dispatchEvent(pointer("pointermove", 400 + 5 * i, 300));
+      sc.update();
+    }
+    document.dispatchEvent(pointer("pointerup", 420, 300));
+    drag(controls, el, [400, 300], [420, 300], 4);
+    // Same pole crossing, opposite horizontal turn.
+    expect(Math.sign(single.position.x)).toBe(-Math.sign(camera.position.x));
+    sc.dispose();
+  });
+
+  it("Shift+left drag is left to the renderer's pan and does not rotate", () => {
+    const start = vi.fn();
+    const end = vi.fn();
+    controls.addEventListener("start", start);
+    controls.addEventListener("end", end);
+    const before = camera.position.clone();
+    drag(controls, el, [400, 500], [200, 100], 10, true);
+    controls.update();
+    expect(camera.position.distanceTo(before)).toBeLessThan(1e-9);
+    // start/end still fire so pivot snapping and persistence keep working.
+    expect(start).toHaveBeenCalledTimes(1);
+    expect(end).toHaveBeenCalledTimes(1);
   });
 
   it("accumulates every pointermove between two updates (lossless drag)", () => {
@@ -197,6 +288,15 @@ describe("CameraControls rotation", () => {
   });
 });
 
+describe("isShiftPanGesture", () => {
+  it("matches only Shift + left button", () => {
+    expect(isShiftPanGesture({ button: 0, shiftKey: true })).toBe(true);
+    expect(isShiftPanGesture({ button: 0, shiftKey: false })).toBe(false);
+    expect(isShiftPanGesture({ button: 2, shiftKey: true })).toBe(false);
+    expect(isShiftPanGesture({ button: 1, shiftKey: true })).toBe(false);
+  });
+});
+
 describe("CameraControls.syncImmediate", () => {
   let el: HTMLDivElement;
   let camera: THREE.OrthographicCamera;
@@ -209,15 +309,7 @@ describe("CameraControls.syncImmediate", () => {
     controls.screen = { ...SCREEN };
   });
 
-  it("with damping enabled, momentum keeps turning the camera after release", () => {
-    controls.staticMoving = false;
-    drag(controls, el, [400, 500], [400, 300], 10);
-    const afterRelease = camera.position.clone();
-    controls.update();
-    expect(camera.position.distanceTo(afterRelease)).toBeGreaterThan(1e-6);
-  });
-
-  it("drops that momentum so subsequent updates hold the pose", () => {
+  it("drops any glide so subsequent updates hold the pose", () => {
     controls.staticMoving = false;
     drag(controls, el, [400, 500], [400, 300], 10);
     controls.syncImmediate();

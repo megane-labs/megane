@@ -232,3 +232,202 @@ describe("MoleculeRenderer.dispose after a failed mount", () => {
     expect(canvas.parentNode).toBeNull();
   });
 });
+
+describe("MoleculeRenderer turntable up axis", () => {
+  it("builds the controls with +c of the loaded cell as the up axis", () => {
+    const r = new MoleculeRenderer();
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const internals = r as any;
+    internals.renderer = { domElement: makeCanvasStub(), dispose: vi.fn() };
+    internals.camera = new THREE.OrthographicCamera();
+    // c along +x (a, b span y/z): the turntable must keep x upright.
+    internals.snapshot = { box: new Float32Array([0, 5, 0, 0, 0, 5, 5, 0, 0]) };
+    const controls = internals.createControls() as CameraControls;
+    expect(controls.upAxis.x).toBeCloseTo(1, 9);
+    expect(controls.upAxis.y).toBeCloseTo(0, 9);
+    expect(controls.upAxis.z).toBeCloseTo(0, 9);
+  });
+
+  it("falls back to +z without a snapshot", () => {
+    const { controls } = makeRenderer(new THREE.OrthographicCamera());
+    expect(controls.upAxis.toArray()).toEqual([0, 0, 1]);
+  });
+});
+
+describe("MoleculeRenderer.setRotationCenter (OVITO-style orbit center)", () => {
+  /** A few world points spread around the scene, to check the image. */
+  const probes = [
+    new THREE.Vector3(0, 0, 0),
+    new THREE.Vector3(6, -3, 2),
+    new THREE.Vector3(-4, 5, -7),
+  ];
+  const screenOf = (cam: THREE.Camera) => {
+    cam.updateMatrixWorld(true);
+    return probes.map((p) => p.clone().project(cam));
+  };
+
+  function orthoSetup() {
+    const cam = new THREE.OrthographicCamera(-25, 25, 25, -25, -100, 100);
+    cam.position.set(3, -50, 8);
+    cam.up.set(0, 0, 1);
+    const setup = makeRenderer(cam);
+    setup.controls.target.set(3, 0, 8);
+    setup.controls.syncImmediate();
+    return { cam, ...setup };
+  }
+
+  it("orthographic: moves the pivot without moving the image", () => {
+    const { cam, r, controls, internals } = orthoSetup();
+    // Rotate off-axis first so the camera frame is not world-aligned.
+    controls.upAxis.set(0, 0, 1);
+    cam.position.set(30, -30, 20);
+    controls.syncImmediate();
+    const before = screenOf(cam);
+
+    r.setRotationCenter(6, -3, 2);
+
+    expect(controls.target.toArray()).toEqual([6, -3, 2]);
+    const after = screenOf(cam);
+    for (let i = 0; i < probes.length; i++) {
+      expect(after[i].x).toBeCloseTo(before[i].x, 6);
+      expect(after[i].y).toBeCloseTo(before[i].y, 6);
+    }
+    // The shift is booked as frustum pan so resize re-applies it.
+    expect(internals._frustumPanX).not.toBe(0);
+    expect(internals.pivotAnim).toBeNull();
+  });
+
+  it("orthographic: the scene then orbits around the new pivot on screen", () => {
+    const { cam, r, controls, canvas } = orthoSetup();
+    r.setRotationCenter(6, -3, 2);
+    const pivotBefore = screenOf(cam)[1];
+    canvas.dispatchEvent(
+      new MouseEvent("pointerdown", { clientX: 400, clientY: 300, bubbles: true }),
+    );
+    document.dispatchEvent(
+      new MouseEvent("pointermove", { clientX: 470, clientY: 260, bubbles: true }),
+    );
+    controls.update();
+    document.dispatchEvent(
+      new MouseEvent("pointerup", { clientX: 470, clientY: 260, bubbles: true }),
+    );
+    const pivotAfter = screenOf(cam)[1];
+    expect(pivotAfter.x).toBeCloseTo(pivotBefore.x, 6);
+    expect(pivotAfter.y).toBeCloseTo(pivotBefore.y, 6);
+    // ...while everything else moved.
+    expect(screenOf(cam)[2].distanceTo(pivotAfter)).toBeGreaterThan(0);
+  });
+
+  it("perspective: animates the pivot to the screen center by default", () => {
+    const pcam = new THREE.PerspectiveCamera(50, 4 / 3, 0.1, 1000);
+    pcam.position.set(0, -40, 0);
+    const { r, internals, controls } = makeRenderer(pcam);
+    r.setRotationCenter(5, 0, 2);
+    expect(internals.pivotAnim).not.toBeNull();
+    expect(internals.pivotAnim.endTarget.toArray()).toEqual([5, 0, 2]);
+    expect(internals.pivotAnim.endCameraPos.toArray()).toEqual([5, -40, 2]);
+    // A second pick first snaps the running animation to its end.
+    r.setRotationCenter(1, 1, 1);
+    expect(controls.target.toArray()).toEqual([5, 0, 2]);
+    expect(internals.pivotAnim.startTarget.toArray()).toEqual([5, 0, 2]);
+  });
+
+  it("perspective: animate=false re-centres on the spot", () => {
+    const pcam = new THREE.PerspectiveCamera(50, 4 / 3, 0.1, 1000);
+    pcam.position.set(0, -40, 0);
+    const { r, internals, controls } = makeRenderer(pcam);
+    r.setRotationCenter(5, 0, 2, false);
+    expect(internals.pivotAnim).toBeNull();
+    expect(controls.target.toArray()).toEqual([5, 0, 2]);
+    expect(pcam.position.toArray()).toEqual([5, -40, 2]);
+  });
+
+  it("resetRotationCenter returns to the model center, keeping the image", () => {
+    const { cam, r, controls, internals } = orthoSetup();
+    internals.snapshot = {
+      nAtoms: 2,
+      positions: new Float32Array([0, 0, 0, 2, 4, 6]),
+      elements: new Uint8Array([6, 6]),
+      box: null,
+    };
+    // Trajectory frame: the current positions, not the loaded ones, count.
+    internals.currentPositions = new Float32Array([10, 0, 0, 12, 4, 6]);
+    r.setRotationCenter(6, -3, 2);
+    const before = screenOf(cam);
+    r.resetRotationCenter();
+    expect(controls.target.x).toBeCloseTo(11, 6);
+    expect(controls.target.y).toBeCloseTo(2, 6);
+    expect(controls.target.z).toBeCloseTo(3, 6);
+    const after = screenOf(cam);
+    expect(after[2].x).toBeCloseTo(before[2].x, 6);
+    expect(after[2].y).toBeCloseTo(before[2].y, 6);
+  });
+
+  it("resetRotationCenter is a no-op before a snapshot is loaded", () => {
+    const { r, controls } = orthoSetup();
+    r.resetRotationCenter();
+    expect(controls.target.toArray()).toEqual([3, 0, 8]);
+  });
+});
+
+describe("MoleculeRenderer Shift+left-drag pan", () => {
+  function setupPan() {
+    const cam = new THREE.OrthographicCamera(-25, 25, 25, -25, -100, 100);
+    cam.position.set(0, -50, 0);
+    cam.up.set(0, 0, 1);
+    const setup = makeRenderer(cam);
+    setup.controls.syncImmediate();
+    setup.internals.attachCustomPanListener();
+    return { cam, ...setup };
+  }
+  const press = (el: HTMLElement, type: string, x: number, y: number, init: MouseEventInit = {}) =>
+    el.dispatchEvent(new MouseEvent(type, { clientX: x, clientY: y, bubbles: true, ...init }));
+
+  it("pans the frustum without rotating the camera", () => {
+    const { cam, canvas, controls, internals } = setupPan();
+    const pos = cam.position.clone();
+    press(canvas, "pointerdown", 400, 300, { button: 0, shiftKey: true });
+    press(canvas, "pointermove", 480, 300);
+    press(document.body, "pointermove", 480, 300);
+    controls.update();
+    press(canvas, "pointerup", 480, 300);
+    // 80 px of 800 px width over a 50-unit frustum = 5 units to the left.
+    expect(internals._frustumPanX).toBeCloseTo(-5, 6);
+    expect(cam.left).toBeCloseTo(-30, 6);
+    expect(cam.position.distanceTo(pos)).toBeLessThan(1e-9);
+  });
+
+  it("is suspended while the controls are disabled (box select, Builder drag)", () => {
+    const { canvas, r, internals } = setupPan();
+    r.setControlsEnabled(false);
+    press(canvas, "pointerdown", 400, 300, { button: 0, shiftKey: true });
+    press(canvas, "pointermove", 480, 300);
+    press(canvas, "pointerup", 480, 300);
+    expect(internals._frustumPanX).toBe(0);
+  });
+
+  it("yields to a Builder atom drag that disables the controls mid-press", () => {
+    const { canvas, r, internals } = setupPan();
+    press(canvas, "pointerdown", 400, 300, { button: 0, shiftKey: true });
+    r.setControlsEnabled(false);
+    press(canvas, "pointermove", 480, 300);
+    press(canvas, "pointerup", 480, 300);
+    expect(internals._frustumPanX).toBe(0);
+  });
+
+  it("plain left drag does not pan", () => {
+    const { canvas, internals } = setupPan();
+    press(canvas, "pointerdown", 400, 300, { button: 0 });
+    press(canvas, "pointermove", 480, 300);
+    press(canvas, "pointerup", 480, 300);
+    expect(internals._frustumPanX).toBe(0);
+  });
+
+  it("right drag still pans", () => {
+    const { canvas, internals } = setupPan();
+    press(canvas, "pointerdown", 400, 300, { button: 2 });
+    press(canvas, "pointermove", 480, 300);
+    press(canvas, "pointerup", 480, 300);
+    expect(internals._frustumPanX).toBeCloseTo(-5, 6);
+  });
+});

@@ -139,8 +139,8 @@ export function computeViewBounds(
  *
  * Restores `orientation` — by default the structure's standard orientation
  * (VESTA's "Standard orientation of crystal shape", see `cameraOrientation.ts`).
- * The trackball controls rotate `camera.up` freely, so without resetting it a
- * re-fit after a few drags would keep the current roll.
+ * The turntable controls tilt `camera.up` with every vertical drag, so
+ * without resetting it a re-fit would keep the current tilt.
  */
 export function fitCameraToView(
   camera: THREE.OrthographicCamera | THREE.PerspectiveCamera,
