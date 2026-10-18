@@ -4,8 +4,8 @@
  * `defaultParams` instead of spelling out every xyflow field.
  *
  * Nodes are created unplaced (at the origin): every consumer of these graphs
- * — the store's initial graph and `reset`, `applyTemplate`, `openFile`'s
- * minimal graph, `useMeganeLocal` — runs them through `getLayoutedElements`,
+ * — the store's initial graph and `reset`, `applyTemplate`, and
+ * `installMinimalGraph` in `openFile.ts` — runs them through `getLayoutedElements`,
  * which positions nodes from their sizes and edges alone, and the editor
  * re-lays them out once measured (`layoutPending`). A hand-written position
  * would never be seen.
