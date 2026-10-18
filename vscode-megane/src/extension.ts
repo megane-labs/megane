@@ -1,4 +1,5 @@
 import * as vscode from "vscode";
+import * as os from "os";
 import * as path from "path";
 import { webcrypto } from "crypto";
 
@@ -19,6 +20,45 @@ interface SaveFileMessage {
   filename: string;
   bytes: number[];
 }
+
+/**
+ * File extensions megane Builder offers to open from the Explorer: the
+ * structure formats with coordinates. Trajectory-only formats (XTC, DCD,
+ * NetCDF), topologies without coordinates (prmtop), volumetric grids and
+ * spectra are left out. VASP's extension-less POSCAR / CONTCAR / XDATCAR are
+ * matched by name (`BUILDER_FILENAME_PREFIXES`). The `explorer/context` menu's
+ * `when` clause in package.json mirrors both lists (checked by the tests).
+ */
+export const BUILDER_EXTENSIONS = [
+  "pdb",
+  "gro",
+  "xyz",
+  "extxyz",
+  "jxyz",
+  "mol",
+  "sdf",
+  "mol2",
+  "cif",
+  "mmcif",
+  "data",
+  "lammps",
+  "lammpstrj",
+  "dump",
+  "trj",
+  "traj",
+  "vasp",
+  "molden",
+  "cml",
+  "xsf",
+  "axsf",
+  "c3xml",
+  "xodydata",
+  "odydata",
+  "magres",
+  "gamess",
+  "phonon",
+];
+export const BUILDER_FILENAME_PREFIXES = ["POSCAR", "CONTCAR", "XDATCAR"];
 
 const SAVE_FILTERS: Record<string, [string, string[]]> = {
   glb: ["3D Model", ["glb"]],
@@ -43,7 +83,7 @@ const SAVE_FILTERS: Record<string, [string, string[]]> = {
 export async function handleSaveFileMessage(
   message: SaveFileMessage,
   documentUri: vscode.Uri,
-): Promise<void> {
+): Promise<vscode.Uri | undefined> {
   const { filename, bytes } = message;
   const defaultUri = vscode.Uri.file(path.join(path.dirname(documentUri.fsPath), filename));
   const ext = path.extname(filename).slice(1).toLowerCase();
@@ -55,14 +95,16 @@ export async function handleSaveFileMessage(
       ? defaultUri
       : await vscode.window.showSaveDialog({ defaultUri, filters });
 
-  if (!target) return; // user cancelled the dialog
+  if (!target) return undefined; // user cancelled the dialog
   try {
     await vscode.workspace.fs.writeFile(target, new Uint8Array(bytes));
     void vscode.window.showInformationMessage(`Saved ${path.basename(target.fsPath)}`);
+    return target;
   } catch (err) {
     void vscode.window.showErrorMessage(
       `Failed to save file: ${err instanceof Error ? err.message : String(err)}`,
     );
+    return undefined;
   }
 }
 
@@ -254,9 +296,7 @@ export class MeganeEditorProvider implements vscode.CustomReadonlyEditorProvider
       if (filename.toLowerCase().endsWith(".gro")) {
         const stem = filename.slice(0, filename.lastIndexOf("."));
         const topName = stem + ".top";
-        const topUri = vscode.Uri.file(
-          path.join(path.dirname(document.uri.fsPath), topName),
-        );
+        const topUri = vscode.Uri.file(path.join(path.dirname(document.uri.fsPath), topName));
         try {
           const topData = await vscode.workspace.fs.readFile(topUri);
           topBytes = topData.buffer as ArrayBuffer;
@@ -335,6 +375,167 @@ export class MeganeEditorProvider implements vscode.CustomReadonlyEditorProvider
   }
 }
 
+/**
+ * A URI in the folder the Builder's save dialog should start in: beside the
+ * file the Builder was opened from, else the first workspace folder, else the
+ * home directory. Only its directory is used (`handleSaveFileMessage`).
+ */
+export function builderSaveBase(file: vscode.Uri | undefined): vscode.Uri {
+  if (file) return file;
+  const folder = vscode.workspace.workspaceFolders?.[0];
+  if (folder) return vscode.Uri.joinPath(folder.uri, "untitled");
+  return vscode.Uri.file(path.join(os.homedir(), "untitled"));
+}
+
+/** The file of the editor in front (a text editor or a megane viewer tab), if any. */
+function activeFileUri(): vscode.Uri | undefined {
+  const input = vscode.window.tabGroups?.activeTabGroup?.activeTab?.input as
+    | { uri?: vscode.Uri }
+    | undefined;
+  return input?.uri ?? vscode.window.activeTextEditor?.document.uri;
+}
+
+/**
+ * megane Builder (the structure editor) in editor tabs.
+ *
+ * Opened from the megane view in the activity bar (*New Structure*, *Open File
+ * in Builder…*), from a structure file's *Open in megane Builder* entry in the
+ * Explorer, or from the button in a megane viewer tab's title bar. A file is
+ * opened in one Builder tab: asking again reveals it. Each tab is its own
+ * webview, so tabs do not share a document.
+ */
+export class MeganeBuilderPanels {
+  static readonly viewType = "megane.builder";
+  private readonly panels = new Map<string, vscode.WebviewPanel>();
+
+  constructor(private readonly context: vscode.ExtensionContext) {}
+
+  /** Open a Builder tab, on `file` when given (revealing its tab if it has one). */
+  open(file?: vscode.Uri): vscode.WebviewPanel {
+    const key = file?.toString();
+    const existing = key ? this.panels.get(key) : undefined;
+    if (existing) {
+      existing.reveal();
+      return existing;
+    }
+    const mediaDir = vscode.Uri.joinPath(this.context.extensionUri, "media");
+    const title = file ? `${path.basename(file.fsPath)} — Builder` : "megane Builder";
+    const panel = vscode.window.createWebviewPanel(
+      MeganeBuilderPanels.viewType,
+      title,
+      vscode.ViewColumn.Active,
+      { enableScripts: true, retainContextWhenHidden: true, localResourceRoots: [mediaDir] },
+    );
+    panel.iconPath = vscode.Uri.joinPath(this.context.extensionUri, "resources", "megane.svg");
+    if (key) this.panels.set(key, panel);
+
+    const webview = panel.webview;
+    webview.onDidReceiveMessage(async (message: { type?: string; id?: number }) => {
+      if (message.type === "ready") {
+        if (!file) return;
+        try {
+          const bytes = await vscode.workspace.fs.readFile(file);
+          void webview.postMessage({
+            type: "openFile",
+            contentBytes: bytes.buffer as ArrayBuffer,
+            filename: path.basename(file.fsPath),
+          });
+        } catch (err) {
+          void vscode.window.showErrorMessage(
+            `megane Builder could not read ${path.basename(file.fsPath)}: ${
+              err instanceof Error ? err.message : String(err)
+            }`,
+          );
+        }
+        return;
+      }
+      if (message.type === "saveFile") {
+        const target = await handleSaveFileMessage(
+          message as unknown as SaveFileMessage,
+          builderSaveBase(file),
+        );
+        void webview.postMessage({
+          type: "saveResult",
+          id: message.id,
+          path: target ? path.basename(target.fsPath) : null,
+        });
+      }
+    });
+    panel.onDidDispose(() => {
+      if (key && this.panels.get(key) === panel) this.panels.delete(key);
+    });
+    webview.html = getBuilderHtml(webview, mediaDir);
+    return panel;
+  }
+
+  /** Ask for a structure file and open it in a Builder tab. */
+  async openFromDialog(): Promise<vscode.WebviewPanel | undefined> {
+    const picked = await vscode.window.showOpenDialog({
+      canSelectMany: false,
+      openLabel: "Open in Builder",
+      filters: { "Structure files": BUILDER_EXTENSIONS, "All files": ["*"] },
+    });
+    return picked?.[0] ? this.open(picked[0]) : undefined;
+  }
+
+  /**
+   * *Open in megane Builder*: the file the Explorer or a title bar passed, else
+   * the file of the editor in front, else ask for one.
+   */
+  async openFile(uri?: vscode.Uri): Promise<vscode.WebviewPanel | undefined> {
+    const file = uri instanceof vscode.Uri ? uri : activeFileUri();
+    return file ? this.open(file) : this.openFromDialog();
+  }
+}
+
+/** The welcome view in the megane activity-bar container: an empty tree shows its buttons. */
+class EmptyTree implements vscode.TreeDataProvider<never> {
+  getTreeItem(element: never): vscode.TreeItem {
+    return element;
+  }
+  getChildren(): never[] {
+    return [];
+  }
+}
+
+/**
+ * The Builder webview's page. Its bundle is split into chunks (Ketcher loads
+ * on demand), so the CSP admits scripts from the extension's resource origin
+ * besides the nonce'd entry; workers start from blob: bootstraps that import
+ * their scripts from there (see `src/utils/crossOriginWorker.ts`).
+ */
+export function getBuilderHtml(webview: vscode.Webview, mediaDir: vscode.Uri): string {
+  const builderDir = vscode.Uri.joinPath(mediaDir, "builder");
+  const scriptUri = webview.asWebviewUri(vscode.Uri.joinPath(builderDir, "builder.js"));
+  const cssUri = webview.asWebviewUri(vscode.Uri.joinPath(builderDir, "builder.css"));
+  const nonce = getNonce();
+  const e2eMode = process.env.MEGANE_E2E_MODE === "1";
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta http-equiv="Content-Security-Policy"
+    content="default-src 'none';
+             script-src 'nonce-${nonce}' ${webview.cspSource} 'wasm-unsafe-eval' blob:;
+             style-src ${webview.cspSource} 'unsafe-inline';
+             img-src ${webview.cspSource} data: blob:;
+             font-src ${webview.cspSource} data:;
+             connect-src ${webview.cspSource} blob: data:;
+             worker-src blob:;" />
+  <link rel="stylesheet" href="${cssUri}" />
+</head>
+<body>
+  <div id="root"></div>
+  <script nonce="${nonce}">
+    window.__MEGANE_CONTEXT__ = "vscode";
+    ${e2eMode ? "window.__MEGANE_TEST__ = true;" : ""}
+  </script>
+  <script nonce="${nonce}" type="module" src="${scriptUri}"></script>
+</body>
+</html>`;
+}
+
 function getHtmlForWebview(webview: vscode.Webview, mediaDir: vscode.Uri): string {
   const scriptUri = webview.asWebviewUri(vscode.Uri.joinPath(mediaDir, "webview.js"));
   const wasmUri = webview.asWebviewUri(vscode.Uri.joinPath(mediaDir, "megane_wasm_bg.wasm"));
@@ -407,6 +608,17 @@ export function activate(context: vscode.ExtensionContext) {
     vscode.commands.registerCommand("megane.seekFrame", (frame: number) => {
       editorProvider.seekFrame(frame);
     }),
+  );
+
+  // megane Builder: the activity-bar view and its commands.
+  const builder = new MeganeBuilderPanels(context);
+  context.subscriptions.push(
+    vscode.window.registerTreeDataProvider("megane.builderView", new EmptyTree()),
+    vscode.commands.registerCommand("megane.builder.new", () => builder.open()),
+    vscode.commands.registerCommand("megane.builder.open", () => builder.openFromDialog()),
+    vscode.commands.registerCommand("megane.builder.openFile", (uri?: vscode.Uri) =>
+      builder.openFile(uri),
+    ),
   );
 }
 

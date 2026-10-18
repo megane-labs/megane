@@ -1,5 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { webcrypto } from "crypto";
+import { existsSync, readFileSync } from "node:fs";
+import { resolve } from "node:path";
 
 interface FakeProvider {
   openCustomDocument: (
@@ -70,8 +72,36 @@ const { mockState } = vi.hoisted(() => ({
     showInformationMessage: vi.fn<(message: string) => Promise<undefined>>(),
     showErrorMessage: vi.fn<(message: string) => Promise<undefined>>(),
     statusBarItems: [] as FakeStatusBarItem[],
+    createdPanels: [] as Array<{
+      viewType: string;
+      title: string;
+      column: unknown;
+      options: {
+        enableScripts?: boolean;
+        retainContextWhenHidden?: boolean;
+        localResourceRoots?: FakeUri[];
+      };
+      panel: FakeBuilderPanel;
+    }>,
+    treeProviders: [] as Array<{
+      id: string;
+      provider: { getChildren(): unknown[]; getTreeItem(x: unknown): unknown };
+    }>,
+    showOpenDialog: vi.fn<(options?: unknown) => Promise<FakeUri[] | undefined>>(),
+    workspaceFolders: undefined as Array<{ uri: FakeUri }> | undefined,
+    activeTabInput: undefined as { uri?: FakeUri } | undefined,
+    activeTextEditorUri: undefined as FakeUri | undefined,
   },
 }));
+
+interface FakeBuilderPanel {
+  webview: FakeWebview;
+  iconPath?: unknown;
+  reveal: ReturnType<typeof vi.fn>;
+  onDidDispose: ReturnType<typeof vi.fn>;
+  fireMessage: (msg: unknown) => Promise<void>;
+  fireDispose: () => void;
+}
 
 vi.mock("vscode", () => {
   class Uri {
@@ -100,8 +130,57 @@ vi.mock("vscode", () => {
   }
   return {
     Uri,
-    workspace: { fs: { readFile: mockState.readFile, writeFile: mockState.writeFile } },
+    ViewColumn: { Active: -1 },
+    workspace: {
+      fs: { readFile: mockState.readFile, writeFile: mockState.writeFile },
+      get workspaceFolders() {
+        return mockState.workspaceFolders;
+      },
+    },
     window: {
+      get tabGroups() {
+        return { activeTabGroup: { activeTab: { input: mockState.activeTabInput } } };
+      },
+      get activeTextEditor() {
+        return mockState.activeTextEditorUri
+          ? { document: { uri: mockState.activeTextEditorUri } }
+          : undefined;
+      },
+      showOpenDialog: mockState.showOpenDialog,
+      registerTreeDataProvider: vi.fn((id: string, provider: never) => {
+        mockState.treeProviders.push({ id, provider });
+        return { dispose: vi.fn() };
+      }),
+      createWebviewPanel: vi.fn(
+        (viewType: string, title: string, column: unknown, options: never) => {
+          let onMessage: ((m: unknown) => unknown) | undefined;
+          let onDispose: (() => void) | undefined;
+          const panel: FakeBuilderPanel = {
+            webview: {
+              options: undefined,
+              html: "",
+              cspSource: "vscode-webview://test",
+              onDidReceiveMessage: vi.fn((h: (m: unknown) => unknown) => {
+                onMessage = h;
+                return { dispose: vi.fn() };
+              }),
+              postMessage: vi.fn(),
+              asWebviewUri: (uri: FakeUri) => `webview:${uri.toString()}`,
+            },
+            reveal: vi.fn(),
+            onDidDispose: vi.fn((h: () => void) => {
+              onDispose = h;
+              return { dispose: vi.fn() };
+            }),
+            fireMessage: async (m) => {
+              await onMessage?.(m);
+            },
+            fireDispose: () => onDispose?.(),
+          };
+          mockState.createdPanels.push({ viewType, title, column, options, panel });
+          return panel;
+        },
+      ),
       showSaveDialog: mockState.showSaveDialog,
       showInformationMessage: mockState.showInformationMessage,
       showErrorMessage: mockState.showErrorMessage,
@@ -141,6 +220,10 @@ import {
   createSelectionStatusBarItem,
   handleSaveFileMessage,
   MeganeEditorProvider,
+  builderSaveBase,
+  getBuilderHtml,
+  BUILDER_EXTENSIONS,
+  BUILDER_FILENAME_PREFIXES,
 } from "../../../vscode-megane/src/extension";
 
 const VscodeUri = (vscode as unknown as { Uri: { file: (p: string) => FakeUri } }).Uri;
@@ -220,6 +303,12 @@ beforeEach(() => {
   mockState.showSaveDialog.mockReset();
   mockState.showInformationMessage.mockReset();
   mockState.showErrorMessage.mockReset();
+  mockState.showOpenDialog.mockReset();
+  mockState.createdPanels.length = 0;
+  mockState.treeProviders.length = 0;
+  mockState.workspaceFolders = undefined;
+  mockState.activeTabInput = undefined;
+  mockState.activeTextEditorUri = undefined;
   vi.mocked(vscode.window.registerCustomEditorProvider).mockClear();
   delete process.env.MEGANE_E2E_MODE;
 });
@@ -239,11 +328,12 @@ describe("activate / deactivate", () => {
     ]);
   });
 
-  it("pushes two provider disposables and the seekFrame command onto context.subscriptions", () => {
+  it("pushes the providers, the seekFrame command and the Builder view and commands onto context.subscriptions", () => {
     const ctx = makeContext();
     activate(ctx as unknown as Parameters<typeof activate>[0]);
 
-    expect(ctx.subscriptions).toHaveLength(3);
+    // 2 editor providers + seekFrame + the Builder view + 3 Builder commands.
+    expect(ctx.subscriptions).toHaveLength(7);
     for (const sub of ctx.subscriptions) {
       expect(typeof sub.dispose).toBe("function");
     }
@@ -1140,5 +1230,218 @@ describe("MeganeEditorProvider.seekFrame", () => {
     expect(cmd).toBeDefined();
     // Command handler should not throw when no panel is open
     expect(() => cmd!.handler(0)).not.toThrow();
+  });
+});
+
+describe("megane Builder", () => {
+  function command(name: string) {
+    const cmd = mockState.registeredCommands.find((c) => c.command === name);
+    if (!cmd) throw new Error(`command not registered: ${name}`);
+    return cmd.handler;
+  }
+
+  beforeEach(() => {
+    activate(makeContext("/ext") as unknown as Parameters<typeof activate>[0]);
+  });
+
+  it("registers the activity-bar view as an empty tree, so its welcome buttons show", () => {
+    expect(mockState.treeProviders.map((t) => t.id)).toEqual(["megane.builderView"]);
+    const tree = mockState.treeProviders[0].provider;
+    expect(tree.getChildren()).toEqual([]);
+    const item = { label: "x" };
+    expect(tree.getTreeItem(item)).toBe(item);
+    const names = mockState.registeredCommands.map((c) => c.command);
+    expect(names).toEqual(
+      expect.arrayContaining([
+        "megane.builder.new",
+        "megane.builder.open",
+        "megane.builder.openFile",
+      ]),
+    );
+  });
+
+  it("New Structure opens an empty Builder tab with scripts and the media folder only", () => {
+    command("megane.builder.new")();
+    expect(mockState.createdPanels).toHaveLength(1);
+    const created = mockState.createdPanels[0];
+    expect(created.viewType).toBe("megane.builder");
+    expect(created.title).toBe("megane Builder");
+    expect(created.options.enableScripts).toBe(true);
+    expect(created.options.retainContextWhenHidden).toBe(true);
+    expect(created.options.localResourceRoots!.map((u) => u.path)).toEqual(["/ext/media"]);
+    expect(created.panel.webview.html).toContain("media/builder/builder.js");
+    expect(created.panel.webview.html).toContain("media/builder/builder.css");
+  });
+
+  it("an empty Builder posts nothing when ready", async () => {
+    command("megane.builder.new")();
+    const { panel } = mockState.createdPanels[0];
+    await panel.fireMessage({ type: "ready" });
+    expect(panel.webview.postMessage).not.toHaveBeenCalled();
+  });
+
+  it("Open in megane Builder sends the file's bytes once the webview is ready", async () => {
+    mockState.readFile.mockResolvedValue(new Uint8Array([1, 2, 3]));
+    await command("megane.builder.openFile")(VscodeUri.file("/work/caffeine.sdf"));
+    const { title, panel } = mockState.createdPanels[0];
+    expect(title).toBe("caffeine.sdf — Builder");
+    await panel.fireMessage({ type: "ready" });
+    const posted = panel.webview.postMessage.mock.calls[0][0] as {
+      type: string;
+      filename: string;
+      contentBytes: ArrayBuffer;
+    };
+    expect(posted.type).toBe("openFile");
+    expect(posted.filename).toBe("caffeine.sdf");
+    expect([...new Uint8Array(posted.contentBytes)]).toEqual([1, 2, 3]);
+  });
+
+  it("opening the same file again reveals its tab; a closed tab opens anew", async () => {
+    const uri = VscodeUri.file("/work/water.pdb");
+    await command("megane.builder.openFile")(uri);
+    await command("megane.builder.openFile")(uri);
+    expect(mockState.createdPanels).toHaveLength(1);
+    expect(mockState.createdPanels[0].panel.reveal).toHaveBeenCalledTimes(1);
+    mockState.createdPanels[0].panel.fireDispose();
+    await command("megane.builder.openFile")(uri);
+    expect(mockState.createdPanels).toHaveLength(2);
+  });
+
+  it("reports a file it cannot read", async () => {
+    mockState.readFile.mockRejectedValue(new Error("EACCES"));
+    await command("megane.builder.openFile")(VscodeUri.file("/work/locked.pdb"));
+    await mockState.createdPanels[0].panel.fireMessage({ type: "ready" });
+    expect(mockState.showErrorMessage).toHaveBeenCalledWith(
+      "megane Builder could not read locked.pdb: EACCES",
+    );
+  });
+
+  it("without a file argument, opens the file in front, else asks for one", async () => {
+    mockState.activeTabInput = { uri: VscodeUri.file("/work/front.xyz") };
+    await command("megane.builder.openFile")();
+    expect(mockState.createdPanels[0].title).toBe("front.xyz — Builder");
+
+    mockState.activeTabInput = undefined;
+    mockState.activeTextEditorUri = VscodeUri.file("/work/text.pdb");
+    await command("megane.builder.openFile")();
+    expect(mockState.createdPanels[1].title).toBe("text.pdb — Builder");
+
+    mockState.activeTextEditorUri = undefined;
+    mockState.showOpenDialog.mockResolvedValue([VscodeUri.file("/work/picked.cif")]);
+    await command("megane.builder.openFile")();
+    expect(mockState.createdPanels[2].title).toBe("picked.cif — Builder");
+  });
+
+  it("Open File in Builder… asks with the structure filters; cancelling opens nothing", async () => {
+    mockState.showOpenDialog.mockResolvedValue(undefined);
+    expect(await command("megane.builder.open")()).toBeUndefined();
+    expect(mockState.createdPanels).toHaveLength(0);
+    const options = mockState.showOpenDialog.mock.calls[0][0] as {
+      filters: Record<string, string[]>;
+    };
+    expect(options.filters["Structure files"]).toEqual(BUILDER_EXTENSIONS);
+  });
+
+  it("Save asks where to write, beside the opened file, and answers the webview", async () => {
+    await command("megane.builder.openFile")(VscodeUri.file("/work/water.pdb"));
+    const { panel } = mockState.createdPanels[0];
+    mockState.showSaveDialog.mockResolvedValue(VscodeUri.file("/work/out/water.xyz"));
+    mockState.writeFile.mockResolvedValue();
+    await panel.fireMessage({ type: "saveFile", id: 4, filename: "water.xyz", bytes: [65] });
+    const options = mockState.showSaveDialog.mock.calls[0][0] as { defaultUri: FakeUri };
+    expect(options.defaultUri.fsPath).toBe("/work/water.xyz");
+    expect(panel.webview.postMessage).toHaveBeenCalledWith({
+      type: "saveResult",
+      id: 4,
+      path: "water.xyz",
+    });
+
+    mockState.showSaveDialog.mockResolvedValue(undefined);
+    await panel.fireMessage({ type: "saveFile", id: 5, filename: "water.xyz", bytes: [65] });
+    expect(panel.webview.postMessage).toHaveBeenLastCalledWith({
+      type: "saveResult",
+      id: 5,
+      path: null,
+    });
+  });
+
+  it("builderSaveBase: the file, else the first workspace folder, else home", () => {
+    const file = VscodeUri.file("/work/a.pdb");
+    expect(builderSaveBase(file as never)).toBe(file);
+    mockState.workspaceFolders = [{ uri: VscodeUri.file("/ws") }];
+    expect(builderSaveBase(undefined).path).toBe("/ws/untitled");
+    mockState.workspaceFolders = undefined;
+    expect(builderSaveBase(undefined).path).toMatch(/untitled$/);
+  });
+
+  it("the Builder page admits the extension's chunks and blob: workers, with a nonce", () => {
+    const html = getBuilderHtml(
+      {
+        cspSource: "https://res",
+        asWebviewUri: (u: FakeUri) => `webview:${u.path}`,
+      } as never,
+      VscodeUri.file("/ext/media") as never,
+    );
+    expect(html).toMatch(
+      /script-src 'nonce-[A-Za-z0-9]{32}' https:\/\/res 'wasm-unsafe-eval' blob:/,
+    );
+    expect(html).toContain("worker-src blob:");
+    expect(html).not.toContain("__MEGANE_TEST__ = true");
+    process.env.MEGANE_E2E_MODE = "1";
+    expect(
+      getBuilderHtml(
+        { cspSource: "x", asWebviewUri: (u: FakeUri) => u.path } as never,
+        VscodeUri.file("/m") as never,
+      ),
+    ).toContain("window.__MEGANE_TEST__ = true;");
+  });
+});
+
+describe("megane Builder manifest", () => {
+  const manifest = JSON.parse(
+    readFileSync(resolve(__dirname, "../../../vscode-megane/package.json"), "utf8"),
+  ) as {
+    contributes: {
+      viewsContainers: { activitybar: { id: string; icon: string }[] };
+      views: Record<string, { id: string }[]>;
+      viewsWelcome: { view: string; contents: string }[];
+      commands: { command: string }[];
+      menus: Record<string, { command: string; when: string }[]>;
+    };
+  };
+
+  it("puts a megane container in the activity bar with the Builder view and its welcome buttons", () => {
+    const c = manifest.contributes;
+    expect(c.viewsContainers.activitybar).toEqual([
+      expect.objectContaining({ id: "megane", icon: "resources/megane.svg" }),
+    ]);
+    expect(existsSync(resolve(__dirname, "../../../vscode-megane/resources/megane.svg"))).toBe(
+      true,
+    );
+    expect(c.views.megane.map((v) => v.id)).toEqual(["megane.builderView"]);
+    const welcome = c.viewsWelcome.find((w) => w.view === "megane.builderView")!;
+    expect(welcome.contents).toContain("command:megane.builder.new");
+    expect(welcome.contents).toContain("command:megane.builder.open");
+  });
+
+  it("declares every Builder command it registers", () => {
+    const declared = manifest.contributes.commands.map((c) => c.command);
+    expect(declared).toEqual(
+      expect.arrayContaining([
+        "megane.builder.new",
+        "megane.builder.open",
+        "megane.builder.openFile",
+      ]),
+    );
+  });
+
+  it("the Explorer entry's when clause matches exactly the Builder's file types", () => {
+    const entry = manifest.contributes.menus["explorer/context"].find(
+      (m) => m.command === "megane.builder.openFile",
+    )!;
+    const ext = /resourceExtname =~ \/\^\\\.\(([^)]*)\)\$\/i/.exec(entry.when);
+    expect(ext?.[1].split("|")).toEqual(BUILDER_EXTENSIONS);
+    const names = /resourceFilename =~ \/\^\(([^)]*)\)\//.exec(entry.when);
+    expect(names?.[1].split("|")).toEqual(BUILDER_FILENAME_PREFIXES);
   });
 });
