@@ -16,6 +16,10 @@
  *
  * Usage: node scripts/profile-trajectory-frame0.mjs
  *   env STRUCT_FIXTURE / TRAJ_FIXTURE override the defaults; RUNS sets repeats.
+ *   The defaults (tests/fixtures/caffeine_water.pdb + caffeine_water_vibration.xtc)
+ *   only smoke-test the harness: the win shows up on multi-MB trajectories, so
+ *   point TRAJ_FIXTURE at a large XTC / LAMMPS dump whose atom count matches
+ *   STRUCT_FIXTURE for a real measurement.
  */
 
 import { join } from "path";
@@ -30,10 +34,9 @@ import {
 
 const RUNS = Number(process.env.RUNS ?? 3);
 const LOAD_TIMEOUT_MS = Number(process.env.LOAD_TIMEOUT_MS ?? 200000);
-const SCRATCH = "/tmp/claude-0/-home-user-megane/16f26662-2db6-53cf-8a01-2eb436efa76a/scratchpad";
-const STRUCT =
-  process.env.STRUCT_FIXTURE ?? join(REPO_ROOT, "tests", "fixtures", "caffeine_water.pdb");
-const TRAJ = process.env.TRAJ_FIXTURE ?? `${SCRATCH}/big.lammpstrj`;
+const FIXTURES = join(REPO_ROOT, "tests", "fixtures");
+const STRUCT = process.env.STRUCT_FIXTURE ?? join(FIXTURES, "caffeine_water.pdb");
+const TRAJ = process.env.TRAJ_FIXTURE ?? join(FIXTURES, "caffeine_water_vibration.xtc");
 
 function median(arr) {
   const a = arr.filter((v) => v !== null && v !== undefined).sort((x, y) => x - y);

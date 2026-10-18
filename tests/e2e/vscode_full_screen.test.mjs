@@ -35,7 +35,8 @@
  *
  * Requirements:
  *   - code-server in PATH
- *   - Playwright globally installed at /opt/node22/lib/node_modules/
+ *   - Playwright (resolved by tests/e2e/utils/playwright.mjs: project
+ *     node_modules first, then the global install)
  *   - WASM and webview already built (npm run build:wasm + vscode-megane build)
  *   - pixelmatch + pngjs in node_modules
  */
@@ -53,7 +54,7 @@ import {
 import { tmpdir } from "os";
 import { dirname, join, resolve } from "path";
 import { fileURLToPath } from "url";
-import { createRequire } from "module";
+import { getChromium } from "./utils/playwright.mjs";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = resolve(__dirname, "..", "..");
@@ -62,9 +63,9 @@ const SNAPSHOTS_DIR = join(__dirname, "snapshots", "vscode");
 const DIFF_DIR = join(__dirname, "diffs", "vscode");
 const SCREENSHOT_DIR = join(__dirname, "screenshots", "vscode");
 
-// Resolve Playwright from the global installation (matches snapshot.test.mjs)
-const _require = createRequire("/opt/node22/lib/node_modules/");
-const { chromium } = _require("playwright");
+// Resolve Playwright via the shared helper (project node_modules first, then
+// the global install) instead of duplicating the createRequire block.
+const chromium = getChromium();
 
 // Resolve pixelmatch + pngjs from project node_modules
 const { default: pixelmatch } = await import(
