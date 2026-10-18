@@ -176,7 +176,7 @@
     "viewsWelcome": [
       {
         "view": "megane.builderView",
-        "contents": "Build or edit a molecular structure with megane Builder: add, delete and move atoms, draw bonds, build crystals and save as XYZ, PDB or MOL.\n[New Structure](command:megane.builder.new)\n[Open File in Builder…](command:megane.builder.open)\nTo edit a file from the Explorer, right-click it and choose **Open in megane Builder**."
+        "contents": "Build or edit a molecular structure with megane Builder: add, delete and move atoms, draw bonds, build crystals and save as XYZ, PDB or MOL.\n[New Structure](command:megane.builder.new)\n[Open File in Builder…](command:megane.builder.open)\nTo edit a file from the Explorer, right-click it and choose \"Open in megane Builder\"."
       }
     ],
     "commands": [
