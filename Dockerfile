@@ -40,7 +40,7 @@ RUN test -f python/megane/static/app/index.html || \
     (echo "ERROR: Frontend build missing app/index.html" && exit 1)
 
 # Unified install: compiles Rust extension + installs Python package
-RUN pip install --no-cache-dir ".[trajectory]"
+RUN pip install --no-cache-dir ".[traj]"
 
 # Clean up build tools
 RUN apt-get purge -y build-essential && apt-get autoremove -y && \
