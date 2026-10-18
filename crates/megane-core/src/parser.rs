@@ -322,40 +322,9 @@ fn parse_cryst1(line: &str) -> Option<[f32; 9]> {
 }
 
 /// Convert crystallographic cell parameters to a 3x3 matrix (row-major).
-pub fn cell_params_to_matrix(
-    a: f32,
-    b: f32,
-    c: f32,
-    alpha: f32,
-    beta: f32,
-    gamma: f32,
-) -> [f32; 9] {
-    let to_rad = std::f32::consts::PI / 180.0;
-    let alpha_r = alpha * to_rad;
-    let beta_r = beta * to_rad;
-    let gamma_r = gamma * to_rad;
-
-    let cos_a = alpha_r.cos();
-    let cos_b = beta_r.cos();
-    let cos_g = gamma_r.cos();
-    let sin_g = gamma_r.sin();
-
-    let cx = c * cos_b;
-    let cy = c * (cos_a - cos_b * cos_g) / sin_g;
-    let cz = (c * c - cx * cx - cy * cy).max(0.0).sqrt();
-
-    [
-        a,
-        0.0,
-        0.0, // va
-        b * cos_g,
-        b * sin_g,
-        0.0, // vb
-        cx,
-        cy,
-        cz, // vc
-    ]
-}
+///
+/// Re-exported from [`crate::cell`], which owns every cell conversion.
+pub use crate::cell::cell_params_to_matrix;
 
 /// Parse CONECT record to extract bond pairs.
 fn parse_conect_line(line: &str, serial_to_index: &HashMap<i32, usize>) -> Vec<(u32, u32)> {

@@ -5,6 +5,7 @@
 
 use std::collections::HashMap;
 
+use crate::cell::cell_params_to_matrix;
 use crate::parser::ParsedStructure;
 
 /// Parse an AMBER prmtop topology file.
@@ -76,7 +77,7 @@ pub fn parse_prmtop(text: &str) -> Result<ParsedStructure, String> {
             .collect();
         match vals[..] {
             [beta, a, b, c] if a > 0.0 && b > 0.0 && c > 0.0 => {
-                Some(cell_matrix(a, b, c, beta, beta, beta))
+                Some(cell_params_to_matrix(a, b, c, beta, beta, beta))
             }
             _ => None,
         }
@@ -158,7 +159,7 @@ pub fn parse_inpcrd(text: &str, n_atoms: usize) -> Result<(Vec<f32>, Option<[f32
     // Optional box: last 6 values are (a, b, c, alpha, beta, gamma) in Å / degrees
     let box_mat = if all_vals.len() == n_atoms * 3 + 6 {
         let box_vals: Vec<f32> = all_vals.drain(n_atoms * 3..).collect();
-        Some(cell_matrix(
+        Some(cell_params_to_matrix(
             box_vals[0],
             box_vals[1],
             box_vals[2],
@@ -183,29 +184,6 @@ pub fn parse_inpcrd(text: &str, n_atoms: usize) -> Result<(Vec<f32>, Option<[f32
 }
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
-
-/// Build a 3×3 orthogonal box matrix from edge lengths (Ångström).
-fn orthorhombic_box(a: f32, b: f32, c: f32) -> [f32; 9] {
-    let mut m = [0.0f32; 9];
-    m[0] = a;
-    m[4] = b;
-    m[8] = c;
-    m
-}
-
-/// Build a 3×3 box matrix from lengths (Å) and angles (degrees).
-///
-/// Right angles take the exact diagonal path so orthorhombic boxes are free of
-/// f32 trigonometric noise; anything else (e.g. the 109.47° truncated
-/// octahedron) goes through the general triclinic conversion.
-fn cell_matrix(a: f32, b: f32, c: f32, alpha: f32, beta: f32, gamma: f32) -> [f32; 9] {
-    let right = |ang: f32| (ang - 90.0).abs() < 1e-3;
-    if right(alpha) && right(beta) && right(gamma) {
-        orthorhombic_box(a, b, c)
-    } else {
-        crate::parser::cell_params_to_matrix(a, b, c, alpha, beta, gamma)
-    }
-}
 
 /// Split a prmtop into a map of FLAG name → data text.
 ///
@@ -509,21 +487,24 @@ water trunc oct
 ";
 
     #[test]
-    fn test_orthorhombic_box() {
-        let m = orthorhombic_box(10.0, 20.0, 30.0);
-        assert_eq!(m[0], 10.0);
-        assert_eq!(m[4], 20.0);
-        assert_eq!(m[8], 30.0);
-        assert_eq!(m[1], 0.0);
-        assert_eq!(m[2], 0.0);
-    }
-
-    #[test]
-    fn test_cell_matrix_right_angles_match_orthorhombic_box() {
-        // 90° angles must produce the exact diagonal the old path built.
+    fn test_right_angle_boxes_are_exactly_diagonal() {
+        // 90° angles take the exact orthorhombic path: no f32 trig noise in
+        // the off-diagonals, from either the inpcrd box or BOX_DIMENSIONS.
+        let result = parse(WATER_PRMTOP, WATER_INPCRD_BOX).expect("box parse failed");
         assert_eq!(
-            cell_matrix(10.0, 20.0, 30.0, 90.0, 90.0, 90.0),
-            orthorhombic_box(10.0, 20.0, 30.0)
+            result.box_matrix,
+            Some([20.0, 0.0, 0.0, 0.0, 20.0, 0.0, 0.0, 0.0, 20.0])
+        );
+        let prmtop = format!(
+            "{WATER_PRMTOP}%FLAG BOX_DIMENSIONS
+%FORMAT(5E16.8)
+  9.00000000E+01  2.00000000E+01  2.10000000E+01  2.20000000E+01
+"
+        );
+        let result = parse_prmtop(&prmtop).expect("parse_prmtop failed");
+        assert_eq!(
+            result.box_matrix,
+            Some([20.0, 0.0, 0.0, 0.0, 21.0, 0.0, 0.0, 0.0, 22.0])
         );
     }
 

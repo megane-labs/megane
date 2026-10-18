@@ -92,7 +92,7 @@ fn parse_crysin(params: &[f32]) -> Crysin {
             alpha, beta, gamma
         ));
     }
-    let m = crate::parser::cell_params_to_matrix(a, b, c, alpha, beta, gamma);
+    let m = crate::cell::cell_params_to_matrix(a, b, c, alpha, beta, gamma);
     // The angle combination can still be geometrically impossible (e.g.
     // alpha = beta = gamma = 179): c_z collapses to zero and the cell is flat.
     if m.iter().any(|v| !v.is_finite()) || m[8] <= 0.0 {
