@@ -48,16 +48,21 @@ files into `Snapshot`s. Pipeline execution is 100% TypeScript.
 | 10 | `NODE_EXECUTORS` entry | `src/pipeline/executors/registry.ts` | Wire the executor into `executePipeline()` |
 | 11 | React component | `src/components/nodes/<Name>Node.tsx` | The node's properties form, wrapping `NodeShell` |
 | 12 | `nodeTypes` map + `ADD_NODE_GROUPS` | `src/components/PipelineEditor.tsx`, `src/components/PipelineRail.tsx` | Render the component + add it to the "Add Node" menu |
-| 13 | Builder subclass (optional) | `src/pipeline/builder.ts` (+ export from `src/lib.ts`) | JS graph-construction API |
+| 13 | Builder subclass + `BUILDER_NODE_CLASSES` entry | `src/pipeline/builder.ts` (+ export from `src/lib.ts`) | JS graph-construction API |
 | 14 | Python subclass | `python/megane/pipeline.py` (+ export from `python/megane/__init__.py`) | Python graph-construction API |
 
-Surfaces 1–5, 7, 8 and 10 are compile-enforced (see above; `defaultParams()` and
-`summarizeNodeParams()` are exhaustive `switch`es with no `default`, so a missing
-`case` is a "lacks ending return statement" error, and `NODE_EXECUTORS` is a
+Surfaces 1–5, 7, 8, 10 and 13 are compile-enforced (see above; `defaultParams()`
+and `summarizeNodeParams()` are exhaustive `switch`es with no `default`, so a
+missing `case` is a "lacks ending return statement" error; `NODE_EXECUTORS` is a
 mapped type over `PipelineNodeType`, so a missing entry is a "property is
-missing" error). Surfaces 9–12 are what make
-the node actually _do_ something and appear on the canvas. 13–14 are only needed
-for the programmatic `Pipeline` builders — but note that the catalog's
+missing" error; and `BUILDER_NODE_CLASSES` `satisfies` a mapped type over
+`PipelineNodeType`, so a node type without a JS builder class does not compile).
+`tests/ts/pipeline/builderCoverage.test.ts` then checks every builder class's
+ports against `NODE_PORTS`, its serialized keys against `defaultParams` and the
+catalog, and the serialize round-trip, and
+`tests/ts/pipeline/builderLibExports.test.ts` checks it is exported from
+`src/lib.ts`. Surfaces 9–12 are what make the node actually _do_ something and
+appear on the canvas. 14 is only needed for the Python `Pipeline` builder — but note that the catalog's
 `pythonClass` names the class users import from `megane`, and
 `tests/ts/pipeline/catalog.test.ts` requires one for every node, so ship the
 Python subclass too. `tests/python/test_pipeline_node_drift.py` then checks the
@@ -362,12 +367,13 @@ export const ADD_NODE_GROUPS: { category: NodeCategory; label: string; types: Pi
 That's the full loop — build, drop a **Fade** node from the Modify group, wire it
 between a structure and the viewport, and your atoms go translucent.
 
-## The programmatic base class (optional, for scripting)
+## The programmatic base class (for scripting)
 
-Everything above wires the node into the _visual editor and engine_. If you also
-want the node constructable from the JS or Python builder APIs
+Everything above wires the node into the _visual editor and engine_. To make the
+node constructable from the JS and Python builder APIs
 ([TypeScript](/guide/pipeline/typescript) / [Python](/guide/pipeline/python)),
-subclass the one real base class that Megane does have.
+subclass the one real base class that Megane does have. The JS builder covers
+every node type (the compile-time `BUILDER_NODE_CLASSES` registry enforces it).
 
 Unlike the execution side, the **builder** has a genuine
 `abstract class PipelineNode` (`src/pipeline/builder.ts`), mirrored one-to-one by
@@ -415,7 +421,9 @@ with `_node_type`/`_out_ports`/`_inp_ports` and store params on `self`, then add
 an `isinstance(node, Fade)` branch to `Pipeline._serialize_node()` that copies
 those attributes into the node dict. Export the class from `python/megane/__init__.py`
 (import + `__all__`) so `megane.Fade` resolves; likewise add the TypeScript class
-to the builder exports in `src/lib.ts` if npm users should reach it.
+to the builder exports in `src/lib.ts` and register it in `BUILDER_NODE_CLASSES`
+(`fade: Fade`). Read defaults from `defaultParams("fade")` rather than repeating
+them in the constructor, so the builder cannot drift from the editor.
 
 ```python
 class Fade(PipelineNode):
