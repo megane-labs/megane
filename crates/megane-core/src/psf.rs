@@ -193,22 +193,9 @@ pub fn parse_psf(text: &str) -> Result<ParsedStructure, String> {
         elements,
         bonds: unique_bonds,
         n_file_bonds,
-        bond_orders: None,
-        box_matrix: None,
-        box_origin: None,
-        frame_positions_flat: Vec::new(),
         atom_labels: Some(atom_labels),
         chain_ids: if has_chain { Some(chain_ids) } else { None },
-        bfactors: None,
-        vector_channels: vec![],
-        ca_indices: Vec::new(),
-        ca_chain_ids: Vec::new(),
-        ca_res_nums: Vec::new(),
-        ca_ss_type: Vec::new(),
-        symmetry_ops: Vec::new(),
-        scalar_channels: Vec::new(),
-        warnings: Vec::new(),
-        hetero: None,
+        ..Default::default()
     })
 }
 

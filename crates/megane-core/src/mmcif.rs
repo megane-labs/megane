@@ -864,22 +864,19 @@ pub fn parse(text: &str) -> Result<ParsedStructure, String> {
         elements,
         bonds: all_bonds,
         n_file_bonds,
-        bond_orders: None,
         box_matrix,
-        box_origin: None,
         frame_positions_flat,
         atom_labels: if has_labels { Some(atom_labels) } else { None },
         chain_ids: if has_chain_ids { Some(chain_ids) } else { None },
         bfactors: if has_bfactors { Some(bfactors) } else { None },
-        vector_channels: vec![],
         ca_indices,
         ca_chain_ids,
         ca_res_nums,
         ca_ss_type,
         symmetry_ops: crate::cif::extract_symmetry_ops(text),
-        scalar_channels: Vec::new(),
         warnings,
         hetero,
+        ..Default::default()
     })
 }
 

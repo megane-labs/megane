@@ -59,6 +59,10 @@ pub struct HeteroFrames {
 }
 
 /// Common result type for all structure format parsers.
+///
+/// Derives [`Default`] so parsers spell out only the channels they fill and
+/// end the literal with `..Default::default()` (empty vecs, `None` options).
+#[derive(Default)]
 pub struct ParsedStructure {
     pub n_atoms: usize,
     pub positions: Vec<f32>,
@@ -699,22 +703,17 @@ fn parse_impl(text: &str, frame0_only: bool) -> Result<ParsedStructure, String> 
         elements,
         bonds: unique_bonds,
         n_file_bonds,
-        bond_orders: None,
         box_matrix,
-        box_origin: None,
         frame_positions_flat,
         atom_labels,
         chain_ids,
         bfactors,
-        vector_channels: vec![],
         ca_indices,
         ca_chain_ids,
         ca_res_nums,
         ca_ss_type,
-        symmetry_ops: Vec::new(),
-        scalar_channels: Vec::new(),
-        warnings: Vec::new(),
         hetero,
+        ..Default::default()
     })
 }
 
