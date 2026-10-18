@@ -17,12 +17,13 @@
  *   notebook); Clean up and the sketch dialog's 3D embedding ask the kernel
  *   for it (`{type: "rdkit_wasm"}`) the first time they need it.
  *
- * The Builder's document lives in a page-wide store (`useBuilderStore`), so a
- * page shows one Builder at a time: the newest output takes it over, and the
- * others show a *Show here* button that takes it back. When the Builder moves
- * to an output of another `Builder` object, that object's document is opened
- * from its `_document` (or `_source`); its edit history stays with the output
- * it was made in.
+ * anywidget imports this bundle once per `Builder` object, so each object has
+ * its own copy of the Builder's store and edits its own document. The outputs
+ * of one object share that store, so one of them shows the Builder at a time:
+ * the newest output takes it over, and the others show a *Show here* button
+ * that takes it back. When the module first shows (or a page reload restores)
+ * an object's output, the document is opened from its `_document` (or
+ * `_source`); the edit history does not survive a reload.
  */
 
 import { downloadBlob } from "./renderer/RenderCapture";
@@ -242,7 +243,7 @@ export function resetRDKitWasm(): void {
   rdkitUrl = null;
 }
 
-// ── One Builder per page ──
+// ── One output of a Builder at a time ──
 
 interface View {
   model: BuilderWidgetModel;
@@ -263,7 +264,11 @@ function modelId(model: BuilderWidgetModel): unknown {
   return model.get("_instance_id") ?? model;
 }
 
-/** Make `view` the one showing the Builder, restoring its model's document when it changes hands. */
+/**
+ * Make `view` the output showing the Builder. The first output (and, should
+ * anywidget ever share one module between objects, another object's output)
+ * opens its model's document; another output of the same object keeps it.
+ */
 export async function takeOver(view: View, api = useBuilderStore): Promise<void> {
   const previous = owner;
   if (previous === view) return;
@@ -273,6 +278,8 @@ export async function takeOver(view: View, api = useBuilderStore): Promise<void>
   if (!sameModel) {
     api.getState().closeDocument();
     await restoreDocument(view.model, api);
+    // Another output took the Builder while the document was being opened.
+    if (owner !== view) return;
   }
   view.claim();
 }

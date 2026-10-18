@@ -330,6 +330,27 @@ describe("render: one Builder per page", () => {
     viewB.el.remove();
   });
 
+  it("a second output arriving while the first still opens its document gets the Builder", async () => {
+    let finish!: (v: unknown) => void;
+    parseStructureFile.mockReturnValue(new Promise((r) => (finish = r)));
+    const model = new FakeModel({
+      _source: new DataView(new TextEncoder().encode("SRC").buffer),
+      _source_name: "water.pdb",
+    });
+    const first = show(model);
+    const second = show(model);
+    finish(parsed());
+    await flush();
+    expect(currentOwner()).toBe(model);
+    // Only the second output mounted; the first shows the placeholder.
+    expect(mounts).toHaveLength(1);
+    expect(second.el.contains(mounts[0].el)).toBe(true);
+    expect(first.el.querySelector('[data-testid="builder-widget-show-here"]')).not.toBeNull();
+    expect(useBuilderStore.getState().fileName).toBe("water.pdb");
+    second.dispose();
+    first.dispose();
+  });
+
   it("two outputs of one Builder keep the document when it moves between them", async () => {
     const model = new FakeModel();
     const first = show(model);

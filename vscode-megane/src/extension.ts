@@ -501,8 +501,13 @@ class EmptyTree implements vscode.TreeDataProvider<never> {
 /**
  * The Builder webview's page. Its bundle is split into chunks (Ketcher loads
  * on demand), so the CSP admits scripts from the extension's resource origin
- * besides the nonce'd entry; workers start from blob: bootstraps that import
- * their scripts from there (see `src/utils/crossOriginWorker.ts`).
+ * besides the nonce'd entry. Workers start from blob: bootstraps that import
+ * their scripts from there (see `src/utils/crossOriginWorker.ts`); a module
+ * worker's imports are checked against `worker-src`, which therefore lists
+ * the resource origin too. RDKit (Emscripten + embind) builds its call
+ * wrappers with `new Function`, and its worker inherits this page's policy, so
+ * this page — unlike the viewer's — also allows `'unsafe-eval'`. It runs only
+ * the extension's own bundle; opened files are parsed by WASM, never evaluated.
  */
 export function getBuilderHtml(webview: vscode.Webview, mediaDir: vscode.Uri): string {
   const builderDir = vscode.Uri.joinPath(mediaDir, "builder");
@@ -517,12 +522,12 @@ export function getBuilderHtml(webview: vscode.Webview, mediaDir: vscode.Uri): s
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <meta http-equiv="Content-Security-Policy"
     content="default-src 'none';
-             script-src 'nonce-${nonce}' ${webview.cspSource} 'wasm-unsafe-eval' blob:;
+             script-src 'nonce-${nonce}' ${webview.cspSource} 'wasm-unsafe-eval' 'unsafe-eval' blob:;
              style-src ${webview.cspSource} 'unsafe-inline';
              img-src ${webview.cspSource} data: blob:;
              font-src ${webview.cspSource} data:;
              connect-src ${webview.cspSource} blob: data:;
-             worker-src blob:;" />
+             worker-src blob: ${webview.cspSource};" />
   <link rel="stylesheet" href="${cssUri}" />
 </head>
 <body>

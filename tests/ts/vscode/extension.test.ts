@@ -1383,9 +1383,9 @@ describe("megane Builder", () => {
       VscodeUri.file("/ext/media") as never,
     );
     expect(html).toMatch(
-      /script-src 'nonce-[A-Za-z0-9]{32}' https:\/\/res 'wasm-unsafe-eval' blob:/,
+      /script-src 'nonce-[A-Za-z0-9]{32}' https:\/\/res 'wasm-unsafe-eval' 'unsafe-eval' blob:/,
     );
-    expect(html).toContain("worker-src blob:");
+    expect(html).toContain("worker-src blob: https://res;");
     expect(html).not.toContain("__MEGANE_TEST__ = true");
     process.env.MEGANE_E2E_MODE = "1";
     expect(

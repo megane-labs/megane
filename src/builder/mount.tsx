@@ -8,9 +8,10 @@
  *
  * The Builder's document lives in a module-level store (`useBuilderStore`), so
  * a page holds one Builder document: two Builders mounted on the same page
- * would edit the same structure. Each host therefore keeps one mounted at a
- * time (VS Code gives every panel a page of its own; JupyterLab reveals its one
- * Builder tab; the Jupyter widget hands the document to the newest output).
+ * would edit the same structure. Each host therefore keeps one mounted per
+ * copy of the bundle (VS Code gives every panel a page of its own; JupyterLab
+ * reveals its one Builder tab; anywidget loads the bundle once per `Builder`
+ * object, and the newest output of an object takes its document).
  */
 
 import { StrictMode } from "react";

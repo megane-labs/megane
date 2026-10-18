@@ -16,8 +16,9 @@ Save* in the cell writes into :attr:`Builder.save_dir` (the kernel's working
 directory unless set) and never overwrites a file: a taken name gets a ``-1``,
 ``-2``, … suffix.
 
-A page shows one Builder at a time. Displaying a second one moves the Builder
-into the new output; the old output offers *Show here* to take it back.
+Each ``Builder`` edits its own document. Displaying the same ``Builder`` in a
+second output moves it there; the earlier output offers *Show here* to take
+it back.
 """
 
 from __future__ import annotations

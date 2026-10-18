@@ -1,0 +1,146 @@
+/**
+ * megane Builder in the VS Code extension, under code-server.
+ *
+ * The megane container in the activity bar holds the Builder view, whose
+ * welcome buttons open a Builder tab; structure files get *Open in megane
+ * Builder* in the Explorer's context menu and in a megane viewer tab's title
+ * bar. Checks that the webview's chunked bundle runs the Builder's heavy parts
+ * from the extension's resource origin (the RDKit worker, the lazily loaded
+ * Ketcher and its Indigo worker) and that Save goes through the extension
+ * host (in E2E mode it skips the save dialog and writes beside the file).
+ *
+ * Prereqs: `bash scripts/install-code-server.sh` with a VSIX packaged from
+ * this tree (`npm --prefix vscode-megane run package`).
+ */
+
+import { copyFileSync, existsSync, mkdirSync, readFileSync, rmSync } from "fs";
+import { join } from "path";
+import { fileURLToPath } from "url";
+import { test, expect, type Frame, type Page } from "playwright/test";
+import { waitForReady } from "./lib/setup";
+import { startCodeServer, stopCodeServer, type CodeServerHandle } from "./lib/hosts/code-server";
+import { cleanUpWithRDKit, openSketch, saveAs, waitForKetcher } from "./lib/builder";
+
+const REPO = join(fileURLToPath(import.meta.url), "..", "..", "..");
+const WORKSPACE = "/tmp/megane-e2e-builder-vscode";
+const PORT = Number(process.env.MEGANE_VSCODE_BUILDER_PORT ?? 18995);
+
+let cs: CodeServerHandle | null = null;
+
+test.describe.configure({ timeout: 300_000 });
+
+test.beforeAll(async () => {
+  rmSync(WORKSPACE, { recursive: true, force: true });
+  mkdirSync(WORKSPACE, { recursive: true });
+  copyFileSync(join(REPO, "tests", "fixtures", "caffeine.sdf"), join(WORKSPACE, "caffeine.sdf"));
+  copyFileSync(join(REPO, "tests", "fixtures", "1crn.pdb"), join(WORKSPACE, "1crn.pdb"));
+  cs = await startCodeServer({ port: PORT, workspace: WORKSPACE, e2eMode: true });
+});
+
+test.afterAll(() => {
+  stopCodeServer(cs);
+  cs = null;
+});
+
+async function openWorkbench(page: Page) {
+  await page.goto(`http://127.0.0.1:${PORT}/?folder=${encodeURIComponent(WORKSPACE)}`, {
+    waitUntil: "domcontentloaded",
+  });
+  await page.waitForSelector(".monaco-workbench", { timeout: 60_000 });
+  // Let the extensions and the file tree settle before interacting.
+  await page.waitForTimeout(3_000);
+}
+
+/** The webview frame that holds a megane Builder (not a megane viewer). */
+async function builderFrame(page: Page, timeoutMs = 60_000): Promise<Frame> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    for (const frame of page.frames()) {
+      if (frame === page.mainFrame()) continue;
+      try {
+        if (
+          await frame.evaluate(() => !!document.querySelector('[data-testid="megane-builder"]'))
+        ) {
+          return frame;
+        }
+      } catch {
+        // Navigating or detached.
+      }
+    }
+    await page.waitForTimeout(250);
+  }
+  throw new Error("no megane Builder webview appeared");
+}
+
+test("the megane activity-bar view opens an empty Builder tab", async ({ page }) => {
+  await openWorkbench(page);
+  await page
+    .getByRole("tab", { name: /^megane/ })
+    .first()
+    .click();
+  // The welcome buttons (the view's title bar repeats them as icons).
+  const welcome = page.locator(".welcome-view-content");
+  const newStructure = welcome.getByRole("button", { name: "New Structure" });
+  await expect(newStructure).toBeVisible({ timeout: 30_000 });
+  await expect(welcome.getByRole("button", { name: "Open File in Builder…" })).toBeVisible();
+  await newStructure.click();
+
+  const wv = await builderFrame(page);
+  await expect(wv.locator('[data-testid="builder-welcome"]')).toBeVisible();
+  await expect(wv.locator('[data-testid="builder-tools"]')).toHaveCount(0);
+  await expect(page.locator(".tab", { hasText: "megane Builder" }).first()).toBeVisible();
+});
+
+test("Open in megane Builder from the Explorer: RDKit, Ketcher and Save work in the webview", async ({
+  page,
+}) => {
+  rmSync(join(WORKSPACE, "caffeine.xyz"), { force: true });
+  await openWorkbench(page);
+  const row = page.getByRole("treeitem", { name: "caffeine.sdf", exact: true });
+  await row.waitFor({ state: "visible", timeout: 30_000 });
+  await row.click({ button: "right" });
+  const entry = page.getByRole("menuitem", { name: "Open in megane Builder" });
+  await expect(entry).toBeVisible();
+  // The context menu ignores clicks while it is still animating in.
+  await page.waitForTimeout(500);
+  await entry.click();
+
+  const wv = await builderFrame(page);
+  const root = wv.locator('[data-testid="megane-builder"]');
+  await expect(root).toHaveAttribute("data-atom-count", "24", { timeout: 60_000 });
+  await waitForReady(wv);
+  await expect(page.locator(".tab", { hasText: "caffeine.sdf — Builder" }).first()).toBeVisible();
+
+  // The RDKit worker starts from the extension's resource origin.
+  await cleanUpWithRDKit(wv);
+
+  // Ketcher's chunk and its Indigo worker load too.
+  await openSketch(wv);
+  await waitForKetcher(wv);
+  await wv.locator('[data-testid="sketch-cancel"]').click();
+
+  // Save goes through the extension host, which writes beside the file.
+  await saveAs(wv, "xyz");
+  await expect(wv.locator('[data-testid="builder-notice"]')).toContainText("Saved caffeine.xyz", {
+    timeout: 30_000,
+  });
+  await expect.poll(() => existsSync(join(WORKSPACE, "caffeine.xyz"))).toBe(true);
+  expect(readFileSync(join(WORKSPACE, "caffeine.xyz"), "utf8").split("\n")[0].trim()).toBe("24");
+});
+
+test("a megane viewer tab's title bar opens its file in the Builder", async ({ page }) => {
+  await openWorkbench(page);
+  const row = page.getByRole("treeitem", { name: "1crn.pdb", exact: true });
+  await row.waitFor({ state: "visible", timeout: 30_000 });
+  await row.click({ force: true });
+  await row.dblclick({ force: true });
+  const action = page.getByRole("button", { name: "Open in megane Builder" });
+  await expect(action).toBeVisible({ timeout: 60_000 });
+  await action.click();
+  const wv = await builderFrame(page);
+  await expect(wv.locator('[data-testid="megane-builder"]')).toHaveAttribute(
+    "data-atom-count",
+    "327",
+    { timeout: 60_000 },
+  );
+});
