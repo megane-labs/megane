@@ -11,11 +11,10 @@
  * Requires: WASM must be built first (`npm run build:wasm` or `npm run build`).
  */
 
-import { spawn } from "child_process";
 import { mkdirSync, writeFileSync } from "fs";
 import { join, dirname } from "path";
 import { fileURLToPath } from "url";
-import { getChromium } from "../tests/e2e/utils/playwright.mjs";
+import { getChromium, startViteServer } from "../tests/e2e/utils/playwright.mjs";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(__dirname, "..");
@@ -27,36 +26,6 @@ const chromium = getChromium();
 
 const PORT = 15273 + Math.floor(Math.random() * 100);
 
-function startViteServer() {
-  return new Promise((resolve, reject) => {
-    const proc = spawn("npx", ["vite", "--port", String(PORT), "--host", "127.0.0.1"], {
-      cwd: ROOT,
-      stdio: ["ignore", "pipe", "pipe"],
-      env: { ...process.env, NODE_ENV: "development" },
-    });
-
-    const timeout = setTimeout(() => {
-      reject(new Error("Vite dev server did not start in time"));
-    }, 30000);
-
-    const handler = (data) => {
-      const line = data.toString();
-      if (line.includes("Local:") && line.includes(String(PORT))) {
-        clearTimeout(timeout);
-        resolve(proc);
-      }
-    };
-
-    proc.stdout.on("data", handler);
-    proc.stderr.on("data", handler);
-
-    proc.on("error", (err) => {
-      clearTimeout(timeout);
-      reject(err);
-    });
-  });
-}
-
 let server = null;
 let browser = null;
 
@@ -64,7 +33,7 @@ try {
   mkdirSync(OUTPUT_DIR, { recursive: true });
 
   console.log("Starting Vite dev server...");
-  server = await startViteServer();
+  server = await startViteServer({ port: PORT });
   console.log(`Vite dev server running on port ${PORT}`);
 
   browser = await chromium.launch({ headless: true });
