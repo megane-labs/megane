@@ -28,7 +28,8 @@ import { createDefaultPipeline, createDemoPipeline, createEmptyPipeline } from "
 import { PIPELINE_TEMPLATES } from "./templates";
 import { getLayoutedElements, allNodesMeasured } from "./layout";
 import { performOpenFile, type OpenFileOptions } from "./openFile";
-import { reconcileInspectorLayers, isInspectorId, type InspectorLayer } from "./inspectorSync";
+import { reconcileInspectorLayers, isInspectorLayerId, type InspectorLayer } from "./inspectorSync";
+import { applyQuickStyle, type QuickStyle } from "./quickStyle";
 import { findPrimaryLoader, loaderEdits } from "./editHistory";
 import { registerTestStores, GLOBAL_BUNDLE_ID } from "../stores/testRegistry";
 
@@ -139,6 +140,8 @@ export interface PipelineStore {
   // branching from whatever currently feeds viewport.particle so replicate /
   // supercell effects are preserved. Non-Inspector nodes are left untouched.
   setInspectorLayers: (layers: InspectorLayer[]) => void;
+  /** Apply Quick Style controls to the graph (see `quickStyle.ts`). */
+  setQuickStyle: (patch: Partial<QuickStyle>) => void;
 
   // Structure editing: the edit history is the primary load_structure
   // node's `edits` list (see editHistory.ts) — part of the input, not a node
@@ -661,7 +664,7 @@ export const pipelineStateCreator: StateCreator<PipelineStore> = (set, get, api)
       (e) =>
         e.target === viewport.id &&
         (e.targetHandle ?? "") === "particle" &&
-        !isInspectorId(e.source),
+        !isInspectorLayerId(e.source),
     );
     let source: { nodeId: string; handle: string } | null = null;
     if (baseEdge) {
@@ -673,6 +676,14 @@ export const pipelineStateCreator: StateCreator<PipelineStore> = (set, get, api)
     if (!source) return;
 
     const next = reconcileInspectorLayers(nodes, edges, layers, source, viewport.id);
+    set({ nodes: next.nodes, edges: next.edges });
+    get().execute();
+  },
+
+  setQuickStyle: (patch) => {
+    const { nodes, edges } = get();
+    const next = applyQuickStyle(nodes, edges, patch);
+    if (next.nodes === nodes && next.edges === edges) return;
     set({ nodes: next.nodes, edges: next.edges });
     get().execute();
   },

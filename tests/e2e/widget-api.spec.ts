@@ -16,7 +16,8 @@
  */
 
 import { execFileSync } from "child_process";
-import { existsSync } from "fs";
+import { existsSync, readFileSync, rmSync } from "fs";
+import { tmpdir } from "os";
 import { join } from "path";
 import { fileURLToPath } from "url";
 import { test, expect, type Page } from "playwright/test";
@@ -298,4 +299,65 @@ test("a saved notebook without embedding cannot play without a kernel", async ({
   const notebook = writeExecutedNotebook("widget_api_saved_kernel", false);
   await openLabNotebook(page, { port: PORT, token: TOKEN, notebook, runAll: false });
   expect(await framesAppliedWithoutKernel(page)).toBe(0);
+});
+
+// ─── quick_style: the opt-in Quick Style panel ───────────────────────────
+
+test("quick_style edits the pipeline and writes it back to Python", async ({ page }) => {
+  // The kernel mirrors every `_pipeline_json` the front end sends into a file,
+  // so the test can read what Python received without running another cell.
+  const mirror = join(tmpdir(), `megane-quick-style-${Date.now()}.json`);
+  rmSync(mirror, { force: true });
+  await reopenWithCells(page, [
+    [
+      "from megane import Pipeline, LoadStructure, AddBonds, Viewport\n",
+      "pipe = Pipeline()\n",
+      `s = pipe.add_node(LoadStructure(\"${REPO}/tests/fixtures/water_wrapped.pdb\"))\n`,
+      "b = pipe.add_node(AddBonds())\n",
+      "v = pipe.add_node(Viewport())\n",
+      "pipe.add_edge(s.out.particle, b.inp.particle)\n",
+      "pipe.add_edge(s.out.particle, v.inp.particle)\n",
+      "pipe.add_edge(b.out.bond, v.inp.bond)\n",
+      "viewer.set_pipeline(pipe)\n",
+      "viewer.quick_style = True\n",
+      `viewer.observe(lambda c: open(\"${mirror}\", \"w\").write(c[\"new\"]), names=\"_pipeline_json\")\n`,
+    ],
+  ]);
+  await waitForReady(page, { needsData: true, timeout: 30_000 });
+
+  const panel = page.locator('[data-testid="quick-style"]');
+  await expect(panel).toBeVisible({ timeout: 30_000 });
+  await panel.locator('[data-testid="quick-style-atom-scale"]').fill("0.5");
+  await panel.locator('[data-testid="quick-style-bond-scale"]').fill("2");
+
+  await expect
+    .poll(
+      () => {
+        if (!existsSync(mirror)) return null;
+        const json = JSON.parse(readFileSync(mirror, "utf8")) as {
+          nodes: { id: string; scale?: number }[];
+        };
+        return json.nodes
+          .filter((n) => n.id.startsWith("insp-global-"))
+          .map((n) => `${n.id}:${n.scale}`)
+          .sort();
+      },
+      { timeout: 30_000 },
+    )
+    .toEqual(["insp-global-atoms:0.5", "insp-global-bonds:2"]);
+  rmSync(mirror, { force: true });
+
+  // Collapses to a "Style" toggle and opens again.
+  await page.getByLabel("Collapse panel").click();
+  await expect(panel).toHaveCount(0);
+  await page.locator('[data-testid="panel-style-toggle"]').click();
+  await expect(page.locator('[data-testid="quick-style"]')).toBeVisible();
+});
+
+test("quick_style is disabled on the legacy load() path", async ({ page }) => {
+  await reopenWithCells(page, [["viewer.quick_style = True\n"]]);
+  await waitForReady(page, { needsData: true, timeout: 30_000 });
+  await expect(page.locator('[data-testid="quick-style-disabled"]')).toContainText("set_pipeline", {
+    timeout: 30_000,
+  });
 });

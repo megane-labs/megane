@@ -103,3 +103,13 @@ describe("executeViewport — representation pickup", () => {
     expect(state.representationByAtom).toEqual(["line", "licorice"]);
   });
 });
+
+describe("executeViewport — selections beat a global style", () => {
+  it("lets a selection's representation win over a whole-structure one ahead of it", () => {
+    const global = makeParticle("a", "licorice");
+    const layer = makeParticle("a", "line", new Uint32Array([1]));
+    const state = executeViewport(baseParams, inputs([global, layer]));
+    expect(state.representationByAtom).toEqual(["licorice", "line"]);
+    expect(state.representationMode).toBe("licorice");
+  });
+});

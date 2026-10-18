@@ -1,10 +1,15 @@
 /**
  * Simplified megane viewer for Jupyter widget embedding.
- * Minimal UI: Viewport + Timeline + Tooltip + MeasurementPanel.
+ * Minimal UI: Viewport + Timeline + Tooltip + MeasurementPanel, plus the
+ * opt-in Quick Style panel (`MolecularViewer(quick_style=True)`).
  *
  * The visual pipeline editor is intentionally not mounted here — it is
  * webapp / JupyterLab / VSCode only. Pipeline data still flows in via
  * `pipelineJson` + `nodeSnapshotsData` from `MolecularViewer.set_pipeline()`.
+ * Quick Style is the one exception that edits the pipeline in the widget: it
+ * only changes node parameters (no graph UI), and every change is written
+ * back through `onPipelineChange` so it lands in `_pipeline_json` and in the
+ * notebook's saved widget state.
  */
 
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -15,6 +20,8 @@ import { Timeline } from "./Timeline";
 import { Tooltip } from "./Tooltip";
 import { MeasurementPanel } from "./MeasurementPanel";
 import { ViewAxisControls } from "./ViewAxisControls";
+import { CollapsiblePanel } from "./CollapsiblePanel";
+import { QuickStylePanel } from "./QuickStylePanel";
 import { OVERLAY_INSET } from "./overlayLayout";
 import { MoleculeRenderer, type MeganeCameraState } from "../renderer/MoleculeRenderer";
 import { latticeVectors, type ViewAxis } from "../renderer/cameraOrientation";
@@ -46,11 +53,16 @@ interface WidgetViewerProps {
   initialCameraState?: MeganeCameraState | null;
   /** Called when camera state changes (after user interaction ends). */
   onCameraStateChange?: (state: MeganeCameraState) => void;
+  /** Show the Quick Style panel (the `quick_style` traitlet). */
+  quickStyle?: boolean;
   // Optional pipeline store override. Each Jupyter widget mount creates its
   // own private store so multiple MolecularViewers in the same notebook do
   // not share state. Tests pass their own store to inspect internal state.
   pipelineStore?: StoreApi<PipelineStore>;
 }
+
+/** Quick Style edits are written back to Python at most this often while dragging. */
+export const QUICK_STYLE_SYNC_DELAY_MS = 300;
 
 /** Decode a binary DataView into a Snapshot. */
 function decodeNodeSnapshot(data: DataView): Snapshot | null {
@@ -74,8 +86,10 @@ export function WidgetViewer({
   onMeasurementChange,
   pipelineJson,
   nodeSnapshotsData,
+  onPipelineChange,
   initialCameraState,
   onCameraStateChange,
+  quickStyle = false,
   pipelineStore: pipelineStoreProp,
 }: WidgetViewerProps) {
   // Each WidgetViewer instance owns a private pipeline store. The webapp
@@ -147,7 +161,20 @@ export function WidgetViewer({
   // single store transaction so the post-deserialize execute() sees the
   // matching snapshots.
   const prevPipelineJsonRef = useRef<string>("");
+  // The pipeline JSON this viewer last wrote back (Quick Style). When the
+  // model echoes it, nothing else changed, so there is nothing to reload.
+  const echoedPipelineJsonRef = useRef<string | null>(null);
+  const prevInputsRef = useRef<{ snapshot: Snapshot | null; data?: Record<string, DataView> }>({
+    snapshot: null,
+  });
   useEffect(() => {
+    const inputsUnchanged =
+      prevInputsRef.current.snapshot === snapshot &&
+      prevInputsRef.current.data === nodeSnapshotsData;
+    prevInputsRef.current = { snapshot, data: nodeSnapshotsData };
+    if (pipelineJson && pipelineJson === echoedPipelineJsonRef.current && inputsUnchanged) {
+      return;
+    }
     const store = pipelineStore.getState();
     const decodedSnapshots: Record<string, Parameters<typeof store.setNodeSnapshot>[1]> = {};
     if (nodeSnapshotsData) {
@@ -207,6 +234,30 @@ export function WidgetViewer({
       }
     }
   }, [snapshot, nodeSnapshotsData, pipelineJson, setSnapshot, pipelineStore]);
+
+  // Quick Style → Python. Debounced so dragging a slider sends one update, and
+  // flushed on unmount so the last change is not lost.
+  const onPipelineChangeRef = useRef(onPipelineChange);
+  onPipelineChangeRef.current = onPipelineChange;
+  const syncTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const syncPendingRef = useRef(false);
+  const flushPipelineSync = useCallback(() => {
+    if (syncTimerRef.current !== null) clearTimeout(syncTimerRef.current);
+    syncTimerRef.current = null;
+    if (!syncPendingRef.current) return;
+    syncPendingRef.current = false;
+    const json = JSON.stringify(pipelineStore.getState().serialize());
+    prevPipelineJsonRef.current = json;
+    echoedPipelineJsonRef.current = json;
+    onPipelineChangeRef.current?.(json);
+  }, [pipelineStore]);
+  const schedulePipelineSync = useCallback(() => {
+    syncPendingRef.current = true;
+    if (syncTimerRef.current !== null) clearTimeout(syncTimerRef.current);
+    syncTimerRef.current = setTimeout(flushPipelineSync, QUICK_STYLE_SYNC_DELAY_MS);
+  }, [flushPipelineSync]);
+  useEffect(() => flushPipelineSync, [flushPipelineSync]);
+  const [quickStyleCollapsed, setQuickStyleCollapsed] = useState(false);
 
   // Apply viewportState changes to the renderer
   useEffect(() => {
@@ -404,6 +455,28 @@ export function WidgetViewer({
       >
         <ViewAxisControls hasCell={hasCell} onAlign={handleAlignView} />
       </div>
+      {quickStyle && (
+        <CollapsiblePanel
+          title="Style"
+          collapsed={quickStyleCollapsed}
+          onToggleCollapse={() => setQuickStyleCollapsed((c) => !c)}
+          width={260}
+          bottom="auto"
+        >
+          <div style={{ padding: "10px 14px", overflowY: "auto", maxHeight: 300 }}>
+            <QuickStylePanel
+              store={pipelineStore}
+              framed={false}
+              onApplied={schedulePipelineSync}
+              disabledReason={
+                pipelineJson
+                  ? null
+                  : "Quick style edits the viewer's pipeline. Load data with viewer.set_pipeline(...) to use it."
+              }
+            />
+          </div>
+        </CollapsiblePanel>
+      )}
       <Tooltip info={hoverInfo} />
       <MeasurementPanel
         selection={selection}

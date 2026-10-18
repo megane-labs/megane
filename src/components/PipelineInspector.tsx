@@ -1,7 +1,8 @@
 /**
  * Selection Inspector — a lightweight third editing surface (alongside the
- * visual pipeline Editor and the AI Chat) for "select a subset, change how it
- * looks", inspired by OVITO's Expression Select.
+ * visual pipeline Editor and the AI Chat) for "change how it looks". The Quick
+ * Style section on top restyles the whole structure (`QuickStylePanel`); the
+ * Selections below restyle a subset, inspired by OVITO's Expression Select.
  *
  * The user builds selections from structure-aware chips (the actual elements /
  * residues / chains present) or a raw expression, tunes appearance (color,
@@ -18,6 +19,7 @@ import {
   useScopedInspectorStore,
   usePipelineStoreApi,
 } from "../stores/MeganeProvider";
+import { QuickStylePanel, COLOR_MODE_LABELS, REP_LABELS } from "./QuickStylePanel";
 import { getStructureFacts } from "../ai/structureSummary";
 import { evaluateSelection, validateQuery } from "../pipeline/selection";
 import {
@@ -33,26 +35,6 @@ import {
   type InspectorAppearance,
 } from "../pipeline/inspectorSync";
 import type { ColorMode, RepresentationMode } from "../pipeline/types";
-
-const COLOR_MODE_LABELS: Record<ColorMode, string> = {
-  uniform: "Uniform",
-  byElement: "Element",
-  byResidue: "Residue",
-  byChain: "Chain",
-  byBFactor: "B-Factor",
-  byProperty: "Property",
-  illustrative: "Illustrative",
-};
-
-const REP_LABELS: Record<RepresentationMode, string> = {
-  atoms: "Ball",
-  licorice: "Licorice",
-  cartoon: "Cartoon",
-  both: "Ball + Stick",
-  surface: "Surface",
-  line: "Line",
-  illustrative: "Illustrative",
-};
 
 const panelStyle: React.CSSProperties = {
   flex: 1,
@@ -150,8 +132,13 @@ export function PipelineInspector() {
 
   const facts = useMemo(() => getStructureFacts(snapshot, atomLabels), [snapshot, atomLabels]);
 
-  const [layers, setLayersState] = useState<InspectorLayer[]>([]);
-  const [activeId, setActiveId] = useState<string | null>(null);
+  // The graph is the only source of truth: layers are re-read from it on every
+  // change, so a re-opened .megane.json, an applied template or chat pipeline,
+  // and edits made in the Editor tab all show up here.
+  const graphNodes = useScopedPipelineStore((s) => s.nodes);
+  const layers = useMemo(() => layersFromGraph(graphNodes), [graphNodes]);
+  const [selectedId, setActiveId] = useState<string | null>(null);
+  const activeId = layers.some((l) => l.id === selectedId) ? selectedId : (layers[0]?.id ?? null);
 
   // Per-active-layer chip composer state. Reset whenever the active layer
   // changes (we don't parse arbitrary raw expressions back into chips).
@@ -160,18 +147,6 @@ export function PipelineInspector() {
   const [chipChains, setChipChains] = useState<Set<string>>(new Set());
   const [withinR, setWithinR] = useState<string>("");
   const [customQuery, setCustomQuery] = useState(false);
-
-  // Hydrate from any Inspector nodes already in the graph, once on mount.
-  const hydrated = useRef(false);
-  useEffect(() => {
-    if (hydrated.current) return;
-    hydrated.current = true;
-    const existing = layersFromGraph(pipelineApi.getState().nodes);
-    if (existing.length > 0) {
-      setLayersState(existing);
-      setActiveId(existing[0].id);
-    }
-  }, [pipelineApi]);
 
   useEffect(() => {
     // Reset the chip composer when switching layers.
@@ -185,7 +160,6 @@ export function PipelineInspector() {
   const active = layers.find((l) => l.id === activeId) ?? null;
 
   function commit(next: InspectorLayer[]) {
-    setLayersState(next);
     setInspectorLayers(next);
   }
 
@@ -281,6 +255,7 @@ export function PipelineInspector() {
   if (!facts) {
     return (
       <div style={panelStyle} data-testid="pipeline-inspector">
+        <QuickStylePanel store={pipelineApi} />
         <div style={{ color: "var(--megane-text-secondary)", fontSize: 13 }}>
           Load a structure to start selecting atoms.
         </div>
@@ -290,10 +265,12 @@ export function PipelineInspector() {
 
   return (
     <div style={panelStyle} data-testid="pipeline-inspector">
-      {/* Layer list */}
+      <QuickStylePanel store={pipelineApi} />
+
+      {/* Selection layers: restyle a subset on top of the Quick Style */}
       <div style={sectionStyle}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-          <span style={sectionTitleStyle}>Layers</span>
+          <span style={sectionTitleStyle}>Selections</span>
           <button
             data-testid="inspector-add-layer"
             onClick={handleAddLayer}

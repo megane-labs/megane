@@ -35,7 +35,7 @@ vi.mock("@/pipeline/executors/addBond", async (importOriginal) => {
   };
 });
 
-import { WidgetViewer } from "@/components/WidgetViewer";
+import { WidgetViewer, QUICK_STYLE_SYNC_DELAY_MS } from "@/components/WidgetViewer";
 import { Viewport } from "@/components/Viewport";
 import { Tooltip } from "@/components/Tooltip";
 import { MeasurementPanel } from "@/components/MeasurementPanel";
@@ -571,5 +571,109 @@ describe("WidgetViewer — per-frame bond recalc", () => {
     expect(stateB.nodes.find((n) => n.id === "loader-a")).toBeUndefined();
     expect(stateA.viewportState.particles.length).toBeGreaterThan(0);
     expect(stateB.viewportState.particles.length).toBeGreaterThan(0);
+  });
+
+  describe("Quick Style", () => {
+    const pipelineJson = JSON.stringify({
+      version: 3,
+      nodes: [
+        {
+          type: "load_structure",
+          id: "loader-q",
+          position: { x: 0, y: 0 },
+          fileName: null,
+          hasTrajectory: false,
+          hasCell: false,
+        },
+        {
+          type: "viewport",
+          id: "viewport-q",
+          position: { x: 0, y: 300 },
+          perspective: false,
+          cellAxesVisible: true,
+        },
+      ],
+      edges: [
+        {
+          source: "loader-q",
+          target: "viewport-q",
+          sourceHandle: "particle",
+          targetHandle: "particle",
+        },
+      ],
+    });
+
+    beforeEach(() => {
+      vi.useFakeTimers();
+    });
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    function mount(extra: Record<string, unknown> = {}) {
+      const store = createPipelineStore();
+      const onPipelineChange = vi.fn();
+      const nodeSnapshotsData = { "loader-q": encodeSnapshot(makeSnapshot()) };
+      const props = {
+        ...defaultProps,
+        pipelineJson,
+        nodeSnapshotsData,
+        pipelineStore: store,
+        onPipelineChange,
+        quickStyle: true,
+        ...extra,
+      };
+      const view = render(<WidgetViewer {...props} />);
+      return { store, onPipelineChange, view, props };
+    }
+
+    it("is hidden unless quickStyle is set", () => {
+      const { view } = mount({ quickStyle: false });
+      expect(view.queryByTestId("quick-style")).toBeNull();
+    });
+
+    it("writes edits back once, after the debounce, and ignores the echo", () => {
+      const { store, onPipelineChange, view, props } = mount();
+      const slider = view.getByTestId("quick-style-atom-scale");
+      fireEvent.change(slider, { target: { value: "0.6" } });
+      fireEvent.change(slider, { target: { value: "0.5" } });
+      expect(onPipelineChange).not.toHaveBeenCalled();
+      act(() => {
+        vi.advanceTimersByTime(QUICK_STYLE_SYNC_DELAY_MS);
+      });
+      expect(onPipelineChange).toHaveBeenCalledTimes(1);
+      const json = onPipelineChange.mock.calls[0][0] as string;
+      expect(JSON.parse(json).nodes.some((n: { id: string }) => n.id === "insp-global-atoms")).toBe(
+        true,
+      );
+
+      // The model echoes the JSON back: nothing is reloaded or re-decoded.
+      const loadSpy = vi.spyOn(store.getState(), "loadPipeline");
+      const snapSpy = vi.spyOn(store.getState(), "setNodeSnapshot");
+      view.rerender(<WidgetViewer {...props} pipelineJson={json} />);
+      expect(loadSpy).not.toHaveBeenCalled();
+      expect(snapSpy).not.toHaveBeenCalled();
+      expect(store.getState().nodes.find((n) => n.id === "insp-global-atoms")).toBeDefined();
+    });
+
+    it("flushes a pending edit on unmount", () => {
+      const { onPipelineChange, view } = mount();
+      fireEvent.click(view.getByTestId("quick-style-perspective"));
+      view.unmount();
+      expect(onPipelineChange).toHaveBeenCalledTimes(1);
+    });
+
+    it("collapses to a toggle", () => {
+      const { view } = mount();
+      fireEvent.click(view.getByLabelText("Collapse panel"));
+      expect(view.queryByTestId("quick-style")).toBeNull();
+      fireEvent.click(view.getByTestId("panel-style-toggle"));
+      expect(view.getByTestId("quick-style")).toBeTruthy();
+    });
+
+    it("is disabled on the legacy load() path (no pipeline JSON)", () => {
+      const { view } = mount({ pipelineJson: "", nodeSnapshotsData: {} });
+      expect(view.getByTestId("quick-style-disabled").textContent).toMatch(/set_pipeline/);
+    });
   });
 });

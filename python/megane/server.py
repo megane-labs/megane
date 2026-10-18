@@ -8,6 +8,7 @@ import json
 import logging
 import os
 import tempfile
+import warnings
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Optional
@@ -16,8 +17,9 @@ from fastapi import FastAPI, HTTPException, Request, UploadFile, WebSocket, WebS
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
-from megane.parsers.common import encode_trajectory_frame
-from megane.parsers.pdb import Structure, load_pdb
+from megane.parsers.common import Structure, encode_trajectory_frame
+from megane.parsers.dispatch import load_structure_file, structure_ext
+from megane.parsers.pdb import load_pdb
 from megane.protocol import encode_metadata, encode_snapshot
 
 if TYPE_CHECKING:
@@ -40,7 +42,7 @@ class ServerState:
 
     structure: Optional[Structure] = None
     snapshot_bytes: bytes = b""
-    pdb_path: str = ""
+    structure_path: str = ""
     xtc_path: Optional[str] = None
     trajectory: Optional[InMemoryTrajectory] = None
 
@@ -71,22 +73,47 @@ def configure_files(root: str | os.PathLike[str] | None, any_host: bool = False)
 
 
 def configure(
-    pdb_path: str,
+    structure_path: str = "",
     xtc_path: str | None = None,
     traj_path: str | None = None,
+    *,
+    pdb_path: str | None = None,
 ) -> None:
-    """Configure the server with a molecular structure to serve."""
-    _state.xtc_path = xtc_path
-    _state.trajectory = None
+    """Configure the server with a molecular structure to serve.
 
+    Args:
+        structure_path: Any structure file the viewer opens (PDB, GRO, XYZ,
+            CIF, MOL2, ...; see ``megane.parsers.dispatch``). An ASE ``.traj``
+            is loaded with all its frames, as ``traj_path`` is.
+        xtc_path: Optional XTC trajectory whose topology is ``structure_path``.
+        traj_path: ASE ``.traj`` file holding both topology and frames;
+            ``structure_path`` is ignored when it is given.
+        pdb_path: Deprecated alias of ``structure_path``.
+
+    Raises:
+        ValueError: ``structure_path`` has an unsupported extension.
+    """
+    if pdb_path is not None:
+        warnings.warn(
+            "configure(pdb_path=...) is deprecated; pass structure_path instead",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        if structure_path:
+            raise TypeError("configure() got both structure_path and pdb_path")
+        structure_path = pdb_path
+
+    if traj_path is None and structure_path and structure_ext(structure_path) == ".traj":
+        traj_path = structure_path
+
+    # Read everything before touching _state, so a file that fails to load
+    # (an unsupported upload, an atom-count mismatch) leaves the current
+    # structure and trajectory in place.
     if traj_path is not None:
         from megane.parsers.traj import load_traj
 
         structure, traj = load_traj(traj_path)
-        _state.structure = structure
-        _state.snapshot_bytes = encode_snapshot(structure)
-        _state.pdb_path = traj_path
-        _state.trajectory = traj
+        _set_state(structure, traj_path, None, traj)
         logger.info(
             "Loaded .traj: %d frames, %d atoms, %d bonds",
             traj.n_frames,
@@ -95,34 +122,49 @@ def configure(
         )
         return
 
-    structure = load_pdb(pdb_path)
-    _state.structure = structure
-    _state.snapshot_bytes = encode_snapshot(structure)
-    _state.pdb_path = pdb_path
+    # Extension-less files keep the historic PDB reading.
+    if structure_ext(structure_path) == "":
+        structure = load_pdb(structure_path)
+    else:
+        structure = load_structure_file(structure_path)
 
+    traj = None
     if xtc_path:
         from megane.parsers.xtc import load_trajectory
 
-        traj = load_trajectory(pdb_path, xtc_path)
-        _state.trajectory = traj
+        traj = load_trajectory(structure_path, xtc_path)
         logger.info(
             "Loaded trajectory: %d frames, %d atoms",
             traj.n_frames,
             traj.n_atoms,
         )
 
+    _set_state(structure, structure_path, xtc_path, traj)
     logger.info(
         "Loaded %s: %d atoms, %d bonds",
-        pdb_path,
+        structure_path,
         structure.n_atoms,
         len(structure.bonds),
     )
 
 
+def _set_state(
+    structure: Structure,
+    structure_path: str,
+    xtc_path: str | None,
+    trajectory: InMemoryTrajectory | None,
+) -> None:
+    _state.structure = structure
+    _state.snapshot_bytes = encode_snapshot(structure)
+    _state.structure_path = structure_path
+    _state.xtc_path = xtc_path
+    _state.trajectory = trajectory
+
+
 def _build_metadata_bytes() -> bytes:
     """Build metadata message bytes including file names."""
     traj = _state.trajectory
-    pdb_name = Path(_state.pdb_path).name if _state.pdb_path else ""
+    pdb_name = Path(_state.structure_path).name if _state.structure_path else ""
     xtc_name = Path(_state.xtc_path).name if _state.xtc_path else ""
     return encode_metadata(
         n_frames=traj.n_frames if traj else 0,
@@ -158,11 +200,14 @@ async def upload_file(
     pdb: UploadFile,
     xtc: UploadFile | None = None,
 ) -> dict:
-    """Upload a PDB file (and optional XTC) to load in the viewer."""
+    """Upload a structure file (and optional XTC) to load in the viewer.
+
+    The ``pdb`` form field takes any structure format; the uploaded file name's
+    extension picks the reader. An unsupported extension is a 400.
+    """
     with tempfile.TemporaryDirectory() as tmpdir:
-        # Save PDB
-        pdb_path = Path(tmpdir) / Path(pdb.filename or "upload.pdb").name
-        pdb_path.write_bytes(await pdb.read())
+        structure_path = Path(tmpdir) / Path(pdb.filename or "upload.pdb").name
+        structure_path.write_bytes(await pdb.read())
 
         # Save XTC if provided
         xtc_path = None
@@ -171,7 +216,10 @@ async def upload_file(
             xtc_path_obj.write_bytes(await xtc.read())
             xtc_path = str(xtc_path_obj)
 
-        configure(str(pdb_path), xtc_path)
+        try:
+            configure(str(structure_path), xtc_path)
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e)) from None
 
     # Broadcast to all connected clients
     await _broadcast_snapshot()

@@ -258,3 +258,24 @@ def test_embedded_trajectory_cleared_by_later_calls():
         warnings.simplefilter("ignore", DeprecationWarning)
         v.load(str(FIXTURES / "1crn.pdb"))
     assert v._trajectory_data == b""
+
+
+def test_quick_style_defaults_off_and_syncs():
+    """quick_style is off by default, settable at construction, and synced."""
+    assert MolecularViewer().quick_style is False
+    v = MolecularViewer(quick_style=True)
+    assert v.quick_style is True
+    assert v.get_state()["quick_style"] is True
+    v.quick_style = False
+    assert v.get_state()["quick_style"] is False
+
+
+def test_set_pipeline_replaces_quick_style_edits():
+    """A pipeline JSON written back by the front end is replaced by set_pipeline()."""
+    v = MolecularViewer(quick_style=True)
+    pipe = _make_pdb_pipeline(str(FIXTURES / "1crn.pdb"))
+    v.set_pipeline(pipe)
+    original = v._pipeline_json
+    v._pipeline_json = '{"version": 3, "nodes": [], "edges": []}'  # as the JS side would
+    v.set_pipeline(pipe)
+    assert v._pipeline_json == original

@@ -50,10 +50,12 @@ export function executeViewport(
 /**
  * Resolve the effective representation from the incoming particle streams.
  *
- * Each atom takes the override of the *first* stream (in stream order) that
- * both carries a `representationOverride` and covers it — matching the prior
- * "first non-null override wins" rule while extending it to disjoint branches.
- * Atoms no override stream covers fall back to the base mode.
+ * Each atom takes the override of the *first* stream that both carries a
+ * `representationOverride` and covers it, where selection streams (`indices`
+ * set) come before whole-structure ones — so a selection's style beats a
+ * global style set upstream of it, and among streams of one kind stream order
+ * decides, as before. Atoms no override stream covers fall back to the base
+ * mode.
  *
  * When every atom ends up with the same mode we return it as the global
  * `representationMode` with `representationByAtom: null` (the fast path that
@@ -69,10 +71,14 @@ function resolveRepresentation(particles: ParticleData[]): {
   for (const p of particles) nAtoms = Math.max(nAtoms, p.source?.nAtoms ?? 0);
   if (nAtoms === 0) return { representationMode: "atoms", representationByAtom: null };
 
+  const whole = particles.filter((p) => p.indices === null);
+  const subsets = particles.filter((p) => p.indices !== null);
+
   // The global mesh mode for atoms that no override or a non-"line" override
-  // covers: the first non-"line" override seen, else "atoms".
+  // covers: the first non-"line" override seen (whole-structure streams
+  // first), else "atoms".
   let base: RepresentationMode = "atoms";
-  for (const p of particles) {
+  for (const p of [...whole, ...subsets]) {
     if (p.representationOverride && p.representationOverride !== "line") {
       base = p.representationOverride;
       break;
@@ -81,7 +87,7 @@ function resolveRepresentation(particles: ParticleData[]): {
 
   // First covering override wins per atom; undefined entries fall back to base.
   const assigned: (RepresentationMode | undefined)[] = new Array(nAtoms);
-  for (const p of particles) {
+  for (const p of [...subsets, ...whole]) {
     const mode = p.representationOverride;
     if (!mode) continue;
     if (p.indices === null) {
