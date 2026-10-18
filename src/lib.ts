@@ -108,6 +108,9 @@ export {
   LoadVector,
   Filter,
   Modify,
+  Symmetry,
+  Wrap,
+  Replicate,
   DrawingBoundary,
   BoundaryCompletion,
   Color,
@@ -116,9 +119,15 @@ export {
   AddCoordination,
   AddLabels,
   AddPolyhedra,
+  SurfaceMesh,
   VectorOverlay,
+  LoadVolumetric,
+  Isosurface,
+  LoadSpectrum,
+  SpectrumPlot,
   Viewport as ViewportNode,
 } from "./pipeline/builder";
+export type { LoadTrajectoryOptions, IsosurfaceOptions } from "./pipeline/builder";
 
 // Worker pool for off-main-thread decoding
 export { WorkerPool } from "./protocol/WorkerPool";

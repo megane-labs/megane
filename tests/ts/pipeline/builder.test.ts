@@ -12,6 +12,12 @@ import {
   BoundaryCompletion,
   Symmetry,
   Wrap,
+  Replicate,
+  SurfaceMesh,
+  LoadVolumetric,
+  Isosurface,
+  LoadSpectrum,
+  SpectrumPlot,
   AddBonds,
   AddCoordination,
   AddLabels,
@@ -20,6 +26,8 @@ import {
   Viewport,
 } from "@/pipeline/builder";
 import { deserializePipeline } from "@/pipeline/serialize";
+import { TRAJECTORY_EXTS } from "@/parsers/fileNames";
+import { defaultParams } from "@/pipeline/types";
 
 // ─── NodePort ─────────────────────────────────────────────────────────
 
@@ -116,6 +124,47 @@ describe("LoadTrajectory", () => {
     const node = new LoadTrajectory({ traj: "sim.traj" });
     const params = node._toSerializedParams();
     expect(params).toMatchObject({ fileName: "sim.traj" });
+  });
+
+  it.each(TRAJECTORY_EXTS)("accepts a %s path directly or as { path }", (ext) => {
+    const file = `run${ext}`;
+    expect(new LoadTrajectory(file)._toSerializedParams()).toEqual({
+      type: "load_trajectory",
+      fileName: file,
+      fileUrl: file,
+      source: "file",
+    });
+    expect(new LoadTrajectory({ path: file })._toSerializedParams().fileName).toBe(file);
+  });
+
+  it.each([
+    ["dcd", "run.dcd"],
+    ["nc", "run.nc"],
+    ["xyz", "movie.xyz"],
+    ["lammpstrj", "dump.lammpstrj"],
+  ] as const)("accepts the Python-style { %s } key", (key, file) => {
+    const node = new LoadTrajectory({ [key]: file });
+    expect(node[key]).toBe(file);
+    expect(node.fileName).toBe(file);
+    expect(node._toSerializedParams()).toMatchObject({ fileName: file, fileUrl: file });
+  });
+
+  it("prefers path, then the per-format keys in Python order", () => {
+    expect(new LoadTrajectory({ path: "a.nc", xtc: "b.xtc" }).fileName).toBe("a.nc");
+    expect(new LoadTrajectory({ xtc: "b.xtc", traj: "c.traj" }).fileName).toBe("b.xtc");
+    expect(new LoadTrajectory({ dcd: "d.dcd", traj: "c.traj" }).fileName).toBe("d.dcd");
+  });
+
+  it("defaults to no file and source 'file', and forwards source 'structure'", () => {
+    expect(new LoadTrajectory()._toSerializedParams()).toEqual({
+      type: "load_trajectory",
+      fileName: null,
+      fileUrl: null,
+      source: "file",
+    });
+    expect(new LoadTrajectory({ source: "structure" })._toSerializedParams().source).toBe(
+      "structure",
+    );
   });
 
   it("exposes inp.particle and out.traj", () => {
@@ -288,6 +337,118 @@ describe("Wrap", () => {
       target: w._id,
       sourceHandle: "particle",
       targetHandle: "particle",
+    });
+  });
+});
+
+describe("Replicate", () => {
+  it("takes its defaults from defaultParams", () => {
+    expect(new Replicate()._toSerializedParams()).toEqual(defaultParams("replicate"));
+  });
+
+  it("serializes the supercell size and exposes particle/cell/traj on both sides", () => {
+    const node = new Replicate({ nx: 3, ny: 2, nz: 1 });
+    expect(node._toSerializedParams()).toEqual({ type: "replicate", nx: 3, ny: 2, nz: 1 });
+    expect(node.inp.cell.handle).toBe("cell");
+    expect(node.out.cell.handle).toBe("cell");
+    expect(node.inp.traj.handle).toBe("trajectory");
+    expect(node.out.particle.handle).toBe("particle");
+  });
+});
+
+describe("SurfaceMesh", () => {
+  it("takes its defaults from defaultParams", () => {
+    expect(new SurfaceMesh()._toSerializedParams()).toEqual(defaultParams("surface_mesh"));
+  });
+
+  it("serializes custom appearance and maps particle -> mesh", () => {
+    const node = new SurfaceMesh({ alphaRadius: 5, color: "#00ff00", opacity: 0.2 });
+    expect(node._toSerializedParams()).toEqual({
+      type: "surface_mesh",
+      alphaRadius: 5,
+      color: "#00ff00",
+      opacity: 0.2,
+    });
+    expect(node.inp.particle.handle).toBe("particle");
+    expect(node.out.mesh.handle).toBe("mesh");
+  });
+});
+
+describe("LoadVolumetric", () => {
+  it("serializes the file and exposes out.volumetric only", () => {
+    const node = new LoadVolumetric("density.cube");
+    expect(node._toSerializedParams()).toEqual({
+      type: "load_volumetric",
+      fileName: "density.cube",
+      fileUrl: "density.cube",
+    });
+    expect(node.out.volumetric.handle).toBe("volumetric");
+    expect(() => node.inp.volumetric).toThrow(/Available: \(none\)/);
+  });
+});
+
+describe("Isosurface", () => {
+  it("takes its defaults from defaultParams and omits colorRange", () => {
+    const params = new Isosurface()._toSerializedParams();
+    expect(params).toEqual(defaultParams("isosurface"));
+    expect(params).not.toHaveProperty("colorRange");
+  });
+
+  it("serializes every option, including an explicit colorRange", () => {
+    const node = new Isosurface({
+      isoLevel: 0.02,
+      color: "#112233",
+      opacity: 0.4,
+      showNegative: true,
+      negativeColor: "#332211",
+      colorMode: "volume",
+      colormap: "rainbow",
+      colorRange: [-0.1, 0.1],
+    });
+    expect(node._toSerializedParams()).toEqual({
+      type: "isosurface",
+      isoLevel: 0.02,
+      color: "#112233",
+      opacity: 0.4,
+      showNegative: true,
+      negativeColor: "#332211",
+      colorMode: "volume",
+      colormap: "rainbow",
+      colorRange: [-0.1, 0.1],
+    });
+  });
+
+  it("maps the colorVolumetric alias to its handle", () => {
+    const node = new Isosurface();
+    expect(node.inp.volumetric.handle).toBe("volumetric");
+    expect(node.inp.colorVolumetric.handle).toBe("colorVolumetric");
+    expect(node.out.mesh.handle).toBe("mesh");
+  });
+});
+
+describe("LoadSpectrum / SpectrumPlot", () => {
+  it("LoadSpectrum serializes the file and exposes out.spectrum", () => {
+    const node = new LoadSpectrum("ir.jdx");
+    expect(node._toSerializedParams()).toEqual({
+      type: "load_spectrum",
+      fileName: "ir.jdx",
+      fileUrl: "ir.jdx",
+    });
+    expect(node.out.spectrum.handle).toBe("spectrum");
+  });
+
+  it("SpectrumPlot takes its defaults from defaultParams and is terminal", () => {
+    const node = new SpectrumPlot();
+    expect(node._toSerializedParams()).toEqual(defaultParams("spectrum_plot"));
+    expect(node.inp.spectrum.handle).toBe("spectrum");
+    expect(() => node.out.spectrum).toThrow(/Available: \(none\)/);
+  });
+
+  it("SpectrumPlot serializes custom options", () => {
+    expect(new SpectrumPlot({ reverseX: false, color: "#000000" })._toSerializedParams()).toEqual({
+      type: "spectrum_plot",
+      reverseX: false,
+      color: "#000000",
     });
   });
 });
