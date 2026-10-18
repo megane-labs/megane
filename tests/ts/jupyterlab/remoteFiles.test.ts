@@ -8,8 +8,11 @@ function contentsWith(models: Record<string, unknown>) {
       if (!model) throw new Error(`No such file: ${path}`);
       return model;
     }),
+    getDownloadUrl: vi.fn(async (path: string) => `http://lab/files/${path}`),
   };
 }
+
+const noRequest = vi.fn(async () => new Response(""));
 
 describe("createJupyterFileSource", () => {
   it("lists a folder from the Contents API, folders first", async () => {
@@ -26,7 +29,7 @@ describe("createJupyterFileSource", () => {
         ],
       },
     });
-    const source = createJupyterFileSource(contents as never, () => "work/run");
+    const source = createJupyterFileSource(contents as never, noRequest, () => "work/run");
     expect(source.mode).toBe("browse");
     expect(source.initialPath?.()).toBe("work/run");
 
@@ -53,6 +56,7 @@ describe("createJupyterFileSource", () => {
   it("has no parent at the root and tolerates an empty folder", async () => {
     const source = createJupyterFileSource(
       contentsWith({ "": { type: "directory", path: "", content: null } }) as never,
+      noRequest,
     );
     expect(source.initialPath?.()).toBe("");
     await expect(source.list("")).resolves.toEqual({ path: "", parent: null, entries: [] });
@@ -61,24 +65,27 @@ describe("createJupyterFileSource", () => {
   it("refuses to list a file", async () => {
     const source = createJupyterFileSource(
       contentsWith({ "a.pdb": { type: "file", path: "a.pdb" } }) as never,
+      noRequest,
     );
     await expect(source.list("a.pdb")).rejects.toThrow("Not a folder: a.pdb");
   });
 
-  it("reads a file as base64 and names it after its basename", async () => {
-    const contents = contentsWith({
-      "work/a.pdb": { type: "file", path: "work/a.pdb", content: btoa("ATOM") },
-      "work/empty.pdb": { type: "file", path: "work/empty.pdb", content: null },
-    });
-    const source = createJupyterFileSource(contents as never);
+  it("downloads the file's bytes from the server and names it after its basename", async () => {
+    const contents = contentsWith({});
+    const request = vi.fn(async () => new Response("ATOM"));
+    const source = createJupyterFileSource(contents as never, request);
     const file = await source.read("work/a.pdb");
-    expect(contents.get).toHaveBeenCalledWith("work/a.pdb", {
-      content: true,
-      format: "base64",
-      type: "file",
-    });
+    expect(contents.getDownloadUrl).toHaveBeenCalledWith("work/a.pdb");
+    expect(request).toHaveBeenCalledWith("http://lab/files/work/a.pdb");
     expect(file.name).toBe("a.pdb");
     expect(file.size).toBe(4);
-    expect((await source.read("work/empty.pdb")).size).toBe(0);
+  });
+
+  it("reports a failed download", async () => {
+    const request = vi.fn(async () => new Response("", { status: 403, statusText: "Forbidden" }));
+    const source = createJupyterFileSource(contentsWith({}) as never, request);
+    await expect(source.read("secret.pdb")).rejects.toThrow(
+      "Could not read secret.pdb: 403 Forbidden",
+    );
   });
 });

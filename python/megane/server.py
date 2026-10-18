@@ -222,8 +222,10 @@ def _rel(root: Path, path: Path) -> str:
     return path.relative_to(root).as_posix() if path != root else ""
 
 
+# Plain `def` (not async): FastAPI runs these in its threadpool, so a slow
+# filesystem (a network mount on a cluster) does not stall the WebSocket.
 @app.get("/api/files")
-async def list_files(request: Request, path: str = "") -> dict:
+def list_files(request: Request, path: str = "") -> dict:
     """List a folder under the files root for the web UI's file dialog.
 
     Hidden entries (dot files) and entries whose real location is outside the
@@ -260,7 +262,7 @@ async def list_files(request: Request, path: str = "") -> dict:
 
 
 @app.get("/api/files/content")
-async def read_file(request: Request, path: str) -> FileResponse:
+def read_file(request: Request, path: str) -> FileResponse:
     """Send one file under the files root."""
     root = _files_root(request)
     target = _resolve_under(root, path)

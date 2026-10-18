@@ -42,7 +42,10 @@ const mockApp = {
     addFileType: vi.fn(),
     addWidgetFactory: vi.fn(),
   },
-  serviceManager: { contents: {} },
+  serviceManager: {
+    contents: { getDownloadUrl: vi.fn(async (path: string) => `/files/${path}`) },
+    serverSettings: { baseUrl: "/" },
+  },
 };
 
 const mockRestorer = {
@@ -96,6 +99,24 @@ describe("megane JupyterLab plugin – Open from server", () => {
     const source = getRemoteFileSource();
     expect(source?.mode).toBe("browse");
     expect(source?.mode === "browse" && source.initialPath?.()).toBe("work/run");
+  });
+
+  it("downloads through ServerConnection with the app's server settings", async () => {
+    const { ServerConnection } = await import("@jupyterlab/services");
+    const makeRequest = vi
+      .spyOn(ServerConnection, "makeRequest")
+      .mockResolvedValue(new Response("ATOM"));
+    plugin.activate(mockApp as never, mockRestorer as never, null as never);
+    const source = getRemoteFileSource();
+    if (source?.mode !== "browse") throw new Error("expected a browse source");
+    const file = await source.read("a.pdb");
+    expect(file.name).toBe("a.pdb");
+    expect(makeRequest).toHaveBeenCalledWith(
+      "/files/a.pdb",
+      {},
+      mockApp.serviceManager.serverSettings,
+    );
+    makeRequest.mockRestore();
   });
 
   it("starts at the root without a file browser", () => {

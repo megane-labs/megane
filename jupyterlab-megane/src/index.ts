@@ -3,6 +3,7 @@ import { WidgetTracker } from "@jupyterlab/apputils";
 import type { IDocumentWidget } from "@jupyterlab/docregistry";
 import { IStatusBar } from "@jupyterlab/statusbar";
 import { IDefaultFileBrowser } from "@jupyterlab/filebrowser";
+import { ServerConnection } from "@jupyterlab/services";
 import { setRemoteFileSource } from "@megane/remote/fileSource";
 import { exposeAppForTests } from "./testHook";
 import { MeganeDocFactory, MeganePipelineDocFactory } from "./factory";
@@ -44,8 +45,13 @@ const plugin: JupyterFrontEndPlugin<void> = {
 
     // The Load nodes' "Open from server..." dialog browses the Jupyter
     // server's files, starting in the file browser's folder.
+    const { contents, serverSettings } = app.serviceManager;
     setRemoteFileSource(
-      createJupyterFileSource(app.serviceManager.contents, () => browser?.model.path ?? ""),
+      createJupyterFileSource(
+        contents,
+        (url) => ServerConnection.makeRequest(url, {}, serverSettings),
+        () => browser?.model.path ?? "",
+      ),
     );
 
     for (const ft of [...STRUCTURE_FILETYPES_TEXT, ...STRUCTURE_FILETYPES_BINARY]) {

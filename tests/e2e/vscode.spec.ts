@@ -124,6 +124,41 @@ test("hover tooltip renders beside the cursor", async ({ page }) => {
   await expectTooltipNearCursor(page, wv);
 });
 
+/**
+ * In a browser-hosted workbench (code-server) the webview's own file input
+ * opens the dialog of the computer running the browser, not the workspace's
+ * machine. The Load Structure node then also offers "Open from remote...",
+ * which the extension host answers with VS Code's open dialog (the quick-input
+ * "simple file dialog" here) and posts the chosen file's bytes back.
+ */
+test("Load Structure opens a workspace file through VS Code's open dialog", async ({ page }) => {
+  const wv = await openVscodeFile(page, { port: PORT, file: "1crn.pdb" });
+  await assertDomContract(wv, [
+    ...defaultViewerContract({ expectedAtoms: 327, context: "vscode" }),
+  ]);
+
+  await wv.locator('[data-testid="pipeline-editor-tab-editor"]').first().click();
+  await wv.locator('[data-testid="pipeline-node-load_structure"]').first().click();
+  const button = wv.locator('[data-testid="load-structure-remote"]').first();
+  await expect(button).toHaveText("Open from remote...");
+  await button.click();
+
+  const input = page.locator(".quick-input-widget input").first();
+  await expect(input).toBeVisible({ timeout: 30_000 });
+  await input.fill(join(WORKSPACE, "water.gro"));
+  await input.press("Enter");
+
+  await expect(wv.locator('[data-testid="load-structure-filename"]').first()).toHaveText(
+    "water.gro",
+    { timeout: 30_000 },
+  );
+  await expect
+    .poll(async () =>
+      Number(await wv.locator('[data-testid="megane-viewer"]').getAttribute("data-atom-count")),
+    )
+    .not.toBe(327);
+});
+
 test("render export is saved through the extension-host saveFile bridge", async ({ page }) => {
   // In MEGANE_E2E_MODE the extension host skips the native save dialog and
   // writes next to the open document, so the export lands in the workspace.
