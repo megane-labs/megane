@@ -11,6 +11,7 @@ import {
   isVaspBareName,
   matchesStructureName,
   structureExtFromFileName,
+  trajectoryKindFromFileName,
 } from "@/parsers/fileNames";
 
 describe("isVaspBareName", () => {
@@ -128,5 +129,32 @@ describe("basename", () => {
     ["plain.xyz", "plain.xyz"],
   ])("strips the directory from %s", (path, expected) => {
     expect(basename(path)).toBe(expected);
+  });
+});
+
+describe("trajectoryKindFromFileName", () => {
+  it.each([
+    ["run.xtc", "xtc"],
+    ["RUN.XTC", "xtc"],
+    ["/data/sim/run.dcd", "dcd"],
+    ["C:\\sim\\md.nc", "netcdf"],
+    ["dump.lammpstrj", "lammpstrj"],
+    ["atoms.dump", "lammpstrj"],
+    ["atoms.trj", "lammpstrj"],
+  ])("resolves %s to %s", (name, kind) => {
+    expect(trajectoryKindFromFileName(name)).toBe(kind);
+  });
+
+  it.each(["water.pdb", "run.trr", "noext", "dir.xtc/file", ".xtc.bak"])(
+    "returns null for the non-trajectory name %s",
+    (name) => {
+      expect(trajectoryKindFromFileName(name)).toBeNull();
+    },
+  );
+
+  it("resolves every TRAJECTORY_EXTS entry", () => {
+    for (const ext of TRAJECTORY_EXTS) {
+      expect(trajectoryKindFromFileName(`t${ext}`)).not.toBeNull();
+    }
   });
 });

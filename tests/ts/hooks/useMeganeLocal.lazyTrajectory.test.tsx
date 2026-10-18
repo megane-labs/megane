@@ -180,6 +180,16 @@ describe("useMeganeLocal — two-phase lazy trajectory", () => {
     expect(usePipelineStore.getState().fileFrames).toHaveLength(1);
   });
 
+  it("rejects a non-trajectory extension instead of guessing XTC", async () => {
+    const { result } = await withStructure();
+    await expect(result.current.loadXtc(new File(["dummy"], "run.trr"))).rejects.toThrow(
+      /Unsupported trajectory format: run\.trr/,
+    );
+    expect(frame0Mock).not.toHaveBeenCalled();
+    expect(indexTrajMock).not.toHaveBeenCalled();
+    expect(parseXtcMock).not.toHaveBeenCalled();
+  });
+
   it("disposes a stale phase-2 handle when a newer trajectory load supersedes it", async () => {
     const { result } = await withStructure();
     frame0Mock.mockResolvedValue(new Float32Array(9));
