@@ -80,7 +80,7 @@ const MODES: { value: PipelinePanelMode; label: string; title: string; icon: Rea
   {
     value: "inspector",
     label: "Inspector",
-    title: "Inspector: what each node outputs",
+    title: "Inspector: restyle the structure or a selection of it",
     icon: (
       <RailIcon>
         <path d="M4 6h9M4 11h6M4 16h5" />

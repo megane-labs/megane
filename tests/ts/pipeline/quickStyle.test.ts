@@ -1,0 +1,380 @@
+import { describe, it, expect } from "vitest";
+import type { Node, Edge } from "@xyflow/react";
+import type { PipelineNodeData } from "@/pipeline/execute";
+import { createDefaultPipeline } from "@/pipeline/defaults";
+import {
+  applyQuickStyle,
+  readQuickStyle,
+  quickStyleDefaults,
+  QUICK_STYLE_IDS,
+} from "@/pipeline/quickStyle";
+import { reconcileInspectorLayers, defaultInspectorAppearance } from "@/pipeline/inspectorSync";
+import { serializePipeline, deserializePipeline } from "@/pipeline/serialize";
+import { createPipelineStore } from "@/pipeline/store";
+import type {
+  AddBondParams,
+  ColorParams,
+  LabelGeneratorParams,
+  ModifyParams,
+  VectorOverlayParams,
+  ViewportParams,
+} from "@/pipeline/types";
+import type { Snapshot } from "@/types";
+
+type G = { nodes: Node<PipelineNodeData>[]; edges: Edge[] };
+
+function base(): G {
+  return createDefaultPipeline();
+}
+
+function feeders(g: G, target: string, port: string): string[] {
+  return g.edges
+    .filter((e) => e.target === target && (e.targetHandle ?? "") === port)
+    .map((e) => `${e.source}.${e.sourceHandle}`);
+}
+
+function edgeSet(g: G): string[] {
+  return g.edges.map((e) => `${e.source}.${e.sourceHandle}->${e.target}.${e.targetHandle}`).sort();
+}
+
+function apply(g: G, patch: Parameters<typeof applyQuickStyle>[2]): G {
+  return applyQuickStyle(g.nodes, g.edges, patch);
+}
+
+function params<T>(g: G, id: string): T {
+  return g.nodes.find((n) => n.id === id)!.data.params as T;
+}
+
+describe("readQuickStyle", () => {
+  it("reads defaults from an untouched default pipeline", () => {
+    const g = base();
+    const { style, available } = readQuickStyle(g.nodes, g.edges);
+    expect(style).toMatchObject({
+      representation: null,
+      colorMode: null,
+      atomScale: 1,
+      atomOpacity: 1,
+      bondScale: 1,
+      bondOpacity: 1,
+      bondTolerance: null, // bonds come from the structure file, not distance
+      labels: "none",
+      perspective: false,
+      cellAxesVisible: true,
+      vectorScale: null,
+    });
+    expect(available).toEqual({
+      viewport: true,
+      bonds: true,
+      foreignLabels: false,
+      foreignStyleNodes: 0,
+    });
+  });
+
+  it("reports no viewport on an empty graph", () => {
+    expect(readQuickStyle([], []).available.viewport).toBe(false);
+  });
+});
+
+describe("applyQuickStyle — particle chain", () => {
+  it("splices an atoms modify between the trunk and the viewport", () => {
+    const g = apply(base(), { atomScale: 0.5 });
+    expect(params<ModifyParams>(g, QUICK_STYLE_IDS.atoms)).toMatchObject({
+      scale: 0.5,
+      opacity: 1,
+    });
+    expect(feeders(g, "viewport-1", "particle")).toEqual([`${QUICK_STYLE_IDS.atoms}.out`]);
+    expect(feeders(g, QUICK_STYLE_IDS.atoms, "in")).toEqual(["replicate-1.particle"]);
+    // add_bond keeps reading the unstyled trunk.
+    expect(feeders(g, "addbond-1", "particle")).toEqual(["replicate-1.particle"]);
+    expect(readQuickStyle(g.nodes, g.edges).style.atomScale).toBe(0.5);
+  });
+
+  it("orders color → representation → atoms and rebuilds idempotently", () => {
+    const g1 = apply(base(), {
+      colorMode: "uniform",
+      uniformColor: "#123456",
+      representation: "licorice",
+      atomOpacity: 0.4,
+    });
+    expect(feeders(g1, QUICK_STYLE_IDS.color, "in")).toEqual(["replicate-1.particle"]);
+    expect(feeders(g1, QUICK_STYLE_IDS.representation, "in")).toEqual([
+      `${QUICK_STYLE_IDS.color}.out`,
+    ]);
+    expect(feeders(g1, QUICK_STYLE_IDS.atoms, "in")).toEqual([
+      `${QUICK_STYLE_IDS.representation}.out`,
+    ]);
+    expect(params<ColorParams>(g1, QUICK_STYLE_IDS.color).uniformColor).toBe("#123456");
+
+    const g2 = apply(g1, {});
+    expect(edgeSet(g2)).toEqual(edgeSet(g1));
+    expect(g2.nodes.map((n) => n.id).sort()).toEqual(g1.nodes.map((n) => n.id).sort());
+  });
+
+  it("drops a node once its control is back at the default", () => {
+    const g1 = apply(base(), { colorMode: "byChain", atomScale: 0.5 });
+    const g2 = apply(g1, { colorMode: null });
+    expect(g2.nodes.some((n) => n.id === QUICK_STYLE_IDS.color)).toBe(false);
+    expect(feeders(g2, QUICK_STYLE_IDS.atoms, "in")).toEqual(["replicate-1.particle"]);
+  });
+
+  it("restores the original graph on Reset", () => {
+    const g0 = base();
+    const styled = apply(g0, {
+      colorMode: "byElement",
+      representation: "line",
+      atomScale: 2,
+      bondScale: 2,
+      labels: "element",
+    });
+    const reset = apply(styled, quickStyleDefaults());
+    expect(edgeSet(reset)).toEqual(edgeSet(g0));
+    expect(reset.nodes.map((n) => n.id).sort()).toEqual(g0.nodes.map((n) => n.id).sort());
+  });
+
+  it("keeps a position the user dragged a node to", () => {
+    const g1 = apply(base(), { atomScale: 0.5 });
+    const moved = {
+      ...g1,
+      nodes: g1.nodes.map((n) =>
+        n.id === QUICK_STYLE_IDS.atoms ? { ...n, position: { x: 7, y: 9 } } : n,
+      ),
+    };
+    const g2 = apply(moved, { atomScale: 0.8 });
+    expect(g2.nodes.find((n) => n.id === QUICK_STYLE_IDS.atoms)!.position).toEqual({ x: 7, y: 9 });
+  });
+
+  it("keeps a node the user disabled in the Editor disabled", () => {
+    const g1 = apply(base(), { atomScale: 0.5 });
+    const off = {
+      ...g1,
+      nodes: g1.nodes.map((n) =>
+        n.id === QUICK_STYLE_IDS.atoms ? { ...n, data: { ...n.data, enabled: false } } : n,
+      ),
+    };
+    const g2 = apply(off, { atomScale: 0.8 });
+    expect(g2.nodes.find((n) => n.id === QUICK_STYLE_IDS.atoms)!.data.enabled).toBe(false);
+  });
+
+  it("moves Inspector layers behind the chain and back again", () => {
+    const g0 = base();
+    const layered = reconcileInspectorLayers(
+      g0.nodes,
+      g0.edges,
+      [{ id: "layer-1", name: "Layer 1", query: "", appearance: defaultInspectorAppearance() }],
+      { nodeId: "replicate-1", handle: "particle" },
+      "viewport-1",
+    );
+    const g1 = apply(layered, { atomScale: 0.5 });
+    expect(feeders(g1, "insp-layer-1-filter", "in")).toEqual([`${QUICK_STYLE_IDS.atoms}.out`]);
+    // The layer's own output still reaches the viewport.
+    expect(feeders(g1, "viewport-1", "particle")).toContain("insp-layer-1-color.out");
+
+    const g2 = apply(g1, { atomScale: 1 });
+    expect(feeders(g2, "insp-layer-1-filter", "in")).toEqual(["replicate-1.particle"]);
+  });
+
+  it("leaves a graph without a viewport untouched", () => {
+    const nodes = base().nodes.filter((n) => n.type !== "viewport");
+    const out = applyQuickStyle(nodes, [], { atomScale: 0.5 });
+    expect(out.nodes).toBe(nodes);
+  });
+
+  it("creates no chain when nothing feeds the viewport's particle input", () => {
+    const g0 = base();
+    const edges = g0.edges.filter(
+      (e) => !(e.target === "viewport-1" && e.targetHandle === "particle"),
+    );
+    const out = applyQuickStyle(g0.nodes, edges, { atomScale: 0.5, labels: "index" });
+    expect(out.nodes.some((n) => n.id === QUICK_STYLE_IDS.atoms)).toBe(false);
+    expect(out.nodes.some((n) => n.id === QUICK_STYLE_IDS.labels)).toBe(false);
+  });
+});
+
+describe("applyQuickStyle — bonds, labels and existing node params", () => {
+  it("splices a bond modify into the bond stream", () => {
+    const g = apply(base(), { bondScale: 2, bondOpacity: 0.5 });
+    expect(feeders(g, "viewport-1", "bond")).toEqual([`${QUICK_STYLE_IDS.bonds}.out`]);
+    expect(feeders(g, QUICK_STYLE_IDS.bonds, "in")).toEqual(["addbond-1.bond"]);
+    const s = readQuickStyle(g.nodes, g.edges).style;
+    expect(s.bondScale).toBe(2);
+    expect(s.bondOpacity).toBe(0.5);
+    expect(readQuickStyle(g.nodes, g.edges).available.bonds).toBe(true);
+  });
+
+  it("edits add_bond's tolerance only when bonds are inferred by distance", () => {
+    const g0 = base();
+    const distance = {
+      ...g0,
+      nodes: g0.nodes.map((n) =>
+        n.id === "addbond-1"
+          ? {
+              ...n,
+              data: {
+                ...n.data,
+                params: { type: "add_bond", bondSource: "distance" } as AddBondParams,
+              },
+            }
+          : n,
+      ),
+    };
+    expect(readQuickStyle(distance.nodes, distance.edges).style.bondTolerance).toBe(0.6);
+    const g1 = apply(distance, { bondTolerance: 0.8 });
+    expect(params<AddBondParams>(g1, "addbond-1").vdwScale).toBe(0.8);
+    // With bond width also styled the tolerance still reaches add_bond.
+    const g2 = apply(g1, { bondScale: 2, bondTolerance: 0.7 });
+    expect(params<AddBondParams>(g2, "addbond-1").vdwScale).toBe(0.7);
+    expect(readQuickStyle(g2.nodes, g2.edges).style.bondTolerance).toBe(0.7);
+
+    const structure = apply(base(), { bondTolerance: 0.9 });
+    expect(params<AddBondParams>(structure, "addbond-1").vdwScale).toBeUndefined();
+  });
+
+  it("adds a label generator reading the styled stream", () => {
+    const g = apply(base(), { atomOpacity: 0.5, labels: "index" });
+    expect(params<LabelGeneratorParams>(g, QUICK_STYLE_IDS.labels).source).toBe("index");
+    expect(feeders(g, QUICK_STYLE_IDS.labels, "particle")).toEqual([
+      `${QUICK_STYLE_IDS.atoms}.out`,
+    ]);
+    expect(feeders(g, "viewport-1", "label")).toEqual([`${QUICK_STYLE_IDS.labels}.label`]);
+
+    const off = apply(g, { labels: "none" });
+    expect(off.nodes.some((n) => n.id === QUICK_STYLE_IDS.labels)).toBe(false);
+    expect(feeders(off, "viewport-1", "label")).toEqual([]);
+  });
+
+  it("does not add labels beside a label stream the user wired", () => {
+    const g0 = base();
+    const g: G = {
+      nodes: [
+        ...g0.nodes,
+        {
+          id: "labels-1",
+          type: "label_generator",
+          position: { x: 0, y: 0 },
+          data: { params: { type: "label_generator", source: "element" }, enabled: true },
+        },
+      ],
+      edges: [
+        ...g0.edges,
+        {
+          id: "el",
+          source: "labels-1",
+          target: "viewport-1",
+          sourceHandle: "label",
+          targetHandle: "label",
+        },
+      ],
+    };
+    expect(readQuickStyle(g.nodes, g.edges).available.foreignLabels).toBe(true);
+    const out = apply(g, { labels: "index" });
+    expect(out.nodes.some((n) => n.id === QUICK_STYLE_IDS.labels)).toBe(false);
+  });
+
+  it("writes perspective and cell axes onto the viewport node", () => {
+    const g = apply(base(), { perspective: true, cellAxesVisible: false });
+    expect(params<ViewportParams>(g, "viewport-1")).toMatchObject({
+      perspective: true,
+      cellAxesVisible: false,
+    });
+  });
+
+  it("edits a vector overlay's arrow scale", () => {
+    const g0 = base();
+    const g: G = {
+      nodes: [
+        ...g0.nodes,
+        {
+          id: "vec-1",
+          type: "vector_overlay",
+          position: { x: 0, y: 0 },
+          data: { params: { type: "vector_overlay", scale: 1 }, enabled: true },
+        },
+      ],
+      edges: [
+        ...g0.edges,
+        {
+          id: "ev",
+          source: "vec-1",
+          target: "viewport-1",
+          sourceHandle: "vector",
+          targetHandle: "vector",
+        },
+      ],
+    };
+    expect(readQuickStyle(g.nodes, g.edges).style.vectorScale).toBe(1);
+    const out = apply(g, { vectorScale: 3 });
+    expect(params<VectorOverlayParams>(out, "vec-1").scale).toBe(3);
+  });
+
+  it("counts style nodes it does not own", () => {
+    const g0 = base();
+    const nodes = [
+      ...g0.nodes,
+      {
+        id: "color-9",
+        type: "color",
+        position: { x: 0, y: 0 },
+        data: { params: { type: "color", mode: "byChain", uniformColor: "#fff" }, enabled: true },
+      } as Node<PipelineNodeData>,
+    ];
+    const styled = apply({ nodes, edges: g0.edges }, { colorMode: "byElement" });
+    expect(readQuickStyle(styled.nodes, styled.edges).available.foreignStyleNodes).toBe(1);
+  });
+});
+
+describe("Quick Style persistence", () => {
+  it("survives serialize → deserialize without extra viewport wiring", () => {
+    const styled = apply(base(), {
+      colorMode: "byChain",
+      representation: "licorice",
+      atomScale: 0.7,
+      bondScale: 1.5,
+      labels: "element",
+      perspective: true,
+    });
+    const reopened = deserializePipeline(serializePipeline(styled.nodes, styled.edges));
+    expect(readQuickStyle(reopened.nodes, reopened.edges).style).toEqual(
+      readQuickStyle(styled.nodes, styled.edges).style,
+    );
+    expect(feeders(reopened, "viewport-1", "particle")).toEqual([`${QUICK_STYLE_IDS.atoms}.out`]);
+    expect(feeders(reopened, "viewport-1", "bond")).toEqual([`${QUICK_STYLE_IDS.bonds}.out`]);
+  });
+});
+
+describe("store.setQuickStyle", () => {
+  function snapshot(): Snapshot {
+    return {
+      nAtoms: 2,
+      nBonds: 1,
+      nFileBonds: 1,
+      positions: new Float32Array([0, 0, 0, 1.2, 0, 0]),
+      elements: new Uint8Array([6, 6]),
+      bonds: new Uint32Array([0, 1]),
+      bondOrders: null,
+      box: null,
+      boxOrigin: null,
+    } as unknown as Snapshot;
+  }
+
+  it("re-executes so the viewport state carries the styled streams", () => {
+    const store = createPipelineStore();
+    store.getState().setNodeSnapshot("loader-1", {
+      snapshot: snapshot(),
+      frames: null,
+      meta: null,
+      labels: null,
+    });
+    store.getState().setQuickStyle({ atomScale: 0.5, bondScale: 2 });
+    const vs = store.getState().viewportState;
+    expect(vs.particles[0].scaleOverrides?.[0]).toBe(0.5);
+    expect(vs.bonds[0].scale).toBe(2);
+  });
+
+  it("does nothing on a graph without a viewport", () => {
+    const store = createPipelineStore();
+    store.setState({ nodes: [], edges: [] });
+    const before = store.getState().nodes;
+    store.getState().setQuickStyle({ atomScale: 0.5 });
+    expect(store.getState().nodes).toBe(before);
+  });
+});

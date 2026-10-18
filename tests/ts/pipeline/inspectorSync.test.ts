@@ -6,8 +6,12 @@ import {
   layersFromGraph,
   defaultInspectorAppearance,
   isInspectorId,
+  isInspectorLayerId,
+  isQuickStyleId,
+  layerDisplayName,
   type InspectorLayer,
 } from "@/pipeline/inspectorSync";
+import { serializePipeline, deserializePipeline } from "@/pipeline/serialize";
 import type { ColorParams, ModifyParams, FilterParams } from "@/pipeline/types";
 
 /** A tiny base graph: replicate feeds viewport.particle. */
@@ -74,7 +78,6 @@ describe("reconcileInspectorLayers", () => {
     );
     expect(inspEdges).toHaveLength(2);
     expect((insp[0].data.params as FilterParams).query).toBe('element == "C"');
-    expect((insp[0].data as { inspectorLayerId?: string }).inspectorLayerId).toBe("L1");
   });
 
   it("chains filter → color when color is enabled", () => {
@@ -182,5 +185,87 @@ describe("layersFromGraph", () => {
 
   it("returns nothing for a graph with no inspector nodes", () => {
     expect(layersFromGraph(baseGraph().nodes)).toEqual([]);
+  });
+});
+
+describe("layer ownership survives serialization", () => {
+  it("rebuilds layers from a saved and re-opened pipeline (ids only, no data tags)", () => {
+    const a = defaultInspectorAppearance();
+    a.scale = 0.5;
+    const g0 = baseGraph();
+    const g1 = reconcileInspectorLayers(
+      g0.nodes,
+      g0.edges,
+      [layer({ id: "layer-2", query: 'element == "O"', appearance: a })],
+      SOURCE,
+      VP,
+    );
+    const reopened = deserializePipeline(serializePipeline(g1.nodes, g1.edges));
+    const recovered = layersFromGraph(reopened.nodes);
+    expect(recovered).toHaveLength(1);
+    expect(recovered[0].id).toBe("layer-2");
+    expect(recovered[0].name).toBe("Layer 2");
+    expect(recovered[0].query).toBe('element == "O"');
+    expect(recovered[0].appearance.scale).toBe(0.5);
+  });
+
+  it("keeps Quick Style nodes when layers are reconciled", () => {
+    const g0 = baseGraph();
+    g0.nodes.push({
+      id: "insp-global-atoms",
+      type: "modify",
+      position: { x: 0, y: 0 },
+      data: { params: { type: "modify", scale: 0.5, opacity: 1 }, enabled: true },
+    });
+    g0.edges.push({
+      id: "e-qs",
+      source: "replicate-1",
+      target: "insp-global-atoms",
+      sourceHandle: "particle",
+      targetHandle: "in",
+    });
+    const out = reconcileInspectorLayers(g0.nodes, g0.edges, [], SOURCE, VP);
+    expect(out.nodes.some((n) => n.id === "insp-global-atoms")).toBe(true);
+    expect(out.edges.some((e) => e.id === "e-qs")).toBe(true);
+    // ... and never reports them as a layer.
+    expect(layersFromGraph(out.nodes)).toEqual([]);
+  });
+
+  it("orders layers numerically", () => {
+    const g0 = baseGraph();
+    const ids = ["layer-10", "layer-9", "layer-1"];
+    const g1 = reconcileInspectorLayers(
+      g0.nodes,
+      g0.edges,
+      ids.map((id) => layer({ id })),
+      SOURCE,
+      VP,
+    );
+    expect(layersFromGraph(g1.nodes).map((l) => l.id)).toEqual(["layer-1", "layer-9", "layer-10"]);
+  });
+
+  it("ignores insp- ids whose role does not match the node type", () => {
+    const nodes = baseGraph().nodes;
+    nodes.push({
+      id: "insp-x-filter",
+      type: "modify",
+      position: { x: 0, y: 0 },
+      data: { params: { type: "modify", scale: 1, opacity: 1 }, enabled: true },
+    });
+    expect(layersFromGraph(nodes)).toEqual([]);
+  });
+});
+
+describe("id helpers", () => {
+  it("tells layer nodes from Quick Style nodes", () => {
+    expect(isInspectorLayerId("insp-layer-1-filter")).toBe(true);
+    expect(isInspectorLayerId("insp-global-atoms")).toBe(false);
+    expect(isQuickStyleId("insp-global-atoms")).toBe(true);
+    expect(isInspectorLayerId("filter-1")).toBe(false);
+  });
+
+  it("names layers from their id", () => {
+    expect(layerDisplayName("layer-7")).toBe("Layer 7");
+    expect(layerDisplayName("custom")).toBe("custom");
   });
 });

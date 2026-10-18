@@ -486,3 +486,17 @@ describe("deserializePipeline normalization", () => {
     expect(edges).toHaveLength(4);
   });
 });
+
+describe("deserializePipeline normalization — crystal pass-through nodes", () => {
+  it("re-opens the default pipeline without a second loader → viewport stream", async () => {
+    const { createDefaultPipeline } = await import("@/pipeline/defaults");
+    const g = createDefaultPipeline();
+    const reopened = deserializePipeline(serializePipeline(g.nodes, g.edges));
+    const into = (port: string) =>
+      reopened.edges
+        .filter((e) => e.target === "viewport-1" && e.targetHandle === port)
+        .map((e) => e.source);
+    expect(into("particle")).toEqual(["replicate-1"]);
+    expect(into("cell")).toEqual(["replicate-1"]);
+  });
+});

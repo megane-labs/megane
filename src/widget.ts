@@ -175,6 +175,7 @@ function render({ model, el }: { model: AnyWidgetModel; el: HTMLElement }) {
           onPipelineChange: handlePipelineChange,
           initialCameraState: getInitialCameraState(),
           onCameraStateChange: handleCameraStateChange,
+          quickStyle: model.get("quick_style") === true,
         }),
       ),
     );
@@ -238,6 +239,10 @@ function render({ model, el }: { model: AnyWidgetModel; el: HTMLElement }) {
   });
 
   model.on("change:_pipeline_json", () => {
+    renderApp();
+  });
+
+  model.on("change:quick_style", () => {
     renderApp();
   });
 

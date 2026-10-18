@@ -92,4 +92,65 @@ test.describe("inspector: webapp", () => {
     });
     expect(filterQuery).toBe('element != "H"');
   });
+
+  test("Quick style restyles the whole structure through pipeline nodes", async ({ page }) => {
+    await page.locator('[data-testid="pipeline-editor-tab-inspector"]').click();
+    const panel = page.locator('[data-testid="quick-style"]');
+    await expect(panel).toBeVisible();
+
+    await panel.locator('[data-testid="quick-style-atom-scale"]').fill("0.5");
+    await panel.locator('[data-testid="quick-style-bond-scale"]').fill("2");
+    await panel.locator('[data-testid="quick-style-rep"]').selectOption("licorice");
+    await panel.locator('[data-testid="quick-style-labels-element"]').click();
+
+    const read = () =>
+      page.evaluate(() => {
+        const store = (
+          window as unknown as {
+            __megane_test_pipeline_store?: {
+              getState: () => {
+                nodes: { id: string; data: { params: Record<string, unknown> } }[];
+                viewportState: {
+                  particles: { scaleOverrides: Float32Array | null }[];
+                  bonds: { scale: number }[];
+                  labels: unknown[];
+                  representationMode: string;
+                };
+              };
+            };
+          }
+        ).__megane_test_pipeline_store;
+        const s = store!.getState();
+        return {
+          owned: s.nodes
+            .filter((n) => n.id.startsWith("insp-global-"))
+            .map((n) => n.id)
+            .sort(),
+          atomScale: s.viewportState.particles[0]?.scaleOverrides?.[0] ?? null,
+          bondScale: s.viewportState.bonds[0]?.scale ?? null,
+          labels: s.viewportState.labels.length,
+          rep: s.viewportState.representationMode,
+        };
+      });
+
+    await expect
+      .poll(async () => (await read()).owned)
+      .toEqual(["insp-global-atoms", "insp-global-bonds", "insp-global-labels", "insp-global-rep"]);
+    const styled = await read();
+    expect(styled.atomScale).toBe(0.5);
+    expect(styled.bondScale).toBe(2);
+    expect(styled.labels).toBe(1);
+    expect(styled.rep).toBe("licorice");
+
+    // The nodes are ordinary pipeline nodes: the Editor shows them.
+    await page.locator('[data-testid="pipeline-editor-tab-editor"]').click();
+    await expect(
+      page.locator('[data-testid="pipeline-node-representation"]').first(),
+    ).toBeVisible();
+
+    // Reset removes every Quick Style node again.
+    await page.locator('[data-testid="pipeline-editor-tab-inspector"]').click();
+    await panel.locator('[data-testid="quick-style-reset"]').click();
+    await expect.poll(async () => (await read()).owned).toEqual([]);
+  });
 });

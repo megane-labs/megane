@@ -115,11 +115,18 @@ class MolecularViewer(anywidget.AnyWidget):
 
     # Pipeline data delivery (the visual pipeline editor is intentionally
     # not surfaced in the widget — it lives in the standalone webapp,
-    # JupyterLab labextension and VSCode extension only).
+    # JupyterLab labextension and VSCode extension only). The Quick Style
+    # panel writes its edits back here (JS → Python).
     _pipeline_json = traitlets.Unicode("").tag(sync=True)
     _node_snapshots_data = traitlets.Dict(
         value_trait=traitlets.Bytes(),
     ).tag(sync=True)
+
+    #: Show the Quick Style panel (style, color, atom size / opacity, bond
+    #: width / opacity, labels, perspective) in the top-right corner. Its
+    #: edits change the viewer's pipeline and are kept in the notebook's
+    #: widget state; calling :meth:`set_pipeline` again replaces them.
+    quick_style = traitlets.Bool(False).tag(sync=True)
 
     # Internal (not synced)
     _structure = None
@@ -132,6 +139,10 @@ class MolecularViewer(anywidget.AnyWidget):
         The visual pipeline editor is not available in the widget; use the
         standalone web app, JupyterLab extension, or VSCode extension to
         edit pipelines visually.
+
+        Pass ``quick_style=True`` (or set :attr:`quick_style` later) to show
+        the Quick Style panel for simple appearance changes. It needs data
+        loaded with :meth:`set_pipeline`.
         """
         super().__init__(*args, **kwargs)
         self._event_handlers: dict[str, list[Callable]] = defaultdict(list)
@@ -355,6 +366,9 @@ class MolecularViewer(anywidget.AnyWidget):
         every frame to the front end up front instead: playback then works
         without a kernel, including in a notebook reopened from its saved
         widget state, at the cost of storing the frames in that state.
+
+        Changes made in the Quick Style panel (:attr:`quick_style`) are part
+        of the viewer's pipeline, so applying a pipeline here replaces them.
 
         Args:
             pipeline: A :class:`~megane.pipeline.Pipeline` instance,
