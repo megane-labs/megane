@@ -29,7 +29,7 @@ vi.mock("@/renderer/RenderCapture", async (importOriginal) => {
   return { ...actual, captureSnapshot: vi.fn(actual.captureSnapshot), downloadBlob: vi.fn() };
 });
 
-import { RenderModal } from "@/components/RenderModal";
+import { RenderModal, RESOLUTION_PRESETS, defaultResolutionFor } from "@/components/RenderModal";
 import { captureSnapshot } from "@/renderer/RenderCapture";
 import type { MoleculeRenderer } from "@/renderer/MoleculeRenderer";
 
@@ -409,7 +409,8 @@ describe("RenderModal: animation export testids", () => {
     const width = screen.getByTestId("render-modal-width") as HTMLInputElement;
     fireEvent.change(width, { target: { value: "160" } });
     expect((screen.getByTestId("render-modal-width") as HTMLInputElement).value).toBe("160");
-    // Aspect stays locked by default, so height follows the 800×600 canvas.
+    // Aspect stays locked by default, so height follows the 4:3 default
+    // (1024×768) picked for the 800×600 canvas.
     expect((screen.getByTestId("render-modal-height") as HTMLInputElement).value).toBe("120");
 
     const endFrame = screen.getByTestId("render-modal-end-frame") as HTMLInputElement;
@@ -463,5 +464,67 @@ describe("RenderModal: animation tab availability", () => {
     expect(animationTab.disabled).toBe(false);
     expect(animationTab.title).toBe("");
     expect(screen.queryByTestId("render-modal-animation-hint")).toBeNull();
+  });
+
+  describe("default resolution", () => {
+    function openWithCanvas(w: number, h: number) {
+      cleanup();
+      render(
+        <RenderModal
+          open
+          onClose={() => {}}
+          rendererRef={makeRendererRef({ getCanvas: vi.fn().mockReturnValue(makeCanvas(w, h)) })}
+          totalFrames={1}
+          currentFrame={0}
+          onSeek={() => {}}
+        />,
+      );
+      return {
+        width: (screen.getByTestId("render-modal-width") as HTMLInputElement).value,
+        height: (screen.getByTestId("render-modal-height") as HTMLInputElement).value,
+        preset: (screen.getByTestId("render-modal-preset") as HTMLSelectElement).value,
+      };
+    }
+
+    it("uses a standard resolution instead of the raw viewport size", () => {
+      expect(openWithCanvas(1451, 1151)).toEqual({
+        width: "1024",
+        height: "768",
+        preset: "1024x768",
+      });
+    });
+
+    it("matches the viewport aspect ratio", () => {
+      expect(openWithCanvas(1600, 900)).toMatchObject({ width: "1280", height: "720" });
+      expect(openWithCanvas(2560, 1000)).toMatchObject({ width: "1280", height: "720" });
+      expect(openWithCanvas(700, 700)).toMatchObject({ width: "1024", height: "1024" });
+      expect(openWithCanvas(600, 820)).toMatchObject({ width: "768", height: "1024" });
+      expect(openWithCanvas(400, 900)).toMatchObject({ width: "720", height: "1280" });
+    });
+
+    it("falls back to HD for a zero-sized canvas", () => {
+      expect(defaultResolutionFor(0, 0)).toEqual(RESOLUTION_PRESETS[0]);
+      expect(defaultResolutionFor(800, 0)).toEqual(RESOLUTION_PRESETS[0]);
+    });
+
+    it("applies a preset and re-locks the aspect to it", () => {
+      openWithCanvas(800, 600);
+      fireEvent.change(screen.getByTestId("render-modal-preset"), {
+        target: { value: "1920x1080" },
+      });
+      expect((screen.getByTestId("render-modal-width") as HTMLInputElement).value).toBe("1920");
+      expect((screen.getByTestId("render-modal-height") as HTMLInputElement).value).toBe("1080");
+
+      fireEvent.change(screen.getByTestId("render-modal-width"), { target: { value: "640" } });
+      expect((screen.getByTestId("render-modal-height") as HTMLInputElement).value).toBe("360");
+      expect((screen.getByTestId("render-modal-preset") as HTMLSelectElement).value).toBe("custom");
+    });
+
+    it("ignores an unknown preset value", () => {
+      openWithCanvas(800, 600);
+      fireEvent.change(screen.getByTestId("render-modal-preset"), { target: { value: "custom" } });
+      expect((screen.getByTestId("render-modal-width") as HTMLInputElement).value).toBe("1024");
+      expect((screen.getByTestId("render-modal-height") as HTMLInputElement).value).toBe("768");
+    });
   });
 });
