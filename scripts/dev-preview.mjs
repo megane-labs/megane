@@ -37,7 +37,7 @@ import {
 } from "fs";
 import { join, dirname } from "path";
 import { fileURLToPath } from "url";
-import { createRequire } from "module";
+import { getChromium } from "../tests/e2e/utils/playwright.mjs";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(__dirname, "..");
@@ -45,9 +45,9 @@ const OUTPUT_DIR = join(ROOT, "dev-preview");
 const SCREENSHOTS_DIR = join(OUTPUT_DIR, "screenshots");
 const VIDEOS_DIR = join(OUTPUT_DIR, "videos");
 
-// Resolve Playwright from global installation
-const _require = createRequire("/opt/node22/lib/node_modules/");
-const { chromium } = _require("playwright");
+// Resolve Playwright via the shared helper (project node_modules first, then
+// the global install) instead of duplicating the createRequire block.
+const chromium = getChromium();
 
 // ---- CLI argument parsing ----
 const args = process.argv.slice(2);

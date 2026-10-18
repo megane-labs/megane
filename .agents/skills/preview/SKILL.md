@@ -7,7 +7,9 @@ description: Capture screenshots and videos of the megane viewer for visual revi
 
 ## IMPORTANT: These scripts use Playwright, NOT Puppeteer
 
-All scripts resolve Playwright from `/opt/node22/lib/node_modules/`.
+All scripts resolve Playwright through the shared `tests/e2e/utils/playwright.mjs`
+helper (`getChromium()`), which prefers the project's own `node_modules` and
+falls back to the global install at `/opt/node22/lib/node_modules/`.
 
 ## Dev Preview (screenshots + video for visual review)
 
@@ -40,9 +42,10 @@ Output goes to `dev-preview/` directory.
 ```
 node scripts/capture-screenshots.mjs
 ```
-Captures a high-quality 1280x720 DPR=2 screenshot of caffeine_water molecule.
+Captures a high-quality 1280x720 DPR=2 screenshot of the full app UI (3D
+viewport, pipeline editor, timeline) with the default caffeine_water scene.
 Output: `docs/public/screenshots/hero.png`.
-This script does NOT require WASM (uses pre-parsed JSON data).
+Requires WASM to be built first (`npm run build:wasm`).
 
 ## Scripted Zoom Demo Video (storyboard-as-code)
 
@@ -94,10 +97,20 @@ npm run demo:video -- --url https://<demo-site>/megane/app/
   `actionFirst`). Live generation needs `ANTHROPIC_API_KEY` + network; without
   them the run still completes (prompt typed, generation skipped).
 
+## Promo Video (camera-zoom variant)
+
+`npm run demo:promo` (`scripts/promo-video.mjs`) records a promotional cut of
+the same chat → generate → pipeline flow, but with the `#root` screen-zoom
+camera kept on throughout (it re-measures ReactFlow handles once at identity so
+the zoomed pipeline edges stay attached). Its storyboard is hard-coded in the
+script header rather than in `demo-script.mjs`. Options: `--out`, `--url`,
+`--prompt`, `--width/--height`, `--dpr`, `--response-wait <ms>`,
+`--no-generate`, `--clean`; output goes to `demo/out/megane-promo-<ts>.webm`.
+
 ## Prerequisites
 
 - WASM must be built for dev-preview.mjs (it auto-builds if missing)
-- capture-screenshots.mjs does NOT need WASM
+- capture-screenshots.mjs needs WASM already built (it does not auto-build)
 - Both scripts auto-start and auto-stop a Vite dev server
 
 ## Cleaning Up
