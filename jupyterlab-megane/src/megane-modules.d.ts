@@ -34,6 +34,10 @@ declare module "@megane/pipeline/store" {
   };
 }
 
+declare module "@megane/pipeline/companionFiles" {
+  export function companionFileName(node: { type?: unknown }): string | null;
+}
+
 declare module "@megane/pipeline/storeSnapshot" {
   export type PipelineStoreSnapshot = Record<string, unknown>;
   export function capturePipelineStore(state: any): PipelineStoreSnapshot;
@@ -48,6 +52,16 @@ declare module "@megane/stores/usePlaybackStore" {
     getState(): { seekFrame(index: number): void; [key: string]: any };
     [key: string]: any;
   };
+}
+
+declare module "@megane/hosts/classifyStandaloneFile" {
+  export interface StandaloneFileClassification {
+    kind: "structure" | "trajectory-only" | "spectrum" | "volumetric";
+    errorMessage?: string;
+    loadFailureHint?: string;
+  }
+  export function classifyStandaloneFile(fileName: string): StandaloneFileClassification;
+  export function siblingTopologyName(fileName: string): string | null;
 }
 
 declare module "@megane/styles/megane.css";

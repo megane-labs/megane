@@ -13,7 +13,7 @@
  *
  * Requires:
  *   - code-server (installed via `npm install -g code-server` if missing)
- *   - playwright (global install at /opt/node22/lib/node_modules/)
+ *   - playwright (resolved by tests/e2e/utils/playwright.mjs)
  *   - Internet access to download VSIX from VS Code Marketplace
  */
 
