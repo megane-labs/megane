@@ -19,6 +19,10 @@ import { useMeganeLocal } from "../../src/hooks/useMeganeLocal";
 import { usePipelineStore } from "../../src/pipeline/store";
 import { usePlaybackStore } from "../../src/stores/usePlaybackStore";
 import type { SerializedPipeline } from "../../src/pipeline/types";
+import {
+  companionFilesFromPayload,
+  type CompanionFilePayload,
+} from "../../src/pipeline/companionFiles";
 import type { MeganeCameraState } from "../../src/renderer/MoleculeRenderer";
 import type { SelectionState, Measurement } from "../../src/types";
 import { useTour } from "../../src/tour/useTour";
@@ -147,20 +151,17 @@ function App() {
       }
 
       if (message.type === "loadPipeline") {
-        const { pipeline, structureFiles, trajectoryFiles } = message as {
+        const { pipeline, companionFiles } = message as {
           pipeline: SerializedPipeline;
-          structureFiles: Array<{ nodeId: string; content: string; filename: string }>;
-          trajectoryFiles: Array<{ nodeId: string; content: ArrayBuffer; filename: string }>;
+          companionFiles: CompanionFilePayload[];
         };
         // The WASM URL is provided by the HTML (window.__MEGANE_WASM_URL__).
 
         (async () => {
-          const companions: File[] = [
-            ...structureFiles.map(
-              (sf) => new File([sf.content], sf.filename, { type: "text/plain" }),
-            ),
-            ...trajectoryFiles.map((tf) => new File([new Uint8Array(tf.content)], tf.filename)),
-          ];
+          // Companions arrive as raw bytes (ArrayBuffers, structured clone) so
+          // binary formats such as ASE .traj survive; the shared parsers pick
+          // text() or arrayBuffer() by extension.
+          const companions = companionFilesFromPayload(companionFiles);
 
           // Re-stringify the pipeline payload into a File so the canonical
           // openFile entry point sees the same .megane.json contract that
@@ -175,13 +176,9 @@ function App() {
           // setNodeSnapshot on the first load_structure node — that's
           // idempotent because openFile already set the same snapshot for
           // that node a moment ago. PR-B will drop these props entirely.
-          if (structureFiles.length > 0) {
-            const firstStructure = new File(
-              [structureFiles[0].content],
-              structureFiles[0].filename,
-              { type: "text/plain" },
-            );
-            await local.loadFile(firstStructure);
+          const firstStructure = companionFiles.findIndex((c) => c.nodeType === "load_structure");
+          if (firstStructure >= 0) {
+            await local.loadFile(companions[firstStructure]);
           }
 
           setLoaded(true);
