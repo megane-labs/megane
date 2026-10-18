@@ -23,6 +23,62 @@ const ANIMATION_UNAVAILABLE_HINT =
   "Animation is unavailable: the current structure has only 1 frame. " +
   "Load a trajectory (2+ frames) to export GIF/MP4.";
 
+export interface ResolutionPreset {
+  label: string;
+  width: number;
+  height: number;
+}
+
+/** Standard output resolutions offered in the Resolution dropdown. */
+export const RESOLUTION_PRESETS: readonly ResolutionPreset[] = [
+  { label: "HD 16:9", width: 1280, height: 720 },
+  { label: "Full HD 16:9", width: 1920, height: 1080 },
+  { label: "4K UHD 16:9", width: 3840, height: 2160 },
+  { label: "XGA 4:3", width: 1024, height: 768 },
+  { label: "UXGA 4:3", width: 1600, height: 1200 },
+  { label: "Square 1:1", width: 1024, height: 1024 },
+  { label: "Square 1:1", width: 2048, height: 2048 },
+  { label: "Portrait 3:4", width: 768, height: 1024 },
+  { label: "Portrait 9:16", width: 720, height: 1280 },
+  { label: "Portrait 9:16", width: 1080, height: 1920 },
+];
+
+/**
+ * Defaults picked on open, one per aspect ratio, all around one megapixel.
+ * Larger output is one Scale step (2× / 4×) away.
+ */
+const DEFAULT_PRESETS: readonly ResolutionPreset[] = [
+  RESOLUTION_PRESETS[0], // 1280×720
+  RESOLUTION_PRESETS[3], // 1024×768
+  RESOLUTION_PRESETS[5], // 1024×1024
+  RESOLUTION_PRESETS[7], // 768×1024
+  RESOLUTION_PRESETS[8], // 720×1280
+];
+
+/**
+ * Pick the default output resolution for a viewport: the standard preset
+ * whose aspect ratio is closest to the viewport's, so the export frames the
+ * scene like the screen does without inheriting its odd pixel size.
+ */
+export function defaultResolutionFor(viewW: number, viewH: number): ResolutionPreset {
+  if (!(viewW > 0) || !(viewH > 0)) return DEFAULT_PRESETS[0];
+  const target = Math.log(viewW / viewH);
+  let best = DEFAULT_PRESETS[0];
+  let bestDiff = Infinity;
+  for (const p of DEFAULT_PRESETS) {
+    const diff = Math.abs(Math.log(p.width / p.height) - target);
+    if (diff < bestDiff) {
+      best = p;
+      bestDiff = diff;
+    }
+  }
+  return best;
+}
+
+function presetKey(w: number, h: number): string {
+  return `${w}x${h}`;
+}
+
 interface RenderModalProps {
   open: boolean;
   onClose: () => void;
@@ -144,8 +200,8 @@ export function RenderModal({
   const [mode, setMode] = useState<Mode>("snapshot");
   const [snapshotFormat, setSnapshotFormat] = useState<SnapshotFormat>("png");
   const [animationFormat, setAnimationFormat] = useState<AnimationFormat>("gif");
-  const [width, setWidth] = useState(1920);
-  const [height, setHeight] = useState(1080);
+  const [width, setWidth] = useState(1280);
+  const [height, setHeight] = useState(720);
   const [scaleFactor, setScaleFactor] = useState(1);
   const [lockAspect, setLockAspect] = useState(true);
   const [transparent, setTransparent] = useState(false);
@@ -154,18 +210,18 @@ export function RenderModal({
   const [animFps, setAnimFps] = useState(30);
   const [exporting, setExporting] = useState(false);
   const [progress, setProgress] = useState(0);
-  const aspectRef = useRef(1920 / 1080);
+  const aspectRef = useRef(1280 / 720);
 
-  // Sync resolution from viewport on open
+  // On open, default to the standard resolution closest to the viewport's
+  // aspect ratio rather than the viewport's raw pixel size.
   useEffect(() => {
     if (open && rendererRef.current) {
       const canvas = rendererRef.current.getCanvas();
       if (canvas) {
-        const w = canvas.clientWidth;
-        const h = canvas.clientHeight;
-        setWidth(w);
-        setHeight(h);
-        aspectRef.current = w / h;
+        const preset = defaultResolutionFor(canvas.clientWidth, canvas.clientHeight);
+        setWidth(preset.width);
+        setHeight(preset.height);
+        aspectRef.current = preset.width / preset.height;
       }
     }
   }, [open, rendererRef]);
@@ -208,6 +264,18 @@ export function RenderModal({
     },
     [lockAspect],
   );
+
+  const handlePresetChange = useCallback((key: string) => {
+    const preset = RESOLUTION_PRESETS.find((p) => presetKey(p.width, p.height) === key);
+    if (!preset) return;
+    setWidth(preset.width);
+    setHeight(preset.height);
+    aspectRef.current = preset.width / preset.height;
+  }, []);
+
+  const activePresetKey = RESOLUTION_PRESETS.some((p) => p.width === width && p.height === height)
+    ? presetKey(width, height)
+    : "custom";
 
   const handleExport = useCallback(async () => {
     const renderer = rendererRef.current;
@@ -420,6 +488,22 @@ export function RenderModal({
         {!is3DFormat && (
           <>
             <div style={labelStyle}>Resolution</div>
+            <select
+              value={activePresetKey}
+              onChange={(e) => handlePresetChange(e.target.value)}
+              style={{ ...selectStyle, marginBottom: 8 }}
+              disabled={exporting}
+              data-testid="render-modal-preset"
+            >
+              {RESOLUTION_PRESETS.map((p) => (
+                <option key={presetKey(p.width, p.height)} value={presetKey(p.width, p.height)}>
+                  {p.label} — {p.width} × {p.height}
+                </option>
+              ))}
+              <option value="custom" disabled>
+                Custom
+              </option>
+            </select>
             <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
               <input
                 type="number"
