@@ -58,9 +58,12 @@ function makeRenderer(): MoleculeRenderer {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const internals = renderer as any;
   internals.scene = { add: () => {}, remove: () => {} };
-  internals.camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0.1, 100);
-  internals.camera.position.set(0, 0, 10);
-  internals.controls = { target: new THREE.Vector3(), upAxis: new THREE.Vector3(0, 1, 0) };
+  internals.cameraController.camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0.1, 100);
+  internals.cameraController.camera.position.set(0, 0, 10);
+  internals.cameraController.controls = {
+    target: new THREE.Vector3(),
+    upAxis: new THREE.Vector3(0, 1, 0),
+  };
   // The axes inset owns its own WebGLRenderer; jsdom has no canvas context.
   internals.cellAxesRenderer = { loadBox: () => {}, setVisible: () => {}, dispose: () => {} };
   return renderer;
