@@ -33,9 +33,12 @@ import { usePipelineStoreApi, usePlaybackStoreApi } from "../stores/MeganeProvid
 import { useBondSource } from "./useBondSource";
 import { useLabelSource } from "./useLabelSource";
 import { useVectorSource } from "./useVectorSource";
-import { createMinimalStructurePipeline } from "../pipeline/defaults";
-import { syncAddBondSourceForLoader, applyTopologyFile } from "../pipeline/openFile";
-import { getLayoutedElements } from "../pipeline/layout";
+import {
+  applyStructureToPipeline,
+  applyTopologyFile,
+  ensureStructureLoader,
+  type AppliedStructure,
+} from "../pipeline/openFile";
 import type {
   Snapshot,
   Frame,
@@ -166,131 +169,23 @@ export function useMeganeLocal(): MeganeLocalState {
   }, []);
 
   const applyResult = useCallback(
-    (
-      result: {
-        snapshot: Snapshot;
-        frames: Frame[];
-        meta: TrajectoryMeta | null;
-        labels: string[] | null;
-      },
-      filename?: string,
-      // Lazy multi-frame structure (large XYZ/PDB): frame 0 is the eager
-      // snapshot, extra frames stream from this provider via the pipeline's
-      // structure-trajectory channel. When set, the eager frame arrays stay
-      // empty and `result.frames` is empty.
-      lazy?: { provider: LazyFrameProvider },
-    ) => {
-      const prevSnapshot = baseSnapshotRef.current;
+    (result: AppliedStructure, filename: string) => {
       baseSnapshotRef.current = result.snapshot;
       structureFramesRef.current = result.frames;
       fileFramesRef.current = [];
       fileTrajMetaRef.current = null;
       xtcFileNameRef.current = null;
-      // Multi-frame when the file carries eager extra frames OR a lazy provider.
-      const hasFrames = result.frames.length > 0 || !!lazy;
+      const hasFrames = result.frames.length > 0;
 
-      // If the new structure itself carries multiple frames (multi-frame
-      // XYZ, multi-MODEL PDB, etc.), feed them through the pipeline's
-      // file-trajectory channel so the default LoadTrajectory →
-      // Viewport edge picks them up — there is no LoadStructure edge to
-      // viewport.traj in the standard graph.
-      //
-      // executeLoadTrajectory builds a MemoryFrameProvider WITHOUT
-      // basePositions, so its index 0 must be a real frame. The XYZ
-      // parser puts frame 0 into `snapshot.positions` and frames 1..N-1
-      // into `result.frames`; prepend a synthetic frame 0 so the
-      // provider-emitted indices match the file's frame numbering.
-      //
-      // Otherwise, only clear when we are replacing a prior structure
-      // with incompatible atom count; never clear during the very first
-      // load (no prior structure) to avoid racing against a follow-up
-      // loadXtc() in the auto-load.
-      const pipeStore = pipelineApi.getState();
-      if (lazy) {
-        // Extra frames stream through the structure-trajectory channel. Clear
-        // (and dispose) any prior file trajectory so only this provider is live;
-        // the LoadTrajectory node below switches to its "structure" source.
-        pipeStore.setFileFrames(null, null);
-        pipeStore.setStructureProvider(lazy.provider);
-      } else if (result.frames.length > 0) {
-        const allFrames: Frame[] = [
-          {
-            frameId: 0,
-            nAtoms: result.snapshot.nAtoms,
-            positions: result.snapshot.positions,
-          },
-          ...result.frames,
-        ];
-        const trajectoryMeta: TrajectoryMeta = {
-          nFrames: allFrames.length,
-          timestepPs: 1.0,
-          nAtoms: result.snapshot.nAtoms,
-        };
-        // Feed both channels: the default web/widget pipelines wire
-        // through LoadTrajectory (consumes fileFrames); the empty
-        // pipeline used by the VSCode custom editor wires LoadStructure
-        // directly to Viewport.traj (consumes structureFrames).
-        pipeStore.setFileFrames(allFrames, trajectoryMeta);
-        pipeStore.setStructureFrames(result.frames, trajectoryMeta);
-      } else if (prevSnapshot && prevSnapshot.nAtoms !== result.snapshot.nAtoms) {
-        pipeStore.setFileFrames(null, null);
-        pipeStore.setStructureFrames(null, null);
-      }
-
-      // Keep the pipeline's load_structure node in sync with whatever was
-      // just loaded. Without this the editor would show stale demo
-      // filenames (e.g. "caffeine_water.pdb") even though the viewer is
-      // rendering the user's file.
-      //
-      // If the current graph has no load_structure node — e.g. a previous
-      // .megane.json open replaced the pipeline with one that lacks one,
-      // or an empty/broken graph is in the store — install a minimal
-      // pipeline first so the parsed file actually reaches the viewer.
-      // Without this, the WASM parse succeeds but the snapshot is dropped
-      // and the viewport stays empty (the symptom users see as "the next
-      // file I open is broken").
-      if (filename) {
-        let loaderNode = pipeStore.nodes.find((n) => n.type === "load_structure");
-        if (!loaderNode) {
-          const raw = createMinimalStructurePipeline();
-          const { nodes, edges } = getLayoutedElements(raw.nodes, raw.edges);
-          pipelineApi.setState({ nodes, edges, layoutPending: true });
-          loaderNode = pipelineApi.getState().nodes.find((n) => n.type === "load_structure");
-        }
-        if (loaderNode) {
-          pipeStore.setNodeSnapshot(loaderNode.id, {
-            snapshot: result.snapshot,
-            frames: result.frames.length > 0 ? result.frames : null,
-            meta: result.meta,
-            labels: result.labels,
-          });
-          pipeStore.updateNodeParams(loaderNode.id, {
-            fileName: filename,
-            hasTrajectory: hasFrames,
-            hasCell: !!result.snapshot.box,
-          });
-          // Mirror the openFile path: pick AddBond's Source by file format
-          // ("structure" for PDB/MOL/SDF/LAMMPS, "distance" / VDW otherwise)
-          // so VSCode and JupyterLab single-file viewers — which feed files
-          // through this hook instead of usePipelineStore.openFile — also
-          // start with a sensible default for formats that lack bond info.
-          syncAddBondSourceForLoader(pipelineApi.getState(), loaderNode.id, filename);
-        }
-        const trajNode = pipeStore.nodes.find((n) => n.type === "load_trajectory");
-        if (trajNode) {
-          if (hasFrames) {
-            // Multi-frame structure files (.traj, multi-MODEL PDB,
-            // multi-frame XYZ) carry their trajectory in the structure file
-            // itself. Flip the node to its visible "structure" source rather
-            // than silently removing it from the graph.
-            pipeStore.updateNodeParams(trajNode.id, { source: "structure", fileName: "" });
-          } else {
-            // Clear any previously-loaded XTC name so it doesn't linger
-            // across structure swaps, and reset to the file source.
-            pipeStore.updateNodeParams(trajNode.id, { source: "file", fileName: "" });
-          }
-        }
-      }
+      // Everything the pipeline sees goes through the same helper `openFile`
+      // and the Load Structure node use, so the VSCode and JupyterLab
+      // single-file viewers — which feed files through this hook — open a
+      // file exactly like the webapp does (node snapshot, AddBond source,
+      // embedded vector channels, structure frames, LoadTrajectory source).
+      // A graph without a load_structure node (e.g. a .megane.json that has
+      // none) gets the minimal pipeline first so the parse reaches the viewer.
+      const loaderId = ensureStructureLoader(pipelineApi);
+      applyStructureToPipeline(pipelineApi, loaderId, result, filename);
 
       // Reset sub-hook state
       bonds.reset(result.snapshot);
@@ -305,9 +200,7 @@ export function useMeganeLocal(): MeganeLocalState {
       setTrajectorySourceState(initialTrajSource);
 
       setSnapshot(result.snapshot);
-      // Lazy provider knows the true frame count (extra + 1); the eager frame-0
-      // result has no meta of its own.
-      setMeta(lazy ? lazy.provider.meta : result.meta);
+      setMeta(result.meta);
       resetPlayback();
     },
     [resetPlayback, bonds.reset, labels.reset, vectors.reset, pipelineApi],
@@ -323,7 +216,7 @@ export function useMeganeLocal(): MeganeLocalState {
       setPdbFileName(fileName);
       setXtcFileName(result.meta ? "PDB models" : null);
 
-      // applyResult calls syncAddBondSourceForLoader (sets "distance" for GRO).
+      // applyResult picks the format's AddBond source (sets "distance" for GRO).
       // If the host pre-loaded a sibling .top, overwrite with topology bonds.
       if (topFile) {
         const store = pipelineApi.getState();
