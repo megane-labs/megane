@@ -27,7 +27,7 @@
  *       mobile-<timestamp>.webm
  */
 
-import { spawn, execSync } from "child_process";
+import { execSync } from "child_process";
 import {
   existsSync,
   mkdirSync,
@@ -37,7 +37,7 @@ import {
 } from "fs";
 import { join, dirname } from "path";
 import { fileURLToPath } from "url";
-import { createRequire } from "module";
+import { getChromium, startViteServer } from "../tests/e2e/utils/playwright.mjs";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(__dirname, "..");
@@ -45,9 +45,9 @@ const OUTPUT_DIR = join(ROOT, "dev-preview");
 const SCREENSHOTS_DIR = join(OUTPUT_DIR, "screenshots");
 const VIDEOS_DIR = join(OUTPUT_DIR, "videos");
 
-// Resolve Playwright from global installation
-const _require = createRequire("/opt/node22/lib/node_modules/");
-const { chromium } = _require("playwright");
+// Resolve Playwright via the shared helper (project node_modules first, then
+// the global install) instead of duplicating the createRequire block.
+const chromium = getChromium();
 
 // ---- CLI argument parsing ----
 const args = process.argv.slice(2);
@@ -108,36 +108,6 @@ function ensureWasm() {
   console.log("WASM package not found. Building...");
   execSync("npm run build:wasm", { cwd: ROOT, stdio: "inherit", timeout: 180000 });
   console.log("WASM build succeeded.");
-}
-
-function startViteServer() {
-  return new Promise((resolve, reject) => {
-    const proc = spawn("npx", ["vite", "--port", String(PORT), "--host", "127.0.0.1"], {
-      cwd: ROOT,
-      stdio: ["ignore", "pipe", "pipe"],
-      env: { ...process.env, NODE_ENV: "development" },
-    });
-
-    const timeout = setTimeout(() => {
-      reject(new Error("Vite dev server did not start in time"));
-    }, 30000);
-
-    const handler = (data) => {
-      const line = data.toString();
-      if (line.includes("Local:") && line.includes(String(PORT))) {
-        clearTimeout(timeout);
-        resolve(proc);
-      }
-    };
-
-    proc.stdout.on("data", handler);
-    proc.stderr.on("data", handler);
-
-    proc.on("error", (err) => {
-      clearTimeout(timeout);
-      reject(err);
-    });
-  });
 }
 
 async function waitForApp(page) {
@@ -241,7 +211,6 @@ async function captureVideo(browser, viewport, durationMs) {
   }
 }
 
-
 // ---- Main ----
 
 let server = null;
@@ -256,7 +225,7 @@ try {
   if (CAPTURE_VIDEOS) console.log(`Videos: enabled (${VIDEO_DURATION}ms${INTERACT ? " + interaction" : ""})`);
 
   console.log("\nStarting Vite dev server...");
-  server = await startViteServer();
+  server = await startViteServer({ port: PORT });
   console.log(`Vite dev server running on port ${PORT}`);
 
   browser = await chromium.launch({ headless: true });

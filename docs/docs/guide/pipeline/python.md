@@ -74,6 +74,7 @@ from megane import (
     AddCoordination,
     AddLabels,
     AddPolyhedra,
+    SurfaceMesh,
     Isosurface,
     VectorOverlay,
     SpectrumPlot,
@@ -82,9 +83,9 @@ from megane import (
 )
 ```
 
-:::note
-The **Surface Mesh** node (alpha-shape envelope) is available in the visual pipeline editor but does not have a Python class. Use the standalone app, JupyterLab, or VS Code to add it interactively, or author the pipeline JSON directly.
-:::
+Every node type of the visual pipeline editor has a Python class, so
+`Pipeline.from_dict()` / `Pipeline.load()` can read any pipeline the editor
+saves.
 
 ### LoadStructure
 
@@ -225,10 +226,10 @@ Select atoms by a query expression.
 Filter(*, query: str = "all", bond_query: str = "")
 ```
 
-| Parameter    | Type  | Default | Description                                                                                                                |
-| ------------ | ----- | ------- | -------------------------------------------------------------------------------------------------------------------------- |
-| `query`      | `str` | `"all"` | Atom selection expression (see [Filter DSL](./index.md#filter-dsl))                                                        |
-| `bond_query` | `str` | `""`    | Bond selection expression (see [Bond Selection DSL](./index.md#bond-selection-dsl)). Empty string means no bond filtering. |
+| Parameter    | Type  | Default | Description                                                                                                                                                                             |
+| ------------ | ----- | ------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `query`      | `str` | `"all"` | Atom selection expression (see [Filter DSL](./index.md#filter-dsl)). `"all"` and `""` both select every atom; a pipeline JSON node without `query` loads as `""`, the editor's default. |
+| `bond_query` | `str` | `""`    | Bond selection expression (see [Bond Selection DSL](./index.md#bond-selection-dsl)). Empty string means no bond filtering.                                                              |
 
 **Ports:** `inp.particle`, `out.particle`
 
@@ -291,7 +292,7 @@ Replicate(*, nx: int = 1, ny: int = 1, nz: int = 1)
 | ---------------- | ----- | ------- | -------------------------------------------- |
 | `nx`, `ny`, `nz` | `int` | `1`     | Number of cell images along a / b / c (≥ 1) |
 
-**Ports:** `inp.particle`, `inp.cell`, `out.particle`, `out.cell`
+A connected trajectory is replicated per frame. **Ports:** `inp.particle`, `inp.cell`, `inp.traj`, `out.particle`, `out.cell`, `out.traj`
 
 ### Color
 
@@ -440,6 +441,36 @@ AddPolyhedra(
 | `edge_width` | `float` | `3.0`       | Wireframe edge width (px)  |
 
 **Ports:** `inp.coordination`, `out.mesh`
+
+### SurfaceMesh
+
+Wrap the atoms in an OVITO-style alpha-shape surface envelope. The mesh is
+computed in the browser from the incoming atom positions; the Python object
+only carries the parameters.
+
+```python
+SurfaceMesh(*, alpha_radius: float = 3.0, color: str = "#4488ff", opacity: float = 0.5)
+```
+
+| Parameter      | Type    | Default     | Description                                                         |
+| -------------- | ------- | ----------- | ------------------------------------------------------------------- |
+| `alpha_radius` | `float` | `3.0`       | Probe sphere radius in Å (larger = smoother, smaller = more detail) |
+| `color`        | `str`   | `"#4488ff"` | Surface color (hex)                                                 |
+| `opacity`      | `float` | `0.5`       | Surface transparency (0–1)                                          |
+
+```python
+from megane import Pipeline, LoadStructure, SurfaceMesh, Viewport
+
+pipe = Pipeline()
+s = pipe.add_node(LoadStructure("au_nanoparticle.xyz"))
+surf = pipe.add_node(SurfaceMesh(alpha_radius=3.0, opacity=0.4))
+v = pipe.add_node(Viewport())
+pipe.add_edge(s.out.particle, surf.inp.particle)
+pipe.add_edge(s.out.particle, v.inp.particle)
+pipe.add_edge(surf.out.mesh, v.inp.mesh)
+```
+
+**Ports:** `inp.particle`, `out.mesh`
 
 ### VectorOverlay
 

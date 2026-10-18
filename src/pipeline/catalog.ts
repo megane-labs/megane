@@ -55,7 +55,10 @@ export interface NodeCatalogEntry {
   promptOutputs?: string;
   /** Whether this node is surfaced to the LLM. Only `streaming` is false. */
   inPrompt: boolean;
-  /** Python class name in `python.megane`, or null when unavailable (surface_mesh). */
+  /**
+   * Python class name exported from `megane`, or null for a browser-only node
+   * (none today; tests/python/test_pipeline_node_drift.py keeps this honest).
+   */
   pythonClass: string | null;
 }
 
@@ -524,7 +527,7 @@ export const NODE_CATALOG: Record<PipelineNodeType, NodeCatalogEntry> = {
     promptInputs: "`particle` (particle data type)",
     promptOutputs: "`mesh` (mesh data type)",
     inPrompt: true,
-    pythonClass: null,
+    pythonClass: "SurfaceMesh",
   },
   vector_overlay: {
     description: "Visualizes per-atom vectors (forces, velocities) as arrows.",

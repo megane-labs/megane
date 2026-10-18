@@ -7,6 +7,7 @@
 import type { NodeProps, Node } from "@xyflow/react";
 import type { PipelineNodeData } from "../../pipeline/execute";
 import type { LoadVectorParams } from "../../pipeline/types";
+import { EMBEDDED_VECTOR_PREFIX } from "../../pipeline/companionFiles";
 import { useScopedPipelineStore, useLoadHandlers } from "../../stores/MeganeProvider";
 import { globalLoadHandlers, type VectorLoadHandler } from "../../stores/loadHandlers";
 import { NodeShell } from "./NodeShell";
@@ -53,7 +54,7 @@ export function LoadVectorNode({ id, data }: NodeProps<Node<PipelineNodeData>>) 
         return;
       }
       activateEmbeddedVectorChannel(name);
-      updateNodeParams(id, { fileName: `[embedded] ${name}` });
+      updateNodeParams(id, { fileName: `${EMBEDDED_VECTOR_PREFIX}${name}` });
     },
     [id, activateEmbeddedVectorChannel, updateNodeParams],
   );

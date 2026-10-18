@@ -111,14 +111,14 @@ Constructor parameters mirror the Python API (using an options object instead of
 | `Isosurface(iso_level=0.02)`             | `new Isosurface({ isoLevel: 0.02 })`             |
 | `LoadSpectrum("ir.jdx")`                 | `new LoadSpectrum('ir.jdx')`                     |
 | `SpectrumPlot(reverse_x=False)`          | `new SpectrumPlot({ reverseX: false })`          |
-| —                                        | `new SurfaceMesh({ alphaRadius: 3.0 })`          |
+| `SurfaceMesh(alpha_radius=3.0)`          | `new SurfaceMesh({ alphaRadius: 3.0 })`          |
 | `Viewport(perspective=True)`             | `new ViewportNode({ perspective: true })`        |
 
 The Viewport class is exported as `ViewportNode` so it does not clash with the `Viewport` React component exported from the same entry point.
 
 ### Differences from Python
 
-- **Node coverage:** every pipeline node type has a TypeScript builder class (a compile-time check keeps it that way). `SurfaceMesh` is TypeScript-only — the Python builder has no class for `surface_mesh` — and the TypeScript `Replicate` also exposes the `traj` ports the node has (`inp.traj` / `out.traj`), which the Python class does not. Parameter defaults come from the editor's `defaultParams`, so a builder node starts with the same values as a node added in the editor.
+- **Node coverage:** every pipeline node type has a TypeScript builder class (a compile-time check keeps it that way). The Python builder covers the same node types (a drift test checks it against the TypeScript node contract). Parameter defaults come from the editor's `defaultParams`, so a builder node starts with the same values as a node added in the editor.
 - **`LoadTrajectory`** takes the file path directly — `new LoadTrajectory("run.dcd")` or `{ path }` — in any format the Load Trajectory node opens (XTC, DCD, AMBER NetCDF `.nc`, LAMMPS dump `.lammpstrj` / `.dump` / `.trj`). The Python-style per-format keys (`{ xtc }`, `{ dcd }`, `{ nc }`, `{ traj }`, `{ xyz }`, `{ lammpstrj }`) also work, and `{ source: "structure" }` forwards the frames embedded in the structure file.
 - **`AddBonds`** takes only `{ source }`; there is no `top` option for topology files.
 - **`Pipeline`** has `addNode`, `addEdge`, `toObject`, and `toJSON` only — there is no `fromDict` / `load` / `save`. Use `deserializePipeline()` to turn a `SerializedPipeline` back into editor nodes and edges.

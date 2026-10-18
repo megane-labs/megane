@@ -125,9 +125,9 @@ describe("MoleculeRenderer.raycastAtPixel visibility wiring", () => {
     internals.camera = orthoCamera();
     internals.snapshot = stacked();
     expect((r.raycastAtPixel(50, 50) as { atomIndex: number }).atomIndex).toBe(0);
-    internals.currentAtomOpacityOverrides = new Float32Array([0, 1]);
+    r.setAtomOpacityOverrides(new Float32Array([0, 1]));
     expect((r.raycastAtPixel(50, 50) as { atomIndex: number }).atomIndex).toBe(1);
-    internals.atomOpacity = 0;
+    r.setAtomOpacity(0);
     expect(r.raycastAtPixel(50, 50)).toBeNull();
   });
 });

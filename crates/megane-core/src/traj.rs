@@ -596,22 +596,10 @@ pub fn parse_traj(data: &[u8]) -> Result<ParsedStructure, String> {
         elements,
         bonds,
         n_file_bonds: 0,
-        bond_orders: None,
         box_matrix,
-        box_origin: None,
         frame_positions_flat,
-        atom_labels: None,
-        chain_ids: None,
-        bfactors: None,
-        vector_channels: vec![],
-        ca_indices: vec![],
-        ca_chain_ids: vec![],
-        ca_res_nums: vec![],
-        ca_ss_type: vec![],
-        symmetry_ops: Vec::new(),
-        scalar_channels: Vec::new(),
-        warnings: Vec::new(),
         hetero,
+        ..Default::default()
     })
 }
 
