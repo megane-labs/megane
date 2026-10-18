@@ -6,6 +6,7 @@
 ///
 /// Only the variables needed for trajectory visualization are decoded:
 /// `coordinates`, `time`, `cell_lengths`, `cell_angles`.
+use crate::cell::cell_params_to_matrix;
 use crate::trajectory::TrajectoryData;
 
 const TAG_DIM: u32 = 10;
@@ -190,19 +191,6 @@ fn parse_var_list(r: &mut Reader) -> Result<Vec<VarDesc>, String> {
     Ok(vars)
 }
 
-/// Build a 3×3 cell matrix from lengths (Å) and angles (degrees).
-///
-/// Right angles take the exact diagonal path so orthorhombic cells are free of
-/// f32 trigonometric noise.
-fn cell_matrix(a: f32, b: f32, c: f32, alpha: f32, beta: f32, gamma: f32) -> [f32; 9] {
-    let right = |ang: f32| (ang - 90.0).abs() < 1e-3;
-    if right(alpha) && right(beta) && right(gamma) {
-        [a, 0.0, 0.0, 0.0, b, 0.0, 0.0, 0.0, c]
-    } else {
-        crate::parser::cell_params_to_matrix(a, b, c, alpha, beta, gamma)
-    }
-}
-
 // ─── public API ────────────────────────────────────────────────────────────
 
 /// Parse an AMBER NetCDF trajectory file (`.nc`).
@@ -371,7 +359,7 @@ pub fn parse_netcdf(data: &[u8]) -> Result<TrajectoryData, String> {
                     }
                     None => (90.0, 90.0, 90.0),
                 };
-                let m = cell_matrix(a, b, c, alpha, beta, gamma);
+                let m = cell_params_to_matrix(a, b, c, alpha, beta, gamma);
                 if i == 0 {
                     box_matrix = Some(m);
                 }

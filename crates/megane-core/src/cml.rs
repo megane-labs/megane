@@ -44,7 +44,8 @@
 
 use crate::atomic::{capitalize, symbol_to_atomic_num};
 use crate::bonds;
-use crate::parser::{cell_params_to_matrix, ParsedStructure};
+use crate::cell::{cell_params_to_matrix, frac_to_cart};
+use crate::parser::ParsedStructure;
 use quick_xml::events::{BytesStart, Event};
 use quick_xml::Reader;
 use std::collections::{HashMap, HashSet};
@@ -361,10 +362,10 @@ pub fn parse(text: &str) -> Result<ParsedStructure, String> {
             }
             Coord::Fractional([fa, fb, fc]) => {
                 // SAFETY: `needs_cell` guarantees box_matrix is Some here.
-                let m = box_matrix.unwrap();
-                positions.push(fa * m[0] + fb * m[3] + fc * m[6]);
-                positions.push(fa * m[1] + fb * m[4] + fc * m[7]);
-                positions.push(fa * m[2] + fb * m[5] + fc * m[8]);
+                let (x, y, z) = frac_to_cart(fa, fb, fc, &box_matrix.unwrap());
+                positions.push(x);
+                positions.push(y);
+                positions.push(z);
             }
         }
         elements.push(atom.element);

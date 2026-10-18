@@ -60,7 +60,8 @@
 
 use crate::atomic::{capitalize, symbol_to_atomic_num};
 use crate::bonds;
-use crate::parser::{cell_params_to_matrix, ParsedStructure};
+use crate::cell::orthorhombic;
+use crate::parser::ParsedStructure;
 use quick_xml::events::{BytesStart, Event};
 use quick_xml::Reader;
 use std::collections::{HashMap, HashSet};
@@ -488,7 +489,7 @@ fn finish(raw: Raw) -> Result<ParsedStructure, String> {
     // Odyssey centres a periodic sample on the box centre. Coordinates stay
     // exactly as written; box_origin anchors the cell's lower corner at
     // -L/2 so the rendered cell encloses the atoms.
-    let box_matrix = box_lengths.map(|[x, y, z]| cell_params_to_matrix(x, y, z, 90.0, 90.0, 90.0));
+    let box_matrix = box_lengths.map(|[x, y, z]| orthorhombic(x, y, z));
     let box_origin = box_lengths.map(|[x, y, z]| [-x / 2.0, -y / 2.0, -z / 2.0]);
 
     let n_file_bonds = bond_pairs.len();

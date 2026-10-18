@@ -31,23 +31,23 @@ describe("MoleculeRenderer — preview selection", () => {
   it("draws one highlight sphere per previewed atom", () => {
     const { renderer, internals } = makeRenderer();
     renderer.setPreviewSelection([0, 2]);
-    expect(internals.previewSelectionGroup.children.length).toBe(2);
+    expect(internals.selection.previewSelectionGroup.children.length).toBe(2);
   });
 
   it("clears the preview on null/empty", () => {
     const { renderer, internals } = makeRenderer();
     renderer.setPreviewSelection([0, 1, 2]);
-    expect(internals.previewSelectionGroup.children.length).toBe(3);
+    expect(internals.selection.previewSelectionGroup.children.length).toBe(3);
     renderer.setPreviewSelection(null);
-    expect(internals.previewSelectionGroup.children.length).toBe(0);
+    expect(internals.selection.previewSelectionGroup.children.length).toBe(0);
     renderer.setPreviewSelection([]);
-    expect(internals.previewSelectionGroup.children.length).toBe(0);
+    expect(internals.selection.previewSelectionGroup.children.length).toBe(0);
   });
 
   it("does not touch the measurement selection group", () => {
     const { renderer, internals } = makeRenderer();
     renderer.setPreviewSelection([0, 1]);
-    expect(internals.selectionGroup.children.length).toBe(0);
+    expect(internals.selection.selectionGroup.children.length).toBe(0);
   });
 
   it("selectAtomsInRect returns [] without a container", () => {
@@ -57,10 +57,10 @@ describe("MoleculeRenderer — preview selection", () => {
 
   it("setControlsEnabled toggles the orbit controls flag", () => {
     const { renderer, internals } = makeRenderer();
-    internals.controls = { enabled: true };
+    internals.cameraController.controls = { enabled: true };
     renderer.setControlsEnabled(false);
-    expect(internals.controls.enabled).toBe(false);
+    expect(internals.cameraController.controls.enabled).toBe(false);
     renderer.setControlsEnabled(true);
-    expect(internals.controls.enabled).toBe(true);
+    expect(internals.cameraController.controls.enabled).toBe(true);
   });
 });

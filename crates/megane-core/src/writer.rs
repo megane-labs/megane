@@ -14,6 +14,7 @@
 //! parser result. All coordinates are Ångström, matching the parser contract.
 
 use crate::atomic::atomic_num_to_symbol;
+use crate::cell::matrix_to_params;
 use std::fmt::Write as _;
 
 /// Borrowed view over the minimal per-atom data a writer needs.
@@ -147,33 +148,6 @@ pub fn write_xyz(view: &StructureView<'_>) -> Result<String, String> {
     Ok(out)
 }
 
-/// Convert a row-major cell matrix to crystallographic `(a, b, c, α, β, γ)`.
-fn cell_params(m: &[f32; 9]) -> (f32, f32, f32, f32, f32, f32) {
-    let a = [m[0], m[1], m[2]];
-    let b = [m[3], m[4], m[5]];
-    let c = [m[6], m[7], m[8]];
-    let norm = |v: &[f32; 3]| (v[0] * v[0] + v[1] * v[1] + v[2] * v[2]).sqrt();
-    let dot = |u: &[f32; 3], v: &[f32; 3]| u[0] * v[0] + u[1] * v[1] + u[2] * v[2];
-    let la = norm(&a);
-    let lb = norm(&b);
-    let lc = norm(&c);
-    let angle = |u: &[f32; 3], v: &[f32; 3], lu: f32, lv: f32| {
-        if lu == 0.0 || lv == 0.0 {
-            90.0
-        } else {
-            (dot(u, v) / (lu * lv)).clamp(-1.0, 1.0).acos().to_degrees()
-        }
-    };
-    (
-        la,
-        lb,
-        lc,
-        angle(&b, &c, lb, lc),
-        angle(&a, &c, la, lc),
-        angle(&a, &b, la, lb),
-    )
-}
-
 /// Split a megane residue label (`ALA42`) into `(resname, resid)`.
 fn split_label(label: &str) -> (&str, Option<u32>) {
     let name_end = label
@@ -208,7 +182,7 @@ pub fn write_pdb(view: &StructureView<'_>) -> Result<String, String> {
     }
     let mut out = String::with_capacity(n * 90 + 128);
     if let Some(m) = &view.box_matrix {
-        let (a, b, c, alpha, beta, gamma) = cell_params(m);
+        let (a, b, c, alpha, beta, gamma) = matrix_to_params(m);
         let _ = writeln!(
             out,
             "CRYST1{:9.3}{:9.3}{:9.3}{:7.2}{:7.2}{:7.2} P 1           1",
@@ -488,19 +462,6 @@ mod tests {
             chain_ids: None,
         };
         assert!(write_xyz(&view).unwrap().contains("X "));
-    }
-
-    #[test]
-    fn cell_params_of_triclinic_cell() {
-        // 60° between a and b, everything else orthogonal.
-        let m = [2.0, 0.0, 0.0, 1.0, 3f32.sqrt(), 0.0, 0.0, 0.0, 5.0];
-        let (a, b, c, alpha, beta, gamma) = cell_params(&m);
-        assert!((a - 2.0).abs() < 1e-5);
-        assert!((b - 2.0).abs() < 1e-5);
-        assert!((c - 5.0).abs() < 1e-5);
-        assert!((alpha - 90.0).abs() < 1e-3);
-        assert!((beta - 90.0).abs() < 1e-3);
-        assert!((gamma - 60.0).abs() < 1e-3);
     }
 
     #[test]

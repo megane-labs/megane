@@ -16,6 +16,7 @@
 ///   offset 44 – 47 : HAS_CELL (CHARMM only, overlaps DELTA padding)
 ///   offset 48 – 79 : eight int32 zeros
 ///   offset 80 – 83 : CHARMM_VERSION (0 = X-PLOR)
+use crate::cell::cell_params_to_matrix;
 use crate::trajectory::TrajectoryData;
 
 pub type DcdData = TrajectoryData;
@@ -155,19 +156,6 @@ fn dcd_cell_angles(alpha_raw: f64, beta_raw: f64, gamma_raw: f64) -> (f32, f32, 
         }
     };
     (to_deg(alpha_raw), to_deg(beta_raw), to_deg(gamma_raw))
-}
-
-/// Build a 3×3 cell matrix from lengths (Å) and angles (degrees).
-///
-/// Right angles take the exact diagonal path so orthorhombic cells are free of
-/// f32 trigonometric noise.
-fn cell_matrix(a: f32, b: f32, c: f32, alpha: f32, beta: f32, gamma: f32) -> [f32; 9] {
-    let right = |ang: f32| (ang - 90.0).abs() < 1e-3;
-    if right(alpha) && right(beta) && right(gamma) {
-        [a, 0.0, 0.0, 0.0, b, 0.0, 0.0, 0.0, c]
-    } else {
-        crate::parser::cell_params_to_matrix(a, b, c, alpha, beta, gamma)
-    }
 }
 
 // ── public API ───────────────────────────────────────────────────────────────
@@ -310,7 +298,7 @@ pub fn parse_dcd(data: &[u8]) -> Result<DcdData, String> {
                     };
                     let (a, b, c) = (f(0) as f32, f(16) as f32, f(40) as f32);
                     let (alpha, beta, gamma) = dcd_cell_angles(f(32), f(24), f(8));
-                    cur_box = Some(cell_matrix(a, b, c, alpha, beta, gamma));
+                    cur_box = Some(cell_params_to_matrix(a, b, c, alpha, beta, gamma));
                 }
                 Ok(_) => {}
                 Err(_) => break,
