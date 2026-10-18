@@ -14,7 +14,7 @@ import { loadVectorFileData } from "../logic/vectorSourceLogic";
 import { parseStructureFile, shouldUseLazyStructure } from "../parsers/structure";
 import { pdbMayHaveModels } from "../parsers/pdbModels";
 import type { StructureParseResult, LazyStructureKind } from "../parsers/structure";
-import type { NodeSnapshotData } from "../pipeline/execute";
+import { applyStructureToPipeline } from "../pipeline/openFile";
 import type { Snapshot } from "../types";
 import type {
   StructureLoadHandler,
@@ -37,8 +37,6 @@ export function useNodeLoadHandlers({
   onUploadStructure,
   onUploadTrajectory,
 }: UseNodeLoadHandlersOptions): MutableRefObject<string | null> {
-  const setNodeSnapshot = useScopedPipelineStore((s) => s.setNodeSnapshot);
-  const updateNodeParams = useScopedPipelineStore((s) => s.updateNodeParams);
   const setNodeParseError = useScopedPipelineStore((s) => s.setNodeParseError);
   const clearNodeParseError = useScopedPipelineStore((s) => s.clearNodeParseError);
   const setFileVectors = useScopedPipelineStore((s) => s.setFileVectors);
@@ -97,27 +95,10 @@ export function useNodeLoadHandlers({
         parseStructureFile(file)
           .then((result) => {
             clearNodeParseError(nodeId);
-            const data: NodeSnapshotData = {
-              snapshot: result.snapshot,
-              frames: result.frames.length > 0 ? result.frames : null,
-              meta: result.meta,
-              labels: result.labels,
-            };
-            setNodeSnapshot(nodeId, data);
-            updateNodeParams(nodeId, {
-              hasTrajectory: result.frames.length > 0,
-              hasCell: !!result.snapshot.box,
-            });
-            // Offer embedded vector channels (e.g. GRO velocities) to the
-            // load_vector node UI. Nothing is rendered until the user activates
-            // one — a parse must not switch a visual overlay on as a side effect.
-            pipelineApi
-              .getState()
-              .setEmbeddedVectorChannels(
-                result.vectorChannels.length > 0
-                  ? result.vectorChannels.map((ch) => ({ name: ch.name, frames: ch.frames }))
-                  : null,
-              );
+            // The same helper every structure-open path uses: node snapshot,
+            // AddBond source, embedded vector channels and — for the primary
+            // node — the global structure/trajectory state.
+            applyStructureToPipeline(pipelineApi, nodeId, result, file.name);
             // For the primary node, also drive the legacy load path for
             // trajectory/label/bond source management. Pass the ALREADY-parsed
             // result so it reuses this parse instead of reading + WASM-parsing the
@@ -142,8 +123,6 @@ export function useNodeLoadHandlers({
     };
   }, [
     onUploadStructure,
-    setNodeSnapshot,
-    updateNodeParams,
     setNodeParseError,
     clearNodeParseError,
     setFileVectors,

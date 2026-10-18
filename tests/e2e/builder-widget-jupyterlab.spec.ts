@@ -105,7 +105,14 @@ async function kernelPrint(page: Page, code: string): Promise<string> {
   }, code);
 }
 
-const outputs = (page: Page) => page.locator(".jp-OutputArea-output");
+/**
+ * The output area of each code cell, in notebook order. Scoped per cell (not
+ * per `.jp-OutputArea-output`) because the reused kernel can print a stray
+ * stderr output above a widget, e.g. ipykernel's asyncio "Task was destroyed
+ * but it is pending!" warning when the second test re-runs the notebook; a
+ * flat output index would then name the wrong Builder.
+ */
+const outputs = (page: Page) => page.locator(".jp-Notebook .jp-CodeCell .jp-Cell-outputArea");
 
 /** Select the oxygens with the Select tool's element chip and delete them with the Delete key. */
 async function deleteOxygens(scope: ReturnType<Page["locator"]>) {

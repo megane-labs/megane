@@ -63,7 +63,10 @@ function seedStore(nodeId = "n1") {
         id: nodeId,
         type: "load_structure",
         position: { x: 0, y: 0 },
-        data: {},
+        data: {
+          params: { type: "load_structure", fileName: "", hasTrajectory: false, hasCell: false },
+          enabled: true,
+        },
       } as never,
     ],
     setNodeSnapshot: vi.fn(),

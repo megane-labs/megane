@@ -1,8 +1,13 @@
+use megane_core::formats::{StructureFormat, TrajectoryFormat};
 use megane_core::parser::ParsedStructure;
+use megane_core::trajectory::VectorChannel;
 use numpy::ndarray::{Array1, Array2};
 use numpy::{IntoPyArray, PyArray1, PyArray2, PyReadonlyArray1, PyReadonlyArray2};
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
+
+/// Vector channels as handed to Python: `[(name, [(n, 3) array per frame])]`.
+type PyVectorChannels = Vec<(String, Vec<Py<PyArray2<f32>>>)>;
 
 #[pyclass]
 struct PyStructure {
@@ -69,10 +74,92 @@ struct PyStructure {
     /// `[(name, [frame0_values, …]), …]`. A single-frame channel is static.
     #[pyo3(get)]
     scalar_channels: Vec<(String, Vec<Py<PyArray1<f32>>>)>,
+    /// Embedded per-atom vector channels (GRO / LAMMPS velocities, forces, …)
+    /// as `[(name, [frame0_vectors (n, 3), …]), …]`. A single-frame channel is
+    /// static.
+    #[pyo3(get)]
+    vector_channels: PyVectorChannels,
     /// Non-fatal parse warnings (e.g. atoms the file declares but the parser
     /// could not represent). Empty for a clean parse.
     #[pyo3(get)]
     warnings: Vec<String>,
+    /// Number of bonds (rows of `bonds`).
+    #[pyo3(get)]
+    n_bonds: usize,
+    /// How many leading rows of `bonds` the file itself declares; the rest
+    /// were inferred from distances (only for formats with no connectivity).
+    #[pyo3(get)]
+    n_file_bonds: usize,
+    /// Per-atom labels (atom names), or `None` when the format carries none.
+    #[pyo3(get)]
+    atom_labels: Option<Vec<String>>,
+    /// Per-atom chain IDs as raw ASCII bytes (e.g. 65 = `A`), or `None`.
+    #[pyo3(get)]
+    chain_ids: Option<Py<PyArray1<u8>>>,
+    /// Per-atom B-factors, or `None` when the format carries none.
+    #[pyo3(get)]
+    bfactors: Option<Py<PyArray1<f32>>>,
+    /// Indices of the Cα backbone atoms (empty when not a protein).
+    #[pyo3(get)]
+    ca_indices: Py<PyArray1<u32>>,
+    /// Per-Cα chain identifier as an ASCII byte.
+    #[pyo3(get)]
+    ca_chain_ids: Py<PyArray1<u8>>,
+    /// Per-Cα residue sequence number.
+    #[pyo3(get)]
+    ca_res_nums: Py<PyArray1<u32>>,
+    /// Per-Cα secondary-structure type: 0 = coil, 1 = helix, 2 = sheet.
+    #[pyo3(get)]
+    ca_ss_type: Py<PyArray1<u8>>,
+    /// True when the per-frame atom count changes (heterogeneous only).
+    #[pyo3(get)]
+    varies_atoms: bool,
+    /// True when the per-frame unit cell changes (heterogeneous only).
+    #[pyo3(get)]
+    varies_cell: bool,
+    /// True when per-frame elements / bonds change (heterogeneous only).
+    #[pyo3(get)]
+    varies_topology: bool,
+}
+
+/// Bond pairs as an `(n, 2)` uint32 array (shape `(0, 2)` when empty).
+fn pairs_to_array(py: Python<'_>, pairs: &[(u32, u32)]) -> PyResult<Py<PyArray2<u32>>> {
+    let n = pairs.len();
+    let arr =
+        Array2::from_shape_vec((n, 2), megane_core::bonds::flatten_pairs(pairs)).map_err(|e| {
+            PyValueError::new_err(format!("failed to reshape bonds into ({n}, 2): {e}"))
+        })?;
+    Ok(arr.into_pyarray(py).unbind())
+}
+
+/// Vector channels as `[(name, [(n, 3) array per frame])]`. Frames can differ in
+/// atom count on a heterogeneous trajectory, so each frame is reshaped on its
+/// own.
+fn vector_channels_to_py(
+    py: Python<'_>,
+    channels: Vec<VectorChannel>,
+) -> PyResult<PyVectorChannels> {
+    channels
+        .into_iter()
+        .map(|ch| {
+            let frames = ch
+                .frames
+                .into_iter()
+                .map(|f| {
+                    let rows = f.vectors.len() / 3;
+                    Array2::from_shape_vec((rows, 3), f.vectors)
+                        .map(|a| a.into_pyarray(py).unbind())
+                        .map_err(|e| {
+                            PyValueError::new_err(format!(
+                                "vector channel {:?} is not (n, 3): {e}",
+                                ch.name
+                            ))
+                        })
+                })
+                .collect::<PyResult<Vec<_>>>()?;
+            Ok((ch.name, frames))
+        })
+        .collect()
 }
 
 impl PyStructure {
@@ -86,16 +173,7 @@ impl PyStructure {
 
         let elem_array = Array1::from_vec(data.elements);
 
-        let bonds_flat: Vec<u32> = data.bonds.iter().flat_map(|(a, b)| [*a, *b]).collect();
-        let bond_array = if n_bonds > 0 {
-            Array2::from_shape_vec((n_bonds, 2), bonds_flat).map_err(|e| {
-                PyValueError::new_err(format!("failed to reshape bonds into ({n_bonds}, 2): {e}"))
-            })?
-        } else {
-            Array2::from_shape_vec((0, 2), vec![]).map_err(|e| {
-                PyValueError::new_err(format!("failed to create empty bonds array: {e}"))
-            })?
-        };
+        let bond_array = pairs_to_array(py, &data.bonds)?;
 
         let bo_vec = data.bond_orders.unwrap_or_else(|| vec![1u8; n_bonds]);
         let bo_array = Array1::from_vec(bo_vec);
@@ -121,6 +199,10 @@ impl PyStructure {
         // `frame_positions` is left empty and the flat + offsets arrays are used.
         let hetero = data.hetero;
         let heterogeneous = hetero.is_some();
+        let (varies_atoms, varies_cell, varies_topology) = hetero
+            .as_ref()
+            .map(|h| (h.varies_atoms, h.varies_cell, h.varies_topology))
+            .unwrap_or_default();
         let max_atoms = hetero.as_ref().map(|h| h.max_atoms as usize).unwrap_or(n);
         let stride = n * 3;
         let frame_flat = data.frame_positions_flat;
@@ -179,7 +261,7 @@ impl PyStructure {
             n_frames,
             positions: pos_array.into_pyarray(py).into(),
             elements: elem_array.into_pyarray(py).into(),
-            bonds: bond_array.into_pyarray(py).into(),
+            bonds: bond_array,
             bond_orders: bo_array.into_pyarray(py).into(),
             box_matrix: box_array.into_pyarray(py).into(),
             box_origin: box_origin_array.into_pyarray(py).into(),
@@ -194,53 +276,89 @@ impl PyStructure {
             frame_bond_offsets: frame_bond_offsets.into_pyarray(py).into(),
             frame_bonds: frame_bonds.into_pyarray(py).into(),
             scalar_channels,
+            vector_channels: vector_channels_to_py(py, data.vector_channels)?,
             warnings: data.warnings,
+            n_bonds,
+            n_file_bonds: data.n_file_bonds,
+            atom_labels: data.atom_labels,
+            chain_ids: data
+                .chain_ids
+                .map(|c| Array1::from_vec(c).into_pyarray(py).unbind()),
+            bfactors: data
+                .bfactors
+                .map(|b| Array1::from_vec(b).into_pyarray(py).unbind()),
+            ca_indices: Array1::from_vec(data.ca_indices).into_pyarray(py).unbind(),
+            ca_chain_ids: Array1::from_vec(data.ca_chain_ids)
+                .into_pyarray(py)
+                .unbind(),
+            ca_res_nums: Array1::from_vec(data.ca_res_nums).into_pyarray(py).unbind(),
+            ca_ss_type: Array1::from_vec(data.ca_ss_type).into_pyarray(py).unbind(),
+            varies_atoms,
+            varies_cell,
+            varies_topology,
         })
     }
 }
 
-/// Parse a PDB file text and return structured data.
-#[pyfunction]
-fn parse_pdb(py: Python<'_>, text: &str) -> PyResult<PyStructure> {
-    let data = megane_core::parser::parse(text).map_err(PyValueError::new_err)?;
-    PyStructure::from_parsed(py, data)
+/// Generates one `#[pyfunction]` structure parser per
+/// `megane_core::for_each_structure_format!` entry (`parse_pdb`, `parse_gro`,
+/// …) plus `add_structure_parsers`, which registers them all on the module.
+/// The registry is shared with the WASM binding, so both hosts expose the
+/// same formats under the same names.
+macro_rules! py_structure_parsers {
+    ($( $(#[doc = $doc:tt])* $variant:ident => $binding:ident($arg:ident: $ty:ty); )*) => {
+        $(
+            $(#[doc = $doc])*
+            #[pyfunction]
+            fn $binding(py: Python<'_>, $arg: $ty) -> PyResult<PyStructure> {
+                let data = StructureFormat::$variant
+                    .parse($arg.into())
+                    .map_err(PyValueError::new_err)?;
+                PyStructure::from_parsed(py, data)
+            }
+        )*
+
+        fn add_structure_parsers(m: &Bound<'_, PyModule>) -> PyResult<()> {
+            $( m.add_function(wrap_pyfunction!($binding, m)?)?; )*
+            Ok(())
+        }
+    };
 }
 
-/// Parse a GRO file text and return structured data.
-#[pyfunction]
-fn parse_gro(py: Python<'_>, text: &str) -> PyResult<PyStructure> {
-    let data = megane_core::gro::parse(text).map_err(PyValueError::new_err)?;
-    PyStructure::from_parsed(py, data)
+megane_core::for_each_structure_format!(py_structure_parsers);
+
+/// Generates one `#[pyfunction]` trajectory parser per
+/// `megane_core::for_each_trajectory_format!` entry, using the entry's Python
+/// name (`parse_xtc`, `parse_dcd`, …), plus `add_trajectory_parsers`.
+macro_rules! py_trajectory_parsers {
+    ($( $(#[doc = $doc:tt])* $variant:ident => $wasm:ident / $py:ident($arg:ident: $ty:ty); )*) => {
+        $(
+            $(#[doc = $doc])*
+            #[pyfunction]
+            fn $py(py: Python<'_>, $arg: $ty) -> PyResult<PyTrajectoryData> {
+                let traj = TrajectoryFormat::$variant
+                    .parse($arg.into())
+                    .map_err(PyValueError::new_err)?;
+                py_trajectory_from_data(py, traj)
+            }
+        )*
+
+        fn add_trajectory_parsers(m: &Bound<'_, PyModule>) -> PyResult<()> {
+            $( m.add_function(wrap_pyfunction!($py, m)?)?; )*
+            Ok(())
+        }
+    };
 }
 
-/// Parse an XYZ file text and return structured data.
-#[pyfunction]
-fn parse_xyz(py: Python<'_>, text: &str) -> PyResult<PyStructure> {
-    let data = megane_core::xyz::parse(text).map_err(PyValueError::new_err)?;
-    PyStructure::from_parsed(py, data)
-}
+megane_core::for_each_trajectory_format!(py_trajectory_parsers);
 
-/// Parse an XCrySDen structure file (`.xsf` / `.axsf`) and return structured
-/// data. An `ANIMSTEPS` animation yields a multi-frame structure.
+/// The shared format registry as JSON (`megane_core::formats::registry_json`):
+/// every structure / trajectory format with its exported function names,
+/// encoding, and file extensions. Lets the Python tests check this module's
+/// exports and `megane.parsers.dispatch` against the one source of truth.
 #[pyfunction]
-fn parse_xsf(py: Python<'_>, text: &str) -> PyResult<PyStructure> {
-    let data = megane_core::xsf::parse(text).map_err(PyValueError::new_err)?;
-    PyStructure::from_parsed(py, data)
-}
-
-/// Parse a Chemical Markup Language (`.cml`) document and return structured data.
-#[pyfunction]
-fn parse_cml(py: Python<'_>, text: &str) -> PyResult<PyStructure> {
-    let data = megane_core::cml::parse(text).map_err(PyValueError::new_err)?;
-    PyStructure::from_parsed(py, data)
-}
-
-/// Parse a VASP POSCAR / CONTCAR / XDATCAR (also `.vasp`) text and return
-/// structured data. An XDATCAR yields a multi-frame structure.
-#[pyfunction]
-fn parse_vasp(py: Python<'_>, text: &str) -> PyResult<PyStructure> {
-    let data = megane_core::vasp::parse(text).map_err(PyValueError::new_err)?;
-    PyStructure::from_parsed(py, data)
+fn format_registry() -> String {
+    megane_core::formats::registry_json()
 }
 
 /// A decoded JCAMP-DX spectrum. Deliberately not a `PyStructure` -- a spectrum
@@ -280,112 +398,11 @@ fn parse_jcampdx(py: Python<'_>, text: &str) -> PyResult<PySpectrum> {
     })
 }
 
-/// Parse a Molden file (`.molden`) and return structured data. A `[GEOMETRIES] XYZ` block yields a multi-frame structure.
-#[pyfunction]
-fn parse_molden(py: Python<'_>, text: &str) -> PyResult<PyStructure> {
-    let data = megane_core::molden::parse(text).map_err(PyValueError::new_err)?;
-    PyStructure::from_parsed(py, data)
-}
-
-/// Parse a Chem3D XML (`.c3xml`) document and return structured data.
-#[pyfunction]
-fn parse_c3xml(py: Python<'_>, text: &str) -> PyResult<PyStructure> {
-    let data = megane_core::c3xml::parse(text).map_err(PyValueError::new_err)?;
-    PyStructure::from_parsed(py, data)
-}
-/// Parse a Wavefunction Odyssey (`.xodydata` / `.odydata`) file and return structured data. The XML and text flavours are detected from the content.
-#[pyfunction]
-fn parse_odydata(py: Python<'_>, text: &str) -> PyResult<PyStructure> {
-    let data = megane_core::odydata::parse(text).map_err(PyValueError::new_err)?;
-    PyStructure::from_parsed(py, data)
-}
-/// Parse a CASTEP / Quantum ESPRESSO NMR `.magres` file and return structured data from its `[atoms]` block.
-#[pyfunction]
-fn parse_magres(py: Python<'_>, text: &str) -> PyResult<PyStructure> {
-    let data = megane_core::magres::parse(text).map_err(PyValueError::new_err)?;
-    PyStructure::from_parsed(py, data)
-}
-/// Parse a GAMESS (US / Firefly) output file and return structured data. Each `COORDINATES OF ALL ATOMS ARE` block becomes a frame.
-#[pyfunction]
-fn parse_gamess(py: Python<'_>, text: &str) -> PyResult<PyStructure> {
-    let data = megane_core::gamess::parse(text).map_err(PyValueError::new_err)?;
-    PyStructure::from_parsed(py, data)
-}
-/// Parse a CASTEP `.phonon` lattice-dynamics file and return the periodic structure from its header.
-#[pyfunction]
-fn parse_phonon(py: Python<'_>, text: &str) -> PyResult<PyStructure> {
-    let data = megane_core::phonon::parse(text).map_err(PyValueError::new_err)?;
-    PyStructure::from_parsed(py, data)
-}
-
-/// Parse an MDL Molfile (V2000) text and return structured data.
-#[pyfunction]
-fn parse_mol(py: Python<'_>, text: &str) -> PyResult<PyStructure> {
-    let data = megane_core::mol::parse(text).map_err(PyValueError::new_err)?;
-    PyStructure::from_parsed(py, data)
-}
-
-/// Parse a Tripos MOL2 file text and return structured data.
-#[pyfunction]
-fn parse_mol2(py: Python<'_>, text: &str) -> PyResult<PyStructure> {
-    let data = megane_core::mol2::parse(text).map_err(PyValueError::new_err)?;
-    PyStructure::from_parsed(py, data)
-}
-
-/// Parse a LAMMPS data file text and return structured data.
-#[pyfunction]
-fn parse_lammps_data(py: Python<'_>, text: &str) -> PyResult<PyStructure> {
-    let data = megane_core::lammps_data::parse(text).map_err(PyValueError::new_err)?;
-    PyStructure::from_parsed(py, data)
-}
-
-/// Parse a CIF file text and return structured data.
-///
-/// Auto-detects mmCIF (PDBx/macromolecular) vs small-molecule CIF.
-#[pyfunction]
-fn parse_cif(py: Python<'_>, text: &str) -> PyResult<PyStructure> {
-    let data = if megane_core::mmcif::is_mmcif(text) {
-        megane_core::mmcif::parse(text)
-    } else {
-        megane_core::cif::parse(text)
-    }
-    .map_err(PyValueError::new_err)?;
-    PyStructure::from_parsed(py, data)
-}
-
-/// Parse an mmCIF (PDBx) file text and return structured data.
-#[pyfunction]
-fn parse_mmcif(py: Python<'_>, text: &str) -> PyResult<PyStructure> {
-    let data = megane_core::mmcif::parse(text).map_err(PyValueError::new_err)?;
-    PyStructure::from_parsed(py, data)
-}
-
-/// Parse an AMBER prmtop topology file (positions at origin, no inpcrd).
-#[pyfunction]
-fn parse_prmtop(py: Python<'_>, text: &str) -> PyResult<PyStructure> {
-    let data = megane_core::amber::parse_prmtop(text).map_err(PyValueError::new_err)?;
-    PyStructure::from_parsed(py, data)
-}
-
 /// Parse AMBER prmtop topology and inpcrd/rst7 coordinates together.
 #[pyfunction]
 fn parse_amber(py: Python<'_>, prmtop: &str, inpcrd: &str) -> PyResult<PyStructure> {
     let data = megane_core::amber::parse(prmtop, inpcrd).map_err(PyValueError::new_err)?;
     PyStructure::from_parsed(py, data)
-}
-
-/// Parse an XTC trajectory binary and return frame data.
-#[pyfunction]
-fn parse_xtc(py: Python<'_>, data: &[u8]) -> PyResult<PyTrajectoryData> {
-    let traj = megane_core::xtc::parse_xtc(data).map_err(PyValueError::new_err)?;
-    py_trajectory_from_data(py, traj)
-}
-
-/// Parse an ASE .traj file (binary) and return structured data.
-#[pyfunction]
-fn parse_traj(py: Python<'_>, data: &[u8]) -> PyResult<PyStructure> {
-    let parsed = megane_core::traj::parse_traj(data).map_err(PyValueError::new_err)?;
-    PyStructure::from_parsed(py, parsed)
 }
 
 /// Parsed trajectory data exposed to Python (shared by XTC / DCD / LAMMPS dump /
@@ -403,6 +420,15 @@ struct PyTrajectoryData {
     timestep_ps: f32,
     #[pyo3(get)]
     box_matrix: Py<PyArray2<f32>>,
+    /// World-space lower corner (xlo,ylo,zlo) the box is anchored at, shape
+    /// `(3,)`. `(0,0,0)` when the format carries no explicit origin (only
+    /// LAMMPS dumps do).
+    #[pyo3(get)]
+    box_origin: Py<PyArray1<f32>>,
+    /// Embedded per-atom vector channels (LAMMPS dump velocities / forces) as
+    /// `[(name, [frame_vectors (n, 3), …]), …]`, one array per frame.
+    #[pyo3(get)]
+    vector_channels: PyVectorChannels,
     /// Rectangular `(n_frames, n_atoms*3)` positions — populated only when the
     /// trajectory is uniform (empty otherwise).
     #[pyo3(get)]
@@ -447,6 +473,13 @@ fn py_trajectory_from_data(
         PyValueError::new_err(format!("failed to reshape box_matrix into (3, 3): {e}"))
     })?;
 
+    let origin_vec = traj
+        .box_origin
+        .map(|o| o.to_vec())
+        .unwrap_or_else(|| vec![0.0f32; 3]);
+    let box_origin: Py<PyArray1<f32>> = Array1::from_vec(origin_vec).into_pyarray(py).unbind();
+    let vector_channels = vector_channels_to_py(py, traj.vector_channels)?;
+
     let empty_f32 = || Array1::<f32>::from_vec(Vec::new()).into_pyarray(py).into();
     let empty_u32 = || Array1::<u32>::from_vec(Vec::new()).into_pyarray(py).into();
     let empty_u8 = || Array1::<u8>::from_vec(Vec::new()).into_pyarray(py).into();
@@ -460,6 +493,8 @@ fn py_trajectory_from_data(
             n_frames: traj.n_frames,
             timestep_ps: traj.timestep_ps,
             box_matrix: box_array.into_pyarray(py).into(),
+            box_origin,
+            vector_channels,
             frame_positions,
             heterogeneous: true,
             varies_atoms: h.varies_atoms,
@@ -497,6 +532,8 @@ fn py_trajectory_from_data(
         n_frames: traj.n_frames,
         timestep_ps: traj.timestep_ps,
         box_matrix: box_array.into_pyarray(py).into(),
+        box_origin,
+        vector_channels,
         frame_positions: frame_array.into_pyarray(py).into(),
         heterogeneous: false,
         varies_atoms: false,
@@ -510,37 +547,6 @@ fn py_trajectory_from_data(
     })
 }
 
-/// Parse a DCD trajectory binary (CHARMM/NAMD/X-PLOR) and return frame data.
-#[pyfunction]
-fn parse_dcd(py: Python<'_>, data: &[u8]) -> PyResult<PyTrajectoryData> {
-    let traj = megane_core::dcd::parse_dcd(data).map_err(PyValueError::new_err)?;
-    py_trajectory_from_data(py, traj)
-}
-
-/// Parse a LAMMPS dump trajectory text and return frame data.
-#[pyfunction]
-fn parse_lammpstrj(py: Python<'_>, text: &str) -> PyResult<PyTrajectoryData> {
-    let data = megane_core::lammpstrj::parse_lammpstrj(text).map_err(PyValueError::new_err)?;
-    py_trajectory_from_data(py, data)
-}
-
-/// Parse a LAMMPS dump as a standalone multi-frame structure (frame-0 topology
-/// + extra frames). Element identities are the integer LAMMPS `type` ids used
-/// as an atomic-number proxy; bonds are inferred from frame 0.
-#[pyfunction]
-fn parse_lammpstrj_structure(py: Python<'_>, text: &str) -> PyResult<PyStructure> {
-    let parsed =
-        megane_core::lammpstrj::parse_lammpstrj_structure(text).map_err(PyValueError::new_err)?;
-    PyStructure::from_parsed(py, parsed)
-}
-
-/// Parse an AMBER NetCDF trajectory binary and return frame data.
-#[pyfunction]
-fn parse_netcdf(py: Python<'_>, data: &[u8]) -> PyResult<PyTrajectoryData> {
-    let traj = megane_core::netcdf::parse_netcdf(data).map_err(PyValueError::new_err)?;
-    py_trajectory_from_data(py, traj)
-}
-
 /// Parse a GROMACS `.top` topology file at `path` and return bond pairs,
 /// resolving `#include` directives from the filesystem (relative to the
 /// file's directory, then as absolute paths). Missing includes are skipped;
@@ -551,18 +557,7 @@ fn parse_netcdf(py: Python<'_>, data: &[u8]) -> PyResult<PyTrajectoryData> {
 fn parse_top_bonds_from_path(py: Python<'_>, path: &str) -> PyResult<Py<PyArray2<u32>>> {
     let bonds = megane_core::top::parse_top_bonds_from_path(path, usize::MAX)
         .map_err(PyValueError::new_err)?;
-    let n = bonds.len();
-    let flat: Vec<u32> = bonds.iter().flat_map(|(a, b)| [*a, *b]).collect();
-    let arr = if n > 0 {
-        Array2::from_shape_vec((n, 2), flat).map_err(|e| {
-            PyValueError::new_err(format!("failed to reshape bonds into ({n}, 2): {e}"))
-        })?
-    } else {
-        Array2::from_shape_vec((0, 2), vec![]).map_err(|e| {
-            PyValueError::new_err(format!("failed to create empty bonds array: {e}"))
-        })?
-    };
-    Ok(arr.into_pyarray(py).unbind())
+    pairs_to_array(py, &bonds)
 }
 
 /// The default AddBond source for a structure filename: `"structure"` for
@@ -581,18 +576,7 @@ fn default_bond_source(filename: &str) -> &'static str {
 #[pyfunction]
 fn parse_psf_bonds(py: Python<'_>, text: &str) -> PyResult<Py<PyArray2<u32>>> {
     let bonds = megane_core::psf::parse_psf_bonds(text, usize::MAX);
-    let n = bonds.len();
-    let flat: Vec<u32> = bonds.iter().flat_map(|(a, b)| [*a, *b]).collect();
-    let arr = if n > 0 {
-        Array2::from_shape_vec((n, 2), flat).map_err(|e| {
-            PyValueError::new_err(format!("failed to reshape bonds into ({n}, 2): {e}"))
-        })?
-    } else {
-        Array2::from_shape_vec((0, 2), vec![]).map_err(|e| {
-            PyValueError::new_err(format!("failed to create empty bonds array: {e}"))
-        })?
-    };
-    Ok(arr.into_pyarray(py).into())
+    pairs_to_array(py, &bonds)
 }
 
 /// Infer bonds from interatomic distances using VDW radii.
@@ -621,17 +605,7 @@ fn infer_bonds_vdw(
     let positions_vec: Vec<f32> = positions_view.iter().copied().collect();
 
     let bonds = megane_core::bonds::infer_bonds_vdw(&positions_vec, &elements_vec, n_atoms);
-
-    let n_bonds = bonds.len();
-    let mut flat: Vec<u32> = Vec::with_capacity(n_bonds * 2);
-    for (a, b) in &bonds {
-        flat.push(*a);
-        flat.push(*b);
-    }
-    let arr = Array2::from_shape_vec((n_bonds, 2), flat).map_err(|e| {
-        PyValueError::new_err(format!("failed to reshape bonds into (n_bonds, 2): {e}"))
-    })?;
-    Ok(arr.into_pyarray(py).into())
+    pairs_to_array(py, &bonds)
 }
 
 /// Serialize a structure as `xyz` (extended XYZ when a cell is given), `pdb`,
@@ -700,32 +674,11 @@ fn write_structure(
 
 #[pymodule]
 fn megane_parser(m: &Bound<'_, PyModule>) -> PyResult<()> {
-    m.add_function(wrap_pyfunction!(parse_pdb, m)?)?;
-    m.add_function(wrap_pyfunction!(parse_gro, m)?)?;
-    m.add_function(wrap_pyfunction!(parse_xyz, m)?)?;
-    m.add_function(wrap_pyfunction!(parse_xsf, m)?)?;
-    m.add_function(wrap_pyfunction!(parse_cml, m)?)?;
-    m.add_function(wrap_pyfunction!(parse_vasp, m)?)?;
-    m.add_function(wrap_pyfunction!(parse_molden, m)?)?;
+    add_structure_parsers(m)?;
+    add_trajectory_parsers(m)?;
+    m.add_function(wrap_pyfunction!(format_registry, m)?)?;
     m.add_function(wrap_pyfunction!(parse_jcampdx, m)?)?;
-    m.add_function(wrap_pyfunction!(parse_c3xml, m)?)?;
-    m.add_function(wrap_pyfunction!(parse_odydata, m)?)?;
-    m.add_function(wrap_pyfunction!(parse_magres, m)?)?;
-    m.add_function(wrap_pyfunction!(parse_gamess, m)?)?;
-    m.add_function(wrap_pyfunction!(parse_phonon, m)?)?;
-    m.add_function(wrap_pyfunction!(parse_mol, m)?)?;
-    m.add_function(wrap_pyfunction!(parse_mol2, m)?)?;
-    m.add_function(wrap_pyfunction!(parse_lammps_data, m)?)?;
-    m.add_function(wrap_pyfunction!(parse_cif, m)?)?;
-    m.add_function(wrap_pyfunction!(parse_mmcif, m)?)?;
-    m.add_function(wrap_pyfunction!(parse_prmtop, m)?)?;
     m.add_function(wrap_pyfunction!(parse_amber, m)?)?;
-    m.add_function(wrap_pyfunction!(parse_xtc, m)?)?;
-    m.add_function(wrap_pyfunction!(parse_dcd, m)?)?;
-    m.add_function(wrap_pyfunction!(parse_traj, m)?)?;
-    m.add_function(wrap_pyfunction!(parse_lammpstrj, m)?)?;
-    m.add_function(wrap_pyfunction!(parse_lammpstrj_structure, m)?)?;
-    m.add_function(wrap_pyfunction!(parse_netcdf, m)?)?;
     m.add_function(wrap_pyfunction!(parse_psf_bonds, m)?)?;
     m.add_function(wrap_pyfunction!(parse_top_bonds_from_path, m)?)?;
     m.add_function(wrap_pyfunction!(default_bond_source, m)?)?;
