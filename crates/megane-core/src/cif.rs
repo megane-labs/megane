@@ -4,7 +4,7 @@
 /// and atom sites (_atom_site loop) with fractional or Cartesian coordinates.
 use std::collections::HashSet;
 
-use crate::atomic::{capitalize, symbol_to_atomic_num};
+use crate::atomic::element_from_symbol;
 use crate::bonds;
 use crate::cif_lex::{contains_ci, split_line, starts_with_ci, strip_quotes, Document, Item};
 use crate::parser::{cell_params_to_matrix, ParsedStructure};
@@ -67,24 +67,6 @@ fn fract_to_cart(fx: f32, fy: f32, fz: f32, matrix: &[f32; 9]) -> (f32, f32, f32
     let y = fx * matrix[1] + fy * matrix[4] + fz * matrix[7];
     let z = fx * matrix[2] + fy * matrix[5] + fz * matrix[8];
     (x, y, z)
-}
-
-/// Extract element symbol from a CIF type_symbol or label field.
-/// type_symbol may contain charge like "Fe2+" or "O2-"; label may be "Na1", "O2".
-fn element_from_symbol(s: &str) -> u8 {
-    // Strip charge suffixes like "2+", "3-", "+", "-"
-    let cleaned: String = s.chars().take_while(|c| c.is_alphabetic()).collect();
-    if cleaned.is_empty() {
-        return 0;
-    }
-    let capitalized = capitalize(&cleaned);
-    let z = symbol_to_atomic_num(&capitalized);
-    if z > 0 {
-        return z;
-    }
-    // Try first character only
-    let first = capitalize(&cleaned[..1]);
-    symbol_to_atomic_num(&first)
 }
 
 /// CIF/mmCIF loop tags whose column holds a symmetry operation string.
@@ -213,6 +195,7 @@ pub fn parse(text: &str) -> Result<ParsedStructure, String> {
     let mut positions: Vec<f32> = Vec::new();
     let mut elements: Vec<u8> = Vec::new();
     let mut atom_labels: Vec<String> = Vec::new();
+    let mut warnings: Vec<String> = Vec::new();
 
     // Loop rows are a CIF token stream (see `cif_lex`): a row may wrap lines,
     // quoted values may contain spaces, and blank/comment lines inside the
@@ -276,6 +259,14 @@ pub fn parse(text: &str) -> Result<ParsedStructure, String> {
             positions.push(z);
         }
 
+        if lp.partial_row_len() > 0 {
+            warnings.push(format!(
+                "_atom_site loop ends with an incomplete row ({} of {} values); it was skipped",
+                lp.partial_row_len(),
+                lp.tags.len()
+            ));
+        }
+
         // Only parse the first atom_site loop
         if !elements.is_empty() {
             break;
@@ -323,22 +314,11 @@ pub fn parse(text: &str) -> Result<ParsedStructure, String> {
         elements,
         bonds,
         n_file_bonds: 0,
-        bond_orders: None,
         box_matrix,
-        box_origin: None,
-        frame_positions_flat: Vec::new(),
         atom_labels: labels,
-        chain_ids: None,
-        bfactors: None,
-        vector_channels: vec![],
-        ca_indices: vec![],
-        ca_chain_ids: vec![],
-        ca_res_nums: vec![],
-        ca_ss_type: vec![],
         symmetry_ops,
-        scalar_channels: Vec::new(),
-        warnings: Vec::new(),
-        hetero: None,
+        warnings,
+        ..Default::default()
     })
 }
 
@@ -635,6 +615,27 @@ Na1 ? 0.25(3) 0.5(12) 0.75(1)
         assert_eq!(
             s.atom_labels.as_ref().unwrap(),
             &vec!["Na1".to_string(), String::new()]
+        );
+    }
+
+    /// A dangling partial row at the end of the atom loop is reported, not
+    /// dropped silently.
+    #[test]
+    fn incomplete_last_row_warns() {
+        let cif = "data_p
+loop_
+_atom_site_label
+_atom_site_Cartn_x
+_atom_site_Cartn_y
+_atom_site_Cartn_z
+Na1 1 2 3
+Cl1 4
+";
+        let s = parse(cif).expect("parse");
+        assert_eq!(s.n_atoms, 1);
+        assert_eq!(
+            s.warnings,
+            vec!["_atom_site loop ends with an incomplete row (2 of 4 values); it was skipped"]
         );
     }
 

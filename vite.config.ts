@@ -3,6 +3,7 @@ import react from "@vitejs/plugin-react";
 import wasm from "vite-plugin-wasm";
 import path from "path";
 import { ketcherAlias, ketcherDefine, ketcherRaphaelRequire } from "./vite.ketcher";
+import { aliasEntries, srcAlias, wasmWorker } from "./vite.shared";
 
 /**
  * The npm package a module belongs to, read from its *outermost*
@@ -43,18 +44,12 @@ export default defineConfig({
   plugins: [react(), wasm(), ketcherRaphaelRequire()],
   // The parse worker (src/parsers/parse.worker.ts) imports the WASM module, so
   // its sub-build needs vite-plugin-wasm too.
-  worker: {
-    format: "es",
-    plugins: () => [wasm()],
-  },
+  worker: wasmWorker(),
   assetsInclude: ["**/*.xtc"],
   // Ketcher (megane Builder's sketcher) needs a few Node shims; see vite.ketcher.ts.
   define: ketcherDefine,
   resolve: {
-    alias: {
-      "@": path.resolve(__dirname, "src"),
-      ...ketcherAlias,
-    },
+    alias: [srcAlias(), ...aliasEntries(ketcherAlias)],
   },
   server: {
     port: 5173,

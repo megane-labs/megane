@@ -19,6 +19,10 @@ import { useMeganeLocal } from "../../src/hooks/useMeganeLocal";
 import { usePipelineStore } from "../../src/pipeline/store";
 import { usePlaybackStore } from "../../src/stores/usePlaybackStore";
 import type { SerializedPipeline } from "../../src/pipeline/types";
+import {
+  companionFilesFromPayload,
+  type CompanionFilePayload,
+} from "../../src/pipeline/companionFiles";
 import type { MeganeCameraState } from "../../src/renderer/MoleculeRenderer";
 import type { SelectionState, Measurement } from "../../src/types";
 import { useTour } from "../../src/tour/useTour";
@@ -26,6 +30,7 @@ import { ThemeSync } from "../../src/components/ThemeSync";
 import { ErrorBoundary } from "../../src/components/ErrorBoundary";
 import { setRemoteFileSource } from "../../src/remote/fileSource";
 import { createMessageFileSource } from "../../src/remote/messageFiles";
+import { classifyStandaloneFile } from "../../src/hosts/classifyStandaloneFile";
 import "../../src/styles/megane.css";
 
 // Acquire VS Code API
@@ -89,48 +94,26 @@ function App() {
           topBytes && topFilename
             ? new File([new Uint8Array(topBytes as ArrayBuffer)], topFilename as string)
             : undefined;
-        const lower = filename.toLowerCase();
-        const isTrajectoryOnly =
-          lower.endsWith(".xtc") || lower.endsWith(".dcd") || lower.endsWith(".nc");
-        // A JCAMP-DX spectrum has no coordinates, so the 3D viewer has nothing
-        // to draw. `.dx` is excluded: it is shared with OpenDX grids and only
-        // content sniffing can tell them apart.
-        if (lower.endsWith(".jdx") || lower.endsWith(".jcamp")) {
-          setError(
-            `${filename} is a spectrum, which has no atoms or coordinates to render. ` +
-              "Add a Load Spectrum node in the pipeline editor and wire it to a " +
-              "Spectrum Plot node to view it.",
-          );
+        // Spectra and volumetric grids have nothing to render standalone, and
+        // trajectory-only formats (XTC, DCD, NetCDF) need a topology loaded
+        // first; the shared classifier (also used by the JupyterLab DocWidget)
+        // decides which, and words the actionable error. The user recovers via
+        // the always-mounted pipeline editor.
+        const classification = classifyStandaloneFile(filename);
+        if (classification.errorMessage) {
+          setError(classification.errorMessage);
           return;
         }
-        // Volumetric grids (CUBE, OpenDX) carry a scalar field but no atoms, so
-        // there is nothing to render standalone. Guard them the same way.
-        const isVolumetricOnly =
-          lower.endsWith(".cube") || lower.endsWith(".cub") || lower.endsWith(".dx");
-        if (isVolumetricOnly) {
-          setError(
-            `${filename} is a volumetric grid, which has no atoms to render on its own. ` +
-              "Open a structure file (PDB, GRO, etc.) first, then add a Load Volumetric node " +
-              "in the pipeline editor and point it at this file to draw an isosurface.",
-          );
-          return;
-        }
-        // Trajectory-only formats (XTC, DCD, NetCDF) need a topology loaded
-        // first. Surface an actionable error rather than silently failing —
-        // the user can recover via the always-mounted pipeline editor by
-        // adding a Load Structure node and re-pointing the trajectory file.
-        // LAMMPS dump (.lammpstrj/.dump/.trj) is NOT trajectory-only: it loads
-        // standalone as a multi-frame structure via loadFile (topology from
-        // frame 0), like a multi-frame XYZ / ASE .traj.
-        const loadPromise = isTrajectoryOnly ? local.loadXtc(file) : local.loadFile(file, topFile);
+        const loadPromise =
+          classification.kind === "trajectory-only"
+            ? local.loadXtc(file)
+            : local.loadFile(file, topFile);
         loadPromise
           .then(() => setLoaded(true))
           .catch((err) => {
             console.error("Failed to load file:", err);
             const base = err instanceof Error ? err.message : String(err);
-            const hint = isTrajectoryOnly
-              ? " Open a structure file (PDB, GRO, etc.) first, or use the pipeline editor to wire a Load Structure node."
-              : "";
+            const hint = classification.loadFailureHint ? ` ${classification.loadFailureHint}` : "";
             setError(`Failed to load file: ${base}${hint}`);
           });
         return;
@@ -147,20 +130,17 @@ function App() {
       }
 
       if (message.type === "loadPipeline") {
-        const { pipeline, structureFiles, trajectoryFiles } = message as {
+        const { pipeline, companionFiles } = message as {
           pipeline: SerializedPipeline;
-          structureFiles: Array<{ nodeId: string; content: string; filename: string }>;
-          trajectoryFiles: Array<{ nodeId: string; content: ArrayBuffer; filename: string }>;
+          companionFiles: CompanionFilePayload[];
         };
         // The WASM URL is provided by the HTML (window.__MEGANE_WASM_URL__).
 
         (async () => {
-          const companions: File[] = [
-            ...structureFiles.map(
-              (sf) => new File([sf.content], sf.filename, { type: "text/plain" }),
-            ),
-            ...trajectoryFiles.map((tf) => new File([new Uint8Array(tf.content)], tf.filename)),
-          ];
+          // Companions arrive as raw bytes (ArrayBuffers, structured clone) so
+          // binary formats such as ASE .traj survive; the shared parsers pick
+          // text() or arrayBuffer() by extension.
+          const companions = companionFilesFromPayload(companionFiles);
 
           // Re-stringify the pipeline payload into a File so the canonical
           // openFile entry point sees the same .megane.json contract that
@@ -175,13 +155,9 @@ function App() {
           // setNodeSnapshot on the first load_structure node — that's
           // idempotent because openFile already set the same snapshot for
           // that node a moment ago. PR-B will drop these props entirely.
-          if (structureFiles.length > 0) {
-            const firstStructure = new File(
-              [structureFiles[0].content],
-              structureFiles[0].filename,
-              { type: "text/plain" },
-            );
-            await local.loadFile(firstStructure);
+          const firstStructure = companionFiles.findIndex((c) => c.nodeType === "load_structure");
+          if (firstStructure >= 0) {
+            await local.loadFile(companions[firstStructure]);
           }
 
           setLoaded(true);

@@ -9,7 +9,7 @@
 /// cartoon rendering.
 use std::collections::{HashMap, HashSet};
 
-use crate::atomic::{capitalize, symbol_to_atomic_num};
+use crate::atomic::element_from_symbol;
 use crate::bonds;
 use crate::cif_lex::{field, starts_with_ci, Document, Value};
 use crate::parser::{cell_params_to_matrix, HeteroFrames, ParsedStructure};
@@ -107,21 +107,6 @@ impl AtomSiteColumns {
 /// Value of column `c` in `row`, if the loop has that column.
 fn at<'a>(row: &[Value<'a>], c: Option<usize>) -> Option<Value<'a>> {
     c.and_then(|c| row.get(c).copied())
-}
-
-/// Extract element atomic number from a type_symbol field (`C`, `N`, `FE`, …).
-fn element_from_type_symbol(s: &str) -> u8 {
-    let cleaned: String = s.chars().take_while(|c| c.is_alphabetic()).collect();
-    if cleaned.is_empty() {
-        return 0;
-    }
-    let cap = capitalize(&cleaned);
-    let z = symbol_to_atomic_num(&cap);
-    if z > 0 {
-        return z;
-    }
-    let first = capitalize(&cleaned[..1]);
-    symbol_to_atomic_num(&first)
 }
 
 // ---------------------------------------------------------------------------
@@ -363,7 +348,7 @@ pub(crate) fn parse_document(text: &str, doc: &Document) -> Result<ParsedStructu
             // Element
             let elem = at(row, cols.type_symbol)
                 .and_then(|v| v.get())
-                .map(element_from_type_symbol)
+                .map(element_from_symbol)
                 .unwrap_or(0);
 
             // Model membership: rows are grouped by model number; the
@@ -629,22 +614,19 @@ pub(crate) fn parse_document(text: &str, doc: &Document) -> Result<ParsedStructu
         elements,
         bonds: all_bonds,
         n_file_bonds,
-        bond_orders: None,
         box_matrix,
-        box_origin: None,
         frame_positions_flat,
         atom_labels: if has_labels { Some(atom_labels) } else { None },
         chain_ids: if has_chain_ids { Some(chain_ids) } else { None },
         bfactors: if has_bfactors { Some(bfactors) } else { None },
-        vector_channels: vec![],
         ca_indices,
         ca_chain_ids,
         ca_res_nums,
         ca_ss_type,
-        symmetry_ops: crate::cif::extract_symmetry_ops(text),
-        scalar_channels: Vec::new(),
+        symmetry_ops: crate::cif::symmetry_ops(text, doc),
         warnings,
         hetero,
+        ..Default::default()
     })
 }
 
@@ -1321,12 +1303,12 @@ TURN_P A 1 3 A 1 3
     }
 
     #[test]
-    fn test_element_from_type_symbol() {
-        assert_eq!(element_from_type_symbol("C"), 6);
-        assert_eq!(element_from_type_symbol("N"), 7);
-        assert_eq!(element_from_type_symbol("O"), 8);
-        assert_eq!(element_from_type_symbol("S"), 16);
-        assert_eq!(element_from_type_symbol("FE"), 26);
-        assert_eq!(element_from_type_symbol("ZN"), 30);
+    fn test_element_from_symbol() {
+        assert_eq!(element_from_symbol("C"), 6);
+        assert_eq!(element_from_symbol("N"), 7);
+        assert_eq!(element_from_symbol("O"), 8);
+        assert_eq!(element_from_symbol("S"), 16);
+        assert_eq!(element_from_symbol("FE"), 26);
+        assert_eq!(element_from_symbol("ZN"), 30);
     }
 }

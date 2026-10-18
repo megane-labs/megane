@@ -50,6 +50,7 @@
   ],
   "scripts": {
     "dev": "vite",
+    "dev:llm-proxy": "bash scripts/dev-llm-proxy.sh",
     "build:wasm": "node scripts/build-wasm.mjs",
     "build": "npm run build:wasm && tsc && vite build && npm run build:widget && rm -rf dist && vite build --config vite.widget.config.ts --outDir dist && vite build --config vite.lib.config.ts && npm run build:types && npm run build:lab",
     "build:app": "npm run build:wasm && tsc && vite build",
@@ -59,6 +60,7 @@
     "build:lab": "cd jupyterlab-megane && npm install && npm run build",
     "preview": "vite preview",
     "demo:video": "node scripts/demo-video.mjs",
+    "demo:promo": "node scripts/promo-video.mjs",
     "test": "vitest run",
     "test:watch": "vitest",
     "smoke:render": "node scripts/smoke-render.mjs",

@@ -219,21 +219,8 @@ fn parse_v3000_ctab(lines: &[&str]) -> Result<crate::parser::ParsedStructure, St
         bonds,
         n_file_bonds,
         bond_orders: Some(bond_orders),
-        box_matrix: None,
-        box_origin: None,
-        frame_positions_flat: Vec::new(),
-        atom_labels: None,
-        chain_ids: None,
-        bfactors: None,
-        vector_channels: vec![],
-        ca_indices: vec![],
-        ca_chain_ids: vec![],
-        ca_res_nums: vec![],
-        ca_ss_type: vec![],
-        symmetry_ops: Vec::new(),
         scalar_channels,
-        warnings: Vec::new(),
-        hetero: None,
+        ..Default::default()
     })
 }
 
@@ -456,21 +443,9 @@ pub fn parse(text: &str) -> Result<crate::parser::ParsedStructure, String> {
         bonds,
         n_file_bonds: n_bonds,
         bond_orders: Some(bond_orders),
-        box_matrix: None,
-        box_origin: None,
-        frame_positions_flat: Vec::new(),
-        atom_labels: None,
-        chain_ids: None,
-        bfactors: None,
-        vector_channels: vec![],
-        ca_indices: vec![],
-        ca_chain_ids: vec![],
-        ca_res_nums: vec![],
-        ca_ss_type: vec![],
-        symmetry_ops: Vec::new(),
         scalar_channels,
         warnings,
-        hetero: None,
+        ..Default::default()
     })
 }
 
