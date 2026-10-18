@@ -2,7 +2,7 @@
 title: Structure Editor Design
 ---
 
-How structure editing (**megane Builder**, the standalone editor at
+How structure editing (**Megane Builder**, the standalone editor at
 `/builder.html` that the VS Code and JupyterLab extensions and the
 `megane.Builder` Jupyter widget also embed, and the edit engine it shares
 with the viewer's `load_structure` node) is built, why it lives where it does, and what is
@@ -11,11 +11,11 @@ it to a simulation backend.
 
 ## Where it lives
 
-Editing is implemented **inside megane** — a second app entry in the same
+Editing is implemented **inside Megane** — a second app entry in the same
 repository (`builder.html` → `src/builder/`) on top of a shared edit engine —
 not as a separate repository and not inside a simulation engine:
 
-- It is tightly coupled to megane internals that are not public API — the
+- It is tightly coupled to Megane internals that are not public API — the
   `Snapshot` layout, screen-space picking (`src/renderer/Picking.ts`), the
   renderer facade, and the zustand store bundle. A separate repository would
   first have to expose all of those.
@@ -25,7 +25,7 @@ not as a separate repository and not inside a simulation engine:
   which is the right *integration* (export the edited structure, start a new
   session) but the wrong place for the editor itself.
 
-The division of labour is: megane builds and repairs the structure *before* it
+The division of labour is: Megane builds and repairs the structure *before* it
 is simulated; a simulation backend only needs a way to accept a new structure.
 
 ## The edit list lives on the loader (rule #11 in `AGENTS.md`)
@@ -191,8 +191,8 @@ format (below) is its seam.
 **Hosts.** Every host puts the app on its page through `mountBuilder`
 (`src/builder/mount.tsx`): `builder.html` (`src/builder/index.tsx`), the VS
 Code webview (`vscode-megane/webview/builder.tsx`, an editor tab opened from
-the megane activity-bar view), the JupyterLab main-area tab
-(`jupyterlab-megane/src/builder/`, opened from the megane left-sidebar panel)
+the Megane activity-bar view), the JupyterLab main-area tab
+(`jupyterlab-megane/src/builder/`, opened from the Megane left-sidebar panel)
 and the anywidget bundle behind `megane.Builder` (`src/builderWidget.ts`,
 `python/megane/builder.py`). The host passes a `BuilderHost`
 (`src/builder/host.ts`) that says how *Save* delivers a file (`save`: VS
@@ -345,7 +345,7 @@ build of an unmodified RDKit release that exposes exactly one call today —
 `embed(molfile, options)` (a mol block or a SMILES string): ETKDG embedding with the implicit hydrogens
 added, then MMFF94s (UFF fallback) minimisation, returning a V2000 mol
 block. The build lives in its own repository because it needs emsdk, Boost
-and a C++ toolchain nothing else in megane touches; megane depends on the
+and a C++ toolchain nothing else in Megane touches; Megane depends on the
 published npm package and Vite ships its `.wasm` (~3.5 MB, ~1 MB gzipped) as
 an asset that is fetched only when the sketch dialog or *Clean up geometry*
 first needs it. The Jupyter widget bundle leaves the `.wasm` out and asks the
@@ -367,7 +367,7 @@ rescaled to Å.
 
 ## Writers
 
-megane had no structure writer before this feature. `crates/megane-core/src/writer.rs`
+Megane had no structure writer before this feature. `crates/megane-core/src/writer.rs`
 adds XYZ (extended XYZ when a cell is present), PDB (`CRYST1`, `ATOM`,
 `CONECT`) and MOL V2000, exposed as `write_structure` through both WASM
 (`src/parsers/parseCore.ts` → `src/export/structureExport.ts`) and PyO3
@@ -396,4 +396,4 @@ above).
   file), and the notebook widget writes a new name in the kernel's working
   directory.
 - **Live-MD integration** — a "reload structure" command on the simulation side
-  (stop → rebuild system → re-send topology), driven by megane's exporter.
+  (stop → rebuild system → re-send topology), driven by Megane's exporter.

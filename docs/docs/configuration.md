@@ -83,7 +83,7 @@ megane/
 
 ## Rendering
 
-megane uses **billboard impostor rendering** for atoms and bonds at every atom
+Megane uses **billboard impostor rendering** for atoms and bonds at every atom
 count — atoms are screen-aligned quads with ray-sphere intersection in the
 fragment shader (`src/renderer/ImpostorAtomMesh.ts`), and bonds use the same
 technique with cylinder intersection (`src/renderer/ImpostorBondMesh.ts`). See

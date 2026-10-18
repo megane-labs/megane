@@ -1,6 +1,6 @@
 # Use with Vue, Svelte & Vanilla JS
 
-`MoleculeRenderer` is a plain Three.js class — the same renderer powering all megane components — that you can mount without React. Use it to embed megane in Vue, Svelte, or any other framework, or directly in a vanilla `<div>`.
+`MoleculeRenderer` is a plain Three.js class — the same renderer powering all Megane components — that you can mount without React. Use it to embed Megane in Vue, Svelte, or any other framework, or directly in a vanilla `<div>`.
 
 `megane-viewer/lib` is a single entry that also exports the React components, so `react` and `react-dom` (its peer dependencies) still have to be installed even when you only use `MoleculeRenderer`.
 

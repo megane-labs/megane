@@ -2,11 +2,11 @@
 title: Visual Pipeline Architecture
 ---
 
-Developer guide to megane's internal architecture: how molecular data flows from file parsing to pixels on screen, and how to extend the system.
+Developer guide to Megane's internal architecture: how molecular data flows from file parsing to pixels on screen, and how to extend the system.
 
 ## Design Philosophy
 
-megane's visual pipeline is built on three core principles:
+Megane's visual pipeline is built on three core principles:
 
 ### Typed Data Flow
 
@@ -21,7 +21,7 @@ Pipeline execution produces a pure data structure — `ViewportState` — with n
 
 ### GPU-Efficient Impostor Rendering
 
-Instead of mesh-based spheres (32+ triangles each), atoms are rendered as **screen-aligned quads** (2 triangles) with ray-sphere intersection in the fragment shader. The base per-atom data costs 7 floats of GPU memory (position xyz, radius, color rgb), and the current `ImpostorAtomMesh` implementation adds 2 more floats for per-atom scale and opacity overrides (9 floats/atom total). All atoms draw in a single instanced call. This is what allows megane to render 1M+ atoms at 60 fps on mid-range hardware.
+Instead of mesh-based spheres (32+ triangles each), atoms are rendered as **screen-aligned quads** (2 triangles) with ray-sphere intersection in the fragment shader. The base per-atom data costs 7 floats of GPU memory (position xyz, radius, color rgb), and the current `ImpostorAtomMesh` implementation adds 2 more floats for per-atom scale and opacity overrides (9 floats/atom total). All atoms draw in a single instanced call. This is what allows Megane to render 1M+ atoms at 60 fps on mid-range hardware.
 
 ## System Overview
 
@@ -200,7 +200,7 @@ interface AtomRenderer {
 
 `StructureLayer` (`src/renderer/StructureLayer.ts`) encapsulates an independent set of atom/bond/cell renderers per additional `load_structure` node. `applyViewportState()` routes the first particle source to the primary renderer and additional sources to their respective StructureLayers, keyed by `sourceNodeId`.
 
-## Extending megane
+## Extending Megane
 
 ### Adding a New Pipeline Node
 

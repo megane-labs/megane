@@ -3,9 +3,9 @@ import LiveViewer from '@site/src/components/LiveViewer';
 
 # Jupyter widget
 
-Use megane inside Jupyter notebooks as an interactive widget backed by [anywidget](https://anywidget.dev/). The widget is the `MolecularViewer` object; `megane.view()` / `view_traj()` are convenience wrappers that return one. Works in JupyterLab, Jupyter Notebook, VS Code, and Google Colab.
+Use Megane inside Jupyter notebooks as an interactive widget backed by [anywidget](https://anywidget.dev/). The widget is the `MolecularViewer` object; `megane.view()` / `view_traj()` are convenience wrappers that return one. Works in JupyterLab, Jupyter Notebook, VS Code, and Google Colab.
 
-<LiveViewer data="caffeine_water" caption="A live megane widget showing caffeine solvated in water — drag to rotate, scroll to zoom. This is the same renderer the notebook cell mounts." />
+<LiveViewer data="caffeine_water" caption="A live Megane widget showing caffeine solvated in water — drag to rotate, scroll to zoom. This is the same renderer the notebook cell mounts." />
 
 ## Installation
 
@@ -135,7 +135,7 @@ changes when Python sets it.
 
 ## Structure editing: `megane.Builder`
 
-`megane.Builder` puts [megane Builder](builder.md) — the structure editor — in
+`megane.Builder` puts [Megane Builder](builder.md) — the structure editor — in
 a cell. Python opens files in it and reads the edited structure back:
 
 ```python
@@ -185,7 +185,7 @@ viewer.off_event("selection_change")          # remove all callbacks for this ev
 
 ## Plotly Integration
 
-Combine megane with Plotly `FigureWidget` to build interactive analysis dashboards.
+Combine Megane with Plotly `FigureWidget` to build interactive analysis dashboards.
 
 ### Click a chart point to jump to a frame
 
@@ -348,7 +348,7 @@ The `measurement` dict contains: `type` (`"distance"`, `"angle"`, or `"dihedral"
 ## Tips
 
 - **Re-running cells** — calling `viewer.set_pipeline(pipe)` again updates the displayed pipeline in-place without re-creating the widget.
-- **JupyterLab vs. classic Notebook** — megane is tested on JupyterLab 4+. In classic Notebook, enable the `anywidget` extension if the viewer appears blank.
+- **JupyterLab vs. classic Notebook** — Megane is tested on JupyterLab 4+. In classic Notebook, enable the `anywidget` extension if the viewer appears blank.
 - **Large trajectories** — the kernel loads the full trajectory into Python memory, and by default sends the widget one frame at a time. Keep large trajectories out of `embed_trajectory=True` (every frame would be written into the notebook), or use `"auto"`, which leaves anything over 20 MB in the kernel. For a trajectory too large for the kernel, open it in the standalone web app, which parses in a Web Worker and streams trajectories of 8 MB or more from the file on demand. See [Platform Support — UI features](../platform-support#ui-features).
 - **Sharing notebooks** — to hand over a notebook whose trajectory still plays, embed it (see [Share a notebook with a playable trajectory](#share-a-notebook-with-a-playable-trajectory)). Exported HTML (`File → Export → HTML`) captures the last-rendered frame as a static image.
 
@@ -356,16 +356,16 @@ The `measurement` dict contains: `type` (`"distance"`, `"angle"`, or `"dihedral"
 
 ### "Module anywidget, version ~0.9.\* is not registered, however, 0.11.0 is"
 
-The notebook was saved by megane 0.16 or older, which recorded the exact
+The notebook was saved by Megane 0.16 or older, which recorded the exact
 anywidget minor version it ran with, and the Jupyter opening it has another
-one. megane 0.17 and newer record any anywidget front end from 0.9 on
+one. Megane 0.17 and newer record any anywidget front end from 0.9 on
 (`megane.widget.ANYWIDGET_FRONTEND_RANGE`), so re-run the notebook with an
-up-to-date megane and save it again.
+up-to-date Megane and save it again.
 
 ### "No version of module anywidget is registered"
 
 The Jupyter server showing the page has no anywidget front end. This happens
-when megane is installed into the kernel's environment but JupyterLab runs from
+when Megane is installed into the kernel's environment but JupyterLab runs from
 another one (common on hosted JupyterLab services), or when the page was opened
 before `pip install megane`. Install anywidget where JupyterLab itself runs and
 reload the browser tab; the server does not need a restart:
@@ -382,7 +382,7 @@ This is a [known issue](https://github.com/manzt/anywidget/issues/684) with VS C
 
 **Workarounds:**
 
-1. **Reload the VS Code window** after installing megane:
+1. **Reload the VS Code window** after installing Megane:
    - Open the Command Palette (`Ctrl+Shift+P` / `Cmd+Shift+P`)
    - Run `Developer: Reload Window`
 

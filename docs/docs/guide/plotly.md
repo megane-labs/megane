@@ -1,6 +1,6 @@
 # Plotly
 
-Control the megane viewer from Plotly charts using ipywidgets event interop. Click a data point on a Plotly `FigureWidget` to jump to the corresponding trajectory frame.
+Control the Megane viewer from Plotly charts using ipywidgets event interop. Click a data point on a Plotly `FigureWidget` to jump to the corresponding trajectory frame.
 
 ## Click to Select Frame
 
@@ -37,7 +37,7 @@ widgets.VBox([fig, viewer])
 
 ## Sync Plotly Marker with Current Frame
 
-Use megane's `on_event("frame_change")` callback to update a marker on the Plotly chart:
+Use Megane's `on_event("frame_change")` callback to update a marker on the Plotly chart:
 
 ```python
 # megane → Plotly (update red marker on the chart)

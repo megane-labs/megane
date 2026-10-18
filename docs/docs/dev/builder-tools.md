@@ -5,7 +5,7 @@ title: Builder Tool Contract (MCP)
 **Status: contract version 1.** Builder implements it over Streamable HTTP
 (`src/builder/tools/`, the *Tools* menu on the operations rail left of the view); the
 reference server is [megane-builder-tools](https://github.com/hodakamori/megane-builder-tools).
-This page is the specification megane Builder and third-party structure tools
+This page is the specification Megane Builder and third-party structure tools
 implement. Change
 it here first, then change the code; cite the section in the PR.
 
@@ -21,12 +21,12 @@ the §7 record is kept for the session only; and the §9 confirmation,
 destination notice and chat opt-in are not built.
 :::
 
-megane Builder is a JavaScript application, while most structure-generation
+Megane Builder is a JavaScript application, while most structure-generation
 software (packmol, ASE, pymatgen, RDKit, polymer builders, …) is Python.
 Instead of porting that software to TypeScript, Builder exposes
 **tool buttons** — *Liquid box*, *Polymer chain*, *Solvate*, … — whose work
 runs in an [MCP](https://modelcontextprotocol.io/) server. Users add servers
-and get new buttons without any change to megane.
+and get new buttons without any change to Megane.
 
 MCP alone only says "a tool has a name and a JSON Schema". Turning a tool into
 a Builder button additionally needs agreement on which tools are buttons, how
@@ -35,7 +35,7 @@ structure enters the document. This page is that agreement: a small profile on
 top of MCP, identified by the `_meta` prefix `io.github.megane-labs/`.
 
 The same server stays an ordinary MCP server, so LLM clients (Claude Code,
-Claude Desktop, megane's own chat) can call the same tools. Everything below is
+Claude Desktop, Megane's own chat) can call the same tools. Everything below is
 chosen so that a tool is fully usable by a client that knows nothing of this
 contract.
 
@@ -80,7 +80,7 @@ flowchart LR
 - **Bridge** is host code that owns the MCP connections. A browser page cannot
   spawn processes, so every host needs one (§8). It is the only component that
   speaks MCP transports; Builder talks to it through a narrow message API.
-- **Servers** are ordinary MCP servers. megane ships a reference server,
+- **Servers** are ordinary MCP servers. Megane ships a reference server,
   `megane-builder-tools`, in a separate repository (§10).
 
 ## 3. Discovery: which tools are buttons
@@ -306,7 +306,7 @@ with 1000 water and 20 ethanol molecules (3160 atoms)."*).
 ### 5.1 Structure
 
 The payload is a structure-of-arrays JSON object that maps directly onto
-megane's `Snapshot` and on to the fields the writers export. It is used both
+Megane's `Snapshot` and on to the fields the writers export. It is used both
 for results and for the `document` input.
 
 | Field | Type | Required | Notes |
@@ -322,7 +322,7 @@ for results and for the `document` input.
 | `atomNames` | string[] | no | Per-atom name. |
 | `chainIds` | string[] | no | Per-atom single-character chain id. |
 | `formalCharges` | integer[] | no | Per-atom formal charge. |
-| `scalars` | object of number[] | no | Named per-atom channels megane does not render yet (e.g. `"partial_charge"`). Kept, not dropped. |
+| `scalars` | object of number[] | no | Named per-atom channels Megane does not render yet (e.g. `"partial_charge"`). Kept, not dropped. |
 
 Rules:
 
@@ -331,7 +331,7 @@ Rules:
 - **Builder draws exactly the bonds the payload lists and infers none.** A
   tool that builds molecules must return their bonds; a tool that genuinely
   has no connectivity (e.g. an atomic gas) returns `[]`. This is the same
-  "the source asserts, nothing is invented" principle megane's parsers follow
+  "the source asserts, nothing is invented" principle Megane's parsers follow
   (rule #11 in `AGENTS.md`).
 - Molecules should be returned whole (not wrapped into the cell); Builder's
   *Structure › Wrap atoms into cell* does wrapping when the user wants it.
@@ -438,7 +438,7 @@ such a link. The fragment is never sent to a web server, so the token does not
 end up in access logs.
 
 A build can name a default server with `VITE_BUILDER_TOOLS_URL`; Builder
-connects to it on load while it is the chosen server (no token). megane's demo
+connects to it on load while it is the chosen server (no token). Megane's demo
 site uses this for a hosted reference server running in public mode
 (`megane-builder-tools --public`): no token, since one embedded in a public page
 would be public too, and only requests whose `Origin` is the demo site are
@@ -478,19 +478,19 @@ sampling. Hosts that get a bridge must be listed in
   warnings and error messages are rendered as plain text. Icons are rendered
   only from `data:` URIs of an allowed image type. Result sizes are capped
   (§5.1) before parsing.
-- **LLM exposure is opt-in per server.** megane's chat can offer a server's
+- **LLM exposure is opt-in per server.** Megane's chat can offer a server's
   tools to the model only when the user enables that for the server, because
   third-party tool descriptions are prompt input.
 
 ## 10. Repositories and conformance
 
-- **This contract lives in megane** (this page), because megane is the client
+- **This contract lives in Megane** (this page), because Megane is the client
   that has to implement it and it is versioned with Builder.
 - **The reference server lives in its own repository**,
   [`hodakamori/megane-builder-tools`](https://github.com/hodakamori/megane-builder-tools),
   published to PyPI as `megane-builder-tools`. It is split out for the same
   reasons as `megane-rdkit`: its dependencies (packmol, RadonPy, RDKit, their
-  licences) and release cadence have nothing to do with megane's wheel and CI.
+  licences) and release cadence have nothing to do with Megane's wheel and CI.
   It contains:
   - `megane_builder_tools.sdk` — the `Structure` / `BuilderResult` /
     `Molecule` models, the widget and unit annotations of this page
@@ -511,10 +511,10 @@ sampling. Hosts that get a bridge must be listed in
     same seed reproduces the structure, and that a call without the required
     arguments is refused. Cancellation is not checked yet. Third-party servers
     are expected to pass it.
-- megane's own tests use recorded `tools/list` / `tools/call` fixtures from the
+- Megane's own tests use recorded `tools/list` / `tools/call` fixtures from the
   reference server (`make fixtures` there, committed under
   `tests/fixtures/builder-tools/` and read by `tests/ts/builder/tools/`), so
-  megane CI never needs Python tool dependencies.
+  Megane CI never needs Python tool dependencies.
 
 ## 11. Versioning
 

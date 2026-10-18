@@ -2,9 +2,9 @@ import LiveViewer from '@site/src/components/LiveViewer';
 
 # React component
 
-megane can be embedded in React applications as a component library, published to npm as `megane-viewer`. It provides both high-level React components (`MeganeViewer`, `PipelineViewer`) and the framework-agnostic `MoleculeRenderer` core renderer.
+Megane can be embedded in React applications as a component library, published to npm as `megane-viewer`. It provides both high-level React components (`MeganeViewer`, `PipelineViewer`) and the framework-agnostic `MoleculeRenderer` core renderer.
 
-<LiveViewer data="caffeine_water" caption="The megane renderer running live in this page — the same engine megane-viewer ships to your app." />
+<LiveViewer data="caffeine_water" caption="The Megane renderer running live in this page — the same engine megane-viewer ships to your app." />
 
 ## Installation
 
@@ -452,7 +452,7 @@ When the pipeline includes time-dependent data — by loading a multi-frame stru
 
 ### Using a saved pipeline JSON
 
-You can serialize a pipeline from the megane UI (Pipeline editor → **File** → **Export pipeline**, which downloads `pipeline.megane.json`) and load it directly:
+You can serialize a pipeline from the Megane UI (Pipeline editor → **File** → **Export pipeline**, which downloads `pipeline.megane.json`) and load it directly:
 
 ```tsx
 import pipelineJson from "./my-pipeline.json";
@@ -475,7 +475,7 @@ const pipeline = {
 
 ## Individual Components
 
-For custom layouts, megane exports each panel as a separate component. This gives you full control over placement and behavior.
+For custom layouts, Megane exports each panel as a separate component. This gives you full control over placement and behavior.
 
 ### `Viewport` — 3D Canvas Only
 
@@ -551,13 +551,13 @@ function CustomLayout({ bondConfig, trajectoryConfig, handleUpload }) {
 
 ## Core Renderer (Vue / Svelte / vanilla JS)
 
-For non-React applications (Vue, Svelte, vanilla JS), use `MoleculeRenderer` directly — the same Three.js renderer that powers all megane components. See the [guide to using megane with Vue, Svelte & vanilla JS](/guide/framework-agnostic) for mounting, appearance control, atom selection/measurement, and screen-space picking.
+For non-React applications (Vue, Svelte, vanilla JS), use `MoleculeRenderer` directly — the same Three.js renderer that powers all Megane components. See the [guide to using Megane with Vue, Svelte & vanilla JS](/guide/framework-agnostic) for mounting, appearance control, atom selection/measurement, and screen-space picking.
 
 ---
 
 ## MDX Usage (Next.js)
 
-megane works in MDX-based documentation frameworks like Next.js. For static embeds, `MeganeViewer`/`PipelineViewer` variants, viewport-only embeds, and the required `next.config.mjs` WASM setup, see the [MDX / Next.js guide](/guide/mdx).
+Megane works in MDX-based documentation frameworks like Next.js. For static embeds, `MeganeViewer`/`PipelineViewer` variants, viewport-only embeds, and the required `next.config.mjs` WASM setup, see the [MDX / Next.js guide](/guide/mdx).
 
 ---
 
@@ -599,7 +599,7 @@ ws.onmessage = (event) => {
 
 ## Types
 
-Key TypeScript types exported by megane:
+Key TypeScript types exported by Megane:
 
 ```ts
 import type {

@@ -11,7 +11,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const GA_ID = gaMeasurementId(process.env.GA_MEASUREMENT_ID);
 
 const config: Config = {
-  title: "megane",
+  title: "Megane",
   tagline: "Spectacles for atomistic data",
   favicon: "logo.png",
   url: "https://megane-labs.github.io",
@@ -56,8 +56,8 @@ const config: Config = {
     navbar: {
       title: "Megane",
       logo: {
-        alt: "Megane",
-        src: "logo.svg",
+        alt: "Megane logo",
+        src: "logo.png",
       },
       items: [
         {

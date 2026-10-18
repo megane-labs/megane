@@ -1,6 +1,6 @@
 # Standalone web app (`megane serve`)
 
-The **standalone web app** is megane's full-featured viewer. You launch it with the `megane serve` command, which starts a local server and opens the viewer in your browser. `megane serve` is the CLI launcher; the FastAPI + WebSocket process it starts is referred to as the `megane serve` backend. The same server also hosts [megane Builder](builder.md), the structure editor, at `/builder.html`.
+The **standalone web app** is Megane's full-featured viewer. You launch it with the `megane serve` command, which starts a local server and opens the viewer in your browser. `megane serve` is the CLI launcher; the FastAPI + WebSocket process it starts is referred to as the `megane serve` backend. The same server also hosts [Megane Builder](builder.md), the structure editor, at `/builder.html`.
 
 :::note
 The viewer page currently starts in its in-browser data mode: it opens with the bundled demo (caffeine in water) and parses every file you drop or pick in the browser with WASM. It does not connect to the backend's `/ws` endpoint, so a file passed on the command line is loaded by the backend but is not what the page shows — open it from the browser instead.
@@ -150,12 +150,12 @@ In development mode, `megane serve` does not open a browser; start the Vite dev 
 
 `megane serve` starts the backend — a [FastAPI](https://fastapi.tiangolo.com/) server with:
 
-- **Static file serving** — The built frontend from `megane/static/app/` (the viewer at `/`, megane Builder at `/builder.html`). Set the `MEGANE_STATIC_DIR` environment variable to serve a different build directory.
+- **Static file serving** — The built frontend from `megane/static/app/` (the viewer at `/`, Megane Builder at `/builder.html`). Set the `MEGANE_STATIC_DIR` environment variable to serve a different build directory.
 - **WebSocket endpoint** (`/ws`) — Binary protocol streaming for molecular data. On connect it sends the loaded snapshot and metadata; clients can then send `request_frame`, `stream` (`start`, `end`, `stride`, `fps`), and `stop` JSON commands.
 - **Upload endpoint** (`POST /api/upload`) — Accepts a `pdb` file (plus an optional `xtc`) as multipart form data, loads it, and broadcasts it to every connected WebSocket client.
 - **Health check** (`GET /health`) — Returns `{"status": "ok"}`, for load balancers and container orchestrators.
 
-Data is encoded using megane's binary protocol for efficient transfer:
+Data is encoded using Megane's binary protocol for efficient transfer:
 
 | Message Type | Content |
 |-------------|---------|
