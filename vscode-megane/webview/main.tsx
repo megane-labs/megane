@@ -258,14 +258,6 @@ function App() {
       <MeganeViewer
         testContext="vscode"
         onUploadStructure={handleUploadStructure}
-        onBondSourceChange={(s) =>
-          local.setBondSource(s as "structure" | "file" | "distance" | "none")
-        }
-        onLabelSourceChange={(s) => local.setLabelSource(s as "none" | "structure" | "file")}
-        onLoadLabelFile={(f) => local.loadLabelFile(f)}
-        onVectorSourceChange={(s) => local.setVectorSource(s as "none" | "file" | "demo")}
-        onLoadVectorFile={(f) => local.loadVectorFile(f)}
-        onLoadDemoVectors={() => local.loadDemoVectors()}
         initialCameraState={initialCameraState}
         onCameraStateChange={handleCameraStateChange}
         onFrameChange={handleFrameChange}

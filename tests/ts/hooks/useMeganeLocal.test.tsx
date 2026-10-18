@@ -64,3 +64,42 @@ describe("useMeganeLocal.applyStructureResult", () => {
     expect(result.current.pdbFileName).toBe("mol.pdb");
   });
 });
+
+describe("useMeganeLocal.seekFrame", () => {
+  it("serves frame 0 from the base snapshot and later frames from the structure frames", async () => {
+    const extra = [
+      { frameId: 1, nAtoms: 3, positions: new Float32Array(9).fill(1) },
+      { frameId: 2, nAtoms: 3, positions: new Float32Array(9).fill(2) },
+    ];
+    const res = makeResult({ frames: extra } as Partial<StructureParseResult>);
+    const { result } = renderHook(() => useMeganeLocal());
+    await act(async () => {
+      await result.current.applyStructureResult(res, "multi.xyz");
+    });
+    expect(result.current.trajectorySource).toBe("structure");
+
+    act(() => result.current.seekFrame(2));
+    expect(result.current.frame).toBe(extra[1]);
+    expect(result.current.currentFrame).toBe(2);
+    expect(result.current.currentFrameRef.current).toBe(2);
+
+    act(() => result.current.seekFrame(0));
+    expect(result.current.frame).toEqual({
+      frameId: 0,
+      nAtoms: 3,
+      positions: res.snapshot.positions,
+    });
+
+    // Out-of-range frames move the cursor but keep the last delivered frame.
+    act(() => result.current.seekFrame(9));
+    expect(result.current.frame?.frameId).toBe(0);
+    expect(result.current.currentFrame).toBe(9);
+  });
+
+  it("only moves the cursor when no structure is loaded", () => {
+    const { result } = renderHook(() => useMeganeLocal());
+    act(() => result.current.seekFrame(0));
+    expect(result.current.frame).toBeNull();
+    expect(result.current.currentFrame).toBe(0);
+  });
+});
