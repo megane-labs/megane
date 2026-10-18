@@ -89,7 +89,7 @@ Cell visibility is not a field on `CellData`: a cell is drawn whenever one reach
 
 ### MoleculeRenderer
 
-`src/renderer/MoleculeRenderer.ts` (~2400 lines) is the main orchestrator. It owns the Three.js scene, camera (orthographic or perspective), turntable camera controls (`src/renderer/CameraControls.ts`, OVITO-style orbit about +c / +z with no roll and no pole clamp), and all sub-renderers. Its API is imperative and framework-agnostic — React components call it via refs, and the widget/docs embed uses the same API.
+`src/renderer/MoleculeRenderer.ts` (~1600 lines) is the main orchestrator. It owns the Three.js scene and all sub-renderers, and delegates two concerns to helper classes: `src/renderer/CameraController.ts` owns the camera (orthographic or perspective), the turntable camera controls (`src/renderer/CameraControls.ts`, OVITO-style orbit about +c / +z with no roll and no pole clamp) and the interactions on top of them (pivot animation, right-drag / Shift+left-drag pan, wheel zoom, frustum insets, projection switch), and `src/renderer/SelectionController.ts` owns screen-space picking and the selection / measurement overlays. The E2E hooks (`window.__megane_test*`) live in `src/renderer/testApi.ts`. Its API is imperative and framework-agnostic — React components call it via refs, and the widget/docs embed uses the same API.
 
 Scene graph structure:
 
@@ -331,8 +331,8 @@ the same PR. The full per-host registration checklist lives in the
 | **Bond impostor** | `src/renderer/ImpostorBondMesh.ts` |
 | **Shaders** | `src/renderer/shaders.ts` |
 | **Multi-structure** | `src/renderer/StructureLayer.ts` |
-| **Camera/controls** | `src/renderer/CameraControls.ts` (turntable orbit), `src/renderer/CameraManager.ts` (fit, insets, zoom), `src/renderer/cameraOrientation.ts` (VESTA standard orientation, ±a/±b/±c and ±x/±y/±z views) |
-| **Picking** | `src/renderer/Picking.ts` |
+| **Camera/controls** | `src/renderer/CameraController.ts` (camera state, pan / zoom / pivot interactions), `src/renderer/CameraControls.ts` (turntable orbit), `src/renderer/CameraManager.ts` (fit, insets, zoom helpers), `src/renderer/cameraOrientation.ts` (VESTA standard orientation, ±a/±b/±c and ±x/±y/±z views) |
+| **Picking / selection** | `src/renderer/Picking.ts` (screen-space helpers), `src/renderer/SelectionController.ts` (picking against the live view, selection overlays) |
 | **Element data** | `src/constants.ts` (colors, vdW radii, bond params) |
 | **Color schemes** | `src/colorSchemes.ts` (by element/residue/chain/B-factor/property, illustrative) |
 | **File parsing (TS side)** | `src/parsers/` (`structure.ts` facade, `parseCore.ts` WASM dispatch, `parse.worker.ts`, `fileNames.ts`) |

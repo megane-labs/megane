@@ -14,6 +14,7 @@
 import type { Snapshot, Frame, TrajectoryMeta, VectorChannel, ScalarChannel } from "../types";
 import { deserializeScalarChannels, deserializeVectorChannels } from "./vectorChannels";
 import { perfMark, perfMeasure } from "../perf";
+import type { TrajectoryKind } from "./fileNames";
 
 export interface StructureParseResult {
   snapshot: Snapshot;
@@ -36,7 +37,7 @@ export interface XTCParseResult {
 }
 
 /** Trajectory formats handled by the binary/text trajectory parsers. */
-export type TrajectoryKind = "xtc" | "dcd" | "lammpstrj" | "netcdf";
+export type { TrajectoryKind };
 
 let initPromise: Promise<void> | null = null;
 let wasmModule: WasmModule | null = null;
