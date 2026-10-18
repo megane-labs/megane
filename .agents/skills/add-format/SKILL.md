@@ -22,8 +22,7 @@ Walk every item. Skipping one means the format silently fails on at least one ho
 
 - [ ] `crates/megane-core/src/<format>.rs` — parser implementation + unit tests.
 - [ ] `crates/megane-core/src/lib.rs` — module export.
-- [ ] `crates/megane-wasm/src/lib.rs` — `pub use ... <format>` and `#[wasm_bindgen] pub fn parse_<format>(text|bytes) -> Result<ParseResult, JsError>`.
-- [ ] `crates/megane-python/src/lib.rs` — PyO3 `parse_<format>` if you want Python API access.
+- [ ] `crates/megane-core/src/formats.rs` — add one entry to `for_each_structure_format!` (or `for_each_trajectory_format!`) plus its `extensions()` and `parse()` match arms. Both bindings are generated from this table, so the WASM `#[wasm_bindgen] parse_<format>` and the PyO3 `megane_parser.parse_<format>` appear together with the same name and signature — do not hand-write per-format functions in `crates/megane-wasm/src/lib.rs` / `crates/megane-python/src/lib.rs`. `tests/ts/parsers/formatRegistry.test.ts` and `tests/python/test_format_registry.py` fail until `STRUCTURE_EXTS` / `TRAJECTORY_EXTS` and `python/megane/parsers/dispatch.py` list the same extensions.
 - [ ] Run `npm run build:wasm` and `maturin develop --release` so downstream code can resolve the new symbol.
 
 ### 2. TypeScript parser dispatch (shared by **all** browser hosts)
@@ -79,7 +78,7 @@ This is the only file that knows how to dispatch by extension; every host below 
 
 These match AGENTS.md CRITICAL RULE #6:
 
-- Browser parsers: `crates/megane-wasm/src/lib.rs`
+- Format registry (generates the WASM and PyO3 parsers): `crates/megane-core/src/formats.rs`
 - Standalone accept lists: `src/parsers/fileNames.ts` (`STRUCTURE_EXTS` / `TRAJECTORY_EXTS`, consumed by `LoadStructureNode.tsx` / `LoadTrajectoryNode.tsx`)
 - JupyterLab filetypes: `jupyterlab-megane/src/filetypes.ts`
 - VSCode customEditors: `vscode-megane/package.json`

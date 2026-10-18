@@ -1,0 +1,106 @@
+// @vitest-environment node
+/**
+ * The WASM binding is generated from megane-core's format registry
+ * (`crates/megane-core/src/formats.rs`), the same registry the PyO3 binding is
+ * generated from — `tests/python/test_format_registry.py` is this file's
+ * Python twin. Together they pin CRITICAL RULE #6 (host consistency): both
+ * hosts expose exactly the registry's structure / trajectory formats, plus a
+ * short, explicit allowlist of host-specific exports.
+ *
+ * This test loads the real compiled module (`npm run build:wasm`), reads the
+ * registry it embeds, and checks it against (a) the module's own exports and
+ * their declared return types and (b) the web app's extension tables.
+ */
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
+import { beforeAll, describe, expect, it } from "vitest";
+import * as wasm from "../../../crates/megane-wasm/pkg/megane_wasm.js";
+import { STRUCTURE_EXTS, TRAJECTORY_EXTS } from "@/parsers/fileNames";
+
+const PKG = resolve(__dirname, "../../../crates/megane-wasm/pkg");
+
+interface Registry {
+  structure: { binding: string; encoding: "text" | "binary"; extensions: string[] }[];
+  trajectory: {
+    wasm: string;
+    python: string;
+    encoding: "text" | "binary";
+    extensions: string[];
+  }[];
+}
+
+/**
+ * WASM-only exports that return a `ParseResult` but are not a format entry:
+ * the bounded-prefix first-paint helper takes a `kind` and only handles the
+ * lazily streamed XYZ / PDB. (Python reads whole files, so it has no prefix
+ * path.) Everything else returning `ParseResult` must come from the registry.
+ */
+const WASM_ONLY_STRUCTURE_EXPORTS = ["parse_structure_prefix"];
+
+let registry: Registry;
+let declarations: string;
+
+beforeAll(() => {
+  wasm.initSync({ module: readFileSync(resolve(PKG, "megane_wasm_bg.wasm")) });
+  registry = JSON.parse(wasm.format_registry()) as Registry;
+  declarations = readFileSync(resolve(PKG, "megane_wasm.d.ts"), "utf8");
+});
+
+/** Names of the exported functions whose declared return type is `ret`. */
+function exportsReturning(ret: string): string[] {
+  const re = new RegExp(`^export function (\\w+)\\([^)]*\\): ${ret};`, "gm");
+  return [...declarations.matchAll(re)].map((m) => m[1]).sort();
+}
+
+describe("WASM format registry", () => {
+  it("exports one callable parser per registry structure format", () => {
+    const exported = wasm as unknown as Record<string, unknown>;
+    expect(registry.structure.length).toBeGreaterThan(15);
+    for (const { binding } of registry.structure) {
+      expect(typeof exported[binding], binding).toBe("function");
+    }
+  });
+
+  it("returns ParseResult only from registry formats plus the allowlist", () => {
+    const expected = [
+      ...registry.structure.map((f) => f.binding),
+      ...WASM_ONLY_STRUCTURE_EXPORTS,
+    ].sort();
+    expect(exportsReturning("ParseResult")).toEqual(expected);
+  });
+
+  it("returns XtcParseResult exactly from the registry trajectory formats", () => {
+    const expected = registry.trajectory.map((f) => f.wasm).sort();
+    expect(exportsReturning("XtcParseResult")).toEqual(expected);
+  });
+
+  it("declares each parser's argument with the registry encoding", () => {
+    for (const { binding, encoding } of registry.structure) {
+      const arg = encoding === "binary" ? "data: Uint8Array" : "text: string";
+      expect(declarations, binding).toContain(`export function ${binding}(${arg}): ParseResult;`);
+    }
+    for (const { wasm: name, encoding } of registry.trajectory) {
+      const arg = encoding === "binary" ? "data: Uint8Array" : "text: string";
+      expect(declarations, name).toContain(`export function ${name}(${arg}): XtcParseResult;`);
+    }
+  });
+
+  it("covers exactly the web app's structure and trajectory extension lists", () => {
+    const structureExts = registry.structure.flatMap((f) => f.extensions).sort();
+    const trajectoryExts = registry.trajectory.flatMap((f) => f.extensions).sort();
+    expect(structureExts).toEqual([...STRUCTURE_EXTS].sort());
+    expect(trajectoryExts).toEqual([...TRAJECTORY_EXTS].sort());
+  });
+
+  it("parses through a generated binding", () => {
+    const text = readFileSync(resolve(__dirname, "../../fixtures/water.gro"), "utf8");
+    const result = wasm.parse_gro(text);
+    try {
+      expect(result.n_atoms).toBeGreaterThan(0);
+      expect(result.positions().length).toBe(result.n_atoms * 3);
+    } finally {
+      result.free();
+    }
+    expect(() => wasm.parse_gro("")).toThrow();
+  });
+});

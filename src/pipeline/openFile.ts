@@ -36,6 +36,8 @@ import type { PipelineNodeData } from "./execute";
 import type { PipelineStore } from "./store";
 import type { SerializedPipeline } from "./types";
 import type { Snapshot, BondSource } from "../types";
+import type { StructureParseResult } from "../parsers/structure";
+import { LazyFrameProvider } from "../stream/LazyFrameProvider";
 
 export type OpenFileMode = "replace" | "merge";
 
@@ -196,7 +198,18 @@ async function readBlobAsText(blob: Blob): Promise<string> {
   });
 }
 
-function installMinimalGraph(api: StoreApi<PipelineStore>): void {
+/**
+ * Replace the graph with the minimal structure pipeline and drop every piece
+ * of data the old graph held — per-node snapshots, parse errors, streaming
+ * data and the global structure / trajectory / vector channels — so nothing
+ * from the previous file leaks into the new graph. Lazy (worker-backed)
+ * providers are disposed before they are dropped.
+ */
+export function installMinimalGraph(api: StoreApi<PipelineStore>): void {
+  const prev = api.getState();
+  for (const provider of [prev.fileProvider, prev.structureProvider]) {
+    if (provider instanceof LazyFrameProvider) provider.dispose();
+  }
   const raw = createMinimalStructurePipeline();
   const { nodes, edges } = getLayoutedElements(raw.nodes, raw.edges);
   api.setState({
@@ -210,8 +223,10 @@ function installMinimalGraph(api: StoreApi<PipelineStore>): void {
     atomLabels: null,
     structureFrames: null,
     structureMeta: null,
+    structureProvider: null,
     fileFrames: null,
     fileMeta: null,
+    fileProvider: null,
     fileVectors: null,
   });
 }
@@ -223,63 +238,137 @@ function findNodeId(
   return api.getState().nodes.find((n) => n.type === type)?.id ?? null;
 }
 
+/**
+ * Return the `load_structure` node a structure open should fill, installing
+ * the minimal pipeline first when `mode` is "replace" or the graph has no
+ * loader at all. `mode` defaults to "merge" when a loader exists.
+ */
+export function ensureStructureLoader(
+  api: StoreApi<PipelineStore>,
+  opts: { mode?: OpenFileMode; targetNodeId?: string } = {},
+): string {
+  const hasLoader = api.getState().nodes.some((n) => n.type === "load_structure");
+  const mode: OpenFileMode = opts.mode ?? (hasLoader ? "merge" : "replace");
+  if (mode === "replace" || !hasLoader) {
+    installMinimalGraph(api);
+  }
+  const loaderId = opts.targetNodeId ?? findNodeId(api, "load_structure");
+  if (!loaderId) {
+    throw new Error("No load_structure node available after installing minimal pipeline");
+  }
+  return loaderId;
+}
+
+/** The parts of a structure parse that `applyStructureToPipeline` consumes. */
+export type AppliedStructure = Pick<
+  StructureParseResult,
+  "snapshot" | "frames" | "meta" | "labels"
+> &
+  Partial<Pick<StructureParseResult, "vectorChannels">>;
+
+/**
+ * Write a parsed structure file into the `load_structure` node `loaderId`.
+ *
+ * This is the one place that decides what opening a structure does to the
+ * pipeline; every structure-open path (`openFile`, the legacy
+ * `useMeganeLocal` loader the VSCode / JupyterLab single-file viewers use, and
+ * the Load Structure node's own file picker) calls it, so a file opens the
+ * same way on every host.
+ *
+ * For any loader it sets the node snapshot and `fileName` / `hasTrajectory` /
+ * `hasCell`, picks the downstream AddBond source from the file format, and
+ * offers the file's embedded vector channels to the load_vector node UI.
+ *
+ * For the graph's primary (first) loader it also owns the global trajectory
+ * state: the structure-frame channel always follows the new file (so a
+ * single-frame file never inherits the previous file's frames), a
+ * multi-frame file switches the first load_trajectory node to its
+ * "structure" source and drops any file trajectory, and a single-frame file
+ * switches it back to "file", dropping a loaded trajectory whose atom count
+ * no longer matches. The node's `fileName` is cleared whenever no file
+ * trajectory is left, so it never names a file that is not loaded.
+ */
+export function applyStructureToPipeline(
+  api: StoreApi<PipelineStore>,
+  loaderId: string,
+  result: AppliedStructure,
+  fileName: string,
+): void {
+  const state = api.getState();
+  const isPrimary = findNodeId(api, "load_structure") === loaderId;
+  const prevSnapshot = state.nodeSnapshots[loaderId]?.snapshot ?? null;
+  const hasFrames = result.frames.length > 0;
+
+  state.setNodeSnapshot(loaderId, {
+    snapshot: result.snapshot,
+    frames: hasFrames ? result.frames : null,
+    meta: result.meta,
+    labels: result.labels,
+  });
+  state.updateNodeParams(loaderId, {
+    fileName,
+    hasTrajectory: hasFrames,
+    hasCell: !!result.snapshot.box,
+  });
+
+  syncAddBondSourceForLoader(api.getState(), loaderId, fileName);
+
+  // Offer embedded vector channels to the load_vector node UI; nothing
+  // renders until the user activates one (a parse must not switch a visual
+  // overlay on as a side effect).
+  const channels = result.vectorChannels ?? [];
+  state.setEmbeddedVectorChannels(
+    channels.length > 0 ? channels.map((ch) => ({ name: ch.name, frames: ch.frames })) : null,
+  );
+
+  if (!isPrimary) return;
+
+  const trajNodeId = findNodeId(api, "load_trajectory");
+  if (hasFrames) {
+    // Multi-frame structure (.traj, multi-MODEL PDB, multi-frame XYZ): the
+    // frames live in the structure file itself. Feed the structure channel
+    // and switch LoadTrajectory to its visible "structure" source instead of
+    // silently removing it from the graph.
+    state.setStructureFrames(
+      result.frames,
+      result.meta ?? {
+        nFrames: result.frames.length + 1,
+        timestepPs: 1.0,
+        nAtoms: result.snapshot.nAtoms,
+      },
+    );
+    state.setFileFrames(null, null);
+    if (trajNodeId) {
+      state.updateNodeParams(trajNodeId, { source: "structure", fileName: "" });
+    }
+    return;
+  }
+
+  state.setStructureFrames(null, null);
+  // A loaded file trajectory survives a structure swap only while it still
+  // fits the atoms; never drop one on the very first load (no previous
+  // structure), which may be racing a follow-up trajectory load.
+  if (prevSnapshot && prevSnapshot.nAtoms !== result.snapshot.nAtoms) {
+    state.setFileFrames(null, null);
+  }
+  if (trajNodeId) {
+    const after = api.getState();
+    const fileTrajectoryLive = !!after.fileProvider || (after.fileFrames?.length ?? 0) > 0;
+    state.updateNodeParams(
+      trajNodeId,
+      fileTrajectoryLive ? { source: "file" } : { source: "file", fileName: "" },
+    );
+  }
+}
+
 async function openStructure(
   api: StoreApi<PipelineStore>,
   file: File,
   opts: OpenFileOptions,
 ): Promise<void> {
   const result = await parseStructureFile(file);
-
-  const hasLoader = api.getState().nodes.some((n) => n.type === "load_structure");
-  const mode: OpenFileMode = opts.mode ?? (hasLoader ? "merge" : "replace");
-
-  if (mode === "replace" || !hasLoader) {
-    installMinimalGraph(api);
-  }
-
-  const state = api.getState();
-  const loaderId = opts.targetNodeId ?? findNodeId(api, "load_structure");
-  if (!loaderId) {
-    throw new Error("No load_structure node available after installing minimal pipeline");
-  }
-
-  state.setNodeSnapshot(loaderId, {
-    snapshot: result.snapshot,
-    frames: result.frames.length > 0 ? result.frames : null,
-    meta: result.meta,
-    labels: result.labels,
-  });
-  state.updateNodeParams(loaderId, {
-    fileName: file.name,
-    hasTrajectory: result.frames.length > 0,
-    hasCell: !!result.snapshot.box,
-  });
-
-  syncAddBondSourceForLoader(api.getState(), loaderId, file.name);
-
-  // Offer embedded vector channels to the load_vector node UI; nothing
-  // renders until the user activates one (a parse must not switch a visual
-  // overlay on as a side effect).
-  state.setEmbeddedVectorChannels(
-    result.vectorChannels && result.vectorChannels.length > 0
-      ? result.vectorChannels.map((ch) => ({ name: ch.name, frames: ch.frames }))
-      : null,
-  );
-
-  // When opening a multi-frame structure file (e.g. .traj, multi-MODEL .pdb,
-  // multi-frame .xyz), the frames live in the structure file itself. Switch
-  // any LoadTrajectory node to its visible "structure" source instead of
-  // silently removing it from the graph; a single-frame file resets it to
-  // "file" so a later XTC/DCD open plays normally.
-  const trajNodeId = findNodeId(api, "load_trajectory");
-  if (result.frames.length > 0) {
-    state.setFileFrames(null, null);
-    if (trajNodeId) {
-      state.updateNodeParams(trajNodeId, { source: "structure", fileName: "" });
-    }
-  } else if (trajNodeId) {
-    state.updateNodeParams(trajNodeId, { source: "file" });
-  }
+  const loaderId = ensureStructureLoader(api, opts);
+  applyStructureToPipeline(api, loaderId, result, file.name);
 }
 
 async function openTrajectory(

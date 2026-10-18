@@ -294,8 +294,11 @@ the same PR. The full per-host registration checklist lives in the
 `add-format` skill (`.agents/skills/add-format/SKILL.md`).
 
 1. Implement the parser in Rust in `crates/megane-core/src/`
-2. Expose via WASM in `crates/megane-wasm/src/lib.rs` with `#[wasm_bindgen]`
-3. Expose via PyO3 in `crates/megane-python/src/lib.rs` with `#[pyfunction]`
+2. Add it to the format registry in `crates/megane-core/src/formats.rs`
+   (`for_each_structure_format!` / `for_each_trajectory_format!`)
+3. Rebuild: the WASM (`#[wasm_bindgen]`) and PyO3 (`#[pyfunction]`) `parse_*`
+   functions are generated from that registry, so both hosts get the format
+   under the same name
 4. Add the file-extension dispatch in `src/parsers/parseCore.ts`
    (the `WasmModule` interface and `getParserForExtension`; this is the code
    the Web Worker and the sync fallback behind `parseStructureFile` in
