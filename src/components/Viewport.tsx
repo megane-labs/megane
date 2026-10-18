@@ -136,18 +136,26 @@ export function Viewport({
       onHoverRef.current?.(null);
     };
 
+    // Double-click sets the orbit center as in OVITO: on an atom (the drawn
+    // copy that was hit, which may be a periodic image) or a bond midpoint;
+    // on empty space it resets to the model center.
     const handleDblClick = (e: MouseEvent) => {
       const info = renderer.raycastAtPixel(e.clientX, e.clientY);
-      if (info && info.kind === "atom") {
+      if (info?.kind === "atom") {
+        renderer.setRotationCenter(...info.position);
+      } else if (info?.kind === "bond") {
         const positions = renderer.getCurrentPositionsCopy();
         if (positions) {
-          const idx = info.atomIndex;
+          const a = info.atomA * 3;
+          const b = info.atomB * 3;
           renderer.setRotationCenter(
-            positions[idx * 3],
-            positions[idx * 3 + 1],
-            positions[idx * 3 + 2],
+            (positions[a] + positions[b]) / 2,
+            (positions[a + 1] + positions[b + 1]) / 2,
+            (positions[a + 2] + positions[b + 2]) / 2,
           );
         }
+      } else {
+        renderer.resetRotationCenter();
       }
     };
 
