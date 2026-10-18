@@ -11,6 +11,7 @@ use std::collections::{HashMap, HashSet};
 
 use crate::atomic::{capitalize, symbol_to_atomic_num};
 use crate::bonds;
+use crate::cif_lex::{field, starts_with_ci, Document, Value};
 use crate::parser::{cell_params_to_matrix, HeteroFrames, ParsedStructure};
 
 // ---------------------------------------------------------------------------
@@ -103,36 +104,9 @@ impl AtomSiteColumns {
 // Helpers
 // ---------------------------------------------------------------------------
 
-/// Return `true` for mmCIF "missing value" tokens (`?` or `.`).
-fn is_missing(s: &str) -> bool {
-    s == "?" || s == "."
-}
-
-/// Parse a float field, returning `None` for missing values or parse errors.
-fn parse_float_field(s: &str) -> Option<f32> {
-    if is_missing(s) {
-        None
-    } else {
-        s.parse().ok()
-    }
-}
-
-/// Parse a u32 field, returning `None` for missing values or parse errors.
-fn parse_u32_field(s: &str) -> Option<u32> {
-    if is_missing(s) {
-        None
-    } else {
-        s.parse().ok()
-    }
-}
-
-/// Strip surrounding single- or double-quote characters from a CIF token.
-fn strip_quotes(s: &str) -> &str {
-    if (s.starts_with('\'') && s.ends_with('\'')) || (s.starts_with('"') && s.ends_with('"')) {
-        &s[1..s.len() - 1]
-    } else {
-        s
-    }
+/// Value of column `c` in `row`, if the loop has that column.
+fn at<'a>(row: &[Value<'a>], c: Option<usize>) -> Option<Value<'a>> {
+    c.and_then(|c| row.get(c).copied())
 }
 
 /// Extract element atomic number from a type_symbol field (`C`, `N`, `FE`, …).
@@ -148,112 +122,6 @@ fn element_from_type_symbol(s: &str) -> u8 {
     }
     let first = capitalize(&cleaned[..1]);
     symbol_to_atomic_num(&first)
-}
-
-// ---------------------------------------------------------------------------
-// Category row collection (_struct_conn, _struct_conf, _struct_sheet_range)
-// ---------------------------------------------------------------------------
-
-/// Collect the rows of a dot-notation mmCIF category (e.g. `_struct_conn.`).
-///
-/// Handles both the `loop_` form and the single-record key-value form PDB
-/// entries use when a category holds exactly one row. Returns the lowercased
-/// tag names and the quote-stripped row values.
-fn collect_category_rows(lines: &[&str], prefix: &str) -> (Vec<String>, Vec<Vec<String>>) {
-    let mut kv_tags: Vec<String> = Vec::new();
-    let mut kv_row: Vec<String> = Vec::new();
-
-    let mut i = 0;
-    while i < lines.len() {
-        let t = lines[i].trim();
-        if t == "loop_" {
-            // Read the loop header and decide whether it is the target category.
-            let mut j = i + 1;
-            let mut header: Vec<String> = Vec::new();
-            while j < lines.len() {
-                let h = lines[j].trim();
-                if h.starts_with('#') {
-                    j += 1;
-                    continue;
-                }
-                if h.starts_with('_') {
-                    let tag = h
-                        .split_whitespace()
-                        .next()
-                        .unwrap_or("")
-                        .to_ascii_lowercase();
-                    header.push(tag);
-                    j += 1;
-                } else {
-                    break;
-                }
-            }
-            let is_target = header.iter().any(|h| h.starts_with(prefix));
-            i = j;
-            if !is_target {
-                continue;
-            }
-            // Read data rows until the loop terminates.
-            let mut rows: Vec<Vec<String>> = Vec::new();
-            while i < lines.len() {
-                let d = lines[i].trim();
-                if d.is_empty()
-                    || d.starts_with("loop_")
-                    || d.starts_with("data_")
-                    || d.starts_with('#')
-                    || d.starts_with('_')
-                {
-                    break;
-                }
-                // Semicolon-delimited multi-line strings are skipped whole.
-                if d.starts_with(';') {
-                    i += 1;
-                    while i < lines.len() && !lines[i].trim().starts_with(';') {
-                        i += 1;
-                    }
-                    i += 1;
-                    continue;
-                }
-                let fields: Vec<String> = d
-                    .split_whitespace()
-                    .map(|s| strip_quotes(s).to_string())
-                    .collect();
-                if fields.len() >= header.len() {
-                    rows.push(fields);
-                }
-                i += 1;
-            }
-            return (header, rows);
-        }
-        if t.to_ascii_lowercase().starts_with(prefix) {
-            // Single-record key-value form: `_struct_conn.conn_type_id disulf`.
-            let parts: Vec<&str> = t.splitn(2, char::is_whitespace).collect();
-            if parts.len() == 2 {
-                kv_tags.push(parts[0].to_ascii_lowercase());
-                kv_row.push(strip_quotes(parts[1].trim()).to_string());
-            }
-        }
-        i += 1;
-    }
-
-    if kv_tags.is_empty() {
-        (Vec::new(), Vec::new())
-    } else {
-        (kv_tags, vec![kv_row])
-    }
-}
-
-/// Find the column index of a lowercased `tag` in a category header.
-fn col(tags: &[String], tag: &str) -> Option<usize> {
-    tags.iter().position(|t| t == tag)
-}
-
-/// Fetch a row field by optional column index, treating absent columns as the
-/// mmCIF missing token.
-fn field(row: &[String], idx: Option<usize>) -> &str {
-    idx.and_then(|i| row.get(i))
-        .map(String::as_str)
-        .unwrap_or("?")
 }
 
 // ---------------------------------------------------------------------------
@@ -273,27 +141,25 @@ struct AtomAddress {
 /// preferred; auth_* is the fallback when the label sequence id is missing
 /// (`.`/`?`, e.g. waters, ions, and other HETATM sites).
 fn resolve_conn_partner(
-    label_asym: &str,
-    label_seq: &str,
-    atom_id: &str,
-    auth_asym: &str,
-    auth_seq: &str,
+    label_asym: Value,
+    label_seq: Value,
+    atom_id: Value,
+    auth_asym: Value,
+    auth_seq: Value,
     label_map: &HashMap<(String, u32, String), u32>,
     auth_map: &HashMap<(String, u32, String), u32>,
 ) -> Option<u32> {
-    if is_missing(atom_id) {
-        return None;
-    }
-    if let Some(seq) = parse_u32_field(label_seq) {
-        if let Some(&idx) = label_map.get(&(label_asym.to_string(), seq, atom_id.to_string())) {
+    let atom_id = atom_id.get()?;
+    if let Some(seq) = label_seq.as_u32() {
+        if let Some(&idx) = label_map.get(&(label_asym.text.to_string(), seq, atom_id.to_string()))
+        {
             return Some(idx);
         }
     }
-    if let Some(seq) = parse_u32_field(auth_seq) {
-        let chain = if is_missing(auth_asym) || auth_asym.is_empty() {
-            label_asym
-        } else {
-            auth_asym
+    if let Some(seq) = auth_seq.as_u32() {
+        let chain = match auth_asym.get() {
+            Some(a) if !a.is_empty() => a,
+            _ => label_asym.text,
         };
         if let Some(&idx) = auth_map.get(&(chain.to_string(), seq, atom_id.to_string())) {
             return Some(idx);
@@ -317,32 +183,30 @@ struct SsRange {
 /// Build one SS range, preferring label_* addressing and falling back to
 /// auth_* when the label sequence ids are missing.
 fn ss_range_from_fields(
-    label_asym: &str,
-    label_beg: &str,
-    label_end: &str,
-    auth_asym: &str,
-    auth_beg: &str,
-    auth_end: &str,
+    label_asym: Value,
+    label_beg: Value,
+    label_end: Value,
+    auth_asym: Value,
+    auth_beg: Value,
+    auth_end: Value,
     ss_type: u8,
 ) -> Option<SsRange> {
-    let (chain, beg, end) = match (parse_u32_field(label_beg), parse_u32_field(label_end)) {
+    let (chain, beg, end) = match (label_beg.as_u32(), label_end.as_u32()) {
         (Some(b), Some(e)) => (label_asym, b, e),
         _ => {
-            let b = parse_u32_field(auth_beg)?;
-            let e = parse_u32_field(auth_end)?;
-            let chain = if is_missing(auth_asym) || auth_asym.is_empty() {
-                label_asym
-            } else {
-                auth_asym
+            let b = auth_beg.as_u32()?;
+            let e = auth_end.as_u32()?;
+            let chain = match auth_asym.get() {
+                Some(a) if !a.is_empty() => auth_asym,
+                _ => label_asym,
             };
             (chain, b, e)
         }
     };
-    let chain_id = if is_missing(chain) {
-        b' '
-    } else {
-        chain.as_bytes().first().copied().unwrap_or(b' ')
-    };
+    let chain_id = chain
+        .get()
+        .and_then(|c| c.as_bytes().first().copied())
+        .unwrap_or(b' ');
     Some(SsRange {
         chain_id,
         start: beg.min(end),
@@ -353,21 +217,21 @@ fn ss_range_from_fields(
 
 /// Extract helix/sheet residue ranges from the `_struct_conf` and
 /// `_struct_sheet_range` categories.
-fn extract_ss_ranges(lines: &[&str]) -> Vec<SsRange> {
+fn extract_ss_ranges(doc: &Document) -> Vec<SsRange> {
     let mut ranges: Vec<SsRange> = Vec::new();
 
     // _struct_conf: HELX_* rows are helices; the occasional STRN row is a
     // strand. Turns/bends render as coil and are ignored.
-    let (tags, rows) = collect_category_rows(lines, "_struct_conf.");
-    let c_type = col(&tags, "_struct_conf.conf_type_id");
-    let c_asym = col(&tags, "_struct_conf.beg_label_asym_id");
-    let c_beg = col(&tags, "_struct_conf.beg_label_seq_id");
-    let c_end = col(&tags, "_struct_conf.end_label_seq_id");
-    let c_auth_asym = col(&tags, "_struct_conf.beg_auth_asym_id");
-    let c_auth_beg = col(&tags, "_struct_conf.beg_auth_seq_id");
-    let c_auth_end = col(&tags, "_struct_conf.end_auth_seq_id");
-    for row in &rows {
-        let conf_type = field(row, c_type).to_ascii_uppercase();
+    let conf = doc.category("_struct_conf.");
+    let c_type = conf.col("_struct_conf.conf_type_id");
+    let c_asym = conf.col("_struct_conf.beg_label_asym_id");
+    let c_beg = conf.col("_struct_conf.beg_label_seq_id");
+    let c_end = conf.col("_struct_conf.end_label_seq_id");
+    let c_auth_asym = conf.col("_struct_conf.beg_auth_asym_id");
+    let c_auth_beg = conf.col("_struct_conf.beg_auth_seq_id");
+    let c_auth_end = conf.col("_struct_conf.end_auth_seq_id");
+    for row in &conf.rows {
+        let conf_type = field(row, c_type).text.to_ascii_uppercase();
         let ss_type = if conf_type.starts_with("HELX") {
             1
         } else if conf_type.starts_with("STRN") {
@@ -389,14 +253,14 @@ fn extract_ss_ranges(lines: &[&str]) -> Vec<SsRange> {
     }
 
     // _struct_sheet_range: every row is a sheet strand.
-    let (tags, rows) = collect_category_rows(lines, "_struct_sheet_range.");
-    let s_asym = col(&tags, "_struct_sheet_range.beg_label_asym_id");
-    let s_beg = col(&tags, "_struct_sheet_range.beg_label_seq_id");
-    let s_end = col(&tags, "_struct_sheet_range.end_label_seq_id");
-    let s_auth_asym = col(&tags, "_struct_sheet_range.beg_auth_asym_id");
-    let s_auth_beg = col(&tags, "_struct_sheet_range.beg_auth_seq_id");
-    let s_auth_end = col(&tags, "_struct_sheet_range.end_auth_seq_id");
-    for row in &rows {
+    let sheet = doc.category("_struct_sheet_range.");
+    let s_asym = sheet.col("_struct_sheet_range.beg_label_asym_id");
+    let s_beg = sheet.col("_struct_sheet_range.beg_label_seq_id");
+    let s_end = sheet.col("_struct_sheet_range.end_label_seq_id");
+    let s_auth_asym = sheet.col("_struct_sheet_range.beg_auth_asym_id");
+    let s_auth_beg = sheet.col("_struct_sheet_range.beg_auth_seq_id");
+    let s_auth_end = sheet.col("_struct_sheet_range.end_auth_seq_id");
+    for row in &sheet.rows {
         if let Some(r) = ss_range_from_fields(
             field(row, s_asym),
             field(row, s_beg),
@@ -425,41 +289,20 @@ fn extract_ss_ranges(lines: &[&str]) -> Vec<SsRange> {
 /// differ). Topology, labels, chain/SS data, and `_struct_conn` connectivity
 /// come from the first model only, matching the PDB parser.
 pub fn parse(text: &str) -> Result<ParsedStructure, String> {
-    let lines: Vec<&str> = text.lines().collect();
+    parse_document(text, &Document::parse(text))
+}
 
+/// [`parse`] over an already-lexed document (`cif::parse` delegates here for
+/// dotted-tag files served under `.cif`).
+pub(crate) fn parse_document(text: &str, doc: &Document) -> Result<ParsedStructure, String> {
     // --- Cell parameters (dot-notation key-value) ---
-    let mut cell_a: Option<f32> = None;
-    let mut cell_b: Option<f32> = None;
-    let mut cell_c: Option<f32> = None;
-    let mut cell_alpha: Option<f32> = None;
-    let mut cell_beta: Option<f32> = None;
-    let mut cell_gamma: Option<f32> = None;
-
-    for line in &lines {
-        let trimmed = line.trim();
-        if trimmed.starts_with('#') || trimmed.is_empty() {
-            continue;
-        }
-        if trimmed.starts_with('_') {
-            let parts: Vec<&str> = trimmed.splitn(2, char::is_whitespace).collect();
-            if parts.len() >= 2 {
-                let tag = parts[0].to_ascii_lowercase();
-                let val = parts[1].trim();
-                if !is_missing(val) {
-                    let v: Option<f32> = val.parse().ok();
-                    match tag.as_str() {
-                        "_cell.length_a" => cell_a = v,
-                        "_cell.length_b" => cell_b = v,
-                        "_cell.length_c" => cell_c = v,
-                        "_cell.angle_alpha" => cell_alpha = v,
-                        "_cell.angle_beta" => cell_beta = v,
-                        "_cell.angle_gamma" => cell_gamma = v,
-                        _ => {}
-                    }
-                }
-            }
-        }
-    }
+    let cell = |tag: &str| doc.value(tag).and_then(|v| v.as_f32());
+    let cell_a = cell("_cell.length_a");
+    let cell_b = cell("_cell.length_b");
+    let cell_c = cell("_cell.length_c");
+    let cell_alpha = cell("_cell.angle_alpha");
+    let cell_beta = cell("_cell.angle_beta");
+    let cell_gamma = cell("_cell.angle_gamma");
 
     let box_matrix = match (cell_a, cell_b, cell_c, cell_alpha, cell_beta, cell_gamma) {
         (Some(a), Some(b), Some(c), Some(alpha), Some(beta), Some(gamma))
@@ -470,10 +313,12 @@ pub fn parse(text: &str) -> Result<ParsedStructure, String> {
         _ => None,
     };
 
+    let mut warnings: Vec<String> = Vec::new();
+
     // _struct_conn rows are collected up front so per-atom addressing data is
     // only gathered when the file actually declares connectivity.
-    let (conn_tags, conn_rows) = collect_category_rows(&lines, "_struct_conn.");
-    let need_conn_addressing = !conn_rows.is_empty();
+    let conn = doc.category("_struct_conn.");
+    let need_conn_addressing = !conn.rows.is_empty();
 
     // --- Atom site data ---
     // Per-model storage: index 0 is the base structure, later models become
@@ -490,211 +335,117 @@ pub fn parse(text: &str) -> Result<ParsedStructure, String> {
     let mut ca_res_nums: Vec<u32> = Vec::new();
     let mut addr: Vec<AtomAddress> = Vec::new();
 
-    let mut i = 0;
-    while i < lines.len() {
-        let trimmed = lines[i].trim();
-
-        if trimmed == "loop_" {
-            i += 1;
-            let mut cols = AtomSiteColumns::new();
-            let mut col_count = 0usize;
-            let mut is_atom_site = false;
-
-            // Read loop header (all lines starting with `_`)
-            while i < lines.len() {
-                let t = lines[i].trim();
-                if t.starts_with('#') {
-                    i += 1;
-                    continue;
-                }
-                if t.starts_with('_') {
-                    let lower = t.to_ascii_lowercase();
-                    // Strip inline comments after the tag name
-                    let tag = lower.split_whitespace().next().unwrap_or("");
-                    if tag.starts_with("_atom_site.") {
-                        is_atom_site = true;
-                        cols.assign(col_count, tag);
-                    }
-                    col_count += 1;
-                    i += 1;
-                } else {
-                    break;
-                }
+    // Loop rows are a CIF token stream (see `cif_lex`): quoted atom names
+    // such as `"O5'"` or `'N A'` stay one value and a row may wrap lines.
+    for lp in doc.loops() {
+        let mut cols = AtomSiteColumns::new();
+        let mut is_atom_site = false;
+        for (idx, tag) in lp.tags.iter().enumerate() {
+            if starts_with_ci(tag, "_atom_site.") {
+                is_atom_site = true;
+                cols.assign(idx, tag);
             }
+        }
+        if !is_atom_site || !cols.has_cartesian() {
+            continue;
+        }
 
-            if !is_atom_site || !cols.has_cartesian() || col_count == 0 {
+        let mut rows = lp.cursor();
+        while let Some(row) = rows.next_row() {
+            // Coordinates
+            let x = at(row, cols.cartn_x).and_then(|v| v.as_f32());
+            let y = at(row, cols.cartn_y).and_then(|v| v.as_f32());
+            let z = at(row, cols.cartn_z).and_then(|v| v.as_f32());
+            let (Some(x), Some(y), Some(z)) = (x, y, z) else {
                 continue;
+            };
+
+            // Element
+            let elem = at(row, cols.type_symbol)
+                .and_then(|v| v.get())
+                .map(element_from_type_symbol)
+                .unwrap_or(0);
+
+            // Model membership: rows are grouped by model number; the
+            // first number seen is the base structure.
+            let m = at(row, cols.model_num)
+                .and_then(|v| v.as_u32())
+                .unwrap_or(1);
+            let mi = match model_nums.iter().position(|&n| n == m) {
+                Some(p) => p,
+                None => {
+                    model_nums.push(m);
+                    model_positions.push(Vec::new());
+                    model_elements.push(Vec::new());
+                    model_nums.len() - 1
+                }
+            };
+
+            // Per-atom metadata comes from the first model only.
+            if mi == 0 {
+                let text_of = |c: Option<usize>| at(row, c).and_then(|v| v.get());
+                let first_byte =
+                    |c: Option<usize>| text_of(c).and_then(|s| s.as_bytes().first().copied());
+
+                // Atom name
+                let atom_name = text_of(cols.label_atom_id).unwrap_or_default().to_string();
+
+                // Chain ID: label_asym_id preferred, auth_asym_id as fallback
+                let chain_byte = first_byte(cols.label_asym_id)
+                    .or_else(|| first_byte(cols.auth_asym_id))
+                    .unwrap_or(b' ');
+
+                // B-factor
+                let bfac = at(row, cols.b_iso).and_then(|v| v.as_f32()).unwrap_or(0.0);
+
+                // Cα tracking (ATOM records only, atom name == "CA")
+                let is_atom = at(row, cols.group_pdb)
+                    .map(|v| v.text.eq_ignore_ascii_case("ATOM"))
+                    .unwrap_or(true); // assume ATOM if column absent
+
+                let label_seq = at(row, cols.label_seq_id).and_then(|v| v.as_u32());
+                let auth_seq = at(row, cols.auth_seq_id).and_then(|v| v.as_u32());
+
+                if is_atom && atom_name == "CA" {
+                    let atom_idx = model_elements[0].len() as u32;
+                    ca_indices.push(atom_idx);
+                    ca_chain_ids.push(chain_byte);
+                    ca_res_nums.push(label_seq.or(auth_seq).unwrap_or(0));
+                }
+
+                // Residue addressing for _struct_conn partner resolution.
+                if need_conn_addressing {
+                    let asym_str = |c: Option<usize>| text_of(c).unwrap_or("").to_string();
+                    addr.push(AtomAddress {
+                        label_asym: asym_str(cols.label_asym_id),
+                        auth_asym: asym_str(cols.auth_asym_id),
+                        label_seq,
+                        auth_seq,
+                    });
+                }
+
+                atom_labels.push(atom_name);
+                chain_ids.push(chain_byte);
+                bfactors.push(bfac);
             }
 
-            // Read data rows
-            while i < lines.len() {
-                let t = lines[i].trim();
+            model_elements[mi].push(elem);
+            model_positions[mi].push(x);
+            model_positions[mi].push(y);
+            model_positions[mi].push(z);
+        }
 
-                // End of loop conditions
-                if t.is_empty()
-                    || t.starts_with("loop_")
-                    || t.starts_with("data_")
-                    || t.starts_with('#')
-                    || t.starts_with('_')
-                {
-                    break;
-                }
+        if lp.partial_row_len() > 0 {
+            warnings.push(format!(
+                "_atom_site loop ends with an incomplete row ({} of {} values); it was skipped",
+                lp.partial_row_len(),
+                lp.tags.len()
+            ));
+        }
 
-                // Handle semicolon-delimited multi-line strings (skip the whole block)
-                if t.starts_with(';') {
-                    i += 1;
-                    while i < lines.len() && !lines[i].trim().starts_with(';') {
-                        i += 1;
-                    }
-                    i += 1; // skip closing ';'
-                    continue;
-                }
-
-                let raw_fields: Vec<&str> = t.split_whitespace().collect();
-                if raw_fields.len() < col_count {
-                    i += 1;
-                    continue;
-                }
-
-                // Coordinates
-                let x = cols
-                    .cartn_x
-                    .and_then(|c| raw_fields.get(c))
-                    .and_then(|s| parse_float_field(s));
-                let y = cols
-                    .cartn_y
-                    .and_then(|c| raw_fields.get(c))
-                    .and_then(|s| parse_float_field(s));
-                let z = cols
-                    .cartn_z
-                    .and_then(|c| raw_fields.get(c))
-                    .and_then(|s| parse_float_field(s));
-
-                let (x, y, z) = match (x, y, z) {
-                    (Some(x), Some(y), Some(z)) => (x, y, z),
-                    _ => {
-                        i += 1;
-                        continue;
-                    }
-                };
-
-                // Element
-                let elem = cols
-                    .type_symbol
-                    .and_then(|c| raw_fields.get(c))
-                    .map(|s| element_from_type_symbol(strip_quotes(s)))
-                    .unwrap_or(0);
-
-                // Model membership: rows are grouped by model number; the
-                // first number seen is the base structure.
-                let m = cols
-                    .model_num
-                    .and_then(|c| raw_fields.get(c))
-                    .and_then(|s| parse_u32_field(s))
-                    .unwrap_or(1);
-                let mi = match model_nums.iter().position(|&n| n == m) {
-                    Some(p) => p,
-                    None => {
-                        model_nums.push(m);
-                        model_positions.push(Vec::new());
-                        model_elements.push(Vec::new());
-                        model_nums.len() - 1
-                    }
-                };
-
-                // Per-atom metadata comes from the first model only.
-                if mi == 0 {
-                    // Atom name
-                    let atom_name = cols
-                        .label_atom_id
-                        .and_then(|c| raw_fields.get(c))
-                        .map(|s| strip_quotes(s))
-                        .filter(|s| !is_missing(s))
-                        .map(|s| s.to_string())
-                        .unwrap_or_default();
-
-                    // Chain ID: label_asym_id preferred, auth_asym_id as fallback
-                    let chain_byte = cols
-                        .label_asym_id
-                        .and_then(|c| raw_fields.get(c))
-                        .map(|s| strip_quotes(s))
-                        .filter(|s| !is_missing(s))
-                        .and_then(|s| s.as_bytes().first().copied())
-                        .or_else(|| {
-                            cols.auth_asym_id
-                                .and_then(|c| raw_fields.get(c))
-                                .map(|s| strip_quotes(s))
-                                .filter(|s| !is_missing(s))
-                                .and_then(|s| s.as_bytes().first().copied())
-                        })
-                        .unwrap_or(b' ');
-
-                    // B-factor
-                    let bfac = cols
-                        .b_iso
-                        .and_then(|c| raw_fields.get(c))
-                        .and_then(|s| parse_float_field(s))
-                        .unwrap_or(0.0);
-
-                    // Cα tracking (ATOM records only, atom name == "CA")
-                    let is_atom = cols
-                        .group_pdb
-                        .and_then(|c| raw_fields.get(c))
-                        .map(|s| strip_quotes(s).eq_ignore_ascii_case("ATOM"))
-                        .unwrap_or(true); // assume ATOM if column absent
-
-                    let label_seq = cols
-                        .label_seq_id
-                        .and_then(|c| raw_fields.get(c))
-                        .and_then(|s| parse_u32_field(s));
-                    let auth_seq = cols
-                        .auth_seq_id
-                        .and_then(|c| raw_fields.get(c))
-                        .and_then(|s| parse_u32_field(s));
-
-                    if is_atom && atom_name == "CA" {
-                        let atom_idx = model_elements[0].len() as u32;
-                        ca_indices.push(atom_idx);
-                        ca_chain_ids.push(chain_byte);
-                        ca_res_nums.push(label_seq.or(auth_seq).unwrap_or(0));
-                    }
-
-                    // Residue addressing for _struct_conn partner resolution.
-                    if need_conn_addressing {
-                        let asym_str = |c: Option<usize>| {
-                            c.and_then(|c| raw_fields.get(c))
-                                .map(|s| strip_quotes(s))
-                                .filter(|s| !is_missing(s))
-                                .unwrap_or("")
-                                .to_string()
-                        };
-                        addr.push(AtomAddress {
-                            label_asym: asym_str(cols.label_asym_id),
-                            auth_asym: asym_str(cols.auth_asym_id),
-                            label_seq,
-                            auth_seq,
-                        });
-                    }
-
-                    atom_labels.push(atom_name);
-                    chain_ids.push(chain_byte);
-                    bfactors.push(bfac);
-                }
-
-                model_elements[mi].push(elem);
-                model_positions[mi].push(x);
-                model_positions[mi].push(y);
-                model_positions[mi].push(z);
-
-                i += 1;
-            }
-
-            // Stop after first atom_site block that yielded atoms
-            if model_elements.first().is_some_and(|e| !e.is_empty()) {
-                break;
-            }
-        } else {
-            i += 1;
+        // Stop after first atom_site block that yielded atoms
+        if model_elements.first().is_some_and(|e| !e.is_empty()) {
+            break;
         }
     }
 
@@ -760,8 +511,6 @@ pub fn parse(text: &str) -> Result<ParsedStructure, String> {
         None
     };
 
-    let mut warnings: Vec<String> = Vec::new();
-
     // File-declared connectivity from _struct_conn (disulfides, covalent
     // ligand links, metal coordination). mmCIF carries no routine polymer
     // connectivity, so distance inference still covers everything else; the
@@ -769,7 +518,7 @@ pub fn parse(text: &str) -> Result<ParsedStructure, String> {
     // duplicated.
     let mut file_bonds: Vec<(u32, u32)> = Vec::new();
     let mut bond_set: HashSet<(u32, u32)> = HashSet::new();
-    if !conn_rows.is_empty() {
+    if !conn.rows.is_empty() {
         let mut label_map: HashMap<(String, u32, String), u32> = HashMap::new();
         let mut auth_map: HashMap<(String, u32, String), u32> = HashMap::new();
         for (idx, a) in addr.iter().enumerate() {
@@ -791,22 +540,23 @@ pub fn parse(text: &str) -> Result<ParsedStructure, String> {
             }
         }
 
-        let c_type = col(&conn_tags, "_struct_conn.conn_type_id");
-        let p1_asym = col(&conn_tags, "_struct_conn.ptnr1_label_asym_id");
-        let p1_seq = col(&conn_tags, "_struct_conn.ptnr1_label_seq_id");
-        let p1_atom = col(&conn_tags, "_struct_conn.ptnr1_label_atom_id");
-        let p1_auth_asym = col(&conn_tags, "_struct_conn.ptnr1_auth_asym_id");
-        let p1_auth_seq = col(&conn_tags, "_struct_conn.ptnr1_auth_seq_id");
-        let p2_asym = col(&conn_tags, "_struct_conn.ptnr2_label_asym_id");
-        let p2_seq = col(&conn_tags, "_struct_conn.ptnr2_label_seq_id");
-        let p2_atom = col(&conn_tags, "_struct_conn.ptnr2_label_atom_id");
-        let p2_auth_asym = col(&conn_tags, "_struct_conn.ptnr2_auth_asym_id");
-        let p2_auth_seq = col(&conn_tags, "_struct_conn.ptnr2_auth_seq_id");
+        let c_type = conn.col("_struct_conn.conn_type_id");
+        let p1_asym = conn.col("_struct_conn.ptnr1_label_asym_id");
+        let p1_seq = conn.col("_struct_conn.ptnr1_label_seq_id");
+        let p1_atom = conn.col("_struct_conn.ptnr1_label_atom_id");
+        let p1_auth_asym = conn.col("_struct_conn.ptnr1_auth_asym_id");
+        let p1_auth_seq = conn.col("_struct_conn.ptnr1_auth_seq_id");
+        let p2_asym = conn.col("_struct_conn.ptnr2_label_asym_id");
+        let p2_seq = conn.col("_struct_conn.ptnr2_label_seq_id");
+        let p2_atom = conn.col("_struct_conn.ptnr2_label_atom_id");
+        let p2_auth_asym = conn.col("_struct_conn.ptnr2_auth_asym_id");
+        let p2_auth_seq = conn.col("_struct_conn.ptnr2_auth_seq_id");
 
         let mut unmatched = 0usize;
-        for row in &conn_rows {
+        for row in &conn.rows {
             // Hydrogen bonds are not covalent connectivity — skip them.
             if field(row, c_type)
+                .text
                 .to_ascii_lowercase()
                 .starts_with("hydrog")
             {
@@ -854,7 +604,7 @@ pub fn parse(text: &str) -> Result<ParsedStructure, String> {
 
     // Secondary structure from _struct_conf / _struct_sheet_range ranges,
     // matched by chain byte + residue number exactly like PDB HELIX/SHEET.
-    let ss_ranges = extract_ss_ranges(&lines);
+    let ss_ranges = extract_ss_ranges(doc);
     let mut ca_ss_type: Vec<u8> = Vec::with_capacity(ca_indices.len());
     for k in 0..ca_indices.len() {
         let ss = ss_ranges
@@ -1399,20 +1149,175 @@ A 1 ALA A 3 ALA A 4
         assert_eq!(result.ca_ss_type, vec![1, 1, 2, 2, 0]);
     }
 
+    /// Header shared by the lexing regression tests below.
+    const LEX_HEADER: &str = "data_lex
+_entry.id lex
+loop_
+_atom_site.group_PDB
+_atom_site.id
+_atom_site.type_symbol
+_atom_site.label_atom_id
+_atom_site.label_comp_id
+_atom_site.label_asym_id
+_atom_site.label_seq_id
+_atom_site.Cartn_x
+_atom_site.Cartn_y
+_atom_site.Cartn_z
+_atom_site.B_iso_or_equiv
+_atom_site.pdbx_PDB_model_num
+";
+
+    /// Quoted atom names containing a space or a prime used to shift every
+    /// later column (coordinates, B-factor, model number).
     #[test]
-    fn test_strip_quotes() {
-        assert_eq!(strip_quotes("'THR'"), "THR");
-        assert_eq!(strip_quotes("\"CA\""), "CA");
-        assert_eq!(strip_quotes("THR"), "THR");
-        assert_eq!(strip_quotes("?"), "?");
+    fn quoted_atom_names_keep_columns_aligned() {
+        let text = format!(
+            "{LEX_HEADER}ATOM 1 O \"O5'\" DA A 1 1.0 2.0 3.0 10.0 1
+HETATM 2 N 'N A' LIG B . 4.0 5.0 6.0 20.0 1
+#
+"
+        );
+        let s = parse(&text).expect("parse");
+        assert_eq!(s.n_atoms, 2);
+        assert_eq!(s.elements, vec![8, 7]);
+        assert_eq!(
+            s.atom_labels.as_ref().unwrap(),
+            &vec!["O5'".to_string(), "N A".to_string()]
+        );
+        assert_eq!(&s.positions, &[1.0, 2.0, 3.0, 4.0, 5.0, 6.0]);
+        assert_eq!(s.chain_ids.as_ref().unwrap(), &vec![b'A', b'B']);
+        assert_eq!(s.bfactors.as_ref().unwrap(), &vec![10.0, 20.0]);
+        assert_eq!(s.extra_frame_count(), 0);
     }
 
+    /// Rows wrap lines, `;` text fields and comments may sit inside a row, and
+    /// numbers may carry standard uncertainties (cell included).
     #[test]
-    fn test_is_missing() {
-        assert!(is_missing("?"));
-        assert!(is_missing("."));
-        assert!(!is_missing("A"));
-        assert!(!is_missing("1.0"));
+    fn wrapped_rows_text_fields_and_uncertainties() {
+        let text = format!(
+            "_cell.length_a 40.0(1)
+_cell.length_b 40.0(1)
+_cell.length_c 40.0(1)
+_cell.angle_alpha 90
+_cell.angle_beta 90
+_cell.angle_gamma 90
+{LEX_HEADER}ATOM 1 C CA ALA A 1
+  1.25(3) 2.0(1) 3.0
+  11.5(2) 1
+# a comment inside the loop body
+ATOM 2 C
+;CB
+;
+ALA A 1 4.0 5.0 6.0 ? 1
+#
+"
+        );
+        let s = parse(&text).expect("parse");
+        assert_eq!(s.n_atoms, 2);
+        assert!((s.box_matrix.unwrap()[0] - 40.0).abs() < 1e-4);
+        assert_eq!(&s.positions, &[1.25, 2.0, 3.0, 4.0, 5.0, 6.0]);
+        assert_eq!(
+            s.atom_labels.as_ref().unwrap(),
+            &vec!["CA".to_string(), "CB".to_string()]
+        );
+        assert_eq!(s.bfactors.as_ref().unwrap(), &vec![11.5, 0.0]);
+        assert_eq!(s.ca_indices, vec![0]);
+        assert!(s.warnings.is_empty());
+    }
+
+    /// Rows whose coordinates are `?` are skipped, and a dangling partial row
+    /// at the end of the loop is reported instead of dropped silently.
+    #[test]
+    fn missing_coordinates_and_partial_row() {
+        let text = format!(
+            "{LEX_HEADER}ATOM 1 N N ALA A 1 ? ? ? 1.0 1
+ATOM 2 C CA ALA A 1 1.0 2.0 3.0 1.0 1
+ATOM 3 C
+#
+"
+        );
+        let s = parse(&text).expect("parse");
+        assert_eq!(s.n_atoms, 1);
+        assert_eq!(s.warnings.len(), 1);
+        assert!(
+            s.warnings[0].contains("incomplete row (3 of 12 values)"),
+            "{:?}",
+            s.warnings
+        );
+    }
+
+    /// `_struct_conn` / `_struct_conf` values are lexed the same way: quoted
+    /// atom ids with spaces resolve and a row may wrap lines.
+    #[test]
+    fn struct_conn_with_quoted_atom_ids() {
+        let text = format!(
+            "{LEX_HEADER}HETATM 1 S 'S 1' LIG A 1 0.0 0.0 0.0 1.0 1
+HETATM 2 S 'S 2' LIG A 2 3.5 0.0 0.0 1.0 1
+#
+loop_
+_struct_conn.id
+_struct_conn.conn_type_id
+_struct_conn.ptnr1_label_asym_id
+_struct_conn.ptnr1_label_seq_id
+_struct_conn.ptnr1_label_atom_id
+_struct_conn.ptnr2_label_asym_id
+_struct_conn.ptnr2_label_seq_id
+_struct_conn.ptnr2_label_atom_id
+_struct_conn.details
+c1 covale A 1 'S 1' A 2
+'S 2' 'a quoted, spaced detail'
+#
+"
+        );
+        let s = parse(&text).expect("parse");
+        assert_eq!(s.n_file_bonds, 1);
+        assert_eq!(s.bonds, vec![(0, 1)]);
+        assert!(s.warnings.is_empty());
+    }
+
+    /// SS ranges fall back to auth_* numbering when the label sequence ids
+    /// are null, and to the label chain when auth_asym_id is null too; an
+    /// `_atom_site.` loop without coordinates is skipped.
+    #[test]
+    fn struct_conf_auth_fallback_and_coordinate_less_loop() {
+        let text = format!(
+            "loop_
+_atom_site.id
+_atom_site.type_symbol
+1 C
+{LEX_HEADER}ATOM 1 C CA ALA A 1 0.0 0.0 0.0 1.0 1
+ATOM 2 C CA ALA A 2 3.8 0.0 0.0 1.0 1
+ATOM 3 C CA ALA A 3 7.6 0.0 0.0 1.0 1
+#
+loop_
+_struct_conf.conf_type_id
+_struct_conf.beg_label_asym_id
+_struct_conf.beg_label_seq_id
+_struct_conf.end_label_seq_id
+_struct_conf.beg_auth_asym_id
+_struct_conf.beg_auth_seq_id
+_struct_conf.end_auth_seq_id
+HELX_P A . . ? 1 2
+STRN A . . A 3 3
+TURN_P A 1 3 A 1 3
+#
+"
+        );
+        let s = parse(&text).expect("parse");
+        assert_eq!(s.n_atoms, 3);
+        assert_eq!(s.ca_ss_type, vec![1, 1, 2]);
+    }
+
+    /// `cif::parse` hands dotted-tag documents to `parse_document` with the
+    /// already-lexed document; the result must match `mmcif::parse`.
+    #[test]
+    fn parse_document_matches_parse() {
+        let text = include_str!("../../../tests/fixtures/1ala.mmcif");
+        let a = parse(text).unwrap();
+        let b = parse_document(text, &Document::parse(text)).unwrap();
+        assert_eq!(a.positions, b.positions);
+        assert_eq!(a.elements, b.elements);
+        assert_eq!(a.bonds, b.bonds);
     }
 
     #[test]
