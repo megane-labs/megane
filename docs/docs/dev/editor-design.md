@@ -329,13 +329,6 @@ structure writes its atoms as one `add_fragment` op (after a `set_cell` when
 the result's cell differs from the document's), pushed as one Undo step; a
 tool that builds a new document replaces the open one.
 
-**Python tools.** Liquid boxes, polymer chains, solvation and other
-generators that already exist in Python reach Builder as buttons backed by
-MCP servers rather than as TypeScript ports: `src/builder/tools/` is the
-client of the [Builder Tool Contract (MCP)](/dev/builder-tools) behind the
-*Tools* menu (web app only; see *Hosts*). A tool that adds to the open
-structure writes one `add_fragment` op, so its result is one Undo step.
-
 Rendered atom indices are translated to op refs through `result.refAt`
 before an op is written, so an op always names the atom the user saw. Drags
 write one `move_atoms` op at press time and rewrite its delta while the

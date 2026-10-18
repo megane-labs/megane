@@ -323,6 +323,30 @@ Terminal node that draws its `spectrum` input as a 2D line chart.
 | `sourceHandle` | `string` | Output port name (e.g., `"particle"`, `"bond"`, `"mesh"`) |
 | `targetHandle` | `string` | Input port name (e.g., `"particle"`, `"bond"`, `"in"`)    |
 
+## Loading Behavior
+
+When a pipeline is loaded (editor import, a share link, a `.megane.json` in VS
+Code, `PipelineViewer`), megane:
+
+- rejects any `version` other than `3` and any unknown node `type`;
+- fills missing parameters with the node's defaults and drops fields from older
+  formats (e.g. `colorScheme` / `representationMode` on `viewport`, color fields
+  on `modify`);
+- migrates the older `particle → polyhedron_generator` shape by inserting
+  `drawing_boundary` and `coordination_generator` nodes;
+- completes the canonical `load_structure → add_bond → viewport` wiring: for
+  each structure loader that feeds a viewport, an `add_bond` node is injected
+  when no bond stream reaches the viewport, and the loader's `cell` (and, when
+  `hasTrajectory` is `true`, its `trajectory`) output is connected to the
+  viewport. Existing nodes and edges are never removed.
+
+File names are resolved per host. VS Code reads `load_structure` and
+`load_trajectory` files relative to the `.megane.json` file's directory
+(absolute paths and paths that leave that directory are ignored). The React
+`PipelineViewer` fetches each `load_structure` node's `fileUrl`. Python's
+`Pipeline.from_dict()` resolves relative paths from the current working
+directory.
+
 ## Example: Crystal with Polyhedra
 
 ```json
