@@ -4,7 +4,7 @@ import { usePipelineStore } from "@/pipeline/store";
 import { usePipelineUIStore } from "@/stores/usePipelineUIStore";
 import { useInspectorInteractionStore } from "@/stores/useInspectorInteractionStore";
 import { PipelineInspector } from "@/components/PipelineInspector";
-import { isInspectorId } from "@/pipeline/inspectorSync";
+import { isInspectorId, defaultInspectorAppearance } from "@/pipeline/inspectorSync";
 import type { Snapshot } from "@/types";
 import type { FilterParams, ColorParams } from "@/pipeline/types";
 
@@ -186,5 +186,41 @@ describe("PipelineInspector — 3D interactions", () => {
     fireEvent.click(screen.getByTestId("inspector-add-layer"));
     fireEvent.click(screen.getByTestId("inspector-box-toggle"));
     expect(useInspectorInteractionStore.getState().boxSelectActive).toBe(true);
+  });
+
+  it("shows the Quick Style section above the selections", () => {
+    render(<PipelineInspector />);
+    expect(screen.getByTestId("quick-style")).toBeTruthy();
+    usePipelineStore.getState().setSnapshot(null);
+  });
+
+  it("follows layers that reach the graph from outside the panel", () => {
+    render(<PipelineInspector />);
+    expect(screen.queryByTestId("inspector-layer-layer-3")).toBeNull();
+    // e.g. a re-opened .megane.json or an Editor edit, not a click here.
+    act(() => {
+      usePipelineStore.getState().setInspectorLayers([
+        {
+          id: "layer-3",
+          name: "ignored",
+          query: 'element == "N"',
+          appearance: defaultInspectorAppearance(),
+        },
+      ]);
+    });
+    expect(screen.getByTestId("inspector-layer-layer-3").textContent).toContain("Layer 3");
+    act(() => {
+      usePipelineStore.getState().setInspectorLayers([]);
+    });
+    expect(screen.queryByTestId("inspector-layer-layer-3")).toBeNull();
+  });
+
+  it("deleting the active layer selects the remaining one", () => {
+    render(<PipelineInspector />);
+    fireEvent.click(screen.getByTestId("inspector-add-layer"));
+    fireEvent.click(screen.getByTestId("inspector-add-layer"));
+    fireEvent.click(screen.getByTestId("inspector-delete-layer-2"));
+    expect(screen.queryByTestId("inspector-layer-layer-2")).toBeNull();
+    expect(screen.getByTestId("inspector-selection")).toBeTruthy();
   });
 });

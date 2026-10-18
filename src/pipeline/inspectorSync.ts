@@ -10,12 +10,14 @@
  * an Inspector layer produces show up verbatim in the visual editor: editing in
  * the Inspector *is* editing the pipeline.
  *
- * Inspector-owned nodes are marked two ways so `reconcileInspectorLayers` can
- * rebuild them idempotently without disturbing the rest of the graph:
- *   - a deterministic id, `insp-<layerId>-<role>` (survives re-runs, so React
- *     Flow doesn't remount and node positions stay put);
- *   - `data.inspectorLayerId` (used to reconstruct layer models from a live
- *     graph via `layersFromGraph`).
+ * Inspector-owned nodes are identified by their id alone,
+ * `insp-<layerId>-<role>`. The id is deterministic (re-runs don't remount the
+ * React Flow node, so positions stay put) and, unlike anything in `data`, it is
+ * kept by `serializePipeline` — so a saved and re-opened pipeline still knows
+ * which nodes the Inspector owns, and `layersFromGraph` can rebuild the layers.
+ *
+ * The `insp-global-*` ids belong to the Quick Style chain (`quickStyle.ts`),
+ * not to a layer: layer reconciliation leaves them alone.
  */
 
 import type { Node, Edge } from "@xyflow/react";
@@ -31,6 +33,9 @@ import type {
 
 /** Prefix shared by every node/edge the Inspector owns. */
 export const INSPECTOR_NODE_PREFIX = "insp-";
+
+/** Prefix of the Quick Style nodes (see `quickStyle.ts`). */
+export const QUICK_STYLE_NODE_PREFIX = `${INSPECTOR_NODE_PREFIX}global-`;
 
 /** Visual settings a single Inspector layer applies to its selection. */
 export interface InspectorAppearance {
@@ -87,13 +92,32 @@ export interface InspectorSource {
 
 type Role = "filter" | "color" | "representation" | "modify";
 
+/** `insp-<layerId>-<role>`; the layer id may itself contain hyphens. */
+const LAYER_NODE_ID = /^insp-(.+)-(filter|color|representation|modify)$/;
+
 function nodeId(layerId: string, role: Role): string {
   return `${INSPECTOR_NODE_PREFIX}${layerId}-${role}`;
 }
 
-/** True when a node/edge id belongs to the Inspector. */
+/** True when a node/edge id belongs to the Inspector (a layer or Quick Style). */
 export function isInspectorId(id: string): boolean {
   return id.startsWith(INSPECTOR_NODE_PREFIX);
+}
+
+/** True when a node id belongs to the Quick Style chain. */
+export function isQuickStyleId(id: string): boolean {
+  return id.startsWith(QUICK_STYLE_NODE_PREFIX);
+}
+
+/** True when a node id belongs to an Inspector selection layer. */
+export function isInspectorLayerId(id: string): boolean {
+  return isInspectorId(id) && !isQuickStyleId(id);
+}
+
+/** Display name for a layer id: `layer-3` → "Layer 3", anything else verbatim. */
+export function layerDisplayName(layerId: string): string {
+  const m = layerId.match(/^layer-(\d+)$/);
+  return m ? `Layer ${m[1]}` : layerId;
 }
 
 function makeNode(
@@ -101,13 +125,12 @@ function makeNode(
   type: Role,
   position: { x: number; y: number },
   params: PipelineNodeData["params"],
-  layerId: string,
 ): Node<PipelineNodeData> {
   return {
     id,
     type,
     position,
-    data: { params, enabled: true, inspectorLayerId: layerId },
+    data: { params, enabled: true },
   };
 }
 
@@ -160,7 +183,7 @@ function buildLayer(
   // Create the chain nodes.
   const ids = roles.map((role) => nodeId(layer.id, role));
   roles.forEach((role, i) => {
-    nodes.push(makeNode(ids[i], role, { x: colX, y: rowY }, paramsFor(role), layer.id));
+    nodes.push(makeNode(ids[i], role, { x: colX, y: rowY }, paramsFor(role)));
     rowY += rowStep;
   });
 
@@ -194,8 +217,8 @@ function buildLayer(
 }
 
 /**
- * Rebuild the Inspector-owned portion of the graph from `layers`, leaving every
- * other node and edge untouched. Idempotent: running it again with the same
+ * Rebuild the Inspector layers' portion of the graph from `layers`, leaving
+ * every other node and edge (Quick Style's included) untouched. Idempotent: running it again with the same
  * layers produces the same node ids and positions.
  *
  * `source` is the particle stream the layers branch from (typically whatever
@@ -209,13 +232,10 @@ export function reconcileInspectorLayers(
   source: InspectorSource,
   viewportId: string,
 ): { nodes: Node<PipelineNodeData>[]; edges: Edge[] } {
-  // Drop the previous Inspector nodes and any edge touching them.
-  const keptNodes = nodes.filter((n) => !isInspectorId(n.id));
+  // Drop the previous layer nodes and any edge touching them.
+  const keptNodes = nodes.filter((n) => !isInspectorLayerId(n.id));
   const keptEdges = edges.filter(
-    (e) =>
-      !isInspectorId(e.id.replace(/^e-/, "")) &&
-      !isInspectorId(e.source) &&
-      !isInspectorId(e.target),
+    (e) => !isInspectorLayerId(e.source) && !isInspectorLayerId(e.target),
   );
 
   const newNodes: Node<PipelineNodeData>[] = [];
@@ -233,16 +253,18 @@ export function reconcileInspectorLayers(
 }
 
 /**
- * Reconstruct Inspector layer models from a live graph by reading the nodes
- * tagged with `data.inspectorLayerId`. Lets the Inspector re-open showing the
- * layers it previously authored (within a session). Layers are returned in
- * ascending layer-id order for determinism.
+ * Reconstruct Inspector layer models from a graph by parsing the
+ * `insp-<layerId>-<role>` node ids. Works on a live graph and on one just
+ * re-opened from a saved `.megane.json`. Layers are returned in ascending
+ * layer-id order (numeric-aware, so `layer-10` follows `layer-9`).
  */
 export function layersFromGraph(nodes: Node<PipelineNodeData>[]): InspectorLayer[] {
   const byLayer = new Map<string, Node<PipelineNodeData>[]>();
   for (const n of nodes) {
-    const layerId = (n.data as { inspectorLayerId?: string }).inspectorLayerId;
-    if (!layerId) continue;
+    if (!isInspectorLayerId(n.id)) continue;
+    const m = n.id.match(LAYER_NODE_ID);
+    if (!m || n.type !== m[2]) continue;
+    const layerId = m[1];
     const group = byLayer.get(layerId);
     if (group) group.push(n);
     else byLayer.set(layerId, [n]);
@@ -289,12 +311,12 @@ export function layersFromGraph(nodes: Node<PipelineNodeData>[]): InspectorLayer
 
     layers.push({
       id: layerId,
-      name: layerId,
+      name: layerDisplayName(layerId),
       query: (filter.data.params as FilterParams).query,
       appearance,
     });
   }
 
-  layers.sort((a, b) => a.id.localeCompare(b.id));
+  layers.sort((a, b) => a.id.localeCompare(b.id, undefined, { numeric: true }));
   return layers;
 }
