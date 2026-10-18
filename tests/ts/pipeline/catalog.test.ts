@@ -37,14 +37,11 @@ describe("NODE_CATALOG", () => {
     }
   });
 
-  it("marks only surface_mesh as having no Python class", () => {
+  it("gives every node a Python class", () => {
+    // tests/python/test_pipeline_node_drift.py checks each name is a real
+    // `megane` export whose _node_type matches.
     for (const type of ALL_TYPES) {
-      const pythonClass = NODE_CATALOG[type].pythonClass;
-      if (type === "surface_mesh") {
-        expect(pythonClass).toBeNull();
-      } else {
-        expect(pythonClass).toBeTruthy();
-      }
+      expect(NODE_CATALOG[type].pythonClass, `${type} has no Python class`).toBeTruthy();
     }
   });
 

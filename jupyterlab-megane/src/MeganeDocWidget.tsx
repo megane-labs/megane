@@ -13,11 +13,7 @@ import { usePlaybackStore } from "@megane/stores/usePlaybackStore";
 import "@megane/styles/megane.css";
 import { ensureWasmUrl } from "./wasmLoader";
 import { STRUCTURE_FILETYPES_BINARY } from "./filetypes";
-import {
-  SPECTRUM_ONLY_EXTENSIONS,
-  TRAJECTORY_ONLY_EXTENSIONS,
-  VOLUMETRIC_ONLY_EXTENSIONS,
-} from "./trajectoryUtils";
+import { classifyStandaloneFile, siblingTopologyName } from "@megane/hosts/classifyStandaloneFile";
 import { createSubscription, createFrameSubscription } from "./frameSubscription";
 import type { SelectionState, Measurement } from "@megane/types";
 
@@ -90,43 +86,27 @@ function DocBody({
           ? Uint8Array.from(atob(raw), (c) => c.charCodeAt(0))
           : new TextEncoder().encode(raw);
         const file = new File([bytes], filename);
-        if (SPECTRUM_ONLY_EXTENSIONS.has(ext)) {
-          // A spectrum has no coordinates at all, so the 3D viewer has nothing
-          // to draw. Point at the node that does display it.
-          throw new Error(
-            `${filename} is a spectrum, which has no atoms or coordinates to render. ` +
-              "Add a Load Spectrum node in the pipeline editor and wire it to a " +
-              "Spectrum Plot node to view it.",
-          );
+        // Spectra and volumetric grids have nothing to render standalone, and
+        // trajectory-only formats (XTC, DCD, NetCDF) need a topology loaded
+        // first; the shared classifier (also used by the VSCode webview)
+        // decides which, and words the actionable error. The always-mounted
+        // pipeline editor lets the user wire the right node to recover.
+        const classification = classifyStandaloneFile(filename);
+        if (classification.errorMessage) {
+          throw new Error(classification.errorMessage);
         }
-        if (VOLUMETRIC_ONLY_EXTENSIONS.has(ext)) {
-          // A scalar grid carries a field but no atoms, so there is nothing to
-          // render on its own. Same shape of guard as the trajectory-only
-          // formats: say what to do instead of failing obscurely.
-          throw new Error(
-            `${filename} is a volumetric grid, which has no atoms to render on its own. ` +
-              "Open a structure file (PDB, GRO, etc.) first, then add a Load Volumetric node " +
-              "in the pipeline editor and point it at this file to draw an isosurface.",
-          );
-        }
-        if (TRAJECTORY_ONLY_EXTENSIONS.has(ext)) {
-          // Trajectory-only formats need a topology already loaded. Surface
-          // an actionable error; the always-mounted pipeline editor lets the
-          // user wire a Load Structure node to recover.
+        if (classification.kind === "trajectory-only") {
           try {
             await local.loadXtc(file);
           } catch (err) {
             const base = err instanceof Error ? err.message : String(err);
-            throw new Error(
-              `${base} Open a structure file (PDB, GRO, etc.) first, or use the pipeline editor to wire a Load Structure node.`,
-            );
+            throw new Error(`${base} ${classification.loadFailureHint}`);
           }
         } else {
           // For .gro files, probe for a sibling .top file with the same stem.
           let topFile: File | undefined;
-          if (ext === ".gro") {
-            const stem = filename.slice(0, filename.lastIndexOf("."));
-            const topName = stem + ".top";
+          const topName = siblingTopologyName(filename);
+          if (topName) {
             const dir = context.path.includes("/")
               ? context.path.slice(0, context.path.lastIndexOf("/"))
               : "";

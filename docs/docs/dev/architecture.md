@@ -79,7 +79,7 @@ Cell visibility is not a field on `CellData`: a cell is drawn whenever one reach
 `executePipeline()` in `src/pipeline/execute.ts` drives the data flow:
 
 1. **Topological sort** — `topologicalSort()` (Kahn's algorithm) in `src/pipeline/graph.ts` determines execution order.
-2. **Per-node dispatch** — A switch on `params.type` calls the appropriate executor from `src/pipeline/executors/`.
+2. **Per-node dispatch** — `params.type` is looked up in the `NODE_EXECUTORS` registry (`src/pipeline/executors/registry.ts`, one typed entry per node type), which calls the appropriate executor from `src/pipeline/executors/` and reports the node's warnings.
 3. **Edge data propagation** — An `EdgeOutputs` map (`Map<nodeId, Map<portName, PipelineData>>`) carries outputs between nodes. `collectInputs()` gathers upstream data for each node.
 4. **Disabled node passthrough** — Disabled nodes forward each input port's data to the first output port of the same data type, preserving downstream flow.
 5. **ViewportState assembly** — The `viewport` executor collects the 7 renderable channels (`particle`, `bond`, `cell`, `trajectory`, `label`, `mesh`, `vector`) into a single `ViewportState`, along with the Viewport node's display settings and the representation resolved from upstream Representation nodes.
@@ -250,7 +250,7 @@ export function executeColorByProperty(
 ```
 Follow existing patterns in `filter.ts` or `modify.ts`.
 
-**6. Register in the execution engine** — Add a `case "color_by_property":` to the switch in `executePipeline()` (`src/pipeline/execute.ts`).
+**6. Register in the execution engine** — Add a `color_by_property:` entry to `NODE_EXECUTORS` in `src/pipeline/executors/registry.ts`; `executePipeline()` (`src/pipeline/execute.ts`) dispatches through it.
 
 **7. Create the UI node** — Add `src/components/nodes/ColorByPropertyNode.tsx` wrapping `NodeShell` (`src/components/nodes/NodeShell.tsx`), which renders the compact canvas card (`NodeCard`) or, in the properties pane, your form. Follow the pattern from `FilterNode.tsx` or `ModifyNode.tsx`.
 

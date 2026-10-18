@@ -5,6 +5,7 @@ use std::collections::{HashMap, HashSet};
 
 // Re-export element utilities that were historically part of this module.
 // New code should import from `crate::atomic` directly.
+use crate::atomic::element_from_atom_name_in_residue;
 pub use crate::atomic::{capitalize, symbol_to_atomic_num};
 
 /// Parsed atom data from a single ATOM/HETATM line.
@@ -58,6 +59,10 @@ pub struct HeteroFrames {
 }
 
 /// Common result type for all structure format parsers.
+///
+/// Derives [`Default`] so parsers spell out only the channels they fill and
+/// end the literal with `..Default::default()` (empty vecs, `None` options).
+#[derive(Default)]
 pub struct ParsedStructure {
     pub n_atoms: usize,
     pub positions: Vec<f32>,
@@ -243,8 +248,10 @@ fn parse_ca_info(line: &str) -> Option<(u8, u32)> {
 
 /// Parse the element from a PDB ATOM/HETATM line.
 ///
-/// First tries columns 76-78 (element symbol field).
-/// Falls back to deriving from the atom name (columns 12-16).
+/// First tries columns 77-78 (element symbol field).
+/// Falls back to deriving from the atom name (columns 13-16) read in the
+/// context of the residue name (columns 18-21), so a protein Cα "CA" is
+/// carbon while a calcium ion residue "CA" is calcium.
 fn parse_element(line: &str) -> u8 {
     let bytes = line.as_bytes();
 
@@ -261,29 +268,16 @@ fn parse_element(line: &str) -> u8 {
         }
     }
 
-    // Fallback: derive from atom name (columns 13-16, 0-indexed: 12-15)
-    if bytes.len() >= 16 {
-        let atom_name = &line[12..16];
-        // Strip digits and spaces, take first alpha characters
-        let alpha: String = atom_name.chars().filter(|c| c.is_alphabetic()).collect();
-        if !alpha.is_empty() {
-            // Try two-char element first, then single char
-            if alpha.len() >= 2 {
-                let two_char = capitalize(&alpha[..2]);
-                let z = symbol_to_atomic_num(&two_char);
-                if z > 0 {
-                    return z;
-                }
-            }
-            let one_char = alpha[..1].to_uppercase().to_string();
-            let z = symbol_to_atomic_num(&one_char);
-            if z > 0 {
-                return z;
-            }
+    // Fallback: derive from atom name (columns 13-16, 0-indexed: 12-15).
+    // The residue name spans columns 18-20, with CHARMM-style 4-letter names
+    // ("TIP3") spilling into column 21.
+    match line.get(12..16) {
+        Some(atom_name) => {
+            let res_name = line.get(17..21).unwrap_or("");
+            element_from_atom_name_in_residue(atom_name, res_name)
         }
+        None => 0, // unknown
     }
-
-    0 // unknown
 }
 
 /// Parse an ATOM/HETATM line to extract coordinates and element.
@@ -709,22 +703,17 @@ fn parse_impl(text: &str, frame0_only: bool) -> Result<ParsedStructure, String> 
         elements,
         bonds: unique_bonds,
         n_file_bonds,
-        bond_orders: None,
         box_matrix,
-        box_origin: None,
         frame_positions_flat,
         atom_labels,
         chain_ids,
         bfactors,
-        vector_channels: vec![],
         ca_indices,
         ca_chain_ids,
         ca_res_nums,
         ca_ss_type,
-        symmetry_ops: Vec::new(),
-        scalar_channels: Vec::new(),
-        warnings: Vec::new(),
         hetero,
+        ..Default::default()
     })
 }
 
@@ -1253,5 +1242,31 @@ END
         assert_eq!(result.n_atoms, 1);
         // No non-zero B-factor => bfactors should be None
         assert!(result.bfactors.is_none());
+    }
+
+    #[test]
+    fn test_pdb_element_from_name_uses_residue_context() {
+        // No element columns (77-78): the atom name is read in the context of
+        // its residue, so a protein Cα is carbon, not calcium.
+        let pdb = "\
+ATOM      1  CA  ALA A   1      17.047  14.099   3.625
+ATOM      2  HG  SER A   2      16.967  12.784   4.338
+ATOM      3  SG  CYS A   3      15.685  12.755   5.133
+ATOM      4  OH2 TIP3W   4      10.000  10.000  10.000
+HETATM    5 CA    CA A 101      12.000  12.000  12.000
+HETATM    6 ZN    ZN A 102      13.000  13.000  13.000
+END
+";
+        let result = parse(pdb).expect("parse failed");
+        assert_eq!(result.elements, vec![6, 1, 16, 8, 20, 30]);
+        // An explicit element column still wins over the name guess.
+        assert_eq!(
+            parse_element(
+                "HETATM    5 CA    CA A 101      12.000  12.000  12.000  1.00  0.00           C  "
+            ),
+            6
+        );
+        // A name field that cannot be sliced resolves to unknown, not a panic.
+        assert_eq!(parse_element("ATOM      1 ABC\u{e9} ALA A   1"), 0);
     }
 }

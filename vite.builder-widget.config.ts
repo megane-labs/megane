@@ -3,6 +3,7 @@ import wasm from "vite-plugin-wasm";
 import { rdkitNoDefaultWasm } from "./vite.rdkit";
 import fs from "fs";
 import path from "path";
+import { prodDefine, srcAlias, syncParseAlias } from "./vite.shared";
 
 const RDKIT_WASM = path.resolve(__dirname, "node_modules/megane-rdkit/dist/megane-rdkit.wasm");
 const OUT_DIR = path.resolve(__dirname, "python/megane/static");
@@ -35,10 +36,7 @@ export default defineConfig({
   resolve: {
     alias: [
       // Single-file bundle: parse on the main thread (see vite.widget.config.ts).
-      {
-        find: /\.\/parseClient$/,
-        replacement: path.resolve(__dirname, "src/parsers/parseClientSync.ts"),
-      },
+      syncParseAlias(),
       {
         find: /^\.\/KetcherEditor$/,
         replacement: path.resolve(__dirname, "src/builder/library/KetcherUnavailable.tsx"),
@@ -51,12 +49,10 @@ export default defineConfig({
         find: /^megane-rdkit\/dist\/megane-rdkit\.wasm\?url$/,
         replacement: path.resolve(__dirname, "src/builder/library/rdkitWasmUnbundled.ts"),
       },
-      { find: "@", replacement: path.resolve(__dirname, "src") },
+      srcAlias(),
     ],
   },
-  define: {
-    "process.env.NODE_ENV": JSON.stringify("production"),
-  },
+  define: prodDefine,
   worker: {
     format: "es",
     plugins: () => [rdkitNoDefaultWasm()],
