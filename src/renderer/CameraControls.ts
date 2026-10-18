@@ -10,7 +10,7 @@
  * and the horizontal direction is flipped for a drag that starts upside down
  * so the model still follows the pointer.
  *
- * Panning is disabled here — `MoleculeRenderer` implements right-drag and
+ * Panning is disabled here — `CameraController` implements right-drag and
  * Shift+left-drag pan itself so the rotation pivot stays fixed on screen —
  * and the A/S/D modifier keys are unbound so typing in a side panel can
  * never latch the controls into a zoom/pan mode.
@@ -24,7 +24,7 @@ import { TrackballControls } from "three/examples/jsm/controls/TrackballControls
  * directions (OVITO's orbit mode uses the same 5 / height rad per pixel).
  */
 export const ORBIT_SPEED = 5;
-/** Zoom speed; also read by the wheel-zoom handler in MoleculeRenderer. */
+/** Zoom speed; also read by the wheel-zoom handler in CameraController. */
 export const TRACKBALL_ZOOM_SPEED = 1.2;
 
 /** The subset of the controls API shared with `CameraManager` helpers. */
@@ -76,7 +76,7 @@ export class CameraControls extends TrackballControls {
     // stops. Inertial glide would scale with the last inter-frame segment,
     // making the feel depend on the frame rate of the scene being rotated.
     this.staticMoving = true;
-    // Right-drag and Shift+left-drag pan are implemented by MoleculeRenderer
+    // Right-drag and Shift+left-drag pan are implemented by CameraController
     // (frustum shift for orthographic cameras), so the built-in pan stays off.
     this.noPan = true;
     // Empty key codes never match `event.code`, which disables the
@@ -120,7 +120,7 @@ export class CameraControls extends TrackballControls {
   }
 
   /**
-   * Leave a Shift+left press to MoleculeRenderer's pan handler: the press
+   * Leave a Shift+left press to CameraController's pan handler: the press
    * still dispatches `start`/`end` (so pivot snapping and the camera-change
    * callback fire), but the controls stay idle instead of rotating.
    */

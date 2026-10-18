@@ -21,6 +21,8 @@
 
 use std::collections::HashSet;
 
+use crate::cell::frac_to_cart;
+
 /// A parsed symmetry operation: fractional 3×3 rotation + translation.
 pub struct Symop {
     /// Row-major 3×3 rotation/permutation acting on fractional coordinates.
@@ -132,15 +134,6 @@ fn invert3x3(m: &[f32; 9]) -> Option<[f32; 9]> {
         (b * g - a * h) * inv,
         (a * e - b * d) * inv,
     ])
-}
-
-/// Cartesian = frac · M, where M rows are the cell vectors (row-major).
-fn frac_to_cart(fa: f32, fb: f32, fc: f32, m: &[f32; 9]) -> (f32, f32, f32) {
-    (
-        fa * m[0] + fb * m[3] + fc * m[6],
-        fa * m[1] + fb * m[4] + fc * m[7],
-        fa * m[2] + fb * m[5] + fc * m[8],
-    )
 }
 
 /// Fractional = cart · M⁻¹.

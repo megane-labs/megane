@@ -12,7 +12,8 @@ import { CameraControls } from "@/renderer/CameraControls";
  *   - setPerspective() recreates the controls for the new camera
  *
  * mount() needs a real WebGL context, so the tests inject the handful of
- * fields those paths read (container, renderer.domElement, camera, controls).
+ * fields those paths read (container, renderer.domElement, and the camera
+ * controller's camera and controls).
  */
 
 function makeCanvasStub(): HTMLDivElement {
@@ -42,11 +43,13 @@ function makeRenderer(camera: THREE.OrthographicCamera | THREE.PerspectiveCamera
   container.appendChild(canvas);
   internals.container = container;
   internals.renderer = { domElement: canvas, dispose: vi.fn() };
-  internals.camera = camera;
-  internals.perspectiveMode = camera instanceof THREE.PerspectiveCamera;
-  internals.controls = internals.createControls() as CameraControls;
-  internals.controls.screen = { left: 0, top: 0, width: 800, height: 600 };
-  return { r, internals, canvas, container, controls: internals.controls as CameraControls };
+  // Camera state lives in the renderer's CameraController.
+  const ctl = internals.cameraController;
+  ctl.camera = camera;
+  ctl.perspectiveMode = camera instanceof THREE.PerspectiveCamera;
+  ctl.controls = ctl.createControls() as CameraControls;
+  ctl.controls.screen = { left: 0, top: 0, width: 800, height: 600 };
+  return { r, internals, ctl, canvas, container, controls: ctl.controls as CameraControls };
 }
 
 function wheel(el: HTMLElement, deltaY: number, deltaMode = 0): WheelEvent {
@@ -81,8 +84,8 @@ describe("MoleculeRenderer.createControls", () => {
 
   it("snaps a running pivot animation to its end pose when a drag starts", () => {
     const cam = new THREE.OrthographicCamera();
-    const { internals, canvas, controls } = makeRenderer(cam);
-    internals.pivotAnim = {
+    const { ctl, canvas, controls } = makeRenderer(cam);
+    ctl.pivotAnim = {
       startTarget: new THREE.Vector3(0, 0, 0),
       endTarget: new THREE.Vector3(5, 6, 7),
       startCameraPos: new THREE.Vector3(0, -10, 0),
@@ -93,7 +96,7 @@ describe("MoleculeRenderer.createControls", () => {
     canvas.dispatchEvent(
       new MouseEvent("pointerdown", { clientX: 10, clientY: 10, bubbles: true }),
     );
-    expect(internals.pivotAnim).toBeNull();
+    expect(ctl.pivotAnim).toBeNull();
     expect(controls.target.toArray()).toEqual([5, 6, 7]);
     expect(cam.position.toArray()).toEqual([5, -4, 7]);
     document.dispatchEvent(new MouseEvent("pointerup", { bubbles: true }));
@@ -108,7 +111,7 @@ describe("MoleculeRenderer wheel zoom", () => {
     cam = new THREE.OrthographicCamera(-25, 25, 25, -25, -100, 100);
     cam.position.set(0, -50, 0);
     setup = makeRenderer(cam);
-    setup.internals.attachWheelZoomListener();
+    setup.ctl.attachWheelZoomListener();
   });
 
   it("intercepts the event so the controls never see it", () => {
@@ -138,14 +141,14 @@ describe("MoleculeRenderer wheel zoom", () => {
     const after = setup.controls.target.clone().project(cam);
     expect(after.x).toBeCloseTo(before.x, 6);
     expect(after.y).toBeCloseTo(before.y, 6);
-    expect(setup.internals._frustumPanX).not.toBe(0);
+    expect(setup.ctl._frustumPanX).not.toBe(0);
   });
 
   it("dollies a perspective camera toward the target", () => {
     const pcam = new THREE.PerspectiveCamera(50, 1, 0.1, 1000);
     pcam.position.set(0, -40, 0);
     const p = makeRenderer(pcam);
-    p.internals.attachWheelZoomListener();
+    p.ctl.attachWheelZoomListener();
     wheel(p.container, -100);
     const d1 = pcam.position.distanceTo(p.controls.target);
     expect(d1).toBeLessThan(40);
@@ -171,12 +174,12 @@ describe("MoleculeRenderer wheel zoom", () => {
   });
 
   it("re-attaching replaces the previous handler instead of stacking", () => {
-    setup.internals.attachWheelZoomListener();
+    setup.ctl.attachWheelZoomListener();
     wheel(setup.container, -120);
     const once = cam.zoom;
     // A stacked duplicate handler would have applied the zoom twice.
     cam.zoom = 1;
-    setup.internals.attachWheelZoomListener();
+    setup.ctl.attachWheelZoomListener();
     wheel(setup.container, -120);
     expect(cam.zoom).toBeCloseTo(once, 9);
   });
@@ -186,28 +189,28 @@ describe("MoleculeRenderer.setPerspective controls recreation", () => {
   it("swaps the camera and rebuilds the controls with the target preserved", () => {
     const cam = new THREE.OrthographicCamera(-25, 25, 25, -25, -100, 100);
     cam.position.set(0, -50, 0);
-    const { r, internals, canvas } = makeRenderer(cam);
-    const oldControls = internals.controls as CameraControls;
+    const { r, ctl, canvas } = makeRenderer(cam);
+    const oldControls = ctl.controls as CameraControls;
     oldControls.target.set(1, 2, 3);
     const disposeSpy = vi.spyOn(oldControls, "dispose");
 
     r.setPerspective(true);
 
     expect(disposeSpy).toHaveBeenCalled();
-    expect(internals.camera).toBeInstanceOf(THREE.PerspectiveCamera);
-    expect(internals.controls).not.toBe(oldControls);
-    expect(internals.controls).toBeInstanceOf(CameraControls);
-    expect(internals.controls.object).toBe(internals.camera);
-    expect(internals.controls.domElement).toBe(canvas);
-    expect(internals.controls.target.toArray()).toEqual([1, 2, 3]);
+    expect(ctl.camera).toBeInstanceOf(THREE.PerspectiveCamera);
+    expect(ctl.controls).not.toBe(oldControls);
+    expect(ctl.controls).toBeInstanceOf(CameraControls);
+    expect(ctl.controls.object).toBe(ctl.camera);
+    expect(ctl.controls.domElement).toBe(canvas);
+    expect(ctl.controls.target.toArray()).toEqual([1, 2, 3]);
     expect(r.getCameraState()?.mode).toBe("perspective");
   });
 
   it("is a no-op when the mode does not change", () => {
-    const { r, internals } = makeRenderer(new THREE.OrthographicCamera());
-    const controls = internals.controls;
+    const { r, ctl } = makeRenderer(new THREE.OrthographicCamera());
+    const controls = ctl.controls;
     r.setPerspective(false);
-    expect(internals.controls).toBe(controls);
+    expect(ctl.controls).toBe(controls);
   });
 });
 
@@ -239,10 +242,10 @@ describe("MoleculeRenderer turntable up axis", () => {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const internals = r as any;
     internals.renderer = { domElement: makeCanvasStub(), dispose: vi.fn() };
-    internals.camera = new THREE.OrthographicCamera();
+    internals.cameraController.camera = new THREE.OrthographicCamera();
     // c along +x (a, b span y/z): the turntable must keep x upright.
     internals.snapshot = { box: new Float32Array([0, 5, 0, 0, 0, 5, 5, 0, 0]) };
-    const controls = internals.createControls() as CameraControls;
+    const controls = internals.cameraController.createControls() as CameraControls;
     expect(controls.upAxis.x).toBeCloseTo(1, 9);
     expect(controls.upAxis.y).toBeCloseTo(0, 9);
     expect(controls.upAxis.z).toBeCloseTo(0, 9);
@@ -277,7 +280,7 @@ describe("MoleculeRenderer.setRotationCenter (OVITO-style orbit center)", () => 
   }
 
   it("orthographic: moves the pivot without moving the image", () => {
-    const { cam, r, controls, internals } = orthoSetup();
+    const { cam, r, controls, ctl } = orthoSetup();
     // Rotate off-axis first so the camera frame is not world-aligned.
     controls.upAxis.set(0, 0, 1);
     cam.position.set(30, -30, 20);
@@ -293,8 +296,8 @@ describe("MoleculeRenderer.setRotationCenter (OVITO-style orbit center)", () => 
       expect(after[i].y).toBeCloseTo(before[i].y, 6);
     }
     // The shift is booked as frustum pan so resize re-applies it.
-    expect(internals._frustumPanX).not.toBe(0);
-    expect(internals.pivotAnim).toBeNull();
+    expect(ctl._frustumPanX).not.toBe(0);
+    expect(ctl.pivotAnim).toBeNull();
   });
 
   it("orthographic: the scene then orbits around the new pivot on screen", () => {
@@ -321,23 +324,23 @@ describe("MoleculeRenderer.setRotationCenter (OVITO-style orbit center)", () => 
   it("perspective: animates the pivot to the screen center by default", () => {
     const pcam = new THREE.PerspectiveCamera(50, 4 / 3, 0.1, 1000);
     pcam.position.set(0, -40, 0);
-    const { r, internals, controls } = makeRenderer(pcam);
+    const { r, ctl, controls } = makeRenderer(pcam);
     r.setRotationCenter(5, 0, 2);
-    expect(internals.pivotAnim).not.toBeNull();
-    expect(internals.pivotAnim.endTarget.toArray()).toEqual([5, 0, 2]);
-    expect(internals.pivotAnim.endCameraPos.toArray()).toEqual([5, -40, 2]);
+    expect(ctl.pivotAnim).not.toBeNull();
+    expect(ctl.pivotAnim.endTarget.toArray()).toEqual([5, 0, 2]);
+    expect(ctl.pivotAnim.endCameraPos.toArray()).toEqual([5, -40, 2]);
     // A second pick first snaps the running animation to its end.
     r.setRotationCenter(1, 1, 1);
     expect(controls.target.toArray()).toEqual([5, 0, 2]);
-    expect(internals.pivotAnim.startTarget.toArray()).toEqual([5, 0, 2]);
+    expect(ctl.pivotAnim.startTarget.toArray()).toEqual([5, 0, 2]);
   });
 
   it("perspective: animate=false re-centres on the spot", () => {
     const pcam = new THREE.PerspectiveCamera(50, 4 / 3, 0.1, 1000);
     pcam.position.set(0, -40, 0);
-    const { r, internals, controls } = makeRenderer(pcam);
+    const { r, ctl, controls } = makeRenderer(pcam);
     r.setRotationCenter(5, 0, 2, false);
-    expect(internals.pivotAnim).toBeNull();
+    expect(ctl.pivotAnim).toBeNull();
     expect(controls.target.toArray()).toEqual([5, 0, 2]);
     expect(pcam.position.toArray()).toEqual([5, -40, 2]);
   });
@@ -377,14 +380,14 @@ describe("MoleculeRenderer Shift+left-drag pan", () => {
     cam.up.set(0, 0, 1);
     const setup = makeRenderer(cam);
     setup.controls.syncImmediate();
-    setup.internals.attachCustomPanListener();
+    setup.ctl.attachCustomPanListener();
     return { cam, ...setup };
   }
   const press = (el: HTMLElement, type: string, x: number, y: number, init: MouseEventInit = {}) =>
     el.dispatchEvent(new MouseEvent(type, { clientX: x, clientY: y, bubbles: true, ...init }));
 
   it("pans the frustum without rotating the camera", () => {
-    const { cam, canvas, controls, internals } = setupPan();
+    const { cam, canvas, controls, ctl } = setupPan();
     const pos = cam.position.clone();
     press(canvas, "pointerdown", 400, 300, { button: 0, shiftKey: true });
     press(canvas, "pointermove", 480, 300);
@@ -392,43 +395,43 @@ describe("MoleculeRenderer Shift+left-drag pan", () => {
     controls.update();
     press(canvas, "pointerup", 480, 300);
     // 80 px of 800 px width over a 50-unit frustum = 5 units to the left.
-    expect(internals._frustumPanX).toBeCloseTo(-5, 6);
+    expect(ctl._frustumPanX).toBeCloseTo(-5, 6);
     expect(cam.left).toBeCloseTo(-30, 6);
     expect(cam.position.distanceTo(pos)).toBeLessThan(1e-9);
   });
 
   it("is suspended while the controls are disabled (box select, Builder drag)", () => {
-    const { canvas, r, internals } = setupPan();
+    const { canvas, r, ctl } = setupPan();
     r.setControlsEnabled(false);
     press(canvas, "pointerdown", 400, 300, { button: 0, shiftKey: true });
     press(canvas, "pointermove", 480, 300);
     press(canvas, "pointerup", 480, 300);
-    expect(internals._frustumPanX).toBe(0);
+    expect(ctl._frustumPanX).toBe(0);
   });
 
   it("yields to a Builder atom drag that disables the controls mid-press", () => {
-    const { canvas, r, internals } = setupPan();
+    const { canvas, r, ctl } = setupPan();
     press(canvas, "pointerdown", 400, 300, { button: 0, shiftKey: true });
     r.setControlsEnabled(false);
     press(canvas, "pointermove", 480, 300);
     press(canvas, "pointerup", 480, 300);
-    expect(internals._frustumPanX).toBe(0);
+    expect(ctl._frustumPanX).toBe(0);
   });
 
   it("plain left drag does not pan", () => {
-    const { canvas, internals } = setupPan();
+    const { canvas, ctl } = setupPan();
     press(canvas, "pointerdown", 400, 300, { button: 0 });
     press(canvas, "pointermove", 480, 300);
     press(canvas, "pointerup", 480, 300);
-    expect(internals._frustumPanX).toBe(0);
+    expect(ctl._frustumPanX).toBe(0);
   });
 
   it("right drag still pans", () => {
-    const { canvas, internals } = setupPan();
+    const { canvas, ctl } = setupPan();
     press(canvas, "pointerdown", 400, 300, { button: 2 });
     press(canvas, "pointermove", 480, 300);
     press(canvas, "pointerup", 480, 300);
-    expect(internals._frustumPanX).toBeCloseTo(-5, 6);
+    expect(ctl._frustumPanX).toBeCloseTo(-5, 6);
   });
 });
 
@@ -436,7 +439,7 @@ describe("MoleculeRenderer.resetView after an off-centre pivot", () => {
   it("drops the frustum shift so the fitted model is centred again", () => {
     const cam = new THREE.OrthographicCamera(-25, 25, 25, -25, -100, 100);
     cam.position.set(0, -50, 0);
-    const { r, internals } = makeRenderer(cam);
+    const { r, internals, ctl } = makeRenderer(cam);
     internals.snapshot = {
       nAtoms: 2,
       positions: new Float32Array([-3, 0, 0, 3, 0, 0]),
@@ -444,10 +447,10 @@ describe("MoleculeRenderer.resetView after an off-centre pivot", () => {
       box: null,
     };
     r.setRotationCenter(3, 0, 0);
-    expect(internals._frustumPanX).not.toBe(0);
+    expect(ctl._frustumPanX).not.toBe(0);
     r.resetView();
-    expect(internals._frustumPanX).toBe(0);
-    expect(internals._frustumPanY).toBe(0);
+    expect(ctl._frustumPanX).toBe(0);
+    expect(ctl._frustumPanY).toBe(0);
     expect(cam.left + cam.right).toBeCloseTo(0, 6);
   });
 });
