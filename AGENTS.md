@@ -201,7 +201,8 @@ Rules for keeping the two hosts in sync:
   - `vite.widget.config.ts` — anywidget bundle
   - `vite.lib.config.ts` — npm library (`megane-viewer`) bundle
   - `vite.docs-demo.config.ts` — docs demo build
-  - VSCode webview config lives at `vscode-megane/vite.webview.config.ts` (not at repo root)
+  - `vite.builder-widget.config.ts` — megane Builder anywidget bundle (`megane.Builder`, built into `python/megane/static/`)
+  - VSCode webview configs live at `vscode-megane/vite.webview.config.ts` (viewer) and `vscode-megane/vite.builder.config.ts` (Builder, `media/builder/`) — not at repo root
 - Playwright config at repo root: `playwright.config.ts` (declares all E2E projects)
 - App builds to: `python/megane/static/app/` (the viewer at `/`, megane Builder at `/builder.html`)
 - Widget builds to: `dist/`
