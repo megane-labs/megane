@@ -104,6 +104,16 @@ describe("pipeline store — layoutPending", () => {
     expect(usePipelineStore.getState().layoutPending).toBe(true);
   });
 
+  it("reset lays the default graph out instead of stacking it at the origin", () => {
+    seed([node("a", 0, 100)]);
+    usePipelineStore.getState().reset();
+    const { nodes, edges } = usePipelineStore.getState();
+    expect(nodes.length).toBeGreaterThan(1);
+    expect(edges.length).toBeGreaterThan(0);
+    expect(byId("viewport-1").position.y).toBeGreaterThan(byId("loader-1").position.y);
+    expect(new Set(nodes.map((n) => `${n.position.x},${n.position.y}`)).size).toBe(nodes.length);
+  });
+
   it("deserialize keeps saved positions", () => {
     const saved = {
       ...STACKED,

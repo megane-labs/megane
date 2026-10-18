@@ -748,12 +748,14 @@ export const pipelineStateCreator: StateCreator<PipelineStore> = (set, get, api)
   },
 
   reset: () => {
-    const def = getInitialPipeline();
+    // Laid out like the initial graph: the default pipelines carry no
+    // positions of their own (see `graphFactory.ts`).
+    const { nodes, edges } = createInitialGraph();
     disposeIfLazy(get().fileProvider);
     disposeIfLazy(get().structureProvider);
     set({
-      nodes: def.nodes,
-      edges: def.edges,
+      nodes,
+      edges,
       layoutPending: true,
       viewportState: { ...DEFAULT_VIEWPORT_STATE },
       ...CLEARED_EXECUTION_CONTEXT,
