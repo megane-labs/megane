@@ -4,7 +4,7 @@ sidebar_label: TypeScript
 
 # TypeScript Pipeline API
 
-Pipelines can be built programmatically in JavaScript/TypeScript using the `Pipeline` builder. The API mirrors the [Python interface](./python.md) exactly, making it straightforward to port pipelines between languages.
+Pipelines can be built programmatically in JavaScript/TypeScript using the `Pipeline` builder. The API mirrors the [Python interface](./python.md) — same node names, same port names, same `SerializedPipeline` v3 output — making it straightforward to port pipelines between languages. The TypeScript builder covers a subset of the Python node classes; see [Differences from Python](#differences-from-python).
 
 For real-world examples, see the [Gallery](/gallery).
 
@@ -38,6 +38,8 @@ export default function App() {
 ```
 
 After `addNode()`, each node exposes `.out` and `.inp` accessors for its ports. Pass these `NodePort` objects to `addEdge()` to wire nodes together. The pipeline serializes to the same `SerializedPipeline` v3 format used by the TypeScript engine — `toObject()` output can be passed directly to `deserializePipeline()`.
+
+A node's parameters are captured when it is added, so set them in the constructor; changing a field after `addNode()` does not change the serialized pipeline. Adding the same node instance twice throws.
 
 ## Pipeline class
 
@@ -79,7 +81,9 @@ Constructor parameters mirror the Python API (using an options object instead of
 | Python                                   | JavaScript/TypeScript                            |
 | ---------------------------------------- | ------------------------------------------------ |
 | `LoadStructure("path")`                  | `new LoadStructure('path')`                      |
+| `LoadStructure("path", edits=[...])`     | `new LoadStructure('path', { edits: [...] })`    |
 | `Filter(query="element == 'C'")`         | `new Filter({ query: "element == 'C'" })`        |
+| `Filter(bond_query="...")`               | `new Filter({ bondQuery: "..." })`               |
 | `Modify(scale=1.3, opacity=0.8)`         | `new Modify({ scale: 1.3, opacity: 0.8 })`       |
 | `Color(mode="byElement")`                | `new Color({ mode: "byElement" })`               |
 | `Representation(mode="cartoon")`         | `new Representation({ mode: "cartoon" })`        |
@@ -92,6 +96,15 @@ Constructor parameters mirror the Python API (using an options object instead of
 | `VectorOverlay(scale=2.0)`               | `new VectorOverlay({ scale: 2.0 })`              |
 | `LoadTrajectory(xtc="traj.xtc")`         | `new LoadTrajectory({ xtc: 'traj.xtc' })`        |
 | `Viewport(perspective=True)`             | `new ViewportNode({ perspective: true })`        |
+
+The Viewport class is exported as `ViewportNode` so it does not clash with the `Viewport` React component exported from the same entry point.
+
+### Differences from Python
+
+- **Node classes not in the TypeScript builder:** `LoadVolumetric`, `Isosurface`, `Replicate`, `LoadSpectrum`, and `SpectrumPlot` exist only in Python. `Symmetry` and `Wrap` are defined in `src/pipeline/builder.ts` but are not exported from `megane-viewer/lib`. For these nodes, build the pipeline in the editor or author the JSON directly (see [JSON format](./json.md)).
+- **`LoadTrajectory`** accepts only `{ xtc }` or `{ traj }` (no `dcd`, `nc`, `xyz`, `lammpstrj`).
+- **`AddBonds`** takes only `{ source }`; there is no `top` option for topology files.
+- **`Pipeline`** has `addNode`, `addEdge`, `toObject`, and `toJSON` only — there is no `fromDict` / `load` / `save`. Use `deserializePipeline()` to turn a `SerializedPipeline` back into editor nodes and edges.
 
 ## Ports
 
@@ -114,20 +127,22 @@ import { PipelineViewer } from "megane-viewer/lib";
 <PipelineViewer pipeline={pipe.toObject()} width="100%" height={500} />;
 ```
 
-| Prop       | Type                 | Description                            |
-| ---------- | -------------------- | -------------------------------------- |
-| `pipeline` | `SerializedPipeline` | Pipeline object from `pipe.toObject()` |
-| `width`    | `string \| number`   | Container width                        |
-| `height`   | `string \| number`   | Container height                       |
+| Prop       | Type                 | Default  | Description                            |
+| ---------- | -------------------- | -------- | -------------------------------------- |
+| `pipeline` | `SerializedPipeline` | —        | Pipeline object from `pipe.toObject()` |
+| `width`    | `string \| number`   | `"100%"` | Container width                        |
+| `height`   | `string \| number`   | `500`    | Container height                       |
+
+`PipelineViewer` fetches each `load_structure` node's `fileUrl` and parses it in the browser. The builder's `LoadStructure(path)` writes `path` as both `fileName` and `fileUrl`, so pass a URL the page can fetch (relative or absolute). Only structure files are fetched: a `LoadTrajectory` file is not, so for playback use a multi-frame structure file (see [Trajectory Playback](#example-trajectory-playback)).
 
 ### MeganeViewer
 
-A full-featured viewer with sidebar, appearance panel, timeline, and measurement tools.
+A full-featured viewer with the pipeline editor, timeline, and measurement tools. It renders whatever pipeline the pipeline store holds (the module-global `usePipelineStore`, or the store of an enclosing `MeganeProvider`); `onUploadStructure` is its only required prop.
 
 ```tsx
-import { MeganeViewer } from "megane-viewer/lib";
+import { MeganeViewer, usePipelineStore } from "megane-viewer/lib";
 
-<MeganeViewer />;
+<MeganeViewer onUploadStructure={(file) => usePipelineStore.getState().openFile(file)} />;
 ```
 
 #### Switching tools off (`ui`)
@@ -152,6 +167,7 @@ under the table.
 |------|---------|-------|
 | `pipelineEditor` | `true` | Pipeline editor panel on the right (toolbar, node graph, share/render dialogs, **and the viewer's only file-open UI**) |
 | `resetView` | `true` | "Reset View" button in the top-left corner |
+| `viewAxes` | `true` | Axis-alignment buttons (±a/±b/±c while a cell is loaded, ±x/±y/±z always) under Reset View |
 | `perfHud` | `true` | Atoms / Bonds / Draws / FPS readout |
 | `timeline` | `true` | Playback timeline along the bottom |
 | `tooltip` | `true` | Hover tooltip over atoms and bonds |
@@ -230,25 +246,27 @@ export default function App() {
 
 ## Example: Trajectory Playback
 
+A multi-frame structure file (multi-frame XYZ / PDB, ASE `.traj`) carries its own frames on `LoadStructure`'s `out.traj` port, which `PipelineViewer` plays back:
+
 ```typescript
-import { PipelineViewer, Pipeline, LoadStructure, LoadTrajectory, AddBonds, ViewportNode } from "megane-viewer/lib";
+import { PipelineViewer, Pipeline, LoadStructure, AddBonds, ViewportNode } from "megane-viewer/lib";
 
 const pipe = new Pipeline();
-const s = pipe.addNode(new LoadStructure("protein.pdb"));
-const traj = pipe.addNode(new LoadTrajectory({ xtc: "trajectory.xtc" }));
-const bonds = pipe.addNode(new AddBonds({ source: "structure" }));
+const s = pipe.addNode(new LoadStructure("trajectory.xyz"));
+const bonds = pipe.addNode(new AddBonds({ source: "distance" }));
 const v = pipe.addNode(new ViewportNode());
 
-pipe.addEdge(s.out.particle, traj.inp.particle);
 pipe.addEdge(s.out.particle, bonds.inp.particle);
 pipe.addEdge(s.out.particle, v.inp.particle);
-pipe.addEdge(traj.out.traj, v.inp.traj);
+pipe.addEdge(s.out.traj, v.inp.traj);
 pipe.addEdge(bonds.out.bond, v.inp.bond);
 
 export default function App() {
   return <PipelineViewer pipeline={pipe.toObject()} width="100%" height={500} />;
 }
 ```
+
+An external trajectory is wired the same way as in Python — `pipe.addEdge(s.out.particle, traj.inp.particle)` and `pipe.addEdge(traj.out.traj, v.inp.traj)` with `traj = pipe.addNode(new LoadTrajectory({ xtc: "trajectory.xtc" }))` — and serializes normally, but `PipelineViewer` does not fetch the XTC file, so it shows the static structure without playback.
 
 ## Example: TiO₆ Coordination Polyhedra
 
