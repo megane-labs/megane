@@ -4,8 +4,10 @@
  * and renders Viewport + Timeline with full trajectory playback support.
  *
  * Unlike MeganeViewer and WidgetViewer, this component uses NO global stores
- * (no usePipelineStore, no usePlaybackStore), so multiple instances on the same
- * page are fully independent.
+ * (no usePipelineStore, no usePlaybackStore singleton): it keeps the executed
+ * viewport state in a private store and plays trajectories through a private
+ * playback store (`createPlaybackStore`, the same loop MeganeViewer runs), so
+ * multiple instances on the same page are fully independent.
  *
  * Usage:
  *   <PipelineViewer
@@ -28,30 +30,29 @@
  */
 
 import { useEffect, useMemo, useRef, useState, useCallback } from "react";
-import type { Node, Edge } from "@xyflow/react";
+import { useStore } from "zustand";
+import { createStore } from "zustand/vanilla";
+import type { Node } from "@xyflow/react";
 import { Viewport } from "./Viewport";
 import { Timeline } from "./Timeline";
 import { Tooltip } from "./Tooltip";
 import { MoleculeRenderer } from "../renderer/MoleculeRenderer";
 import { useAtomSelection } from "../hooks/useAtomSelection";
+import { useViewportStateSync, type ViewportStateHolder } from "../hooks/useViewportStateSync";
 import { deserializePipeline } from "../pipeline/serialize";
 import { executePipeline } from "../pipeline/execute";
-import { applyViewportState, applyVectorsForFrame } from "../pipeline/apply";
+import { applyVectorsForFrame } from "../pipeline/apply";
 import { parseStructureFile } from "../parsers/structure";
 import {
   useFrameDistanceBonds,
   hasDistanceBondNode,
   distanceBondVdwScale,
 } from "../hooks/useFrameDistanceBonds";
+import { createPlaybackStore } from "../stores/usePlaybackStore";
 import type { PipelineNodeData, NodeSnapshotData } from "../pipeline/execute";
-import type {
-  SerializedPipeline,
-  ViewportState,
-  LoadStructureParams,
-  FrameProvider,
-} from "../pipeline/types";
+import type { SerializedPipeline, LoadStructureParams } from "../pipeline/types";
 import { DEFAULT_VIEWPORT_STATE } from "../pipeline/types";
-import type { Snapshot, Frame, HoverInfo } from "../types";
+import type { HoverInfo } from "../types";
 
 interface PipelineViewerProps {
   pipeline: SerializedPipeline;
@@ -75,45 +76,31 @@ export function PipelineViewer({ pipeline, width = "100%", height = 500 }: Pipel
   const [status, setStatus] = useState<LoadStatus>("loading");
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
-  // Pipeline execution results
+  // Pipeline execution results. The viewport state lives in a private
+  // vanilla store so useViewportStateSync can follow it without re-rendering
+  // this component; the trajectory plays through a private playback store.
   const [nodes, setNodes] = useState<Node<PipelineNodeData>[]>([]);
-  const [_edges, setEdges] = useState<Edge[]>([]);
-  const [viewportState, setViewportState] = useState<ViewportState>(DEFAULT_VIEWPORT_STATE);
-  const [primarySnapshot, setPrimarySnapshot] = useState<Snapshot | null>(null);
+  const [viewportStore] = useState(() =>
+    createStore<ViewportStateHolder>(() => ({ viewportState: DEFAULT_VIEWPORT_STATE })),
+  );
+  const [playbackStore] = useState(() => createPlaybackStore());
 
-  // Trajectory playback (local state — no global store)
-  const [provider, setProvider] = useState<FrameProvider | null>(null);
-  const [totalFrames, setTotalFrames] = useState(0);
-  const [currentFrame, setCurrentFrame] = useState(0);
-  const [currentFrameData, setCurrentFrameData] = useState<Frame | null>(null);
-  const [playing, setPlaying] = useState(false);
-  const [fps, setFpsState] = useState(30);
-  const [speedMultiplier, setSpeedMultiplier] = useState(1);
-  const [loopStart, setLoopStart] = useState(0);
-  const [loopEnd, setLoopEnd] = useState(0);
-
-  // Refs for setInterval (avoids stale closure)
   const rendererRef = useRef<MoleculeRenderer | null>(null);
-  const prevViewportStateRef = useRef<ViewportState | null>(null);
-  const playIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const currentFrameRef = useRef(0);
-  const providerRef = useRef<FrameProvider | null>(null);
-  const totalFramesRef = useRef(0);
-  const fpsRef = useRef(30);
-  const speedRef = useRef(1);
-  const loopStartRef = useRef(0);
-  const loopEndRef = useRef(0);
   const [hoverInfo, setHoverInfo] = useState<HoverInfo | null>(null);
 
-  // Keep refs in sync
-  providerRef.current = provider;
-  totalFramesRef.current = totalFrames;
-  fpsRef.current = fps;
-  speedRef.current = speedMultiplier;
-  loopStartRef.current = loopStart;
-  loopEndRef.current = loopEnd;
-
   const { handleAtomRightClick, handleFrameUpdated } = useAtomSelection(rendererRef);
+
+  // The Viewport draws the first particle stream's source, which is also the
+  // node `applyViewportState` treats as primary when none is named — so,
+  // unlike MeganeViewer / WidgetViewer, no `getPrimaryNodeId` is needed.
+  const primarySnapshot = useStore(
+    viewportStore,
+    (s) => s.viewportState.particles[0]?.source ?? null,
+  );
+  const { attachRenderer } = useViewportStateSync(rendererRef, viewportStore, {
+    snapshot: primarySnapshot,
+    onTrajectoryProvider: (provider) => playbackStore.getState().setProvider(provider),
+  });
 
   // ─── Initialization: fetch files + parse + execute pipeline ──────
 
@@ -121,20 +108,12 @@ export function PipelineViewer({ pipeline, width = "100%", height = 500 }: Pipel
     const abortController = new AbortController();
     const { signal } = abortController;
 
-    // Reset state for each pipeline prop change
+    // Reset state for each pipeline prop change. Clearing the viewport state
+    // also hands the playback store a null provider, which stops playback.
     setStatus("loading");
     setErrorMessage(null);
     setNodes([]);
-    setEdges([]);
-    setViewportState(DEFAULT_VIEWPORT_STATE);
-    setPrimarySnapshot(null);
-    setProvider(null);
-    setTotalFrames(0);
-    currentFrameRef.current = 0;
-    setCurrentFrame(0);
-    setCurrentFrameData(null);
-    setLoopStart(0);
-    setLoopEnd(0);
+    viewportStore.setState({ viewportState: DEFAULT_VIEWPORT_STATE });
 
     async function init() {
       try {
@@ -178,27 +157,11 @@ export function PipelineViewer({ pipeline, width = "100%", height = 500 }: Pipel
           nodeSnapshots,
         });
 
-        // Extract primary snapshot for Viewport
-        const snap = vs.particles[0]?.source ?? null;
-
-        // Extract trajectory provider
-        const traj = vs.trajectories[0] ?? null;
-        const prov = traj?.provider ?? null;
-        const frames = prov ? prov.meta.nFrames : 0;
-        const frame0 = prov ? prov.getFrame(0) : null;
-
+        // The primary snapshot (Viewport) and the trajectory provider
+        // (playback store) follow from the viewport state.
         setNodes(deserializedNodes);
-        setEdges(deserializedEdges);
-        setViewportState(vs);
-        setPrimarySnapshot(snap);
-        setProvider(prov);
-        setTotalFrames(frames);
-        currentFrameRef.current = 0;
-        setCurrentFrame(0);
-        setCurrentFrameData(frame0);
-        setLoopStart(0);
-        setLoopEnd(frames > 0 ? frames - 1 : 0);
         setStatus("ready");
+        viewportStore.setState({ viewportState: vs });
       } catch (err) {
         if (signal.aborted) return;
         setErrorMessage(err instanceof Error ? err.message : String(err));
@@ -211,35 +174,21 @@ export function PipelineViewer({ pipeline, width = "100%", height = 500 }: Pipel
     return () => {
       abortController.abort();
     };
-  }, [pipeline]);
-
-  // ─── Apply viewportState to renderer when ready ──────────────────
-
-  const handleRendererReady = useCallback(
-    (renderer: MoleculeRenderer) => {
-      rendererRef.current = renderer;
-      applyViewportState(renderer, viewportState, null);
-      prevViewportStateRef.current = viewportState;
-    },
-    [viewportState],
-  );
-
-  useEffect(() => {
-    const renderer = rendererRef.current;
-    if (!renderer) return;
-    applyViewportState(renderer, viewportState, prevViewportStateRef.current);
-    prevViewportStateRef.current = viewportState;
-  }, [viewportState]);
+  }, [pipeline, viewportStore]);
 
   // ─── Per-frame vector update ─────────────────────────────────────
 
+  const currentFrame = useStore(playbackStore, (s) => s.currentFrame);
+  const currentFrameData = useStore(playbackStore, (s) => s.currentFrameData);
+  const totalFrames = useStore(playbackStore, (s) => s.totalFrames);
   useEffect(() => {
     const renderer = rendererRef.current;
     if (!renderer) return;
-    if (viewportState.vectors.length > 0) {
-      applyVectorsForFrame(renderer, viewportState.vectors, currentFrame);
+    const { vectors } = viewportStore.getState().viewportState;
+    if (vectors.length > 0) {
+      applyVectorsForFrame(renderer, vectors, currentFrame);
     }
-  }, [currentFrame, viewportState.vectors]);
+  }, [currentFrame, viewportStore]);
 
   // ─── Per-frame bond recalculation (distance mode) ────────────────
 
@@ -257,119 +206,25 @@ export function PipelineViewer({ pipeline, width = "100%", height = 500 }: Pipel
 
   // ─── Playback ────────────────────────────────────────────────────
 
-  const startInterval = useCallback(() => {
-    if (playIntervalRef.current !== null) return;
-    playIntervalRef.current = setInterval(
-      () => {
-        const prov = providerRef.current;
-        const total = totalFramesRef.current;
-        if (!prov || total <= 1) return;
-        const effectiveEnd = Math.min(loopEndRef.current, total - 1);
-        const effectiveStart = Math.max(loopStartRef.current, 0);
-        let next = currentFrameRef.current + 1;
-        if (next > effectiveEnd) next = effectiveStart;
-        const frame = prov.getFrame(next);
-        currentFrameRef.current = next;
-        setCurrentFrame(next);
-        setCurrentFrameData(frame);
-      },
-      1000 / (fpsRef.current * speedRef.current),
-    );
-  }, []);
+  const playing = useStore(playbackStore, (s) => s.playing);
+  const fps = useStore(playbackStore, (s) => s.fps);
+  const speedMultiplier = useStore(playbackStore, (s) => s.speedMultiplier);
+  const loopStart = useStore(playbackStore, (s) => s.loopStart);
+  const loopEnd = useStore(playbackStore, (s) => s.loopEnd);
 
-  const stopInterval = useCallback(() => {
-    if (playIntervalRef.current !== null) {
-      clearInterval(playIntervalRef.current);
-      playIntervalRef.current = null;
-    }
-  }, []);
-
+  // Scrubbing pauses playback (as in the Jupyter widget), so the playhead
+  // stays where the user dropped it.
   const handleSeek = useCallback(
     (index: number) => {
-      const prov = providerRef.current;
-      if (!prov) return;
-      if (playing) {
-        stopInterval();
-        setPlaying(false);
-      }
-      const frame = prov.getFrame(index);
-      currentFrameRef.current = index;
-      setCurrentFrame(index);
-      setCurrentFrameData(frame);
+      const store = playbackStore.getState();
+      store.pause();
+      store.seekFrame(index);
     },
-    [playing, stopInterval],
+    [playbackStore],
   );
 
-  const handlePlayPause = useCallback(() => {
-    if (playing) {
-      stopInterval();
-      setPlaying(false);
-    } else {
-      setPlaying(true);
-      startInterval();
-    }
-  }, [playing, startInterval, stopInterval]);
-
-  const handleFpsChange = useCallback(
-    (newFps: number) => {
-      setFpsState(newFps);
-      fpsRef.current = newFps;
-      if (playing) {
-        stopInterval();
-        startInterval();
-      }
-    },
-    [playing, startInterval, stopInterval],
-  );
-
-  const handleSpeedChange = useCallback(
-    (newSpeed: number) => {
-      setSpeedMultiplier(newSpeed);
-      speedRef.current = newSpeed;
-      if (playing) {
-        stopInterval();
-        startInterval();
-      }
-    },
-    [playing, startInterval, stopInterval],
-  );
-
-  const handleLoopRangeChange = useCallback(
-    (start: number, end: number) => {
-      const cStart = Math.max(0, Math.min(start, totalFrames - 1));
-      const cEnd = Math.max(0, Math.min(end, totalFrames - 1));
-      setLoopStart(cStart);
-      setLoopEnd(cEnd);
-    },
-    [totalFrames],
-  );
-
-  const handleStepForward = useCallback(() => {
-    const prov = providerRef.current;
-    if (!prov) return;
-    const next = Math.min(currentFrameRef.current + 1, loopEndRef.current);
-    const frame = prov.getFrame(next);
-    currentFrameRef.current = next;
-    setCurrentFrame(next);
-    setCurrentFrameData(frame);
-  }, []);
-
-  const handleStepBackward = useCallback(() => {
-    const prov = providerRef.current;
-    if (!prov) return;
-    const prev = Math.max(currentFrameRef.current - 1, loopStartRef.current);
-    const frame = prov.getFrame(prev);
-    currentFrameRef.current = prev;
-    setCurrentFrame(prev);
-    setCurrentFrameData(frame);
-  }, []);
-
-  // Cleanup interval on unmount
-  useEffect(() => {
-    return () => {
-      stopInterval();
-    };
-  }, [stopInterval]);
+  // Stop the private playback interval with the component.
+  useEffect(() => () => playbackStore.getState().pause(), [playbackStore]);
 
   // ─── Render ──────────────────────────────────────────────────────
 
@@ -423,7 +278,7 @@ export function PipelineViewer({ pipeline, width = "100%", height = 500 }: Pipel
       <Viewport
         snapshot={primarySnapshot}
         frame={currentFrameData}
-        onRendererReady={handleRendererReady}
+        onRendererReady={attachRenderer}
         onHover={setHoverInfo}
         onAtomRightClick={handleAtomRightClick}
         onFrameUpdated={handleFrameUpdated}
@@ -438,12 +293,12 @@ export function PipelineViewer({ pipeline, width = "100%", height = 500 }: Pipel
           loopStart={loopStart}
           loopEnd={loopEnd}
           onSeek={handleSeek}
-          onPlayPause={handlePlayPause}
-          onFpsChange={handleFpsChange}
-          onSpeedChange={handleSpeedChange}
-          onLoopRangeChange={handleLoopRangeChange}
-          onStepBackward={handleStepBackward}
-          onStepForward={handleStepForward}
+          onPlayPause={playbackStore.getState().togglePlayPause}
+          onFpsChange={playbackStore.getState().setFps}
+          onSpeedChange={playbackStore.getState().setSpeedMultiplier}
+          onLoopRangeChange={playbackStore.getState().setLoopRange}
+          onStepBackward={playbackStore.getState().stepBackward}
+          onStepForward={playbackStore.getState().stepForward}
         />
       )}
       <Tooltip info={hoverInfo} />

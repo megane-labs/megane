@@ -31,10 +31,10 @@ import {
   hasDistanceBondNode,
   distanceBondVdwScale,
 } from "../hooks/useFrameDistanceBonds";
+import { useViewportStateSync } from "../hooks/useViewportStateSync";
+import { useControlledPlayback } from "../hooks/useControlledPlayback";
 import { createPipelineStore, type PipelineStore } from "../pipeline/store";
-import { applyViewportState } from "../pipeline/apply";
 import { decodeSnapshot, decodeHeader, MSG_SNAPSHOT } from "../protocol/protocol";
-import type { ViewportState } from "../pipeline/types";
 import type { Snapshot, Frame, Measurement, HoverInfo } from "../types";
 import { applyThemeBackground, useRendererThemeBackground } from "../stores/useThemeStore";
 
@@ -101,19 +101,8 @@ export function WidgetViewer({
   const pipelineStore = pipelineStoreProp ?? defaultStore;
 
   const rendererRef = useRef<MoleculeRenderer | null>(null);
-  const playIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const [playing, setPlaying] = useState(false);
-  const [fps, setFps] = useState(30);
-  const [speedMultiplier, setSpeedMultiplier] = useState(1);
-  const [loopStart, setLoopStart] = useState(0);
-  const [loopEnd, setLoopEnd] = useState(0);
-  const currentFrameRef = useRef(0);
-  const loopStartRef = useRef(0);
-  const loopEndRef = useRef(0);
   const [hoverInfo, setHoverInfo] = useState<HoverInfo | null>(null);
   const [bondCount, setBondCount] = useState<number>(0);
-  const prevViewportStateRef = useRef<ViewportState | null>(null);
-  const hasRestoredCameraRef = useRef(false);
   const onCameraStateChangeRef = useRef(onCameraStateChange);
   onCameraStateChangeRef.current = onCameraStateChange;
   const initialCameraStateRef = useRef(initialCameraState);
@@ -131,22 +120,14 @@ export function WidgetViewer({
   const selectedAtomsRef = useRef(selectedAtoms);
   selectedAtomsRef.current = selectedAtoms;
 
-  // Keep loop refs in sync with state for use inside setInterval closure
-  currentFrameRef.current = currentFrame;
-  loopStartRef.current = loopStart;
-  loopEndRef.current = loopEnd;
-
-  // Reset loop range when a new trajectory loads
-  useEffect(() => {
-    setLoopStart(0);
-    setLoopEnd(totalFrames > 0 ? totalFrames - 1 : 0);
-  }, [totalFrames]);
+  // The playhead is the Python model's `frame_index`, so playback is
+  // controlled: ticks go out through `onSeek` and come back as `currentFrame`.
+  const playback = useControlledPlayback({ currentFrame, totalFrames, onSeek });
 
   // Sync external atom selection from Python
   useEffect(() => {
     setExternalSelection(selectedAtoms ?? []);
   }, [selectedAtoms, setExternalSelection]);
-  const viewportState = useStore(pipelineStore, (s) => s.viewportState);
   const storeSnapshot = useStore(pipelineStore, (s) => s.snapshot);
   const setSnapshot = useStore(pipelineStore, (s) => s.setSnapshot);
 
@@ -211,28 +192,9 @@ export function WidgetViewer({
       // Legacy `.load()` path: no pipeline JSON, no per-node snapshots.
       setSnapshot(snapshot);
     }
-
-    const renderer = rendererRef.current;
-    if (renderer) {
-      const storeState = pipelineStore.getState();
-      applyViewportState(
-        renderer,
-        storeState.viewportState,
-        null,
-        undefined,
-        storeState.atomLabels,
-      );
-      prevViewportStateRef.current = storeState.viewportState;
-
-      // Restore persisted camera on first load (Viewport's loadSnapshot/fitToView
-      // runs before this effect because child effects execute first).
-      const effectiveSnap = storeState.snapshot ?? snapshot;
-      if (effectiveSnap && !hasRestoredCameraRef.current) {
-        hasRestoredCameraRef.current = true;
-        const saved = initialCameraStateRef.current;
-        if (saved) renderer.applyCameraState(saved);
-      }
-    }
+    // Re-applying the viewport state and restoring the camera are
+    // useViewportStateSync's job: it runs once the Viewport has loaded the
+    // snapshot these updates produce.
   }, [snapshot, nodeSnapshotsData, pipelineJson, setSnapshot, pipelineStore]);
 
   // Quick Style → Python. Debounced so dragging a slider sends one update, and
@@ -259,20 +221,30 @@ export function WidgetViewer({
   useEffect(() => flushPipelineSync, [flushPipelineSync]);
   const [quickStyleCollapsed, setQuickStyleCollapsed] = useState(false);
 
-  // Apply viewportState changes to the renderer
-  useEffect(() => {
-    const renderer = rendererRef.current;
-    if (!renderer) return;
-    const atomLabels = pipelineStore.getState().atomLabels;
-    applyViewportState(
-      renderer,
-      viewportState,
-      prevViewportStateRef.current,
-      undefined,
-      atomLabels,
-    );
-    prevViewportStateRef.current = viewportState;
-  }, [viewportState, pipelineStore]);
+  const effectiveSnapshot = storeSnapshot ?? snapshot;
+
+  // Renderer ⇄ viewportState sync, shared with MeganeViewer / PipelineViewer.
+  // Subscribes without re-rendering this component, so a Quick Style edit (or
+  // any other execute) no longer re-renders the Timeline and overlays.
+  //
+  // Primary node: the Viewport draws `effectiveSnapshot`, which is the
+  // store's `snapshot` — the lowest-id entry of `nodeSnapshots`, not
+  // necessarily the node behind the first particle stream. Name that node
+  // explicitly, or with two structures whose viewport edges come in the
+  // other order the built-in meshes would get the other node's overrides and
+  // the Viewport's own structure would be drawn a second time as a layer.
+  const { attachRenderer } = useViewportStateSync(rendererRef, pipelineStore, {
+    snapshot: effectiveSnapshot,
+    getPrimaryNodeId: () => {
+      const { snapshot: snap, nodeSnapshots } = pipelineStore.getState();
+      if (!snap) return undefined;
+      return Object.keys(nodeSnapshots)
+        .sort()
+        .find((id) => nodeSnapshots[id].snapshot === snap);
+    },
+    getInitialCameraState: () => initialCameraStateRef.current,
+    onBondCount: setBondCount,
+  });
 
   // Per-frame bond recalculation for distance mode. In pipeline mode the
   // `snapshot` prop is null (set_pipeline only populates
@@ -289,21 +261,12 @@ export function WidgetViewer({
     onBondCount: setBondCount,
   });
 
-  // Track pipeline-driven bond updates (initial load, bondSource flips,
-  // file-mode bonds). Mirrors MeganeViewer's pattern.
-  useEffect(() => {
-    const total = viewportState.bonds.reduce((sum, b) => sum + b.bondIndices.length / 2, 0);
-    setBondCount(total);
-  }, [viewportState.bonds]);
-
   useRendererThemeBackground(rendererRef);
 
   const handleRendererReady = useCallback(
     (renderer: MoleculeRenderer) => {
-      rendererRef.current = renderer;
       applyThemeBackground(renderer);
-      applyViewportState(renderer, pipelineStore.getState().viewportState, null);
-      prevViewportStateRef.current = pipelineStore.getState().viewportState;
+      attachRenderer(renderer);
       // Apply initial selectedAtoms that may have arrived before the renderer was ready
       setExternalSelection(selectedAtomsRef.current ?? []);
       // Register camera change callback for host-side persistence
@@ -312,93 +275,8 @@ export function WidgetViewer({
         if (state) onCameraStateChangeRef.current?.(state);
       });
     },
-    [setExternalSelection, pipelineStore],
+    [setExternalSelection, attachRenderer],
   );
-
-  const startPlayInterval = useCallback(
-    (intervalFps: number, intervalSpeed: number) => {
-      if (playIntervalRef.current) clearInterval(playIntervalRef.current);
-      playIntervalRef.current = setInterval(
-        () => {
-          const next = currentFrameRef.current + 1;
-          if (next > loopEndRef.current) {
-            onSeek(loopStartRef.current);
-          } else {
-            onSeek(next);
-          }
-        },
-        1000 / (intervalFps * intervalSpeed),
-      );
-    },
-    [onSeek],
-  );
-
-  const handlePlayPause = useCallback(() => {
-    setPlaying((prev) => {
-      if (prev) {
-        if (playIntervalRef.current) {
-          clearInterval(playIntervalRef.current);
-          playIntervalRef.current = null;
-        }
-        return false;
-      } else {
-        startPlayInterval(fps, speedMultiplier);
-        return true;
-      }
-    });
-  }, [fps, speedMultiplier, startPlayInterval]);
-
-  const handleFpsChange = useCallback(
-    (newFps: number) => {
-      setFps(newFps);
-      if (playIntervalRef.current) startPlayInterval(newFps, speedMultiplier);
-    },
-    [speedMultiplier, startPlayInterval],
-  );
-
-  const handleSpeedChange = useCallback(
-    (newSpeed: number) => {
-      setSpeedMultiplier(newSpeed);
-      if (playIntervalRef.current) startPlayInterval(fps, newSpeed);
-    },
-    [fps, startPlayInterval],
-  );
-
-  const handleLoopRangeChange = useCallback(
-    (start: number, end: number) => {
-      const cStart = Math.max(0, Math.min(start, totalFrames - 1));
-      const cEnd = Math.max(0, Math.min(end, totalFrames - 1));
-      setLoopStart(cStart);
-      setLoopEnd(cEnd);
-    },
-    [totalFrames],
-  );
-
-  const handleStepForward = useCallback(() => {
-    const next = Math.min(currentFrame + 1, loopEndRef.current);
-    onSeek(next);
-  }, [currentFrame, onSeek]);
-
-  const handleStepBackward = useCallback(() => {
-    const prev = Math.max(currentFrame - 1, loopStartRef.current);
-    onSeek(prev);
-  }, [currentFrame, onSeek]);
-
-  const handleSeek = useCallback(
-    (frame: number) => {
-      if (playing) {
-        setPlaying(false);
-        if (playIntervalRef.current) {
-          clearInterval(playIntervalRef.current);
-          playIntervalRef.current = null;
-        }
-      }
-      onSeek(frame);
-    },
-    [onSeek, playing],
-  );
-
-  const effectiveSnapshot = storeSnapshot ?? snapshot;
 
   // Axis alignment moves the camera like a drag does; the renderer's
   // camera-change callback then syncs `camera_state` back to Python.
@@ -432,22 +310,7 @@ export function WidgetViewer({
       />
 
       {totalFrames > 1 && (
-        <Timeline
-          currentFrame={currentFrame}
-          totalFrames={totalFrames}
-          playing={playing}
-          fps={fps}
-          speedMultiplier={speedMultiplier}
-          loopStart={loopStart}
-          loopEnd={loopEnd}
-          onSeek={handleSeek}
-          onPlayPause={handlePlayPause}
-          onFpsChange={handleFpsChange}
-          onSpeedChange={handleSpeedChange}
-          onLoopRangeChange={handleLoopRangeChange}
-          onStepBackward={handleStepBackward}
-          onStepForward={handleStepForward}
-        />
+        <Timeline {...playback} currentFrame={currentFrame} totalFrames={totalFrames} />
       )}
       <div
         data-testid="view-controls"
