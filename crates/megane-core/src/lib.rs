@@ -6,6 +6,7 @@ pub mod cif;
 pub mod cml;
 pub mod crystal;
 pub mod dcd;
+pub mod formats;
 pub mod gamess;
 pub mod gro;
 pub mod jcampdx;
