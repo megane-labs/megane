@@ -10,10 +10,15 @@ import ipywidgets as widgets
 import megane
 
 viewer = megane.view_traj("protein.pdb", xtc="trajectory.xtc")
+frames = list(range(viewer.total_frames))
+energy = ...  # one value per frame, e.g. from your simulation log
 
-# Create a Plotly time-series chart
+# Create a Plotly time-series chart, plus a marker for the current frame
 fig = go.FigureWidget(
-    data=[go.Scatter(x=frames, y=energy, mode="lines+markers", name="Energy")],
+    data=[
+        go.Scatter(x=frames, y=energy, mode="lines+markers", name="Energy"),
+        go.Scatter(x=[0], y=[energy[0]], mode="markers", marker=dict(size=12, color="red"), name="Current"),
+    ],
     layout=go.Layout(
         xaxis_title="Frame", yaxis_title="Energy (kJ/mol)",
     ),
@@ -36,6 +41,8 @@ Use megane's `on_event("frame_change")` callback to update a marker on the Plotl
 
 ```python
 # megane → Plotly (update red marker on the chart)
+marker_trace = fig.data[1]
+
 @viewer.on_event("frame_change")
 def update_marker(data):
     idx = data["frame_index"]
@@ -46,25 +53,30 @@ def update_marker(data):
 
 ## Dihedral Trajectory Analysis
 
-Collect dihedral angles across all frames and plot the result:
+Collect dihedral angles across all frames and plot the result. The viewer
+computes measurements in the browser, and the kernel cannot receive them while
+a cell is still running, so a loop that sets `frame_index` and waits for
+`measurement` events collects nothing. Compute the series from the trajectory
+in Python and let the viewer highlight the same atoms:
 
 ```python
-import time
+import numpy as np
+from megane import load_trajectory
 
-viewer.selected_atoms = [10, 20, 30, 40]  # define the dihedral
-dihedrals = []
+atoms = [10, 20, 30, 40]
+viewer.selected_atoms = atoms  # live dihedral in the viewer
 
-@viewer.on_event("measurement")
-def collect(data):
-    if data and data["type"] == "dihedral":
-        dihedrals.append(data["value"])
+def dihedral_deg(p0, p1, p2, p3):
+    b0, b1, b2 = p0 - p1, p2 - p1, p3 - p2
+    b1n = b1 / np.linalg.norm(b1)
+    v = b0 - np.dot(b0, b1n) * b1n
+    w = b2 - np.dot(b2, b1n) * b1n
+    return float(np.degrees(np.arctan2(np.dot(np.cross(b1n, v), w), np.dot(v, w))))
 
-# Scan all frames
-for i in range(viewer.total_frames):
-    viewer.frame_index = i
-    time.sleep(0.01)  # allow widget sync
-
-viewer.off_event("measurement", collect)  # clean up
+trajectory = load_trajectory("protein.pdb", "trajectory.xtc")
+dihedrals = [
+    dihedral_deg(*trajectory.get_frame(i)[atoms]) for i in range(trajectory.n_frames)
+]
 
 # Plot with Plotly
 fig = go.FigureWidget(

@@ -53,21 +53,25 @@ function App() {
 
 | Prop | Type | Required | Description |
 |------|------|:--------:|-------------|
-| `onUploadStructure` | `(file: File) => void` | ✓ | Called when the user uploads a structure file |
-| `onUploadTrajectory` | `(file: File) => void` | | Called when the user uploads a trajectory file |
-| `onBondSourceChange` | `(source: BondSource) => void` | | Bond source change callback |
-| `onLabelSourceChange` | `(source: LabelSource) => void` | | Label source change callback |
-| `onLoadLabelFile` | `(file: File) => void` | | Called when the user uploads a label file |
-| `onVectorSourceChange` | `(source: VectorSource) => void` | | Vector source change callback |
-| `onLoadVectorFile` | `(file: File) => void` | | Called when the user uploads a vector file |
-| `onLoadDemoVectors` | `() => void` | | Called when the user requests demo vectors |
-| `playing` | `boolean` | | Playback state (default: `false`) |
-| `fps` | `number` | | Playback speed (default: `30`) |
-| `onSeek` | `(frame: number) => void` | | Frame seek handler |
-| `onPlayPause` | `() => void` | | Play/pause toggle |
-| `onFpsChange` | `(fps: number) => void` | | FPS change handler |
+| `onUploadStructure` | `(file: File, preParsed?: StructureParseResult) => void` | ✓ | Called when a file is opened in the primary Load Structure node. `preParsed` carries the viewer's own parse result when it already has one (large multi-frame XYZ / PDB files are handed over unparsed so the host can stream them) |
+| `onUploadTrajectory` | `(file: File) => void` | | Called when the user opens a file in a Load Trajectory node |
+| `onFrameChange` | `(frame: number) => void` | | Fires whenever the active trajectory frame changes (scrub, playback tick, seek) — mirrors the Jupyter widget's `frame_change` event |
+| `onSelectionChange` | `(selection: SelectionState) => void` | | Fires whenever the atom selection changes; data `{ atoms: number[] }` (0-based, max 4) — mirrors `selection_change` |
+| `onMeasurementChange` | `(measurement: Measurement \| null) => void` | | Fires when the distance / angle / dihedral measurement changes, `null` when cleared — mirrors `measurement` |
+| `playing` | `boolean` | | Playback state (default: `false`). Used only together with `onPlayPause`; otherwise the viewer's own playback store drives the Timeline |
+| `fps` | `number` | | Playback speed (default: `30`). Used only together with `onFpsChange` |
+| `onSeek` | `(frame: number) => void` | | Frame seek handler (default: the internal playback store) |
+| `onPlayPause` | `() => void` | | Play/pause toggle — supplying it makes playback controlled by `playing` |
+| `onFpsChange` | `(fps: number) => void` | | FPS change handler — supplying it makes the speed controlled by `fps` |
+| `initialCameraState` | `MeganeCameraState \| null` | | Camera to restore on the first structure load; takes precedence over the built-in `localStorage` copy |
+| `onCameraStateChange` | `(state: MeganeCameraState) => void` | | Called after each camera interaction, for hosts that persist the camera in their own storage |
 | `width` / `height` | `string \| number` | | Viewer dimensions (default: `"100%"`) |
 | `ui` | `Partial<MeganeViewerUiOptions>` | | Hides individual tools — see below (default: everything visible) |
+
+`onBondSourceChange`, `onLabelSourceChange`, `onLoadLabelFile`,
+`onVectorSourceChange`, `onLoadVectorFile` and `onLoadDemoVectors` are still
+accepted for compatibility but are no longer called: bonds, labels and vectors
+are configured by the pipeline's nodes.
 
 ### Hiding tools (`ui`)
 
@@ -100,6 +104,25 @@ pipeline still executes and the renderer still receives every update. The type
 are exported for typed configs. With `pipelineEditor: false` you must drive
 file loading yourself (`usePipelineStore.getState().openFile(file)`), since the
 Load Structure node lives inside the editor.
+
+### Light / dark theme
+
+`MeganeViewer` injects its colour tokens itself, but its panels only switch to
+the dark palette while `<html>` carries `data-theme="dark"`. To follow the OS
+(or VS Code / JupyterLab) theme, mount `<ThemeSync />` once next to your app
+root — or call `installThemeSync()`, which returns an undo function — and it
+keeps that attribute in step with the theme store.
+`useThemeStore.getState().setTheme("dark")` (or `"light"`, `"system"`) forces
+one; the choice is saved in `localStorage` under `megane-theme`.
+
+```tsx
+import { MeganeViewer, ThemeSync } from "megane-viewer/lib";
+
+<>
+  <ThemeSync />
+  <MeganeViewer onUploadStructure={handleUpload} />
+</>;
+```
 
 ### Camera orientation
 
@@ -279,7 +302,7 @@ keep working as before.
 
 | Feature | `MeganeViewer` | `PipelineViewer` |
 |---------|---------------|-----------------|
-| UI panels (sidebar, appearance) | Yes | No |
+| Editing UI (pipeline editor, measurement panels, perf HUD) | Yes | No |
 | Pipeline control | Internal editor UI | `pipeline` prop |
 | Multiple instances per page | Yes, with [`MeganeProvider`](#multiple-viewers-on-one-page) | Fully independent |
 | File loading | Upload / drag-drop | URL fetch via `fileUrl` |
@@ -367,8 +390,6 @@ interface SerializedPipeline {
 
 `PipelineNodeParams` is a discriminated union exported by `megane-viewer/lib`. The `type` field on each node determines which parameters are required — see [Node Reference](/reference/node-reference) for the full list.
 
-Each node's `type` field determines which parameters are required. See [Node Reference](/reference/node-reference) for the full list.
-
 #### `load_structure` node — the `fileUrl` field
 
 `PipelineViewer` cannot use a local file picker, so `load_structure` nodes need a `fileUrl` field pointing to a URL where the structure file can be fetched:
@@ -423,7 +444,7 @@ When the pipeline includes time-dependent data — by loading a multi-frame stru
 />
 ```
 
-> **Note:** `PipelineViewer` does not currently support `load_trajectory` nodes. Trajectories must be embedded in the structure file (e.g. ASE `.traj`, multi-frame XYZ). External XTC trajectories require a `MeganeViewer` with a server-side pipeline.
+> **Note:** `PipelineViewer` only fetches `load_structure` nodes, so `load_trajectory` nodes draw nothing. Trajectories must be embedded in the structure file (e.g. ASE `.traj`, multi-frame XYZ). Separate trajectory files (XTC, DCD, LAMMPS dump, …) need a `MeganeViewer`, where the user opens them in a Load Trajectory node.
 
 ### Usage in MDX (Next.js / Docusaurus)
 
@@ -431,7 +452,7 @@ When the pipeline includes time-dependent data — by loading a multi-frame stru
 
 ### Using a saved pipeline JSON
 
-You can serialize a pipeline from the megane UI (Pipeline editor → Export) and load it directly:
+You can serialize a pipeline from the megane UI (Pipeline editor → **File** → **Export pipeline**, which downloads `pipeline.megane.json`) and load it directly:
 
 ```tsx
 import pipelineJson from "./my-pipeline.json";
@@ -592,6 +613,7 @@ import type {
   BondConfig,          // Bond panel configuration (for Sidebar)
   TrajectoryConfig,    // Trajectory panel configuration (for Sidebar)
   StructureParseResult,// Parse result from parseStructureFile/Text
+  MeganeCameraState,   // Camera state for initialCameraState / onCameraStateChange
 } from "megane-viewer/lib";
 ```
 
@@ -602,8 +624,10 @@ import { parseStructureFile, parseStructureText } from "megane-viewer/lib";
 
 // Parse from File object (drag-and-drop, file input)
 const result = await parseStructureFile(file);
-// result.snapshot, result.frames, result.labels
+// result.snapshot, result.frames, result.meta, result.labels,
+// result.vectorChannels, result.scalarChannels, result.warnings
 
-// Parse from text string (fetched content)
-const result = await parseStructureText(pdbText);
+// Parse from text string (fetched content). The optional file name picks
+// the format by extension; without it the text is parsed as PDB.
+const fromText = await parseStructureText(groText, "conf.gro");
 ```

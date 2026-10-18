@@ -63,6 +63,9 @@ appears on one line just above it until you dismiss it.
 
 ## Getting started
 
+With nothing open, the view shows *Build a structure* with **Open…**,
+**New empty cell…** and **New bulk crystal…**, the same as the *File* menu.
+
 - **File › Open…** loads a structure file. Any format the viewer reads works
   (PDB, XYZ, MOL / SDF, MOL2, CIF, GRO, LAMMPS data, …). Only the structure
   is taken; trajectory frames are ignored. Dropping a file anywhere on the 3D
@@ -153,8 +156,9 @@ element, *Clean up molecule* and *Delete atom*.
 
 ### Clean up geometry
 
-**Structure › Clean up geometry** (or *Clean up* in the Inspector, or *Clean
-up molecule* in the atom menu) hands each molecule — the selected ones, or
+**Structure › Clean up geometry** (*Clean up selected molecules* while atoms
+are selected; or *Clean up* in the Inspector, or *Clean up molecule* in the
+atom menu) hands each molecule — the selected ones, or
 all of them when nothing is selected — to [RDKit](https://www.rdkit.org/):
 it is embedded again from its atoms and bonds (ETKDG), minimised with
 MMFF94s (UFF when MMFF has no parameters), and put back where it was by a
@@ -187,9 +191,9 @@ lattice constant never switches tools.
 
 Editing never moves the camera: the view keeps its zoom and orientation across
 every operation (and across Undo / Redo / Clear all). Only opening a file or
-starting a new document re-fits the view. **View › Reset view** and the
-*Look along* directions (±x / ±y / ±z, and ±a / ±b / ±c while there is a cell)
-work as the viewer's Reset View and axis buttons.
+starting a new document re-fits the view. **Reset View** (R) and the axis
+buttons in the top-left corner (±x / ±y / ±z, and ±a / ±b / ±c while there
+is a cell) work as the viewer's.
 
 ## Library
 
@@ -220,16 +224,16 @@ and grows with your own molecules:
   always kept). RDKit is the only way a sketch becomes 3D: if it cannot run
   (a browser without Web Workers, or a drawing it cannot sanitise) the
   dialog reports the error and nothing is added.
-  **Paste MOL** in the dialog takes a molfile from elsewhere instead of
-  drawing (it is embedded the same way); it is also what the dialog falls
-  back to if Ketcher cannot load.
+  **Paste MOL** in the dialog takes a molfile (or a SMILES string) from
+  elsewhere instead of drawing (it is embedded the same way); it is also what
+  the dialog falls back to if Ketcher cannot load.
 - **From file…** (in the gallery) imports any structure file megane reads as a molecule (3D
   coordinates are kept as they are).
-- **Save as fragment** in the Inspector keeps the selected atoms, with the bonds between them, as a
-  molecule — a quick way to lift a 3D fragment out of an opened file.
   A flat 2D file (a molfile without z coordinates) is only rescaled to
   ångström and marked *flat* in the list; the Builder never invents a
   conformer for it.
+- **Save as fragment** in the Inspector keeps the selected atoms, with the bonds between them, as a
+  molecule — a quick way to lift a 3D fragment out of an opened file.
 - **Edit** (on a sketched molecule) reopens the sketch in Ketcher; adding the
   result makes a new library entry. **×** removes a molecule you added.
 
@@ -260,8 +264,8 @@ Either way the molecule enters the history as one `add_fragment` operation
 (named after the molecule, e.g. `Add water-3 (3 atoms)`), so Undo removes it
 whole and the fragment's atoms can be addressed by later operations.
 
-To put a molecule *on* a surface, tick **Place on atoms** in the *Place*
-tool's settings and give a height:
+To put a molecule *on* a surface, tick **On atoms** in the *Place*
+tool's settings and give a height (2 Å by default):
 the Place tool then also accepts a click on an atom and stamps the molecule
 that many Å above it along the cell's c axis (the slab normal; +z without a
 cell) — an adsorbate on the site you clicked. Leave it unticked and clicks on
@@ -284,8 +288,8 @@ tests (`tests/fixtures/crystal/ase-oracle.json`).
   the fields with reference lattice constants (Cu, Al, Fe, Mg, Si, NaCl, GaAs,
   SrTiO₃, …). The document is named after the crystal (`Cu-fcc`) and, like
   an empty cell, replaces whatever is open.
-- **Set cell…** edits the cell as `a b c α β γ` (the info line over the view
-  always shows the current cell).
+- **Set cell…** (*Edit cell…* once there is one) edits the cell as
+  `a b c α β γ` (the info line over the view always shows the current cell).
   With *move atoms with the cell* on, the atoms keep their fractional
   coordinates (ASE's `scale_atoms`); off, they stay where they are.
   **Wrap atoms into cell** folds every atom back into the cell; **Center with
@@ -317,10 +321,12 @@ tests (`tests/fixtures/crystal/ase-oracle.json`).
 
 The items that take parameters open a form in the Details panel.
 While its fields describe a valid operation, **the view previews the result**
-(the status line says *Preview*) and clicks in the view are paused; **Apply**
-writes the operation, **Cancel** or Esc leaves the structure as it was. A
+(the status line says *Preview*) and clicks in the view are paused; the
+form's button (*Set cell*, *Center*, *Make supercell*, *Cut slab*) writes
+the operation, **Cancel** or Esc leaves the structure as it was. A
 result of more than 200 000 atoms is not previewed — the form says so — but
-Apply still builds it. The view is refitted to what it shows when the preview
+the button still builds it; a supercell or slab of more than 1 000 000 atoms
+is refused. The view is refitted to what it shows when the preview
 starts and ends, keeping the angle you were looking from.
 
 Each action is one operation in the history (`Supercell 2×2×1`,
@@ -336,7 +342,9 @@ polymer chains, solvation — appear in the **Tools** menu on the operations rai
 in a separate *tool server*, an
 [MCP](https://modelcontextprotocol.io/) server that follows the
 [Builder Tool Contract](../dev/builder-tools.md). Start the reference server
-with HTTP on your machine, allowing the page you opened Builder from:
+with HTTP on your machine, allowing the page you opened Builder from (here
+`megane serve --port 8080`; `megane serve` defaults to port 8765, which the
+tool server takes below):
 
 ```bash
 uvx megane-builder-tools --transport http --port 8765 \
