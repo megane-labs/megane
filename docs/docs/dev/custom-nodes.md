@@ -16,7 +16,7 @@ extending megane itself.
 
 The pipeline is a typed, directed-acyclic data-flow graph (built on
 [React Flow](https://reactflow.dev/)). A "node" is **not a single class** — it is
-a set of coordinated declarations spread across roughly eight locations. There is
+a set of coordinated declarations spread across roughly ten files. There is
 deliberately no runtime `Node` base class: instead, each node type is a string
 literal in the `PipelineNodeType` union, and everything about it is supplied by
 matching entries in a family of `Record<PipelineNodeType, …>` tables.
