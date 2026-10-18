@@ -51,9 +51,9 @@
   "scripts": {
     "dev": "vite",
     "build:wasm": "node scripts/build-wasm.mjs",
-    "build": "npm run build:wasm && tsc && vite build && vite build --config vite.widget.config.ts && rm -rf dist && vite build --config vite.widget.config.ts --outDir dist && vite build --config vite.lib.config.ts && npm run build:types && npm run build:lab",
+    "build": "npm run build:wasm && tsc && vite build && npm run build:widget && rm -rf dist && vite build --config vite.widget.config.ts --outDir dist && vite build --config vite.lib.config.ts && npm run build:types && npm run build:lab",
     "build:app": "npm run build:wasm && tsc && vite build",
-    "build:widget": "vite build --config vite.widget.config.ts",
+    "build:widget": "vite build --config vite.widget.config.ts && vite build --config vite.builder-widget.config.ts",
     "build:lib": "npm run build:wasm && vite build --config vite.widget.config.ts --outDir dist && vite build --config vite.lib.config.ts && npm run build:types",
     "build:types": "tsc -p tsconfig.build-types.json && node scripts/postprocess-dts.mjs",
     "build:lab": "cd jupyterlab-megane && npm install && npm run build",

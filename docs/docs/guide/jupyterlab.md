@@ -32,6 +32,15 @@ Trajectory-only formats (`.xtc`, `.dcd`, `.nc`) and volumetric grids (`.cube`, `
 
 The JupyterLab DocWidget mounts the full visual pipeline editor, so you can build and edit visualization workflows by wiring nodes, just as in the standalone web app. Pipelines saved as `.megane.json` reopen in the same editor.
 
+## megane Builder (structure editor)
+
+Click the *megane* panel (a pair of glasses) in the left sidebar: **Open
+Builder**, or click one of the structure files it lists from the file
+browser's folder. Structure files also have **Open in megane Builder** in the
+file browser's context menu, and the launcher has a **megane Builder** card.
+*Save* writes into the server's file tree. See
+[megane Builder](builder.md#in-vs-code-jupyterlab-and-notebooks).
+
 ## Events for other extensions
 
 The JupyterLab DocWidget has no Python kernel connection, so events are surfaced as a subscription API rather than a Python callback. Other JupyterLab extensions can react to viewer state via `MeganeReactView.subscribeFrameChange`, `subscribeSelectionChange`, and `subscribeMeasurementChange`. When `IStatusBar` is available, the current frame index is also shown in the JupyterLab status bar.

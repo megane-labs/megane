@@ -7,7 +7,7 @@
  * dialog has the keyboard, so typing a lattice constant never switches tools.
  */
 
-import { useEffect } from "react";
+import { useEffect, type RefObject } from "react";
 import type { StoreApi } from "zustand";
 import type { EditAtomRef } from "../pipeline/types";
 import { canEdit, type BuilderStore } from "./store";
@@ -158,11 +158,32 @@ export function runShortcut(
   }
 }
 
-/** Listen for the shortcuts on the window while mounted. */
-export function useBuilderShortcuts(api: StoreApi<BuilderStore>, host: ShortcutHost) {
+/**
+ * Whether a key event belongs to the Builder. Without a scope (the web app,
+ * which owns the window) every key does; embedded beside an IDE's own
+ * editors, only keys pressed while the focus is inside the Builder do.
+ */
+export function inScope(
+  target: EventTarget | null,
+  scope: HTMLElement | null | undefined,
+): boolean {
+  if (scope === undefined) return true;
+  return !!scope && target instanceof Node && scope.contains(target);
+}
+
+/**
+ * Listen for the shortcuts on the window while mounted; with `scope`, only
+ * for keys pressed while the focus is inside that element.
+ */
+export function useBuilderShortcuts(
+  api: StoreApi<BuilderStore>,
+  host: ShortcutHost,
+  scope?: RefObject<HTMLElement | null>,
+) {
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.defaultPrevented || e.repeat) return;
+      if (scope && !inScope(e.target, scope.current)) return;
       if (isTypingTarget(e.target)) return;
       // A modal dialog (the Ketcher sketcher) owns the keyboard; the forms in
       // the Details panel (a Structure dialog, a new document, a Python tool,
@@ -175,5 +196,5 @@ export function useBuilderShortcuts(api: StoreApi<BuilderStore>, host: ShortcutH
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [api, host]);
+  }, [api, host, scope]);
 }

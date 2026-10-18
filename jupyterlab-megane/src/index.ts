@@ -5,6 +5,7 @@ import { IStatusBar } from "@jupyterlab/statusbar";
 import { exposeAppForTests } from "./testHook";
 import { MeganeDocFactory, MeganePipelineDocFactory } from "./factory";
 import { setupFrameStatusBar } from "./frameStatusBar";
+import { builderPlugin } from "./builder/plugin";
 import type { MeganeReactView } from "./MeganeDocWidget";
 import type { MeganePipelineReactView } from "./MeganePipelineDocWidget";
 import {
@@ -131,4 +132,5 @@ const plugin: JupyterFrontEndPlugin<void> = {
   },
 };
 
-export default plugin;
+export { plugin, builderPlugin };
+export default [plugin, builderPlugin];

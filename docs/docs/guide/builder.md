@@ -6,7 +6,9 @@ drag them around, change elements, draw or remove bonds, and save the result
 as XYZ, PDB, or MOL. It lives beside the viewer at `/builder.html` — on the
 hosted demo ([megane-labs.github.io/megane/app/builder.html](https://megane-labs.github.io/megane/app/builder.html)), in the
 web app that `megane serve` hosts, and in the Vite dev server (`npm run dev`,
-then open `http://localhost:5173/builder.html`).
+then open `http://localhost:5173/builder.html`) — and inside VS Code,
+JupyterLab and Jupyter notebooks (see
+[In VS Code, JupyterLab and notebooks](#in-vs-code-jupyterlab-and-notebooks)).
 
 The viewer and the Builder are deliberately different tools. The viewer's
 pipeline describes how a structure is *shown* (bonds, filters, colours,
@@ -382,12 +384,65 @@ Operations refer to atoms in two ways: atoms from the file by their index in
 the opened structure, and atoms you created by an id the operation assigned.
 That is why deleting an atom never breaks a later operation.
 
+## In VS Code, JupyterLab and notebooks
+
+The same Builder ships with the editor extensions and the Python package.
+Everything above works the same; what differs is how you get to it and
+where *Save* writes.
+
+**VS Code.** The megane extension adds a *megane* icon (a pair of glasses) to
+the activity bar. Its *Builder* view has **New Structure** and **Open File in
+Builder…**; a structure file also has **Open in megane Builder** in the
+Explorer's context menu, and a megane viewer tab has the same button in its
+title bar. Each opens the Builder in an editor tab (one tab per file; asking
+again brings it back). *Save* asks where to write with VS Code's save dialog,
+starting beside the file you opened.
+
+**JupyterLab.** The megane extension adds a *megane* panel (the glasses icon)
+to the left sidebar: **Open Builder**, and the structure files of the file
+browser's current folder — click one to edit it. Structure files also have
+**Open in megane Builder** in the file browser's context menu, and the
+launcher has a **megane Builder** card. The Builder is one main-area tab;
+opening another file replaces its document, as *File › Open…* does. *Save*
+asks for a path in the server's file tree (beside the opened file by default)
+and asks before replacing a file.
+
+**Jupyter notebooks** (JupyterLab, Notebook, VS Code): `megane.Builder` is a
+widget.
+
+```python
+import megane
+
+b = megane.Builder("caffeine.sdf")   # or megane.Builder() for the start screen
+b                                    # edit in the cell
+
+b.n_atoms                            # the structure on screen, kept in sync
+b.save("caffeine_edited.pdb")        # format from the extension
+pdb_text = b.text("pdb")             # "xyz", "pdb" or "mol"
+atoms = b.to_ase()                   # needs ASE
+b.load("other.xyz")                  # open another file in the same widget
+```
+
+*File › Save* in the cell writes through the kernel into its working
+directory (the notebook's folder; set `megane.Builder(save_dir=...)` to
+change it) and never overwrites a file — a taken name gets `-1`, `-2`, ….
+Each `Builder` edits its own document; displaying the same `Builder` in a
+second output moves it there, and the first offers *Show here* to take it
+back.
+
+What the embedded Builders leave out: the *Tools* menu (MCP tool servers,
+which only the web app can reach), and, in the notebook widget, the Ketcher
+sketcher — *Sketch…* opens the dialog with *Paste MOL*, which takes a MOL
+block or a SMILES string and embeds it in 3D with RDKit. RDKit (*Clean up* and
+the 3D embedding) works on every host; the notebook widget fetches it from the
+kernel the first time it is needed. The keyboard shortcuts act only while the
+focus is in the Builder, so they never steal keys from the editor around it.
+
 ## Not yet
 
 Saving the document as a project file (the source plus its operations),
 building a crystal from a space-group number and
 Wyckoff positions, and enumerating the distinct terminations of a slab
-(pymatgen's `SlabGenerator`) are deliberately not in this version; nor is
-the Builder shipped inside the JupyterLab or VS Code hosts yet. The full design, including how a Builder
+(pymatgen's `SlabGenerator`) are deliberately not in this version. The full design, including how a Builder
 document is meant to travel into the viewer, is in
 [Structure editing design](../dev/editor-design.md).

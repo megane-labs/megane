@@ -1,7 +1,7 @@
 {
   "name": "vscode-megane",
   "displayName": "megane - Molecular Viewer",
-  "description": "View molecular structure files (PDB, GRO, XYZ (incl. extended XYZ .extxyz and Jmol .jxyz), MOL, SDF, MOL2, CIF, mmCIF, LAMMPS data, AMBER prmtop, ASE traj, XTC, LAMMPS dump, DCD, AMBER NetCDF, VASP POSCAR/CONTCAR/XDATCAR, CML, Molden, XCrySDen XSF, Chem3D XML, Odyssey xodydata/odydata, CASTEP magres, GAMESS output, CASTEP phonon), volumetric grids (Gaussian CUBE, OpenDX), and JCAMP-DX spectra (.jdx, .jcamp) with megane",
+  "description": "View and build molecular structure files (PDB, GRO, XYZ (incl. extended XYZ .extxyz and Jmol .jxyz), MOL, SDF, MOL2, CIF, mmCIF, LAMMPS data, AMBER prmtop, ASE traj, XTC, LAMMPS dump, DCD, AMBER NetCDF, VASP POSCAR/CONTCAR/XDATCAR, CML, Molden, XCrySDen XSF, Chem3D XML, Odyssey xodydata/odydata, CASTEP magres, GAMESS output, CASTEP phonon), volumetric grids (Gaussian CUBE, OpenDX), and JCAMP-DX spectra (.jdx, .jcamp) with megane",
   "version": "0.17.0",
   "publisher": "hodakamori",
   "license": "MIT",
@@ -153,10 +153,83 @@
         ],
         "priority": "default"
       }
-    ]
+    ],
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "megane",
+          "title": "megane",
+          "icon": "resources/megane.svg"
+        }
+      ]
+    },
+    "views": {
+      "megane": [
+        {
+          "id": "megane.builderView",
+          "name": "Builder",
+          "icon": "resources/megane.svg",
+          "contextualTitle": "megane Builder"
+        }
+      ]
+    },
+    "viewsWelcome": [
+      {
+        "view": "megane.builderView",
+        "contents": "Build or edit a molecular structure with megane Builder: add, delete and move atoms, draw bonds, build crystals and save as XYZ, PDB or MOL.\n[New Structure](command:megane.builder.new)\n[Open File in Builder…](command:megane.builder.open)\nTo edit a file from the Explorer, right-click it and choose \"Open in megane Builder\"."
+      }
+    ],
+    "commands": [
+      {
+        "command": "megane.builder.new",
+        "title": "New Structure",
+        "category": "megane Builder",
+        "icon": "$(add)"
+      },
+      {
+        "command": "megane.builder.open",
+        "title": "Open File in Builder…",
+        "category": "megane Builder",
+        "icon": "$(folder-opened)"
+      },
+      {
+        "command": "megane.builder.openFile",
+        "title": "Open in megane Builder",
+        "category": "megane Builder",
+        "icon": "$(tools)"
+      }
+    ],
+    "menus": {
+      "view/title": [
+        {
+          "command": "megane.builder.new",
+          "when": "view == megane.builderView",
+          "group": "navigation@1"
+        },
+        {
+          "command": "megane.builder.open",
+          "when": "view == megane.builderView",
+          "group": "navigation@2"
+        }
+      ],
+      "explorer/context": [
+        {
+          "command": "megane.builder.openFile",
+          "when": "resourceExtname =~ /^\\.(pdb|gro|xyz|extxyz|jxyz|mol|sdf|mol2|cif|mmcif|data|lammps|lammpstrj|dump|trj|traj|vasp|molden|cml|xsf|axsf|c3xml|xodydata|odydata|magres|gamess|phonon)$/i || resourceFilename =~ /^(POSCAR|CONTCAR|XDATCAR)/",
+          "group": "navigation@90"
+        }
+      ],
+      "editor/title": [
+        {
+          "command": "megane.builder.openFile",
+          "when": "activeCustomEditorId == megane.structureViewer",
+          "group": "navigation"
+        }
+      ]
+    }
   },
   "scripts": {
-    "build:webview": "vite build --config vite.webview.config.ts",
+    "build:webview": "vite build --config vite.webview.config.ts && vite build --config vite.builder.config.ts",
     "build:extension": "tsc -p tsconfig.json",
     "build": "npm run build:webview && npm run build:extension",
     "watch": "tsc -p tsconfig.json --watch",

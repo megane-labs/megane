@@ -70,3 +70,35 @@ declare module "@megane/types" {
     label: string;
   }
 }
+
+declare module "@megane/builder/host" {
+  export interface BuilderSaveRequest {
+    name: string;
+    text: string;
+    format: "xyz" | "pdb" | "mol";
+  }
+  export interface BuilderHost {
+    save?: (file: BuilderSaveRequest) => Promise<string | null | void>;
+    tools?: boolean;
+    scopeShortcuts?: boolean;
+  }
+}
+
+declare module "@megane/builder/mount" {
+  import type { BuilderHost } from "@megane/builder/host";
+  export interface MountedBuilder {
+    open(file: File): Promise<boolean>;
+    dispose(): void;
+  }
+  export function mountBuilder(el: HTMLElement, host?: BuilderHost): MountedBuilder;
+}
+
+declare module "@megane/builder/open" {
+  export function openStructureFile(file: File): Promise<boolean>;
+}
+
+declare module "@megane/builder/store" {
+  export const useBuilderStore: {
+    getState(): { closeDocument(): void; [key: string]: any };
+  };
+}

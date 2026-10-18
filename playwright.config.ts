@@ -134,6 +134,24 @@ export default defineConfig({
       testMatch: /(^|\/)vscode\.spec\.ts$/,
       timeout: 240_000,
     },
+    // megane Builder embedded in the other hosts: the JupyterLab extension's
+    // megane sidebar + tab, the `megane.Builder` Jupyter widget, and the VS
+    // Code extension's activity-bar view + Builder tab.
+    {
+      name: "builder-jupyterlab",
+      testMatch: /builder-jupyterlab\.spec\.ts$/,
+      timeout: 240_000,
+    },
+    {
+      name: "builder-widget-jupyterlab",
+      testMatch: /builder-widget-jupyterlab\.spec\.ts$/,
+      timeout: 240_000,
+    },
+    {
+      name: "builder-vscode",
+      testMatch: /builder-vscode\.spec\.ts$/,
+      timeout: 300_000,
+    },
 
     // ── Feature specs ─────────────────────────────────────────────────
     // These run against the same prebuilt webapp as `webapp` / `contract`,

@@ -84,6 +84,30 @@ export interface MenuProps {
   ariaLabel?: string;
 }
 
+/**
+ * The part of the window a menu may use: the window, narrowed to the Builder
+ * the trigger belongs to. Embedded in a notebook the page can be far taller
+ * than what is on screen (a VS Code notebook draws its outputs in one tall
+ * webview), so a menu kept inside the Builder stays where the user looks.
+ */
+export function menuBounds(
+  trigger: Element,
+  win: Pick<Window, "innerWidth" | "innerHeight"> = window,
+): { left: number; top: number; right: number; bottom: number } {
+  const bounds = { left: 0, top: 0, right: win.innerWidth, bottom: win.innerHeight };
+  const builder = trigger.closest('[data-testid="megane-builder"]');
+  if (!builder) return bounds;
+  const r = builder.getBoundingClientRect();
+  // A Builder too small to hold anything (not laid out yet) does not narrow it.
+  if (r.width <= 0 || r.height <= 0) return bounds;
+  return {
+    left: Math.max(bounds.left, r.left),
+    top: Math.max(bounds.top, r.top),
+    right: Math.min(bounds.right, r.right),
+    bottom: Math.min(bounds.bottom, r.bottom),
+  };
+}
+
 export function Menu({
   label,
   items,
@@ -98,29 +122,31 @@ export function Menu({
   ariaLabel,
 }: MenuProps) {
   const [open, setOpen] = useState(false);
-  const [pos, setPos] = useState<{ left: number; top: number } | null>(null);
+  const [pos, setPos] = useState<{ left: number; top: number; bottom: number } | null>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
 
   useDismiss({ onDismiss: () => setOpen(false), enabled: open, inside: [triggerRef, menuRef] });
 
   // Under the trigger (or beside it), pulled back when it would run off the
-  // window.
+  // window or out of the Builder (see `menuBounds`).
   useLayoutEffect(() => {
     if (!open || !triggerRef.current) {
       setPos(null);
       return;
     }
     const at = triggerRef.current.getBoundingClientRect();
+    const box = menuBounds(triggerRef.current);
     const width = menuRef.current?.offsetWidth ?? 0;
     const height = menuRef.current?.offsetHeight ?? 0;
-    const maxLeft = window.innerWidth - width - EDGE;
-    const maxTop = window.innerHeight - height - EDGE;
+    const maxLeft = box.right - width - EDGE;
+    const maxTop = box.bottom - height - EDGE;
     const left = placement === "right" ? at.right + 8 : at.left;
     const top = placement === "right" ? at.top : at.bottom + 4;
     setPos({
-      left: Math.max(EDGE, Math.min(left, maxLeft)),
-      top: placement === "right" ? Math.max(EDGE, Math.min(top, maxTop)) : top,
+      left: Math.max(box.left + EDGE, Math.min(left, maxLeft)),
+      top: placement === "right" ? Math.max(box.top + EDGE, Math.min(top, maxTop)) : top,
+      bottom: box.bottom,
     });
   }, [open, placement]);
 
@@ -170,7 +196,7 @@ export function Menu({
               right: "auto",
               marginTop: 0,
               zIndex: 1000,
-              maxHeight: `calc(100vh - ${(pos?.top ?? 0) + EDGE}px)`,
+              maxHeight: pos ? Math.max(0, pos.bottom - pos.top - EDGE) : undefined,
               overflowY: "auto",
               display: "flex",
               flexDirection: "column",

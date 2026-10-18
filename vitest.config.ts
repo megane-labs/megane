@@ -21,10 +21,7 @@ export default defineConfig({
         __dirname,
         "tests/ts/__stubs__/jupyterlab-application.ts",
       ),
-      "@jupyterlab/apputils": path.resolve(
-        __dirname,
-        "tests/ts/__stubs__/jupyterlab-apputils.ts",
-      ),
+      "@jupyterlab/apputils": path.resolve(__dirname, "tests/ts/__stubs__/jupyterlab-apputils.ts"),
       "@jupyterlab/coreutils": path.resolve(
         __dirname,
         "tests/ts/__stubs__/jupyterlab-coreutils.ts",
@@ -33,20 +30,19 @@ export default defineConfig({
         __dirname,
         "tests/ts/__stubs__/jupyterlab-docregistry.ts",
       ),
-      "@jupyterlab/services": path.resolve(
+      "@jupyterlab/filebrowser": path.resolve(
         __dirname,
-        "tests/ts/__stubs__/jupyterlab-services.ts",
+        "tests/ts/__stubs__/jupyterlab-filebrowser.ts",
       ),
+      "@jupyterlab/launcher": path.resolve(__dirname, "tests/ts/__stubs__/jupyterlab-launcher.ts"),
+      "@jupyterlab/services": path.resolve(__dirname, "tests/ts/__stubs__/jupyterlab-services.ts"),
       "@jupyterlab/statusbar": path.resolve(
         __dirname,
         "tests/ts/__stubs__/jupyterlab-statusbar.ts",
       ),
       // `@lumino/widgets` is a peer dep of jupyterlab-megane but is not in the
       // root node_modules. The stub satisfies import resolution at test time.
-      "@lumino/widgets": path.resolve(
-        __dirname,
-        "tests/ts/__stubs__/lumino-widgets.ts",
-      ),
+      "@lumino/widgets": path.resolve(__dirname, "tests/ts/__stubs__/lumino-widgets.ts"),
       // `vscode` is injected by the VS Code extension host at runtime and is
       // not present in any node_modules. Tests mock it via vi.mock(); the stub
       // only needs to satisfy resolution.

@@ -27,6 +27,11 @@
  * Reuses the viewer's renderer (`Viewport` + `MoleculeRenderer`, driven through
  * `applyViewportState`), parsers, writers and the edit engine; nothing in the
  * viewer imports this app.
+ *
+ * The same app is embedded in the VS Code and JupyterLab extensions and the
+ * Jupyter widget; `host` says how Save delivers a file there, whether the
+ * keyboard shortcuts stay inside the Builder, and which optional parts are on
+ * (see `host.ts`).
  */
 
 import {
@@ -48,8 +53,12 @@ import type { MoleculeRenderer } from "../renderer/MoleculeRenderer";
 import { latticeVectors, type ViewAxis } from "../renderer/cameraOrientation";
 import { applyViewportState } from "../pipeline/apply";
 import type { ViewportState } from "../pipeline/types";
-import { parseStructureFile } from "../parsers/structure";
-import { STRUCTURE_EXPORT_FORMATS, exportSnapshot } from "../export/structureExport";
+import {
+  STRUCTURE_EXPORT_FORMATS,
+  exportFileName,
+  exportSnapshot,
+  snapshotToText,
+} from "../export/structureExport";
 import type { StructureWriteFormat } from "../parsers/parseCore";
 import { applyThemeBackground, useRendererThemeBackground } from "../stores/useThemeStore";
 import type { HoverInfo } from "../types";
@@ -78,7 +87,9 @@ import { LibraryHost } from "./library/LibraryPanel";
 import { AtomMenu, type AtomMenuTarget } from "./AtomMenu";
 import { runCleanup } from "./cleanup";
 import { buttonStyle, hintStyle } from "./styles";
-import { trackEvent, trackFileOpen } from "../analytics";
+import { trackEvent } from "../analytics";
+import { WEB_HOST, hostHasTools, type BuilderHost } from "./host";
+import { openStructureFile } from "./open";
 
 /** Width of the Details and History panels on the right of the view. */
 const PANEL_WIDTH = 372;
@@ -101,8 +112,15 @@ function modKeyLabel(): string {
   return /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent) ? "⌘" : "Ctrl";
 }
 
-export function BuilderApp() {
+export interface BuilderAppProps {
+  /** The page the Builder runs in; the standalone web app when omitted. */
+  host?: BuilderHost;
+}
+
+export function BuilderApp({ host = WEB_HOST }: BuilderAppProps = {}) {
   const api = useBuilderStore;
+  const rootRef = useRef<HTMLDivElement>(null);
+  const hasTools = hostHasTools(host);
   const source = useBuilderStore((s) => s.source);
   const result = useBuilderStore((s) => s.result);
   const showOriginal = useBuilderStore((s) => s.showOriginal);
@@ -120,7 +138,6 @@ export function BuilderApp() {
   const redo = useBuilderStore((s) => s.redo);
   const newCell = useBuilderStore((s) => s.newCell);
   const newBulk = useBuilderStore((s) => s.newBulk);
-  const openStructure = useBuilderStore((s) => s.openStructure);
   const setNotice = useBuilderStore((s) => s.setNotice);
   const reportError = useBuilderStore((s) => s.reportError);
   const pushOp = useBuilderStore((s) => s.pushOp);
@@ -152,7 +169,7 @@ export function BuilderApp() {
   const [hoverInfo, setHoverInfo] = useState<HoverInfo>(null);
   const [atomMenu, setAtomMenu] = useState<AtomMenuTarget | null>(null);
   const closeAtomMenu = useCallback(() => setAtomMenu(null), []);
-  useToolServerLaunch();
+  useToolServerLaunch(hasTools);
   const [dropActive, setDropActive] = useState(false);
 
   // ── The panels on the right ──
@@ -226,20 +243,7 @@ export function BuilderApp() {
 
   // ── Open ──
   const inputRef = useRef<HTMLInputElement>(null);
-  const openFile = useCallback(
-    async (file: File) => {
-      try {
-        const parsed = await parseStructureFile(file);
-        openStructure(parsed.snapshot, parsed.labels, file.name);
-        trackFileOpen("structure", file.name);
-      } catch (err) {
-        reportError(
-          `Could not open ${file.name}: ${err instanceof Error ? err.message : String(err)}`,
-        );
-      }
-    },
-    [openStructure, reportError],
-  );
+  const openFile = useCallback((file: File) => openStructureFile(file, api), [api]);
   const handleOpenChange = useCallback(
     async (e: ChangeEvent<HTMLInputElement>) => {
       const file = e.target.files?.[0];
@@ -261,10 +265,23 @@ export function BuilderApp() {
   const handleExport = useCallback(
     async (format: StructureWriteFormat) => {
       if (!shown) return;
-      await exportSnapshot(shown, format, fileName, sourceLabels);
+      if (host.save) {
+        // The host writes the file itself (a save dialog, the Jupyter
+        // server's contents, the kernel's working directory).
+        try {
+          const text = await snapshotToText(shown, format, sourceLabels);
+          const said = await host.save({ name: exportFileName(fileName, format), text, format });
+          if (said) setNotice({ level: "info", text: said });
+        } catch (err) {
+          reportError(`Could not save: ${err instanceof Error ? err.message : String(err)}`);
+          return;
+        }
+      } else {
+        await exportSnapshot(shown, format, fileName, sourceLabels);
+      }
       trackEvent("export_structure", { file_format: format });
     },
-    [shown, fileName, sourceLabels],
+    [host, shown, fileName, sourceLabels, setNotice, reportError],
   );
 
   // ── View controls ──
@@ -287,10 +304,11 @@ export function BuilderApp() {
     pushOp,
     () => void runCleanup(api),
   );
-  const toolsItems = toolsMenuItems(
-    { status: toolsStatus, connection: toolsConnection, openForm },
-    () => showForm({ server: true }),
-  );
+  const toolsItems = hasTools
+    ? toolsMenuItems({ status: toolsStatus, connection: toolsConnection, openForm }, () =>
+        showForm({ server: true }),
+      )
+    : undefined;
 
   // ── Keyboard ──
   const shortcutHost = useMemo(
@@ -301,7 +319,7 @@ export function BuilderApp() {
     }),
     [handleExport],
   );
-  useBuilderShortcuts(api, shortcutHost);
+  useBuilderShortcuts(api, shortcutHost, host.scopeShortcuts ? rootRef : undefined);
   const mod = modKeyLabel();
 
   // The view's background follows the theme, as in the viewer.
@@ -343,7 +361,22 @@ export function BuilderApp() {
 
   return (
     <div
+      ref={rootRef}
       data-testid="megane-builder"
+      // Embedded, a click anywhere in the Builder focuses it, which is what
+      // scopes its keyboard shortcuts to it (see `useBuilderShortcuts`).
+      tabIndex={host.scopeShortcuts ? -1 : undefined}
+      onPointerDownCapture={
+        host.scopeShortcuts
+          ? () => {
+              // The 3D view may swallow the press before the browser moves the
+              // focus; take it here unless something inside already has it.
+              const root = rootRef.current;
+              if (root && !root.contains(document.activeElement))
+                root.focus({ preventScroll: true });
+            }
+          : undefined
+      }
       data-atom-count={shown?.nAtoms ?? 0}
       data-bond-count={shown?.nBonds ?? 0}
       data-edit-count={edits.length}
@@ -354,6 +387,7 @@ export function BuilderApp() {
         overflow: "hidden",
         background: "var(--megane-bg, #fff)",
         color: "var(--megane-text, #1e293b)",
+        outline: "none",
       }}
     >
       <input

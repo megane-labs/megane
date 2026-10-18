@@ -69,7 +69,8 @@ function disabledRail(disabled: boolean): React.CSSProperties {
 export interface OperationsRailProps {
   fileItems: MenuItem[];
   structureItems: MenuItem[];
-  toolsItems: MenuItem[];
+  /** The Tools menu; omitted on a host without tool servers, which hides it. */
+  toolsItems?: MenuItem[];
   /** Whether a structure is open (the Structure menu needs one). */
   hasDocument: boolean;
   canUndo: boolean;
@@ -117,13 +118,17 @@ export function OperationsRail({
         items: structureItems,
         disabled: !hasDocument,
       },
-      {
-        testId: "builder-tools",
-        label: "Tools",
-        title: "Tools: Python tools from a connected tool server",
-        icon: IconTools,
-        items: toolsItems,
-      },
+      ...(toolsItems
+        ? [
+            {
+              testId: "builder-tools",
+              label: "Tools",
+              title: "Tools: Python tools from a connected tool server",
+              icon: IconTools,
+              items: toolsItems,
+            },
+          ]
+        : []),
     ],
   ];
 

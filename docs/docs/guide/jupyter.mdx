@@ -118,6 +118,20 @@ print(viewer.measurement)
 # {"type": "dihedral", "value": 120.5, "label": "120.5°", "atoms": [10, 20, 30, 40]}
 ```
 
+## Structure editing: `megane.Builder`
+
+`megane.Builder` puts [megane Builder](builder.md) — the structure editor — in
+a cell. Python opens files in it and reads the edited structure back:
+
+```python
+b = megane.Builder("caffeine.sdf")
+b                               # edit in the cell
+b.save("caffeine_edited.pdb")   # or b.text("xyz"), b.to_ase(), b.n_atoms
+```
+
+*File › Save* in the cell writes into the kernel's working directory. See
+[In VS Code, JupyterLab and notebooks](builder.md#in-vs-code-jupyterlab-and-notebooks).
+
 ## Event Callbacks
 
 React to user interactions with `on_event()`:

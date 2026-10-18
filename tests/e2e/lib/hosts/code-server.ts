@@ -251,6 +251,8 @@ export async function openVscodeFile(page: Page, opts: OpenVscodeFileOpts): Prom
 export interface OpenVscodeNotebookOpts extends OpenVscodeFileOpts {
   /** Notebook filename (relative to workspace). */
   notebook: string;
+  /** Workspace folder to open (default `/workspace`). */
+  folder?: string;
 }
 
 /**
@@ -259,7 +261,7 @@ export interface OpenVscodeNotebookOpts extends OpenVscodeFileOpts {
  * widget. Used by widget-vscode.spec.ts.
  */
 export async function openVscodeNotebook(page: Page, opts: OpenVscodeNotebookOpts): Promise<Frame> {
-  const url = `http://127.0.0.1:${opts.port}/?folder=${encodeURIComponent("/workspace")}`;
+  const url = `http://127.0.0.1:${opts.port}/?folder=${encodeURIComponent(opts.folder ?? "/workspace")}`;
   await page.goto(url, { waitUntil: "domcontentloaded" });
   await page.waitForSelector(".monaco-workbench", { timeout: 30_000 });
   await page.waitForTimeout(3_000);

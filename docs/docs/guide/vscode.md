@@ -31,6 +31,15 @@ The VS Code custom editor mounts the full visual pipeline editor. You can build 
 
 Pipelines are saved as `.megane.json` files, which open in a dedicated **megane Pipeline Viewer** editor. Save, share, and version-control these recipes alongside your project.
 
+## megane Builder (structure editor)
+
+Click the *megane* icon (a pair of glasses) in the activity bar: its *Builder*
+view has **New Structure** and **Open File in Builder…**. A structure file
+also has **Open in megane Builder** in the Explorer's context menu, and a
+megane viewer tab has the same button in its title bar. The Builder opens in
+an editor tab; *Save* goes through VS Code's save dialog. See
+[megane Builder](builder.md#in-vs-code-jupyterlab-and-notebooks).
+
 ## Status bar integration
 
 The current trajectory frame index, atom selection count, and measurement label are reflected in the VS Code status bar. Other extensions can drive the viewer programmatically — e.g. `vscode.commands.executeCommand('megane.seekFrame', N)` seeks the most recently active megane webview to frame `N`.
