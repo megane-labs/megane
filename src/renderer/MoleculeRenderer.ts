@@ -1499,6 +1499,10 @@ export class MoleculeRenderer {
   /** Fit camera to show all atoms (or simulation cell if present). */
   private fitToView(snapshot: Snapshot): void {
     this.lastExtent = fitCameraToView(this.camera, this.controls, snapshot);
+    // A fit centres the model: drop any pan / off-centre orbit-center shift
+    // accumulated in the frustum, or the re-applied insets would keep it.
+    this._frustumPanX = 0;
+    this._frustumPanY = 0;
     if (this.camera instanceof THREE.OrthographicCamera) {
       this.doApplyFrustumInsets();
     }

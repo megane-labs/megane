@@ -431,3 +431,23 @@ describe("MoleculeRenderer Shift+left-drag pan", () => {
     expect(internals._frustumPanX).toBeCloseTo(-5, 6);
   });
 });
+
+describe("MoleculeRenderer.resetView after an off-centre pivot", () => {
+  it("drops the frustum shift so the fitted model is centred again", () => {
+    const cam = new THREE.OrthographicCamera(-25, 25, 25, -25, -100, 100);
+    cam.position.set(0, -50, 0);
+    const { r, internals } = makeRenderer(cam);
+    internals.snapshot = {
+      nAtoms: 2,
+      positions: new Float32Array([-3, 0, 0, 3, 0, 0]),
+      elements: new Uint8Array([6, 6]),
+      box: null,
+    };
+    r.setRotationCenter(3, 0, 0);
+    expect(internals._frustumPanX).not.toBe(0);
+    r.resetView();
+    expect(internals._frustumPanX).toBe(0);
+    expect(internals._frustumPanY).toBe(0);
+    expect(cam.left + cam.right).toBeCloseTo(0, 6);
+  });
+});
