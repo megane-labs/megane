@@ -23,6 +23,9 @@ export const DEFAULT_ALPHA_RADIUS = 3.0;
 /** Default surface mesh marching-cubes grid resolution (cells per axis). */
 export const DEFAULT_ALPHA_SURFACE_RESOLUTION = 48;
 
+/** Empty grid cells kept between the probe-expanded bounding box and the grid edge. */
+export const ALPHA_GRID_MARGIN_CELLS = 2;
+
 // ─── SDF construction ─────────────────────────────────────────────────────────
 
 /** Layout-compatible subset of SdfResult so we can reuse sdfToGeometry. */
@@ -79,8 +82,13 @@ export function buildAlphaSdf(
     if (z + alphaRadius > maxZ) maxZ = z + alphaRadius;
   }
 
+  // Leave ALPHA_GRID_MARGIN_CELLS empty cells beyond the expanded box on every
+  // side. The outermost probe spheres touch that box exactly, so without the
+  // margin the SDF is still <= 0 on the grid's boundary layer and marching
+  // cubes leaves the envelope open there — a hole on every flat facet that
+  // reaches the bounding box (e.g. the {100} faces of a nanoparticle).
   const span = Math.max(maxX - minX, maxY - minY, maxZ - minZ);
-  const cellSize = span / (res - 1);
+  const cellSize = span / (res - 1 - 2 * ALPHA_GRID_MARGIN_CELLS);
 
   const cx = (minX + maxX) / 2;
   const cy = (minY + maxY) / 2;

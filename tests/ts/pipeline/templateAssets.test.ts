@@ -89,6 +89,30 @@ describe("loadTemplateVolumetric", () => {
     expect(vol.data.length).toBeGreaterThan(0);
   });
 
+  it("addresses a load_volumetric node by id when one is given", async () => {
+    const store = makeStore([
+      { id: "volumetric-1", type: "load_volumetric" },
+      { id: "volumetric-esp", type: "load_volumetric" },
+    ]);
+    await loadTemplateVolumetric(
+      () => store,
+      "/caffeine_esp.cube",
+      "caffeine_esp.cube",
+      "volumetric-esp",
+    );
+
+    expect(store.updateNodeParams).toHaveBeenCalledTimes(1);
+    expect(store.updateNodeParams.mock.calls[0][0]).toBe("volumetric-esp");
+  });
+
+  it("is a no-op when the addressed node does not exist", async () => {
+    const store = makeStore([{ id: "volumetric-1", type: "load_volumetric" }]);
+    await loadTemplateVolumetric(() => store, "/caffeine_esp.cube", "caffeine_esp.cube", "gone");
+
+    expect(fetch).not.toHaveBeenCalled();
+    expect(store.updateNodeParams).not.toHaveBeenCalled();
+  });
+
   it("is a no-op when the template has no load_volumetric node", async () => {
     const store = makeStore([{ id: "loader-1", type: "load_structure" }]);
     await loadTemplateVolumetric(() => store, "/caffeine_esp.cube", "caffeine_esp.cube");
@@ -197,8 +221,9 @@ describe("loadMultiFileTemplate", () => {
   const cubeText = readFileSync(CUBE_PATH, "utf8");
 
   const sources: TemplateAssetSources = {
-    caffeineSdf: "SDF TEXT",
-    caffeineEspCubeUrl: "/caffeine_esp.cube",
+    caffeineB3lypSdf: "SDF TEXT",
+    caffeineDensityCubeUrl: "/caffeine_b3lyp_density.cube",
+    caffeineEspCubeUrl: "/caffeine_b3lyp_esp.cube",
     ubiquitinPdb: "AA PDB TEXT",
     ubiquitinCgPdb: "CG PDB TEXT",
   };
@@ -216,19 +241,25 @@ describe("loadMultiFileTemplate", () => {
     vi.unstubAllGlobals();
   });
 
-  it("loads caffeine through the host and the ESP grid into the volumetric node", async () => {
+  it("loads caffeine through the host, the density and the potential into their own nodes", async () => {
     const store = makeStore([
       { id: "loader-1", type: "load_structure" },
       { id: "volumetric-1", type: "load_volumetric" },
+      { id: "volumetric-esp", type: "load_volumetric" },
     ]);
     const loadPrimary = vi.fn(async () => undefined);
 
     const handled = await loadMultiFileTemplate("esp", sources, () => store, loadPrimary);
 
     expect(handled).toBe(true);
-    expect(loadPrimary).toHaveBeenCalledWith("SDF TEXT", "caffeine.sdf");
-    expect(store.updateNodeParams.mock.calls[0][0]).toBe("volumetric-1");
-    expect(store.updateNodeParams.mock.calls[0][1].fileName).toBe("caffeine_esp.cube");
+    expect(loadPrimary).toHaveBeenCalledWith("SDF TEXT", "caffeine_b3lyp.sdf");
+    expect(fetch).toHaveBeenCalledWith("/caffeine_b3lyp_density.cube");
+    expect(fetch).toHaveBeenCalledWith("/caffeine_b3lyp_esp.cube");
+    const writes = store.updateNodeParams.mock.calls.map(([id, params]) => [id, params.fileName]);
+    expect(writes).toEqual([
+      ["volumetric-1", "caffeine_b3lyp_density.cube"],
+      ["volumetric-esp", "caffeine_b3lyp_esp.cube"],
+    ]);
   });
 
   it("loads the all-atom structure through the host and the beads into loader-cg", async () => {

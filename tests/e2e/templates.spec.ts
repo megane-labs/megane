@@ -1,14 +1,17 @@
 /**
- * Pipeline template E2E — the two templates that need more than a single
- * structure file to render.
+ * Pipeline template E2E — the templates whose scenes are built from more than
+ * a plain structure-plus-viewport graph.
  *
- * "ESP Isosurface" pairs a molecule with a volumetric grid; "Coarse-Grained
- * Overlay" pairs two structures in one Viewport. Both go through code paths no
- * other template exercises (`load_volumetric`'s ephemeral data, and a second
- * `load_structure` node addressed by id), and both would fail silently — an
- * empty isosurface, a missing bead layer — rather than throw, so the checks
- * here assert the scene actually arrived rather than just that the graph
- * mounted.
+ * "ESP Map" pairs a molecule with two volumetric grids (one contoured, one
+ * coloring the contour); "Coarse-Grained Overlay" pairs two structures in one
+ * Viewport. Both go through code paths no other template exercises
+ * (`load_volumetric`'s ephemeral data addressed by node id, and a second
+ * `load_structure` node addressed by id). "Protein" fetches its PDB as an
+ * emitted asset and splits it into four selection branches; "Surface Mesh"
+ * wraps a nanoparticle in an alpha-shape envelope. All of them would fail
+ * silently — an empty or uncolored isosurface, a missing bead layer, a filter
+ * that selects nothing — rather than throw, so the checks here assert the
+ * scene actually arrived rather than just that the graph mounted.
  */
 
 import { test, expect, type Page } from "playwright/test";
@@ -25,6 +28,10 @@ const PLATFORM = "templates";
 
 /** Atoms in each template's scene. */
 const ATOM_COUNT_CAFFEINE = 24;
+/** 1hsg.pdb: 1514 protein + 45 indinavir (MK1) + 127 crystallographic waters. */
+const ATOM_COUNT_PROTEASE = 1686;
+/** au_nanoparticle.xyz: a Wulff-shaped fcc Au cluster. */
+const ATOM_COUNT_AU_PARTICLE = 1385;
 /**
  * 1ubq's 660 atoms: 602 protein + 58 crystallographic waters. Both the
  * `data-atom-count` attribute and `__megane_test_ready.atomCount` report the
@@ -53,10 +60,15 @@ async function viewportSummary(page: Page) {
         getState: () => {
           nodes: Array<{ id: string; type?: string }>;
           nodeSnapshots: Record<string, { snapshot: { nAtoms: number } }>;
+          nodeErrors: Record<string, unknown[]>;
           viewportState: {
-            particles: Array<{ sourceNodeId: string }>;
+            particles: Array<{ sourceNodeId: string; indices: Uint32Array | null }>;
             bonds: Array<{ nBonds: number }>;
-            meshes: Array<{ positions: Float32Array | number[] }>;
+            meshes: Array<{
+              positions: Float32Array | number[];
+              colors: Float32Array | number[];
+            }>;
+            representationMode: string;
           };
         };
       };
@@ -70,8 +82,24 @@ async function viewportSummary(page: Page) {
         Object.entries(state.nodeSnapshots).map(([id, s]) => [id, s.snapshot.nAtoms]),
       ),
       particleSources: state.viewportState.particles.map((p) => p.sourceNodeId),
+      particleSelectionSizes: state.viewportState.particles.map((p) =>
+        p.indices === null ? "all" : p.indices.length,
+      ),
       bondCounts: state.viewportState.bonds.map((b) => b.nBonds),
       meshVertexCounts: state.viewportState.meshes.map((m) => m.positions.length / 3),
+      // Vertices clearly red (r - b > 0.4) and clearly blue (b - r > 0.4):
+      // a volume-colored ESP surface has both, a solid one neither.
+      meshRedBlue: state.viewportState.meshes.map((m) => {
+        let red = 0;
+        let blue = 0;
+        for (let i = 0; i + 2 < m.colors.length; i += 4) {
+          if (m.colors[i] - m.colors[i + 2] > 0.4) red++;
+          if (m.colors[i + 2] - m.colors[i] > 0.4) blue++;
+        }
+        return [red, blue];
+      }),
+      erroredNodes: Object.keys(state.nodeErrors).filter((id) => state.nodeErrors[id].length > 0),
+      representationMode: state.viewportState.representationMode,
     };
   });
 }
@@ -86,7 +114,9 @@ test.describe("pipeline templates: data-heavy scenes", () => {
     await waitForReady(page);
   });
 
-  test("ESP Isosurface renders caffeine plus both potential lobes", async ({ page }) => {
+  test("ESP Map renders caffeine inside a density surface colored by its potential", async ({
+    page,
+  }) => {
     await applyTemplate(page, "esp");
     await expect
       .poll(async () => (await getReadyState(page)).atomCount, { timeout: 30_000 })
@@ -94,27 +124,85 @@ test.describe("pipeline templates: data-heavy scenes", () => {
 
     await assertDomContract(page, [
       ...defaultViewerContract({ expectedAtoms: ATOM_COUNT_CAFFEINE, context: "webapp" }),
-      { testid: "pipeline-node-load_volumetric", visible: true },
+      { testid: "pipeline-node-load_volumetric", visible: true, count: 2 },
       { testid: "pipeline-node-isosurface", visible: true },
     ]);
 
-    // The cube reached the node: its voxel-count readout replaces the
+    // Both cubes reached their nodes: the voxel-count readout replaces the
     // "No volumetric file loaded" placeholder only once parsing succeeded.
-    await expect(page.locator('[data-testid="pipeline-node-load_volumetric"]')).toContainText(
-      /\d+×\d+×\d+ voxels/,
-    );
+    const volumetricNodes = page.locator('[data-testid="pipeline-node-load_volumetric"]');
+    for (let i = 0; i < 2; i++) {
+      await expect(volumetricNodes.nth(i)).toContainText(/\d+×\d+×\d+ voxels/);
+    }
     await expect(page.locator('[data-testid="load-volumetric-error"]')).toHaveCount(0);
 
+    // The surface carries the potential, not the solid fallback color: wait
+    // for the second grid to land and repaint the mesh.
+    await expect
+      .poll(
+        async () => {
+          const [red, blue] = (await viewportSummary(page)).meshRedBlue[0] ?? [0, 0];
+          return red > 0 && blue > 0;
+        },
+        { timeout: 30_000 },
+      )
+      .toBe(true);
     const summary = await viewportSummary(page);
     // Caffeine's 25 SDF bonds, and a marching-cubes mesh with real geometry —
     // an iso level outside the data range would still produce a mesh entry,
     // but an empty one.
     expect(summary.bondCounts).toEqual([25]);
     expect(summary.meshVertexCounts).toHaveLength(1);
-    expect(summary.meshVertexCounts[0]).toBeGreaterThan(100);
+    expect(summary.meshVertexCounts[0]).toBeGreaterThan(1000);
 
-    await expectFullPageMatch(page, PLATFORM, "esp-isosurface");
-    await expectViewerRegionMatch(page, PLATFORM, "esp-isosurface-viewer");
+    await expectFullPageMatch(page, PLATFORM, "esp-map");
+    await expectViewerRegionMatch(page, PLATFORM, "esp-map-viewer");
+  });
+
+  test("Protein renders the protease cartoon with indinavir and its contact waters", async ({
+    page,
+  }) => {
+    await applyTemplate(page, "protein");
+    await expect
+      .poll(async () => (await getReadyState(page)).atomCount, { timeout: 30_000 })
+      .toBe(ATOM_COUNT_PROTEASE);
+
+    await assertDomContract(page, [
+      ...defaultViewerContract({ expectedAtoms: ATOM_COUNT_PROTEASE, context: "webapp" }),
+      { testid: "pipeline-node-filter", visible: true, count: 5 },
+    ]);
+
+    const summary = await viewportSummary(page);
+    // No filter came back empty or invalid — "MK1" ends in a digit, so a
+    // regression in resname matching shows up here as "Filter returned 0 atoms".
+    expect(summary.erroredNodes).toEqual([]);
+    // Polymer, indinavir, contact waters, bulk waters: disjoint and complete.
+    expect(summary.particleSelectionSizes).toEqual([1514, 45, 7, 120]);
+    expect(summary.representationMode).toBe("both");
+
+    await expectFullPageMatch(page, PLATFORM, "protein");
+    await expectViewerRegionMatch(page, PLATFORM, "protein-viewer");
+  });
+
+  test("Surface Mesh wraps the gold nanoparticle in one alpha-shape envelope", async ({ page }) => {
+    await applyTemplate(page, "surface_mesh");
+    await expect
+      .poll(async () => (await getReadyState(page)).atomCount, { timeout: 30_000 })
+      .toBe(ATOM_COUNT_AU_PARTICLE);
+
+    await assertDomContract(page, [
+      ...defaultViewerContract({ expectedAtoms: ATOM_COUNT_AU_PARTICLE, context: "webapp" }),
+      { testid: "pipeline-node-surface_mesh", visible: true },
+    ]);
+
+    const summary = await viewportSummary(page);
+    expect(summary.erroredNodes).toEqual([]);
+    expect(summary.bondCounts).toEqual([]);
+    expect(summary.meshVertexCounts).toHaveLength(1);
+    expect(summary.meshVertexCounts[0]).toBeGreaterThan(1000);
+
+    await expectFullPageMatch(page, PLATFORM, "surface-mesh");
+    await expectViewerRegionMatch(page, PLATFORM, "surface-mesh-viewer");
   });
 
   test("Coarse-Grained Overlay renders both structures in one viewport", async ({ page }) => {

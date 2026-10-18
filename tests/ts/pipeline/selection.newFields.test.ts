@@ -1,5 +1,10 @@
 import { describe, it, expect } from "vitest";
-import { evaluateSelection, validateQuery, parseResid } from "@/pipeline/selection";
+import {
+  evaluateSelection,
+  validateQuery,
+  parseResid,
+  labelMatchesResname,
+} from "@/pipeline/selection";
 import type { Snapshot } from "@/types";
 
 /** Build a small Snapshot, including optional chain IDs, for testing. */
@@ -157,5 +162,56 @@ describe("validateQuery: new fields and within", () => {
   it("rejects within without a radius or 'of'", () => {
     expect(validateQuery('within of (element == "O")').valid).toBe(false);
     expect(validateQuery('within 5 (element == "O")').valid).toBe(false);
+  });
+});
+
+describe("labelMatchesResname", () => {
+  it("keeps exact leading-letter matching for alphabetic names", () => {
+    expect(labelMatchesResname("ALA42", "ALA")).toBe(true);
+    expect(labelMatchesResname("HOH", "HOH")).toBe(true);
+    expect(labelMatchesResname("ALA42", "AL")).toBe(false);
+    // "NA12" is sodium 12 — an alphabetic query never reaches the prefix rule.
+    expect(labelMatchesResname("NA12", "NA")).toBe(true);
+  });
+
+  it("matches a name containing a digit as a prefix followed by the residue number", () => {
+    expect(labelMatchesResname("MK1902", "MK1")).toBe(true);
+    expect(labelMatchesResname("1PE101", "1PE")).toBe(true);
+    expect(labelMatchesResname("MK1-3", "MK1")).toBe(true);
+  });
+
+  it("rejects a digit-bearing name that is not followed by a residue number", () => {
+    expect(labelMatchesResname("MK1", "MK1")).toBe(false);
+    expect(labelMatchesResname("MK1A2", "MK1")).toBe(false);
+    expect(labelMatchesResname("XK2902", "MK1")).toBe(false);
+  });
+});
+
+describe("resname comparisons on names that contain a digit", () => {
+  // Indinavir (MK1 902) between an alanine and a water, as 1HSG labels them.
+  const snap = makeSnapshot({
+    nAtoms: 3,
+    positions: [0, 0, 0, 1, 0, 0, 2, 0, 0],
+    elements: [6, 6, 8],
+  });
+  const labels = ["ALA1", "MK1902", "HOH301"];
+
+  it('selects the drug with resname == "MK1"', () => {
+    expect(evaluateSelection('resname == "MK1"', snap, labels)).toEqual(new Set([1]));
+  });
+
+  it('excludes it with resname != "MK1"', () => {
+    expect(evaluateSelection('resname != "MK1"', snap, labels)).toEqual(new Set([0, 2]));
+  });
+
+  it("works inside within", () => {
+    expect(evaluateSelection('within 1.5 of (resname == "MK1")', snap, labels)).toEqual(
+      new Set([0, 1, 2]),
+    );
+  });
+
+  it("treats an atom with no label as an empty residue name", () => {
+    expect(evaluateSelection('resname == ""', snap, null)).toEqual(new Set([0, 1, 2]));
+    expect(evaluateSelection('resname != "MK1"', snap, null)).toEqual(new Set([0, 1, 2]));
   });
 });
