@@ -325,7 +325,6 @@ fn parse_bond_sections(
     Ok(bonds)
 }
 
-/// Build per-atom labels as `"RESNAME/ATOMNAME"` strings.
 /// Residue label of atom `i` (0-indexed), or `""` when the prmtop has none.
 fn residue_name<'a>(i: usize, res_labels: &'a [String], res_ptrs: &[i64]) -> &'a str {
     // res_ptrs is 1-indexed; find the last pointer ≤ (i+1)
@@ -335,6 +334,7 @@ fn residue_name<'a>(i: usize, res_labels: &'a [String], res_ptrs: &[i64]) -> &'a
     res_labels.get(res_idx).map(String::as_str).unwrap_or("")
 }
 
+/// Build per-atom labels as `"RESNAME/ATOMNAME"` strings.
 fn build_atom_labels(
     atom_names: &[String],
     res_labels: &[String],
