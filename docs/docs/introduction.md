@@ -6,10 +6,11 @@
 
 - **Render 1M+ atoms at 60 fps** in the browser using billboard impostor rendering
 - **Load 29 file formats** — structures (PDB, GRO, XYZ, MOL/SDF, MOL2, CIF, mmCIF, LAMMPS data, VASP, Molden, XCrySDen, CML and more), trajectories (XTC, DCD, ASE `.traj`, LAMMPS dump, AMBER NetCDF), volumetric grids (Gaussian CUBE, OpenDX) and spectra (JCAMP-DX)
-- **Stream XTC trajectories from the `megane serve` CLI** over WebSocket — scrub multi-GB files without loading every frame into memory (browser/Jupyter without the CLI load full trajectories)
-- **Build visual pipelines** with a drag-and-drop node editor, or write them as Python/TypeScript code
+- **Stream large trajectories** — the `megane serve` backend streams XTC frames over WebSocket, so you can scrub multi-GB files without loading every frame into memory; without a backend, the standalone web app decodes trajectories and multi-frame XYZ / PDB files of 8 MB or more on demand in a Web Worker, and the Jupyter widget sends frames from the kernel one at a time
+- **Build visual pipelines** with a drag-and-drop node editor, describe them in natural language to the AI pipeline generator (the editor's **Chat** panel), or write them as Python/TypeScript code
+- **Edit structures in [megane Builder](./guide/builder)** — add, delete, move and re-element atoms, draw bonds, build bulk crystals, supercells and slabs, and save as XYZ / PDB / MOL. It runs at `/builder.html` in the standalone web app, from the megane view in VS Code's activity bar and the megane panel in JupyterLab's left sidebar, and as `megane.Builder()` in notebooks
 - **Integrate with Plotly**, MDX/Next.js, ipywidgets, and any framework via the framework-agnostic renderer
-- **Light, dark, and auto themes** — cycle through Light / Dark / Auto via the Theme button in the Pipeline panel; persisted across sessions. Auto follows the VS Code or JupyterLab theme when megane runs inside one, and the OS preference elsewhere
+- **Light, dark, and auto themes** — cycle through Light / Dark / Auto via the Theme button on the Pipeline panel's left rail; persisted across sessions. Auto follows the VS Code or JupyterLab theme when megane runs inside one, and the OS preference elsewhere
 
 ## Choose your distribution
 
@@ -35,8 +36,8 @@ For a side-by-side comparison of which formats and UI features each distribution
 | Protein Data Bank | `.pdb` |
 | GROMACS structure | `.gro` |
 | XYZ (single- or multi-frame, incl. extended `Lattice=`) | `.xyz`, `.jxyz`, `.extxyz` |
-| MDL Molfile (V2000) | `.mol` |
-| MDL SDfile (parsed via the V2000 Molfile reader) | `.sdf` |
+| MDL Molfile (V2000 and V3000) | `.mol` |
+| MDL SDfile (parsed via the Molfile reader) | `.sdf` |
 | Tripos MOL2 | `.mol2` |
 | Crystallographic Information File | `.cif` |
 | Macromolecular CIF (mmCIF/PDBx) | `.mmcif` |

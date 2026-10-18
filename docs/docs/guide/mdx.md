@@ -23,7 +23,7 @@ A caffeine molecule solvated by water — 3024 atoms rendered in real time.
     version: 3,
     nodes: [
       { id: "s1", type: "load_structure", fileName: "caffeine_water.pdb",
-        fileUrl: "/data/protein.pdb",
+        fileUrl: "/data/caffeine_water.pdb",
         hasTrajectory: false, hasCell: false, position: { x: 0, y: 0 } },
       { id: "b1", type: "add_bond", bondSource: "distance",
         position: { x: 200, y: 0 } },
@@ -44,10 +44,11 @@ to display all 3024 atoms with bonds inferred from van der Waals radii.
 
 ## Full viewer with `MeganeViewer`
 
-If you specifically need the full sidebar / appearance / pipeline-editor UI in an MDX page, use `MeganeViewer` and pipe uploads through `usePipelineStore`:
+If you specifically need the full pipeline-editor / timeline / measurement UI in an MDX page, use `MeganeViewer` and pipe uploads through `usePipelineStore`:
 
 ```mdx
 import { useCallback } from "react";
+import "megane-viewer/styles.css";
 import { MeganeViewer, usePipelineStore } from "megane-viewer/lib";
 
 export function FullViewer() {
@@ -66,9 +67,10 @@ export function FullViewer() {
 <FullViewer />
 ```
 
-Note that `MeganeViewer` is backed by a global Zustand store, so only one
-instance per page renders correctly — for multiple independent viewers, use
-`PipelineViewer` as shown above.
+Without a provider, `MeganeViewer` reads module-global stores, so two of them
+on one page would share a single pipeline. Wrap each one in its own
+`MeganeProvider` (see [Multiple viewers on one page](/guide/web#multiple-viewers-on-one-page)),
+or use `PipelineViewer` as shown above, which needs no wiring at all.
 
 ## Viewport-only in MDX
 

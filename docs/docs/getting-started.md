@@ -50,7 +50,7 @@ docker build -t megane .
 docker run --rm -p 8080:8080 megane
 ```
 
-Open http://localhost:8080 in your browser.
+Open http://localhost:8080 in your browser. megane Builder, the structure editor, is at http://localhost:8080/builder.html.
 
 To view your own files, mount them into the container:
 
@@ -69,6 +69,7 @@ that pushes the chosen file into the global pipeline store:
 
 ```tsx
 import { useCallback } from "react";
+import "megane-viewer/styles.css";
 import { MeganeViewer, usePipelineStore } from "megane-viewer/lib";
 
 function App() {
@@ -86,8 +87,9 @@ function App() {
 }
 ```
 
-For multiple independent viewers per page (e.g. embedding in MDX docs), use
-`PipelineViewer` instead — see the [React component (npm) guide](/guide/web).
+For multiple independent viewers per page, wrap each `MeganeViewer` in its own
+`MeganeProvider`, or use the store-less `PipelineViewer` (e.g. for embedding in
+MDX docs) — see the [React component (npm) guide](/guide/web).
 
 ## Supported File Formats
 
@@ -96,10 +98,10 @@ For multiple independent viewers per page (e.g. embedding in MDX docs), use
 | PDB | `.pdb` | Protein Data Bank — most common molecular structure format |
 | GRO | `.gro` | GROMACS structure file |
 | XYZ | `.xyz`, `.jxyz`, `.extxyz` | Simple cartesian coordinate format (single- or multi-frame, incl. extended XYZ); `.jxyz` (Jmol) and `.extxyz` (ASE) are second names for it |
-| MOL | `.mol` | MDL Molfile (V2000) — small molecules with bond information |
-| SDF | `.sdf` | MDL SDfile — uses the MOL V2000 parser |
+| MOL | `.mol` | MDL Molfile (V2000 and V3000) — small molecules with bond information |
+| SDF | `.sdf` | MDL SDfile — uses the MOL parser |
 | MOL2 | `.mol2` | Tripos MOL2 |
-| CIF | `.cif` | Crystallographic Information File — the asymmetric unit is expanded to the full cell on load |
+| CIF | `.cif` | Crystallographic Information File — the asymmetric unit is expanded to the full cell by the Symmetry node in the default pipeline |
 | mmCIF | `.mmcif` | Macromolecular CIF (PDBx/mmCIF) — large structure databases |
 | LAMMPS data | `.data`, `.lammps` | LAMMPS data file |
 | AMBER topology | `.prmtop` | AMBER parameter/topology file (no coordinates) |
@@ -116,7 +118,7 @@ For multiple independent viewers per page (e.g. embedding in MDX docs), use
 | DCD | `.dcd` | CHARMM/NAMD binary trajectory |
 | ASE .traj | `.traj` | ASE trajectory (ULM binary format) |
 | LAMMPS dump | `.lammpstrj`, `.dump`, `.trj` | LAMMPS dump — opens standalone as a multi-frame structure, or attaches to a topology |
-| AMBER NetCDF | `.nc` | AMBER compressed trajectory (NetCDF format) |
+| AMBER NetCDF | `.nc` | AMBER trajectory (NetCDF format) |
 | Gaussian CUBE | `.cube`, `.cub` | Volumetric grid, rendered as an isosurface over a loaded structure |
 | OpenDX | `.dx` | Volumetric scalar field (APBS electrostatics) |
 | JCAMP-DX | `.jdx`, `.jcamp`, `.dx` | IR / NMR / MS / UV-Vis spectra, drawn by the `SpectrumPlot` node |
@@ -133,5 +135,6 @@ Not every host opens every extension from its native file picker — see
 - [React component (npm) guide](/guide/web) — Embedding in React applications, imperative renderer API
 - [Python Pipeline API](/guide/pipeline/python) — Full Python API documentation
 - [TypeScript Pipeline API](/guide/pipeline/typescript) — Full TypeScript API documentation
+- [megane Builder](/guide/builder) — Edit structures and build crystals, supercells and slabs
 
 <CtaBridge />

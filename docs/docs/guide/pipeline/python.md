@@ -13,6 +13,8 @@ viewer = megane.view("protein.pdb")                                     # struct
 viewer = megane.view_traj("protein.pdb", xtc="trajectory.xtc")         # with trajectory
 ```
 
+Both pick the bond source per format by default (`bonds="auto"`). `megane.build_pipeline(path, ...)` builds the same minimal pipeline but returns the `Pipeline` itself instead of a widget, for saving to JSON or further editing.
+
 When you need more control — filtering atoms, multi-layer rendering, labels, polyhedra, or custom styling — build a pipeline manually with the `Pipeline` class.
 
 For real-world examples, see the [Gallery](/gallery).
@@ -58,8 +60,12 @@ from megane import (
     Streaming,
     LoadVector,
     LoadVolumetric,
+    LoadSpectrum,
     Filter,
     Modify,
+    Symmetry,
+    Wrap,
+    Replicate,
     DrawingBoundary,
     BoundaryCompletion,
     Color,
@@ -70,6 +76,7 @@ from megane import (
     AddPolyhedra,
     Isosurface,
     VectorOverlay,
+    SpectrumPlot,
     Viewport,
     Pipeline,
 )
@@ -84,12 +91,20 @@ The **Surface Mesh** node (alpha-shape envelope) is available in the visual pipe
 Load a molecular structure file.
 
 ```python
-LoadStructure(path: str)
+LoadStructure(path: str, *, edits: list[dict] | None = None)
 ```
 
-| Parameter | Type  | Description                                                                                                                                                                                                                                                                                                                                                 |
-| --------- | ----- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `path`    | `str` | File path. Auto-detected by extension. Supported by the Python-side parser: `.pdb`, `.gro`, `.xyz`, `.mol`, `.sdf` (routed through the MOL parser), `.mol2`, `.cif`, `.data`, `.lammps`, `.traj` (ASE binary). The browser-side (WASM) parser additionally accepts `.mmcif` and `.prmtop` (AMBER topology) when the pipeline runs inside `MolecularViewer`. |
+| Parameter | Type                 | Default | Description                                                                                                                                                                                                                                                                                                                                                                                                                                              |
+| --------- | -------------------- | ------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `path`    | `str`                | —       | File path, read when the node is added. Auto-detected by extension: `.pdb`, `.gro`, `.xyz` / `.extxyz` / `.jxyz`, `.mol`, `.sdf`, `.mol2`, `.cif`, `.mmcif`, `.data` / `.lammps` (LAMMPS data), `.lammpstrj` / `.dump` / `.trj` (LAMMPS dump, frame 0), `.prmtop`, `.vasp` and bare `POSCAR` / `CONTCAR` / `XDATCAR` names, `.cml`, `.molden`, `.xsf` / `.axsf`, `.c3xml`, `.odydata` / `.xodydata`, `.magres`, `.gamess`, `.phonon`, and `.traj` (ASE binary). |
+| `edits`   | `list[dict] \| None` | `None`  | Structure edits replayed on the file as loaded — the same edit history the [megane Builder](../builder.md#history) writes (`add_atom`, `delete_atoms`, `move_atoms`, `set_element`, `add_bond`, `delete_bond`, `add_fragment`, `set_cell`, `supercell`, `slab`, `expand_symmetry`, `wrap`, `center`). Atom references are file atom indices (`int`) or the `id` of an atom an earlier op created (`str`).                                                                                         |
+
+```python
+LoadStructure("water.pdb", edits=[
+    {"op": "delete_atoms", "atoms": [5, 6]},
+    {"op": "add_bond", "a": 0, "b": 1, "order": 2},
+])
+```
 
 **Ports:** `out.particle`, `out.traj`, `out.cell`
 
@@ -115,8 +130,8 @@ LoadTrajectory(
 | `dcd`       | `str \| None` | `None`  | Path to DCD trajectory file (CHARMM/NAMD/X-PLOR)        |
 | `nc`        | `str \| None` | `None`  | Path to AMBER NetCDF trajectory file                    |
 | `traj`      | `str \| None` | `None`  | Path to ASE `.traj` trajectory file                     |
-| `xyz`       | `str \| None` | `None`  | Path to a multi-frame XYZ trajectory file               |
-| `lammpstrj` | `str \| None` | `None`  | Path to LAMMPS dump trajectory (`.lammpstrj` / `.dump`) |
+| `xyz`       | `str \| None` | `None`  | Path to a multi-frame XYZ (or extended XYZ) trajectory file      |
+| `lammpstrj` | `str \| None` | `None`  | Path to LAMMPS dump trajectory (`.lammpstrj` / `.dump` / `.trj`) |
 
 Pass exactly one. **Ports:** `inp.particle`, `out.traj`
 
@@ -146,7 +161,7 @@ LoadVector(path: str)
 
 ### LoadVolumetric
 
-Load a Gaussian CUBE file and output volumetric data for isosurface rendering.
+Load a volumetric grid file and output volumetric data for isosurface rendering.
 
 ```python
 LoadVolumetric(path: str = "")
@@ -154,7 +169,7 @@ LoadVolumetric(path: str = "")
 
 | Parameter | Type  | Description                                                                                                     |
 | --------- | ----- | --------------------------------------------------------------------------------------------------------------- |
-| `path`    | `str` | File path to a Gaussian CUBE file (`.cube`). Parsed in the browser; the Python object only tracks the filename. |
+| `path`    | `str` | File path to a Gaussian CUBE (`.cube` / `.cub`) or OpenDX (`.dx`) grid. Parsed in the browser; the Python object only tracks the filename. |
 
 **Ports:** `out.volumetric`
 
@@ -193,12 +208,13 @@ To render an ESP-mapped charge density, load both cubes and connect the ESP
 volume to the coloring input:
 
 ```python
-density = LoadVolumetric("density.cube")
-esp = LoadVolumetric("esp.cube")
-iso = Isosurface(iso_level=0.02, color_mode="volume", colormap="rwb")
+density = pipe.add_node(LoadVolumetric("density.cube"))
+esp = pipe.add_node(LoadVolumetric("esp.cube"))
+iso = pipe.add_node(Isosurface(iso_level=0.02, color_mode="volume", colormap="rwb"))
+v = pipe.add_node(Viewport())
 pipe.add_edge(density.out.volumetric, iso.inp.volumetric)
 pipe.add_edge(esp.out.volumetric, iso.inp.color_volumetric)
-pipe.add_edge(iso.out.mesh, viewport.inp.mesh)
+pipe.add_edge(iso.out.mesh, v.inp.mesh)
 ```
 
 ### Filter
@@ -230,6 +246,52 @@ Modify(*, scale: float = 1.0, opacity: float = 1.0)
 | `opacity` | `float` | `1.0`   | Transparency (0 = invisible, 1 = opaque) |
 
 **Ports:** `inp.particle`, `out.particle`
+
+### Symmetry
+
+Expand a crystallographic asymmetric unit into the full unit cell using the
+space-group operations the parser captured (a CIF `_symmetry_equiv_pos_as_xyz`
+loop), replicating bonds per image and dropping coincident images. `megane.view()`
+inserts this node automatically.
+
+```python
+Symmetry(*, mode: Literal["expand", "none"] = "expand")
+```
+
+| Parameter | Type  | Default    | Description                                                                                                                       |
+| --------- | ----- | ---------- | --------------------------------------------------------------------------------------------------------------------------------- |
+| `mode`    | `str` | `"expand"` | `"expand"` fills the unit cell; `"none"` passes the asymmetric unit through. Structures without symmetry ops or a cell pass through unchanged. |
+
+**Ports:** `inp.particle`, `inp.traj`, `out.particle`, `out.traj`
+
+### Wrap
+
+Remap coordinates by whole lattice vectors.
+
+```python
+Wrap(*, mode: Literal["none", "wrap", "unwrap"] = "none")
+```
+
+| Parameter | Type  | Default  | Description                                                                                                                                                                    |
+| --------- | ----- | -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `mode`    | `str` | `"none"` | `"wrap"` folds every atom into the home cell; `"unwrap"` makes bonded molecules that straddle a periodic face whole; `"none"` passes coordinates through. Requires a unit cell. |
+
+A connected trajectory is remapped per frame. **Ports:** `inp.particle`, `inp.traj`, `out.particle`, `out.traj`
+
+### Replicate
+
+Build an `nx × ny × nz` supercell: every atom (and its bonds) is copied into the
+cell images along +a/+b/+c and the cell is enlarged. Requires a unit cell.
+
+```python
+Replicate(*, nx: int = 1, ny: int = 1, nz: int = 1)
+```
+
+| Parameter        | Type  | Default | Description                                  |
+| ---------------- | ----- | ------- | -------------------------------------------- |
+| `nx`, `ny`, `nz` | `int` | `1`     | Number of cell images along a / b / c (≥ 1) |
+
+**Ports:** `inp.particle`, `inp.cell`, `out.particle`, `out.cell`
 
 ### Color
 
@@ -317,7 +379,8 @@ DrawingBoundary(
 ```
 
 Drawing Boundary creates periodic display copies inside inclusive fractional
-bounds without changing structural atom indices or enlarging the cell.
+bounds without changing structural atom indices or enlarging the cell (use
+`Replicate` for a real supercell).
 
 **Ports:** `inp.particle`, `out.particle`
 
@@ -391,6 +454,26 @@ VectorOverlay(*, scale: float = 1.0)
 | `scale`   | `float` | `1.0`   | Vector arrow length multiplier |
 
 **Ports:** `inp.vector`, `out.vector`
+
+### LoadSpectrum / SpectrumPlot
+
+Load a JCAMP-DX spectrum (`.jdx` / `.jcamp`) and draw it as a 2D line chart.
+A spectrum has no 3D coordinates, so it feeds `SpectrumPlot` (a terminal node)
+rather than `Viewport`. The file is decoded in the browser; the Python object
+only tracks the filename.
+
+```python
+LoadSpectrum(path: str = "")
+SpectrumPlot(*, reverse_x: bool = True, color: str = "#84cc16")
+```
+
+| Parameter   | Type   | Default     | Description                                                  |
+| ----------- | ------ | ----------- | ------------------------------------------------------------ |
+| `path`      | `str`  | `""`        | Path to the JCAMP-DX file (`LoadSpectrum`)                   |
+| `reverse_x` | `bool` | `True`      | Draw the abscissa high-to-low, the IR / NMR convention       |
+| `color`     | `str`  | `"#84cc16"` | Hex stroke color of the trace                                |
+
+**Ports:** `LoadSpectrum` — `out.spectrum`; `SpectrumPlot` — `inp.spectrum`
 
 ### Viewport
 
@@ -480,6 +563,11 @@ viewer = MolecularViewer()
 viewer.set_pipeline(pipe)
 viewer.frame_index = 50  # jump to frame 50
 ```
+
+Frames stay in the kernel and are sent as they are shown. Pass
+`set_pipeline(pipe, embed_trajectory=True)` (or `"auto"`, which embeds only
+when the encoded frames are small enough) to send every frame to the front end
+so playback works without a running kernel.
 
 ## Example: Make Solvent Translucent
 

@@ -16,7 +16,7 @@ extending megane itself.
 
 The pipeline is a typed, directed-acyclic data-flow graph (built on
 [React Flow](https://reactflow.dev/)). A "node" is **not a single class** — it is
-a set of coordinated declarations spread across roughly eight locations. There is
+a set of coordinated declarations spread across roughly ten files. There is
 deliberately no runtime `Node` base class: instead, each node type is a string
 literal in the `PipelineNodeType` union, and everything about it is supplied by
 matching entries in a family of `Record<PipelineNodeType, …>` tables.
@@ -43,16 +43,23 @@ files into `Snapshot`s. Pipeline execution is 100% TypeScript.
 | 5 | `XxxParams` + `PipelineNodeParams` + `defaultParams()` | `src/pipeline/types.ts` | The node's config schema and initial values |
 | 6 | `GENERIC_NODE_ACCEPTS` (optional) | `src/pipeline/types.ts` | Only for nodes whose input type is resolved from the connected edge |
 | 7 | `NODE_CATALOG` entry | `src/pipeline/catalog.ts` | Prose + per-param docs (feeds the LLM prompt and the Node Reference page) |
-| 8 | Executor function | `src/pipeline/executors/<name>.ts` | Pure compute: `(params, inputs) => outputs` |
-| 9 | Dispatch `case` | `src/pipeline/execute.ts` | Wire the executor into `executePipeline()` |
-| 10 | React component | `src/components/nodes/<Name>Node.tsx` | The node UI, wrapping `NodeShell` |
-| 11 | `nodeTypes` map + `ADD_NODE_GROUPS` | `src/components/PipelineEditor.tsx`, `src/components/PipelineRail.tsx` | Render the component + add it to the "Add Node" menu |
-| 12 | Builder subclass (optional) | `src/pipeline/builder.ts` | JS graph-construction API |
-| 13 | Python subclass (optional) | `python/megane/pipeline.py` | Python graph-construction API |
+| 8 | `summarizeNodeParams()` case | `src/pipeline/nodeSummary.ts` | One-line parameter summary shown on the node's canvas card |
+| 9 | Executor function | `src/pipeline/executors/<name>.ts` | Pure compute: `(params, inputs) => outputs` |
+| 10 | Dispatch `case` | `src/pipeline/execute.ts` | Wire the executor into `executePipeline()` |
+| 11 | React component | `src/components/nodes/<Name>Node.tsx` | The node's properties form, wrapping `NodeShell` |
+| 12 | `nodeTypes` map + `ADD_NODE_GROUPS` | `src/components/PipelineEditor.tsx`, `src/components/PipelineRail.tsx` | Render the component + add it to the "Add Node" menu |
+| 13 | Builder subclass (optional) | `src/pipeline/builder.ts` (+ export from `src/lib.ts`) | JS graph-construction API |
+| 14 | Python subclass | `python/megane/pipeline.py` (+ export from `python/megane/__init__.py`) | Python graph-construction API |
 
-Surfaces 1–5 and 7 are compile-enforced (see above). Surfaces 8–11 are what make
-the node actually _do_ something and appear on the canvas. 12–13 are only needed
-if you want the node reachable from the programmatic `Pipeline` builders.
+Surfaces 1–5, 7 and 8 are compile-enforced (see above; `defaultParams()` and
+`summarizeNodeParams()` are exhaustive `switch`es with no `default`, so a missing
+`case` is a "lacks ending return statement" error). Surfaces 9–12 are what make
+the node actually _do_ something and appear on the canvas. 13–14 are only needed
+for the programmatic `Pipeline` builders — but note that the catalog's
+`pythonClass` names the class users import from `megane`, and
+`tests/ts/pipeline/catalog.test.ts` only allows `pythonClass: null` for
+`surface_mesh`, so in practice ship the Python subclass too (or update that test
+deliberately).
 
 ## Rules
 
@@ -60,14 +67,17 @@ These are non-negotiable — they keep the engine testable and consistent, and s
 are hard CI gates.
 
 - **Ports are typed and connections are checked.** Every port declares a
-  `PipelineDataType` (`particle`, `bond`, `cell`, `label`, `mesh`, `trajectory`,
-  `vector`, `volumetric`). A connection is legal only when the source output's
-  `dataType` equals the target input's `dataType` — enforced by `canConnect()` in
-  `types.ts`. Generic nodes (in `GENERIC_NODE_ACCEPTS`) resolve their input type
-  from the connected edge instead.
+  `PipelineDataType` (`particle`, `bond`, `coordination`, `cell`, `label`, `mesh`,
+  `trajectory`, `vector`, `volumetric`, `spectrum`). A connection is legal only
+  when the source output's `dataType` equals the target input's `dataType` —
+  enforced by `canConnect()` in `types.ts`. Generic nodes (in
+  `GENERIC_NODE_ACCEPTS`: `filter`, `modify`, `color`, `representation`) resolve
+  their input type from the connected edge instead, and their output is checked
+  against the types they can carry.
 - **Executors are pure and renderer-free.** An executor has the exact signature
   `(params, inputs: Map<string, PipelineData[]>) => Map<string, PipelineData>`
-  (some load nodes take extra context args). It must be a pure function of its
+  (some nodes take extra context args — the loaders their file data, and
+  `filter` / `color` / `label_generator` the atom labels). It must be a pure function of its
   inputs — **no Three.js, no DOM, no side effects.** Computation and rendering are
   strictly separated: the pipeline produces a plain `ViewportState`, and a
   separate `applyViewportState()` layer maps it to renderer calls. This is why the
@@ -98,7 +108,7 @@ We'll add a **Fade** node in the `modify` category that applies a uniform opacit
 to an incoming particle stream. The compute is intentionally trivial — the point
 is the wiring. Substitute your own logic once the plumbing is in place. The
 pattern mirrors the real `modify` node (`src/pipeline/executors/modify.ts`,
-`src/components/nodes/FilterNode.tsx`).
+`src/components/nodes/ModifyNode.tsx`).
 
 ### 1–6. Declare the type in `src/pipeline/types.ts`
 
@@ -107,7 +117,7 @@ pattern mirrors the real `modify` node (`src/pipeline/executors/modify.ts`,
 export type PipelineNodeType =
   | "load_structure"
   // …existing…
-  | "isosurface"
+  | "spectrum_plot"
   | "fade";
 
 // 2. Display label
@@ -174,12 +184,22 @@ export const NODE_CATALOG: Record<PipelineNodeType, NodeCatalogEntry> = {
     promptInputs: "`in` (particle data type)",
     promptOutputs: "`out` (particle data type)",
     inPrompt: true,
-    pythonClass: "Fade", // or null if you skip the Python subclass in step 12/13
+    pythonClass: "Fade", // the class exported from `megane` (step 14)
   },
 };
 ```
 
-### 8. Write the executor — `src/pipeline/executors/fade.ts`
+### 8. Summarize it in `src/pipeline/nodeSummary.ts`
+
+The canvas shows each node as a compact card whose second line is
+`summarizeNodeParams(params)`. Add a `case` to its `switch`:
+
+```typescript
+case "fade":
+  return `Opacity ${pct(params.opacity)}`;
+```
+
+### 9. Write the executor — `src/pipeline/executors/fade.ts`
 
 ```typescript
 import type { PipelineData, ParticleData, FadeParams } from "../types";
@@ -204,7 +224,7 @@ export function executeFade(
 }
 ```
 
-### 9. Dispatch it in `src/pipeline/execute.ts`
+### 10. Dispatch it in `src/pipeline/execute.ts`
 
 Import the executor near the other executor imports, then add a `case` to the
 `switch (data.params.type)` inside `executePipeline()`:
@@ -223,23 +243,28 @@ case "fade": {
 }
 ```
 
-### 10. Build the UI — `src/components/nodes/FadeNode.tsx`
+### 11. Build the UI — `src/components/nodes/FadeNode.tsx`
 
-Every node wraps the shared `NodeShell` (`src/components/nodes/NodeShell.tsx`),
-which draws the header, enable toggle, delete button, error badge, and the typed
-handles derived from `NODE_PORTS`. Your component only renders the _body_ (the
-param controls) and commits changes via the store's `updateNodeParams`.
+Every node wraps the shared `NodeShell` (`src/components/nodes/NodeShell.tsx`).
+The editor renders each node component twice: on the canvas, `NodeShell` ignores
+its children and draws the compact `NodeCard` (category icon, title, the
+`summarizeNodeParams` line, an "Off" badge, the error/warning status dot, and the
+typed handles derived from `NODE_PORTS`); in the properties pane under the graph,
+it renders only your children, below a header (enable toggle, delete button,
+node messages) that `PipelineEditor.tsx` supplies. So your component only renders
+the _form_ (the param controls) and commits changes via the store's
+`updateNodeParams`.
 
 ```tsx
 import type { NodeProps, Node } from "@xyflow/react";
 import type { PipelineNodeData } from "../../pipeline/execute";
 import type { FadeParams } from "../../pipeline/types";
-import { usePipelineStore } from "../../pipeline/store";
+import { useScopedPipelineStore } from "../../stores/MeganeProvider";
 import { NodeShell } from "./NodeShell";
 import { FormStack, SliderField } from "./form";
 
 export function FadeNode({ id, data }: NodeProps<Node<PipelineNodeData>>) {
-  const updateNodeParams = usePipelineStore((s) => s.updateNodeParams);
+  const updateNodeParams = useScopedPipelineStore((s) => s.updateNodeParams);
   const params = data.params as FadeParams;
 
   return (
@@ -267,10 +292,13 @@ Lay the form out with the shared kit in `src/components/nodes/form.tsx` —
 new node's properties pane looks like every other one.
 
 Read/write params **only** through `updateNodeParams(id, partial)` — never mutate
-`data.params` directly. For a text field, keep a local state for smooth typing
+`data.params` directly. Use the scoped hook (`useScopedPipelineStore` from
+`src/stores/MeganeProvider.tsx`), not the module-global `usePipelineStore`, so the
+node talks to the store of the viewer it lives in when several viewers share a
+page. For a text field, keep a local state for smooth typing
 and commit on blur/Enter, as `FilterNode.tsx` does.
 
-### 11. Register the component
+### 12. Register the component
 
 Two edits: the React Flow `nodeTypes` map in `src/components/PipelineEditor.tsx`,
 and the "Add Node" menu groups in `src/components/PipelineRail.tsx` (the icon
@@ -288,7 +316,21 @@ const nodeTypes = {
 // src/components/PipelineRail.tsx — add "fade" to the "Modify" group:
 export const ADD_NODE_GROUPS: { category: NodeCategory; label: string; types: PipelineNodeType[] }[] = [
   // …
-  { category: "modify", label: "Modify", types: ["modify", "color", "representation", "replicate", "fade"] },
+  {
+    category: "modify",
+    label: "Modify",
+    types: [
+      "modify",
+      "color",
+      "representation",
+      "symmetry",
+      "wrap",
+      "replicate",
+      "drawing_boundary",
+      "boundary_completion",
+      "fade",
+    ],
+  },
   // …
 ];
 ```
@@ -323,7 +365,7 @@ export abstract class PipelineNode {
 }
 ```
 
-A `Fade` subclass (step 12):
+A `Fade` subclass (step 13), following the builder's options-object constructor convention:
 
 ```typescript
 export class Fade extends PipelineNode {
@@ -331,8 +373,11 @@ export class Fade extends PipelineNode {
   protected readonly _outPorts = { particle: "out" };
   protected readonly _inpPorts = { particle: "in" };
 
-  constructor(public opacity: number = 0.3) {
+  public opacity: number;
+
+  constructor({ opacity = 0.3 }: { opacity?: number } = {}) {
     super();
+    this.opacity = opacity;
   }
 
   _toSerializedParams() {
@@ -341,10 +386,12 @@ export class Fade extends PipelineNode {
 }
 ```
 
-And the Python mirror (step 13) in `python/megane/pipeline.py` — declare the class
+And the Python mirror (step 14) in `python/megane/pipeline.py` — declare the class
 with `_node_type`/`_out_ports`/`_inp_ports` and store params on `self`, then add
 an `isinstance(node, Fade)` branch to `Pipeline._serialize_node()` that copies
-those attributes into the node dict:
+those attributes into the node dict. Export the class from `python/megane/__init__.py`
+(import + `__all__`) so `megane.Fade` resolves; likewise add the TypeScript class
+to the builder exports in `src/lib.ts` if npm users should reach it.
 
 ```python
 class Fade(PipelineNode):
@@ -381,7 +428,9 @@ regressions.
 **Unit tests (required, `npm test -- --coverage`).** Cover:
 
 - the executor — feed it a small `ParticleData` and assert the output overrides;
-- `defaultParams("fade")` — assert the returned shape;
+- `defaultParams("fade")` — assert the returned shape (the catalog tests in
+  `tests/ts/pipeline/catalog.test.ts` also check every default key is documented);
+- `summarizeNodeParams` — add a case to `tests/ts/pipeline/nodeSummary.test.ts`;
 - the React component — render it and assert `updateNodeParams` fires on change;
 - if you added builder/Python subclasses — assert `to_dict()` / `_toSerializedParams()`
   round-trips through `deserialize`.
@@ -397,8 +446,12 @@ modifier projects and sweep the neighborhood for side effects:
 ```bash
 npm run build:wasm && npm run build:app
 PATH="$(pwd)/.venv/bin:$PATH" npx playwright test --project=pipeline-editor
-PATH="$(pwd)/.venv/bin:$PATH" npx playwright test --project=modify-node
+PATH="$(pwd)/.venv/bin:$PATH" npx playwright test --project=modify-node__webapp
 ```
+
+(`modify-node` is a feature × host matrix; its projects are named
+`modify-node__<host>`. `npm run test:e2e:modify-node` runs all five hosts, which
+needs the JupyterLab and code-server setup from the `e2e-coverage` skill.)
 
 If your node changes rendered pixels intentionally, re-baseline with
 `MEGANE_E2E_UPDATE=1`, visually inspect the new PNGs, and commit them under

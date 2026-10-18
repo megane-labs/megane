@@ -95,10 +95,10 @@ const ENVIRONMENTS = [
   },
   {
     title: "Standalone web app",
-    install: "megane serve ./structures",
+    install: "megane serve protein.pdb",
     isCommand: true,
     description:
-      "Serve local structure files and view them instantly in the browser. No code needed.",
+      "Serve a local structure file and view it instantly in the browser — or drag in any supported format. No code needed.",
     href: "/guide/cli",
   },
   {
@@ -106,7 +106,7 @@ const ENVIRONMENTS = [
     install: "Install from Marketplace",
     isCommand: false,
     description:
-      "Open .pdb, .gro, .xyz, .mol, .cif files directly in VS Code with the megane extension.",
+      "Open .pdb, .gro, .xyz, .mol, .cif and every other supported structure format directly in VS Code with the megane extension.",
     href: "/guide/vscode",
   },
 ];
@@ -149,7 +149,7 @@ const CAPABILITIES = [
   },
   {
     title: "Visual pipeline editor",
-    body: "Wire 19 node types across 5 categories to load, filter, style and overlay — no code required. 9 typed data channels flow through color-coded edges; only matching types connect. Pipelines serialize to JSON to save and share.",
+    body: "Wire 24 node types across 6 categories to load, filter, style and overlay — no code required, or describe what you want and let the AI pipeline generator build it. 10 typed data channels flow through color-coded edges; only matching types connect. Pipelines serialize to JSON to save and share.",
   },
   {
     title: "Embed & integrate",
