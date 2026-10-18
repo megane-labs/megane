@@ -9,6 +9,18 @@ This page is the specification megane Builder and third-party structure tools
 implement. Change
 it here first, then change the code; cite the section in the PR.
 
+:::note What Builder implements today
+The client covers §3–§6 with these gaps, each still part of the contract:
+`icons` are not rendered (every tool is a text entry in the *Tools* menu);
+`expectedSeconds` only sets the timeout, and the progress bar shows for every
+call; the `element` widget is a number field that shows the symbol, and the
+`cell` widget takes an orthorhombic `a, b, c` only (pre-filled from the open
+document's cell, else 20 Å) and sends it as a diagonal 3×3 cell;
+a `new_document` tool warns in its form instead of asking for confirmation;
+the §7 record is kept for the session only; and the §9 confirmation,
+destination notice and chat opt-in are not built.
+:::
+
 megane Builder is a JavaScript application, while most structure-generation
 software (packmol, ASE, pymatgen, RDKit, polymer builders, …) is Python.
 Instead of porting that software to TypeScript, Builder exposes
@@ -103,14 +115,14 @@ them).
 | Field | Type | Meaning |
 | --- | --- | --- |
 | `contract` | integer | Contract version. Builder hides tools whose version it does not support and says so once per server. |
-| `category` | `"bulk"` \| `"molecule"` \| `"polymer"` \| `"surface"` \| `"solvation"` \| `"other"` | Sidebar group the button is placed in. |
-| `apply` | `"new_document"` \| `"insert"` | How the result enters the document (§5). |
+| `category` | `"bulk"` \| `"molecule"` \| `"polymer"` \| `"surface"` \| `"solvation"` \| `"other"` | *Tools*-menu group the button is placed in. |
+| `apply` | `"new_document"` \| `"insert"` | How the result enters the document (§5). Builder hides a tool with any other value, as for an unsupported `contract`. |
 | `document` | `"none"` \| `"optional"` \| `"required"` | Whether the tool receives the open document (§4.3). `insert` tools usually say `required`. |
 | `stochastic` | boolean | The result depends on a random seed. Such a tool **must** have a `seed` input (§4.4). |
 | `expectedSeconds` | number, optional | Typical run time; Builder shows a progress bar instead of a spinner above ~2 s and uses it to pick a timeout (§6). |
 
 Everything a user reads comes from standard MCP fields: `title` is the button
-label (fallback: `name`), the first sentence of `description` is its tooltip,
+label (fallback: `annotations.title`, then `name`), the first sentence of `description` is its tooltip,
 and `icons` is its icon. Builder renders only `data:` icons; any other icon
 source falls back to the category icon (this sidesteps the icon-fetching rules
 in the MCP spec). `description` is written for both humans and LLMs: first
@@ -135,8 +147,8 @@ the tool's form from it. Two things are added:
 ### 4.1 Form generation
 
 Builder supports this subset of JSON Schema for form generation. A tool that
-needs more must still validate on the server, but Builder shows it with a
-"cannot build a form" notice instead of a button:
+needs more must still validate on the server, but Builder shows its button
+disabled, with a "Builder cannot build a form: …" tooltip naming the property:
 
 | Schema | Control |
 | --- | --- |
@@ -144,15 +156,16 @@ needs more must still validate on the server, but Builder shows it with a
 | `type: "string"` with `enum` | Select |
 | `type: "string"` | Text field (`maxLength` respected) |
 | `type: "boolean"` | Checkbox |
-| `type: "array"` of numbers with `minItems == maxItems ≤ 9` | Fixed-size vector field |
-| `type: "array"` of objects | Editable table, one row per item; columns from the item schema |
+| `type: "array"` of numbers or integers with `minItems == maxItems ≤ 9` | Fixed-size vector field |
+| `type: "array"` of objects | Editable table, one row per item (*Add row* / *Remove* within `minItems` / `maxItems`); columns from the item schema; tables do not nest |
 | `type: "object"` (one level of nesting) | Fieldset |
 | Any property with `x-megane-widget` | The widget in §4.2 |
 
 `title` labels the control, `description` becomes its help text, `default`
-pre-fills it, `required` marks it mandatory. `oneOf` / `anyOf` / `if` / `$ref`
-to external URIs are not supported for form generation (local `$ref` into
-`$defs` is). A property with a widget is exempt: its control comes from the
+pre-fills it (else the first of `examples`), `required` marks it mandatory
+(other properties without a `default` are labelled *optional*). `oneOf` /
+`anyOf` / `allOf` / `if` / `not` / `$ref` to external URIs are not supported
+for form generation (local `$ref` into `$defs` is). A property with a widget is exempt: its control comes from the
 widget, not from its schema.
 
 Every required property without a `default` **should** carry JSON Schema
@@ -169,7 +182,8 @@ The JSON Schemas below are normative. A server's property with a given
 (it may be stricter, e.g. `minItems`). The reference SDK (§10) exports them.
 
 **`x-megane-widget: "molecule"` — a molecule from the Builder library.**
-The control is the library picker (presets, sketches, imported files). Builder
+The control is a drop-down of the Builder library (the presets and the user's
+sketches, imported files and saved selections). Builder
 sends the library molecule as a V2000 mol block with explicit hydrogens and 3D
 coordinates in Å — what the library already stores after RDKit embedding.
 
@@ -186,8 +200,7 @@ coordinates in Å — what the library already stores after RDKit embedding.
 }
 ```
 
-Builder always sends `molblock` (plus `smiles` when the library entry has
-one). Servers **must** accept `molblock` and **may** accept `smiles` alone, which
+Builder always sends `name` and `molblock` (library entries carry no SMILES). Servers **must** accept `molblock` and **may** accept `smiles` alone, which
 is what LLM clients will usually send; a server that cannot embed a SMILES
 returns a tool error saying so. A server **must not** re-embed or re-optimise a
 3D `molblock` it was given: the user chose that conformer.
@@ -203,8 +216,9 @@ treat a missing code as 3D.
 **`x-megane-widget: "atom"` — one atom of a molecule argument.** Used, for
 example, for the head and tail atoms of a polymer monomer. The value is a
 0-based index into the atom block of that molecule's `molblock`. The property
-names the molecule argument it refers to with `x-megane-of`; the control shows
-that molecule and lets the user click an atom.
+names the molecule argument it refers to with `x-megane-of`; the control lists
+that molecule's atoms (index and element) to pick from, and is a plain number
+field until a molecule is chosen.
 
 ```json
 { "type": "integer", "minimum": 0, "x-megane-widget": "atom", "x-megane-of": "monomer" }
@@ -220,20 +234,26 @@ orthorhombic `a, b, c` shortcut.
 
 **`x-megane-widget: "selection"`** — atom indices into the `document` argument
 (§4.3), `{"type": "array", "items": {"type": "integer", "minimum": 0}}`.
-Builder fills it with the atoms selected in the 3D view.
+Builder fills it with the atoms selected in the 3D view; the form only shows
+how many are selected.
 
 **`x-megane-widget: "seed"`** — `{"type": "integer", "minimum": 0}`. Builder
-pre-fills a fresh random value, shows it, and records it (§7).
+pre-fills a fresh random value, shows it (editable, with a *New seed* button),
+and records it (§7).
 
-**`x-megane-widget: "document"`** — see §4.3. Never shown as a control.
+**`x-megane-widget: "document"`** — see §4.3. Never shown as a control; the
+form says how many atoms the open structure has.
 
 ### 4.3 The open document
 
 A tool whose `_meta` says `document: "required"` or `"optional"` declares
 exactly one property with `x-megane-widget: "document"` and the
 [`Structure`](#51-structure) schema. Builder fills it with the structure
-currently shown in the 3D view (the document with its edits applied), never
-the original file. `selection` indices refer to atoms of this payload.
+currently shown in the 3D view — the document with its edits applied, not the
+file as opened (unless the History panel's *Show original* is on, which also
+blocks `insert` tools) — as `elements`, `positions`, `cell`, `bonds` and, when
+any bond is not single, `bondOrders`. `selection` indices refer to atoms of
+this payload.
 
 The document is **read-only input**. An `insert` tool returns only the atoms it
 adds, never the document's atoms (§5.2); this is what keeps the Builder's edit
@@ -271,19 +291,16 @@ with 1000 water and 20 ethanol molecules (3160 atoms)."*).
   "name": "water-ethanol",
   "structure": { "…": "Structure, §5.1" },
   "warnings": ["packmol reached the iteration limit; minimum distance 1.7 Å < tolerance 2.0 Å"],
-  "provenance": {
-    "software": { "packmol": "20.15.1", "rdkit": "2026.03.6" },
-    "seed": 12345
-  }
+  "provenance": { "packmol": "21.2.3", "rdkit": "2026.03.6", "megane-builder-tools": "0.1.0", "seed": 12345 }
 }
 ```
 
 | Field | Meaning |
 | --- | --- |
 | `contract` | Must equal the tool's `contract`. |
-| `name` | Suggested document / fragment name. Builder sanitises it and uses it as the file name for `new_document`. |
+| `name` | Suggested document / fragment name. Builder sanitises it and uses it as the file name for `new_document` and as the stem of the fragment id for `insert`; a missing or blank name becomes `result`. |
 | `structure` | The atoms (§5.1). |
-| `warnings` | Non-fatal problems, shown in Builder's notice line. A result that is unusable is an error (§6), not a warning. |
+| `warnings` | Non-fatal problems, shown in Builder's notice line after the text summary. A result that is unusable is an error (§6), not a warning. |
 | `provenance` | Versions of the software that produced the result and the seed actually used. Free-form object of strings / numbers; recorded by Builder (§7). |
 
 ### 5.1 Structure
@@ -294,10 +311,10 @@ for results and for the `document` input.
 
 | Field | Type | Required | Notes |
 | --- | --- | --- | --- |
-| `elements` | integer[] | yes | Atomic numbers, length N. `0` is not allowed. |
+| `elements` | integer[] | yes | Atomic numbers 1–118, length N. `0` is not allowed. |
 | `positions` | number[] | yes | Cartesian Å, flat `[x0,y0,z0, x1,…]`, length 3N. |
 | `cell` | number[9] \| null | yes | Row-major lattice vectors in Å, or `null` for a non-periodic structure. |
-| `bonds` | [int, int][] | yes | 0-based atom index pairs. **Complete**: every bond the tool knows. |
+| `bonds` | [int, int][] | yes | 0-based pairs of two distinct atoms. **Complete**: every bond the tool knows. |
 | `bondOrders` | integer[] | no | Parallel to `bonds`: 1, 2, 3, or 4 (aromatic). Omitted means all single. |
 | `molecules` | integer[] | no | Per-atom 0-based molecule index. |
 | `residueNames` | string[] | no | Per-atom residue name (≤ 4 chars recommended for PDB export). |
@@ -317,7 +334,7 @@ Rules:
   "the source asserts, nothing is invented" principle megane's parsers follow
   (rule #11 in `AGENTS.md`).
 - Molecules should be returned whole (not wrapped into the cell); Builder's
-  *Wrap* op does wrapping when the user wants it.
+  *Structure › Wrap atoms into cell* does wrapping when the user wants it.
 - Size: Builder accepts up to 500 000 atoms per result. Tools that can exceed
   this should expose a limit parameter. A binary encoding for large payloads is
   reserved for a later contract version.
@@ -326,8 +343,8 @@ Rules:
 
 | `apply` | What Builder does | Undo |
 | --- | --- | --- |
-| `new_document` | Asks for confirmation if the open document has edits, then opens the result as a new document (`openStructure`), named from `name`. Residue names become the document's labels. | The previous document is replaced, like *File → New*. |
-| `insert` | Converts the result into **one `add_fragment` op** (absolute positions, no translation, bonds and orders from the payload) with a fresh fragment id, and pushes it. If the result's `cell` differs from the document's, a `set_cell` op (without atom scaling) is pushed first, in the same step. The new atoms are selected. | One Undo removes the whole insertion. |
+| `new_document` | Warns in the form (*The result replaces the open structure and its history.*) when the open document has edits, then opens the result as a new document (`openStructure`), named from `name`. Residue names become the document's labels (`RESNAME<resid>` when `residueIds` is given). | The previous document and its history are replaced, like *File › Open…* or *New …*. |
+| `insert` | Needs an open, editable document (*Run* is disabled otherwise). Converts the result into **one `add_fragment` op** (absolute positions, no translation, bonds and orders from the payload) with a fresh fragment id, and pushes it. If the result has a `cell` that differs from the document's, a `set_cell` op (without atom scaling) is pushed first, in the same step. The new atoms are selected. | One Undo removes the whole insertion. |
 
 Because `insert` goes through the existing `add_fragment` op, a tool-inserted
 molecule is indistinguishable from a library placement: later edits address it
@@ -337,7 +354,8 @@ as `<fragmentId>:<k>`, and the document replays without the server.
 
 - Builder calls a tool only on an explicit user action (button → form →
   *Run*). It never calls tools on its own.
-- Builder validates arguments against `inputSchema` before calling, and
+- Builder validates the form against the constraints of `inputSchema` it
+  renders (§4.1; *Run* stays disabled until they hold) before calling, and
   validates `structuredContent` against **its own** copy of `BuilderResult`
   (not the server-provided `outputSchema`) before applying anything.
 - Calls carry a `progressToken`. Servers **should** send
@@ -354,9 +372,9 @@ as `<fragmentId>:<k>`, and the document replays without the server.
 - Failures a user can fix (invalid combination of parameters, packmol did not
   converge, a planar molecule where 3D is required) are **tool errors**:
   `isError: true` with a one-line, actionable message in the first text content
-  item. Builder shows that line in the notice line and keeps the form open with
-  the user's values. JSON-RPC errors are reported as "server error" with the
-  server's name.
+  item. Builder shows that line in the form and keeps the form open with
+  the user's values. JSON-RPC and transport errors are shown the same way, as
+  "The server failed: …" with the error's message.
 - A result that fails validation (§5.1) is rejected entirely; Builder never
   applies a partial structure.
 
@@ -379,6 +397,13 @@ and writes them into saved Builder documents, so a structure can be rebuilt by
 calling the same tool with the same arguments. The persistence format is part
 of the Builder document work and is not fixed by this contract.
 
+Today Builder keeps the record in memory for the session only (the tools
+store's `applied` list), not in the edit history or a saved file. Each entry has
+`server: { name, version, url }` (from the server's `serverInfo` and the URL
+it connected to), `tool`, `contract`, `arguments` with the document argument
+replaced by `{ "atoms": N }` (no hash yet), the result's `provenance`, and the
+number of atoms applied.
+
 ## 8. Hosts and the bridge
 
 Servers are configured in the common `mcpServers` format, so the same entry
@@ -393,10 +418,14 @@ works in LLM clients:
 }
 ```
 
-Builder currently ships only in the standalone webapp (`/builder.html`, see
-`docs/docs/platform-support.md`). **What is implemented today is the direct
-path:** the page connects to a Streamable HTTP server itself (the *Python
-tools* section takes the server URL and bearer token), whether the page came
+Builder runs in the standalone webapp (`/builder.html`) and, embedded, in the
+VS Code extension, the JupyterLab extension and the Jupyter widget
+(`megane.Builder`), but only the webapp shows the *Tools* menu: the embedded
+hosts turn it off (`BuilderHost.tools: false`, `src/builder/host.ts`) until they
+have a bridge (see `docs/docs/platform-support.md`). **What is implemented today
+is the direct path:** the page connects to a Streamable HTTP server itself (the
+*Tools › Tool server…* form takes the server URL, default
+`http://127.0.0.1:8765/mcp`, and bearer token), whether the page came
 from `megane serve`, a local build or the hosted docs. The server has to allow
 the page's origin (`megane-builder-tools --transport http --allow-origin
 <origin>`). stdio servers need a bridge that spawns them; the rows below say
@@ -420,9 +449,9 @@ server bounds each call's time and the number of concurrent calls.
 | --- | --- | --- | --- | --- |
 | Any webapp page (hosted, local build, `megane serve`) — **implemented** | None: the page connects to HTTP servers directly | *Tools › Tool server…*; the URL is remembered in local storage, the token is not | no | CORS permitting |
 | Standalone webapp via `megane serve` (planned) | FastAPI app spawns servers and relays over its WebSocket | `megane serve --mcp-config <file>` | yes | yes |
-| VS Code extension (when Builder is hosted there) | Extension host spawns servers and relays through `postMessage` | `megane.builder.mcpServers` setting | yes | yes |
-| JupyterLab labextension (when Builder is hosted there) | Jupyter server extension spawns servers and relays | `jupyter_server_config` | yes | yes |
-| Jupyter widget (`MolecularViewer`) | — | — | — | — (the widget does not mount Builder) |
+| VS Code extension (planned; its Builder tab has no *Tools* menu yet) | Extension host spawns servers and relays through `postMessage` | `megane.builder.mcpServers` setting | yes | yes |
+| JupyterLab labextension (planned; its Builder tab has no *Tools* menu yet) | Jupyter server extension spawns servers and relays | `jupyter_server_config` | yes | yes |
+| Jupyter widget | — | — | — | — (`megane.Builder` has no *Tools* menu; `MolecularViewer` does not mount Builder) |
 
 The bridge exposes only `listTools(serverId)`, `callTool(serverId, name,
 arguments)` with progress events, and `cancel(callId)` to the page. It never
@@ -483,8 +512,9 @@ sampling. Hosts that get a bridge must be listed in
     arguments is refused. Cancellation is not checked yet. Third-party servers
     are expected to pass it.
 - megane's own tests use recorded `tools/list` / `tools/call` fixtures from the
-  reference server (`make fixtures` there), so megane CI never needs Python
-  tool dependencies.
+  reference server (`make fixtures` there, committed under
+  `tests/fixtures/builder-tools/` and read by `tests/ts/builder/tools/`), so
+  megane CI never needs Python tool dependencies.
 
 ## 11. Versioning
 
@@ -511,7 +541,7 @@ both apply modes and the `molecule`, `atom`, `seed` and `document` widgets.
 {
   "name": "liquid_box",
   "title": "Liquid box",
-  "description": "Fill a periodic box with molecules at a target density using packmol. Give each component and either its count or a mole fraction; the box is sized from the density.",
+  "description": "Fill a periodic box with molecules at a target density using packmol. Give each component and its number of copies; the box is sized so that the mixture has the requested density (g/cm³). …",
   "inputSchema": {
     "type": "object",
     "properties": {
@@ -519,19 +549,20 @@ both apply modes and the `molecule`, `atom`, `seed` and `document` widgets.
         "type": "array",
         "title": "Components",
         "minItems": 1,
+        "maxItems": 8,
         "items": {
           "type": "object",
           "properties": {
             "molecule": { "$ref": "#/$defs/Molecule", "x-megane-widget": "molecule", "title": "Molecule" },
-            "count": { "type": "integer", "minimum": 1, "title": "Count", "examples": [100], "x-megane-unit": "count" }
+            "count": { "type": "integer", "minimum": 1, "maximum": 500000, "title": "Count", "examples": [100], "x-megane-unit": "count" }
           },
           "required": ["molecule", "count"]
         }
       },
-      "density": { "type": "number", "exclusiveMinimum": 0, "default": 1.0, "title": "Density", "x-megane-unit": "g/cm3" },
+      "density": { "type": "number", "exclusiveMinimum": 0, "maximum": 5, "default": 1.0, "title": "Density", "x-megane-unit": "g/cm3" },
       "shape": { "type": "string", "enum": ["cubic", "orthorhombic"], "default": "cubic", "title": "Box shape" },
       "aspect": { "type": "array", "items": { "type": "number", "exclusiveMinimum": 0 }, "minItems": 3, "maxItems": 3, "default": [1, 1, 1], "title": "Aspect ratio a:b:c" },
-      "tolerance": { "type": "number", "minimum": 1.0, "default": 2.0, "title": "Minimum distance", "x-megane-unit": "angstrom" },
+      "tolerance": { "type": "number", "minimum": 1.0, "maximum": 4.0, "default": 2.0, "title": "Minimum distance", "x-megane-unit": "angstrom" },
       "seed": { "type": "integer", "minimum": 0, "x-megane-widget": "seed", "title": "Seed" }
     },
     "required": ["components", "seed"],
@@ -599,15 +630,15 @@ the 200-unit maximum.
 {
   "name": "solvate",
   "title": "Solvate",
-  "description": "Fill the empty space of the open structure's cell with solvent molecules. The number of solvent molecules gives the requested density in the part of the cell not taken by the existing atoms' van der Waals spheres. Only the added solvent is returned. …",
+  "description": "Fill the empty space of the open structure's cell with solvent molecules. The number of solvent molecules is chosen so that the solvent has the requested density (g/cm³) in the part of the cell not taken by the existing atoms' van der Waals spheres. … Only the added solvent is returned; the open structure is not changed. Needs an orthorhombic cell.",
   "inputSchema": {
     "type": "object",
     "properties": {
       "document": { "$ref": "#/$defs/Structure", "x-megane-widget": "document" },
       "solvent": { "$ref": "#/$defs/Molecule", "x-megane-widget": "molecule", "title": "Solvent" },
       "seed": { "type": "integer", "minimum": 0, "x-megane-widget": "seed", "title": "Seed" },
-      "density": { "type": "number", "exclusiveMinimum": 0, "default": 1.0, "title": "Density", "x-megane-unit": "g/cm3" },
-      "tolerance": { "type": "number", "minimum": 1.0, "default": 2.0, "title": "Minimum distance", "x-megane-unit": "angstrom" }
+      "density": { "type": "number", "exclusiveMinimum": 0, "maximum": 5, "default": 1.0, "title": "Density", "x-megane-unit": "g/cm3" },
+      "tolerance": { "type": "number", "minimum": 1.0, "maximum": 4.0, "default": 2.0, "title": "Minimum distance", "x-megane-unit": "angstrom" }
     },
     "required": ["document", "solvent", "seed"]
   },
@@ -624,7 +655,7 @@ Result: only the solvent atoms, with `cell` equal to the document's cell (so
 Builder pushes no `set_cell`). packmol keeps the document's atoms fixed and
 every solvent atom at least `tolerance` from other atoms across periodic
 boundaries. A document without a cell, or with a non-orthorhombic cell, is a
-tool error ("Solvate needs a periodic cell; set one in Crystal → Cell").
+tool error telling the user to set a cell (in Builder: *Structure › Set cell…*).
 
 ### 12.4 Server side
 
