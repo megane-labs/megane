@@ -36,7 +36,7 @@
 
 use crate::atomic::{capitalize, symbol_to_atomic_num};
 use crate::bonds;
-use crate::parser::{HeteroFrames, ParsedStructure};
+use crate::parser::{FrameChange, HeteroFramesBuilder, ParsedStructure};
 use crate::trajectory::{VectorChannel, VectorFrame};
 use std::collections::HashSet;
 
@@ -275,14 +275,7 @@ pub fn parse(text: &str) -> Result<ParsedStructure, String> {
     let n_atoms = first.elements.len();
     let base_cell = first.cell;
 
-    let mut frame_positions_flat: Vec<f32> = Vec::new();
-    let mut atom_offsets: Vec<u32> = vec![0];
-    let mut per_frame_cells: Vec<[f32; 9]> = Vec::new();
-    let mut per_frame_elements: Vec<Vec<u8>> = Vec::new();
-    let mut varies_atoms = false;
-    let mut varies_cell = false;
-    let mut varies_topology = false;
-    let mut max_atoms = n_atoms;
+    let mut frames = HeteroFramesBuilder::with_capacity(n_atoms, steps.len());
     let mut force_frames: Vec<VectorFrame> = Vec::new();
     if !first.forces.is_empty() {
         force_frames.push(VectorFrame {
@@ -292,21 +285,17 @@ pub fn parse(text: &str) -> Result<ParsedStructure, String> {
     }
 
     for (k, step) in steps.iter().enumerate() {
-        frame_positions_flat.extend_from_slice(&step.positions);
-        let last = *atom_offsets.last().unwrap();
-        atom_offsets.push(last + step.elements.len() as u32);
-        max_atoms = max_atoms.max(step.elements.len());
-        if step.elements.len() != n_atoms {
-            varies_atoms = true;
-        }
-        if step.elements != first.elements {
-            varies_topology = true;
-        }
-        if step.cell != base_cell {
-            varies_cell = true;
-        }
-        per_frame_cells.push(step.cell.or(base_cell).unwrap_or([0.0; 9]));
-        per_frame_elements.push(step.elements.clone());
+        // A step without its own cell inherits frame 0's, but (unlike XYZ) a
+        // missing cell next to a frame-0 cell still counts as a cell change.
+        frames.push_frame(
+            &step.positions,
+            || step.elements.clone(),
+            step.cell.or(base_cell),
+            FrameChange {
+                topology: step.elements != first.elements,
+                cell: step.cell != base_cell,
+            },
+        );
         if !step.forces.is_empty() {
             force_frames.push(VectorFrame {
                 frame: k + 1,
@@ -318,55 +307,7 @@ pub fn parse(text: &str) -> Result<ParsedStructure, String> {
     let empty_bonds = HashSet::new();
     let bonds = bonds::infer_bonds(&first.positions, &first.elements, n_atoms, &empty_bonds);
 
-    let hetero = if varies_atoms || varies_cell || varies_topology {
-        let (elements_flat, bonds_flat, bond_offsets) = if varies_atoms || varies_topology {
-            let mut elements_flat: Vec<u8> = Vec::new();
-            let mut bonds_flat: Vec<u32> = Vec::new();
-            let mut bond_offsets: Vec<u32> = vec![0];
-            for (k, elems) in per_frame_elements.iter().enumerate() {
-                let a = atom_offsets[k] as usize * 3;
-                let b = atom_offsets[k + 1] as usize * 3;
-                let fbonds = bonds::infer_bonds(
-                    &frame_positions_flat[a..b],
-                    elems,
-                    elems.len(),
-                    &empty_bonds,
-                );
-                for (u, v) in &fbonds {
-                    bonds_flat.push(*u);
-                    bonds_flat.push(*v);
-                }
-                let last = *bond_offsets.last().unwrap();
-                bond_offsets.push(last + fbonds.len() as u32);
-                elements_flat.extend_from_slice(elems);
-            }
-            (elements_flat, bonds_flat, bond_offsets)
-        } else {
-            (Vec::new(), Vec::new(), Vec::new())
-        };
-        let cells_flat = if varies_cell {
-            let mut cf = Vec::with_capacity(per_frame_cells.len() * 9);
-            for c in &per_frame_cells {
-                cf.extend_from_slice(c);
-            }
-            cf
-        } else {
-            Vec::new()
-        };
-        Some(HeteroFrames {
-            atom_offsets,
-            elements_flat,
-            cells_flat,
-            bond_offsets,
-            bonds_flat,
-            varies_atoms,
-            varies_cell,
-            varies_topology,
-            max_atoms: max_atoms as u32,
-        })
-    } else {
-        None
-    };
+    let (frame_positions_flat, hetero) = frames.finish(&first.elements, base_cell);
 
     let mut warnings = Vec::new();
     if ghost_count > 0 {
@@ -702,5 +643,23 @@ PRIMCOORD
             Err(e) => e,
         };
         assert!(err.contains("no PRIMCOORD"), "unexpected error: {err}");
+    }
+
+    #[test]
+    fn animsteps_that_add_an_atom_and_change_the_cell_build_a_side_table() {
+        let text = "ANIMSTEPS 3\nCRYSTAL\nPRIMVEC\n 5 0 0\n 0 5 0\n 0 0 5\n\
+            PRIMCOORD 1\n2 1\n8 0 0 0\n1 0.96 0 0\n\
+            PRIMCOORD 2\n2 1\n8 0 0 0.1\n1 0.96 0 0.1\n\
+            PRIMVEC 3\n 6 0 0\n 0 6 0\n 0 0 6\n\
+            PRIMCOORD 3\n3 1\n8 0 0 0.2\n1 0.96 0 0.2\n1 0 0.96 0.2\n";
+        let s = parse(text).unwrap();
+        assert_eq!(s.extra_frame_count(), 2);
+        let h = s.hetero.as_ref().expect("atom count and cell vary");
+        assert!(h.varies_atoms && h.varies_topology && h.varies_cell);
+        assert_eq!(h.atom_offsets, vec![0, 2, 5]);
+        assert_eq!(h.elements_flat, vec![8, 1, 8, 1, 1]);
+        assert_eq!(h.bond_offsets, vec![0, 1, 3]);
+        assert_eq!(h.cells_flat[0], 5.0);
+        assert_eq!(h.cells_flat[9], 6.0);
     }
 }

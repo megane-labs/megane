@@ -1,5 +1,5 @@
 use crate::bonds;
-use crate::parser::symbol_to_atomic_num;
+use crate::parser::{symbol_to_atomic_num, FrameChange, HeteroFramesBuilder};
 use crate::trajectory::{ScalarChannel, ScalarFrame, VectorChannel, VectorFrame};
 /// XYZ text format parser.
 ///
@@ -201,23 +201,10 @@ pub fn parse(text: &str) -> Result<crate::parser::ParsedStructure, String> {
     let mut first_n_atoms = 0usize;
     // Frame-0 lattice (also the fallback cell carried into frames that omit one).
     let mut box_matrix: Option<[f32; 9]> = None;
-    // Extra frames only (frame 0 lives in `first_positions`), frame-major flat.
-    let mut frame_positions_flat: Vec<f32> = Vec::new();
-    // Prefix-sum of atom counts over EXTRA frames (seeded with 0); only consumed
-    // when the trajectory turns out to be heterogeneous.
-    let mut atom_offsets: Vec<u32> = vec![0];
-    // Heterogeneity flags + lazily-recorded per-extra-frame snapshots. Nothing is
-    // recorded until a channel is first seen to vary, so a uniform multi-frame
-    // XYZ allocates no side table and keeps the fixed-stride fast path.
-    let mut varies_atoms = false;
-    let mut varies_topology = false;
-    let mut varies_cell = false;
-    let mut max_atoms = 0usize;
-    let mut per_frame_elements: Vec<Vec<u8>> = Vec::new();
-    let mut per_frame_cells: Vec<[f32; 9]> = Vec::new();
-    let mut recording_topo = false;
-    let mut recording_cell = false;
-    let mut extra_idx = 0usize;
+    // Extra frames (frame 0 lives in `first_positions`) and their lazily
+    // recorded heterogeneity side table; re-seeded with frame 0's atom count
+    // once frame 0 is read. A uniform multi-frame XYZ allocates no side table.
+    let mut frames = HeteroFramesBuilder::new(0);
     // Per-atom channels declared by extXYZ Properties, accumulated per frame.
     let mut channel_accums: Vec<ChannelAccum> = Vec::new();
     // Reused across every atom line so each line's split does not allocate a Vec.
@@ -311,13 +298,17 @@ pub fn parse(text: &str) -> Result<crate::parser::ParsedStructure, String> {
             if is_first {
                 labels = ext_labels;
             }
-            let frame_no = if is_first { 0 } else { extra_idx + 1 };
+            let frame_no = if is_first {
+                0
+            } else {
+                frames.extra_frames() + 1
+            };
             record_channels(&mut channel_accums, &plan, frame_no, ext_data);
         }
 
         if is_first {
             first_n_atoms = n_atoms;
-            max_atoms = n_atoms;
+            frames = HeteroFramesBuilder::new(n_atoms);
             box_matrix = frame_lattice;
             first_positions = Some(positions);
             first_elements = Some(elements);
@@ -325,55 +316,22 @@ pub fn parse(text: &str) -> Result<crate::parser::ParsedStructure, String> {
             continue;
         }
 
-        // Extra frame: append positions (jagged — every frame is kept now, unlike
-        // the old fixed-stride path that silently dropped mismatched frames).
-        frame_positions_flat.extend_from_slice(&positions);
-        let last = *atom_offsets.last().unwrap();
-        atom_offsets.push(last + n_atoms as u32);
-        max_atoms = max_atoms.max(n_atoms);
-
-        // Classify this frame's variation against frame 0.
-        let first_elems = first_elements.as_ref().unwrap();
-        if n_atoms != first_n_atoms {
-            varies_atoms = true;
-        }
-        if !varies_topology && elements != *first_elems {
-            varies_topology = true;
-        }
-        // A frame that omits `Lattice=` inherits frame 0's cell (no variation);
-        // only a present-and-different lattice counts as a change.
-        if !varies_cell {
-            if let Some(fl) = frame_lattice {
-                if Some(fl) != box_matrix {
-                    varies_cell = true;
-                }
-            }
-        }
-
-        // Lazily begin recording per-frame topology, backfilling the earlier
-        // (uniform) extra frames with frame-0 elements the first time we diverge.
-        if (varies_atoms || varies_topology) && !recording_topo {
-            for _ in 0..extra_idx {
-                per_frame_elements.push(first_elems.clone());
-            }
-            recording_topo = true;
-        }
-        if recording_topo {
-            per_frame_elements.push(elements);
-        }
-
-        // Same lazy scheme for per-frame cells.
-        if varies_cell && !recording_cell {
-            for _ in 0..extra_idx {
-                per_frame_cells.push(box_matrix.unwrap_or([0.0; 9]));
-            }
-            recording_cell = true;
-        }
-        if recording_cell {
-            per_frame_cells.push(frame_lattice.or(box_matrix).unwrap_or([0.0; 9]));
-        }
-
-        extra_idx += 1;
+        // Extra frame: every frame is kept (jagged), unlike the old fixed-stride
+        // path that silently dropped mismatched frames. Topology changes when
+        // the element list differs from frame 0; a frame that omits `Lattice=`
+        // inherits frame 0's cell (no variation) — only a present-and-different
+        // lattice counts as a change.
+        let first_elems = first_elements.as_deref().unwrap_or_default();
+        let change = FrameChange {
+            topology: !frames.varies_topology() && elements != first_elems,
+            cell: !frames.varies_cell() && frame_lattice.is_some_and(|fl| Some(fl) != box_matrix),
+        };
+        frames.push_frame(
+            &positions,
+            move || elements,
+            frame_lattice.or(box_matrix),
+            change,
+        );
     }
 
     let positions = first_positions.ok_or("XYZ file contains no atoms")?;
@@ -388,57 +346,13 @@ pub fn parse(text: &str) -> Result<crate::parser::ParsedStructure, String> {
 
     // Assemble the heterogeneous side-table only when some channel varies; a
     // uniform multi-frame XYZ keeps `hetero: None` and the fast fixed-stride path.
-    let hetero = if varies_atoms || varies_cell || varies_topology {
-        let (elements_flat, bonds_flat, bond_offsets) = if varies_atoms || varies_topology {
-            let mut elements_flat: Vec<u8> = Vec::new();
-            let mut bonds_flat: Vec<u32> = Vec::new();
-            let mut bond_offsets: Vec<u32> = Vec::with_capacity(per_frame_elements.len() + 1);
-            bond_offsets.push(0);
-            for (k, elems) in per_frame_elements.iter().enumerate() {
-                let a = atom_offsets[k] as usize * 3;
-                let b = atom_offsets[k + 1] as usize * 3;
-                let fpos = &frame_positions_flat[a..b];
-                let fbonds = bonds::infer_bonds(fpos, elems, elems.len(), &empty_bonds);
-                for (u, v) in &fbonds {
-                    bonds_flat.push(*u);
-                    bonds_flat.push(*v);
-                }
-                let last = *bond_offsets.last().unwrap();
-                bond_offsets.push(last + fbonds.len() as u32);
-                elements_flat.extend_from_slice(elems);
-            }
-            (elements_flat, bonds_flat, bond_offsets)
-        } else {
-            (Vec::new(), Vec::new(), Vec::new())
-        };
-        let cells_flat = if varies_cell {
-            let mut cf = Vec::with_capacity(per_frame_cells.len() * 9);
-            for c in &per_frame_cells {
-                cf.extend_from_slice(c);
-            }
-            cf
-        } else {
-            Vec::new()
-        };
-        Some(crate::parser::HeteroFrames {
-            atom_offsets,
-            elements_flat,
-            cells_flat,
-            bond_offsets,
-            bonds_flat,
-            varies_atoms,
-            varies_cell,
-            varies_topology,
-            max_atoms: max_atoms as u32,
-        })
-    } else {
-        None
-    };
+    let varies_atoms = frames.varies_atoms();
+    let total_frames = 1 + frames.extra_frames();
+    let (frame_positions_flat, hetero) = frames.finish(&elements, box_matrix);
 
     // Emit extXYZ channels: frame-synced when every frame (with a fixed atom
     // count — channels assume a fixed per-atom stride) carried the property,
     // otherwise a static frame-0 channel plus one aggregated warning.
-    let total_frames = 1 + extra_idx;
     let mut vector_channels: Vec<VectorChannel> = Vec::new();
     let mut scalar_channels: Vec<ScalarChannel> = Vec::new();
     let mut warnings: Vec<String> = Vec::new();
