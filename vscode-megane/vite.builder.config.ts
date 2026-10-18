@@ -4,6 +4,14 @@ import wasm from "vite-plugin-wasm";
 import path from "path";
 import { ketcherAlias, ketcherDefine, ketcherRaphaelRequire } from "../vite.ketcher";
 import { rdkitNoDefaultWasm } from "../vite.rdkit";
+import {
+  aliasEntries,
+  prodDefine,
+  srcAlias,
+  syncParseAlias,
+  vscodeModules,
+  wasmWorker,
+} from "../vite.shared";
 
 /**
  * Webview bundle of megane Builder (`media/builder/`), opened in an editor tab
@@ -19,26 +27,17 @@ import { rdkitNoDefaultWasm } from "../vite.rdkit";
 export default defineConfig({
   base: "./",
   plugins: [react(), wasm(), ketcherRaphaelRequire()],
-  worker: {
-    format: "es",
-    plugins: () => [wasm(), rdkitNoDefaultWasm()],
-  },
+  worker: wasmWorker(() => [rdkitNoDefaultWasm()]),
   resolve: {
     alias: [
       // Parse on the main thread, as the viewer's webview does.
-      {
-        find: /\.\/parseClient$/,
-        replacement: path.resolve(__dirname, "../src/parsers/parseClientSync.ts"),
-      },
-      { find: "@", replacement: path.resolve(__dirname, "../src") },
-      ...Object.entries(ketcherAlias).map(([find, replacement]) => ({ find, replacement })),
+      syncParseAlias(),
+      srcAlias(),
+      ...aliasEntries(ketcherAlias),
     ],
-    modules: [path.resolve(__dirname, "node_modules"), path.resolve(__dirname, "../node_modules")],
+    modules: vscodeModules(),
   },
-  define: {
-    ...ketcherDefine,
-    "process.env.NODE_ENV": JSON.stringify("production"),
-  },
+  define: { ...ketcherDefine, ...prodDefine },
   build: {
     outDir: "media/builder",
     emptyOutDir: true,

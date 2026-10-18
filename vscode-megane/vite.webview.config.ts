@@ -2,6 +2,7 @@ import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 import wasm from "vite-plugin-wasm";
 import path from "path";
+import { prodDefine, srcAlias, syncParseAlias, vscodeModules } from "../vite.shared";
 
 export default defineConfig({
   plugins: [react(), wasm()],
@@ -10,21 +11,13 @@ export default defineConfig({
       // Single-file webview bundle: use the synchronous main-thread parse path
       // rather than embedding a Web Worker (the webview already loads WASM via a
       // blob URL). Keeps the bundle self-contained under the strict CSP.
-      {
-        find: /\.\/parseClient$/,
-        replacement: path.resolve(__dirname, "../src/parsers/parseClientSync.ts"),
-      },
-      { find: "@", replacement: path.resolve(__dirname, "../src") },
+      syncParseAlias(),
+      srcAlias(),
     ],
     // Resolve dependencies from both vscode-megane/node_modules and parent node_modules
-    modules: [
-      path.resolve(__dirname, "node_modules"),
-      path.resolve(__dirname, "../node_modules"),
-    ],
+    modules: vscodeModules(),
   },
-  define: {
-    "process.env.NODE_ENV": JSON.stringify("production"),
-  },
+  define: prodDefine,
   build: {
     outDir: "media",
     emptyOutDir: true,

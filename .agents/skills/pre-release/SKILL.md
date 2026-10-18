@@ -273,10 +273,9 @@ Note the CloudFront URL.
 **Step 2**: Take a screenshot of the live demo with Playwright and verify
 rendering:
 ```bash
-node -e "
-const { createRequire } = require('module');
-const require2 = createRequire('/opt/node22/lib/node_modules/');
-const { chromium } = require2('playwright');
+node --input-type=module -e "
+import { getChromium } from './tests/e2e/utils/playwright.mjs';
+const chromium = getChromium();
 (async () => {
   const browser = await chromium.launch();
   const page = await browser.newPage({ viewport: { width: 1280, height: 720 } });

@@ -19,6 +19,12 @@ maturin develop --release
 
 After setup, you can start the dev server with `npm run dev`.
 
+To try the AI chat against the free-demo LLM proxy locally, run
+`npm run dev:llm-proxy` (`scripts/dev-llm-proxy.sh`): it starts the Cloudflare
+Worker in `workers/llm-proxy/` with `wrangler dev` and points the Vite dev
+server at it. Copy `workers/llm-proxy/.dev.vars.example` to `.dev.vars` and fill
+in a provider key first.
+
 ## Running the VSCode and JupyterLab Extensions Locally
 
 After completing the Development Setup above, you can build and use either extension interactively on your machine.

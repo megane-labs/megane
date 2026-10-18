@@ -117,7 +117,7 @@ export const STRUCTURE_FILETYPES_TEXT: DocumentRegistry.IFileType[] = [
   {
     // Volumetric grids. Registered so double-clicking one opens megane, which
     // then explains that a grid needs a structure to overlay — see
-    // VOLUMETRIC_ONLY_EXTENSIONS in trajectoryUtils.ts.
+    // classifyStandaloneFile in src/hosts/classifyStandaloneFile.ts.
     name: "megane-cube",
     displayName: "Gaussian CUBE",
     extensions: [".cube", ".cub"],
@@ -158,7 +158,7 @@ export const STRUCTURE_FILETYPES_TEXT: DocumentRegistry.IFileType[] = [
   {
     // JCAMP-DX spectra. Registered so double-clicking one opens megane, which
     // then explains that a spectrum needs the Load Spectrum node -- see
-    // SPECTRUM_ONLY_EXTENSIONS in trajectoryUtils.ts.
+    // classifyStandaloneFile in src/hosts/classifyStandaloneFile.ts.
     name: "megane-jcampdx",
     displayName: "JCAMP-DX spectrum",
     extensions: [".jdx", ".jcamp"],
