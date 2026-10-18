@@ -22,6 +22,7 @@ vi.mock("../../../jupyterlab-megane/src/frameStatusBar", () => ({
 }));
 
 vi.mock("@jupyterlab/apputils", () => ({
+  ICommandPalette: {},
   WidgetTracker: class {
     constructor(_opts: unknown) {
       void _opts;
@@ -32,7 +33,7 @@ vi.mock("@jupyterlab/apputils", () => ({
   },
 }));
 
-import plugin from "../../../jupyterlab-megane/src/index";
+import plugins, { plugin, builderPlugin } from "../../../jupyterlab-megane/src/index";
 import { setupFrameStatusBar } from "../../../jupyterlab-megane/src/frameStatusBar";
 
 const mockApp = {
@@ -46,6 +47,16 @@ const mockApp = {
 const mockRestorer = {
   restore: vi.fn().mockResolvedValue(undefined),
 };
+
+describe("megane JupyterLab extension", () => {
+  it("exports the viewer and Builder plugins", () => {
+    expect(plugins).toEqual([plugin, builderPlugin]);
+    expect(plugins.map((p) => p.id)).toEqual([
+      "megane-jupyterlab:plugin",
+      "megane-jupyterlab:builder",
+    ]);
+  });
+});
 
 describe("megane JupyterLab plugin – IStatusBar optional integration", () => {
   beforeEach(() => {

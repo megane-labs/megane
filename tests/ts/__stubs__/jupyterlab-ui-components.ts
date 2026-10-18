@@ -8,3 +8,12 @@ export class ReactWidget {
     return null;
   }
 }
+
+export class LabIcon {
+  name: string;
+  svgstr: string;
+  constructor(options: { name: string; svgstr: string }) {
+    this.name = options.name;
+    this.svgstr = options.svgstr;
+  }
+}

@@ -13,7 +13,10 @@ module.exports = {
     extensions: [".ts", ".tsx", ".mjs", ".js", ".jsx", "..."],
     modules: [
       path.resolve(__dirname, "node_modules"),
-      path.resolve(__dirname, "../node_modules")
+      path.resolve(__dirname, "../node_modules"),
+      // Last, the usual nested lookup, for dependencies npm installed under
+      // their dependent (Ketcher's `ketcher-react/node_modules/miew-react`).
+      "node_modules"
     ]
   },
   plugins: [
@@ -30,7 +33,20 @@ module.exports = {
     new webpack.NormalModuleReplacementPlugin(
       /[\\/]src[\\/]parsers[\\/]parseClient\.ts$/,
       path.resolve(__dirname, "../src/parsers/parseClientSync.ts")
-    )
+    ),
+    // megane Builder's RDKit worker is a Vite `?worker` import; webpack builds
+    // the same worker from the `new Worker(new URL(...))` form instead.
+    new webpack.NormalModuleReplacementPlugin(/^\.\/embed\.worker\?worker$/, (resource) => {
+      resource.request = path.resolve(__dirname, "../src/builder/library/embedWorker.webpack.ts");
+    }),
+    // ...and imports RDKit's `.wasm` by URL (Vite `?url`). megane-rdkit's
+    // `exports` map does not list the file, so point at it directly.
+    new webpack.NormalModuleReplacementPlugin(/^megane-rdkit\/dist\/megane-rdkit\.wasm\?url$/, (resource) => {
+      resource.request =
+        path.resolve(__dirname, "../node_modules/megane-rdkit/dist/megane-rdkit.wasm") + "?url";
+    }),
+    // megane-rdkit loads `node:module` only under Node; never in the browser.
+    new webpack.IgnorePlugin({ resourceRegExp: /^node:module$/ })
   ],
   module: {
     rules: [
@@ -51,6 +67,19 @@ module.exports = {
         generator: {
           filename: "[name].[hash][ext]"
         }
+      },
+      // Vite's `?url` suffix (megane Builder's RDKit `.wasm`): emit the file,
+      // import its URL.
+      {
+        resourceQuery: /url/,
+        type: "asset/resource",
+        generator: {
+          filename: "[name].[hash][ext]"
+        }
+      },
+      {
+        test: /megane-rdkit[\\/]dist[\\/]megane-rdkit\.mjs$/,
+        loader: path.resolve(__dirname, "rdkit-no-default-wasm-loader.js")
       },
       // Vite's `?raw` suffix (src/renderer/RenderCapture.ts inlines the gif.js
       // worker with it) means "import this file as a string". `asset/source` is

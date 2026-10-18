@@ -4,11 +4,24 @@
 
 export class Widget {
   node: HTMLElement;
+  id = "";
+  isDisposed = false;
+  title: { label: string; caption: string; closable: boolean; icon: unknown } = {
+    label: "",
+    caption: "",
+    closable: false,
+    icon: null,
+  };
   constructor() {
     this.node = document.createElement("div");
   }
   addClass(_className: string): void {
     void _className;
   }
-  dispose(): void {}
+  protected onAfterAttach(_msg?: unknown): void {
+    void _msg;
+  }
+  dispose(): void {
+    this.isDisposed = true;
+  }
 }
