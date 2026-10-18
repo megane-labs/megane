@@ -4,7 +4,7 @@ sidebar_label: TypeScript
 
 # TypeScript Pipeline API
 
-Pipelines can be built programmatically in JavaScript/TypeScript using the `Pipeline` builder. The API mirrors the [Python interface](./python.md) — same node names, same port names, same `SerializedPipeline` v3 output — making it straightforward to port pipelines between languages. The TypeScript builder covers a subset of the Python node classes; see [Differences from Python](#differences-from-python).
+Pipelines can be built programmatically in JavaScript/TypeScript using the `Pipeline` builder. The API mirrors the [Python interface](./python.md) — same node names, same port names, same `SerializedPipeline` v3 output — making it straightforward to port pipelines between languages. The TypeScript builder has a class for every pipeline node type; see [Differences from Python](#differences-from-python) for the few API differences.
 
 For real-world examples, see the [Gallery](/gallery).
 
@@ -62,6 +62,9 @@ import {
   LoadVector,
   Filter,
   Modify,
+  Symmetry,
+  Wrap,
+  Replicate,
   DrawingBoundary,
   BoundaryCompletion,
   Color,
@@ -70,7 +73,12 @@ import {
   AddCoordination,
   AddLabels,
   AddPolyhedra,
+  SurfaceMesh,
   VectorOverlay,
+  LoadVolumetric,
+  Isosurface,
+  LoadSpectrum,
+  SpectrumPlot,
   ViewportNode,
   Pipeline,
 } from "megane-viewer/lib";
@@ -95,14 +103,23 @@ Constructor parameters mirror the Python API (using an options object instead of
 | `AddPolyhedra(opacity=0.5)`              | `new AddPolyhedra({ opacity: 0.5 })`             |
 | `VectorOverlay(scale=2.0)`               | `new VectorOverlay({ scale: 2.0 })`              |
 | `LoadTrajectory(xtc="traj.xtc")`         | `new LoadTrajectory({ xtc: 'traj.xtc' })`        |
+| `LoadTrajectory(dcd="run.dcd")`          | `new LoadTrajectory('run.dcd')`                  |
+| `Symmetry(mode="expand")`                | `new Symmetry({ mode: "expand" })`               |
+| `Wrap(mode="unwrap")`                    | `new Wrap({ mode: "unwrap" })`                   |
+| `Replicate(nx=2, ny=2, nz=1)`            | `new Replicate({ nx: 2, ny: 2, nz: 1 })`         |
+| `LoadVolumetric("density.cube")`         | `new LoadVolumetric('density.cube')`             |
+| `Isosurface(iso_level=0.02)`             | `new Isosurface({ isoLevel: 0.02 })`             |
+| `LoadSpectrum("ir.jdx")`                 | `new LoadSpectrum('ir.jdx')`                     |
+| `SpectrumPlot(reverse_x=False)`          | `new SpectrumPlot({ reverseX: false })`          |
+| —                                        | `new SurfaceMesh({ alphaRadius: 3.0 })`          |
 | `Viewport(perspective=True)`             | `new ViewportNode({ perspective: true })`        |
 
 The Viewport class is exported as `ViewportNode` so it does not clash with the `Viewport` React component exported from the same entry point.
 
 ### Differences from Python
 
-- **Node classes not in the TypeScript builder:** `LoadVolumetric`, `Isosurface`, `Replicate`, `LoadSpectrum`, and `SpectrumPlot` exist only in Python. `Symmetry` and `Wrap` are defined in `src/pipeline/builder.ts` but are not exported from `megane-viewer/lib`. For these nodes, build the pipeline in the editor or author the JSON directly (see [JSON format](./json.md)).
-- **`LoadTrajectory`** accepts only `{ xtc }` or `{ traj }` (no `dcd`, `nc`, `xyz`, `lammpstrj`).
+- **Node coverage:** every pipeline node type has a TypeScript builder class (a compile-time check keeps it that way). `SurfaceMesh` is TypeScript-only — the Python builder has no class for `surface_mesh` — and the TypeScript `Replicate` also exposes the `traj` ports the node has (`inp.traj` / `out.traj`), which the Python class does not. Parameter defaults come from the editor's `defaultParams`, so a builder node starts with the same values as a node added in the editor.
+- **`LoadTrajectory`** takes the file path directly — `new LoadTrajectory("run.dcd")` or `{ path }` — in any format the Load Trajectory node opens (XTC, DCD, AMBER NetCDF `.nc`, LAMMPS dump `.lammpstrj` / `.dump` / `.trj`). The Python-style per-format keys (`{ xtc }`, `{ dcd }`, `{ nc }`, `{ traj }`, `{ xyz }`, `{ lammpstrj }`) also work, and `{ source: "structure" }` forwards the frames embedded in the structure file.
 - **`AddBonds`** takes only `{ source }`; there is no `top` option for topology files.
 - **`Pipeline`** has `addNode`, `addEdge`, `toObject`, and `toJSON` only — there is no `fromDict` / `load` / `save`. Use `deserializePipeline()` to turn a `SerializedPipeline` back into editor nodes and edges.
 

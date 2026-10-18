@@ -1,6 +1,6 @@
 ---
 name: add-node
-description: Register a new pipeline node type across every surface it must touch (types, catalog, executor, engine dispatch, React component, editor palette, and the optional JS/Python builders). Use whenever you add a node to the visual pipeline, or notice a node is only half-wired. Complements the `add-format` skill (formats vs. nodes) and the prose walkthrough at docs/docs/dev/custom-nodes.md.
+description: Register a new pipeline node type across every surface it must touch (types, catalog, executor, engine dispatch, React component, editor palette, and the JS/Python builders). Use whenever you add a node to the visual pipeline, or notice a node is only half-wired. Complements the `add-format` skill (formats vs. nodes) and the prose walkthrough at docs/docs/dev/custom-nodes.md.
 ---
 
 # Adding a new pipeline node to megane
@@ -64,9 +64,10 @@ Walk every item. The order roughly follows the data dependency.
 - [ ] Add the component to the `nodeTypes` map in `PipelineEditor.tsx`.
 - [ ] Add the node type to the correct `ADD_NODE_GROUPS` group in `PipelineRail.tsx` so it shows up in the rail's "Add Node" menu.
 
-### 7. JS builder (optional) — `src/pipeline/builder.ts`
+### 7. JS builder (required) — `src/pipeline/builder.ts`
 
-- [ ] If the node should be constructable from the TypeScript `Pipeline` API, add a `PipelineNode` subclass: `nodeType`, `_outPorts`/`_inpPorts` (alias → port name), and `_toSerializedParams()`.
+- [ ] Add a `PipelineNode` subclass: `nodeType`, `_outPorts`/`_inpPorts` (alias → port name, covering every `NODE_PORTS` port), and `_toSerializedParams()`. Take defaults from `defaultsOf("<type>")` (i.e. `defaultParams`) instead of hand-copying them.
+- [ ] Register it in `BUILDER_NODE_CLASSES` (compile-enforced: the map `satisfies` a mapped type over `PipelineNodeType`) and export it from `src/lib.ts` (`tests/ts/pipeline/builderLibExports.test.ts`). `tests/ts/pipeline/builderCoverage.test.ts` then checks ports, serialized keys, and round-trips automatically; add a `SAMPLE_ARGS` entry there if the constructor needs arguments.
 
 ### 8. Python builder — `python/megane/pipeline.py`
 
