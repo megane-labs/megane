@@ -28,7 +28,7 @@ use std::collections::HashSet;
 
 use crate::atomic::element_from_atom_name_in_residue;
 use crate::bonds;
-use crate::parser::HeteroFrames;
+use crate::parser::{FrameChange, HeteroFramesBuilder};
 use crate::trajectory::{VectorChannel, VectorFrame};
 
 /// Columns occupied by the fixed prefix: resnum(5) resname(5) atomname(5) atomnum(5).
@@ -233,8 +233,9 @@ pub fn parse(text: &str) -> Result<crate::parser::ParsedStructure, String> {
     // Any further complete blocks are trajectory frames (trjconv-style
     // concatenation). GRO trajectories are fixed-atom: a diverging count is an
     // error, not a truncation.
-    let mut frame_positions_flat: Vec<f32> = Vec::new();
-    let mut extra_boxes: Vec<Option<[f32; 9]>> = Vec::new();
+    // GRO never changes atoms or topology across frames (a count change is an
+    // error above), so only a box that differs from frame 0's goes hetero.
+    let mut frames = HeteroFramesBuilder::new(n_atoms);
     let mut per_frame_velocities: Vec<Option<Vec<f32>>> = vec![first.velocities];
     let mut cursor = first.end;
     while cursor < lines.len() {
@@ -254,7 +255,7 @@ pub fn parse(text: &str) -> Result<crate::parser::ParsedStructure, String> {
                 cursor + 1
             ));
         }
-        let frame_idx = extra_boxes.len() + 1;
+        let frame_idx = frames.extra_frames() + 1;
         let block = parse_frame_block(&lines, cursor, false, frame_idx)?;
         if block.n_atoms != n_atoms {
             return Err(format!(
@@ -264,8 +265,15 @@ pub fn parse(text: &str) -> Result<crate::parser::ParsedStructure, String> {
                 n_atoms
             ));
         }
-        frame_positions_flat.extend_from_slice(&block.positions);
-        extra_boxes.push(block.box_matrix);
+        frames.push_frame(
+            &block.positions,
+            Vec::new, // never called: topology is fixed
+            block.box_matrix,
+            FrameChange {
+                topology: false,
+                cell: block.box_matrix != box_matrix,
+            },
+        );
         per_frame_velocities.push(block.velocities);
         cursor = block.end;
     }
@@ -311,28 +319,7 @@ pub fn parse(text: &str) -> Result<crate::parser::ParsedStructure, String> {
 
     // A cell that changes across frames needs the per-frame side table; a
     // constant cell keeps the uniform fast path (hetero = None).
-    let hetero = if extra_boxes.iter().any(|b| *b != box_matrix) {
-        let atom_offsets: Vec<u32> = (0..=extra_boxes.len())
-            .map(|i| (i * n_atoms) as u32)
-            .collect();
-        let mut cells_flat = Vec::with_capacity(extra_boxes.len() * 9);
-        for b in &extra_boxes {
-            cells_flat.extend_from_slice(&b.unwrap_or([0.0; 9]));
-        }
-        Some(HeteroFrames {
-            atom_offsets,
-            elements_flat: Vec::new(),
-            cells_flat,
-            bond_offsets: Vec::new(),
-            bonds_flat: Vec::new(),
-            varies_atoms: false,
-            varies_cell: true,
-            varies_topology: false,
-            max_atoms: n_atoms as u32,
-        })
-    } else {
-        None
-    };
+    let (frame_positions_flat, hetero) = frames.finish(&elements, box_matrix);
 
     Ok(crate::parser::ParsedStructure {
         n_atoms,

@@ -31,7 +31,7 @@
 
 use crate::atomic::{capitalize, symbol_to_atomic_num};
 use crate::bonds;
-use crate::parser::{HeteroFrames, ParsedStructure};
+use crate::parser::{FrameChange, HeteroFramesBuilder, ParsedStructure};
 use std::collections::HashSet;
 
 /// 1 Bohr in Ångström (CODATA 2018).
@@ -143,24 +143,17 @@ pub fn parse(text: &str) -> Result<ParsedStructure, String> {
     let first = frames.remove(0);
     let n_atoms = first.elements.len();
 
-    let mut frame_positions_flat: Vec<f32> = Vec::new();
-    let mut atom_offsets: Vec<u32> = vec![0];
-    let mut per_frame_elements: Vec<Vec<u8>> = Vec::new();
-    let mut varies_atoms = false;
-    let mut varies_topology = false;
-    let mut max_atoms = n_atoms;
+    let mut hframes = HeteroFramesBuilder::with_capacity(n_atoms, frames.len());
     for f in &frames {
-        frame_positions_flat.extend_from_slice(&f.positions);
-        let last = *atom_offsets.last().unwrap();
-        atom_offsets.push(last + f.elements.len() as u32);
-        max_atoms = max_atoms.max(f.elements.len());
-        if f.elements.len() != n_atoms {
-            varies_atoms = true;
-        }
-        if f.elements != first.elements {
-            varies_topology = true;
-        }
-        per_frame_elements.push(f.elements.clone());
+        hframes.push_frame(
+            &f.positions,
+            || f.elements.clone(),
+            None,
+            FrameChange {
+                topology: f.elements != first.elements,
+                cell: false,
+            },
+        );
     }
 
     let empty = HashSet::new();
@@ -168,36 +161,8 @@ pub fn parse(text: &str) -> Result<ParsedStructure, String> {
 
     // An optimisation keeps a fixed atom set, so the fast fixed-stride path is
     // the norm; the side table only appears if a log really does change atoms.
-    let hetero = if varies_atoms || varies_topology {
-        let mut elements_flat: Vec<u8> = Vec::new();
-        let mut bonds_flat: Vec<u32> = Vec::new();
-        let mut bond_offsets: Vec<u32> = vec![0];
-        for (k, elems) in per_frame_elements.iter().enumerate() {
-            let a = atom_offsets[k] as usize * 3;
-            let b = atom_offsets[k + 1] as usize * 3;
-            let fb = bonds::infer_bonds(&frame_positions_flat[a..b], elems, elems.len(), &empty);
-            for (u, v) in &fb {
-                bonds_flat.push(*u);
-                bonds_flat.push(*v);
-            }
-            let last = *bond_offsets.last().unwrap();
-            bond_offsets.push(last + fb.len() as u32);
-            elements_flat.extend_from_slice(elems);
-        }
-        Some(HeteroFrames {
-            atom_offsets,
-            elements_flat,
-            cells_flat: Vec::new(),
-            bond_offsets,
-            bonds_flat,
-            varies_atoms,
-            varies_cell: false,
-            varies_topology,
-            max_atoms: max_atoms as u32,
-        })
-    } else {
-        None
-    };
+    // A molecular log carries no cell, so it never varies.
+    let (frame_positions_flat, hetero) = hframes.finish(&first.elements, None);
 
     Ok(ParsedStructure {
         n_atoms,
