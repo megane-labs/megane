@@ -31,16 +31,12 @@ import { PivotMarker } from "./PivotMarker";
 import { CartoonRenderer } from "./CartoonRenderer";
 import { SurfaceRenderer } from "./SurfaceRenderer";
 import { LineRenderer } from "./LineRenderer";
-import { DrawingBoundaryAtomRenderer } from "./CellBoundaryAtomRenderer";
+import { AtomLayerGroup } from "./AtomLayerGroup";
+import { representationFlags, type RepresentationType } from "./representation";
 import type { DrawingBoundaryData, PeriodicAtomImageData } from "../pipeline/types";
 import { generateDrawingBoundaryImages } from "../logic/cellBoundaryImages";
 import type { MeshData } from "../pipeline/types";
-import {
-  getRadius,
-  BALL_STICK_ATOM_SCALE,
-  LICORICE_RADIUS,
-  SPACEFILL_ATOM_SCALE,
-} from "../constants";
+import { getRadius, BALL_STICK_ATOM_SCALE } from "../constants";
 import {
   pickAtPixel,
   projectToScreen,
@@ -200,15 +196,7 @@ export interface MeganeSubsystemVisibility {
   line: boolean;
 }
 
-/** Representation mode for the viewer. */
-export type RepresentationType =
-  | "atoms"
-  | "licorice"
-  | "cartoon"
-  | "both"
-  | "surface"
-  | "line"
-  | "illustrative";
+export type { RepresentationType } from "./representation";
 
 export interface MeganeRendererMemory {
   geometries: number;
@@ -295,14 +283,22 @@ export class MoleculeRenderer {
   private camera!: THREE.OrthographicCamera | THREE.PerspectiveCamera;
   private controls!: CameraControls;
   private perspectiveMode = false;
-  private atomRenderer: AtomRenderer | null = null;
+  /**
+   * The primary atom renderer plus the display-only periodic-copy layers
+   * (Drawing Boundary copies, bond-stream neighbour images). Every atom
+   * appearance setter goes through it so the layers stay in sync.
+   */
+  private readonly atomLayers = new AtomLayerGroup((object) => this.scene.add(object));
+  /** The primary (pickable) atom renderer, owned by `atomLayers`. */
+  private get atomRenderer(): AtomRenderer | null {
+    return this.atomLayers.primary;
+  }
+  private set atomRenderer(renderer: AtomRenderer | null) {
+    this.atomLayers.setPrimary(renderer);
+  }
   private bondRenderer: BondRenderer | null = null;
   private cellRenderer: CellRenderer | null = null;
-  /** Display-only periodic copies for atoms on inclusive cell boundaries. */
-  private drawingBoundaryAtomRenderer: DrawingBoundaryAtomRenderer | null = null;
   private currentDrawingBoundary: DrawingBoundaryData | null = null;
-  /** Neighbor images added outside the drawing range to complete visible centers. */
-  private bondPeriodicAtomRenderer: DrawingBoundaryAtomRenderer | null = null;
   private currentBondPeriodicImages: PeriodicAtomImageData | null = null;
   private drawingBoundaryHiddenMask: Uint8Array | null = null;
   private representationHiddenMask: Uint8Array | null = null;
@@ -334,8 +330,6 @@ export class MoleculeRenderer {
   private axesDragging = false;
   private axesDragLastX = 0;
   private axesDragLastY = 0;
-  private atomScale = 1.0;
-  private atomOpacity = 1.0;
   private bondScale = 1.0;
   private bondOpacity = 1.0;
   /**
@@ -345,14 +339,6 @@ export class MoleculeRenderer {
    * previous structure when the representation toggles back to "atoms"/"both".
    */
   private bondsAvailable = false;
-  /**
-   * Current per-atom RGB overrides applied to the primary structure
-   * (length === nAtoms*3, NaN sentinel for "fall through to base"). Null
-   * means atoms render with the default CPK palette.
-   */
-  private currentColorOverrides: Float32Array | null = null;
-  private currentAtomScaleOverrides: Float32Array | null = null;
-  private currentAtomOpacityOverrides: Float32Array | null = null;
   private currentLabels: string[] | null = null;
   private viewInsetLeft = 0;
   private viewInsetRight = 0;
@@ -554,9 +540,10 @@ export class MoleculeRenderer {
       this.swapRenderers(true);
     }
 
+    const atomState = this.atomLayers.state;
     this.atomRenderer!.loadSnapshot(snapshot);
-    if (this.currentColorOverrides) {
-      (this.atomRenderer as ImpostorAtomMesh).applyColorOverrides(this.currentColorOverrides);
+    if (atomState.colorOverrides) {
+      (this.atomRenderer as ImpostorAtomMesh).applyColorOverrides(atomState.colorOverrides);
     }
     // Bond loading is handled exclusively by the pipeline via updateBondsExt/updateBonds
     // (called from applyViewportState). This avoids race conditions between
@@ -567,44 +554,18 @@ export class MoleculeRenderer {
     this.flushPendingBonds();
 
     // Re-apply stored scale after loading snapshot data
-    if (this.atomScale !== 1.0 && this.atomRenderer!.setScale) {
-      this.atomRenderer!.setScale(this.atomScale, snapshot);
+    if (atomState.scale !== 1.0 && this.atomRenderer!.setScale) {
+      this.atomRenderer!.setScale(atomState.scale, snapshot);
     }
 
     // Drawing ranges are inclusive: a crystallographic atom
     // on x/y/z=0 is therefore also drawn at the equivalent x/y/z=1 boundary.
     // Keep these copies in a separate, non-pickable visual layer so atom
-    // indices and molecular topology remain unchanged.
-    if (!this.drawingBoundaryAtomRenderer) {
-      this.drawingBoundaryAtomRenderer = new DrawingBoundaryAtomRenderer();
-      this.scene.add(this.drawingBoundaryAtomRenderer.group);
-    }
-    this.drawingBoundaryAtomRenderer.loadSnapshot(snapshot, this.currentDrawingBoundary);
-    this.drawingBoundaryAtomRenderer.setScale(this.atomScale);
-    this.drawingBoundaryAtomRenderer.setOpacity(this.atomOpacity);
-    this.drawingBoundaryAtomRenderer.setScaleOverrides(this.currentAtomScaleOverrides);
-    this.drawingBoundaryAtomRenderer.setOpacityOverrides(this.currentAtomOpacityOverrides);
-    this.drawingBoundaryAtomRenderer.applyColorOverrides(this.currentColorOverrides);
-    this.drawingBoundaryAtomRenderer.setVisible(
-      this.representationType === "atoms" ||
-        this.representationType === "both" ||
-        this.representationType === "licorice",
-    );
-    if (!this.bondPeriodicAtomRenderer) {
-      this.bondPeriodicAtomRenderer = new DrawingBoundaryAtomRenderer();
-      this.scene.add(this.bondPeriodicAtomRenderer.group);
-    }
-    this.bondPeriodicAtomRenderer.loadImages(snapshot, this.currentBondPeriodicImages);
-    this.bondPeriodicAtomRenderer.setScale(this.atomScale);
-    this.bondPeriodicAtomRenderer.setOpacity(this.atomOpacity);
-    this.bondPeriodicAtomRenderer.setScaleOverrides(this.currentAtomScaleOverrides);
-    this.bondPeriodicAtomRenderer.setOpacityOverrides(this.currentAtomOpacityOverrides);
-    this.bondPeriodicAtomRenderer.applyColorOverrides(this.currentColorOverrides);
-    this.bondPeriodicAtomRenderer.setVisible(
-      this.representationType === "atoms" ||
-        this.representationType === "both" ||
-        this.representationType === "licorice",
-    );
+    // indices and molecular topology remain unchanged. The layer group
+    // carries the current appearance (scale, overrides, representation,
+    // visibility) onto layers it creates here.
+    this.atomLayers.loadDrawingBoundary(snapshot, this.currentDrawingBoundary);
+    this.atomLayers.loadBondPeriodicImages(snapshot, this.currentBondPeriodicImages);
     this.applyCombinedAtomHiddenMask();
 
     // Update label overlay
@@ -624,9 +585,7 @@ export class MoleculeRenderer {
         this.scene.add(this.cartoonRenderer.mesh);
       }
       this.cartoonRenderer.loadSnapshot(snapshot);
-      this.cartoonRenderer.setVisible(
-        this.representationType === "cartoon" || this.representationType === "both",
-      );
+      this.cartoonRenderer.setVisible(representationFlags(this.representationType).showCartoon);
     } else if (this.cartoonRenderer) {
       this.cartoonRenderer.setVisible(false);
     }
@@ -636,7 +595,7 @@ export class MoleculeRenderer {
       this.surfaceRenderer = new SurfaceRenderer();
       this.scene.add(this.surfaceRenderer.mesh);
     }
-    if (this.representationType === "surface") {
+    if (representationFlags(this.representationType).showSurface) {
       this.surfaceRenderer.loadSnapshot(snapshot);
       this.surfaceRenderer.setVisible(true);
     } else {
@@ -649,7 +608,7 @@ export class MoleculeRenderer {
       this.scene.add(this.lineRenderer.mesh);
     }
     this.lineRenderer.loadSnapshot(snapshot);
-    this.lineRenderer.setVisible(this.representationType === "line");
+    this.lineRenderer.setVisible(representationFlags(this.representationType).showLine);
 
     // Update simulation cell
     if (snapshot.box) {
@@ -744,7 +703,7 @@ export class MoleculeRenderer {
         this.currentDrawingBoundary.min,
         this.currentDrawingBoundary.max,
       );
-      this.drawingBoundaryAtomRenderer?.loadSnapshot(frameSnapshot, this.currentDrawingBoundary);
+      this.atomLayers.loadDrawingBoundary(frameSnapshot, this.currentDrawingBoundary);
       this.syncLabelOverlay();
     }
 
@@ -788,12 +747,13 @@ export class MoleculeRenderer {
       caResNums: undefined,
       caSsType: undefined,
     };
+    const atomState = this.atomLayers.state;
     this.atomRenderer!.loadSnapshot(synth);
-    if (this.currentColorOverrides) {
-      (this.atomRenderer as ImpostorAtomMesh).applyColorOverrides?.(this.currentColorOverrides);
+    if (atomState.colorOverrides) {
+      (this.atomRenderer as ImpostorAtomMesh).applyColorOverrides?.(atomState.colorOverrides);
     }
-    if (this.atomScale !== 1.0 && this.atomRenderer!.setScale) {
-      this.atomRenderer!.setScale(this.atomScale, synth);
+    if (atomState.scale !== 1.0 && this.atomRenderer!.setScale) {
+      this.atomRenderer!.setScale(atomState.scale, synth);
     }
     this.labelOverlay?.setAtomData(elements, frame.nAtoms);
     this.labelOverlay?.setPositions(frame.positions);
@@ -916,16 +876,7 @@ export class MoleculeRenderer {
       this.drawingBoundaryHiddenMask = null;
     }
     if (this.snapshot) {
-      if (!this.drawingBoundaryAtomRenderer) {
-        this.drawingBoundaryAtomRenderer = new DrawingBoundaryAtomRenderer();
-        this.scene.add(this.drawingBoundaryAtomRenderer.group);
-      }
-      this.drawingBoundaryAtomRenderer.loadSnapshot(this.snapshot, boundary);
-      this.drawingBoundaryAtomRenderer.setVisible(
-        this.representationType === "atoms" ||
-          this.representationType === "both" ||
-          this.representationType === "licorice",
-      );
+      this.atomLayers.loadDrawingBoundary(this.snapshot, boundary);
       this.applyCombinedAtomHiddenMask();
       this.syncLabelOverlay();
     }
@@ -935,22 +886,7 @@ export class MoleculeRenderer {
   setBondPeriodicImages(images: PeriodicAtomImageData | null): void {
     this.currentBondPeriodicImages = images;
     if (!this.snapshot) return;
-    if (!this.bondPeriodicAtomRenderer) {
-      this.bondPeriodicAtomRenderer = new DrawingBoundaryAtomRenderer();
-      this.scene.add(this.bondPeriodicAtomRenderer.group);
-    }
-    this.bondPeriodicAtomRenderer.loadImages(this.snapshot, images);
-    this.bondPeriodicAtomRenderer.setScale(this.atomScale);
-    this.bondPeriodicAtomRenderer.setOpacity(this.atomOpacity);
-    this.bondPeriodicAtomRenderer.setScaleOverrides(this.currentAtomScaleOverrides);
-    this.bondPeriodicAtomRenderer.setOpacityOverrides(this.currentAtomOpacityOverrides);
-    this.bondPeriodicAtomRenderer.applyColorOverrides(this.currentColorOverrides);
-    this.bondPeriodicAtomRenderer.setHiddenMask(this.representationHiddenMask);
-    this.bondPeriodicAtomRenderer.setVisible(
-      this.representationType === "atoms" ||
-        this.representationType === "both" ||
-        this.representationType === "licorice",
-    );
+    this.atomLayers.loadBondPeriodicImages(this.snapshot, images);
     this.syncLabelOverlay();
   }
 
@@ -967,8 +903,7 @@ export class MoleculeRenderer {
     this.atomRenderer?.setHiddenMask?.(combined);
     // Drawing Boundary copies are already range-filtered; only representation
     // hiding is mapped from their source atom.
-    this.drawingBoundaryAtomRenderer?.setHiddenMask(this.representationHiddenMask);
-    this.bondPeriodicAtomRenderer?.setHiddenMask(this.representationHiddenMask);
+    this.atomLayers.setSecondaryHiddenMask(this.representationHiddenMask);
   }
 
   private syncLabelOverlay(): void {
@@ -1105,45 +1040,27 @@ export class MoleculeRenderer {
 
   /** Set atom radius scale multiplier. */
   setAtomScale(scale: number): void {
-    this.atomScale = scale;
-    if (this.atomRenderer?.setScale && this.snapshot) {
-      this.atomRenderer.setScale(scale, this.snapshot);
-    }
-    this.drawingBoundaryAtomRenderer?.setScale(scale);
-    this.bondPeriodicAtomRenderer?.setScale(scale);
+    this.atomLayers.setScale(scale, this.snapshot);
   }
 
   /** Set atom opacity (independent of bonds). */
   setAtomOpacity(opacity: number): void {
-    this.atomOpacity = opacity;
-    this.atomRenderer?.setOpacity?.(opacity);
-    this.drawingBoundaryAtomRenderer?.setOpacity(opacity);
-    this.bondPeriodicAtomRenderer?.setOpacity(opacity);
+    this.atomLayers.setOpacity(opacity);
   }
 
   /** Set per-atom scale overrides from selection pipeline. */
   setAtomScaleOverrides(overrides: Float32Array): void {
-    this.currentAtomScaleOverrides = overrides;
-    this.atomRenderer?.setScaleOverrides?.(overrides);
-    this.drawingBoundaryAtomRenderer?.setScaleOverrides(overrides);
-    this.bondPeriodicAtomRenderer?.setScaleOverrides(overrides);
+    this.atomLayers.setScaleOverrides(overrides);
   }
 
   /** Set per-atom opacity overrides from selection pipeline. */
   setAtomOpacityOverrides(overrides: Float32Array): void {
-    this.currentAtomOpacityOverrides = overrides;
-    this.atomRenderer?.setOpacityOverrides?.(overrides);
-    this.drawingBoundaryAtomRenderer?.setOpacityOverrides(overrides);
-    this.bondPeriodicAtomRenderer?.setOpacityOverrides(overrides);
+    this.atomLayers.setOpacityOverrides(overrides);
   }
 
   /** Clear all per-atom overrides, reverting to global uniforms. */
   clearAtomOverrides(): void {
-    this.currentAtomScaleOverrides = null;
-    this.currentAtomOpacityOverrides = null;
-    this.atomRenderer?.clearOverrides?.();
-    this.drawingBoundaryAtomRenderer?.clearOverrides();
-    this.bondPeriodicAtomRenderer?.clearOverrides();
+    this.atomLayers.clearOverrides();
   }
 
   /** Set bond radius scale multiplier. */
@@ -1166,21 +1083,22 @@ export class MoleculeRenderer {
    * the GPU upload when the same buffer reference is supplied repeatedly.
    */
   applyAtomColorOverrides(overrides: Float32Array | null): void {
-    if (overrides === this.currentColorOverrides) return;
-    this.currentColorOverrides = overrides;
+    if (overrides === this.atomLayers.state.colorOverrides) return;
+    // Records the overrides (replayed on the next snapshot load even when no
+    // mesh exists yet) and repaints the secondary layers.
+    this.atomLayers.setColorOverrides(overrides);
     if (!this.snapshot || !this.atomRenderer) return;
 
     // Reset to base CPK by re-loading the snapshot with no color context.
+    const scale = this.atomLayers.state.scale;
     this.atomRenderer.loadSnapshot(this.snapshot);
-    if (this.atomScale !== 1.0 && this.atomRenderer.setScale) {
-      this.atomRenderer.setScale(this.atomScale, this.snapshot);
+    if (scale !== 1.0 && this.atomRenderer.setScale) {
+      this.atomRenderer.setScale(scale, this.snapshot);
     }
     if (overrides) {
       (this.atomRenderer as ImpostorAtomMesh).applyColorOverrides(overrides);
     }
     this.restoreAtomPerAtomState();
-    this.drawingBoundaryAtomRenderer?.applyColorOverrides(overrides);
-    this.bondPeriodicAtomRenderer?.applyColorOverrides(overrides);
     this.syncBondColorsToAtoms();
   }
 
@@ -1200,11 +1118,12 @@ export class MoleculeRenderer {
    * restore: the reload already left those buffers at their 1.0 / 0 defaults.
    */
   private restoreAtomPerAtomState(): void {
-    if (this.currentAtomScaleOverrides) {
-      this.atomRenderer?.setScaleOverrides?.(this.currentAtomScaleOverrides);
+    const { scaleOverrides, opacityOverrides } = this.atomLayers.state;
+    if (scaleOverrides) {
+      this.atomRenderer?.setScaleOverrides?.(scaleOverrides);
     }
-    if (this.currentAtomOpacityOverrides) {
-      this.atomRenderer?.setOpacityOverrides?.(this.currentAtomOpacityOverrides);
+    if (opacityOverrides) {
+      this.atomRenderer?.setOpacityOverrides?.(opacityOverrides);
     }
     if (this.drawingBoundaryHiddenMask || this.representationHiddenMask) {
       this.applyCombinedAtomHiddenMask();
@@ -1237,11 +1156,7 @@ export class MoleculeRenderer {
 
   /** Toggle atom visibility. */
   setAtomsVisible(visible: boolean): void {
-    if (this.atomRenderer) {
-      this.atomRenderer.mesh.visible = visible;
-    }
-    this.drawingBoundaryAtomRenderer?.setVisible(visible);
-    this.bondPeriodicAtomRenderer?.setVisible(visible);
+    this.atomLayers.setVisible(visible);
   }
 
   /**
@@ -1256,38 +1171,23 @@ export class MoleculeRenderer {
    */
   setRepresentationType(type: RepresentationType): void {
     this.representationType = type;
-    const illustrative = type === "illustrative";
-    const showAtoms = type === "atoms" || type === "both" || type === "licorice" || illustrative;
     // Illustrative draws touching vdW spheres, so the sticks it would hide
     // anyway are switched off (matching Mol*'s spacefill-only preset).
-    const showBonds = showAtoms && !illustrative;
-    const showCartoon = type === "cartoon" || type === "both";
-    const showSurface = type === "surface";
-    const showLine = type === "line";
+    const { showBonds, showCartoon, showSurface, showLine, uniformRadius } =
+      representationFlags(type);
 
     // Licorice: render atoms and bonds at a single equal radius so the spheres
     // act as round caps on the sticks, producing a continuous tube. Reverting
     // to ball-and-stick (atoms/both) restores per-element vdW atom radii and
     // per-order bond radii. setUniformRadius only rewrites the radius buffers.
     // Illustrative instead keeps per-element radii but at full vdW size.
+    // The layer group applies the atom side (radius scale, licorice radius,
+    // illustrative shading, visibility) to every atom layer and records it for
+    // layers created later.
+    this.atomLayers.setRepresentation(type, this.snapshot);
     if (this.snapshot) {
-      const licoriceRadius = type === "licorice" ? LICORICE_RADIUS : null;
-      const radiusScale = illustrative ? SPACEFILL_ATOM_SCALE : BALL_STICK_ATOM_SCALE;
-      this.atomRenderer?.setRadiusScale?.(radiusScale, this.snapshot);
-      this.drawingBoundaryAtomRenderer?.setRadiusScale(radiusScale);
-      this.bondPeriodicAtomRenderer?.setRadiusScale(radiusScale);
-      this.atomRenderer?.setUniformRadius?.(licoriceRadius, this.snapshot);
-      this.bondRenderer?.setUniformRadius?.(licoriceRadius, this.snapshot);
-      this.drawingBoundaryAtomRenderer?.setUniformRadius(licoriceRadius);
-      this.bondPeriodicAtomRenderer?.setUniformRadius(licoriceRadius);
+      this.bondRenderer?.setUniformRadius?.(uniformRadius, this.snapshot);
     }
-    this.atomRenderer?.setIllustrative?.(illustrative);
-    this.drawingBoundaryAtomRenderer?.setIllustrative(illustrative);
-    this.bondPeriodicAtomRenderer?.setIllustrative(illustrative);
-
-    if (this.atomRenderer) this.atomRenderer.mesh.visible = showAtoms;
-    this.drawingBoundaryAtomRenderer?.setVisible(showAtoms);
-    this.bondPeriodicAtomRenderer?.setVisible(showAtoms);
     // Bonds also depend on whether the pipeline emits any bonds; otherwise
     // stale geometry from a previous structure would resurface here.
     if (this.bondRenderer) this.bondRenderer.mesh.visible = showBonds && this.bondsAvailable;
@@ -1313,9 +1213,7 @@ export class MoleculeRenderer {
    * highlights — must scale by this rather than assuming ball-and-stick.
    */
   private atomRadiusScale(): number {
-    return this.representationType === "illustrative"
-      ? SPACEFILL_ATOM_SCALE
-      : BALL_STICK_ATOM_SCALE;
+    return representationFlags(this.representationType).atomRadiusScale;
   }
 
   /**
@@ -1338,7 +1236,7 @@ export class MoleculeRenderer {
       this.bondRenderer?.setHiddenMask?.(null);
       if (this.lineRenderer && this.snapshot) {
         this.lineRenderer.loadSnapshot(this.snapshot);
-        this.lineRenderer.setVisible(this.representationType === "line");
+        this.lineRenderer.setVisible(representationFlags(this.representationType).showLine);
       }
       return;
     }
@@ -1363,7 +1261,9 @@ export class MoleculeRenderer {
       this.lineRenderer.loadSnapshot(this.snapshot, anyLine ? lineMask : null);
       // Keep lines visible for the subset even when the base mesh mode isn't
       // "line"; if no atom is line-mode, defer to the global toggle.
-      this.lineRenderer.setVisible(anyLine || this.representationType === "line");
+      this.lineRenderer.setVisible(
+        anyLine || representationFlags(this.representationType).showLine,
+      );
     }
   }
 
@@ -1379,10 +1279,7 @@ export class MoleculeRenderer {
     if (this.bondRenderer) {
       // "illustrative" shows atoms but never bonds — its spacefill spheres
       // already touch, so a stick would only ever be hidden geometry.
-      const showBonds =
-        this.representationType === "atoms" ||
-        this.representationType === "both" ||
-        this.representationType === "licorice";
+      const { showBonds } = representationFlags(this.representationType);
       this.bondRenderer.mesh.visible = visible && showBonds;
     }
   }
@@ -1488,8 +1385,9 @@ export class MoleculeRenderer {
     });
 
     // Re-apply stored appearance settings
-    if (this.atomOpacity !== 1.0) {
-      this.atomRenderer.setOpacity?.(this.atomOpacity);
+    const atomOpacity = this.atomLayers.state.opacity;
+    if (atomOpacity !== 1.0) {
+      this.atomRenderer.setOpacity?.(atomOpacity);
     }
     if (this.bondOpacity !== 1.0) {
       this.bondRenderer.setOpacity?.(this.bondOpacity);
@@ -1958,16 +1856,16 @@ export class MoleculeRenderer {
       this.container,
       this.snapshot,
       this.getCurrentPositions(),
-      this.atomScale,
+      this.atomLayers.state.scale,
       clientX,
       clientY,
       this.currentDrawingBoundary,
       this.currentBondPeriodicImages,
       this.atomRadiusScale(),
       {
-        globalOpacity: this.atomOpacity,
-        opacity: this.currentAtomOpacityOverrides,
-        scale: this.currentAtomScaleOverrides,
+        globalOpacity: this.atomLayers.state.opacity,
+        opacity: this.atomLayers.state.opacityOverrides,
+        scale: this.atomLayers.state.scaleOverrides,
       },
     );
   }
@@ -2268,9 +2166,7 @@ export class MoleculeRenderer {
       cancelAnimationFrame(this.animationId);
     }
     this.clearSelection();
-    if (this.atomRenderer) this.atomRenderer.dispose();
-    if (this.drawingBoundaryAtomRenderer) this.drawingBoundaryAtomRenderer.dispose();
-    if (this.bondPeriodicAtomRenderer) this.bondPeriodicAtomRenderer.dispose();
+    this.atomLayers.dispose();
     if (this.bondRenderer) this.bondRenderer.dispose();
     if (this.cellRenderer) this.cellRenderer.dispose();
     if (this.cellAxesRenderer) this.cellAxesRenderer.dispose();

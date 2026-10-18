@@ -9,6 +9,12 @@ import { capturePipelineStore, type PipelineStoreSnapshot } from "@megane/pipeli
 import { useTour } from "@megane/tour/useTour";
 import "@megane/styles/megane.css";
 import { ensureWasmUrl } from "./wasmLoader";
+import {
+  basename,
+  dirname,
+  fetchPipelineCompanions,
+  type MinimalSerializedPipeline,
+} from "./pipelineCompanions";
 
 type ActivationSubscribe = (cb: () => void) => () => void;
 
@@ -19,55 +25,6 @@ interface DocBodyProps {
 }
 
 type LoadState = "loading" | "ready" | { error: string };
-
-interface MinimalSerializedPipeline {
-  version?: number;
-  nodes?: Array<{
-    id?: string;
-    type?: string;
-    fileName?: string | null;
-  }>;
-}
-
-function dirname(p: string): string {
-  const idx = p.lastIndexOf("/");
-  return idx >= 0 ? p.slice(0, idx) : "";
-}
-
-function basename(p: string): string {
-  const idx = p.lastIndexOf("/");
-  return idx >= 0 ? p.slice(idx + 1) : p;
-}
-
-function joinUnderDir(dir: string, rel: string): string | null {
-  if (rel.startsWith("/")) return null;
-  const parts = (dir ? `${dir}/${rel}` : rel).split("/");
-  const out: string[] = [];
-  for (const seg of parts) {
-    if (seg === "" || seg === ".") continue;
-    if (seg === "..") {
-      if (out.length === 0) return null;
-      out.pop();
-      continue;
-    }
-    out.push(seg);
-  }
-  const joined = out.join("/");
-  if (dir === "") return joined;
-  if (joined !== dir && !joined.startsWith(`${dir}/`)) return null;
-  return joined;
-}
-
-async function fetchCompanion(contents: Contents.IManager, path: string): Promise<File | null> {
-  try {
-    const model = await contents.get(path, { content: true, format: "base64" });
-    const raw = String(model.content ?? "");
-    const bytes = Uint8Array.from(atob(raw), (c) => c.charCodeAt(0));
-    return new File([bytes], basename(path));
-  } catch {
-    return null;
-  }
-}
 
 function DocBody({ context, contents, subscribeActivation }: DocBodyProps): JSX.Element {
   const [state, setState] = useState<LoadState>("loading");
@@ -95,24 +52,14 @@ function DocBody({ context, contents, subscribeActivation }: DocBodyProps): JSX.
         const pipeline = JSON.parse(pipelineText) as MinimalSerializedPipeline;
         const dir = dirname(context.path);
 
-        // Resolve every load_structure / load_trajectory node's referenced
-        // file under the pipeline file's directory and pull it through the
-        // Jupyter Contents service in parallel — the previous serial loop
-        // dominated open latency for pipelines with multiple companions.
-        // We delegate the rest (deserialize, parse, setNodeSnapshot) to the
-        // shared `usePipelineStore.openFile` entry point.
-        const companionTargets: string[] = [];
-        for (const node of pipeline.nodes ?? []) {
-          if (node.type !== "load_structure" && node.type !== "load_trajectory") {
-            continue;
-          }
-          if (!node.fileName) continue;
-          const target = joinUnderDir(dir, String(node.fileName));
-          if (target) companionTargets.push(target);
-        }
-        const fetched = await Promise.all(companionTargets.map((p) => fetchCompanion(contents, p)));
+        // Resolve every file-bearing node's referenced file (structure,
+        // trajectory, topology, grid, spectrum, vectors) under the pipeline
+        // file's directory and pull them through the Jupyter Contents service
+        // in parallel. We delegate the rest (deserialize, parse,
+        // setNodeSnapshot) to the shared `usePipelineStore.openFile` entry
+        // point.
+        const companions = await fetchPipelineCompanions(contents, pipeline, dir);
         if (token.cancelled) return;
-        const companions: File[] = fetched.filter((f): f is File => f !== null);
 
         const meganeFile = new File([pipelineText], basename(context.path), {
           type: "application/json",

@@ -299,10 +299,56 @@ pub(crate) fn mass_to_atomic_num(mass: f32) -> u8 {
 
 // ── Atom-name heuristics ──────────────────────────────────────────────────
 
-/// Guess atomic number from a GRO-style atom name (e.g. "CA", "OW", "HW1").
+/// Look up a one- or two-letter ASCII symbol (`first` upper-cased, `second`
+/// lower-cased) without allocating. Returns 0 for any non-ASCII letter, which
+/// can never be part of an element symbol.
+fn ascii_symbol_to_atomic_num(first: char, second: Option<char>) -> u8 {
+    if !first.is_ascii() {
+        return 0;
+    }
+    let mut buf = [first.to_ascii_uppercase() as u8, 0];
+    let len = match second {
+        None => 1,
+        Some(c) if c.is_ascii() => {
+            buf[1] = c.to_ascii_lowercase() as u8;
+            2
+        }
+        Some(_) => return 0,
+    };
+    std::str::from_utf8(&buf[..len]).map_or(0, symbol_to_atomic_num)
+}
+
+/// Resolve an element from an explicit element-symbol field such as a CIF /
+/// mmCIF `_atom_site_type_symbol` (`"Fe2+"`, `"O2-"`, `"FE"`) or a CIF site
+/// label (`"Na1"`, `"O2"`).
+///
+/// The leading alphabetic run is the symbol; charge and index suffixes are
+/// ignored. When that run is not itself a symbol (e.g. `"Cla"`), the first
+/// letter alone is tried. Allocation-free.
+pub(crate) fn element_from_symbol(s: &str) -> u8 {
+    let mut run = s.chars().take_while(|c| c.is_alphabetic());
+    let Some(first) = run.next() else {
+        return 0;
+    };
+    let second = run.next();
+    // Element symbols are at most two letters, so a longer run can only
+    // resolve through its first letter.
+    if second.is_some() && run.next().is_none() {
+        let z = ascii_symbol_to_atomic_num(first, second);
+        if z != 0 {
+            return z;
+        }
+    }
+    ascii_symbol_to_atomic_num(first, None)
+}
+
+/// Guess atomic number from an atom name **without** residue context
+/// (e.g. "CL", "FE", "OW", "HW1").
 ///
 /// Tries a two-character symbol first (e.g. "Cl", "Fe"), then falls back to
-/// the first character.
+/// the first character. Because a name alone cannot distinguish a protein
+/// α-carbon "CA" from a calcium ion "CA", prefer
+/// [`element_from_atom_name_in_residue`] whenever the residue name is known.
 pub(crate) fn element_from_atom_name(name: &str) -> u8 {
     // Take the first two alphabetic characters without allocating an
     // intermediate "cleaned" string.
@@ -316,17 +362,13 @@ pub(crate) fn element_from_atom_name(name: &str) -> u8 {
     // Element symbols are ASCII (1–2 letters), so for the overwhelmingly
     // common ASCII case we case-fold into a small stack buffer and avoid the
     // per-call heap allocations. Exotic non-ASCII names keep the original
-    // Unicode-aware path (they never match an ASCII symbol anyway), so the
-    // returned atomic number is identical for every input.
+    // Unicode-aware path, so the returned atomic number is identical for
+    // every input.
 
     // Two-character symbol first (e.g. "CL" → "Cl", "FE" → "Fe").
     if let Some(second) = second {
         let num = if first.is_ascii() && second.is_ascii() {
-            let buf = [
-                first.to_ascii_uppercase() as u8,
-                second.to_ascii_lowercase() as u8,
-            ];
-            symbol_to_atomic_num(std::str::from_utf8(&buf).unwrap_or(""))
+            ascii_symbol_to_atomic_num(first, Some(second))
         } else {
             let two: String = first.to_uppercase().chain(second.to_lowercase()).collect();
             symbol_to_atomic_num(&two)
@@ -338,12 +380,126 @@ pub(crate) fn element_from_atom_name(name: &str) -> u8 {
 
     // Fall back to a single-character symbol.
     if first.is_ascii() {
-        let buf = [first.to_ascii_uppercase() as u8];
-        symbol_to_atomic_num(std::str::from_utf8(&buf).unwrap_or(""))
+        ascii_symbol_to_atomic_num(first, None)
     } else {
         let one: String = first.to_uppercase().collect();
         symbol_to_atomic_num(&one)
     }
+}
+
+/// The 20 standard amino acids plus the common force-field protonation /
+/// disulfide / modified variants (AMBER, CHARMM, GROMACS, OPLS naming).
+/// Every atom of these residues is H, C, N, O or S — except the Se of
+/// MSE/SEC, handled in [`element_from_atom_name_in_residue`].
+fn is_amino_acid(res: &str) -> bool {
+    matches!(
+        res,
+        "ALA" | "ARG" | "ASN" | "ASP" | "CYS" | "GLN" | "GLU" | "GLY" | "HIS" | "ILE"
+            | "LEU" | "LYS" | "MET" | "PHE" | "PRO" | "SER" | "THR" | "TRP" | "TYR" | "VAL"
+            // Histidine tautomers / protonation states.
+            | "HID" | "HIE" | "HIP" | "HSD" | "HSE" | "HSP" | "HISA" | "HISB" | "HISD"
+            | "HISE" | "HISH" | "HIS1" | "HIS2"
+            // Other protonation / disulfide / deprotonated variants.
+            | "CYX" | "CYM" | "CYS2" | "CYSH" | "ASH" | "ASPH" | "GLH" | "GLUH" | "LYN"
+            | "LYSH" | "LYSN" | "ARGN" | "HYP"
+            // Selenium-bearing residues and common caps.
+            | "MSE" | "SEC" | "ACE" | "NME" | "NHE" | "NH2"
+    )
+}
+
+/// Nucleic-acid residue names (PDB, AMBER terminal 5'/3' variants, CHARMM).
+/// Every atom is H, C, N, O or P.
+fn is_nucleic_acid(res: &str) -> bool {
+    matches!(
+        res,
+        // PDB one-letter (RNA) and DNA names.
+        "A" | "C" | "G" | "U" | "T" | "I" | "DA" | "DC" | "DG" | "DT" | "DU" | "DI"
+            // AMBER RNA names and 5'/3'-terminal variants.
+            | "RA" | "RC" | "RG" | "RU" | "DA5" | "DC5" | "DG5" | "DT5" | "DA3" | "DC3"
+            | "DG3" | "DT3" | "RA5" | "RC5" | "RG5" | "RU5" | "RA3" | "RC3" | "RG3" | "RU3"
+            | "A5" | "C5" | "G5" | "U5" | "A3" | "C3" | "G3" | "U3"
+            // CHARMM names.
+            | "ADE" | "CYT" | "GUA" | "THY" | "URA"
+    )
+}
+
+/// Water residue names across force fields and file formats.
+fn is_water(res: &str) -> bool {
+    matches!(
+        res,
+        // PDB / AMBER / GROMACS names.
+        "HOH" | "WAT" | "SOL" | "H2O" | "DOD"
+            // CHARMM / force-field-specific names.
+            | "TIP" | "TIP3" | "TIP4" | "TIP5" | "TP3" | "TP4" | "TP5" | "T3P" | "T4P"
+            | "T5P" | "SPC" | "SPCE"
+    )
+}
+
+/// Upper-case a residue name (≤ 4 ASCII characters after trimming) into a
+/// stack buffer. Returns `None` for anything that cannot be a standard
+/// residue name, so callers fall back to the context-free guess.
+fn upper_residue(res_name: &str, buf: &mut [u8; 4]) -> Option<usize> {
+    let res = res_name.trim();
+    if res.is_empty() || res.len() > buf.len() || !res.is_ascii() {
+        return None;
+    }
+    for (b, c) in buf.iter_mut().zip(res.bytes()) {
+        *b = c.to_ascii_uppercase();
+    }
+    Some(res.len())
+}
+
+/// True when `res_name` names a standard biopolymer residue (amino acid,
+/// incl. AMBER `N`/`C`-prefixed terminal variants like "NALA"/"CLYS"),
+/// nucleic acid, or water — residues whose atoms are all H/C/N/O/S/P (plus
+/// Se in MSE/SEC), so their atom names start with a one-letter element.
+pub(crate) fn is_standard_residue(res_name: &str) -> bool {
+    let mut buf = [0u8; 4];
+    let Some(len) = upper_residue(res_name, &mut buf) else {
+        return false;
+    };
+    // `upper_residue` only accepts ASCII, so this never falls back.
+    let res = std::str::from_utf8(&buf[..len]).unwrap_or("");
+    is_amino_acid(res)
+        || is_nucleic_acid(res)
+        || is_water(res)
+        || (len == 4 && matches!(buf[0], b'N' | b'C') && is_amino_acid(&res[1..]))
+}
+
+/// Guess atomic number from an atom name **with** its residue name.
+///
+/// This is the policy every parser that only has a name to go on (GRO, PDB
+/// without an element column, AMBER/PSF topologies missing the atomic-number
+/// and mass fields) uses:
+///
+/// * Inside a standard biopolymer or water residue (see
+///   [`is_standard_residue`]) the element is the **first letter** of the
+///   name, because those residues contain no two-letter elements: protein
+///   "CA" (Cα), "CD", "NE", "HG", "SG", "OG" resolve to C, C, N, H, S, O —
+///   not calcium, cadmium, neon, mercury, seaborgium, oganesson. The one
+///   exception is the selenium "SE" of selenomethionine (MSE) and
+///   selenocysteine (SEC).
+/// * Everywhere else — ion residues whose name repeats the atom name
+///   ("CA CA", "NA NA", "CL CL", "ZN ZN", "MG MG") and ligands — the
+///   context-free two-letter-first [`element_from_atom_name`] applies.
+///
+/// Allocation-free.
+pub(crate) fn element_from_atom_name_in_residue(name: &str, res_name: &str) -> u8 {
+    if !is_standard_residue(res_name) {
+        return element_from_atom_name(name);
+    }
+    let mut alpha = name.chars().filter(|c| c.is_alphabetic());
+    let Some(first) = alpha.next() else {
+        return 0;
+    };
+    let res = res_name.trim();
+    if (res.eq_ignore_ascii_case("MSE") || res.eq_ignore_ascii_case("SEC"))
+        && first.eq_ignore_ascii_case(&'S')
+        && alpha.next().is_some_and(|c| c.eq_ignore_ascii_case(&'E'))
+    {
+        return 34; // Se
+    }
+    ascii_symbol_to_atomic_num(first, None)
 }
 
 // ── Tests ─────────────────────────────────────────────────────────────────
@@ -414,6 +570,9 @@ mod tests {
 
     #[test]
     fn test_element_from_atom_name() {
+        // Context-free: a bare "CA" reads as calcium. Parsers that know the
+        // residue must use `element_from_atom_name_in_residue`, which resolves
+        // a protein Cα to carbon (see `test_element_from_atom_name_in_residue`).
         assert_eq!(element_from_atom_name("CA"), 20); // Ca (Calcium)
         assert_eq!(element_from_atom_name("OW"), 8); // Oxygen (water)
         assert_eq!(element_from_atom_name("HW1"), 1); // Hydrogen
@@ -430,5 +589,84 @@ mod tests {
         // never match an ASCII element symbol, so they resolve to 0).
         assert_eq!(element_from_atom_name("Ωz"), 0); // two-char + single-char Unicode fallback
         assert_eq!(element_from_atom_name("Ω"), 0); // single-char Unicode fallback
+    }
+
+    #[test]
+    fn test_element_from_symbol() {
+        assert_eq!(element_from_symbol("C"), 6);
+        assert_eq!(element_from_symbol("FE"), 26);
+        assert_eq!(element_from_symbol("Na"), 11);
+        assert_eq!(element_from_symbol("Fe2+"), 26); // charge suffix
+        assert_eq!(element_from_symbol("O2-"), 8);
+        assert_eq!(element_from_symbol("Na1"), 11); // site label index
+        assert_eq!(element_from_symbol("Cla"), 6); // 3-letter run → first letter
+        assert_eq!(element_from_symbol("Xq"), 0); // neither "Xq" nor "X"
+        assert_eq!(element_from_symbol("Ow"), 8); // "Ow" unknown → "O"
+        assert_eq!(element_from_symbol(""), 0);
+        assert_eq!(element_from_symbol("2+"), 0); // no leading letters
+                                                  // Non-ASCII letters never form a symbol (and must not panic).
+        assert_eq!(element_from_symbol("Ω"), 0);
+        assert_eq!(element_from_symbol("Cé"), 6);
+    }
+
+    #[test]
+    fn test_is_standard_residue() {
+        for res in [
+            "ALA", "gly", " HIS ", "HIE", "CYX", "MSE", "NALA", "CLYS", "NHIE",
+        ] {
+            assert!(is_standard_residue(res), "{res} should be an amino acid");
+        }
+        for res in ["DA", "DT5", "RU3", "A", "URA"] {
+            assert!(is_standard_residue(res), "{res} should be a nucleic acid");
+        }
+        for res in ["SOL", "WAT", "HOH", "TIP3", "SPCE"] {
+            assert!(is_standard_residue(res), "{res} should be water");
+        }
+        // Ions, ligands, and names that cannot be standard residues.
+        for res in [
+            "CA", "NA", "CL", "ZN", "MG", "LIG", "HEM", "", "   ", "NXXX", "XALA",
+        ] {
+            assert!(!is_standard_residue(res), "{res} must not be standard");
+        }
+        assert!(!is_standard_residue("TOOLONG"));
+        assert!(!is_standard_residue("ÀLA"));
+    }
+
+    #[test]
+    fn test_element_from_atom_name_in_residue() {
+        // Protein atoms whose two-letter reading is a real (wrong) element.
+        assert_eq!(element_from_atom_name_in_residue("CA", "ALA"), 6); // not Ca
+        assert_eq!(element_from_atom_name_in_residue("CB", "ALA"), 6);
+        assert_eq!(element_from_atom_name_in_residue("HG", "SER"), 1); // not Hg
+        assert_eq!(element_from_atom_name_in_residue("NE", "ARG"), 7); // not Ne
+        assert_eq!(element_from_atom_name_in_residue("CD", "GLU"), 6); // not Cd
+        assert_eq!(element_from_atom_name_in_residue("SG", "CYS"), 16); // not Sg
+        assert_eq!(element_from_atom_name_in_residue("OG", "SER"), 8); // not Og
+        assert_eq!(element_from_atom_name_in_residue("1HG1", "VAL"), 1);
+        assert_eq!(element_from_atom_name_in_residue("CA", "NALA"), 6);
+        // Selenium in selenomethionine / selenocysteine.
+        assert_eq!(element_from_atom_name_in_residue("SE", "MSE"), 34);
+        assert_eq!(element_from_atom_name_in_residue("Se", "sec"), 34);
+        assert_eq!(element_from_atom_name_in_residue("SD", "MET"), 16);
+        assert_eq!(element_from_atom_name_in_residue("CE", "MSE"), 6);
+        assert_eq!(element_from_atom_name_in_residue("S", "MSE"), 16);
+        // Nucleic acids and water.
+        assert_eq!(element_from_atom_name_in_residue("P", "DA"), 15);
+        assert_eq!(element_from_atom_name_in_residue("OP1", "DG"), 8);
+        assert_eq!(element_from_atom_name_in_residue("OW", "SOL"), 8);
+        assert_eq!(element_from_atom_name_in_residue("HW1", "SOL"), 1);
+        assert_eq!(element_from_atom_name_in_residue("MW", "SOL"), 0); // virtual site
+        assert_eq!(element_from_atom_name_in_residue("", "SOL"), 0);
+        assert_eq!(element_from_atom_name_in_residue("Ω", "SOL"), 0);
+        // Ion residues (residue name repeats the atom name) keep two letters.
+        assert_eq!(element_from_atom_name_in_residue("CA", "CA"), 20);
+        assert_eq!(element_from_atom_name_in_residue("NA", "NA"), 11);
+        assert_eq!(element_from_atom_name_in_residue("CL", "CL"), 17);
+        assert_eq!(element_from_atom_name_in_residue("ZN", "ZN"), 30);
+        assert_eq!(element_from_atom_name_in_residue("MG", "MG"), 12);
+        // Ligands / unknown residues use the context-free guess.
+        assert_eq!(element_from_atom_name_in_residue("CL1", "LIG"), 17);
+        assert_eq!(element_from_atom_name_in_residue("C1", "LIG"), 6);
+        assert_eq!(element_from_atom_name_in_residue("FE", ""), 26);
     }
 }

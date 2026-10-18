@@ -365,13 +365,15 @@ class Replicate(PipelineNode):
     Ports:
         inp.particle — atom data in
         inp.cell     — simulation cell in
+        inp.traj     — trajectory in
         out.particle — replicated atom data
         out.cell     — enlarged simulation cell
+        out.traj     — trajectory replicated per frame
     """
 
     _node_type = "replicate"
-    _out_ports = {"particle": "particle", "cell": "cell"}
-    _inp_ports = {"particle": "particle", "cell": "cell"}
+    _out_ports = {"particle": "particle", "cell": "cell", "traj": "trajectory"}
+    _inp_ports = {"particle": "particle", "cell": "cell", "traj": "trajectory"}
 
     def __init__(self, *, nx: int = 1, ny: int = 1, nz: int = 1) -> None:
         super().__init__()
@@ -626,6 +628,34 @@ class AddPolyhedra(PipelineNode):
         self.show_edges = show_edges
         self.edge_color = edge_color
         self.edge_width = edge_width
+
+
+class SurfaceMesh(PipelineNode):
+    """Wrap the atoms in an OVITO-style alpha-shape surface envelope.
+
+    The mesh is computed in the browser from the incoming atom positions;
+    this node only carries the parameters.
+
+    Ports:
+        inp.particle — atom data
+        out.mesh     — surface mesh
+    """
+
+    _node_type = "surface_mesh"
+    _out_ports = {"mesh": "mesh"}
+    _inp_ports = {"particle": "particle"}
+
+    def __init__(
+        self,
+        *,
+        alpha_radius: float = 3.0,
+        color: str = "#4488ff",
+        opacity: float = 0.5,
+    ) -> None:
+        super().__init__()
+        self.alpha_radius = alpha_radius
+        self.color = color
+        self.opacity = opacity
 
 
 class VectorOverlay(PipelineNode):
@@ -931,7 +961,10 @@ class Pipeline:
                 lammpstrj=fname if ext in (".lammpstrj", ".dump", ".trj") else None,
             )
         elif ntype == "filter":
-            return Filter(query=nd.get("query", "all"), bond_query=nd.get("bond_query", ""))
+            # A missing key falls back to the TS ``defaultParams("filter")``
+            # value (``""``), exactly as the TS deserializer does. ``""`` and
+            # the ``Filter()`` constructor's ``"all"`` both select every atom.
+            return Filter(query=nd.get("query", ""), bond_query=nd.get("bond_query", ""))
         elif ntype == "modify":
             return Modify(scale=nd.get("scale", 1.0), opacity=nd.get("opacity", 1.0))
         elif ntype == "color":
@@ -980,6 +1013,12 @@ class Pipeline:
                 show_edges=nd.get("showEdges", False),
                 edge_color=nd.get("edgeColor", "#dddddd"),
                 edge_width=nd.get("edgeWidth", 3.0),
+            )
+        elif ntype == "surface_mesh":
+            return SurfaceMesh(
+                alpha_radius=nd.get("alphaRadius", 3.0),
+                color=nd.get("color", "#4488ff"),
+                opacity=nd.get("opacity", 0.5),
             )
         elif ntype == "vector_overlay":
             return VectorOverlay(scale=nd.get("scale", 1.0))
@@ -1183,6 +1222,10 @@ class Pipeline:
             base["showEdges"] = node.show_edges
             base["edgeColor"] = node.edge_color
             base["edgeWidth"] = node.edge_width
+        elif isinstance(node, SurfaceMesh):
+            base["alphaRadius"] = node.alpha_radius
+            base["color"] = node.color
+            base["opacity"] = node.opacity
         elif isinstance(node, LoadVector):
             base["fileName"] = node.path
         elif isinstance(node, VectorOverlay):

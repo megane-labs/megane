@@ -1,0 +1,353 @@
+{
+  "add_bond": {
+    "pythonClass": "AddBonds",
+    "params": {
+      "type": "add_bond",
+      "bondSource": "distance"
+    },
+    "inputs": [
+      "particle"
+    ],
+    "outputs": [
+      "bond"
+    ]
+  },
+  "boundary_completion": {
+    "pythonClass": "BoundaryCompletion",
+    "params": {
+      "type": "boundary_completion",
+      "mode": "neighbors"
+    },
+    "inputs": [
+      "particle",
+      "bond"
+    ],
+    "outputs": [
+      "particle",
+      "bond"
+    ]
+  },
+  "color": {
+    "pythonClass": "Color",
+    "params": {
+      "type": "color",
+      "mode": "uniform",
+      "uniformColor": "#ff8800"
+    },
+    "inputs": [
+      "in"
+    ],
+    "outputs": [
+      "out"
+    ]
+  },
+  "coordination_generator": {
+    "pythonClass": "AddCoordination",
+    "params": {
+      "type": "coordination_generator",
+      "excludedCenters": [],
+      "excludedLigands": [],
+      "cutoffTolerance": 1.15,
+      "boundaryMode": "complete"
+    },
+    "inputs": [
+      "particle"
+    ],
+    "outputs": [
+      "coordination",
+      "bond"
+    ]
+  },
+  "drawing_boundary": {
+    "pythonClass": "DrawingBoundary",
+    "params": {
+      "type": "drawing_boundary",
+      "xMin": 0,
+      "xMax": 1,
+      "yMin": 0,
+      "yMax": 1,
+      "zMin": 0,
+      "zMax": 1
+    },
+    "inputs": [
+      "particle"
+    ],
+    "outputs": [
+      "particle"
+    ]
+  },
+  "filter": {
+    "pythonClass": "Filter",
+    "params": {
+      "type": "filter",
+      "query": "",
+      "bond_query": ""
+    },
+    "inputs": [
+      "in"
+    ],
+    "outputs": [
+      "out"
+    ]
+  },
+  "isosurface": {
+    "pythonClass": "Isosurface",
+    "params": {
+      "type": "isosurface",
+      "isoLevel": 0.05,
+      "color": "#4488ff",
+      "opacity": 0.7,
+      "showNegative": false,
+      "negativeColor": "#ff4444",
+      "colorMode": "solid",
+      "colormap": "rwb"
+    },
+    "inputs": [
+      "volumetric",
+      "colorVolumetric"
+    ],
+    "outputs": [
+      "mesh"
+    ]
+  },
+  "label_generator": {
+    "pythonClass": "AddLabels",
+    "params": {
+      "type": "label_generator",
+      "source": "element"
+    },
+    "inputs": [
+      "particle"
+    ],
+    "outputs": [
+      "label"
+    ]
+  },
+  "load_spectrum": {
+    "pythonClass": "LoadSpectrum",
+    "params": {
+      "type": "load_spectrum",
+      "fileName": null
+    },
+    "inputs": [],
+    "outputs": [
+      "spectrum"
+    ]
+  },
+  "load_structure": {
+    "pythonClass": "LoadStructure",
+    "params": {
+      "type": "load_structure",
+      "fileName": null,
+      "hasTrajectory": false,
+      "hasCell": false
+    },
+    "inputs": [],
+    "outputs": [
+      "particle",
+      "trajectory",
+      "cell"
+    ]
+  },
+  "load_trajectory": {
+    "pythonClass": "LoadTrajectory",
+    "params": {
+      "type": "load_trajectory",
+      "fileName": null,
+      "source": "file"
+    },
+    "inputs": [
+      "particle"
+    ],
+    "outputs": [
+      "trajectory"
+    ]
+  },
+  "load_vector": {
+    "pythonClass": "LoadVector",
+    "params": {
+      "type": "load_vector",
+      "fileName": null
+    },
+    "inputs": [],
+    "outputs": [
+      "vector"
+    ]
+  },
+  "load_volumetric": {
+    "pythonClass": "LoadVolumetric",
+    "params": {
+      "type": "load_volumetric",
+      "fileName": null
+    },
+    "inputs": [],
+    "outputs": [
+      "volumetric"
+    ]
+  },
+  "modify": {
+    "pythonClass": "Modify",
+    "params": {
+      "type": "modify",
+      "scale": 1,
+      "opacity": 1
+    },
+    "inputs": [
+      "in"
+    ],
+    "outputs": [
+      "out"
+    ]
+  },
+  "polyhedron_generator": {
+    "pythonClass": "AddPolyhedra",
+    "params": {
+      "type": "polyhedron_generator",
+      "opacity": 0.5,
+      "showEdges": false,
+      "edgeColor": "#dddddd",
+      "edgeWidth": 3
+    },
+    "inputs": [
+      "coordination"
+    ],
+    "outputs": [
+      "mesh"
+    ]
+  },
+  "replicate": {
+    "pythonClass": "Replicate",
+    "params": {
+      "type": "replicate",
+      "nx": 1,
+      "ny": 1,
+      "nz": 1
+    },
+    "inputs": [
+      "particle",
+      "cell",
+      "trajectory"
+    ],
+    "outputs": [
+      "particle",
+      "cell",
+      "trajectory"
+    ]
+  },
+  "representation": {
+    "pythonClass": "Representation",
+    "params": {
+      "type": "representation",
+      "mode": "atoms"
+    },
+    "inputs": [
+      "in"
+    ],
+    "outputs": [
+      "out"
+    ]
+  },
+  "spectrum_plot": {
+    "pythonClass": "SpectrumPlot",
+    "params": {
+      "type": "spectrum_plot",
+      "reverseX": true,
+      "color": "#84cc16"
+    },
+    "inputs": [
+      "spectrum"
+    ],
+    "outputs": []
+  },
+  "streaming": {
+    "pythonClass": "Streaming",
+    "params": {
+      "type": "streaming",
+      "connected": false
+    },
+    "inputs": [],
+    "outputs": [
+      "particle",
+      "bond",
+      "trajectory",
+      "cell"
+    ]
+  },
+  "surface_mesh": {
+    "pythonClass": "SurfaceMesh",
+    "params": {
+      "type": "surface_mesh",
+      "alphaRadius": 3,
+      "color": "#4488ff",
+      "opacity": 0.5
+    },
+    "inputs": [
+      "particle"
+    ],
+    "outputs": [
+      "mesh"
+    ]
+  },
+  "symmetry": {
+    "pythonClass": "Symmetry",
+    "params": {
+      "type": "symmetry",
+      "mode": "expand"
+    },
+    "inputs": [
+      "particle",
+      "trajectory"
+    ],
+    "outputs": [
+      "particle",
+      "trajectory"
+    ]
+  },
+  "vector_overlay": {
+    "pythonClass": "VectorOverlay",
+    "params": {
+      "type": "vector_overlay",
+      "scale": 1
+    },
+    "inputs": [
+      "vector"
+    ],
+    "outputs": [
+      "vector"
+    ]
+  },
+  "viewport": {
+    "pythonClass": "Viewport",
+    "params": {
+      "type": "viewport",
+      "perspective": false,
+      "cellAxesVisible": true,
+      "pivotMarkerVisible": true
+    },
+    "inputs": [
+      "particle",
+      "bond",
+      "cell",
+      "trajectory",
+      "label",
+      "mesh",
+      "vector"
+    ],
+    "outputs": []
+  },
+  "wrap": {
+    "pythonClass": "Wrap",
+    "params": {
+      "type": "wrap",
+      "mode": "none"
+    },
+    "inputs": [
+      "particle",
+      "trajectory"
+    ],
+    "outputs": [
+      "particle",
+      "trajectory"
+    ]
+  }
+}

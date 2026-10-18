@@ -237,7 +237,11 @@ import {
   getBuilderHtml,
   BUILDER_EXTENSIONS,
   BUILDER_FILENAME_PREFIXES,
+  PIPELINE_COMPANION_FILE_PARAMS,
+  readPipelineCompanions,
+  toArrayBuffer,
 } from "../../../vscode-megane/src/extension";
+import { COMPANION_FILE_PARAMS } from "../../../src/pipeline/companionFiles";
 
 const VscodeUri = (vscode as unknown as { Uri: { file: (p: string) => FakeUri } }).Uri;
 
@@ -800,8 +804,38 @@ describe("MeganePipelineEditorProvider — pipelineViewer", () => {
     expect(() => doc.dispose()).not.toThrow();
   });
 
-  it("posts loadPipeline with structure + trajectory companions resolved relative to the pipeline file", async () => {
+  type CompanionPayload = {
+    type: string;
+    pipeline: unknown;
+    companionFiles: Array<{
+      nodeId: string;
+      nodeType: string;
+      filename: string;
+      content: ArrayBuffer;
+    }>;
+    wasmBytes?: unknown;
+  };
+
+  async function openPipeline(
+    pipeline: unknown,
+    companionReads: Array<Uint8Array | Error>,
+    docPath = "/work/pipe.megane.json",
+  ): Promise<CompanionPayload> {
     const provider = getProvider("megane.pipelineViewer");
+    mockState.readFile.mockResolvedValueOnce(pipelineBytes(pipeline));
+    for (const read of companionReads) {
+      if (read instanceof Error) mockState.readFile.mockRejectedValueOnce(read);
+      else mockState.readFile.mockResolvedValueOnce(read);
+    }
+    const doc = { uri: VscodeUri.file(docPath), dispose: vi.fn() };
+    const { panel, fireMessage } = makeWebviewPanel();
+    await provider.resolveCustomEditor(doc, panel, {});
+    fireMessage({ type: "ready" });
+    expect(panel.webview.postMessage).toHaveBeenCalledTimes(1);
+    return panel.webview.postMessage.mock.calls[0][0] as CompanionPayload;
+  }
+
+  it("posts loadPipeline with structure + trajectory companions resolved relative to the pipeline file", async () => {
     const pipeline = {
       version: 3,
       nodes: [
@@ -811,37 +845,79 @@ describe("MeganePipelineEditorProvider — pipelineViewer", () => {
       edges: [],
     };
     // No wasm read now: pipeline, then structure companion, then trajectory.
-    mockState.readFile
-      .mockResolvedValueOnce(pipelineBytes(pipeline))
-      .mockResolvedValueOnce(new TextEncoder().encode("ATOM 1"))
-      .mockResolvedValueOnce(new Uint8Array([9, 8, 7]));
-
-    const doc = { uri: VscodeUri.file("/work/pipe.megane.json"), dispose: vi.fn() };
-    const { panel, fireMessage } = makeWebviewPanel();
-    await provider.resolveCustomEditor(doc, panel, {});
-
-    fireMessage({ type: "ready" });
-    expect(panel.webview.postMessage).toHaveBeenCalledTimes(1);
-    const payload = panel.webview.postMessage.mock.calls[0][0] as {
-      type: string;
-      pipeline: unknown;
-      structureFiles: Array<{ nodeId: string; content: string; filename: string }>;
-      trajectoryFiles: Array<{ nodeId: string; content: ArrayBuffer; filename: string }>;
-      wasmBytes?: unknown;
-    };
+    const payload = await openPipeline(pipeline, [
+      new TextEncoder().encode("ATOM 1"),
+      new Uint8Array([9, 8, 7]),
+    ]);
 
     expect(payload.type).toBe("loadPipeline");
     expect(payload.pipeline).toEqual(pipeline);
     expect(payload).not.toHaveProperty("wasmBytes");
-    expect(payload.structureFiles).toEqual([
-      { nodeId: "n1", content: "ATOM 1", filename: "struct.pdb" },
+    expect(payload).not.toHaveProperty("structureFiles");
+    expect(payload.companionFiles.map((c) => [c.nodeId, c.nodeType, c.filename])).toEqual([
+      ["n1", "load_structure", "struct.pdb"],
+      ["n2", "load_trajectory", "traj.xtc"],
     ]);
-    expect(payload.trajectoryFiles).toHaveLength(1);
-    expect(payload.trajectoryFiles[0].nodeId).toBe("n2");
-    expect(payload.trajectoryFiles[0].filename).toBe("traj.xtc");
-    expect(new Uint8Array(payload.trajectoryFiles[0].content as ArrayBuffer)).toEqual(
-      new Uint8Array([9, 8, 7]),
+    expect(mockState.readFile.mock.calls[1][0].fsPath).toBe("/work/struct.pdb");
+    expect(mockState.readFile.mock.calls[2][0].fsPath).toBe("/work/traj.xtc");
+    expect(new TextDecoder().decode(payload.companionFiles[0].content)).toBe("ATOM 1");
+    expect(new Uint8Array(payload.companionFiles[1].content)).toEqual(new Uint8Array([9, 8, 7]));
+  });
+
+  it("sends a binary load_structure companion (ASE .traj) as untouched bytes, not decoded text", async () => {
+    // Bytes that are not valid UTF-8: decoding them as text (the old path)
+    // replaced each with U+FFFD and corrupted the file.
+    const traj = new Uint8Array([0x2d, 0x20, 0x6f, 0x66, 0xff, 0xfe, 0x00, 0x80, 0xc3]);
+    const payload = await openPipeline(
+      {
+        version: 3,
+        nodes: [{ id: "s", type: "load_structure", fileName: "data/water.traj" }],
+        edges: [],
+      },
+      [traj],
     );
+    expect(payload.companionFiles).toHaveLength(1);
+    expect(payload.companionFiles[0].filename).toBe("water.traj");
+    expect(payload.companionFiles[0].content).toBeInstanceOf(ArrayBuffer);
+    expect(new Uint8Array(payload.companionFiles[0].content)).toEqual(traj);
+    expect(mockState.readFile.mock.calls[1][0].fsPath).toBe("/work/data/water.traj");
+  });
+
+  it("reads the companion of every file-bearing node type, under its own param", async () => {
+    const nodes = [
+      { id: "s", type: "load_structure", fileName: "a.pdb" },
+      { id: "t", type: "load_trajectory", fileName: "b.xtc" },
+      { id: "v", type: "load_vector", fileName: "c.vec" },
+      { id: "g", type: "load_volumetric", fileName: "d.cube" },
+      { id: "sp", type: "load_spectrum", fileName: "e.jdx" },
+      { id: "ab", type: "add_bond", bondSource: "file", bondFileName: "f.top" },
+    ];
+    const reads = nodes.map((_, i) => new Uint8Array([i]));
+    const payload = await openPipeline({ version: 3, nodes, edges: [] }, reads);
+    expect(payload.companionFiles.map((c) => [c.nodeId, c.nodeType, c.filename])).toEqual([
+      ["s", "load_structure", "a.pdb"],
+      ["t", "load_trajectory", "b.xtc"],
+      ["v", "load_vector", "c.vec"],
+      ["g", "load_volumetric", "d.cube"],
+      ["sp", "load_spectrum", "e.jdx"],
+      ["ab", "add_bond", "f.top"],
+    ]);
+    payload.companionFiles.forEach((c, i) => {
+      expect(new Uint8Array(c.content)).toEqual(new Uint8Array([i]));
+    });
+  });
+
+  it("skips a load_vector node fed by an embedded channel (no file to read)", async () => {
+    const payload = await openPipeline(
+      {
+        version: 3,
+        nodes: [{ id: "v", type: "load_vector", fileName: "[embedded] velocities" }],
+        edges: [],
+      },
+      [],
+    );
+    expect(payload.companionFiles).toEqual([]);
+    expect(mockState.readFile).toHaveBeenCalledTimes(1);
   });
 
   it("rejects pipelines whose version is not 3", async () => {
@@ -884,134 +960,145 @@ describe("MeganePipelineEditorProvider — pipelineViewer", () => {
   });
 
   it("skips nodes referencing absolute fileName paths (path traversal protection)", async () => {
-    const provider = getProvider("megane.pipelineViewer");
-    const pipeline = {
-      version: 3,
-      nodes: [{ id: "n1", type: "load_structure", fileName: "/etc/passwd" }],
-      edges: [],
-    };
-    mockState.readFile
-      .mockResolvedValueOnce(pipelineBytes(pipeline))
-      .mockResolvedValueOnce(new Uint8Array());
-
-    const doc = { uri: VscodeUri.file("/work/pipe.megane.json"), dispose: vi.fn() };
-    const { panel, fireMessage } = makeWebviewPanel();
-    await provider.resolveCustomEditor(doc, panel, {});
-
-    fireMessage({ type: "ready" });
-    const payload = panel.webview.postMessage.mock.calls[0][0] as {
-      structureFiles: unknown[];
-      trajectoryFiles: unknown[];
-    };
-    expect(payload.structureFiles).toEqual([]);
-    expect(payload.trajectoryFiles).toEqual([]);
+    const payload = await openPipeline(
+      {
+        version: 3,
+        nodes: [
+          { id: "n1", type: "load_structure", fileName: "/etc/passwd" },
+          { id: "n2", type: "add_bond", bondFileName: "/etc/shadow" },
+        ],
+        edges: [],
+      },
+      [],
+    );
+    expect(payload.companionFiles).toEqual([]);
     // Only the pipeline file is read; no companion read attempted.
     expect(mockState.readFile).toHaveBeenCalledTimes(1);
   });
 
   it("skips nodes whose fileName escapes the pipeline directory", async () => {
-    const provider = getProvider("megane.pipelineViewer");
-    const pipeline = {
-      version: 3,
-      nodes: [{ id: "n1", type: "load_structure", fileName: "../../escape.pdb" }],
-      edges: [],
-    };
-    mockState.readFile
-      .mockResolvedValueOnce(pipelineBytes(pipeline))
-      .mockResolvedValueOnce(new Uint8Array());
-
-    const doc = { uri: VscodeUri.file("/work/sub/pipe.megane.json"), dispose: vi.fn() };
-    const { panel, fireMessage } = makeWebviewPanel();
-    await provider.resolveCustomEditor(doc, panel, {});
-
-    fireMessage({ type: "ready" });
-    const payload = panel.webview.postMessage.mock.calls[0][0] as {
-      structureFiles: unknown[];
-    };
-    expect(payload.structureFiles).toEqual([]);
+    const payload = await openPipeline(
+      {
+        version: 3,
+        nodes: [{ id: "n1", type: "load_structure", fileName: "../../escape.pdb" }],
+        edges: [],
+      },
+      [],
+      "/work/sub/pipe.megane.json",
+    );
+    expect(payload.companionFiles).toEqual([]);
     expect(mockState.readFile).toHaveBeenCalledTimes(1);
   });
 
   it("silently skips nodes whose companion file cannot be read", async () => {
-    const provider = getProvider("megane.pipelineViewer");
-    const pipeline = {
-      version: 3,
-      nodes: [
-        { id: "n1", type: "load_structure", fileName: "missing.pdb" },
-        { id: "n2", type: "load_trajectory", fileName: "ok.xtc" },
-      ],
-      edges: [],
-    };
-    mockState.readFile
-      .mockResolvedValueOnce(pipelineBytes(pipeline))
-      .mockRejectedValueOnce(new Error("ENOENT")) // missing.pdb
-      .mockResolvedValueOnce(new Uint8Array([4, 5])); // ok.xtc
-
-    const doc = { uri: VscodeUri.file("/work/pipe.megane.json"), dispose: vi.fn() };
-    const { panel, fireMessage } = makeWebviewPanel();
-    await provider.resolveCustomEditor(doc, panel, {});
-
-    fireMessage({ type: "ready" });
-    const payload = panel.webview.postMessage.mock.calls[0][0] as {
-      type: string;
-      structureFiles: Array<{ nodeId: string }>;
-      trajectoryFiles: Array<{ nodeId: string }>;
-    };
+    const payload = await openPipeline(
+      {
+        version: 3,
+        nodes: [
+          { id: "n1", type: "load_structure", fileName: "missing.pdb" },
+          { id: "n2", type: "load_trajectory", fileName: "ok.xtc" },
+        ],
+        edges: [],
+      },
+      [new Error("ENOENT"), new Uint8Array([4, 5])],
+    );
     expect(payload.type).toBe("loadPipeline");
-    expect(payload.structureFiles).toEqual([]);
-    expect(payload.trajectoryFiles).toHaveLength(1);
-    expect(payload.trajectoryFiles[0].nodeId).toBe("n2");
+    expect(payload.companionFiles.map((c) => c.nodeId)).toEqual(["n2"]);
   });
 
   it("skips nodes that have no fileName at all", async () => {
-    const provider = getProvider("megane.pipelineViewer");
-    const pipeline = {
-      version: 3,
-      nodes: [
-        { id: "n1", type: "filter" },
-        { id: "n2", type: "load_structure", fileName: null },
-      ],
-      edges: [],
-    };
-    mockState.readFile
-      .mockResolvedValueOnce(pipelineBytes(pipeline))
-      .mockResolvedValueOnce(new Uint8Array());
-
-    const doc = { uri: VscodeUri.file("/work/pipe.megane.json"), dispose: vi.fn() };
-    const { panel, fireMessage } = makeWebviewPanel();
-    await provider.resolveCustomEditor(doc, panel, {});
-
-    fireMessage({ type: "ready" });
+    const payload = await openPipeline(
+      {
+        version: 3,
+        nodes: [
+          { id: "n1", type: "filter" },
+          { id: "n2", type: "load_structure", fileName: null },
+          { id: "n3", type: "add_bond", bondSource: "distance" },
+        ],
+        edges: [],
+      },
+      [],
+    );
     expect(mockState.readFile).toHaveBeenCalledTimes(1);
-    const payload = panel.webview.postMessage.mock.calls[0][0] as {
-      structureFiles: unknown[];
-    };
-    expect(payload.structureFiles).toEqual([]);
+    expect(payload.companionFiles).toEqual([]);
   });
 
-  it("ignores companion reads for node types other than load_structure / load_trajectory", async () => {
-    const provider = getProvider("megane.pipelineViewer");
-    const pipeline = {
-      version: 3,
-      nodes: [{ id: "n1", type: "filter", fileName: "filter.txt" }],
-      edges: [],
-    };
-    mockState.readFile
-      .mockResolvedValueOnce(pipelineBytes(pipeline))
-      .mockResolvedValueOnce(new Uint8Array());
-
-    const doc = { uri: VscodeUri.file("/work/pipe.megane.json"), dispose: vi.fn() };
-    const { panel, fireMessage } = makeWebviewPanel();
-    await provider.resolveCustomEditor(doc, panel, {});
-
-    fireMessage({ type: "ready" });
+  it("ignores fileName params on node types that read no file", async () => {
+    const payload = await openPipeline(
+      {
+        version: 3,
+        nodes: [
+          { id: "n1", type: "filter", fileName: "filter.txt" },
+          // `fileName` is not add_bond's file param; only bondFileName is.
+          { id: "n2", type: "add_bond", fileName: "wrong.top" },
+          // A prototype key must not be mistaken for a table entry.
+          { id: "n3", type: "constructor", fileName: "proto.pdb" },
+        ],
+        edges: [],
+      },
+      [],
+    );
     expect(mockState.readFile).toHaveBeenCalledTimes(1);
-    const payload = panel.webview.postMessage.mock.calls[0][0] as {
-      structureFiles: unknown[];
-      trajectoryFiles: unknown[];
-    };
-    expect(payload.structureFiles).toEqual([]);
-    expect(payload.trajectoryFiles).toEqual([]);
+    expect(payload.companionFiles).toEqual([]);
+  });
+});
+
+describe("pipeline companion helpers", () => {
+  it("PIPELINE_COMPANION_FILE_PARAMS mirrors the shared COMPANION_FILE_PARAMS", () => {
+    // The extension host is compiled apart from src/, so it keeps a copy.
+    expect(PIPELINE_COMPANION_FILE_PARAMS).toEqual(COMPANION_FILE_PARAMS);
+  });
+
+  it("toArrayBuffer returns the backing buffer when the view covers all of it", () => {
+    const data = new Uint8Array([1, 2, 3]);
+    expect(toArrayBuffer(data)).toBe(data.buffer);
+  });
+
+  it("toArrayBuffer copies out only the viewed bytes of a pooled buffer", () => {
+    const pool = new Uint8Array([0, 0, 7, 8, 9, 0]);
+    const view = pool.subarray(2, 5);
+    const out = toArrayBuffer(view);
+    expect(out).not.toBe(pool.buffer);
+    expect(new Uint8Array(out)).toEqual(new Uint8Array([7, 8, 9]));
+  });
+
+  it("readPipelineCompanions defaults to the workspace filesystem", async () => {
+    mockState.readFile.mockResolvedValueOnce(new Uint8Array([5]));
+    const out = await readPipelineCompanions(
+      {
+        version: 3,
+        nodes: [{ id: "s", type: "load_structure", fileName: "x.traj" }],
+        edges: [],
+      },
+      "/w",
+    );
+    expect(out).toHaveLength(1);
+    expect(mockState.readFile.mock.calls[0][0].fsPath).toBe("/w/x.traj");
+  });
+
+  it("readPipelineCompanions accepts an injected reader", async () => {
+    const reader = vi.fn(async () => new Uint8Array([1, 2]));
+    const out = await readPipelineCompanions(
+      {
+        version: 3,
+        nodes: [
+          { id: "g", type: "load_volumetric", fileName: "grid.cube" },
+          { id: "x", type: "viewport" },
+        ],
+        edges: [],
+      },
+      "/w",
+      reader,
+    );
+    expect(reader).toHaveBeenCalledTimes(1);
+    expect(out).toEqual([
+      {
+        nodeId: "g",
+        nodeType: "load_volumetric",
+        filename: "grid.cube",
+        content: expect.any(ArrayBuffer),
+      },
+    ]);
   });
 });
 

@@ -30,6 +30,8 @@ module.exports = {
     // parseClient.ts imports a Vite `?worker` module that webpack cannot
     // parse. Swap it for the synchronous main-thread parse client so the
     // labextension bundles cleanly (same pattern as skillLoaderStub above).
+    // The Vite single-file bundles do the same swap via `syncParseAlias()` in
+    // ../vite.shared.ts (a TS module this CommonJS config cannot require).
     new webpack.NormalModuleReplacementPlugin(
       /[\\/]src[\\/]parsers[\\/]parseClient\.ts$/,
       path.resolve(__dirname, "../src/parsers/parseClientSync.ts")

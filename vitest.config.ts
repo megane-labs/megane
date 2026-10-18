@@ -3,6 +3,11 @@ import path from "path";
 
 export default defineConfig({
   resolve: {
+    // jupyterlab-megane/ has its own node_modules (React 18) once `npm run
+    // build:lab` has run, while the root (and CI, which never installs it) is on
+    // React 19. Resolve React from the root for every file so labextension
+    // components rendered through @testing-library/react see one React copy.
+    dedupe: ["react", "react-dom"],
     alias: {
       "@": path.resolve(__dirname, "src"),
       // `@megane/*` is the webpack alias used by jupyterlab-megane to import from

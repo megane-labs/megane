@@ -26,6 +26,10 @@ import type { Node, Edge } from "@xyflow/react";
 import { parseStructureFile, parseTopBonds, parsePsfBonds } from "../parsers/structure";
 import { basename, isVaspBareName, STRUCTURE_EXTS, TRAJECTORY_EXTS } from "../parsers/fileNames";
 import { parseTrajectoryByName } from "../parsers/trajectoryDispatch";
+import { parseSpectrum } from "../parsers/spectrum";
+import { loadVectorFileData } from "../logic/vectorSourceLogic";
+import { companionFileName } from "./companionFiles";
+import { parseVolumetric } from "./executors/parseVolumetric";
 import { createMinimalStructurePipeline } from "./defaults";
 import { getLayoutedElements } from "./layout";
 import type { PipelineNodeData } from "./execute";
@@ -330,9 +334,9 @@ async function openPipeline(
   let firstSnapshot: Snapshot | null = null;
   for (const node of pipeline.nodes ?? []) {
     if (node.type !== "load_structure") continue;
-    const fname = (node as { fileName?: string | null }).fileName;
+    const fname = companionFileName(node);
     if (!fname) continue;
-    const name = basename(String(fname));
+    const name = basename(fname);
     const f = fileMap.get(name);
     if (!f) continue;
     const result = await parseStructureFile(f);
@@ -356,9 +360,9 @@ async function openPipeline(
   for (const node of pipeline.nodes ?? []) {
     if (node.type !== "load_trajectory") continue;
     if (!firstSnapshot) break;
-    const fname = (node as { fileName?: string | null }).fileName;
+    const fname = companionFileName(node);
     if (!fname) continue;
-    const name = basename(String(fname));
+    const name = basename(fname);
     const f = fileMap.get(name);
     if (!f) continue;
     const { frames, meta } = await parseTrajectoryByName(
@@ -370,6 +374,108 @@ async function openPipeline(
     state.setFileFrames(frames, meta ?? null);
     state.updateNodeParams(node.id, { fileName: name });
     break;
+  }
+
+  // Phase 3: the other file-bearing nodes (see companionFiles.ts). What they
+  // load is ephemeral — a topology's bond list, a grid, a spectrum, vectors —
+  // so the saved pipeline only names the file and the data comes back from the
+  // companion here, as it would when the user drops the file on the node. A
+  // file that fails to parse is reported on its node rather than aborting the
+  // whole open.
+  let vectorsAttached = false;
+  for (const node of pipeline.nodes ?? []) {
+    if (
+      node.type !== "add_bond" &&
+      node.type !== "load_volumetric" &&
+      node.type !== "load_spectrum" &&
+      node.type !== "load_vector"
+    ) {
+      continue;
+    }
+    const fname = companionFileName(node);
+    if (!fname) continue;
+    const name = basename(fname);
+    const f = fileMap.get(name);
+    if (!f) continue;
+    await attachAuxiliaryCompanion(api, node.id, node.type, f, name, () => {
+      // Single global vector channel, like the trajectory: first one wins, and
+      // it needs a structure for the atom count.
+      if (vectorsAttached || !firstSnapshot) return null;
+      vectorsAttached = true;
+      return firstSnapshot.nAtoms;
+    });
+  }
+}
+
+async function attachAuxiliaryCompanion(
+  api: StoreApi<PipelineStore>,
+  nodeId: string,
+  type: "add_bond" | "load_volumetric" | "load_spectrum" | "load_vector",
+  file: File,
+  name: string,
+  claimVectorAtoms: () => number | null,
+): Promise<void> {
+  const state = api.getState();
+  switch (type) {
+    case "add_bond": {
+      const lower = name.toLowerCase();
+      if (!lower.endsWith(".top") && !lower.endsWith(".psf")) return;
+      const text = await readBlobAsText(file);
+      try {
+        const bondFileData = lower.endsWith(".psf")
+          ? await parsePsfBonds(text, 0xffffffff)
+          : await parseTopBonds(text, 0xffffffff);
+        // Keep the saved bondSource: the user may have switched the node away
+        // from "file" while leaving the topology attached.
+        state.updateNodeParams(nodeId, { bondFileName: name, bondFileData });
+      } catch (err) {
+        console.error(`Failed to parse topology ${name}:`, err);
+      }
+      return;
+    }
+    case "load_volumetric": {
+      const text = await readBlobAsText(file);
+      try {
+        state.updateNodeParams(nodeId, {
+          fileName: name,
+          volumetricData: parseVolumetric(name, text),
+          parseError: null,
+        });
+      } catch (err) {
+        state.updateNodeParams(nodeId, {
+          fileName: name,
+          volumetricData: null,
+          parseError: err instanceof Error ? err.message : String(err),
+        });
+      }
+      return;
+    }
+    case "load_spectrum": {
+      const text = await readBlobAsText(file);
+      try {
+        const spectrumData = await parseSpectrum(text);
+        state.updateNodeParams(nodeId, { fileName: name, spectrumData, parseError: null });
+      } catch (err) {
+        state.updateNodeParams(nodeId, {
+          fileName: name,
+          spectrumData: null,
+          parseError: err instanceof Error ? err.message : String(err),
+        });
+      }
+      return;
+    }
+    case "load_vector": {
+      const nAtoms = claimVectorAtoms();
+      if (nAtoms === null) return;
+      try {
+        const { vectors } = await loadVectorFileData(file, nAtoms);
+        state.setFileVectors(vectors);
+        state.updateNodeParams(nodeId, { fileName: name });
+      } catch (err) {
+        console.error(`Failed to load vector file ${name}:`, err);
+      }
+      return;
+    }
   }
 }
 
