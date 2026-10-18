@@ -91,6 +91,8 @@ const { mockState } = vi.hoisted(() => ({
     workspaceFolders: undefined as Array<{ uri: FakeUri }> | undefined,
     activeTabInput: undefined as { uri?: FakeUri } | undefined,
     activeTextEditorUri: undefined as FakeUri | undefined,
+    remoteName: undefined as string | undefined,
+    uiKind: 1,
   },
 }));
 
@@ -130,6 +132,15 @@ vi.mock("vscode", () => {
   }
   return {
     Uri,
+    UIKind: { Desktop: 1, Web: 2 },
+    env: {
+      get remoteName() {
+        return mockState.remoteName;
+      },
+      get uiKind() {
+        return mockState.uiKind;
+      },
+    },
     ViewColumn: { Active: -1 },
     workspace: {
       fs: { readFile: mockState.readFile, writeFile: mockState.writeFile },
@@ -219,6 +230,8 @@ import {
   createFrameStatusBarItem,
   createSelectionStatusBarItem,
   handleSaveFileMessage,
+  handlePickFileMessage,
+  workspaceIsRemote,
   MeganeEditorProvider,
   builderSaveBase,
   getBuilderHtml,
@@ -309,6 +322,8 @@ beforeEach(() => {
   mockState.workspaceFolders = undefined;
   mockState.activeTabInput = undefined;
   mockState.activeTextEditorUri = undefined;
+  mockState.remoteName = undefined;
+  mockState.uiKind = 1;
   vi.mocked(vscode.window.registerCustomEditorProvider).mockClear();
   delete process.env.MEGANE_E2E_MODE;
 });
@@ -1443,5 +1458,141 @@ describe("megane Builder manifest", () => {
     expect(ext?.[1].split("|")).toEqual(BUILDER_EXTENSIONS);
     const names = /resourceFilename =~ \/\^\(([^)]*)\)\//.exec(entry.when);
     expect(names?.[1].split("|")).toEqual(BUILDER_FILENAME_PREFIXES);
+  });
+});
+
+describe("Open from remote (pickFile)", () => {
+  it("workspaceIsRemote is false for a local desktop window", () => {
+    expect(workspaceIsRemote()).toBe(false);
+  });
+
+  it("workspaceIsRemote is true under VS Code Remote and in the browser", () => {
+    mockState.remoteName = "ssh-remote";
+    expect(workspaceIsRemote()).toBe(true);
+    mockState.remoteName = undefined;
+    mockState.uiKind = 2;
+    expect(workspaceIsRemote()).toBe(true);
+  });
+
+  it("flags remote workspaces in the viewer page only when remote", async () => {
+    activate(makeContext("/ext") as unknown as Parameters<typeof activate>[0]);
+    const provider = getProvider("megane.structureViewer");
+    mockState.readFile.mockResolvedValue(new Uint8Array([1]));
+    const doc = { uri: VscodeUri.file("/work/sample.pdb"), dispose: vi.fn() };
+
+    const local = makeWebviewPanel();
+    await provider.resolveCustomEditor(doc, local.panel, {});
+    expect(local.panel.webview.html).not.toContain("__MEGANE_REMOTE_FILES__");
+
+    mockState.remoteName = "wsl";
+    const remote = makeWebviewPanel();
+    await provider.resolveCustomEditor(doc, remote.panel, {});
+    expect(remote.panel.webview.html).toContain("window.__MEGANE_REMOTE_FILES__ = true;");
+  });
+
+  it("shows the open dialog beside the document and posts the file back", async () => {
+    const picked = VscodeUri.file("/work/run/traj.xtc");
+    mockState.showOpenDialog.mockResolvedValueOnce([picked]);
+    mockState.readFile.mockResolvedValueOnce(new Uint8Array([9, 8, 7]));
+    const webview = { postMessage: vi.fn() };
+
+    await handlePickFileMessage(
+      { id: 3, kind: "trajectory", extensions: [".xtc", ".dcd"] },
+      VscodeUri.file("/work/sample.pdb") as never,
+      webview as never,
+    );
+
+    const options = mockState.showOpenDialog.mock.calls[0][0] as {
+      defaultUri: FakeUri;
+      filters: Record<string, string[]>;
+      canSelectMany: boolean;
+    };
+    expect(options.canSelectMany).toBe(false);
+    expect(options.defaultUri.path).toBe("/work/sample.pdb/..");
+    expect(options.filters).toEqual({ "Trajectory files": ["xtc", "dcd"], "All files": ["*"] });
+    expect(mockState.readFile).toHaveBeenCalledWith(picked);
+    const reply = webview.postMessage.mock.calls[0][0] as {
+      type: string;
+      id: number;
+      filename: string;
+      contentBytes: ArrayBuffer;
+    };
+    expect(reply).toMatchObject({ type: "pickFileResult", id: 3, filename: "traj.xtc" });
+    expect(Array.from(new Uint8Array(reply.contentBytes))).toEqual([9, 8, 7]);
+  });
+
+  it("answers a cancelled dialog with no file", async () => {
+    mockState.showOpenDialog.mockResolvedValueOnce(undefined);
+    const webview = { postMessage: vi.fn() };
+    await handlePickFileMessage({ id: 1 }, VscodeUri.file("/w/a.pdb") as never, webview as never);
+    const options = mockState.showOpenDialog.mock.calls[0][0] as {
+      filters: Record<string, string[]>;
+    };
+    expect(options.filters).toEqual({ "All files": ["*"] });
+    expect(webview.postMessage).toHaveBeenCalledWith({ type: "pickFileResult", id: 1 });
+  });
+
+  it("reports a read failure", async () => {
+    mockState.showOpenDialog.mockResolvedValueOnce([VscodeUri.file("/w/b.pdb")]);
+    mockState.readFile.mockRejectedValueOnce(new Error("EACCES"));
+    const webview = { postMessage: vi.fn() };
+    await handlePickFileMessage(
+      { id: 2, kind: "structure", extensions: [".pdb"] },
+      VscodeUri.file("/w/a.pdb") as never,
+      webview as never,
+    );
+    expect(webview.postMessage).toHaveBeenCalledWith({
+      type: "pickFileResult",
+      id: 2,
+      error: "EACCES",
+    });
+  });
+
+  it("reports a non-Error failure as text", async () => {
+    mockState.showOpenDialog.mockRejectedValueOnce("boom");
+    const webview = { postMessage: vi.fn() };
+    await handlePickFileMessage({ id: 5 }, VscodeUri.file("/w/a.pdb") as never, webview as never);
+    expect(webview.postMessage).toHaveBeenCalledWith({
+      type: "pickFileResult",
+      id: 5,
+      error: "boom",
+    });
+  });
+
+  it("both viewers route pickFile messages to the handler", async () => {
+    activate(makeContext("/ext") as unknown as Parameters<typeof activate>[0]);
+    mockState.showOpenDialog.mockResolvedValue(undefined);
+
+    mockState.readFile.mockResolvedValueOnce(new Uint8Array([1]));
+    const structure = makeWebviewPanel();
+    await getProvider("megane.structureViewer").resolveCustomEditor(
+      { uri: VscodeUri.file("/work/sample.pdb"), dispose: vi.fn() },
+      structure.panel,
+      {},
+    );
+    structure.fireMessage({ type: "pickFile", id: 11, kind: "structure", extensions: [] });
+    await vi.waitFor(() =>
+      expect(structure.panel.webview.postMessage).toHaveBeenCalledWith({
+        type: "pickFileResult",
+        id: 11,
+      }),
+    );
+
+    mockState.readFile.mockResolvedValueOnce(
+      new TextEncoder().encode(JSON.stringify({ version: 3, nodes: [], edges: [] })),
+    );
+    const pipeline = makeWebviewPanel();
+    await getProvider("megane.pipelineViewer").resolveCustomEditor(
+      { uri: VscodeUri.file("/work/pipe.megane.json"), dispose: vi.fn() },
+      pipeline.panel,
+      {},
+    );
+    pipeline.fireMessage({ type: "pickFile", id: 12, kind: "structure", extensions: [] });
+    await vi.waitFor(() =>
+      expect(pipeline.panel.webview.postMessage).toHaveBeenCalledWith({
+        type: "pickFileResult",
+        id: 12,
+      }),
+    );
   });
 });

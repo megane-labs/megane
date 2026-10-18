@@ -22,6 +22,12 @@
  *   index in each component (the component containing atom 0 gets 0, etc.).
  *   "chain": per-atom chain ID as a single character (e.g. "A"), derived from
  *   `snapshot.atomChainIds`. Atoms without chain info compare as "".
+ *   "resname": residue name, the leading letters of the atom label (e.g.
+ *   "ALA42" → "ALA"). Labels glue the name to the sequence number, so a name
+ *   that itself contains a digit (indinavir's "MK1", "1PE") cannot be split
+ *   back out; `resname == "MK1"` / `!=` therefore also match a label that
+ *   starts with the queried name and continues with the sequence number
+ *   ("MK1902"). See `labelMatchesResname`.
  *   "resid": residue sequence number parsed from the trailing digits of the
  *   atom label (e.g. "ALA42" → 42). Atoms whose label has no trailing number
  *   compare as NaN (never match a numeric comparison).
@@ -368,6 +374,24 @@ export function parseResname(label: string): string {
 }
 
 /**
+ * Whether an atom label ("<resName><resSeq>", e.g. "ALA42") belongs to residue
+ * `name` — the `resname ==` test.
+ *
+ * `parseResname` keeps only the leading letters, which is right for the
+ * alphabetic names that make up nearly every residue but loses names that
+ * contain a digit: "MK1902" (indinavir, residue 902) reads as "MK". A label
+ * cannot be split unambiguously ("NA12" is sodium 12, not "NA1" 2), so the
+ * prefix match only kicks in when the *queried* name contains a digit — a
+ * query `parseResname` could never have satisfied — and existing alphabetic
+ * queries keep their exact-match meaning.
+ */
+export function labelMatchesResname(label: string, name: string): boolean {
+  if (parseResname(label) === name) return true;
+  if (!/\d/.test(name) || !label.startsWith(name)) return false;
+  return /^-?\d/.test(label.slice(name.length));
+}
+
+/**
  * Extract a residue sequence number from an atom label by reading the last run
  * of digits (e.g. "ALA42" → 42, "HOH" → NaN). Returns NaN when the label has no
  * trailing number, so a numeric `resid` comparison never matches those atoms.
@@ -491,6 +515,11 @@ function compileAST(
       const { field, op, value } = ast;
       let moleculeIds: Int32Array | null = null;
       return (i) => {
+        if (field === "resname" && (op === "==" || op === "!=") && typeof value === "string") {
+          const label = atomLabels?.[i];
+          const match = label ? labelMatchesResname(label, value) : value === "";
+          return op === "==" ? match : !match;
+        }
         let fieldValue: string | number;
         switch (field) {
           case "element":

@@ -123,6 +123,7 @@ export function FileDrop({
   nameTestId,
   testId,
   fileInput,
+  remote,
   children,
 }: {
   fileName: ReactNode;
@@ -135,6 +136,11 @@ export function FileDrop({
   testId?: string;
   /** The hidden `<input type="file">` the button clicks. */
   fileInput?: ReactNode;
+  /**
+   * A second button that opens a file on the machine megane runs on
+   * (`useRemoteFilePick`), shown when the host registered a remote source.
+   */
+  remote?: { label: string; onPick: () => void; testId?: string } | null;
   /** Lines under the name: facts, errors, extra controls. */
   children?: ReactNode;
 }) {
@@ -175,6 +181,32 @@ export function FileDrop({
         </svg>
         {buttonLabel}
       </button>
+      {remote && (
+        <button
+          type="button"
+          onClick={remote.onPick}
+          style={nodeButtonStyle}
+          data-testid={remote.testId}
+        >
+          <svg
+            width="13"
+            height="13"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            aria-hidden="true"
+          >
+            <rect x="2" y="3" width="20" height="7" rx="2" />
+            <rect x="2" y="14" width="20" height="7" rx="2" />
+            <line x1="6" y1="6.5" x2="6.01" y2="6.5" />
+            <line x1="6" y1="17.5" x2="6.01" y2="17.5" />
+          </svg>
+          {remote.label}
+        </button>
+      )}
       {fileInput}
     </div>
   );

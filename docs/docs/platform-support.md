@@ -354,6 +354,7 @@ Sources of truth: `crates/megane-wasm/src/lib.rs` (browser parsers), `crates/meg
 |---|:---:|:---:|:---:|:---:|:---:|:---:|
 | Drag-and-drop into viewer | ✓ | — | — | — | ✓ | n/a |
 | Built-in file picker | ✓ | — | host | host | ✓ | n/a |
+| Load Structure / Load Trajectory: open a file on the machine Megane runs on, not the browser's (*Open from server…* / *Open from remote…*)¹¹ | ✓ (`megane serve`) | — | ✓ (Jupyter server's files) | ✓ (VS Code Remote, code-server) | — | n/a |
 | Visual pipeline editor | ✓ | — | ✓ | ✓ | ✓ | n/a |
 | Trajectory timeline / scrubbing | ✓ | ✓ | ✓ | ✓ | ✓ | n/a |
 | Trajectory playback without a running backend (shared / reopened document) | ✓ | ✓⁷ | ✓ | ✓ | ✓ | n/a |
@@ -392,6 +393,8 @@ Sources of truth: `crates/megane-wasm/src/lib.rs` (browser parsers), `crates/meg
 ⁹ Jupyter widget: `measurement` fires for every measurement the viewer computes, whether the atoms were picked by right-clicking in the viewer or set from Python. `selection_change` fires only when Python assigns `selected_atoms` — the front end never writes a click selection back to that traitlet, so right-clicking atoms updates `measurement` but not `selected_atoms`.
 
 ¹⁰ The `megane serve` backend exposes the `/ws` WebSocket endpoint and its binary protocol (and the **Streaming** pipeline node consumes that data), but the bundled viewer page currently starts in its in-browser data mode and does not connect to `/ws`: files are opened and parsed in the browser. See [Standalone web app](guide/cli.md).
+
+¹¹ Each Load node's own button opens the browser's file dialog, which only sees the user's computer. When Megane runs elsewhere, a second button opens a file on that machine instead: under **`megane serve`** it is *Open from server…*, Megane's own dialog over the server's `/api/files` endpoints, rooted at the folder the server was started in (`--files-root` to change it, `--no-files` to turn it off) and served only to clients on the server's own machine — which includes an SSH tunnel — unless `--files-any-host` is given; on **JupyterLab** it is *Open from server…*, the same dialog over the Jupyter server's contents, starting in the file browser's folder; on **VS Code** it is *Open from remote…*, VS Code's own open dialog, shown when the window is remote (SSH, WSL, containers, Codespaces) or runs in a browser (code-server). The host's source is registered with `setRemoteFileSource` (`src/remote/fileSource.ts`). The node stores the file's name, as for an uploaded file. Static hosting and the Vite dev server expose no file API, so the button does not appear there.
 
 Notes:
 

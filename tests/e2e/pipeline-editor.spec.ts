@@ -434,7 +434,7 @@ test.describe("pipeline-editor: layout and properties pane", () => {
       '[data-node-id="protein-filter"][data-testid="pipeline-node-filter"]',
     );
     await expect(card.locator('[data-testid="pipeline-node-summary"]')).toHaveText(
-      'resname != "HOH"',
+      'resname != "HOH" and resname != "MK1"',
     );
     await card.click();
     await expect(card).toHaveAttribute("data-selected", "true");

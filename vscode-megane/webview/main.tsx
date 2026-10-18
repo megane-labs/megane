@@ -24,10 +24,19 @@ import type { SelectionState, Measurement } from "../../src/types";
 import { useTour } from "../../src/tour/useTour";
 import { ThemeSync } from "../../src/components/ThemeSync";
 import { ErrorBoundary } from "../../src/components/ErrorBoundary";
+import { setRemoteFileSource } from "../../src/remote/fileSource";
+import { createMessageFileSource } from "../../src/remote/messageFiles";
 import "../../src/styles/megane.css";
 
 // Acquire VS Code API
 const vscode = acquireVsCodeApi();
+
+// Under VS Code Remote / code-server the webview's own file dialog shows the
+// user's computer, not the workspace's machine; the extension host flags that
+// and answers "Open from remote..." with VS Code's open dialog instead.
+if ((globalThis as { __MEGANE_REMOTE_FILES__?: boolean }).__MEGANE_REMOTE_FILES__) {
+  setRemoteFileSource(createMessageFileSource((message) => vscode.postMessage(message)));
+}
 
 // Route blob downloads through the extension host. A synthetic `<a download>`
 // click is silently ignored inside the webview sandbox, so downloadBlob

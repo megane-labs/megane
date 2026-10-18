@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
 vi.mock("../../../jupyterlab-megane/src/testHook", () => ({
   exposeAppForTests: vi.fn(),
@@ -35,13 +35,17 @@ vi.mock("@jupyterlab/apputils", () => ({
 
 import plugins, { plugin, builderPlugin } from "../../../jupyterlab-megane/src/index";
 import { setupFrameStatusBar } from "../../../jupyterlab-megane/src/frameStatusBar";
+import { getRemoteFileSource, setRemoteFileSource } from "@megane/remote/fileSource";
 
 const mockApp = {
   docRegistry: {
     addFileType: vi.fn(),
     addWidgetFactory: vi.fn(),
   },
-  serviceManager: { contents: {} },
+  serviceManager: {
+    contents: { getDownloadUrl: vi.fn(async (path: string) => `/files/${path}`) },
+    serverSettings: { baseUrl: "/" },
+  },
 };
 
 const mockRestorer = {
@@ -83,5 +87,41 @@ describe("megane JupyterLab plugin – IStatusBar optional integration", () => {
     plugin.activate(mockApp as never, mockRestorer as never, null as never);
     expect(mockApp.docRegistry.addFileType).toHaveBeenCalled();
     expect(mockApp.docRegistry.addWidgetFactory).toHaveBeenCalled();
+  });
+});
+
+describe("megane JupyterLab plugin – Open from server", () => {
+  afterEach(() => setRemoteFileSource(null));
+
+  it("registers the Jupyter server's files, starting in the file browser's folder", () => {
+    const browser = { model: { path: "work/run" } };
+    plugin.activate(mockApp as never, mockRestorer as never, null as never, browser as never);
+    const source = getRemoteFileSource();
+    expect(source?.mode).toBe("browse");
+    expect(source?.mode === "browse" && source.initialPath?.()).toBe("work/run");
+  });
+
+  it("downloads through ServerConnection with the app's server settings", async () => {
+    const { ServerConnection } = await import("@jupyterlab/services");
+    const makeRequest = vi
+      .spyOn(ServerConnection, "makeRequest")
+      .mockResolvedValue(new Response("ATOM"));
+    plugin.activate(mockApp as never, mockRestorer as never, null as never);
+    const source = getRemoteFileSource();
+    if (source?.mode !== "browse") throw new Error("expected a browse source");
+    const file = await source.read("a.pdb");
+    expect(file.name).toBe("a.pdb");
+    expect(makeRequest).toHaveBeenCalledWith(
+      "/files/a.pdb",
+      {},
+      mockApp.serviceManager.serverSettings,
+    );
+    makeRequest.mockRestore();
+  });
+
+  it("starts at the root without a file browser", () => {
+    plugin.activate(mockApp as never, mockRestorer as never, null as never);
+    const source = getRemoteFileSource();
+    expect(source?.mode === "browse" && source.initialPath?.()).toBe("");
   });
 });

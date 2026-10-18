@@ -37,6 +37,8 @@ Pipelines are saved as `.megane.json` files, which open in a dedicated **Megane 
 
 Both editors are read-only views of the file on disk: editing the pipeline does not rewrite the opened file. Exports (pipeline JSON, renders, animations, measurements, structures) go through VS Code's native save dialog. The camera position is remembered per editor tab.
 
+In a remote window (Remote - SSH, WSL, Dev Containers, Codespaces) or in code-server, the **Load Structure** and **Load Trajectory** nodes also show **Open from remote…**. The node's own *Load structure…* / *Load trajectory…* button opens your computer's file dialog; *Open from remote…* opens VS Code's open dialog instead, which browses the workspace's machine and starts in the folder of the open file.
+
 ## Megane Builder (structure editor)
 
 Click the *Megane* icon (a pair of glasses) in the activity bar: its *Builder*

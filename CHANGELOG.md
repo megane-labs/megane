@@ -14,6 +14,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 - **New Megane logo in the README and on the docs site.** The README header shows the full logo (with a white-text variant in dark mode), and the docs site's navbar and favicon use the new logomark. The README and the docs now write the product name as "Megane"; package names, commands and code (`pip install megane`, `megane serve`, `import megane`) are unchanged.
 - **Render dialog: the Animation tab now says why it is unavailable.** With a single-frame structure the tab was clickable but did nothing. It is now visibly disabled, with a tooltip and an inline note explaining that the structure has only one frame and a trajectory (2+ frames) is needed for GIF/MP4 export.
+- **Sharper demo models in three pipeline templates.** *Surface Mesh* now wraps a faceted gold nanoparticle (a 1385-atom Wulff-shaped fcc cluster) instead of a bulk periodic quartz cell, whose alpha-shape envelope was just the box outline. *Protein* shows HIV-1 protease with the drug indinavir in its active site (PDB 1HSG): the dimer as a cartoon, indinavir ball-and-stick, and only the seven crystal waters touching the drug, including the flap water. *ESP Isosurface* becomes *ESP Map*: caffeine's B3LYP/6-31G\* electron-density surface (0.002 e/Bohr³) colored by its electrostatic potential through the Isosurface node's `colorVolumetric` input, replacing a point-charge toy potential drawn as two lobes. Each fixture ships with the script that generates it (`tests/fixtures/generate_au_nanoparticle.py`, `generate_1hsg.py`, `generate_caffeine_dft_esp.py`).
+
+### Fixed
+
+- **The Surface Mesh envelope no longer has holes where the structure reaches its bounding box.** The alpha-shape grid stopped exactly at the probe-expanded bounding box, so the outermost probe spheres touched its faces and marching cubes left the envelope open there — a hole on every flat facet facing an axis. The grid now keeps two empty cells beyond that box.
+- **`resname == "MK1"` selects residues whose name contains a digit.** Atom labels glue the residue name to its number (`MK1902`), and the selection DSL read the name as the leading letters only (`MK`), so ligands such as indinavir (`MK1`) or `1PE` could not be selected by name. `==` and `!=` now also match a label that starts with the queried name followed by the residue number; this applies only to names containing a digit, so alphabetic queries (`resname == "NA"` against sodium `NA12`) are unchanged.
 
 ## [0.17.0] - 2026-09-29
 

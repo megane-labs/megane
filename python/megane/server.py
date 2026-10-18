@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import ipaddress
 import json
 import logging
 import os
@@ -11,7 +12,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Optional
 
-from fastapi import FastAPI, UploadFile, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, HTTPException, Request, UploadFile, WebSocket, WebSocketDisconnect
+from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
 from megane.parsers.common import encode_trajectory_frame
@@ -21,7 +23,7 @@ from megane.protocol import encode_metadata, encode_snapshot
 if TYPE_CHECKING:
     from megane.parsers.common import InMemoryTrajectory
 
-__all__ = ["app", "configure"]
+__all__ = ["app", "configure", "configure_files"]
 
 logger = logging.getLogger(__name__)
 
@@ -44,6 +46,28 @@ class ServerState:
 
 
 _state = ServerState()
+
+
+@dataclass
+class FilesConfig:
+    """Where the browser's "Open from server..." dialog may read files."""
+
+    root: Optional[Path] = None
+    any_host: bool = False
+
+
+_files = FilesConfig()
+
+
+def configure_files(root: str | os.PathLike[str] | None, any_host: bool = False) -> None:
+    """Let the web UI browse and open files under ``root`` (``None`` turns it off).
+
+    Only loopback clients are served unless ``any_host`` is set: ``megane serve``
+    listens on every interface, and an SSH tunnel or a browser on the same
+    machine both arrive from loopback.
+    """
+    _files.root = Path(root).resolve() if root is not None else None
+    _files.any_host = any_host
 
 
 def configure(
@@ -156,6 +180,95 @@ async def upload_file(
         "nAtoms": _state.structure.n_atoms,
         "nBonds": len(_state.structure.bonds),
     }
+
+
+def _is_loopback(host: str | None) -> bool:
+    if not host:
+        return False
+    if host == "localhost":
+        return True
+    try:
+        return ipaddress.ip_address(host).is_loopback
+    except ValueError:
+        return False
+
+
+def _files_root(request: Request) -> Path:
+    """The browse root, or the HTTP error explaining why browsing is unavailable."""
+    if _files.root is None:
+        raise HTTPException(status_code=404, detail="File browsing is disabled on this server")
+    client = request.client.host if request.client else None
+    if not _files.any_host and not _is_loopback(client):
+        raise HTTPException(
+            status_code=403,
+            detail="File browsing is only served to this machine "
+            "(restart megane serve with --files-any-host to allow other hosts)",
+        )
+    return _files.root
+
+
+def _resolve_under(root: Path, rel: str) -> Path:
+    """``rel`` resolved under ``root``; symlinks and ``..`` may not leave it."""
+    try:
+        target = (root / rel.lstrip("/")).resolve()
+    except (OSError, ValueError):
+        raise HTTPException(status_code=400, detail="Invalid path") from None
+    if target != root and not target.is_relative_to(root):
+        raise HTTPException(status_code=400, detail="Path is outside the served folder")
+    return target
+
+
+def _rel(root: Path, path: Path) -> str:
+    return path.relative_to(root).as_posix() if path != root else ""
+
+
+# Plain `def` (not async): FastAPI runs these in its threadpool, so a slow
+# filesystem (a network mount on a cluster) does not stall the WebSocket.
+@app.get("/api/files")
+def list_files(request: Request, path: str = "") -> dict:
+    """List a folder under the files root for the web UI's file dialog.
+
+    Hidden entries (dot files) and entries whose real location is outside the
+    root are left out. Folders come first, then files, each sorted by name.
+    """
+    root = _files_root(request)
+    target = _resolve_under(root, path)
+    if not target.is_dir():
+        raise HTTPException(status_code=404, detail=f"Not a folder: {path}")
+    entries = []
+    for child in target.iterdir():
+        if child.name.startswith("."):
+            continue
+        try:
+            real = child.resolve()
+            if real != root and not real.is_relative_to(root):
+                continue
+            is_dir = real.is_dir()
+            size = None if is_dir else real.stat().st_size
+        except OSError:
+            continue
+        entries.append(
+            {
+                "name": child.name,
+                "path": _rel(root, target / child.name),
+                "isDir": is_dir,
+                "size": size,
+            }
+        )
+    entries.sort(key=lambda e: (not e["isDir"], e["name"].lower()))
+    rel = _rel(root, target)
+    parent = None if target == root else _rel(root, target.parent)
+    return {"path": rel, "parent": parent, "entries": entries}
+
+
+@app.get("/api/files/content")
+def read_file(request: Request, path: str) -> FileResponse:
+    """Send one file under the files root."""
+    root = _files_root(request)
+    target = _resolve_under(root, path)
+    if not target.is_file():
+        raise HTTPException(status_code=404, detail=f"Not a file: {path}")
+    return FileResponse(target, filename=target.name)
 
 
 @app.websocket("/ws")

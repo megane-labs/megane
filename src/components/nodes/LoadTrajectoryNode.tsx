@@ -12,6 +12,8 @@ import { useScopedPipelineStore, useLoadHandlers } from "../../stores/MeganeProv
 import { globalLoadHandlers, type TrajectoryLoadHandler } from "../../stores/loadHandlers";
 import { NodeShell } from "./NodeShell";
 import { FileDrop } from "./form";
+import { errorTextStyle } from "./formStyles";
+import { useRemoteFilePick } from "./useRemoteFilePick";
 import { useRef, useCallback } from "react";
 import { TRAJECTORY_ACCEPT, TRAJECTORY_EXTS } from "../../parsers/fileNames";
 
@@ -36,27 +38,37 @@ export function LoadTrajectoryNode({ id, data }: NodeProps<Node<PipelineNodeData
   const params = data.params as LoadTrajectoryParams;
   const inputRef = useRef<HTMLInputElement>(null);
 
+  const acceptName = useCallback(
+    (name: string) => TRAJECTORY_EXTS.some((ext) => name.toLowerCase().endsWith(ext)),
+    [],
+  );
+
   const handleFile = useCallback(
     (file: File) => {
-      const lower = file.name.toLowerCase();
-      if (!TRAJECTORY_EXTS.some((ext) => lower.endsWith(ext))) return;
+      if (!acceptName(file.name)) return;
       updateNodeParams(id, { fileName: file.name, source: "file" });
       loadHandlers.trajectory?.(file);
     },
-    [id, updateNodeParams, loadHandlers],
+    [id, updateNodeParams, loadHandlers, acceptName],
   );
+
+  const remote = useRemoteFilePick({
+    kind: "trajectory",
+    extensions: TRAJECTORY_EXTS,
+    accept: acceptName,
+    title: "Open trajectory",
+    onFile: handleFile,
+  });
 
   const handleDrop = useCallback(
     (e: React.DragEvent) => {
       e.preventDefault();
       e.stopPropagation();
       const files = Array.from(e.dataTransfer.files);
-      const match = files.find((f) =>
-        TRAJECTORY_EXTS.some((ext) => f.name.toLowerCase().endsWith(ext)),
-      );
+      const match = files.find((f) => acceptName(f.name));
       if (match) handleFile(match);
     },
-    [handleFile],
+    [handleFile, acceptName],
   );
 
   const handleDragOver = useCallback((e: React.DragEvent) => {
@@ -78,6 +90,7 @@ export function LoadTrajectoryNode({ id, data }: NodeProps<Node<PipelineNodeData
         onPick={() => inputRef.current?.click()}
         onDrop={handleDrop}
         onDragOver={handleDragOver}
+        remote={remote.button && { ...remote.button, testId: "load-trajectory-remote" }}
         fileInput={
           <input
             ref={inputRef}
@@ -92,7 +105,14 @@ export function LoadTrajectoryNode({ id, data }: NodeProps<Node<PipelineNodeData
             style={{ display: "none" }}
           />
         }
-      />
+      >
+        {remote.error && (
+          <div data-testid="load-trajectory-remote-error" style={errorTextStyle}>
+            {remote.error}
+          </div>
+        )}
+        {remote.dialog}
+      </FileDrop>
     </NodeShell>
   );
 }

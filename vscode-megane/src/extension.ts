@@ -108,6 +108,71 @@ export async function handleSaveFileMessage(
   }
 }
 
+interface PickFileMessage {
+  id: number;
+  kind?: string;
+  extensions?: string[];
+}
+
+/**
+ * Whether the webview's own `<input type="file">` sees a different machine
+ * than the workspace: under VS Code Remote (SSH, WSL, containers, Codespaces)
+ * and in the browser (code-server, vscode.dev) the dialog it opens browses the
+ * user's computer while the files live on the remote side. The Load nodes then
+ * also offer "Open from remote...", answered by `handlePickFileMessage`.
+ */
+export function workspaceIsRemote(): boolean {
+  const env = vscode.env as { remoteName?: string; uiKind?: number } | undefined;
+  const web = (vscode as { UIKind?: { Web?: number } }).UIKind?.Web;
+  return env?.remoteName !== undefined || (web !== undefined && env?.uiKind === web);
+}
+
+/**
+ * Answer a webview's `{ type: "pickFile" }` (a Load node's "Open from
+ * remote..."): show VS Code's open dialog, which browses the workspace's
+ * machine, starting beside `documentUri`, and post the chosen file's bytes
+ * back as `pickFileResult` (no file when cancelled, `error` when it can't be
+ * read). The protocol's page side is `src/remote/messageFiles.ts`.
+ */
+export async function handlePickFileMessage(
+  message: PickFileMessage,
+  documentUri: vscode.Uri,
+  webview: Pick<vscode.Webview, "postMessage">,
+): Promise<void> {
+  const { id } = message;
+  const exts = (message.extensions ?? []).map((e) => e.replace(/^\./, "")).filter(Boolean);
+  const label = message.kind === "trajectory" ? "Trajectory files" : "Structure files";
+  const filters: Record<string, string[]> = exts.length
+    ? { [label]: exts, "All files": ["*"] }
+    : { "All files": ["*"] };
+  try {
+    const picked = await vscode.window.showOpenDialog({
+      canSelectMany: false,
+      openLabel: "Load",
+      defaultUri: vscode.Uri.joinPath(documentUri, ".."),
+      filters,
+    });
+    const uri = picked?.[0];
+    if (!uri) {
+      void webview.postMessage({ type: "pickFileResult", id });
+      return;
+    }
+    const bytes = await vscode.workspace.fs.readFile(uri);
+    void webview.postMessage({
+      type: "pickFileResult",
+      id,
+      filename: path.basename(uri.fsPath),
+      contentBytes: bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength),
+    });
+  } catch (err) {
+    void webview.postMessage({
+      type: "pickFileResult",
+      id,
+      error: err instanceof Error ? err.message : String(err),
+    });
+  }
+}
+
 class MeganePipelineEditorProvider implements vscode.CustomReadonlyEditorProvider {
   private static readonly viewType = "megane.pipelineViewer";
 
@@ -218,6 +283,10 @@ class MeganePipelineEditorProvider implements vscode.CustomReadonlyEditorProvide
       }
       if (message.type === "saveFile") {
         void handleSaveFileMessage(message as SaveFileMessage, document.uri);
+        return;
+      }
+      if (message.type === "pickFile") {
+        void handlePickFileMessage(message as PickFileMessage, document.uri, webview);
       }
     });
 
@@ -332,6 +401,10 @@ export class MeganeEditorProvider implements vscode.CustomReadonlyEditorProvider
       }
       if (message.type === "saveFile") {
         void handleSaveFileMessage(message as SaveFileMessage, document.uri);
+        return;
+      }
+      if (message.type === "pickFile") {
+        void handlePickFileMessage(message as PickFileMessage, document.uri, webview);
         return;
       }
       if (message.type === "frameChange") {
@@ -580,6 +653,7 @@ function getHtmlForWebview(webview: vscode.Webview, mediaDir: vscode.Uri): strin
   <script nonce="${nonce}">
     window.__MEGANE_WASM_URL__ = "${wasmUri}";
     window.__MEGANE_CONTEXT__ = "vscode";
+    ${workspaceIsRemote() ? "window.__MEGANE_REMOTE_FILES__ = true;" : ""}
     ${e2eMode ? "window.__MEGANE_TEST__ = true;" : ""}
   </script>
   <script nonce="${nonce}" type="module" src="${scriptUri}"></script>
