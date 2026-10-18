@@ -42,6 +42,10 @@ viewer
 ```
 
 The timeline scrubber appears automatically when a trajectory is loaded.
+Instead of `xtc=`, pass `traj=` (ASE `.traj`), `xyz=` (multi-frame XYZ) or
+`lammpstrj=` (LAMMPS dump) — only one of them. A self-contained trajectory file
+(`.traj`, multi-frame `.xyz` / `.extxyz`, `.lammpstrj` / `.dump` / `.trj`) can be
+passed on its own: `megane.view_traj("trajectory.traj")`.
 
 ### Share a notebook with a playable trajectory
 
@@ -82,9 +86,11 @@ Both `view()` and `view_traj()` accept these keyword arguments:
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
-| `bonds` | `"distance"` \| `"structure"` \| `None` | `"distance"` | Bond detection method. `None` to hide bonds |
+| `bonds` | `"auto"` \| `"distance"` \| `"structure"` \| `"file"` \| `None` | `"auto"` | Bond detection method. `"auto"` reads bonds from the file for formats that carry them (PDB, MOL/SDF, LAMMPS data, CML, …) and infers them by distance otherwise — the same default as every other host. `"distance"` forces distance inference, `"structure"` (alias `"file"`) forces file bonds, `None` hides bonds |
 | `perspective` | `bool` | `False` | Perspective projection instead of orthographic |
 | `cell_axes_visible` | `bool` | `True` | Show unit cell axes |
+
+`view()` also adds a `Symmetry` node, so a CIF asymmetric unit is expanded to the full cell as on the other hosts.
 
 `view_traj()` additionally accepts `embed_trajectory` (see [Share a notebook with a playable trajectory](#share-a-notebook-with-a-playable-trajectory)).
 
@@ -100,6 +106,7 @@ After displaying the widget, control it programmatically:
 | `viewer.total_frames` | `int` (read) | Total number of frames |
 | `viewer.selected_atoms` | `list[int]` (read/write) | Indices of currently selected atoms |
 | `viewer.measurement` | `dict \| None` (read) | Current measurement result |
+| `viewer.camera_state` | `dict` (read/write) | Camera mode, position, target, zoom and up vector; kept in the widget state, so a re-displayed or reopened widget restores its view |
 | `viewer.set_pipeline(pipe)` | method | Apply a pipeline to the viewer |
 | `viewer.on_event(name, fn)` | method | Register an event callback |
 | `viewer.off_event(name, fn)` | method | Remove an event callback |
@@ -114,9 +121,17 @@ viewer.frame_index = 100
 
 ```python
 viewer.selected_atoms = [10, 20, 30, 40]  # select 4 atoms
-print(viewer.measurement)
+```
+
+```python
+print(viewer.measurement)  # in a later cell
 # {"type": "dihedral", "value": 120.5, "label": "120.5°", "atoms": [10, 20, 30, 40]}
 ```
+
+`measurement` is computed by the displayed widget and sent back to the kernel,
+which receives it once the cell that set `selected_atoms` has finished. Atoms right-clicked in
+the viewer update `measurement` too, but not `selected_atoms`, which only
+changes when Python sets it.
 
 ## Structure editing: `megane.Builder`
 
@@ -141,8 +156,8 @@ React to user interactions with `on_event()`:
 | Event | Fires when | Payload |
 |-------|------------|---------|
 | `frame_change` | Frame index changes | `{"frame_index": int}` |
-| `selection_change` | Selected atoms change | `{"atoms": list[int]}` |
-| `measurement` | User selects 2–4 atoms | `{"type": str, "value": float, "label": str, "atoms": list[int]}` or `None` |
+| `selection_change` | `selected_atoms` is set from Python | `{"atoms": list[int]}` |
+| `measurement` | A measurement of 2–4 selected atoms (set from Python or right-clicked in the viewer) is computed, changes on a new frame, or is cleared | `{"type": str, "value": float, "label": str, "atoms": list[int]}` or `None` |
 
 ### Registering callbacks
 
@@ -180,9 +195,14 @@ import ipywidgets as widgets
 import megane
 
 viewer = megane.view_traj("protein.pdb", xtc="trajectory.xtc")
+n_frames = viewer.total_frames
+energy = ...  # one value per frame, e.g. from your simulation log
 
 fig = go.FigureWidget(
-    data=[go.Scatter(x=list(range(n_frames)), y=energy, mode="lines+markers")],
+    data=[
+        go.Scatter(x=list(range(n_frames)), y=energy, mode="lines+markers"),
+        go.Scatter(x=[0], y=[energy[0]], mode="markers", marker=dict(size=12, color="red")),
+    ],
     layout=go.Layout(xaxis_title="Frame", yaxis_title="Energy (kJ/mol)"),
 )
 
@@ -198,6 +218,8 @@ widgets.VBox([fig, viewer])
 ### Sync a Plotly marker with the current frame
 
 ```python
+marker_trace = fig.data[1]
+
 @viewer.on_event("frame_change")
 def update_marker(data):
     idx = data["frame_index"]
@@ -208,22 +230,29 @@ def update_marker(data):
 
 ### Collect dihedral angles across all frames
 
+Measurements are computed in the browser, and the kernel cannot receive them
+while a cell is still running, so a loop that sets `frame_index` and waits for
+`measurement` events collects nothing. Compute the series from the trajectory
+in Python instead, and let the viewer highlight the same atoms:
+
 ```python
-import time
+import numpy as np
+from megane import load_trajectory
 
-viewer.selected_atoms = [10, 20, 30, 40]
-dihedrals = []
+atoms = [10, 20, 30, 40]
+viewer.selected_atoms = atoms  # live dihedral in the viewer
 
-@viewer.on_event("measurement")
-def collect(data):
-    if data and data["type"] == "dihedral":
-        dihedrals.append(data["value"])
+def dihedral_deg(p0, p1, p2, p3):
+    b0, b1, b2 = p0 - p1, p2 - p1, p3 - p2
+    b1n = b1 / np.linalg.norm(b1)
+    v = b0 - np.dot(b0, b1n) * b1n
+    w = b2 - np.dot(b2, b1n) * b1n
+    return float(np.degrees(np.arctan2(np.dot(np.cross(b1n, v), w), np.dot(v, w))))
 
-for i in range(viewer.total_frames):
-    viewer.frame_index = i
-    time.sleep(0.01)  # allow widget sync
-
-viewer.off_event("measurement", collect)
+trajectory = load_trajectory("protein.pdb", "trajectory.xtc")
+dihedrals = [
+    dihedral_deg(*trajectory.get_frame(i)[atoms]) for i in range(trajectory.n_frames)
+]
 
 # Plot the result
 fig = go.FigureWidget(
@@ -257,12 +286,15 @@ All classes and convenience functions are importable from `megane`:
 
 ```python
 from megane import (
-    view, view_traj,                                    # convenience wrappers
+    view, view_traj, build_pipeline,                     # convenience wrappers
+    MolecularViewer, Builder,                            # widgets
     Pipeline,                                            # pipeline builder
     LoadStructure, LoadTrajectory, LoadVector, Streaming, # source nodes
+    LoadVolumetric, LoadSpectrum,
     Filter, Modify, Color, Representation,               # processing nodes
-    AddBonds, AddLabels, AddPolyhedra,                   # overlay nodes
-    VectorOverlay, Viewport,                             # display nodes
+    Symmetry, Wrap, Replicate, DrawingBoundary, BoundaryCompletion,
+    AddBonds, AddLabels, AddCoordination, AddPolyhedra,  # overlay nodes
+    Isosurface, VectorOverlay, SpectrumPlot, Viewport,   # display nodes
 )
 ```
 
@@ -273,11 +305,15 @@ from megane import (
 | Action | Effect |
 |--------|--------|
 | Left-drag | Rotate |
-| Scroll / Pinch | Zoom |
+| Right-drag / Shift + left-drag | Pan |
+| Scroll / Pinch / Middle-drag | Zoom |
 | Right-click atom | Select atom |
-| Double-click | Center on atom |
+| Double-click atom or bond | Make it the rotation center (double-click empty space to reset) |
 
-Select 2–4 atoms to measure distances, angles, or dihedral angles.
+Select 2–4 atoms to measure distances, angles, or dihedral angles; the panel's
+*Clear* button deselects them. The buttons in the top-left corner turn the
+camera to look along ±x / ±y / ±z (and ±a / ±b / ±c when the structure has a
+cell).
 
 ### Measurement Types
 
@@ -303,8 +339,9 @@ Select 2–4 atoms to measure distances, angles, or dihedral angles.
 |----------|------|------------|-------------|
 | `frame_index` | `int` | R/W | Current trajectory frame (0-based). Setting this fires `frame_change` |
 | `total_frames` | `int` | R | Total number of frames in the loaded trajectory |
-| `selected_atoms` | `list[int]` | R/W | Indices of selected atoms. Setting this fires `selection_change` |
+| `selected_atoms` | `list[int]` | R/W | Indices of selected atoms (the first 4 are used for measurement). Setting this fires `selection_change` |
 | `measurement` | `dict \| None` | R | Current measurement result, or `None` if fewer than 2 atoms selected |
+| `camera_state` | `dict` | R/W | Camera `mode` (`"orthographic"` / `"perspective"`), `position`, `target`, `zoom` and `up`, updated as the camera moves and restored when the widget is shown again |
 
 The `measurement` dict contains: `type` (`"distance"`, `"angle"`, or `"dihedral"`), `value` (float), `label` (formatted string like `"120.5°"`), and `atoms` (list of indices).
 
@@ -312,17 +349,18 @@ The `measurement` dict contains: `type` (`"distance"`, `"angle"`, or `"dihedral"
 
 - **Re-running cells** — calling `viewer.set_pipeline(pipe)` again updates the displayed pipeline in-place without re-creating the widget.
 - **JupyterLab vs. classic Notebook** — megane is tested on JupyterLab 4+. In classic Notebook, enable the `anywidget` extension if the viewer appears blank.
-- **Large trajectories** — the Jupyter widget loads the full trajectory into Python memory before scrubbing. Keep large trajectories out of `embed_trajectory=True` (every frame would be written into the notebook), or use `"auto"`, which leaves anything over 20 MB in the kernel. If your XTC is too large, run `megane serve protein.pdb --xtc traj.xtc` from the CLI instead — only the standalone server streams frames over WebSocket on demand. See [Platform Support — UI features](../platform-support#ui-features).
+- **Large trajectories** — the kernel loads the full trajectory into Python memory, and by default sends the widget one frame at a time. Keep large trajectories out of `embed_trajectory=True` (every frame would be written into the notebook), or use `"auto"`, which leaves anything over 20 MB in the kernel. For a trajectory too large for the kernel, open it in the standalone web app, which parses in a Web Worker and streams trajectories of 8 MB or more from the file on demand. See [Platform Support — UI features](../platform-support#ui-features).
 - **Sharing notebooks** — to hand over a notebook whose trajectory still plays, embed it (see [Share a notebook with a playable trajectory](#share-a-notebook-with-a-playable-trajectory)). Exported HTML (`File → Export → HTML`) captures the last-rendered frame as a static image.
 
 ## Troubleshooting
 
 ### "Module anywidget, version ~0.9.\* is not registered, however, 0.11.0 is"
 
-The notebook was saved by megane 0.17 or older, which recorded the exact
+The notebook was saved by megane 0.16 or older, which recorded the exact
 anywidget minor version it ran with, and the Jupyter opening it has another
-one. Newer megane records any anywidget front end from 0.9 on, so re-run the
-notebook with an up-to-date megane and save it again.
+one. megane 0.17 and newer record any anywidget front end from 0.9 on
+(`megane.widget.ANYWIDGET_FRONTEND_RANGE`), so re-run the notebook with an
+up-to-date megane and save it again.
 
 ### "No version of module anywidget is registered"
 
