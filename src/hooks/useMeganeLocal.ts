@@ -19,10 +19,6 @@ import type {
   StructureLazyHandle,
 } from "../parsers/structure";
 import {
-  parseXTCFile,
-  parseLammpstrjFile,
-  parseDCDFile,
-  parseNetCDFFile,
   indexTrajectoryLazy,
   decodeTrajectoryFrame0,
   decodeTrajectoryFrame,
@@ -30,7 +26,8 @@ import {
   shouldUseLazyTrajectory,
 } from "../parsers/xtc";
 import type { TrajectoryLazyHandle, LazyTrajectoryKind } from "../parsers/xtc";
-import { remapTrajectoryTypesToElements } from "../parsers/parseCore";
+import { parseTrajectoryByName } from "../parsers/trajectoryDispatch";
+import { trajectoryKindFromFileName } from "../parsers/fileNames";
 import { LazyFrameProvider } from "../stream/LazyFrameProvider";
 import { usePipelineStoreApi, usePlaybackStoreApi } from "../stores/MeganeProvider";
 import { useBondSource } from "./useBondSource";
@@ -569,12 +566,7 @@ export function useMeganeLocal(): MeganeLocalState {
       if (!baseSnapshotRef.current) {
         throw new Error("Load a structure before loading a trajectory");
       }
-      const ext = xtc.name.toLowerCase();
-      const isLammpstrj =
-        ext.endsWith(".lammpstrj") || ext.endsWith(".dump") || ext.endsWith(".trj");
-      const isDcd = ext.endsWith(".dcd");
-      const isNetcdf = ext.endsWith(".nc");
-      const isXtc = !isLammpstrj && !isDcd && !isNetcdf;
+      const kind = trajectoryKindFromFileName(xtc.name);
       const nAtoms = baseSnapshotRef.current.nAtoms;
       const store = pipelineApi.getState();
 
@@ -583,21 +575,13 @@ export function useMeganeLocal(): MeganeLocalState {
       // LAMMPS dump — whose jagged frames the positions-only lazy decoder can't
       // stream, so the full TrajHetero side table must be built eagerly.
       const eagerLoad = async () => {
-        const parseFn = isLammpstrj
-          ? parseLammpstrjFile
-          : isDcd
-            ? parseDCDFile
-            : isNetcdf
-              ? parseNetCDFFile
-              : parseXTCFile;
-        const { frames: parsedFrames, meta: xtcMeta, vectorChannels } = await parseFn(xtc, nAtoms);
-        // A variable-atom LAMMPS dump emits raw integer type ids as each frame's
-        // elements; map them to real atomic numbers via the loaded structure.
-        // The remap returns new frames — the parser output itself stays as-read.
-        const frames =
-          xtcMeta?.variesTopology && baseSnapshotRef.current
-            ? remapTrajectoryTypesToElements(parsedFrames, baseSnapshotRef.current.elements)
-            : parsedFrames;
+        // Dispatches by extension and remaps a variable-atom LAMMPS dump's
+        // per-frame type ids to elements via the loaded structure.
+        const {
+          frames,
+          meta: xtcMeta,
+          vectorChannels,
+        } = await parseTrajectoryByName(xtc, nAtoms, baseSnapshotRef.current?.elements);
         fileFramesRef.current = frames;
         fileTrajMetaRef.current = xtcMeta;
         xtcFileNameRef.current = xtc.name;
@@ -637,7 +621,8 @@ export function useMeganeLocal(): MeganeLocalState {
       //     streaming provider (scrubbable, embedded vectors), seeding frame 0.
       // Small files stay eager (smoother playback, no per-frame worker cost); a
       // null result also falls back to a full read.
-      const lazyKind: LazyTrajectoryKind | null = isLammpstrj ? "lammpstrj" : isXtc ? "xtc" : null;
+      const lazyKind: LazyTrajectoryKind | null =
+        kind === "lammpstrj" || kind === "xtc" ? kind : null;
       if (lazyKind && shouldUseLazyTrajectory(lazyKind, xtc.size)) {
         const myToken = ++xtcLoadTokenRef.current;
 

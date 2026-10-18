@@ -534,6 +534,100 @@ describe("usePipelineStore.openFile — pipeline files", () => {
     ).toBe("water.pdb");
   });
 
+  function pipelineWithTrajectory(trajFileName: string) {
+    return {
+      version: 3 as const,
+      nodes: [
+        {
+          id: "load-1",
+          type: "load_structure",
+          fileName: "gcmc.data",
+          hasTrajectory: false,
+          hasCell: false,
+          position: { x: 0, y: 0 },
+          enabled: true,
+        },
+        {
+          id: "traj-1",
+          type: "load_trajectory",
+          fileName: trajFileName,
+          source: "file",
+          position: { x: 0, y: 200 },
+          enabled: true,
+        },
+      ],
+      edges: [],
+    };
+  }
+
+  it("remaps a variable-atom LAMMPS dump companion's type ids to structure elements", async () => {
+    // Regression: only useMeganeLocal.loadXtc applied the type→element remap,
+    // so a dump attached through a .megane.json rendered raw type ids as Z.
+    const structure = makeSnapshot(2);
+    structure.elements = Uint8Array.from([6, 8]);
+    mockParseStructureFile.mockResolvedValueOnce({
+      snapshot: structure,
+      frames: [],
+      meta: null,
+      labels: null,
+      vectorChannels: [],
+    });
+    mockParseLammpstrjFile.mockResolvedValueOnce({
+      frames: [
+        { ...makeFrame(0, 2), elements: Uint8Array.from([1, 2]) },
+        { ...makeFrame(1, 3), elements: Uint8Array.from([2, 2, 1]) },
+      ],
+      meta: { ...makeMeta(2, 2), variesTopology: true, heterogeneous: true },
+      vectorChannels: [],
+    });
+
+    const meganeFile = new File(
+      [JSON.stringify(pipelineWithTrajectory("gcmc.lammpstrj"))],
+      "gcmc.megane.json",
+    );
+    await usePipelineStore.getState().openFile(meganeFile, {
+      companions: [new File(["<data>"], "gcmc.data"), new File(["<dump>"], "gcmc.lammpstrj")],
+    });
+
+    expect(mockParseLammpstrjFile).toHaveBeenCalledWith(expect.any(File), 2);
+    expect(mockParseXTCFile).not.toHaveBeenCalled();
+    const state = usePipelineStore.getState();
+    expect(state.fileFrames?.map((f) => Array.from(f.elements!))).toEqual([
+      [6, 8],
+      [8, 8, 6],
+    ]);
+    expect(
+      (state.nodes.find((n) => n.id === "traj-1")!.data.params as { fileName: string }).fileName,
+    ).toBe("gcmc.lammpstrj");
+  });
+
+  it("dispatches a DCD companion to the DCD parser", async () => {
+    mockParseStructureFile.mockResolvedValueOnce({
+      snapshot: makeSnapshot(3),
+      frames: [],
+      meta: null,
+      labels: null,
+      vectorChannels: [],
+    });
+    mockParseDCDFile.mockResolvedValueOnce({
+      frames: [makeFrame(1, 3)],
+      meta: makeMeta(1, 3),
+      vectorChannels: [],
+    });
+
+    const meganeFile = new File(
+      [JSON.stringify(pipelineWithTrajectory("run.dcd"))],
+      "run.megane.json",
+    );
+    await usePipelineStore.getState().openFile(meganeFile, {
+      companions: [new File(["<data>"], "gcmc.data"), new File(["<dcd>"], "run.dcd")],
+    });
+
+    expect(mockParseDCDFile).toHaveBeenCalledWith(expect.any(File), 3);
+    expect(mockParseXTCFile).not.toHaveBeenCalled();
+    expect(usePipelineStore.getState().fileFrames?.length).toBe(1);
+  });
+
   it("rejects pipeline files with unsupported version", async () => {
     const pipeline = { version: 99, nodes: [], edges: [] };
     const file = new File([JSON.stringify(pipeline)], "old.megane.json");
