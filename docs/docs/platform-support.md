@@ -355,6 +355,7 @@ Sources of truth: `crates/megane-wasm/src/lib.rs` (browser parsers), `crates/meg
 | Drag-and-drop into viewer | ✓ | — | — | — | ✓ | n/a |
 | Built-in file picker | ✓ | — | host | host | ✓ | n/a |
 | Visual pipeline editor | ✓ | — | ✓ | ✓ | ✓ | n/a |
+| Quick Style panel (style, color, atom size / opacity, bond width / opacity, labels, perspective, cell axes) | ✓ (Inspector tab) | ✓¹¹ (`quick_style=True`) | ✓ (Inspector tab) | ✓ (Inspector tab) | ✓ (Inspector tab) | n/a |
 | Trajectory timeline / scrubbing | ✓ | ✓ | ✓ | ✓ | ✓ | n/a |
 | Trajectory playback without a running backend (shared / reopened document) | ✓ | ✓⁷ | ✓ | ✓ | ✓ | n/a |
 | WebSocket trajectory streaming | backend only¹⁰ | — | — | — | — | n/a |
@@ -393,10 +394,12 @@ Sources of truth: `crates/megane-wasm/src/lib.rs` (browser parsers), `crates/meg
 
 ¹⁰ The `megane serve` backend exposes the `/ws` WebSocket endpoint and its binary protocol (and the **Streaming** pipeline node consumes that data), but the bundled viewer page currently starts in its in-browser data mode and does not connect to `/ws`: files are opened and parsed in the browser. See [Standalone web app](guide/cli.md).
 
+¹¹ Jupyter widget: off by default; `MolecularViewer(quick_style=True)` (or `viewer.quick_style = True`) shows the panel in the viewer's top-right corner. It needs data loaded with `set_pipeline()` — on the deprecated `load()` path it is shown disabled. Its edits are written back to the widget's pipeline JSON, so they survive re-displaying the widget and are kept in the notebook's saved widget state; calling `set_pipeline()` again replaces them. Selection layers (the lower half of the Inspector) are not available in the widget.
+
 Notes:
 
 - **host** means the parent app provides the file picker (the JupyterLab file browser, the VS Code explorer); megane itself does not render one.
-- The Jupyter widget intentionally does not mount the visual pipeline editor — pipelines are built in Python (`megane.Pipeline`) and pushed via `MolecularViewer.set_pipeline()`. Use the standalone app, JupyterLab extension, VS Code extension, or the npm `MeganeViewer` to edit pipelines visually.
+- The Jupyter widget intentionally does not mount the visual pipeline editor — pipelines are built in Python (`megane.Pipeline`) and pushed via `MolecularViewer.set_pipeline()`. Use the standalone app, JupyterLab extension, VS Code extension, or the npm `MeganeViewer` to edit pipelines visually. The opt-in Quick Style panel (¹¹) is the only in-widget control that edits the pipeline, and only the parameters listed above.
 - The standalone app is the only platform that parses in a Web Worker and streams the frames of large (≥ 8 MB) trajectories and multi-frame XYZ / PDB files on demand; the other platforms decode full trajectories into memory.
 - The standalone React `MeganeViewer` exposes an `onFrameChange?: (frame: number) => void` prop that fires on every trajectory frame transition — useful for keeping a host Plotly figure in sync.
 - The standalone React `MeganeViewer` also exposes `onSelectionChange?: (selection: SelectionState) => void` (fires on every atom selection change; data: `{ atoms: number[] }`) and `onMeasurementChange?: (measurement: Measurement | null) => void` (fires when a distance/angle/dihedral measurement is computed or cleared). `onMeasurementChange` matches the Jupyter widget's `measurement` event; the widget's `selection_change` only reports selections set from Python (see ⁹).

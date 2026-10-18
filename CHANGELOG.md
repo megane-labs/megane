@@ -9,10 +9,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 ### Added
 
 - **`.extxyz` (extended XYZ) opens on every host.** ASE and ML-potential tools write extended XYZ under `.extxyz`; megane's XYZ reader already understood the grammar (`Lattice=` cells, `Properties=` columns such as forces, multi-frame blocks) but only under `.xyz`. The extension is now an alias to the XYZ reader in the web app, JupyterLab, VS Code and Python, and large multi-frame `.extxyz` files stream lazily in the web app just like `.xyz`.
+- **Inspector: Quick style.** The old Appearance panel is back, built on the pipeline this time. A *Quick style* section at the top of the Inspector tab sets the style, color, atom size and opacity, bond width and opacity, bond tolerance (distance-inferred bonds), labels (element / residue / index), arrow scale, perspective and cell axes for the whole structure. Each control edits an existing node's parameter or owns one `insp-global-*` node spliced in line before the viewport; a control set back to its default removes its node, and *Reset* restores the original graph. Selection layers branch from the end of that chain and override it for their own atoms.
+- **Jupyter widget: `MolecularViewer(quick_style=True)`.** Shows the same Quick style controls in the widget's top-right corner (off by default; `viewer.quick_style` toggles it live). Changes are written back to `_pipeline_json`, debounced while a slider moves, so they survive re-displaying the widget and are kept in the notebook's saved widget state; `set_pipeline()` replaces them. Disabled on the deprecated `load()` path.
 
 ### Changed
 
 - **Render dialog: the Animation tab now says why it is unavailable.** With a single-frame structure the tab was clickable but did nothing. It is now visibly disabled, with a tooltip and an inline note explaining that the structure has only one frame and a trajectory (2+ frames) is needed for GIF/MP4 export.
+
+### Fixed
+
+- **Inspector layers survive saving and re-opening a pipeline.** The Inspector identified its nodes by a `data.inspectorLayerId` tag that `.megane.json` does not keep, so re-opened layers vanished from the panel and the next Inspector edit deleted their nodes. Layers are now read from the `insp-<layer>-<role>` node ids, and from the graph on every change — so templates, chat results and Editor edits also show up, instead of the panel holding a stale copy from when it was mounted.
+- **A selection's style beats a whole-structure style.** Per-atom size and opacity were merged as "any value other than 1.0 wins", so a selection could not restore 1.0 under a global 0.5; and the representation of a whole-structure stream ahead of a selection hid the selection's. Whole-structure streams now lay down the base and selection streams override the atoms they cover.
+- **Re-opened default pipelines no longer draw the structure twice.** Loading a `.megane.json` did not see the loader reach the viewport through Symmetry → Wrap → Replicate, and wired a second, untransformed `load_structure → viewport` particle stream (and cell) beside the replicated one.
 
 ## [0.17.0] - 2026-09-29
 
