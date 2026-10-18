@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { render, screen, fireEvent, cleanup } from "@testing-library/react";
+import { render, screen, fireEvent, cleanup, waitFor } from "@testing-library/react";
 import { usePipelineStore } from "@/pipeline/store";
 import {
   LoadTrajectoryNode,
@@ -7,6 +7,7 @@ import {
 } from "@/components/nodes/LoadTrajectoryNode";
 import type { LoadTrajectoryParams } from "@/pipeline/types";
 import { seedPipelineStore } from "./_helpers";
+import { setRemoteFileSource } from "@/remote/fileSource";
 
 vi.mock("@xyflow/react", () => import("./_xyflowMock"));
 
@@ -237,5 +238,44 @@ describe("LoadTrajectoryNode", () => {
 
     expect(updateNodeParams).toHaveBeenCalledWith("lt1", { fileName: "good.xtc", source: "file" });
     expect(handler).toHaveBeenCalledWith(traj);
+  });
+});
+
+describe("LoadTrajectoryNode — Open from server", () => {
+  afterEach(() => {
+    cleanup();
+    setRemoteFileSource(null);
+    setTrajectoryLoadHandler(null);
+  });
+
+  it("loads a trajectory picked on the remote side and rejects other files", async () => {
+    const xtc = new File([new Uint8Array([1, 2])], "run.xtc");
+    const pick = vi
+      .fn()
+      .mockResolvedValueOnce(new File(["x"], "a.pdb"))
+      .mockResolvedValueOnce(xtc);
+    setRemoteFileSource({ mode: "native", label: "Open from remote...", pick });
+    const updateNodeParams = vi.fn();
+    const handler = vi.fn();
+    const seeded = seedPipelineStore("load_trajectory", { id: "lt1" });
+    usePipelineStore.setState({ updateNodeParams });
+    setTrajectoryLoadHandler(handler);
+    render(
+      <LoadTrajectoryNode {...nodeProps("lt1", seeded.data.params as LoadTrajectoryParams)} />,
+    );
+
+    const button = screen.getByTestId("load-trajectory-remote");
+    fireEvent.click(button);
+    await waitFor(() =>
+      expect(screen.getByTestId("load-trajectory-remote-error")).toHaveTextContent(
+        "a.pdb is not a trajectory file",
+      ),
+    );
+    expect(pick.mock.calls[0][0].kind).toBe("trajectory");
+
+    fireEvent.click(button);
+    await waitFor(() => expect(handler).toHaveBeenCalledWith(xtc));
+    expect(updateNodeParams).toHaveBeenCalledWith("lt1", { fileName: "run.xtc", source: "file" });
+    expect(screen.queryByTestId("load-trajectory-remote-error")).toBeNull();
   });
 });

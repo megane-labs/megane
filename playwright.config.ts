@@ -226,6 +226,13 @@ export default defineConfig({
       use: { baseURL: `http://127.0.0.1:${PORT_WEBAPP}` },
     },
     {
+      // "Open from server..." on the Load nodes, with megane serve's
+      // /api/files answered by the spec (page.route).
+      name: "remote-files",
+      testMatch: /remote-files\.spec\.ts$/,
+      use: { baseURL: `http://127.0.0.1:${PORT_WEBAPP}` },
+    },
+    {
       name: "pipeline-file",
       testMatch: /pipeline-file\.spec\.ts$/,
       use: { baseURL: `http://127.0.0.1:${PORT_WEBAPP}` },

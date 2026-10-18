@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import logging
+import os
 import webbrowser
 from threading import Timer
 
@@ -25,6 +26,21 @@ def main() -> None:
     parser.add_argument("--port", type=int, default=8765, help="Server port")
     parser.add_argument("--no-browser", action="store_true", help="Don't open browser")
     parser.add_argument(
+        "--files-root",
+        default=None,
+        help="Folder the web UI's 'Open from server...' dialog browses (default: the current directory)",
+    )
+    parser.add_argument(
+        "--no-files",
+        action="store_true",
+        help="Don't let the web UI browse or open files on this machine",
+    )
+    parser.add_argument(
+        "--files-any-host",
+        action="store_true",
+        help="Serve file browsing to every client, not only this machine (an SSH tunnel counts as this machine)",
+    )
+    parser.add_argument(
         "--dev",
         action="store_true",
         help="Development mode (use Vite dev server)",
@@ -35,7 +51,7 @@ def main() -> None:
     logging.basicConfig(level=logging.INFO, format="%(message)s")
 
     if args.command == "serve":
-        from megane.server import app, configure
+        from megane.server import app, configure, configure_files
 
         if args.traj:
             configure("", traj_path=args.traj)
@@ -43,6 +59,13 @@ def main() -> None:
             configure(args.pdb, args.xtc)
         else:
             logging.info("No PDB file specified. Waiting for file upload from browser...")
+
+        if args.no_files:
+            configure_files(None)
+        else:
+            root = args.files_root or os.getcwd()
+            configure_files(root, any_host=args.files_any_host)
+            logging.info("Load nodes can open files under %s ('Open from server...')", root)
 
         if not args.no_browser and not args.dev:
             url = f"http://localhost:{args.port}"

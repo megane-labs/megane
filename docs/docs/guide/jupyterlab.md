@@ -36,6 +36,8 @@ Trajectory-only formats (`.xtc`, `.dcd`, `.nc`) and volumetric grids (`.cube`, `
 
 The JupyterLab DocWidget mounts the full visual pipeline editor, so you can build and edit visualization workflows by wiring nodes, just as in the standalone web app. Pipelines saved as `.megane.json` reopen in the same editor (the **megane Pipeline Viewer**); the files their Load Structure and Load Trajectory nodes name are fetched relative to the `.megane.json` file's folder, and absolute paths or paths that leave that folder are ignored. The viewer tabs are read-only: editing the pipeline does not rewrite the opened file, and exports download through the browser.
 
+The **Load Structure** and **Load Trajectory** nodes have two buttons: *Load structure…* (or *Load trajectory…*) opens the browser's file dialog (files on your computer), and **Open from server…** browses the Jupyter server's files — what the file browser shows — starting in the file browser's current folder. Use the second one when JupyterLab runs on a remote machine.
+
 ## megane Builder (structure editor)
 
 Click the *megane* panel (a pair of glasses) in the left sidebar: **Open

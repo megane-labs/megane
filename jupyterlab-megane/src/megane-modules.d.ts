@@ -102,3 +102,26 @@ declare module "@megane/builder/store" {
     getState(): { closeDocument(): void; [key: string]: any };
   };
 }
+
+declare module "@megane/remote/fileSource" {
+  export interface RemoteFileEntry {
+    name: string;
+    path: string;
+    isDir: boolean;
+    size?: number | null;
+  }
+  export interface RemoteDirListing {
+    path: string;
+    parent: string | null;
+    entries: RemoteFileEntry[];
+  }
+  export interface BrowsableRemoteFileSource {
+    mode: "browse";
+    label: string;
+    initialPath?: () => string;
+    list(path: string): Promise<RemoteDirListing>;
+    read(path: string): Promise<File>;
+  }
+  export type RemoteFileSource = BrowsableRemoteFileSource | { mode: "native"; [key: string]: any };
+  export function setRemoteFileSource(source: RemoteFileSource | null): void;
+}
