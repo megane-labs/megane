@@ -2,19 +2,22 @@
 
 `MoleculeRenderer` is a plain Three.js class — the same renderer powering all megane components — that you can mount without React. Use it to embed megane in Vue, Svelte, or any other framework, or directly in a vanilla `<div>`.
 
+`megane-viewer/lib` is a single entry that also exports the React components, so `react` and `react-dom` (its peer dependencies) still have to be installed even when you only use `MoleculeRenderer`.
+
 ```ts
-import { MoleculeRenderer } from "megane-viewer/lib";
-import type { Snapshot } from "megane-viewer/lib";
+import { MoleculeRenderer, parseStructureText } from "megane-viewer/lib";
 
 // Create and mount
 const renderer = new MoleculeRenderer();
 renderer.mount(document.getElementById("viewer")!);
 
-// Load data
+// Load data (the file name picks the parser; PDB when omitted)
+const text = await (await fetch("/data/caffeine_water.pdb")).text();
+const { snapshot, frames } = await parseStructureText(text, "caffeine_water.pdb");
 renderer.loadSnapshot(snapshot);
 
-// Update positions for animation
-renderer.updateFrame(frame);
+// Update positions for animation (multi-frame files fill `frames`)
+if (frames.length > 0) renderer.updateFrame(frames[0]);
 
 // Control appearance
 renderer.setAtomScale(1.2);
@@ -22,6 +25,7 @@ renderer.setAtomOpacity(0.8);
 renderer.setBondScale(0.5);
 renderer.setPerspective(true);
 renderer.setCellVisible(true);
+renderer.setBackgroundColor(0x0f172a);
 
 // Cleanup
 renderer.dispose();
@@ -36,7 +40,7 @@ renderer.toggleAtomSelection(1);
 
 // Get measurement (distance, angle, or dihedral based on # selected)
 const measurement = renderer.getMeasurement();
-// { type: 'distance', value: 3.82, label: '3.82 Å', atoms: [0, 1] }
+// { type: 'distance', value: 3.82, label: '3.820 Å', atoms: [0, 1] }
 
 // Clear selection
 renderer.clearSelection();
@@ -44,10 +48,10 @@ renderer.clearSelection();
 
 ## Picking (Hover & Click)
 
-Screen-space picking for identifying atoms and bonds:
+Screen-space picking for identifying atoms and bonds. It takes client (viewport) coordinates, as found on a `PointerEvent`:
 
 ```ts
-const hit = renderer.raycastAtPixel(mouseX, mouseY);
+const hit = renderer.raycastAtPixel(event.clientX, event.clientY);
 if (hit) {
   if (hit.kind === "atom") {
     console.log(`Atom ${hit.atomIndex}: ${hit.elementSymbol}`);

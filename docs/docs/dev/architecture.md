@@ -10,7 +10,7 @@ megane's visual pipeline is built on three core principles:
 
 ### Typed Data Flow
 
-The pipeline is a directed acyclic graph where edges carry one of **9 typed data channels**: `particle`, `bond`, `cell`, `trajectory`, `label`, `mesh`, `vector`, `volumetric`, and `spectrum`. Nodes declare typed input/output ports via `NODE_PORTS` in `src/pipeline/types.ts`. The UI prevents connections between incompatible port types at the graph level (see `canConnect()`), so executors can trust that incoming data has the expected shape.
+The pipeline is a directed acyclic graph where edges carry one of **10 typed data channels**: `particle`, `bond`, `coordination`, `cell`, `trajectory`, `label`, `mesh`, `vector`, `volumetric`, and `spectrum`. Nodes declare typed input/output ports via `NODE_PORTS` in `src/pipeline/types.ts`. The UI prevents connections between incompatible port types at the graph level (see `canConnect()`), so executors can trust that incoming data has the expected shape.
 
 ### Separation of Computation and Rendering
 
@@ -29,7 +29,7 @@ Instead of mesh-based spheres (32+ triangles each), atoms are rendered as **scre
 flowchart TB
     subgraph parsers["Rust / WASM Parsers (crates/megane-core/ to megane-wasm/)"]
         direction TB
-        formats["PDB, GRO, XYZ, MOL/SDF, MOL2, CIF, mmCIF,<br/>LAMMPS data, AMBER prmtop, XTC, DCD,<br/>AMBER NetCDF, ASE .traj, .lammpstrj/.dump"]
+        formats["PDB, GRO, XYZ, MOL/SDF, MOL2, CIF, mmCIF, LAMMPS data,<br/>AMBER prmtop, XSF, CML, VASP, Molden, magres, ...<br/>XTC, DCD, AMBER NetCDF, ASE .traj, .lammpstrj/.dump"]
         snapshot["Snapshot: positions, elements, bonds, box"]
         formats --> snapshot
     end
@@ -37,7 +37,7 @@ flowchart TB
     subgraph engine["Pipeline Engine (src/pipeline/)"]
         direction TB
         exec["executePipeline() to topological sort to per-node executor"]
-        flow["LoadStructure to Filter to Modify to Color to Representation<br/>AddBond, Viewport"]
+        flow["LoadStructure to Filter to Modify to Color to Representation<br/>AddBond, Coordination, Polyhedra, ..., Viewport"]
         outputs["ParticleData, BondData, ..., ViewportState"]
         exec --> flow --> outputs
     end
@@ -45,7 +45,7 @@ flowchart TB
     subgraph renderer["Renderer (src/renderer/)"]
         direction TB
         orch["MoleculeRenderer orchestrates:"]
-        meshes["ImpostorAtomMesh (billboard quads + ray-sphere shader)<br/>ImpostorBondMesh (billboard quads + cylinder shader)<br/>CellRenderer, LabelOverlay, ArrowRenderer, ...<br/>StructureLayer (multi-structure overlay)"]
+        meshes["ImpostorAtomMesh (billboard quads + ray-sphere shader)<br/>ImpostorBondMesh (billboard quads + ray-cylinder shader)<br/>CellRenderer, LabelOverlay, ArrowRenderer, CartoonRenderer, ...<br/>StructureLayer (multi-structure overlay)"]
         orch --> meshes
     end
 
@@ -55,21 +55,24 @@ flowchart TB
 
 ## Pipeline Data Types
 
-Nine typed channels flow through pipeline edges. Defined in `src/pipeline/types.ts`.
+Ten typed channels flow through pipeline edges. Defined in `src/pipeline/types.ts`.
 
 | Channel | Interface | Key Fields | Produced By | Consumed By |
 |---------|-----------|------------|-------------|-------------|
-| `particle` | `ParticleData` | `source` (Snapshot), `indices`, `scaleOverrides`, `opacityOverrides`, `colorOverrides`, `representationOverride` | LoadStructure, Streaming, Filter, Modify, Color, Representation | Filter, Modify, Color, Representation, AddBond, Labels, Polyhedra, Viewport |
-| `bond` | `BondData` | `bondIndices`, `bondOrders`, `nBonds`, `scale`, `opacity` | AddBond, Streaming, Filter, Modify | Filter, Modify, Viewport |
-| `cell` | `CellData` | `box` (3x3 Float32Array), `visible`, `axesVisible` | LoadStructure, Streaming | Viewport |
-| `trajectory` | `TrajectoryData` | `provider` (FrameProvider), `meta` | LoadStructure, LoadTrajectory, Streaming | Viewport |
-| `label` | `LabelData` | `labels[]`, `particleRef` | LabelGenerator | Viewport |
-| `mesh` | `MeshData` | `positions`, `indices`, `normals`, `colors` | PolyhedronGenerator, SurfaceMesh, Isosurface | Viewport |
-| `vector` | `VectorData` | `frames` (VectorFrame[]), `scale` | LoadVector, VectorOverlay | VectorOverlay, Viewport |
-| `volumetric` | `VolumetricData` | `nx`, `ny`, `nz`, `origin`, `step`, `data` | LoadVolumetric | Isosurface |
+| `particle` | `ParticleData` | `source` (Snapshot), `sourceNodeId`, `indices`, `scaleOverrides`, `opacityOverrides`, `colorOverrides`, `representationOverride`, `drawingBoundary` | LoadStructure, Streaming, Filter, Modify, Color, Representation, Symmetry, Wrap, Replicate, DrawingBoundary, BoundaryCompletion | Filter, Modify, Color, Representation, Symmetry, Wrap, Replicate, DrawingBoundary, BoundaryCompletion, AddBond, Coordination, LoadTrajectory, Labels, SurfaceMesh, Viewport |
+| `bond` | `BondData` | `bondIndices`, `bondOrders`, `nBonds`, `scale`, `opacity`, `selectedBondIndices`, `bondOpacityOverrides` | AddBond, Coordination, Streaming, Filter, Modify, BoundaryCompletion | Filter, Modify, BoundaryCompletion, Viewport |
+| `coordination` | `CoordinationData` | `particleRef`, `bondIndices` (center→neighbor pairs), `positions`, `elements`, `outsideBoundaryImages` | Coordination | Polyhedra |
+| `cell` | `CellData` | `box` (3x3 row-major Float32Array), `sourceNodeId` | LoadStructure, Streaming, Replicate | Replicate, Viewport |
+| `trajectory` | `TrajectoryData` | `provider` (FrameProvider), `meta`, `source` | LoadStructure, LoadTrajectory, Streaming, Symmetry, Wrap, Replicate | Symmetry, Wrap, Replicate, Viewport |
+| `label` | `LabelData` | `labels[]`, `particleRef` | Labels | Viewport |
+| `mesh` | `MeshData` | `positions`, `indices`, `normals`, `colors` (RGBA), `opacity`, `showEdges` | Polyhedra, SurfaceMesh, Isosurface | Viewport |
+| `vector` | `VectorData` | `frames` (VectorFrame[]), `nAtoms`, `scale` | LoadVector, VectorOverlay | VectorOverlay, Viewport |
+| `volumetric` | `VolumetricData` | `nx`, `ny`, `nz`, `origin`, `step`, `data` | LoadVolumetric | Isosurface (`volumetric` and `colorVolumetric` ports) |
 | `spectrum` | `SpectrumData` | `title`, `dataType`, `xUnits`, `yUnits`, `x`, `y` | LoadSpectrum | SpectrumPlot |
 
-Each edge in the UI is color-coded by data type (`DATA_TYPE_COLORS`). Filter and Modify nodes are generic — they accept both `particle` and `bond` inputs via `GENERIC_NODE_ACCEPTS`. The Color and Representation nodes are particle-only modifiers that share the same Modify category in the toolbar (Ovito-style stack: each modifier owns one visual property — Modify = scale & opacity, Color = per-atom palette, Representation = atoms/licorice/cartoon/both/surface/line/illustrative).
+Each edge in the UI is color-coded by data type (`DATA_TYPE_COLORS`). Filter and Modify nodes are generic — they accept both `particle` and `bond` inputs via `GENERIC_NODE_ACCEPTS`. The Color and Representation nodes are particle-only generic modifiers (`GENERIC_NODE_ACCEPTS` lists only `particle` for them) that share the Modify group of the "Add Node" menu (Ovito-style stack: each modifier owns one visual property — Modify = scale & opacity, Color = per-atom palette, Representation = atoms/licorice/cartoon/both/surface/line/illustrative).
+
+Cell visibility is not a field on `CellData`: a cell is drawn whenever one reaches the viewport, and the cell axes follow the Viewport node's `cellAxesVisible` parameter. `spectrum` is the one channel that never reaches the renderer — Spectrum Plot is a terminal node that draws a 2D chart in the editor.
 
 ## Pipeline Execution
 
@@ -78,15 +81,15 @@ Each edge in the UI is color-coded by data type (`DATA_TYPE_COLORS`). Filter and
 1. **Topological sort** — `topologicalSort()` (Kahn's algorithm) in `src/pipeline/graph.ts` determines execution order.
 2. **Per-node dispatch** — A switch on `params.type` calls the appropriate executor from `src/pipeline/executors/`.
 3. **Edge data propagation** — An `EdgeOutputs` map (`Map<nodeId, Map<portName, PipelineData>>`) carries outputs between nodes. `collectInputs()` gathers upstream data for each node.
-4. **Disabled node passthrough** — Disabled nodes forward their first input to a matching output port, preserving downstream flow.
-5. **ViewportState assembly** — The `viewport` executor collects all 7 channels into a single `ViewportState`.
+4. **Disabled node passthrough** — Disabled nodes forward each input port's data to the first output port of the same data type, preserving downstream flow.
+5. **ViewportState assembly** — The `viewport` executor collects the 7 renderable channels (`particle`, `bond`, `cell`, `trajectory`, `label`, `mesh`, `vector`) into a single `ViewportState`, along with the Viewport node's display settings and the representation resolved from upstream Representation nodes.
 6. **Error collection** — `NodeError` objects (warning/error) accumulate per-node and are surfaced in the UI as badges.
 
 ## Rendering Layer
 
 ### MoleculeRenderer
 
-`src/renderer/MoleculeRenderer.ts` (~1300 lines) is the main orchestrator. It owns the Three.js scene, camera (orthographic or perspective), turntable camera controls (`src/renderer/CameraControls.ts`, OVITO-style orbit about +c / +z with no roll and no pole clamp), and all sub-renderers. Its API is imperative and framework-agnostic — React components call it via refs, and the widget/docs embed uses the same API.
+`src/renderer/MoleculeRenderer.ts` (~2400 lines) is the main orchestrator. It owns the Three.js scene, camera (orthographic or perspective), turntable camera controls (`src/renderer/CameraControls.ts`, OVITO-style orbit about +c / +z with no roll and no pole clamp), and all sub-renderers. Its API is imperative and framework-agnostic — React components call it via refs, and the widget/docs embed uses the same API.
 
 Scene graph structure:
 
@@ -96,17 +99,22 @@ THREE.Scene
 ├── ImpostorAtomMesh.mesh      (primary structure atoms)
 ├── ImpostorBondMesh.mesh      (primary structure bonds)
 ├── CellRenderer               (wireframe simulation box)
-├── CellAxesRenderer           (a, b, c axis arrows)
-├── LabelOverlay               (Canvas 2D text on top)
+├── DrawingBoundaryAtomRenderer (periodic display copies / bond images)
+├── CartoonRenderer            (cartoon representation)
+├── SurfaceRenderer            (surface representation)
+├── LineRenderer               (line representation, incl. per-atom "line")
 ├── ArrowRenderer              (per-atom vectors)
-├── PolyhedronRenderer         (coordination polyhedra)
+├── PolyhedronRenderer         (pipeline meshes: polyhedra, surfaces, isosurfaces)
 ├── Selection highlights
 ├── PivotMarker                (rotation center crosshair)
 └── StructureLayer[]           (one per additional structure)
     ├── ImpostorAtomMesh
     ├── ImpostorBondMesh
+    ├── DrawingBoundaryAtomRenderer
     └── CellRenderer
 ```
+
+Two helpers sit outside the main scene: `LabelOverlay` draws Canvas 2D text on a transparent canvas stacked over the WebGL canvas, and `CellAxesRenderer` draws the a/b/c (or x/y/z) axis arrows from its own small scene into a draggable inset viewport that rotates with the main camera.
 
 ### Impostor Technique
 
@@ -121,21 +129,24 @@ For each instance:               For each fragment:
   by radius × scale                z = sqrt(1 - dist²)
                                    Write correct gl_FragDepth
                                    Apply lighting (dual diffuse
-                                   + Blinn-Phong + Fresnel rim)
+                                   + Blinn-Phong + Fresnel rim),
+                                   or flat illustrative shading
 ```
 
 Instance attributes per atom:
 - `instanceCenter` (vec3) — world position
-- `instanceRadius` (float) — vdW radius × BALL_STICK_ATOM_SCALE
+- `instanceRadius` (float) — vdW radius × `BALL_STICK_ATOM_SCALE` (ball-and-stick), × `SPACEFILL_ATOM_SCALE` (1.0, illustrative), or a fixed uniform radius (licorice)
 - `instanceColor` (vec3) — element color from CPK/VESTA scheme
 - `instanceScaleOverride` (float) — per-atom scale multiplier (default 1.0)
 - `instanceOpacityOverride` (float) — per-atom opacity multiplier (default 1.0)
 
-Global scale and opacity are O(1) uniform updates. Per-atom overrides are activated via `uUsePerAtomOverrides` uniform. Buffers are pre-allocated to `maxAtoms` (default 1M) and grow dynamically if needed.
+Global scale and opacity are O(1) uniform updates. Per-atom overrides are activated via `uUsePerAtomOverrides` uniform. The `illustrative` representation sets `uIllustrative`, which swaps the lit shading for a flat fill with a silhouette outline and a rim-darkening ramp (see [Mol\* illustrative parity](/dev/molstar-illustrative-parity)).
+
+Instance buffers are sized to the loaded structure rather than preallocated (`src/renderer/instanceCapacity.ts`): they start at `MIN_INSTANCE_CAPACITY` (1024), grow with 25 % headroom when a structure does not fit, shrink once they are 4× larger than needed, and each upload covers only the instances actually drawn. `ImpostorBondMesh` uses the same helpers.
 
 ### Bond Rendering
 
-`ImpostorBondMesh` (`src/renderer/ImpostorBondMesh.ts`) renders bonds as billboard quads stretched between atom pairs. Atom positions are stored in a **DataTexture** and read via `texelFetch()` in the vertex shader — this means per-frame position updates cost O(nAtoms) regardless of bond count.
+`ImpostorBondMesh` (`src/renderer/ImpostorBondMesh.ts`) renders bonds as billboard quads that conservatively cover each bond's screen silhouette; the fragment shader then ray-casts the analytic cylinder in view space, so the surface and `gl_FragDepth` are correct at any viewing angle (a flat billboard parameterization is only accurate for bonds perpendicular to the camera). Atom positions are stored in a **DataTexture** and read via `texelFetch()` in the vertex shader — this means per-frame position updates cost O(nAtoms) regardless of bond count.
 
 Bond order visualization:
 - **Single** — 1 cylinder
@@ -143,7 +154,7 @@ Bond order visualization:
 - **Triple** — 3 cylinders in triangular arrangement
 - **Aromatic** — 1 solid + 1 dashed offset cylinder
 
-Bond coloring is **split by endpoint**: each bond carries two per-instance colors (`instanceColorA`/`instanceColorB`), and the fragment shader picks one based on the sign of the cylinder's axial coordinate (`vCylUv.y`), so the half nearest each atom takes that atom's color (e.g. a C–H bond is half grey, half white). This matches the convention used by VMD/PyMOL/Mol*. The same split applies under every color scheme (by element/residue/chain/etc.) because the colors are derived from the per-atom color buffer.
+Bond coloring is **split by endpoint**: each bond carries two per-instance colors (`instanceColorA`/`instanceColorB`), and the fragment shader picks one based on the sign of the ray hit's axial position along the cylinder, so the half nearest each atom takes that atom's color (e.g. a C–H bond is half grey, half white). This matches the convention used by VMD/PyMOL/Mol*. The same split applies under every color scheme (by element/residue/chain/etc.) because the colors are derived from the per-atom color buffer.
 
 Each cylinder runs from atom centre to atom centre, so its ends are buried inside the endpoint spheres. While the atoms are opaque the depth test hides that, but a transparent atom stops writing depth and the buried stick blends straight through the ball — the model then reads as beads threaded onto rods instead of one fused solid. The bond fragment shader therefore renders the **CSG union** of stick and balls: after the ray/cylinder hit is computed it discards any fragment lying inside either endpoint sphere, so the stick ends exactly on the ball's skin at any viewing angle and each pixel is covered by one surface instead of two. Because a buried point is always behind the sphere's own front face along the same ray, the trim discards precisely the fragments the depth test was already rejecting — opaque renders are pixel-identical, and transparent ones cost slightly *less* because the discarded fragments skip the lighting block.
 
@@ -153,8 +164,9 @@ The trim needs the radius of the ball actually on screen, which varies with the 
 
 All shaders are in `src/renderer/shaders.ts` as GLSL 3.0 ES strings, used with `RawShaderMaterial`. This requires explicit declaration of all uniforms and attributes (no Three.js auto-injection).
 
-Lighting model:
-- Dual directional diffuse (sky-blue key light + warm fill)
+Lighting model (computed in the shaders, not from the scene lights):
+- Hemisphere ambient (sky blue from above, warm brown from below)
+- Dual directional diffuse (key + fill)
 - Blinn-Phong specular highlights
 - Fresnel rim lighting for depth cues
 - Edge darkening for contour emphasis
@@ -166,18 +178,23 @@ Lighting model:
 ```typescript
 interface AtomRenderer {
   readonly mesh: THREE.Object3D;
-  loadSnapshot(snapshot: Snapshot): void;
+  loadSnapshot(snapshot: Snapshot, colorCtx?: ColorContext): void;
   updatePositions(positions: Float32Array): void;
   setScale?(scale: number, snapshot: Snapshot): void;
+  setUniformRadius?(radius: number | null, snapshot: Snapshot): void;
+  setRadiusScale?(scale: number, snapshot: Snapshot): void;
+  setIllustrative?(enabled: boolean): void;
   setOpacity?(opacity: number): void;
   setScaleOverrides?(overrides: Float32Array): void;
   setOpacityOverrides?(overrides: Float32Array): void;
   clearOverrides?(): void;
+  setHiddenMask?(mask: Uint8Array | null): void;
+  setRadiusSink?(sink: ((radii: Float32Array | null, scale: number) => void) | null): void;
   dispose(): void;
 }
 ```
 
-`ImpostorAtomMesh` is the implementation `MoleculeRenderer` uses. The interface is the swap point for alternative renderers.
+`BondRenderer` mirrors it (`loadSnapshot`, `updatePositions(positions, bonds, nBonds)`, `dispose`, plus optional scale/opacity, per-bond opacity overrides, `setHiddenMask`, and `setAtomRadii` / `setAtomRadiusScale` for the CSG trim). `ImpostorAtomMesh` / `ImpostorBondMesh` are the implementations `MoleculeRenderer` and `StructureLayer` use. The interfaces are the swap point for alternative renderers.
 
 ### Multi-Structure Overlay
 
@@ -206,7 +223,7 @@ export interface ColorByPropertyParams {
   colormap: string;
 }
 ```
-Add to the `PipelineNodeParams` union and `defaultParams()` switch.
+Add to the `PipelineNodeParams` union and `defaultParams()` switch, and add a `case` to `summarizeNodeParams()` (`src/pipeline/nodeSummary.ts`) — the one-line summary shown on the node's card.
 
 **3. Define ports** in `NODE_PORTS`:
 ```typescript
@@ -216,7 +233,9 @@ color_by_property: {
 },
 ```
 
-**4. Write the executor** in `src/pipeline/executors/colorByProperty.ts`:
+**4. Document it** with a `NODE_CATALOG` entry in `src/pipeline/catalog.ts` (description, per-param docs, prompt port text, `inPrompt`, `pythonClass`). It is compile-enforced and feeds both the LLM system prompt and the autogenerated Node Reference.
+
+**5. Write the executor** in `src/pipeline/executors/colorByProperty.ts`:
 ```typescript
 export function executeColorByProperty(
   params: ColorByPropertyParams,
@@ -231,30 +250,30 @@ export function executeColorByProperty(
 ```
 Follow existing patterns in `filter.ts` or `modify.ts`.
 
-**5. Register in the execution engine** — Add a `case "color_by_property":` to the switch in `executePipeline()` (`src/pipeline/execute.ts`).
+**6. Register in the execution engine** — Add a `case "color_by_property":` to the switch in `executePipeline()` (`src/pipeline/execute.ts`).
 
-**6. Create the UI node** — Add `src/components/nodes/ColorByPropertyNode.tsx` wrapping `NodeShell` (`src/components/nodes/NodeShell.tsx`). Follow the pattern from `FilterNode.tsx` or `ModifyNode.tsx`.
+**7. Create the UI node** — Add `src/components/nodes/ColorByPropertyNode.tsx` wrapping `NodeShell` (`src/components/nodes/NodeShell.tsx`), which renders the compact canvas card (`NodeCard`) or, in the properties pane, your form. Follow the pattern from `FilterNode.tsx` or `ModifyNode.tsx`.
 
-**7. Register in the node palette** — Add to the node creation menu so users can drag it onto the canvas.
+**8. Register in the editor** — Add the component to the `nodeTypes` map in `src/components/PipelineEditor.tsx`, and the node type to the matching `ADD_NODE_GROUPS` group in `src/components/PipelineRail.tsx` so it appears in the rail's "Add Node" menu.
 
 ### Adding a New Renderer Backend
 
 Implement the `AtomRenderer` or `BondRenderer` interface from `src/types.ts`:
 
 - **Required**: `mesh` property, `loadSnapshot()`, `updatePositions()`, `dispose()`
-- **Optional**: `setScale()`, `setOpacity()`, `setScaleOverrides()`, `setOpacityOverrides()`, `clearOverrides()`
+- **Optional**: `setScale()`, `setUniformRadius()`, `setRadiusScale()`, `setIllustrative()`, `setOpacity()`, `setScaleOverrides()`, `setOpacityOverrides()`, `clearOverrides()`, `setHiddenMask()`, `setRadiusSink()` (atoms); `setBondOpacityOverrides()`, `setAtomRadii()`, `setAtomRadiusScale()` (bonds)
 
-Wire it into `MoleculeRenderer` by replacing the renderer construction. See `ImpostorAtomMesh` (`src/renderer/ImpostorAtomMesh.ts`) as the reference implementation.
+Wire it into `MoleculeRenderer` by replacing the renderer construction in `swapRenderers()` (and in `StructureLayer` for overlay structures). See `ImpostorAtomMesh` (`src/renderer/ImpostorAtomMesh.ts`) as the reference implementation.
 
 ### Adding a New Data Channel Type
 
-If the existing 8 channels don't cover your needs:
+If the existing 10 channels don't cover your needs:
 
 1. Add to `PipelineDataType` union and `DATA_TYPE_COLORS` in `src/pipeline/types.ts`
 2. Create the data interface (e.g., `SurfaceData`)
 3. Add to the `PipelineData` union
-4. Add an input port to the viewport node's `NODE_PORTS` entry
-5. Add a field to `ViewportState` and `DEFAULT_VIEWPORT_STATE`
+4. Add an input port to the viewport node's `NODE_PORTS` entry (skip 4–7 for a channel that, like `spectrum`, ends at its own terminal node instead of the renderer)
+5. Add a field to `ViewportState` and `DEFAULT_VIEWPORT_STATE`, and collect it in `executeViewport()` (`src/pipeline/executors/viewport.ts`)
 6. Handle the new field in `applyViewportState()` (`src/pipeline/apply.ts`)
 7. Implement the corresponding renderer
 
@@ -277,10 +296,12 @@ the same PR. The full per-host registration checklist lives in the
 1. Implement the parser in Rust in `crates/megane-core/src/`
 2. Expose via WASM in `crates/megane-wasm/src/lib.rs` with `#[wasm_bindgen]`
 3. Expose via PyO3 in `crates/megane-python/src/lib.rs` with `#[pyfunction]`
-4. Add the file-extension dispatch in `src/parsers/structure.ts`
-   (`parseStructureFile`) and the standalone accept lists in
-   `src/components/nodes/LoadStructureNode.tsx` /
-   `LoadTrajectoryNode.tsx`
+4. Add the file-extension dispatch in `src/parsers/parseCore.ts`
+   (the `WasmModule` interface and `getParserForExtension`; this is the code
+   the Web Worker and the sync fallback behind `parseStructureFile` in
+   `src/parsers/structure.ts` both run) and the standalone accept lists
+   `STRUCTURE_EXTS` / `TRAJECTORY_EXTS` in `src/parsers/fileNames.ts`
+   (read by `LoadStructureNode.tsx` / `LoadTrajectoryNode.tsx`)
 5. Register the type on every host: `jupyterlab-megane/src/filetypes.ts`
    (JupyterLab `IFileType`) and `vscode-megane/package.json`
    (VS Code `customEditors`)
@@ -296,18 +317,24 @@ the same PR. The full per-host registration checklist lives in the
 | **Core types** | `src/types.ts` (Snapshot, Frame, AtomRenderer, BondRenderer) |
 | **Pipeline types** | `src/pipeline/types.ts` (data channels, ports, node params, ViewportState) |
 | **Pipeline engine** | `src/pipeline/execute.ts`, `src/pipeline/graph.ts` |
+| **Node docs** | `src/pipeline/catalog.ts` (`NODE_CATALOG`: LLM prompt + Node Reference) |
+| **Serialization** | `src/pipeline/serialize.ts` (`SerializedPipeline` v3), `src/pipeline/builder.ts` / `python/megane/pipeline.py` (programmatic builders) |
 | **Pipeline → Renderer** | `src/pipeline/apply.ts` |
-| **Node executors** | `src/pipeline/executors/` (one file per node type) |
+| **Node executors** | `src/pipeline/executors/` (one file per node type, plus parsing/geometry helpers) |
+| **Node UI** | `src/components/nodes/`, `src/components/PipelineEditor.tsx`, `src/components/PipelineRail.tsx` |
 | **Selection DSL** | `src/pipeline/selection.ts` (recursive-descent parser/evaluator) |
 | **Main renderer** | `src/renderer/MoleculeRenderer.ts` |
 | **Atom impostor** | `src/renderer/ImpostorAtomMesh.ts` |
 | **Bond impostor** | `src/renderer/ImpostorBondMesh.ts` |
 | **Shaders** | `src/renderer/shaders.ts` |
 | **Multi-structure** | `src/renderer/StructureLayer.ts` |
-| **Camera/controls** | `src/renderer/CameraManager.ts` (fit, insets, zoom), `src/renderer/cameraOrientation.ts` (VESTA standard orientation, ±a/±b/±c and ±x/±y/±z views) |
+| **Camera/controls** | `src/renderer/CameraControls.ts` (turntable orbit), `src/renderer/CameraManager.ts` (fit, insets, zoom), `src/renderer/cameraOrientation.ts` (VESTA standard orientation, ±a/±b/±c and ±x/±y/±z views) |
 | **Picking** | `src/renderer/Picking.ts` |
 | **Element data** | `src/constants.ts` (colors, vdW radii, bond params) |
+| **Color schemes** | `src/colorSchemes.ts` (by element/residue/chain/B-factor/property, illustrative) |
+| **File parsing (TS side)** | `src/parsers/` (`structure.ts` facade, `parseCore.ts` WASM dispatch, `parse.worker.ts`, `fileNames.ts`) |
 | **WASM parsers** | `crates/megane-core/`, `crates/megane-wasm/` |
 | **Python bindings** | `crates/megane-python/`, `python/megane/` |
 | **Pipeline store** | `src/pipeline/store.ts` (Zustand) |
-| **Binary protocol** | `src/protocol/protocol.ts` |
+| **Binary protocol** | `src/protocol/protocol.ts` (decoder; mirrors the encoder in `python/megane/protocol.py`), `src/protocol/WorkerPool.ts` + `decode.worker.ts` (off-main-thread decoding) |
+| **Streaming** | `src/stream/WebSocketClient.ts` (reconnecting client for the `megane serve` backend in `python/megane/server.py`), `src/stream/StreamFrameProvider.ts`, `src/stream/LazyFrameProvider.ts` |

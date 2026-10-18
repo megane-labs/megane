@@ -3,8 +3,9 @@ title: Structure Editor Design
 ---
 
 How structure editing (**megane Builder**, the standalone editor at
-`/builder.html`, and the edit engine it shares with the viewer's
-`load_structure` node) is built, why it lives where it does, and what is
+`/builder.html` that the VS Code and JupyterLab extensions and the
+`megane.Builder` Jupyter widget also embed, and the edit engine it shares
+with the viewer's `load_structure` node) is built, why it lives where it does, and what is
 deliberately left for later. Read this before extending the editor or wiring
 it to a simulation backend.
 
@@ -39,8 +40,10 @@ the ordered operation list (`EditOp` in `src/pipeline/types.ts`) on the primary
 `Snapshot` through `applyEditOps` (`src/pipeline/executors/edit.ts`) and emits
 the edited structure as a brand-new immutable `Snapshot`, so every downstream
 node only ever sees the edited atoms and the graph gains no node. This gives
-undo (drop the last op), preview (`editsBypassed` in the pipeline store, the
-panel's "Show original"), sharing (the list rides in the `.megane.json` with the
+undo (drop the last op), preview (`editsBypassed` on the
+`PipelineExecutionContext` in `src/pipeline/execute.ts`, which shows the file
+as loaded; no viewer UI sets it today, and the Builder's *Show original* is its
+own store flag), sharing (the list rides in the `.megane.json` with the
 loader) and LLM authoring (`edits` is documented on `load_structure` in
 `NODE_CATALOG`) without any new persistence path.
 
@@ -71,8 +74,11 @@ rendered atom *i* into the ref an op must name.
 
 Because refs address the file's atoms, the list is replayed *before* anything
 else runs. Nodes that change the atom count (`replicate`, `symmetry`) come
-after; if such a node is active the panel cannot map rendered indices back and
-pauses with a notice rather than writing ops against the wrong atoms. The
+after, so atom indices rendered downstream of them are not refs. The viewer
+has no editing UI that could write ops against them (the pipeline store's
+`pushEditOp` / `undoEditOp` actions have no caller in the viewer); editing
+happens in the Builder, whose view has no pipeline and maps every rendered
+atom back through `refAt`. The
 history belongs to the file it was authored against: `updateNodeParams` clears
 a loader's `edits` when its `fileName` changes, and an op that no longer
 applies is skipped with a warning on the loader.
@@ -170,13 +176,34 @@ their lists to `<body>` so no panel or scrolling rail clips them.
 `useSectionOpen` (`src/builder/panelState.ts`) keeps whether each panel is
 open and remembers each one in `localStorage`; `shortcuts.ts` holds the key table
 (`resolveShortcut`) and applies it to the store (`runShortcut`), ignoring keys
-aimed at a text field or while the (modal) Ketcher sketcher is open. Starting
+aimed at a text field or while the (modal) Ketcher sketcher is open, and —
+on a host that asks for it — keys pressed while the focus is outside the
+Builder (`inScope`). Starting
 a document — an empty cell or a bulk crystal — is one form
 (`NewStructureDialog`), because both replace
-what is open. Nothing in the viewer imports the Builder; the Builder reuses
+what is open. The viewer imports no Builder app code — only the
+`BuildHandlers` type its `Viewport` accepts and the rail primitives
+(`Menu.tsx`, `rail.tsx`) its Pipeline rail shares; the Builder reuses
 the viewer's renderer, parsers, writers and edit engine. Bringing a Builder
 document into the viewer is the planned integration, and the shared history
 format (below) is its seam.
+
+**Hosts.** Every host puts the app on its page through `mountBuilder`
+(`src/builder/mount.tsx`): `builder.html` (`src/builder/index.tsx`), the VS
+Code webview (`vscode-megane/webview/builder.tsx`, an editor tab opened from
+the megane activity-bar view), the JupyterLab main-area tab
+(`jupyterlab-megane/src/builder/`, opened from the megane left-sidebar panel)
+and the anywidget bundle behind `megane.Builder` (`src/builderWidget.ts`,
+`python/megane/builder.py`). The host passes a `BuilderHost`
+(`src/builder/host.ts`) that says how *Save* delivers a file (`save`: VS
+Code's save dialog, the Jupyter server's contents, the kernel's working
+directory; the web app downloads), whether the *Tools* menu is shown
+(`tools`, off in every embedded host, which cannot count on reaching an MCP
+server) and whether the keyboard shortcuts stay inside the Builder
+(`scopeShortcuts`). The document lives in a module-level store, so a page
+holds one Builder document: VS Code gives each tab a webview of its own,
+JupyterLab keeps one Builder tab, and the widget bundle is loaded once per
+`Builder` object, whose newest output takes the document.
 
 **Document.** `useBuilderStore` (`src/builder/store.ts`) holds a source
 `Snapshot` (the opened file, or `emptyCellSnapshot(edge)` for *New*), its
@@ -235,6 +262,11 @@ tool's *Place on atoms* option (`adsorbHeight` on the store,
 height above a clicked atom along the cell's c axis, which with a slab is
 the surface normal — an adsorbate as one `add_fragment` op.
 
+**Hydrogens.** `src/builder/hydrogens.ts` plans the hydrogen bookkeeping of
+the Add and Element tools (valence-rule hydrogen counts and their 3D
+placement, `addOnAtomOps` / `setElementOps`) as ordinary ops pushed as one
+Undo step; a structure without any hydrogen is left bare.
+
 **Geometry.** `src/builder/geometry.ts` holds what moves together
 (`moleculeOf`, and `movingSide` — the far side of a bond, or only the atom
 when a ring joins the sides), the numeric edits (`setDistance`, `setAngle`,
@@ -274,13 +306,12 @@ fragment*): `presets.ts` (small molecules with 3D geometries), a persisted
 `useLibraryStore` (`store.ts`, the user's molecules in `localStorage`,
 sanitized on read), `fragment.ts` (centring, Hill formulas, the flat-sketch
 rescale, `autoPlacement`, and `fragmentOp` — the `add_fragment` op a
-placement writes), `hydrogens.ts` (valence-rule hydrogen counts and their
-3D placement), `sketch.ts` (a molfile, file or selection → library
+placement writes), `sketch.ts` (a molfile, file or selection → library
 molecule, through the shared parsers), the actions and the shared UI state
 (`ui.ts`: `useLibraryActions`, and `useLibraryUi` for the one sketch dialog,
 the one file input and the gallery's open state, mounted once by
-`LibraryHost`), and the UI (`LibraryPanel`, the gallery under the context
-bar, and `SketchModal`). Ketcher (`ketcher-react` + the standalone Indigo engine) is
+`LibraryHost`), and the UI (`LibraryPanel`, the gallery inside the Place
+tool's settings, and `SketchModal`). Ketcher (`ketcher-react` + the standalone Indigo engine) is
 mounted only by `KetcherEditor.tsx`, which `SketchModal` loads lazily, so the
 sketcher's bundle and WASM are fetched on first use and the Builder itself
 stays small. A molecule enters the document through
@@ -302,12 +333,16 @@ with RDKit and with nothing else — no conformer, and no hydrogen placement,
 is ever invented in TypeScript. RDKit runs in the browser as
 [`megane-rdkit`](https://github.com/hodakamori/megane-rdkit), an Emscripten
 build of an unmodified RDKit release that exposes exactly one call today —
-`embed(molfile, options)`: ETKDG embedding with the implicit hydrogens
+`embed(molfile, options)` (a mol block or a SMILES string): ETKDG embedding with the implicit hydrogens
 added, then MMFF94s (UFF fallback) minimisation, returning a V2000 mol
 block. The build lives in its own repository because it needs emsdk, Boost
 and a C++ toolchain nothing else in megane touches; megane depends on the
 published npm package and Vite ships its `.wasm` (~3.5 MB, ~1 MB gzipped) as
-an asset that is fetched only when the sketch dialog first embeds.
+an asset that is fetched only when the sketch dialog or *Clean up geometry*
+first needs it. The Jupyter widget bundle leaves the `.wasm` out and asks the
+kernel for the copy shipped in the wheel (`setRDKitWasmSource`), and the
+JupyterLab labextension builds the worker with webpack
+(`embedWorker.webpack.ts`).
 
 `src/builder/library/embed.ts` is the main-thread client: one lazily created
 Web Worker (`embed.worker.ts`) holds the module, requests carry the `.wasm`
@@ -327,9 +362,10 @@ megane had no structure writer before this feature. `crates/megane-core/src/writ
 adds XYZ (extended XYZ when a cell is present), PDB (`CRYST1`, `ATOM`,
 `CONECT`) and MOL V2000, exposed as `write_structure` through both WASM
 (`src/parsers/parseCore.ts` → `src/export/structureExport.ts`) and PyO3
-(`megane.write_structure` / `megane.save_structure`). Delivery uses the existing
-host-neutral `downloadBlob`, which the VS Code webview already routes to its
-save dialog.
+(`megane.write_structure` / `megane.save_structure`). In the web app the
+Builder delivers the file through the host-neutral `downloadBlob`; an
+embedding host writes it itself through `BuilderHost.save` (see *Hosts*
+above).
 
 ## Deliberately not in this iteration
 
@@ -344,12 +380,11 @@ save dialog.
   file" flow.
 - **Trajectory editing** — the loader's trajectory output follows the file;
   an edited atom count no longer matches the frames.
-- **Save in place** — VS Code's editor is a `CustomReadonlyEditorProvider` and
-  JupyterLab's document widget never calls `context.save()`; both stay
-  save-as / download for now.
-- **Python structure tools** — liquid boxes, polymer chains, solvation and
-  other generators that already exist in Python are meant to reach Builder as
-  buttons backed by MCP servers rather than as TypeScript ports; the draft
-  contract is [Builder Tool Contract (MCP)](/dev/builder-tools).
+- **Save in place** — the Builder never writes back to the file it opened:
+  VS Code's Builder tab is a plain webview panel (not a custom editor of the
+  file) and saves through the save dialog, JupyterLab's Builder tab is not a
+  document widget and asks for a path (confirming before it replaces a
+  file), and the notebook widget writes a new name in the kernel's working
+  directory.
 - **Live-MD integration** — a "reload structure" command on the simulation side
   (stop → rebuild system → re-send topology), driven by megane's exporter.

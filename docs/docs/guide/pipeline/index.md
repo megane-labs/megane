@@ -7,9 +7,9 @@ import LiveViewer from '@site/src/components/LiveViewer';
 
 # Visual Pipeline Editor
 
-megane's pipeline editor lets you build visualization workflows by wiring nodes — no code required. Open the pipeline panel from the sidebar to start building.
+megane's pipeline editor lets you build visualization workflows by wiring nodes — no code required. The editor lives in the **Pipeline** panel on the right edge of the viewer; when the panel is collapsed, click its **Pipeline** tab to open it.
 
-<Figure src="/screenshots/pipeline-editor.png" alt="megane visual pipeline editor" caption="The visual pipeline editor: nodes on the canvas, live 3D on the right." />
+<Figure src="/screenshots/pipeline-editor.png" alt="megane visual pipeline editor" caption="The visual pipeline editor: nodes on the canvas, live 3D beside it." />
 
 Pipelines can also be built programmatically in [Python](./python.md), [TypeScript](./typescript.md), or written directly as [JSON](./json.md).
 
@@ -19,9 +19,26 @@ For real-world examples, see the [Gallery](/gallery).
 
 A pipeline is a directed graph of **nodes** connected by **edges**. Data flows from source nodes (like Load Structure) through processing nodes (like Filter or Modify) and into a Viewport node for rendering.
 
-Each edge carries a specific **data type** — particle, bond, cell, label, mesh, trajectory, vector, or volumetric — and only matching types can connect.
+Each edge carries a specific **data type** — particle, bond, coordination, cell, label, mesh, trajectory, vector, volumetric, or spectrum — and only matching types can connect.
 
-When a node encounters an error — for example, a parse failure in LoadStructure — an error icon appears on the node with a tooltip showing the details.
+When a node encounters an error or warning — for example, a parse failure in LoadStructure — a colored dot appears on its card (hover it for the message), and the full messages are listed under the node's header in the properties pane.
+
+## Editor Layout
+
+The panel has an icon rail down its left edge. From top to bottom:
+
+- **Editor**, **Inspector**, **Chat** — the panel's three tabs: the node graph, the [Selection Inspector](./inspector.md), and the [AI Pipeline Generator](#ai-pipeline-generator).
+- **Add Node** and **Templates** menus, and **Auto Layout** — these switch to the Editor tab.
+- **File** menu — *Import pipeline…*, *Export pipeline* (downloads `pipeline.megane.json`; see [JSON](./json.md)), and *Copy share link…*. Then **Render**, which opens the image/video render dialog.
+- **Guide**, **Tutorial**, and the theme toggle at the foot.
+
+In the Editor tab every node is a compact card showing its category icon, title, and a one-line summary of its parameters; port names appear when you hover or select a card. Selecting a node opens its form in the **properties pane** under the graph, whose header holds an On/Off switch (a disabled node is bypassed and drawn with a dashed outline) and a remove button. The divider between graph and pane can be dragged.
+
+To delete a connection, hover (or select) the edge and click the **×** at its midpoint, or select it and press <kbd>Backspace</kbd> / <kbd>Delete</kbd>. Dragging an edge's endpoint off its handle onto empty canvas disconnects it; dropping it on another compatible handle rewires it.
+
+### Share Links
+
+*Copy share link…* encodes the current pipeline (compressed) into the URL fragment as `#pipeline=…`; opening that URL in the standalone web app restores the pipeline. Only the graph is encoded — node parameters and file names, not file contents — so loaders show the file names but the recipient has to load the files. Very large pipelines produce a URL that is too long to share, and the dialog warns about it.
 
 ## AI Pipeline Generator
 
@@ -31,9 +48,13 @@ Describe the visualization you want in natural language, and megane builds the n
 
 The generator creates the appropriate LoadStructure, AddBond, Filter, Modify, and Viewport nodes, wires them together, and places them in the editor. You can then adjust parameters or add more nodes manually.
 
+Open **AI Settings** (the gear button in the chat input) to choose a provider (**Anthropic** or **OpenAI**), a model, and your API key; the key is kept in the browser. Builds configured with megane's shared proxy also offer a rate-limited free demo that needs no key — tick **Use my own API key** to switch to your own provider.
+
+The generator checks its own output before applying it: the pipeline schema, the selection-query syntax, edge types, and — when a structure is loaded — the errors the graph actually produces when executed (e.g. `Filter returned 0 atoms`). Any findings are sent back to the model to fix, for up to two repair rounds.
+
 ## VS Code Extension Auto-Setup
 
-When you open a supported molecular file (`.pdb`, `.gro`, `.xyz`, `.mol`, `.sdf`, `.mol2`, `.cif`, `.mmcif`, `.data`, `.lammps`, `.prmtop`, `.traj`, `.xtc`, `.dcd`, `.lammpstrj`, `.dump`, `.nc`) in the megane VS Code extension, it automatically creates a default pipeline consisting of `LoadStructure → AddBond → Viewport`. This gives you an immediate 3D view of the structure with bonds, without needing to build a pipeline manually. You can then modify the auto-generated pipeline in the editor as needed.
+When you open a supported molecular file (`.pdb`, `.gro`, `.xyz`, `.cif`, `.data`, `.lammpstrj`, POSCAR, and the rest of the formats listed in [Platform Support](/platform-support)) in the megane VS Code extension, it automatically creates a default pipeline consisting of `LoadStructure → Symmetry → Wrap → Replicate → AddBond → Viewport`. The AddBond source is picked from the format — bonds read from the file for formats that carry them (PDB, MOL/SDF, LAMMPS data, CML, …), distance-based inference otherwise. This gives you an immediate 3D view of the structure with bonds, without needing to build a pipeline manually. You can then modify the auto-generated pipeline in the editor as needed. A `.megane.json` file opens as the pipeline it describes (see [JSON](./json.md)).
 
 ## Getting Started
 
@@ -43,21 +64,23 @@ The simplest pipeline loads a structure and displays it:
 LoadStructure → Viewport
 ```
 
-To add bonds inferred from atomic distances:
+To add bonds inferred from atomic distances, feed the particles both to an AddBond node and to the Viewport:
 
 ```
-LoadStructure → AddBond → Viewport
-                       ↘
-              LoadStructure → Viewport (particle + cell)
+LoadStructure ──particle──→ AddBond ──bond──→ Viewport
+      └──────────particle, cell─────────────→ Viewport
 ```
 
-Use the **Templates** dropdown to load pre-built pipelines:
+Use the **Templates** menu on the rail to replace the pipeline with a pre-built one:
 
-- **Molecule** — Caffeine (`caffeine_water.pdb`) with structure-based bonds and a vibration trajectory (`caffeine_water_vibration.xtc`). Nodes: `LoadStructure → Wrap → AddBond → Viewport`, `LoadTrajectory → Wrap → Viewport`.
-- **Molecular Crystal** — Glycine (`glycine_csd.cif`) with atoms normalized into the home cell and finite molecules completed across its faces. Nodes: `LoadStructure → Wrap`, followed by parallel `AddBond` and `DrawingBoundary` branches that join at `BoundaryCompletion → Viewport`.
-- **Solid** — Perovskite SrTiO₃ 3×3×3 supercell with TiO₆ coordination polyhedra. Nodes: `LoadStructure → Wrap → DrawingBoundary → Coordination → PolyhedronGenerator → Viewport`. Coordination detects metal centers and neighboring anion-former atoms; its Bond output also renders the neighbor atoms required to complete boundary coordination environments.
+- **Molecule** — Caffeine (`caffeine_water.pdb`) with structure-based bonds and a vibration trajectory (`caffeine_water_vibration.xtc`). Nodes: `LoadStructure → Symmetry → Wrap → AddBond → Viewport`, with `LoadTrajectory` feeding the trajectory through `Symmetry → Wrap → Viewport`.
+- **Molecular Crystal** — Glycine (`glycine_csd.cif`) with atoms normalized into the home cell and finite molecules completed across its faces. Nodes: `LoadStructure → Symmetry → Wrap`, followed by parallel `AddBond` and `DrawingBoundary` branches that join at `BoundaryCompletion → Viewport`.
+- **Solid** — Perovskite SrTiO₃ 3×3×3 supercell with TiO₆ coordination polyhedra. Nodes: `LoadStructure → Symmetry → Wrap → DrawingBoundary → Coordination → PolyhedronGenerator → Viewport`. Coordination detects metal centers and neighboring anion-former atoms; its Bond output also renders the neighbor atoms required to complete boundary coordination environments.
+- **Surface Mesh** — Quartz SiO₂ 2×2×2 supercell (`quartz_sio2_2x2x2.xyz`) wrapped in an OVITO-style alpha-shape envelope. Nodes: `LoadStructure → Symmetry → Wrap → SurfaceMesh → Viewport (mesh)`.
+- **Protein** — Ubiquitin (`1ubq.pdb`) as a cartoon ribbon with semi-transparent water. The protein branch is `Filter (resname != "HOH") → Modify (opacity 0) → Representation (both) → Viewport`, the water branch `Filter (resname == "HOH") → Modify (opacity 0.5) → Viewport`.
 - **ESP Isosurface** — Caffeine (`caffeine.sdf`) overlaid with its electrostatic potential read from a cube file (`caffeine_esp.cube`). Nodes: `LoadStructure → Symmetry → Wrap → AddBond → Viewport` alongside an independent `LoadVolumetric → Isosurface → Viewport (mesh)` branch. The two branches never meet in the graph — the molecule and the grid line up because they share a coordinate frame. The Isosurface node runs in dual-contour mode (`showNegative`), so it draws the potential at both `+isoLevel` (blue, over the methyl and imidazole hydrogens) and `−isoLevel` (red, over the two carbonyl oxygens), the usual chemistry convention. The default level, 0.03 Hartree/e, is where the potential sits on caffeine's van der Waals surface; lower it in the node to grow the lobes into a shell around the whole molecule.
 - **Coarse-Grained Overlay** — Ubiquitin before and after coarse-graining, superimposed: the all-atom model (`1ubq.pdb`) ghosted at 30 % opacity behind one bead per residue (`1ubq_cg.pdb`, each bead at its residue's heavy-atom center of mass). Two `LoadStructure` nodes feed one Viewport and render as separate structure layers. The all-atom side splits into two `Filter → Modify` branches — protein at opacity 0.3, the 58 crystallographic waters at opacity 0 — because a Modify behind a Filter writes its opacity only at the selected atoms and leaves the rest fully opaque. The bead side scales up ×3.2 and takes a uniform Color so it reads over the ghost, with its backbone drawn from the CG file's `CONECT` records.
+- **Streaming** — A `Streaming` node wired to the Viewport (particle, bond, trajectory, cell) for live WebSocket data from `megane serve`.
 
 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
   <LiveViewer data="caffeine_water" height="300px" caption="Molecule template — caffeine in water" />
@@ -73,12 +96,13 @@ Jump straight to a node, e.g. [`polyhedron_generator`](/reference/node-reference
 
 ## Data Types
 
-Nine typed data channels flow through color-coded edges:
+Ten typed data channels flow through color-coded edges:
 
 | Type | Color | Description |
 |------|-------|-------------|
 | **particle** | Blue | Atom positions, elements, and optional indices/overrides |
 | **bond** | Amber | Bond pairs and orders |
+| **coordination** | Orange | Directed center–neighbor pairs from the Coordination node, consumed by Polyhedra |
 | **cell** | Emerald | Simulation cell (3×3 matrix) |
 | **label** | Violet | Text labels positioned at atoms |
 | **mesh** | Gray | Triangle mesh for polyhedra rendering |
@@ -99,6 +123,8 @@ The Filter node accepts Python-like query expressions to select atoms.
 | `index` | number | Atom index (0-based) |
 | `x`, `y`, `z` | number | Cartesian coordinates |
 | `resname` | string | Residue name (e.g., `"ALA"`, `"HOH"`) |
+| `resid` | number | Residue sequence number (e.g. `42` for `ALA42`) |
+| `chain` | string | Chain ID (e.g., `"A"`); atoms without chain info compare as `""` |
 | `mass` | number | Atomic mass |
 | `molecule_id` | number | 0-based connected-component (molecule) ID, derived from bond connectivity. Atoms with no bonds form their own single-atom molecule |
 
@@ -114,6 +140,8 @@ The Filter node accepts Python-like query expressions to select atoms.
 
 `all` — select all atoms, `none` — select no atoms
 
+`within R of (…)` — every atom within `R` Å of any atom the inner expression selects (the selected atoms included)
+
 ### Examples
 
 ```
@@ -126,6 +154,8 @@ element == "O" or element == "N"       # Oxygen or nitrogen
 mass > 32                              # Atoms heavier than sulfur
 molecule_id == 0                       # Atoms belonging to the first molecule
 not molecule_id == 0                   # Everything except the first molecule
+chain == "A" and resid < 50            # First 49 residues of chain A
+within 5 of (resname == "HEM")         # Everything within 5 Å of the heme
 ```
 
 ## Bond Selection DSL
@@ -173,10 +203,10 @@ The bond query selects which bonds a downstream **Modify** node applies opacity 
 ### TiO₆ Octahedra in SrTiO₃
 
 1. Load a perovskite structure (`LoadStructure`)
-2. Add a `PolyhedronGenerator` node
-3. In "Excluded centers", add Sr (38) so only TiO₆ polyhedra are shown (Ti and O are auto-detected)
-4. Connect `LoadStructure.particle → PolyhedronGenerator.particle`
-5. Connect `PolyhedronGenerator.mesh → Viewport.mesh`
+2. Add `Drawing Boundary`, `Coordination`, and `Polyhedra` nodes
+3. Connect `LoadStructure.particle → DrawingBoundary.particle → Coordination.particle`, and `DrawingBoundary.particle → Viewport.particle`
+4. In the Coordination node's **Center atoms**, untick Sr so only TiO₆ polyhedra are built (Ti centers and O neighbors are auto-detected)
+5. Connect `Coordination.coordination → Polyhedra.coordination`, `Polyhedra.mesh → Viewport.mesh`, and `Coordination.bond → Viewport.bond`
 
 Or use the **Solid** template which sets this up automatically.
 
@@ -206,8 +236,8 @@ streams.
 4. Add two `Modify` nodes and set opacity to 0.15 on each
 5. Connect:
    - `LoadStructure.particle → FilterA.in → ModifyA.in → Viewport.particle`
-   - `AddBond.bond → FilterB.in → ModifyB.in → Viewport.bond`
-   - `LoadStructure.particle → Viewport.particle` and `AddBond.bond → Viewport.bond` (original full-opacity streams)
+   - `LoadStructure.particle → Viewport.particle` (the original full-opacity atoms)
+   - `AddBond.bond → FilterB.in → ModifyB.in → Viewport.bond` — do not also wire `AddBond.bond` straight to the Viewport: a bond-query Filter keeps every bond and only marks the selection, so this one stream already carries all bonds, and the Viewport draws a single bond stream per structure
 
 Molecule 0 (the component containing atom 0) stays fully opaque, while every
 other molecule's atoms and bonds fade together — both Filter nodes derive
