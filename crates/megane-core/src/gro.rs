@@ -26,7 +26,7 @@
 /// nm/ps → Å/ps.
 use std::collections::HashSet;
 
-use crate::atomic::element_from_atom_name;
+use crate::atomic::element_from_atom_name_in_residue;
 use crate::bonds;
 use crate::parser::{FrameChange, HeteroFramesBuilder};
 use crate::trajectory::{VectorChannel, VectorFrame};
@@ -150,9 +150,12 @@ fn parse_frame_block(
             };
             labels.push(format!("{}{}", res_name, res_num));
 
-            // Atom name: columns 11-15 (0-indexed: 10..15)
+            // Atom name: columns 11-15 (0-indexed: 10..15). GRO carries no
+            // element column, so the element comes from the name read in the
+            // context of its residue: a protein "CA" is a Cα carbon, an ion
+            // residue "CA" is calcium.
             let atom_name = if line.len() >= 15 { &line[10..15] } else { "" };
-            elements.push(element_from_atom_name(atom_name));
+            elements.push(element_from_atom_name_in_residue(atom_name, res_name));
         }
 
         // Positions in nm → Angstrom (×10)
@@ -324,22 +327,12 @@ pub fn parse(text: &str) -> Result<crate::parser::ParsedStructure, String> {
         elements,
         bonds,
         n_file_bonds: 0,
-        bond_orders: None,
         box_matrix,
-        box_origin: None,
         frame_positions_flat,
         atom_labels,
-        chain_ids: None,
-        bfactors: None,
         vector_channels,
-        ca_indices: vec![],
-        ca_chain_ids: vec![],
-        ca_res_nums: vec![],
-        ca_ss_type: vec![],
-        symmetry_ops: Vec::new(),
-        scalar_channels: Vec::new(),
-        warnings: Vec::new(),
         hetero,
+        ..Default::default()
     })
 }
 
@@ -386,6 +379,29 @@ mod tests {
         assert_eq!(result.elements[0], 8); // O
         assert_eq!(result.elements[1], 1); // H
         assert_eq!(result.elements[2], 1); // H
+    }
+
+    #[test]
+    fn test_gro_protein_atom_names_resolve_by_residue() {
+        // Protein atom names whose two-letter reading is a real element
+        // (Ca, Hg, Ne, Cd, Sg) must resolve by their first letter inside
+        // standard residues, while ion residues keep the two-letter element.
+        let gro = "\
+protein + ions
+9
+    1ALA     CA    1   0.100   0.100   0.100
+    1ALA     CB    2   0.200   0.100   0.100
+    2SER     HG    3   0.300   0.100   0.100
+    3ARG     NE    4   0.400   0.100   0.100
+    3ARG     CD    5   0.500   0.100   0.100
+    4CYS     SG    6   0.600   0.100   0.100
+    5CA      CA    7   0.700   0.100   0.100
+    6NA      NA    8   0.800   0.100   0.100
+    7CL      CL    9   0.900   0.100   0.100
+   2.00000   2.00000   2.00000
+";
+        let result = parse(gro).expect("parse failed");
+        assert_eq!(result.elements, vec![6, 6, 1, 7, 6, 16, 20, 11, 17]);
     }
 
     #[test]

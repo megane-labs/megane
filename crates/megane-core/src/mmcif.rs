@@ -9,7 +9,7 @@
 /// cartoon rendering.
 use std::collections::{HashMap, HashSet};
 
-use crate::atomic::{capitalize, symbol_to_atomic_num};
+use crate::atomic::element_from_symbol;
 use crate::bonds;
 use crate::parser::{cell_params_to_matrix, FrameChange, HeteroFramesBuilder, ParsedStructure};
 
@@ -133,21 +133,6 @@ fn strip_quotes(s: &str) -> &str {
     } else {
         s
     }
-}
-
-/// Extract element atomic number from a type_symbol field (`C`, `N`, `FE`, …).
-fn element_from_type_symbol(s: &str) -> u8 {
-    let cleaned: String = s.chars().take_while(|c| c.is_alphabetic()).collect();
-    if cleaned.is_empty() {
-        return 0;
-    }
-    let cap = capitalize(&cleaned);
-    let z = symbol_to_atomic_num(&cap);
-    if z > 0 {
-        return z;
-    }
-    let first = capitalize(&cleaned[..1]);
-    symbol_to_atomic_num(&first)
 }
 
 // ---------------------------------------------------------------------------
@@ -582,7 +567,7 @@ pub fn parse(text: &str) -> Result<ParsedStructure, String> {
                 let elem = cols
                     .type_symbol
                     .and_then(|c| raw_fields.get(c))
-                    .map(|s| element_from_type_symbol(strip_quotes(s)))
+                    .map(|s| element_from_symbol(strip_quotes(s)))
                     .unwrap_or(0);
 
                 // Model membership: rows are grouped by model number; the
@@ -840,22 +825,19 @@ pub fn parse(text: &str) -> Result<ParsedStructure, String> {
         elements,
         bonds: all_bonds,
         n_file_bonds,
-        bond_orders: None,
         box_matrix,
-        box_origin: None,
         frame_positions_flat,
         atom_labels: if has_labels { Some(atom_labels) } else { None },
         chain_ids: if has_chain_ids { Some(chain_ids) } else { None },
         bfactors: if has_bfactors { Some(bfactors) } else { None },
-        vector_channels: vec![],
         ca_indices,
         ca_chain_ids,
         ca_res_nums,
         ca_ss_type,
         symmetry_ops: crate::cif::extract_symmetry_ops(text),
-        scalar_channels: Vec::new(),
         warnings,
         hetero,
+        ..Default::default()
     })
 }
 
@@ -1407,12 +1389,12 @@ A 1 ALA A 3 ALA A 4
     }
 
     #[test]
-    fn test_element_from_type_symbol() {
-        assert_eq!(element_from_type_symbol("C"), 6);
-        assert_eq!(element_from_type_symbol("N"), 7);
-        assert_eq!(element_from_type_symbol("O"), 8);
-        assert_eq!(element_from_type_symbol("S"), 16);
-        assert_eq!(element_from_type_symbol("FE"), 26);
-        assert_eq!(element_from_type_symbol("ZN"), 30);
+    fn test_element_from_symbol() {
+        assert_eq!(element_from_symbol("C"), 6);
+        assert_eq!(element_from_symbol("N"), 7);
+        assert_eq!(element_from_symbol("O"), 8);
+        assert_eq!(element_from_symbol("S"), 16);
+        assert_eq!(element_from_symbol("FE"), 26);
+        assert_eq!(element_from_symbol("ZN"), 30);
     }
 }

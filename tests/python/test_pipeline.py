@@ -27,6 +27,7 @@ from megane.pipeline import (
     Replicate,
     Representation,
     SpectrumPlot,
+    SurfaceMesh,
     Symmetry,
     VectorOverlay,
     Viewport,
@@ -88,6 +89,12 @@ class TestNodeClasses:
         assert n.nx == 2
         assert n.ny == 3
         assert n.nz == 4
+
+    def test_replicate_trajectory_ports(self):
+        """Replicate exposes the TS trajectory pass-through ports."""
+        n = Replicate()
+        assert n.inp.traj.handle == "trajectory"
+        assert n.out.traj.handle == "trajectory"
 
     def test_symmetry_defaults(self):
         n = Symmetry()
@@ -165,6 +172,21 @@ class TestNodeClasses:
         n = AddPolyhedra()
         assert n.opacity == 0.5
         assert n.show_edges is False
+
+    def test_surface_mesh(self):
+        n = SurfaceMesh(alpha_radius=2.5, color="#ff0000", opacity=0.8)
+        assert n.alpha_radius == 2.5
+        assert n.color == "#ff0000"
+        assert n.opacity == 0.8
+        assert n._node_type == "surface_mesh"
+        assert n.inp.particle.handle == "particle"
+        assert n.out.mesh.handle == "mesh"
+
+    def test_surface_mesh_defaults(self):
+        n = SurfaceMesh()
+        assert n.alpha_radius == 3.0
+        assert n.color == "#4488ff"
+        assert n.opacity == 0.5
 
     def test_drawing_boundary(self):
         n = DrawingBoundary(x_min=-0.1, x_max=1.1, z_max=2.0)
@@ -836,6 +858,56 @@ class TestPipelineSerialization:
         poly_node = next(n for n in result["nodes"] if n["type"] == "polyhedron_generator")
         assert poly_node["opacity"] == 0.7
         assert "excludedCenters" not in poly_node
+
+    def test_surface_mesh_round_trip(self):
+        """A surface-mesh branch serializes its params and survives from_dict()."""
+        pipe = Pipeline()
+        s = pipe.add_node(LoadStructure(str(FIXTURES / "1crn.pdb")))
+        sm = pipe.add_node(SurfaceMesh(alpha_radius=4.0, color="#22cc88", opacity=0.3))
+        v = pipe.add_node(Viewport())
+        pipe.add_edge(s.out.particle, sm.inp.particle)
+        pipe.add_edge(sm.out.mesh, v.inp.mesh)
+        result = pipe.to_dict()
+
+        serialized = next(n for n in result["nodes"] if n["id"] == sm._id)
+        assert serialized["type"] == "surface_mesh"
+        assert serialized["alphaRadius"] == 4.0
+        assert serialized["color"] == "#22cc88"
+        assert serialized["opacity"] == 0.3
+        assert {
+            "source": sm._id,
+            "target": v._id,
+            "sourceHandle": "mesh",
+            "targetHandle": "mesh",
+        } in result["edges"]
+
+        rebuilt = Pipeline.from_dict(result)
+        rebuilt_node = next(
+            value for value, config in rebuilt._nodes.values()
+            if config["type"] == "surface_mesh"
+        )
+        assert isinstance(rebuilt_node, SurfaceMesh)
+        assert rebuilt_node.alpha_radius == 4.0
+        assert rebuilt_node.color == "#22cc88"
+        assert rebuilt_node.opacity == 0.3
+        assert rebuilt.to_dict() == result
+
+    def test_surface_mesh_from_dict_fills_ts_defaults(self):
+        """A surface_mesh node missing its params gets the TS defaultParams values."""
+        d = {"version": 3, "nodes": [{"id": "surface_mesh-1", "type": "surface_mesh"}], "edges": []}
+        node, config = Pipeline.from_dict(d)._nodes["surface_mesh-1"]
+        assert isinstance(node, SurfaceMesh)
+        assert config["alphaRadius"] == 3.0
+        assert config["color"] == "#4488ff"
+        assert config["opacity"] == 0.5
+
+    def test_filter_from_dict_missing_query_uses_ts_default(self):
+        """A filter node without ``query`` falls back to TS's ``""`` (select all)."""
+        d = {"version": 3, "nodes": [{"id": "filter-1", "type": "filter"}], "edges": []}
+        node, config = Pipeline.from_dict(d)._nodes["filter-1"]
+        assert isinstance(node, Filter)
+        assert config["query"] == ""
+        assert config["bond_query"] == ""
 
     def test_isosurface_color_by_volume_round_trip(self):
         pipe = Pipeline()

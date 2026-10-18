@@ -14,9 +14,10 @@ local `playwright` 1.56 devDependency installed by `npm ci`.
 The surviving legacy `*.mjs` scripts (`tests/e2e/perf_app.test.mjs`,
 `perf_widget.test.mjs`, `widget_interaction.test.mjs`,
 `test_notebook_screenshots.mjs`, `test_vscode_render.mjs`,
-`vscode_full_screen.test.mjs`) resolve Playwright through
-`createRequire("/opt/node22/lib/node_modules/")`. The shared helper is
-`tests/e2e/utils/playwright.mjs` — reuse it instead of duplicating the
+`vscode_full_screen.test.mjs`) and the browser scripts under `scripts/`
+resolve Playwright through the shared helper `tests/e2e/utils/playwright.mjs`
+(`getChromium()`: project `node_modules` first, then the global install at
+`/opt/node22/lib/node_modules/`) — reuse it instead of adding a
 `createRequire` block. `puppeteer` is **not** in `package.json`; never
 add it.
 
@@ -301,6 +302,27 @@ These are scheduled to be removed once their coverage is fully
 replicated by the spec.ts suite. The deleted `snapshot.test.mjs` and
 `test_widget_render.mjs` runners have already been retired in favour of
 the Playwright projects.
+
+## Performance A/B harness (AGENTS.md rule #10)
+
+Each profiler starts its own server (Vite, or a static server over the
+`npm run build:app` output for `profile-startup.mjs`) and prints its numbers; run
+both arms against the same `.wasm` (absolute numbers are inflated when the
+local build skipped `wasm-opt`, the relative A/B is still valid).
+
+```
+node scripts/profile-startup.mjs              # production-build startup, bytes, heap, per-process memory
+node scripts/profile-loading.mjs              # structure load time across fixture sizes
+node scripts/profile-streaming.mjs            # eager-vs-lazy multi-frame XYZ/PDB (__MEGANE_LAZY_XTC__)
+node scripts/profile-trajectory.mjs           # eager-vs-lazy XTC / LAMMPS dump (__MEGANE_LAZY_XTC__)
+node scripts/profile-trajectory-frame0.mjs    # two-phase frame-0 read vs single read (__MEGANE_TRAJ_FRAME0__)
+npm run profile:render-fps                    # render-loop FPS
+```
+
+The trajectory profilers default to `caffeine_water.pdb` +
+`caffeine_water_vibration.xtc`, which only smoke-tests the harness; set
+`TRAJ_FIXTURE` (and `STRUCT_FIXTURE` to match its atom count) to a multi-MB
+trajectory for a real measurement.
 
 ## Run All Tests
 

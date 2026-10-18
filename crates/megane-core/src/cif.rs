@@ -4,7 +4,7 @@
 /// and atom sites (_atom_site loop) with fractional or Cartesian coordinates.
 use std::collections::HashSet;
 
-use crate::atomic::{capitalize, symbol_to_atomic_num};
+use crate::atomic::element_from_symbol;
 use crate::bonds;
 use crate::parser::{cell_params_to_matrix, ParsedStructure};
 
@@ -80,24 +80,6 @@ fn fract_to_cart(fx: f32, fy: f32, fz: f32, matrix: &[f32; 9]) -> (f32, f32, f32
     let y = fx * matrix[1] + fy * matrix[4] + fz * matrix[7];
     let z = fx * matrix[2] + fy * matrix[5] + fz * matrix[8];
     (x, y, z)
-}
-
-/// Extract element symbol from a CIF type_symbol or label field.
-/// type_symbol may contain charge like "Fe2+" or "O2-"; label may be "Na1", "O2".
-fn element_from_symbol(s: &str) -> u8 {
-    // Strip charge suffixes like "2+", "3-", "+", "-"
-    let cleaned: String = s.chars().take_while(|c| c.is_alphabetic()).collect();
-    if cleaned.is_empty() {
-        return 0;
-    }
-    let capitalized = capitalize(&cleaned);
-    let z = symbol_to_atomic_num(&capitalized);
-    if z > 0 {
-        return z;
-    }
-    // Try first character only
-    let first = capitalize(&cleaned[..1]);
-    symbol_to_atomic_num(&first)
 }
 
 /// CIF/mmCIF loop tags whose column holds a symmetry operation string.
@@ -485,22 +467,10 @@ pub fn parse(text: &str) -> Result<ParsedStructure, String> {
         elements,
         bonds,
         n_file_bonds: 0,
-        bond_orders: None,
         box_matrix,
-        box_origin: None,
-        frame_positions_flat: Vec::new(),
         atom_labels: labels,
-        chain_ids: None,
-        bfactors: None,
-        vector_channels: vec![],
-        ca_indices: vec![],
-        ca_chain_ids: vec![],
-        ca_res_nums: vec![],
-        ca_ss_type: vec![],
         symmetry_ops,
-        scalar_channels: Vec::new(),
-        warnings: Vec::new(),
-        hetero: None,
+        ..Default::default()
     })
 }
 
