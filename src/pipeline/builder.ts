@@ -25,7 +25,26 @@
  *   const json = pipe.toJSON()
  */
 
-import type { SerializedPipeline, EditOp } from "./types";
+import type {
+  SerializedPipeline,
+  EditOp,
+  PipelineNodeParams,
+  PipelineNodeType,
+  IsosurfaceColorMode,
+  VolumeColormap,
+} from "./types";
+import { defaultParams } from "./types";
+
+/** The params shape `defaultParams(type)` returns for one node type. */
+type ParamsOf<T extends PipelineNodeType> = Extract<PipelineNodeParams, { type: T }>;
+
+/**
+ * Defaults for a node type, read from `defaultParams` so the builder never
+ * keeps a second hand-written copy that could drift from the editor's.
+ */
+function defaultsOf<T extends PipelineNodeType>(type: T): ParamsOf<T> {
+  return defaultParams(type) as ParamsOf<T>;
+}
 
 // ─── Port Objects ────────────────────────────────────────────────────
 
@@ -142,8 +161,41 @@ export class LoadStructure extends PipelineNode {
   }
 }
 
+/** Options accepted by {@link LoadTrajectory}. */
+export interface LoadTrajectoryOptions {
+  /**
+   * Trajectory file path / URL, in any format the Load Trajectory node opens
+   * (`TRAJECTORY_EXTS`: XTC, DCD, AMBER NetCDF `.nc`, LAMMPS dump
+   * `.lammpstrj` / `.dump` / `.trj`) or a multi-frame structure file.
+   */
+  path?: string | null;
+  /** XTC trajectory (kept for the original `{ xtc }` API). */
+  xtc?: string | null;
+  /** CHARMM/NAMD/X-PLOR DCD trajectory. */
+  dcd?: string | null;
+  /** AMBER NetCDF trajectory. */
+  nc?: string | null;
+  /** ASE `.traj` file (kept for the original `{ traj }` API). */
+  traj?: string | null;
+  /** Multi-frame XYZ file. */
+  xyz?: string | null;
+  /** LAMMPS dump trajectory (`.lammpstrj` / `.dump` / `.trj`). */
+  lammpstrj?: string | null;
+  /**
+   * `"file"` (the default) plays the file above; `"structure"` forwards the
+   * frames embedded in the upstream structure file instead.
+   */
+  source?: "file" | "structure";
+}
+
 /**
- * Load an external trajectory file (XTC or ASE .traj).
+ * Load an external trajectory file.
+ *
+ * Accepts any trajectory format the app opens — pass the path directly
+ * (`new LoadTrajectory("run.dcd")`) or as `{ path }`. The per-format keys
+ * mirror the Python builder (`{ xtc }`, `{ dcd }`, `{ nc }`, `{ traj }`,
+ * `{ xyz }`, `{ lammpstrj }`); when several are given the first non-null one
+ * in that order wins, after `path`.
  *
  * Requires connection from a LoadStructure node.
  *
@@ -156,21 +208,41 @@ export class LoadTrajectory extends PipelineNode {
   protected readonly _outPorts = { traj: "trajectory" };
   protected readonly _inpPorts = { particle: "particle" };
 
+  public path: string | null;
   public xtc: string | null;
+  public dcd: string | null;
+  public nc: string | null;
   public traj: string | null;
+  public xyz: string | null;
+  public lammpstrj: string | null;
+  public source: "file" | "structure";
 
-  constructor({ xtc = null, traj = null }: { xtc?: string | null; traj?: string | null } = {}) {
+  constructor(pathOrOptions: string | LoadTrajectoryOptions = {}) {
     super();
-    this.xtc = xtc;
-    this.traj = traj;
+    const opts: LoadTrajectoryOptions =
+      typeof pathOrOptions === "string" ? { path: pathOrOptions } : pathOrOptions;
+    this.path = opts.path ?? null;
+    this.xtc = opts.xtc ?? null;
+    this.dcd = opts.dcd ?? null;
+    this.nc = opts.nc ?? null;
+    this.traj = opts.traj ?? null;
+    this.xyz = opts.xyz ?? null;
+    this.lammpstrj = opts.lammpstrj ?? null;
+    this.source = opts.source ?? (defaultsOf("load_trajectory").source as "file" | "structure");
+  }
+
+  /** The file this node serializes: `path`, else the first per-format key set. */
+  get fileName(): string | null {
+    return this.path ?? this.xtc ?? this.dcd ?? this.nc ?? this.traj ?? this.xyz ?? this.lammpstrj;
   }
 
   _toSerializedParams() {
-    const file = this.xtc ?? this.traj;
+    const file = this.fileName;
     return {
       type: this.nodeType,
       fileName: file,
       fileUrl: file,
+      source: this.source,
     };
   }
 }
@@ -401,6 +473,41 @@ export class Wrap extends PipelineNode {
 }
 
 /**
+ * OVITO/VESTA-style supercell builder: copies every atom (and its bonds) into
+ * an `nx × ny × nz` grid of cell images and enlarges the simulation cell.
+ * Requires a unit cell on the input; without one the input passes through.
+ *
+ * Ports:
+ *   inp.particle — atom data in
+ *   inp.cell     — simulation cell in
+ *   inp.traj     — trajectory in
+ *   out.particle — replicated atom data
+ *   out.cell     — enlarged simulation cell
+ *   out.traj     — replicated trajectory
+ */
+export class Replicate extends PipelineNode {
+  readonly nodeType = "replicate";
+  protected readonly _outPorts = { particle: "particle", cell: "cell", traj: "trajectory" };
+  protected readonly _inpPorts = { particle: "particle", cell: "cell", traj: "trajectory" };
+
+  public nx: number;
+  public ny: number;
+  public nz: number;
+
+  constructor({ nx, ny, nz }: { nx?: number; ny?: number; nz?: number } = {}) {
+    super();
+    const d = defaultsOf("replicate");
+    this.nx = nx ?? d.nx;
+    this.ny = ny ?? d.ny;
+    this.nz = nz ?? d.nz;
+  }
+
+  _toSerializedParams() {
+    return { type: this.nodeType, nx: this.nx, ny: this.ny, nz: this.nz };
+  }
+}
+
+/**
  * Per-stream coloring (Ovito-style). The Viewport reads color overrides
  * directly off the particle stream, so multiple Color nodes can stack.
  *
@@ -611,6 +718,177 @@ export class AddPolyhedra extends PipelineNode {
 }
 
 /**
+ * OVITO-style surface mesh: an alpha-shape envelope around the particles.
+ *
+ * Ports:
+ *   inp.particle — atom data
+ *   out.mesh     — surface mesh
+ */
+export class SurfaceMesh extends PipelineNode {
+  readonly nodeType = "surface_mesh";
+  protected readonly _outPorts = { mesh: "mesh" };
+  protected readonly _inpPorts = { particle: "particle" };
+
+  public alphaRadius: number;
+  public color: string;
+  public opacity: number;
+
+  constructor({
+    alphaRadius,
+    color,
+    opacity,
+  }: { alphaRadius?: number; color?: string; opacity?: number } = {}) {
+    super();
+    const d = defaultsOf("surface_mesh");
+    this.alphaRadius = alphaRadius ?? d.alphaRadius;
+    this.color = color ?? d.color;
+    this.opacity = opacity ?? d.opacity;
+  }
+
+  _toSerializedParams() {
+    return {
+      type: this.nodeType,
+      alphaRadius: this.alphaRadius,
+      color: this.color,
+      opacity: this.opacity,
+    };
+  }
+}
+
+/**
+ * Load a volumetric grid (Gaussian CUBE, OpenDX, ...). The file is parsed in
+ * the browser; this node only records its name.
+ *
+ * Ports:
+ *   out.volumetric — volumetric data
+ */
+export class LoadVolumetric extends PipelineNode {
+  readonly nodeType = "load_volumetric";
+  protected readonly _outPorts = { volumetric: "volumetric" };
+  protected readonly _inpPorts: Record<string, string> = {};
+
+  constructor(public path: string) {
+    super();
+  }
+
+  _toSerializedParams() {
+    return { type: this.nodeType, fileName: this.path, fileUrl: this.path };
+  }
+}
+
+/** Options accepted by {@link Isosurface}. */
+export interface IsosurfaceOptions {
+  isoLevel?: number;
+  color?: string;
+  opacity?: number;
+  showNegative?: boolean;
+  negativeColor?: string;
+  colorMode?: IsosurfaceColorMode;
+  colormap?: VolumeColormap;
+  colorRange?: [number, number];
+}
+
+/**
+ * Extract an isosurface from volumetric data (marching cubes). With
+ * `colorMode: "volume"` the surface is painted by sampling the volume wired
+ * into `inp.colorVolumetric` through `colormap`.
+ *
+ * Ports:
+ *   inp.volumetric      — volumetric data
+ *   inp.colorVolumetric — optional volume sampled for coloring
+ *   out.mesh            — isosurface mesh
+ */
+export class Isosurface extends PipelineNode {
+  readonly nodeType = "isosurface";
+  protected readonly _outPorts = { mesh: "mesh" };
+  protected readonly _inpPorts = { volumetric: "volumetric", colorVolumetric: "colorVolumetric" };
+
+  public isoLevel: number;
+  public color: string;
+  public opacity: number;
+  public showNegative: boolean;
+  public negativeColor: string;
+  public colorMode: IsosurfaceColorMode;
+  public colormap: VolumeColormap;
+  public colorRange?: [number, number];
+
+  constructor(options: IsosurfaceOptions = {}) {
+    super();
+    const d = defaultsOf("isosurface");
+    this.isoLevel = options.isoLevel ?? d.isoLevel;
+    this.color = options.color ?? d.color;
+    this.opacity = options.opacity ?? d.opacity;
+    this.showNegative = options.showNegative ?? d.showNegative;
+    this.negativeColor = options.negativeColor ?? d.negativeColor;
+    this.colorMode = options.colorMode ?? d.colorMode;
+    this.colormap = options.colormap ?? d.colormap;
+    this.colorRange = options.colorRange ?? d.colorRange;
+  }
+
+  _toSerializedParams() {
+    const base: Record<string, unknown> = {
+      type: this.nodeType,
+      isoLevel: this.isoLevel,
+      color: this.color,
+      opacity: this.opacity,
+      showNegative: this.showNegative,
+      negativeColor: this.negativeColor,
+      colorMode: this.colorMode,
+      colormap: this.colormap,
+    };
+    if (this.colorRange !== undefined) base.colorRange = this.colorRange;
+    return base;
+  }
+}
+
+/**
+ * Load a JCAMP-DX spectrum (`.jdx` / `.jcamp` / `.dx`). A spectrum has no 3D
+ * coordinates, so it flows to {@link SpectrumPlot} rather than the Viewport.
+ *
+ * Ports:
+ *   out.spectrum — spectrum data
+ */
+export class LoadSpectrum extends PipelineNode {
+  readonly nodeType = "load_spectrum";
+  protected readonly _outPorts = { spectrum: "spectrum" };
+  protected readonly _inpPorts: Record<string, string> = {};
+
+  constructor(public path: string) {
+    super();
+  }
+
+  _toSerializedParams() {
+    return { type: this.nodeType, fileName: this.path, fileUrl: this.path };
+  }
+}
+
+/**
+ * Draw a spectrum as a 2D line chart. Terminal node, like the Viewport.
+ *
+ * Ports:
+ *   inp.spectrum — spectrum data
+ */
+export class SpectrumPlot extends PipelineNode {
+  readonly nodeType = "spectrum_plot";
+  protected readonly _outPorts: Record<string, string> = {};
+  protected readonly _inpPorts = { spectrum: "spectrum" };
+
+  public reverseX: boolean;
+  public color: string;
+
+  constructor({ reverseX, color }: { reverseX?: boolean; color?: string } = {}) {
+    super();
+    const d = defaultsOf("spectrum_plot");
+    this.reverseX = reverseX ?? d.reverseX;
+    this.color = color ?? d.color;
+  }
+
+  _toSerializedParams() {
+    return { type: this.nodeType, reverseX: this.reverseX, color: this.color };
+  }
+}
+
+/**
  * Configure per-atom vector visualization (e.g. forces, velocities).
  *
  * Ports:
@@ -687,6 +965,48 @@ export class Viewport extends PipelineNode {
     };
   }
 }
+
+// ─── Node Registry ───────────────────────────────────────────────────
+
+/** A builder node class whose instances serialize as node type `T`. */
+type BuilderNodeClass<T extends PipelineNodeType> = new (
+  ...args: never[]
+) => PipelineNode & { readonly nodeType: T };
+
+/**
+ * Every builder node class, keyed by the node type it serializes to.
+ *
+ * The `satisfies` clause makes this exhaustive: adding a member to
+ * `PipelineNodeType` without a builder class here — or registering a class
+ * under the wrong key — is a compile error. `tests/ts/pipeline/builderCoverage.test.ts`
+ * checks the same at runtime, plus ports and serialize round-trips.
+ */
+export const BUILDER_NODE_CLASSES = {
+  load_structure: LoadStructure,
+  load_trajectory: LoadTrajectory,
+  load_vector: LoadVector,
+  streaming: Streaming,
+  add_bond: AddBonds,
+  coordination_generator: AddCoordination,
+  viewport: Viewport,
+  filter: Filter,
+  modify: Modify,
+  symmetry: Symmetry,
+  wrap: Wrap,
+  replicate: Replicate,
+  drawing_boundary: DrawingBoundary,
+  boundary_completion: BoundaryCompletion,
+  color: Color,
+  representation: Representation,
+  label_generator: AddLabels,
+  polyhedron_generator: AddPolyhedra,
+  surface_mesh: SurfaceMesh,
+  vector_overlay: VectorOverlay,
+  load_volumetric: LoadVolumetric,
+  isosurface: Isosurface,
+  load_spectrum: LoadSpectrum,
+  spectrum_plot: SpectrumPlot,
+} satisfies { [T in PipelineNodeType]: BuilderNodeClass<T> };
 
 // ─── Pipeline Builder ─────────────────────────────────────────────────
 
