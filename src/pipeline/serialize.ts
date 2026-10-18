@@ -408,7 +408,11 @@ function normalizePipeline(
     if (!particleConnected) {
       pushEdge(loader.id, "particle", viewport.id, "particle");
     }
-    pushEdge(loader.id, "cell", viewport.id, "cell");
+    // Same guard for the cell: a replicate node feeding viewport.cell already
+    // draws the (super)cell, and the loader's own cell would sit on top of it.
+    if (!outEdges.some((e) => e.target === viewport.id && (e.targetHandle ?? "") === "cell")) {
+      pushEdge(loader.id, "cell", viewport.id, "cell");
+    }
 
     const loaderParams = loader.data.params as { hasTrajectory?: boolean };
     if (loaderParams.hasTrajectory) {
@@ -426,6 +430,25 @@ function normalizePipeline(
  * exists. When no path exists we fall back to the first viewport so the
  * bond/cell/trajectory ports can still be wired up.
  */
+/**
+ * Nodes whose particle output is (a transform of) their particle input, so a
+ * loader still "reaches" the viewport through them. The crystal nodes are in
+ * the list because every default graph runs loader → symmetry → wrap →
+ * replicate → viewport; without them a re-opened default pipeline gained a
+ * second, untransformed loader → viewport stream.
+ */
+const PARTICLE_PASSTHROUGH_TYPES = new Set<PipelineNodeType>([
+  "filter",
+  "modify",
+  "color",
+  "representation",
+  "drawing_boundary",
+  "boundary_completion",
+  "symmetry",
+  "wrap",
+  "replicate",
+]);
+
 function findReachableViewport(
   nodes: Node<PipelineNodeData>[],
   edges: Edge[],
@@ -456,15 +479,7 @@ function findReachableViewport(
       }
       const tgt = nodes.find((n) => n.id === e.target);
       if (!tgt) continue;
-      if (
-        tgt.type !== "filter" &&
-        tgt.type !== "modify" &&
-        tgt.type !== "color" &&
-        tgt.type !== "representation" &&
-        tgt.type !== "drawing_boundary" &&
-        tgt.type !== "boundary_completion"
-      )
-        continue;
+      if (!PARTICLE_PASSTHROUGH_TYPES.has(tgt.type as PipelineNodeType)) continue;
       if (!visited.has(tgt.id)) {
         visited.add(tgt.id);
         stack.push(tgt.id);

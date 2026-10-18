@@ -283,8 +283,15 @@ function applyLayerParticleOverrides(
 
 /**
  * Merge per-atom overrides across multiple particle streams targeting the
- * same structure. Scale / opacity collapse to "any non-1.0 wins"; color
- * collapses to "any non-NaN wins" (last-write semantics in stream order).
+ * same structure.
+ *
+ * Whole-structure streams (`indices === null`) lay down the base, in stream
+ * order: scale / opacity take any non-1.0 value, color any non-NaN one. Then
+ * each selection stream writes its own values over the atoms it covers — so a
+ * selection can override a global setting in either direction (a layer at
+ * scale 1.0 restores full size under a global 0.5). When no whole-structure
+ * stream carries an override, the first selection stream's array is the base,
+ * as before.
  */
 function mergeParticleOverrides(particles: ParticleData[]): {
   scale: Float32Array | null;
@@ -295,10 +302,18 @@ function mergeParticleOverrides(particles: ParticleData[]): {
   let opacity: Float32Array | null = null;
   let color: Float32Array | null = null;
 
-  for (const p of particles) {
+  const ordered = [
+    ...particles.filter((p) => p.indices === null),
+    ...particles.filter((p) => p.indices !== null),
+  ];
+
+  for (const p of ordered) {
+    const subset = p.indices;
     if (p.scaleOverrides) {
       if (!scale) {
         scale = new Float32Array(p.scaleOverrides);
+      } else if (subset) {
+        for (const i of subset) if (i < scale.length) scale[i] = p.scaleOverrides[i];
       } else {
         for (let i = 0; i < scale.length; i++) {
           if (p.scaleOverrides[i] !== 1.0) {
@@ -310,6 +325,8 @@ function mergeParticleOverrides(particles: ParticleData[]): {
     if (p.opacityOverrides) {
       if (!opacity) {
         opacity = new Float32Array(p.opacityOverrides);
+      } else if (subset) {
+        for (const i of subset) if (i < opacity.length) opacity[i] = p.opacityOverrides[i];
       } else {
         for (let i = 0; i < opacity.length; i++) {
           if (p.opacityOverrides[i] !== 1.0) {
@@ -322,13 +339,15 @@ function mergeParticleOverrides(particles: ParticleData[]): {
       if (!color) {
         color = new Float32Array(p.colorOverrides);
       } else {
-        for (let i = 0; i < color.length; i += 3) {
-          if (!Number.isNaN(p.colorOverrides[i])) {
-            color[i] = p.colorOverrides[i];
-            color[i + 1] = p.colorOverrides[i + 1];
-            color[i + 2] = p.colorOverrides[i + 2];
-          }
-        }
+        const write = (i: number) => {
+          const o = i * 3;
+          if (o + 2 >= color!.length || Number.isNaN(p.colorOverrides![o])) return;
+          color![o] = p.colorOverrides![o];
+          color![o + 1] = p.colorOverrides![o + 1];
+          color![o + 2] = p.colorOverrides![o + 2];
+        };
+        if (subset) for (const i of subset) write(i);
+        else for (let i = 0; i < color.length / 3; i++) write(i);
       }
     }
   }
