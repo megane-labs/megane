@@ -57,9 +57,12 @@ Surfaces 1–5, 7 and 8 are compile-enforced (see above; `defaultParams()` and
 the node actually _do_ something and appear on the canvas. 13–14 are only needed
 for the programmatic `Pipeline` builders — but note that the catalog's
 `pythonClass` names the class users import from `megane`, and
-`tests/ts/pipeline/catalog.test.ts` only allows `pythonClass: null` for
-`surface_mesh`, so in practice ship the Python subclass too (or update that test
-deliberately).
+`tests/ts/pipeline/catalog.test.ts` requires one for every node, so ship the
+Python subclass too. `tests/python/test_pipeline_node_drift.py` then checks the
+class against the TS contract (`tests/fixtures/pipeline_node_contract.json`,
+regenerated with `MEGANE_UPDATE_NODE_CONTRACT=1 npx vitest run
+tests/ts/pipeline/nodeContractFixture.test.ts`): same `type`, same port names,
+and every TS default param surviving `Pipeline.from_dict()` → `to_dict()`.
 
 ## Rules
 
