@@ -6,8 +6,9 @@ use std::collections::HashSet;
 
 use crate::atomic::element_from_symbol;
 use crate::bonds;
+use crate::cell::cell_params_to_matrix;
 use crate::cif_lex::{contains_ci, split_line, starts_with_ci, strip_quotes, Document, Item};
-use crate::parser::{cell_params_to_matrix, ParsedStructure};
+use crate::structure::ParsedStructure;
 
 /// Determine column indices from the loop_ header tags.
 struct AtomSiteColumns {
