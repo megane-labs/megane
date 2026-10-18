@@ -428,6 +428,18 @@ pub const FILE_BOND_EXTS: [&str; 11] = [
     ".odydata",
 ];
 
+/// Flatten bond pairs `[(a0, b0), (a1, b1), …]` into `[a0, b0, a1, b1, …]`,
+/// the layout every binding hands to its host (a `Uint32Array` in the browser,
+/// an `(n, 2)` array after a reshape in Python).
+pub fn flatten_pairs(pairs: &[(u32, u32)]) -> Vec<u32> {
+    let mut flat = Vec::with_capacity(pairs.len() * 2);
+    for &(a, b) in pairs {
+        flat.push(a);
+        flat.push(b);
+    }
+    flat
+}
+
 /// The default AddBond source for a structure file: `"structure"` for
 /// formats that embed bonds, `"distance"` (VDW inference) otherwise.
 /// Matching is by case-insensitive filename suffix.
@@ -443,6 +455,15 @@ pub fn default_bond_source(filename: &str) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn flatten_pairs_interleaves_each_pair() {
+        assert_eq!(flatten_pairs(&[]), Vec::<u32>::new());
+        assert_eq!(
+            flatten_pairs(&[(0, 1), (2, 5), (7, 3)]),
+            vec![0, 1, 2, 5, 7, 3]
+        );
+    }
 
     #[test]
     fn default_bond_source_uses_file_bonds_for_embedding_formats() {

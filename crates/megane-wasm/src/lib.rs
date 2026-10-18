@@ -1,10 +1,9 @@
 use js_sys::{Float32Array, Float64Array, Object, Reflect, Uint32Array, Uint8Array};
 use wasm_bindgen::prelude::*;
 
+use megane_core::formats::{self, StructureFormat, TrajectoryFormat};
 use megane_core::{
-    amber, bonds, c3xml, cif, cml, dcd, gamess, gro, jcampdx, lammps_data, lammpstrj, magres,
-    mmcif, mol, mol2, molden, netcdf, odydata, parser, phonon, psf, top, traj, vasp, writer, xsf,
-    xtc, xyz,
+    bonds, gro, jcampdx, lammps_data, lammpstrj, parser, psf, top, writer, xtc, xyz,
 };
 
 /// Serialize a slice of `VectorChannel`s into two parallel outputs:
@@ -378,11 +377,7 @@ impl ParseResult {
 impl ParseResult {
     fn from_parsed(data: parser::ParsedStructure) -> Self {
         let n_bonds = data.bonds.len() as u32;
-        let mut bonds_flat: Vec<u32> = Vec::with_capacity(data.bonds.len() * 2);
-        for (a, b) in &data.bonds {
-            bonds_flat.push(*a);
-            bonds_flat.push(*b);
-        }
+        let bonds_flat = bonds::flatten_pairs(&data.bonds);
         let bond_orders = data
             .bond_orders
             .unwrap_or_else(|| vec![1u8; data.bonds.len()]);
@@ -690,12 +685,25 @@ impl XtcParseResult {
     }
 }
 
-/// Parse an XTC trajectory binary and return frame data.
-#[wasm_bindgen]
-pub fn parse_xtc_file(data: &[u8]) -> Result<XtcParseResult, JsError> {
-    let xtc_data = xtc::parse_xtc(data).map_err(|e| JsError::new(&e))?;
-    Ok(XtcParseResult::from_trajectory(xtc_data))
+/// Generates one `#[wasm_bindgen]` trajectory parser per
+/// `megane_core::for_each_trajectory_format!` entry (`parse_xtc_file`,
+/// `parse_dcd_file`, …), using the entry's WASM name.
+macro_rules! wasm_trajectory_parsers {
+    ($( $(#[doc = $doc:tt])* $variant:ident => $wasm:ident / $py:ident($arg:ident: $ty:ty); )*) => {
+        $(
+            $(#[doc = $doc])*
+            #[wasm_bindgen]
+            pub fn $wasm($arg: $ty) -> Result<XtcParseResult, JsError> {
+                let data = TrajectoryFormat::$variant
+                    .parse($arg.into())
+                    .map_err(|e| JsError::new(&e))?;
+                Ok(XtcParseResult::from_trajectory(data))
+            }
+        )*
+    };
 }
+
+megane_core::for_each_trajectory_format!(wasm_trajectory_parsers);
 
 /// Persistent XTC decoder for lazy/streaming playback.
 ///
@@ -1029,48 +1037,34 @@ pub fn decode_trajectory_frame0(
     Ok(Float32Array::from(&coords[..]))
 }
 
-/// Parse a PDB file text and return structured data for the molecular viewer.
-#[wasm_bindgen]
-pub fn parse_pdb(text: &str) -> Result<ParseResult, JsError> {
-    let data = parser::parse(text).map_err(|e| JsError::new(&e))?;
-    Ok(ParseResult::from_parsed(data))
+/// Generates one `#[wasm_bindgen]` structure parser per
+/// `megane_core::for_each_structure_format!` entry (`parse_pdb`, `parse_gro`,
+/// …). The registry is shared with the Python binding, so both hosts expose
+/// the same formats under the same names.
+macro_rules! wasm_structure_parsers {
+    ($( $(#[doc = $doc:tt])* $variant:ident => $binding:ident($arg:ident: $ty:ty); )*) => {
+        $(
+            $(#[doc = $doc])*
+            #[wasm_bindgen]
+            pub fn $binding($arg: $ty) -> Result<ParseResult, JsError> {
+                let data = StructureFormat::$variant
+                    .parse($arg.into())
+                    .map_err(|e| JsError::new(&e))?;
+                Ok(ParseResult::from_parsed(data))
+            }
+        )*
+    };
 }
 
-/// Parse a GRO file text and return structured data.
-#[wasm_bindgen]
-pub fn parse_gro(text: &str) -> Result<ParseResult, JsError> {
-    let data = gro::parse(text).map_err(|e| JsError::new(&e))?;
-    Ok(ParseResult::from_parsed(data))
-}
+megane_core::for_each_structure_format!(wasm_structure_parsers);
 
-/// Parse an XYZ file text and return structured data.
+/// The shared format registry as JSON (`megane_core::formats::registry_json`):
+/// every structure / trajectory format with its exported function names,
+/// encoding, and file extensions. Lets host tests check the exports and the
+/// extension tables against the one source of truth.
 #[wasm_bindgen]
-pub fn parse_xyz(text: &str) -> Result<ParseResult, JsError> {
-    let data = xyz::parse(text).map_err(|e| JsError::new(&e))?;
-    Ok(ParseResult::from_parsed(data))
-}
-
-/// Parse an XCrySDen structure file (`.xsf` / `.axsf`) and return structured
-/// data. An `ANIMSTEPS` animation yields a multi-frame structure.
-#[wasm_bindgen]
-pub fn parse_xsf(text: &str) -> Result<ParseResult, JsError> {
-    let data = xsf::parse(text).map_err(|e| JsError::new(&e))?;
-    Ok(ParseResult::from_parsed(data))
-}
-
-/// Parse a Chemical Markup Language (`.cml`) document and return structured data.
-#[wasm_bindgen]
-pub fn parse_cml(text: &str) -> Result<ParseResult, JsError> {
-    let data = cml::parse(text).map_err(|e| JsError::new(&e))?;
-    Ok(ParseResult::from_parsed(data))
-}
-
-/// Parse a VASP POSCAR / CONTCAR / XDATCAR (also `.vasp`) text and return
-/// structured data. An XDATCAR yields a multi-frame structure.
-#[wasm_bindgen]
-pub fn parse_vasp(text: &str) -> Result<ParseResult, JsError> {
-    let data = vasp::parse(text).map_err(|e| JsError::new(&e))?;
-    Ok(ParseResult::from_parsed(data))
+pub fn format_registry() -> String {
+    formats::registry_json()
 }
 
 /// A decoded JCAMP-DX spectrum, exposed to JavaScript.
@@ -1127,105 +1121,12 @@ pub fn parse_jcampdx(text: &str) -> Result<SpectrumResult, JsError> {
     })
 }
 
-/// Parse a Molden file (`.molden`) and return structured data. A `[GEOMETRIES] XYZ` block yields a multi-frame structure.
-#[wasm_bindgen]
-pub fn parse_molden(text: &str) -> Result<ParseResult, JsError> {
-    let data = molden::parse(text).map_err(|e| JsError::new(&e))?;
-    Ok(ParseResult::from_parsed(data))
-}
-
-/// Parse a Chem3D XML (`.c3xml`) document and return structured data.
-#[wasm_bindgen]
-pub fn parse_c3xml(text: &str) -> Result<ParseResult, JsError> {
-    let data = c3xml::parse(text).map_err(|e| JsError::new(&e))?;
-    Ok(ParseResult::from_parsed(data))
-}
-/// Parse a Wavefunction Odyssey (`.xodydata` / `.odydata`) file and return structured data. The XML and text flavours are detected from the content.
-#[wasm_bindgen]
-pub fn parse_odydata(text: &str) -> Result<ParseResult, JsError> {
-    let data = odydata::parse(text).map_err(|e| JsError::new(&e))?;
-    Ok(ParseResult::from_parsed(data))
-}
-/// Parse a CASTEP / Quantum ESPRESSO NMR `.magres` file and return structured data from its `[atoms]` block.
-#[wasm_bindgen]
-pub fn parse_magres(text: &str) -> Result<ParseResult, JsError> {
-    let data = magres::parse(text).map_err(|e| JsError::new(&e))?;
-    Ok(ParseResult::from_parsed(data))
-}
-/// Parse a GAMESS (US / Firefly) output file and return structured data. Each `COORDINATES OF ALL ATOMS ARE` block becomes a frame.
-#[wasm_bindgen]
-pub fn parse_gamess(text: &str) -> Result<ParseResult, JsError> {
-    let data = gamess::parse(text).map_err(|e| JsError::new(&e))?;
-    Ok(ParseResult::from_parsed(data))
-}
-/// Parse a CASTEP `.phonon` lattice-dynamics file and return the periodic structure from its header.
-#[wasm_bindgen]
-pub fn parse_phonon(text: &str) -> Result<ParseResult, JsError> {
-    let data = phonon::parse(text).map_err(|e| JsError::new(&e))?;
-    Ok(ParseResult::from_parsed(data))
-}
-
-/// Parse an MDL Molfile (V2000) text and return structured data.
-#[wasm_bindgen]
-pub fn parse_mol(text: &str) -> Result<ParseResult, JsError> {
-    let data = mol::parse(text).map_err(|e| JsError::new(&e))?;
-    Ok(ParseResult::from_parsed(data))
-}
-
-/// Parse a Tripos MOL2 file text and return structured data.
-#[wasm_bindgen]
-pub fn parse_mol2(text: &str) -> Result<ParseResult, JsError> {
-    let data = mol2::parse(text).map_err(|e| JsError::new(&e))?;
-    Ok(ParseResult::from_parsed(data))
-}
-
-/// Parse a CIF file text and return structured data.
-///
-/// Auto-detects mmCIF (PDBx/macromolecular) vs small-molecule CIF and routes
-/// to the appropriate parser.
-#[wasm_bindgen]
-pub fn parse_cif(text: &str) -> Result<ParseResult, JsError> {
-    let data = if mmcif::is_mmcif(text) {
-        mmcif::parse(text)
-    } else {
-        cif::parse(text)
-    }
-    .map_err(|e| JsError::new(&e))?;
-    Ok(ParseResult::from_parsed(data))
-}
-
-/// Parse an mmCIF (PDBx) file text and return structured data.
-#[wasm_bindgen]
-pub fn parse_mmcif(text: &str) -> Result<ParseResult, JsError> {
-    let data = mmcif::parse(text).map_err(|e| JsError::new(&e))?;
-    Ok(ParseResult::from_parsed(data))
-}
-
-/// Parse a LAMMPS data file text and return structured data.
-#[wasm_bindgen]
-pub fn parse_lammps_data(text: &str) -> Result<ParseResult, JsError> {
-    let data = lammps_data::parse(text).map_err(|e| JsError::new(&e))?;
-    Ok(ParseResult::from_parsed(data))
-}
-
-/// Parse an AMBER prmtop topology file (topology only, positions at origin).
-#[wasm_bindgen]
-pub fn parse_prmtop(text: &str) -> Result<ParseResult, JsError> {
-    let data = amber::parse_prmtop(text).map_err(|e| JsError::new(&e))?;
-    Ok(ParseResult::from_parsed(data))
-}
-
 /// Infer bonds using VDW radii (threshold = vdw_sum * 0.6).
 /// Returns flat Uint32Array [a0, b0, a1, b1, ...].
 #[wasm_bindgen]
 pub fn infer_bonds_vdw(positions: &[f32], elements: &[u8], n_atoms: u32) -> Uint32Array {
     let result = bonds::infer_bonds_vdw(positions, elements, n_atoms as usize);
-    let mut flat: Vec<u32> = Vec::with_capacity(result.len() * 2);
-    for (a, b) in &result {
-        flat.push(*a);
-        flat.push(*b);
-    }
-    Uint32Array::from(&flat[..])
+    Uint32Array::from(&bonds::flatten_pairs(&result)[..])
 }
 
 /// Serialize a structure as `xyz` (extended XYZ when a cell is given), `pdb`,
@@ -1268,8 +1169,6 @@ pub fn write_structure(
     writer::write(format, &view).map_err(|e| JsError::new(&e))
 }
 
-/// Parse GROMACS .top file and extract bond pairs.
-/// Returns flat Uint32Array [a0, b0, a1, b1, ...].
 /// The default AddBond source for a structure filename: `"structure"` for
 /// formats that embed bonds, `"distance"` (VDW inference) otherwise.
 /// Shared policy with the Python host (`megane_core::bonds::default_bond_source`).
@@ -1278,15 +1177,12 @@ pub fn default_bond_source(filename: &str) -> String {
     bonds::default_bond_source(filename).to_string()
 }
 
+/// Parse GROMACS .top file and extract bond pairs.
+/// Returns flat Uint32Array [a0, b0, a1, b1, ...].
 #[wasm_bindgen]
 pub fn parse_top_bonds(text: &str, n_atoms: u32) -> Uint32Array {
     let result = top::parse_top_bonds(text, n_atoms as usize);
-    let mut flat: Vec<u32> = Vec::with_capacity(result.len() * 2);
-    for (a, b) in &result {
-        flat.push(*a);
-        flat.push(*b);
-    }
-    Uint32Array::from(&flat[..])
+    Uint32Array::from(&bonds::flatten_pairs(&result)[..])
 }
 
 /// Parse a GROMACS `.top` text with `#include` resolution.
@@ -1320,13 +1216,7 @@ pub fn parse_top_bonds_with_includes(
     let vfs = top::VirtualTopFileSystem::new(files);
     let result =
         top::parse_top_bonds_with_fs(text, &vfs, n_atoms as usize).map_err(|e| JsError::new(&e))?;
-
-    let mut flat: Vec<u32> = Vec::with_capacity(result.len() * 2);
-    for (a, b) in &result {
-        flat.push(*a);
-        flat.push(*b);
-    }
-    Ok(Uint32Array::from(&flat[..]))
+    Ok(Uint32Array::from(&bonds::flatten_pairs(&result)[..]))
 }
 
 /// Extract atom labels from a structure file text.
@@ -1345,54 +1235,12 @@ pub fn extract_labels(text: &str, format: &str) -> String {
     }
 }
 
-/// Parse a LAMMPS dump trajectory (.lammpstrj) and return frame data.
-#[wasm_bindgen]
-pub fn parse_lammpstrj_file(text: &str) -> Result<XtcParseResult, JsError> {
-    let data = lammpstrj::parse_lammpstrj(text).map_err(|e| JsError::new(&e))?;
-    Ok(XtcParseResult::from_trajectory(data))
-}
-
-/// Parse a LAMMPS dump as a standalone multi-frame **structure** (frame-0
-/// topology + extra frames). Element identities are the integer LAMMPS `type`
-/// ids used as an atomic-number proxy; bonds are inferred from frame 0.
-#[wasm_bindgen]
-pub fn parse_lammpstrj_structure(text: &str) -> Result<ParseResult, JsError> {
-    let parsed = lammpstrj::parse_lammpstrj_structure(text).map_err(|e| JsError::new(&e))?;
-    Ok(ParseResult::from_parsed(parsed))
-}
-
-/// Parse a DCD trajectory binary (CHARMM/NAMD/X-PLOR) and return frame data.
-#[wasm_bindgen]
-pub fn parse_dcd_file(data: &[u8]) -> Result<XtcParseResult, JsError> {
-    let dcd_data = dcd::parse_dcd(data).map_err(|e| JsError::new(&e))?;
-    Ok(XtcParseResult::from_trajectory(dcd_data))
-}
-
-/// Parse an ASE .traj file (ULM binary format) and return structured data.
-#[wasm_bindgen]
-pub fn parse_traj(data: &[u8]) -> Result<ParseResult, JsError> {
-    let parsed = traj::parse_traj(data).map_err(|e| JsError::new(&e))?;
-    Ok(ParseResult::from_parsed(parsed))
-}
-
-/// Parse an AMBER NetCDF trajectory file (.nc) and return frame data.
-#[wasm_bindgen]
-pub fn parse_netcdf_file(data: &[u8]) -> Result<XtcParseResult, JsError> {
-    let traj_data = netcdf::parse_netcdf(data).map_err(|e| JsError::new(&e))?;
-    Ok(XtcParseResult::from_trajectory(traj_data))
-}
-
 /// Parse a CHARMM/NAMD PSF topology file and extract bond pairs.
 /// Returns flat Uint32Array [a0, b0, a1, b1, ...] with 0-indexed pairs.
 #[wasm_bindgen]
 pub fn parse_psf_bonds(text: &str, n_atoms: u32) -> Uint32Array {
     let result = psf::parse_psf_bonds(text, n_atoms as usize);
-    let mut flat: Vec<u32> = Vec::with_capacity(result.len() * 2);
-    for (a, b) in &result {
-        flat.push(*a);
-        flat.push(*b);
-    }
-    Uint32Array::from(&flat[..])
+    Uint32Array::from(&bonds::flatten_pairs(&result)[..])
 }
 
 /// Extract only CONECT bonds from a PDB file text.
@@ -1403,21 +1251,12 @@ pub fn parse_pdb_bonds(text: &str, n_atoms: u32) -> Uint32Array {
         Ok(d) => d,
         Err(_) => return Uint32Array::new_with_length(0),
     };
-    // Only return file bonds (CONECT), not inferred ones
-    let file_bonds = &data.bonds[..data.n_file_bonds];
-    let mut flat: Vec<u32> = Vec::with_capacity(file_bonds.len() * 2);
-    for (a, b) in file_bonds {
-        flat.push(*a);
-        flat.push(*b);
-    }
-    // Validate atom indices
-    let limit = n_atoms;
-    let mut valid: Vec<u32> = Vec::new();
-    for chunk in flat.chunks(2) {
-        if chunk[0] < limit && chunk[1] < limit {
-            valid.push(chunk[0]);
-            valid.push(chunk[1]);
-        }
-    }
-    Uint32Array::from(&valid[..])
+    // Only return file bonds (CONECT), not inferred ones, and drop any pair
+    // that indexes past the caller's atom count.
+    let valid: Vec<(u32, u32)> = data.bonds[..data.n_file_bonds]
+        .iter()
+        .copied()
+        .filter(|&(a, b)| a < n_atoms && b < n_atoms)
+        .collect();
+    Uint32Array::from(&bonds::flatten_pairs(&valid)[..])
 }
