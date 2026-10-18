@@ -4,6 +4,7 @@ pub mod bonds;
 pub mod c3xml;
 pub mod cell;
 pub mod cif;
+pub mod cif_lex;
 pub mod cml;
 pub mod crystal;
 pub mod dcd;

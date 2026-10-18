@@ -9,6 +9,12 @@ import { createStore } from "zustand/vanilla";
 import type { Frame } from "../types";
 import type { FrameProvider } from "../pipeline/types";
 import { registerTestStores, GLOBAL_BUNDLE_ID } from "./testRegistry";
+import {
+  clampLoopRange,
+  nextPlaybackFrame,
+  playbackIntervalMs,
+  stepPlaybackFrame,
+} from "../logic/playbackLoop";
 
 export interface PlaybackStore {
   // State
@@ -137,27 +143,22 @@ export const playbackStateCreator: StateCreator<PlaybackStore> = (set, get) => (
   },
 
   setLoopRange: (start, end) => {
-    const { totalFrames } = get();
-    const clampedStart = Math.max(0, Math.min(start, totalFrames - 1));
-    const clampedEnd = Math.max(0, Math.min(end, totalFrames - 1));
-    set({ loopStart: clampedStart, loopEnd: clampedEnd });
+    set(clampLoopRange(start, end, get().totalFrames));
   },
 
   stepForward: () => {
-    const { provider, currentFrame, loopEnd, totalFrames, _currentFrameRef } = get();
+    const { provider, currentFrame, _currentFrameRef } = get();
     if (!provider) return;
-    const effectiveEnd = Math.min(loopEnd, totalFrames - 1);
-    const next = Math.min(currentFrame + 1, effectiveEnd);
+    const next = stepPlaybackFrame(currentFrame, 1, get());
     const frame = provider.getFrame(next);
     _currentFrameRef.current = next;
     set({ currentFrame: next, currentFrameData: frame });
   },
 
   stepBackward: () => {
-    const { provider, currentFrame, loopStart, _currentFrameRef } = get();
+    const { provider, currentFrame, _currentFrameRef } = get();
     if (!provider) return;
-    const effectiveStart = Math.max(loopStart, 0);
-    const prev = Math.max(currentFrame - 1, effectiveStart);
+    const prev = stepPlaybackFrame(currentFrame, -1, get());
     const frame = provider.getFrame(prev);
     _currentFrameRef.current = prev;
     set({ currentFrame: prev, currentFrameData: frame });
@@ -181,17 +182,15 @@ export const playbackStateCreator: StateCreator<PlaybackStore> = (set, get) => (
     if (state._intervalId !== null) return;
     const id = setInterval(
       () => {
-        const { totalFrames, loopStart, loopEnd, _currentFrameRef, provider } = get();
-        if (!provider || totalFrames <= 1) return;
-        const effectiveEnd = Math.min(loopEnd, totalFrames - 1);
-        const effectiveStart = Math.max(loopStart, 0);
-        let nextFrame = _currentFrameRef.current + 1;
-        if (nextFrame > effectiveEnd) nextFrame = effectiveStart;
+        const { _currentFrameRef, provider } = get();
+        if (!provider) return;
+        const nextFrame = nextPlaybackFrame(_currentFrameRef.current, get());
+        if (nextFrame === null) return;
         const frame = provider.getFrame(nextFrame);
         _currentFrameRef.current = nextFrame;
         set({ currentFrame: nextFrame, currentFrameData: frame });
       },
-      1000 / (state.fps * state.speedMultiplier),
+      playbackIntervalMs(state.fps, state.speedMultiplier),
     );
     set({ _intervalId: id });
   },

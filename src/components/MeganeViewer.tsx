@@ -41,9 +41,10 @@ import {
 } from "../stores/MeganeProvider";
 import { getElementSymbol } from "../constants";
 import { parseResname, computeMoleculeIds } from "../pipeline/selection";
-import { applyViewportState, applyVectorsForFrame } from "../pipeline/apply";
+import { applyVectorsForFrame } from "../pipeline/apply";
 import { useAtomSelection } from "../hooks/useAtomSelection";
 import { useNodeLoadHandlers } from "../hooks/useNodeLoadHandlers";
+import { useViewportStateSync } from "../hooks/useViewportStateSync";
 import type {
   HoverInfo,
   BondSource,
@@ -52,7 +53,6 @@ import type {
   SelectionState,
   Measurement,
 } from "../types";
-import type { ViewportState } from "../pipeline/types";
 import { applyThemeBackground, useRendererThemeBackground } from "../stores/useThemeStore";
 import { ensureThemeTokens } from "../styles/themeTokens";
 
@@ -208,8 +208,6 @@ export function MeganeViewer({
   const [pipelineCollapsed, setPipelineCollapsed] = useState(isNarrow);
   const pipelineCollapsedRef = useRef(isNarrow);
   const pipelineWidthRef = useRef(480);
-  const prevViewportStateRef = useRef<ViewportState | null>(null);
-  const hasRestoredCameraRef = useRef(false);
 
   // Resolve the `ui` prop down to plain booleans so a fresh object literal
   // from the caller never destabilises hook deps.
@@ -302,8 +300,8 @@ export function MeganeViewer({
   // render path — every node-param change (e.g. AddBond bondSource flip)
   // produces a new viewportState reference, and a render-path subscription
   // would cascade into a re-render of every child (PipelineEditor, Timeline,
-  // Sidebar, …). Instead, the effect below subscribes via
-  // `usePipelineStore.subscribe`, which only fires the callback without
+  // Sidebar, …). Instead, useViewportStateSync below subscribes through the
+  // store's vanilla `subscribe`, which only fires the callback without
   // triggering a render. The `snapshot` selector still drives the React
   // tree because it changes identity only on file load (snapshots are
   // pinned to the LoadStructure's NodeSnapshotData).
@@ -316,80 +314,30 @@ export function MeganeViewer({
     onUploadTrajectory,
   });
 
-  // When the snapshot identity changes, the Viewport's child loadSnapshot
-  // effect resets per-atom overrides, so we re-apply the pipeline viewport
-  // state immediately afterwards. Viewport's effect (child) runs before this
-  // parent effect, so fitToView has already been called by the time we run.
+  // Renderer ⇄ pipeline viewportState sync (shared with WidgetViewer and
+  // PipelineViewer): full apply on renderer attach and on every snapshot
+  // identity change, diffs via a non-rendering store subscription, the
+  // first-load camera restore, bond count and trajectory provider hand-off.
+  // The primary node is the first load_structure (the node the lazy
+  // streaming path above loads into).
+  //
+  // A snapshot change publishes that snapshot's own bond count; later
+  // bond-stream changes (bondSource flips, file-mode bonds) publish the
+  // pipeline total through `onBondCount`.
   useEffect(() => {
     setBondCount(snapshot?.nBonds ?? 0);
-    const renderer = rendererRef.current;
-    if (renderer) {
-      const state = pipelineApi.getState();
-      applyViewportState(
-        renderer,
-        state.viewportState,
-        null,
-        primaryNodeIdRef.current,
-        state.atomLabels,
-      );
-      prevViewportStateRef.current = state.viewportState;
-
-      // On first snapshot load after mount, restore persisted camera state
-      // (overrides fitToView). Hosts supply initialCameraState for their own
-      // storage; otherwise falls back to the localStorage-backed store.
-      if (snapshot && !hasRestoredCameraRef.current) {
-        hasRestoredCameraRef.current = true;
-        const saved =
-          initialCameraState !== undefined ? initialCameraState : viewStateApi.getState().camera;
-        if (saved) {
-          renderer.applyCameraState(saved);
-        }
-      }
-    }
-  }, [snapshot, initialCameraState, pipelineApi, viewStateApi]);
-
-  // Apply viewportState changes to the renderer + drive playback / bond-count
-  // updates without triggering a React re-render of MeganeViewer. Subscribing
-  // through the vanilla zustand API (instead of `usePipelineStore(selector)`)
-  // means a full pipeline execute flushes only effect callbacks here.
+  }, [snapshot]);
   const setPlaybackProvider = useScopedPlaybackStore((s) => s.setProvider);
-  useEffect(() => {
-    let prevBondsRef: ViewportState["bonds"] | null = null;
-    let prevTrajRef: unknown = null;
-
-    const apply = (vs: ViewportState) => {
-      const renderer = rendererRef.current;
-      if (renderer) {
-        const atomLabels = pipelineApi.getState().atomLabels;
-        applyViewportState(
-          renderer,
-          vs,
-          prevViewportStateRef.current,
-          primaryNodeIdRef.current,
-          atomLabels,
-        );
-        prevViewportStateRef.current = vs;
-      }
-
-      if (vs.bonds !== prevBondsRef) {
-        prevBondsRef = vs.bonds;
-        const total = vs.bonds.reduce((sum, b) => sum + b.bondIndices.length / 2, 0);
-        setBondCount((current) => (current === total ? current : total));
-      }
-
-      const traj = vs.trajectories[0] ?? null;
-      const provider = traj?.provider ?? null;
-      if (provider !== prevTrajRef) {
-        prevTrajRef = provider;
-        setPlaybackProvider(provider);
-      }
-    };
-
-    apply(pipelineApi.getState().viewportState);
-    return pipelineApi.subscribe((state, prev) => {
-      if (state.viewportState !== prev.viewportState) apply(state.viewportState);
-    });
-  }, [setPlaybackProvider, pipelineApi]);
+  const { attachRenderer } = useViewportStateSync(rendererRef, pipelineApi, {
+    snapshot,
+    getPrimaryNodeId: () => primaryNodeIdRef.current,
+    // Hosts supply initialCameraState for their own storage; otherwise fall
+    // back to the localStorage-backed view-state store.
+    getInitialCameraState: () =>
+      initialCameraState !== undefined ? initialCameraState : viewStateApi.getState().camera,
+    onBondCount: setBondCount,
+    onTrajectoryProvider: setPlaybackProvider,
+  });
 
   // Frame, currentFrame, and totalFrames come straight from the playback store.
   const frame = useScopedPlaybackStore((s) => s.currentFrameData);
@@ -469,18 +417,9 @@ export function MeganeViewer({
 
   const handleRendererReady = useCallback(
     (renderer: MoleculeRenderer) => {
-      rendererRef.current = renderer;
       applyThemeBackground(renderer);
       renderer.setViewInsets(0, rightInset());
-      const storeState = pipelineApi.getState();
-      applyViewportState(
-        renderer,
-        storeState.viewportState,
-        null,
-        primaryNodeIdRef.current,
-        storeState.atomLabels,
-      );
-      prevViewportStateRef.current = storeState.viewportState;
+      attachRenderer(renderer);
 
       // Register camera change callback for persistence
       renderer.setCameraChangeCallback(() => {
@@ -493,7 +432,7 @@ export function MeganeViewer({
         }
       });
     },
-    [rightInset, pipelineApi, viewStateApi],
+    [rightInset, attachRenderer, viewStateApi],
   );
 
   // Escape clears the atom selection. Right-click selection stays wired

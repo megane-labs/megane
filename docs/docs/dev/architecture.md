@@ -198,7 +198,7 @@ interface AtomRenderer {
 
 ### Multi-Structure Overlay
 
-`StructureLayer` (`src/renderer/StructureLayer.ts`) encapsulates an independent set of atom/bond/cell renderers per additional `load_structure` node. `applyViewportState()` routes the first particle source to the primary renderer and additional sources to their respective StructureLayers, keyed by `sourceNodeId`.
+`StructureLayer` (`src/renderer/StructureLayer.ts`) encapsulates an independent set of atom/bond/cell renderers per additional `load_structure` node. `applyViewportState()` routes the first particle source to the primary renderer and additional sources to their respective StructureLayers, keyed by `sourceNodeId`. Every viewer (MeganeViewer, the Jupyter `WidgetViewer`, `PipelineViewer`) drives it through one hook, `useViewportStateSync` (`src/hooks/useViewportStateSync.ts`), which also names the primary node whenever the snapshot the Viewport shows is not the first particle source: MeganeViewer passes the first `load_structure` node, the widget passes the node whose snapshot it shows.
 
 ## Extending Megane
 
