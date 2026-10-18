@@ -24,8 +24,10 @@ nodes. All of the work below is in `src/pipeline/` and `src/components/`.
 
 ## Compile-time guardrail
 
-Surfaces 1–5 and 7 below are declared as `Record<PipelineNodeType, …>`, so `tsc`
-**refuses to build** until every table has an entry for the new type. Run
+The structural tables in §1, the `NODE_CATALOG` in §2 and the `NODE_EXECUTORS`
+registry in §4 are declared as `Record<PipelineNodeType, …>` (or an equivalent
+mapped type), and `defaultParams()` / `summarizeNodeParams()` are exhaustive
+`switch`es, so `tsc` **refuses to build** until every one has an entry for the new type. Run
 `npm run build:app` early and often — the type errors are your to-do list. This is
 the project's substitute for a runtime node base class.
 
@@ -50,9 +52,9 @@ Walk every item. The order roughly follows the data dependency.
 
 - [ ] Export `executeXxx(params, inputs: Map<string, PipelineData[]>) => Map<string, PipelineData>`. Keep it a **pure function**: no Three.js, no DOM, no mutation of the inputs (spread new objects, copy typed arrays). Model it on `executors/modify.ts` / `filter.ts`.
 
-### 4. Engine dispatch — `src/pipeline/execute.ts`
+### 4. Engine dispatch — `src/pipeline/executors/registry.ts`
 
-- [ ] Import the executor and add a `case "xxx":` inside the `switch (data.params.type)` in `executePipeline()`. Set `edgeOutputs.set(id, outputs)` and add a "no input" warning like the neighboring cases.
+- [ ] Import the executor and add an `xxx:` entry to `NODE_EXECUTORS`. Each entry receives a `NodeExecutorContext` (`{ id, params, inputs, nodes, ctx, addError }`, with `params` already narrowed to `XxxParams`), calls the pure executor, reports warnings via `addError({ message, severity: "warning" })` (use the shared `noInput()` for the "No input data" case), and returns `{ outputs }`. `executePipeline()` in `src/pipeline/execute.ts` stays untouched: it looks the type up with `getNodeExecutor()` and stores the returned `outputs` as the node's edge outputs. The registry is typed `NodeExecutorRegistry` (a mapped type over `PipelineNodeType`), so a missing entry is a compile error, and `tests/ts/pipeline/executors/registry.test.ts` checks at runtime that it matches `NODE_CATALOG` — add a case there for the node's warnings.
 
 ### 5. React component — `src/components/nodes/<Name>Node.tsx`
 
@@ -97,7 +99,7 @@ Walk every item. The order roughly follows the data dependency.
 | `tsc` error "property 'xxx' is missing" | §1 or §2 — a `Record<PipelineNodeType, …>` table has no entry |
 | Node runs but isn't in the Add Node menu | §6 — `ADD_NODE_GROUPS` (`PipelineRail.tsx`) |
 | Node is in the menu but renders blank / throws | §5 — component not in `nodeTypes`, or wrong `nodeType` prop |
-| Node appears but does nothing at runtime | §4 — no `case` in `executePipeline()` |
+| Node appears but does nothing at runtime | §4 — the `NODE_EXECUTORS` entry returns no `outputs` (or the node is disabled) |
 | `Pipeline(...).to_json()` omits the node's params | §8 — no `isinstance` branch in `_serialize_node()` |
 | Loaded JSON drops params / "Unknown node type" | §1 port entry missing (drives `VALID_NODE_TYPES`) or §7/§8 key mismatch |
 
@@ -105,7 +107,7 @@ Walk every item. The order roughly follows the data dependency.
 
 - Structural metadata (types, ports, params, defaults): `src/pipeline/types.ts`
 - Prose + param docs (AI prompt + Node Reference): `src/pipeline/catalog.ts`
-- Execution: `src/pipeline/executors/`, `src/pipeline/execute.ts`
+- Execution: `src/pipeline/executors/` (per-type dispatch in `executors/registry.ts`), `src/pipeline/execute.ts` (graph walk)
 - UI: `src/components/nodes/`, `src/components/PipelineEditor.tsx`
 - Programmatic builders: `src/pipeline/builder.ts`, `python/megane/pipeline.py`
 - Prose walkthrough: `docs/docs/dev/custom-nodes.md`

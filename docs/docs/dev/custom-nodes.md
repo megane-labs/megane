@@ -45,15 +45,17 @@ files into `Snapshot`s. Pipeline execution is 100% TypeScript.
 | 7 | `NODE_CATALOG` entry | `src/pipeline/catalog.ts` | Prose + per-param docs (feeds the LLM prompt and the Node Reference page) |
 | 8 | `summarizeNodeParams()` case | `src/pipeline/nodeSummary.ts` | One-line parameter summary shown on the node's canvas card |
 | 9 | Executor function | `src/pipeline/executors/<name>.ts` | Pure compute: `(params, inputs) => outputs` |
-| 10 | Dispatch `case` | `src/pipeline/execute.ts` | Wire the executor into `executePipeline()` |
+| 10 | `NODE_EXECUTORS` entry | `src/pipeline/executors/registry.ts` | Wire the executor into `executePipeline()` |
 | 11 | React component | `src/components/nodes/<Name>Node.tsx` | The node's properties form, wrapping `NodeShell` |
 | 12 | `nodeTypes` map + `ADD_NODE_GROUPS` | `src/components/PipelineEditor.tsx`, `src/components/PipelineRail.tsx` | Render the component + add it to the "Add Node" menu |
 | 13 | Builder subclass (optional) | `src/pipeline/builder.ts` (+ export from `src/lib.ts`) | JS graph-construction API |
 | 14 | Python subclass | `python/megane/pipeline.py` (+ export from `python/megane/__init__.py`) | Python graph-construction API |
 
-Surfaces 1–5, 7 and 8 are compile-enforced (see above; `defaultParams()` and
+Surfaces 1–5, 7, 8 and 10 are compile-enforced (see above; `defaultParams()` and
 `summarizeNodeParams()` are exhaustive `switch`es with no `default`, so a missing
-`case` is a "lacks ending return statement" error). Surfaces 9–12 are what make
+`case` is a "lacks ending return statement" error, and `NODE_EXECUTORS` is a
+mapped type over `PipelineNodeType`, so a missing entry is a "property is
+missing" error). Surfaces 9–12 are what make
 the node actually _do_ something and appear on the canvas. 13–14 are only needed
 for the programmatic `Pipeline` builders — but note that the catalog's
 `pythonClass` names the class users import from `megane`, and
@@ -227,24 +229,43 @@ export function executeFade(
 }
 ```
 
-### 10. Dispatch it in `src/pipeline/execute.ts`
+### 10. Register it in `src/pipeline/executors/registry.ts`
 
-Import the executor near the other executor imports, then add a `case` to the
-`switch (data.params.type)` inside `executePipeline()`:
+`executePipeline()` (`src/pipeline/execute.ts`) walks the graph in topological
+order and hands every enabled node to its entry in the `NODE_EXECUTORS`
+registry. You do not edit `execute.ts`. Import the executor next to the other
+executor imports in `registry.ts` and add an entry:
 
 ```typescript
-import { executeFade } from "./executors/fade";
+import { executeFade } from "./fade";
 
-// … inside the switch …
-case "fade": {
-  const outputs = executeFade(data.params as FadeParams, inputs);
-  edgeOutputs.set(id, outputs);
-  if (!inputs.get("in")?.length) {
-    addError(id, { message: "No input data (check upstream nodes)", severity: "warning" });
-  }
-  break;
-}
+export const NODE_EXECUTORS: NodeExecutorRegistry = {
+  // … the other node types …
+  fade: ({ params, inputs, addError }) => {
+    const outputs = executeFade(params, inputs); // params is already FadeParams
+    if (!inputs.get("in")?.length) addError(noInput());
+    return { outputs };
+  },
+};
 ```
+
+Each entry receives a `NodeExecutorContext`:
+
+| Field | What it is |
+|---|---|
+| `id` | The node's id |
+| `params` | The node's params, narrowed to the node's own `XxxParams` |
+| `inputs` | Upstream data per input port (`collectInputs()`) |
+| `nodes` | Every node in the graph (rarely needed; Load Trajectory uses it) |
+| `ctx` | The caller's `PipelineExecutionContext` (snapshots, frames, providers, labels) |
+| `addError` | Records a `NodeError` on this node (shown as the card's warning badge) |
+
+It returns `{ outputs }`, which the engine stores as the node's edge outputs
+(only the Viewport node returns `{ viewportState }` instead). The registry is
+typed `NodeExecutorRegistry`, a mapped type over `PipelineNodeType`, so `tsc`
+fails until the new type has an entry; `tests/ts/pipeline/executors/registry.test.ts`
+also checks at runtime that the registry matches `NODE_CATALOG`, so add a case
+there for your node's warnings.
 
 ### 11. Build the UI — `src/components/nodes/FadeNode.tsx`
 
