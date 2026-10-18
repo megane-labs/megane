@@ -69,9 +69,10 @@ function App() {
 | `ui` | `Partial<MeganeViewerUiOptions>` | | Hides individual tools — see below (default: everything visible) |
 
 `onBondSourceChange`, `onLabelSourceChange`, `onLoadLabelFile`,
-`onVectorSourceChange`, `onLoadVectorFile` and `onLoadDemoVectors` are still
-accepted for compatibility but are no longer called: bonds, labels and vectors
-are configured by the pipeline's nodes.
+`onVectorSourceChange`, `onLoadVectorFile` and `onLoadDemoVectors` are
+deprecated: they are still accepted so existing code keeps compiling, but they
+are never called — bonds, labels and vectors are configured by the pipeline's
+nodes. Drop them from your props; they will be removed in a future release.
 
 ### Hiding tools (`ui`)
 

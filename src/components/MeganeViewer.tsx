@@ -117,11 +117,20 @@ interface MeganeViewerProps {
   onFpsChange?: (fps: number) => void;
   onUploadStructure: (file: File, preParsed?: StructureParseResult) => void;
   onUploadTrajectory?: (file: File) => void;
+  /**
+   * @deprecated Never called. Bonds are configured by the pipeline's Add Bond
+   * node; still accepted so existing embedders keep compiling.
+   */
   onBondSourceChange?: (source: BondSource) => void;
+  /** @deprecated Never called. Labels are configured by the pipeline's Labels node. */
   onLabelSourceChange?: (source: LabelSource) => void;
+  /** @deprecated Never called. Labels are configured by the pipeline's Labels node. */
   onLoadLabelFile?: (file: File) => void;
+  /** @deprecated Never called. Vectors are loaded by the pipeline's Load Vector node. */
   onVectorSourceChange?: (source: VectorSource) => void;
+  /** @deprecated Never called. Vectors are loaded by the pipeline's Load Vector node. */
   onLoadVectorFile?: (file: File) => void;
+  /** @deprecated Never called. Vectors are loaded by the pipeline's Load Vector node. */
   onLoadDemoVectors?: () => void;
   /**
    * Fired whenever the active trajectory frame changes (user scrub, playback
@@ -178,12 +187,6 @@ export function MeganeViewer({
   onFpsChange,
   onUploadStructure,
   onUploadTrajectory,
-  onBondSourceChange: _onBondSourceChange,
-  onLabelSourceChange: _onLabelSourceChange,
-  onLoadLabelFile: _onLoadLabelFile,
-  onVectorSourceChange: _onVectorSourceChange,
-  onLoadVectorFile: _onLoadVectorFile,
-  onLoadDemoVectors: _onLoadDemoVectors,
   onFrameChange,
   onSelectionChange,
   onMeasurementChange,

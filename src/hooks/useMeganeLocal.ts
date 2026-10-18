@@ -2,7 +2,6 @@
  * Local (in-memory) data source hook.
  * Parses structure files in the browser via WASM — no server communication needed.
  * Supports XTC trajectory loading as a separate step.
- * Delegates bond/label/vector source management to dedicated sub-hooks.
  */
 
 import { useState, useRef, useCallback } from "react";
@@ -30,24 +29,13 @@ import { parseTrajectoryByName } from "../parsers/trajectoryDispatch";
 import { trajectoryKindFromFileName } from "../parsers/fileNames";
 import { LazyFrameProvider } from "../stream/LazyFrameProvider";
 import { usePipelineStoreApi, usePlaybackStoreApi } from "../stores/MeganeProvider";
-import { useBondSource } from "./useBondSource";
-import { useLabelSource } from "./useLabelSource";
-import { useVectorSource } from "./useVectorSource";
 import {
   applyStructureToPipeline,
   applyTopologyFile,
   ensureStructureLoader,
   type AppliedStructure,
 } from "../pipeline/openFile";
-import type {
-  Snapshot,
-  Frame,
-  TrajectoryMeta,
-  BondSource,
-  TrajectorySource,
-  LabelSource,
-  VectorSource,
-} from "../types";
+import type { Snapshot, Frame, TrajectoryMeta, TrajectorySource } from "../types";
 
 /** File extensions eligible for lazy multi-frame structure streaming → decoder kind. */
 const LAZY_STRUCTURE_KIND: Record<string, LazyStructureKind> = {
@@ -74,27 +62,10 @@ export interface MeganeLocalState {
   loadText: (text: string, fileName?: string) => Promise<StructureParseResult>;
   loadXtc: (xtc: File) => Promise<void>;
   seekFrame: (frameIdx: number) => void;
-  bondSource: BondSource;
-  setBondSource: (source: BondSource) => void;
   trajectorySource: TrajectorySource;
   setTrajectorySource: (source: TrajectorySource) => void;
-  loadBondFile: (file: File) => Promise<void>;
-  bondFileName: string | null;
-  hasStructureBonds: boolean;
   hasStructureFrames: boolean;
   hasFileFrames: boolean;
-  labelSource: LabelSource;
-  setLabelSource: (source: LabelSource) => void;
-  loadLabelFile: (file: File) => Promise<void>;
-  labelFileName: string | null;
-  hasStructureLabels: boolean;
-  atomLabels: string[] | null;
-  vectorSource: VectorSource;
-  setVectorSource: (source: VectorSource) => void;
-  loadVectorFile: (file: File) => Promise<void>;
-  loadDemoVectors: () => void;
-  vectorFileName: string | null;
-  atomVectors: Float32Array | null;
 }
 
 export function useMeganeLocal(): MeganeLocalState {
@@ -127,16 +98,6 @@ export function useMeganeLocal(): MeganeLocalState {
   const xtcLoadTokenRef = useRef(0);
   const fileTrajMetaRef = useRef<TrajectoryMeta | null>(null);
   const currentTrajSourceRef = useRef<TrajectorySource>("structure");
-
-  // Sub-hooks for source management
-  const bonds = useBondSource(baseSnapshotRef, setSnapshot);
-  const labels = useLabelSource(baseSnapshotRef);
-  const vectors = useVectorSource(
-    baseSnapshotRef,
-    currentFrameRef,
-    structureFramesRef,
-    fileTrajMetaRef,
-  );
 
   const resetPlayback = useCallback(() => {
     setFrame(null);
@@ -187,11 +148,6 @@ export function useMeganeLocal(): MeganeLocalState {
       const loaderId = ensureStructureLoader(pipelineApi);
       applyStructureToPipeline(pipelineApi, loaderId, result, filename);
 
-      // Reset sub-hook state
-      bonds.reset(result.snapshot);
-      labels.reset(result.labels);
-      vectors.reset();
-
       setHasStructureFrames(hasFrames);
       setHasFileFrames(false);
 
@@ -203,7 +159,7 @@ export function useMeganeLocal(): MeganeLocalState {
       setMeta(result.meta);
       resetPlayback();
     },
-    [resetPlayback, bonds.reset, labels.reset, vectors.reset, pipelineApi],
+    [resetPlayback, pipelineApi],
   );
 
   // Apply an ALREADY-parsed structure result without re-reading or re-parsing
@@ -573,33 +529,25 @@ export function useMeganeLocal(): MeganeLocalState {
     [resetPlayback, attachFileProvider, pipelineApi],
   );
 
-  const seekFrame = useCallback(
-    (frameIdx: number) => {
-      const frames =
-        currentTrajSourceRef.current === "file"
-          ? fileFramesRef.current
-          : structureFramesRef.current;
+  const seekFrame = useCallback((frameIdx: number) => {
+    const frames =
+      currentTrajSourceRef.current === "file" ? fileFramesRef.current : structureFramesRef.current;
 
-      if (frameIdx === 0) {
-        if (baseSnapshotRef.current) {
-          setFrame({
-            frameId: 0,
-            nAtoms: baseSnapshotRef.current.nAtoms,
-            positions: baseSnapshotRef.current.positions,
-          });
-        }
-      } else {
-        const f = frames[frameIdx - 1];
-        if (f) setFrame(f);
+    if (frameIdx === 0) {
+      if (baseSnapshotRef.current) {
+        setFrame({
+          frameId: 0,
+          nAtoms: baseSnapshotRef.current.nAtoms,
+          positions: baseSnapshotRef.current.positions,
+        });
       }
-      setCurrentFrame(frameIdx);
-      currentFrameRef.current = frameIdx;
-
-      // Update vectors for this frame
-      vectors.updateForFrame(frameIdx);
-    },
-    [vectors.updateForFrame],
-  );
+    } else {
+      const f = frames[frameIdx - 1];
+      if (f) setFrame(f);
+    }
+    setCurrentFrame(frameIdx);
+    currentFrameRef.current = frameIdx;
+  }, []);
 
   const setTrajectorySource = useCallback(
     (source: TrajectorySource) => {
@@ -631,26 +579,9 @@ export function useMeganeLocal(): MeganeLocalState {
     loadText,
     loadXtc,
     seekFrame,
-    bondSource: bonds.bondSource,
-    setBondSource: bonds.setBondSource,
     trajectorySource,
     setTrajectorySource,
-    loadBondFile: bonds.loadBondFile,
-    bondFileName: bonds.bondFileName,
-    hasStructureBonds: bonds.hasStructureBonds,
     hasStructureFrames,
     hasFileFrames,
-    labelSource: labels.labelSource,
-    setLabelSource: labels.setLabelSource,
-    loadLabelFile: labels.loadLabelFile,
-    labelFileName: labels.labelFileName,
-    hasStructureLabels: labels.hasStructureLabels,
-    atomLabels: labels.atomLabels,
-    vectorSource: vectors.vectorSource,
-    setVectorSource: vectors.setVectorSource,
-    loadVectorFile: vectors.loadVectorFile,
-    loadDemoVectors: vectors.loadDemoVectors,
-    vectorFileName: vectors.vectorFileName,
-    atomVectors: vectors.atomVectors,
   };
 }

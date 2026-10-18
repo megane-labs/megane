@@ -195,16 +195,6 @@ function DocBody({
       <MeganeViewer
         testContext="jupyterlab-doc"
         onUploadStructure={handleUploadStructure}
-        onBondSourceChange={(s: string) =>
-          local.setBondSource(s as "structure" | "file" | "distance" | "none")
-        }
-        onLabelSourceChange={(s: string) =>
-          local.setLabelSource(s as "none" | "structure" | "file")
-        }
-        onLoadLabelFile={(f: File) => local.loadLabelFile(f)}
-        onVectorSourceChange={(s: string) => local.setVectorSource(s as "none" | "file" | "demo")}
-        onLoadVectorFile={(f: File) => local.loadVectorFile(f)}
-        onLoadDemoVectors={() => local.loadDemoVectors()}
         onFrameChange={onFrameChange}
         onSelectionChange={onSelectionChange}
         onMeasurementChange={onMeasurementChange}

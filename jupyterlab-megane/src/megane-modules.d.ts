@@ -4,12 +4,64 @@
  * at bundle time via the alias in webpack.config.js. We declare them here so
  * tsc does not try to follow the alias into the parent source tree (which
  * would force tsc to emit those files outside our rootDir).
+ *
+ * Because the real types cannot be imported, the declarations the host relies
+ * on are mirrored here. `tests/types/jupyterlab-shim.ts` compares the mirrors
+ * with the real modules under the root `tsc --noEmit`, so a renamed, removed
+ * or retyped prop fails the root type check instead of slipping through.
  */
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
 declare module "@megane/components/MeganeViewer" {
   import type { ComponentType } from "react";
-  export const MeganeViewer: ComponentType<any>;
+  import type { SelectionState, Measurement } from "@megane/types";
+
+  /** Mirror of `MeganeViewerUiOptions` (src/components/MeganeViewer.tsx). */
+  export interface MeganeViewerUiOptions {
+    pipelineEditor: boolean;
+    resetView: boolean;
+    viewAxes: boolean;
+    perfHud: boolean;
+    timeline: boolean;
+    tooltip: boolean;
+    measurement: boolean;
+  }
+
+  /** Mirror of `MeganeCameraState` (src/renderer/MoleculeRenderer.ts). */
+  export interface MeganeCameraState {
+    mode: "perspective" | "orthographic";
+    position: [number, number, number];
+    target: [number, number, number];
+    zoom: number;
+    up?: [number, number, number];
+  }
+
+  /**
+   * Mirror of `MeganeViewer`'s props, without the deprecated legacy
+   * bond/label/vector source callbacks the viewer never calls — so passing
+   * one from this host is a type error. `preParsed` is a
+   * `StructureParseResult`, left opaque because this host never reads it.
+   */
+  export interface MeganeViewerProps {
+    playing?: boolean;
+    fps?: number;
+    onSeek?: (frame: number) => void;
+    onPlayPause?: () => void;
+    onFpsChange?: (fps: number) => void;
+    onUploadStructure: (file: File, preParsed?: unknown) => void;
+    onUploadTrajectory?: (file: File) => void;
+    onFrameChange?: (frame: number) => void;
+    onSelectionChange?: (selection: SelectionState) => void;
+    onMeasurementChange?: (measurement: Measurement | null) => void;
+    ui?: Partial<MeganeViewerUiOptions>;
+    width?: string | number;
+    height?: string | number;
+    testContext?: string;
+    initialCameraState?: MeganeCameraState | null;
+    onCameraStateChange?: (state: MeganeCameraState) => void;
+  }
+
+  export const MeganeViewer: ComponentType<MeganeViewerProps>;
 }
 
 declare module "@megane/components/ErrorBoundary" {
@@ -18,7 +70,12 @@ declare module "@megane/components/ErrorBoundary" {
 }
 
 declare module "@megane/hooks/useMeganeLocal" {
-  export function useMeganeLocal(): any;
+  /** The part of `MeganeLocalState` (src/hooks/useMeganeLocal.ts) this host uses. */
+  export interface MeganeLocalState {
+    loadFile: (pdb: File, topFile?: File) => Promise<void>;
+    loadXtc: (xtc: File) => Promise<void>;
+  }
+  export function useMeganeLocal(): MeganeLocalState;
 }
 
 declare module "@megane/pipeline/store" {

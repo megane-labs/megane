@@ -7,15 +7,7 @@
 import { useCallback } from "react";
 import { useMeganeWebSocket } from "./useMeganeWebSocket";
 import { useMeganeLocal, type MeganeLocalState } from "./useMeganeLocal";
-import type {
-  DataMode,
-  Snapshot,
-  Frame,
-  TrajectoryMeta,
-  BondSource,
-  LabelSource,
-  VectorSource,
-} from "../types";
+import type { DataMode, Snapshot, Frame, TrajectoryMeta } from "../types";
 import type { StructureParseResult } from "../parsers/structure";
 
 export interface DataSource {
@@ -28,13 +20,6 @@ export interface DataSource {
   seekFrame: (frameIdx: number) => void;
   uploadStructure: (file: File, preParsed?: StructureParseResult) => void;
   uploadTrajectory: (file: File) => void;
-
-  setBondSource: (source: BondSource) => void;
-  setLabelSource: (source: LabelSource) => void;
-  loadLabelFile: (file: File) => void;
-  setVectorSource: (source: VectorSource) => void;
-  loadVectorFile: (file: File) => void;
-  loadDemoVectors: () => void;
 
   /** Access to the full local state for demo loading etc. */
   local: MeganeLocalState;
@@ -97,67 +82,6 @@ export function useDataSource(mode: DataMode): DataSource {
     [mode, local.loadXtc],
   );
 
-  const setBondSource = useCallback(
-    (source: BondSource) => {
-      if (mode === "streaming") {
-        ws.setBondSource(source);
-      } else {
-        local.setBondSource(source);
-      }
-    },
-    [mode, ws.setBondSource, local.setBondSource],
-  );
-
-  const setLabelSource = useCallback(
-    (source: LabelSource) => {
-      if (mode === "streaming") {
-        ws.setLabelSource(source);
-      } else {
-        local.setLabelSource(source);
-      }
-    },
-    [mode, ws.setLabelSource, local.setLabelSource],
-  );
-
-  const loadLabelFile = useCallback(
-    (file: File) => {
-      if (mode === "streaming") {
-        ws.loadLabelFile(file);
-      } else {
-        local.loadLabelFile(file);
-      }
-    },
-    [mode, ws.loadLabelFile, local.loadLabelFile],
-  );
-
-  const setVectorSource = useCallback(
-    (source: VectorSource) => {
-      if (mode === "streaming") {
-        ws.setVectorSource(source);
-      } else {
-        local.setVectorSource(source);
-      }
-    },
-    [mode, ws.setVectorSource, local.setVectorSource],
-  );
-
-  const loadVectorFile = useCallback(
-    (file: File) => {
-      if (mode === "streaming") {
-        ws.loadVectorFile(file);
-      } else {
-        local.loadVectorFile(file);
-      }
-    },
-    [mode, ws.loadVectorFile, local.loadVectorFile],
-  );
-
-  const loadDemoVectors = useCallback(() => {
-    if (mode === "local") {
-      local.loadDemoVectors();
-    }
-  }, [mode, local.loadDemoVectors]);
-
   return {
     snapshot,
     frame,
@@ -167,12 +91,6 @@ export function useDataSource(mode: DataMode): DataSource {
     seekFrame,
     uploadStructure,
     uploadTrajectory,
-    setBondSource,
-    setLabelSource,
-    loadLabelFile,
-    setVectorSource,
-    loadVectorFile,
-    loadDemoVectors,
     local,
   };
 }
