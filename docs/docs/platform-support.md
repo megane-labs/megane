@@ -351,6 +351,7 @@ Sources of truth: `crates/megane-wasm/src/lib.rs` (browser parsers), `crates/meg
 |---|:---:|:---:|:---:|:---:|:---:|:---:|
 | Drag-and-drop into viewer | ✓ | — | — | — | ✓ | n/a |
 | Built-in file picker | ✓ | — | host | host | ✓ | n/a |
+| Load Structure / Load Trajectory: open a file on the machine megane runs on, not the browser's (*Open from server…* / *Open from remote…*)⁹ | ✓ (`megane serve`) | — | ✓ (Jupyter server's files) | ✓ (VS Code Remote, code-server) | — | n/a |
 | Visual pipeline editor | ✓ | — | ✓ | ✓ (`.megane.json`) | ✓ | n/a |
 | Trajectory timeline / scrubbing | ✓ | ✓ | ✓ | ✓ | ✓ | n/a |
 | Trajectory playback without a running backend (shared / reopened document) | ✓ | ✓⁷ | ✓ | ✓ | ✓ | n/a |
@@ -385,6 +386,8 @@ Sources of truth: `crates/megane-wasm/src/lib.rs` (browser parsers), `crates/meg
 ⁷ Jupyter widget: opt-in with `set_pipeline(pipe, embed_trajectory=True | "auto")` or `view_traj(..., embed_trajectory=...)`, which embeds every frame in the widget state. By default frames stay in the kernel and are sent one at a time, so playback needs a running kernel. The other hosts parse the file in the browser and never depend on a backend for frames.
 
 ⁸ megane Builder outside the web app: the **VS Code** extension adds a *megane* container to the activity bar whose *Builder* view has *New Structure* and *Open File in Builder…*, plus *Open in megane Builder* on structure files in the Explorer's context menu and in a megane viewer tab's title bar; each opens a Builder editor tab. The **JupyterLab** extension adds a *megane* panel to the left sidebar (*Open Builder* and the structure files of the file browser's folder), *Open in megane Builder* in the file browser's context menu, and a *megane Builder* launcher item; the Builder is one main-area tab. The **Jupyter widget** is `megane.Builder("file.sdf")` in a cell: Python opens files in it (`load`, `load_text`) and reads the edited structure back (`n_atoms`, `text("pdb")`, `save(path)`, `to_ase()`); RDKit's module is sent by the kernel on first use rather than shipped in every notebook. Each separate `Builder` edits its own document; showing the same one in two outputs moves it to the newer output. Keyboard shortcuts act only while the focus is in the Builder on the embedded hosts.
+
+⁹ Each Load node's own button opens the browser's file dialog, which only sees the user's computer. When megane runs elsewhere, a second button opens a file on that machine instead: under **`megane serve`** it is *Open from server…*, megane's own dialog over the server's `/api/files` endpoints, rooted at the folder the server was started in (`--files-root` to change it, `--no-files` to turn it off) and served only to clients on the server's own machine — which includes an SSH tunnel — unless `--files-any-host` is given; on **JupyterLab** it is *Open from server…*, the same dialog over the Jupyter server's contents, starting in the file browser's folder; on **VS Code** it is *Open from remote…*, VS Code's own open dialog, shown when the window is remote (SSH, WSL, containers, Codespaces) or runs in a browser (code-server). The host's source is registered with `setRemoteFileSource` (`src/remote/fileSource.ts`). The node stores the file's name, as for an uploaded file. Static hosting and the Vite dev server expose no file API, so the button does not appear there.
 
 Notes:
 

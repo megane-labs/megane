@@ -2,9 +2,12 @@ import { ILayoutRestorer, JupyterFrontEnd, JupyterFrontEndPlugin } from "@jupyte
 import { WidgetTracker } from "@jupyterlab/apputils";
 import type { IDocumentWidget } from "@jupyterlab/docregistry";
 import { IStatusBar } from "@jupyterlab/statusbar";
+import { IDefaultFileBrowser } from "@jupyterlab/filebrowser";
+import { setRemoteFileSource } from "@megane/remote/fileSource";
 import { exposeAppForTests } from "./testHook";
 import { MeganeDocFactory, MeganePipelineDocFactory } from "./factory";
 import { setupFrameStatusBar } from "./frameStatusBar";
+import { createJupyterFileSource } from "./remoteFiles";
 import { builderPlugin } from "./builder/plugin";
 import type { MeganeReactView } from "./MeganeDocWidget";
 import type { MeganePipelineReactView } from "./MeganePipelineDocWidget";
@@ -30,9 +33,20 @@ const plugin: JupyterFrontEndPlugin<void> = {
     "Open molecular structure files (PDB, GRO, XYZ, MOL, SDF, CIF, LAMMPS data, ASE traj) and trajectories (XTC, DCD, LAMMPS dump) and megane pipelines",
   autoStart: true,
   requires: [ILayoutRestorer],
-  optional: [IStatusBar],
-  activate: (app: JupyterFrontEnd, restorer: ILayoutRestorer, statusBar: IStatusBar | null) => {
+  optional: [IStatusBar, IDefaultFileBrowser],
+  activate: (
+    app: JupyterFrontEnd,
+    restorer: ILayoutRestorer,
+    statusBar: IStatusBar | null,
+    browser?: { model: { path: string } } | null,
+  ) => {
     exposeAppForTests(app);
+
+    // The Load nodes' "Open from server..." dialog browses the Jupyter
+    // server's files, starting in the file browser's folder.
+    setRemoteFileSource(
+      createJupyterFileSource(app.serviceManager.contents, () => browser?.model.path ?? ""),
+    );
 
     for (const ft of [...STRUCTURE_FILETYPES_TEXT, ...STRUCTURE_FILETYPES_BINARY]) {
       app.docRegistry.addFileType(ft);

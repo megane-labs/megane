@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
 vi.mock("../../../jupyterlab-megane/src/testHook", () => ({
   exposeAppForTests: vi.fn(),
@@ -35,6 +35,7 @@ vi.mock("@jupyterlab/apputils", () => ({
 
 import plugins, { plugin, builderPlugin } from "../../../jupyterlab-megane/src/index";
 import { setupFrameStatusBar } from "../../../jupyterlab-megane/src/frameStatusBar";
+import { getRemoteFileSource, setRemoteFileSource } from "@megane/remote/fileSource";
 
 const mockApp = {
   docRegistry: {
@@ -83,5 +84,23 @@ describe("megane JupyterLab plugin – IStatusBar optional integration", () => {
     plugin.activate(mockApp as never, mockRestorer as never, null as never);
     expect(mockApp.docRegistry.addFileType).toHaveBeenCalled();
     expect(mockApp.docRegistry.addWidgetFactory).toHaveBeenCalled();
+  });
+});
+
+describe("megane JupyterLab plugin – Open from server", () => {
+  afterEach(() => setRemoteFileSource(null));
+
+  it("registers the Jupyter server's files, starting in the file browser's folder", () => {
+    const browser = { model: { path: "work/run" } };
+    plugin.activate(mockApp as never, mockRestorer as never, null as never, browser as never);
+    const source = getRemoteFileSource();
+    expect(source?.mode).toBe("browse");
+    expect(source?.mode === "browse" && source.initialPath?.()).toBe("work/run");
+  });
+
+  it("starts at the root without a file browser", () => {
+    plugin.activate(mockApp as never, mockRestorer as never, null as never);
+    const source = getRemoteFileSource();
+    expect(source?.mode === "browse" && source.initialPath?.()).toBe("");
   });
 });

@@ -12,7 +12,8 @@ import { useScopedPipelineStore, useLoadHandlers } from "../../stores/MeganeProv
 import { globalLoadHandlers, type StructureLoadHandler } from "../../stores/loadHandlers";
 import { NodeShell } from "./NodeShell";
 import { FileDrop } from "./form";
-import { fileMetaStyle } from "./formStyles";
+import { errorTextStyle, fileMetaStyle } from "./formStyles";
+import { useRemoteFilePick } from "./useRemoteFilePick";
 import { useRef, useCallback } from "react";
 // The file-dialog filter can only express extensions, so VASP contributes
 // `.vasp` there. Its extensionless spellings (POSCAR / CONTCAR / XDATCAR) are
@@ -50,6 +51,15 @@ export function LoadStructureNode({ id, data }: NodeProps<Node<PipelineNodeData>
     [id, updateNodeParams, loadHandlers],
   );
 
+  const acceptName = useCallback((name: string) => matchesStructureName(name, STRUCTURE_EXTS), []);
+  const remote = useRemoteFilePick({
+    kind: "structure",
+    extensions: STRUCTURE_EXTS,
+    accept: acceptName,
+    title: "Open structure",
+    onFile: handleFile,
+  });
+
   const handleDrop = useCallback(
     (e: React.DragEvent) => {
       e.preventDefault();
@@ -86,6 +96,7 @@ export function LoadStructureNode({ id, data }: NodeProps<Node<PipelineNodeData>
         onPick={() => inputRef.current?.click()}
         onDrop={handleDrop}
         onDragOver={handleDragOver}
+        remote={remote.button && { ...remote.button, testId: "load-structure-remote" }}
         fileInput={
           <input
             ref={inputRef}
@@ -112,6 +123,12 @@ export function LoadStructureNode({ id, data }: NodeProps<Node<PipelineNodeData>
             {editCount} edit{editCount === 1 ? "" : "s"}
           </div>
         )}
+        {remote.error && (
+          <div data-testid="load-structure-remote-error" style={errorTextStyle}>
+            {remote.error}
+          </div>
+        )}
+        {remote.dialog}
       </FileDrop>
     </NodeShell>
   );

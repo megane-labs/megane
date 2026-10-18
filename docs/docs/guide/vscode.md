@@ -31,6 +31,8 @@ The VS Code custom editor mounts the full visual pipeline editor. You can build 
 
 Pipelines are saved as `.megane.json` files, which open in a dedicated **megane Pipeline Viewer** editor. Save, share, and version-control these recipes alongside your project.
 
+In a remote window (Remote - SSH, WSL, Dev Containers, Codespaces) or in code-server, the **Load Structure** and **Load Trajectory** nodes also show **Open from remote…**. The node's own *Load structure…* / *Load trajectory…* button opens your computer's file dialog; *Open from remote…* opens VS Code's open dialog instead, which browses the workspace's machine and starts in the folder of the open file.
+
 ## megane Builder (structure editor)
 
 Click the *megane* icon (a pair of glasses) in the activity bar: its *Builder*
