@@ -141,6 +141,20 @@ export const BUILDER_EXTENSIONS = [
 ];
 export const BUILDER_FILENAME_PREFIXES = ["POSCAR", "CONTCAR", "XDATCAR"];
 
+/**
+ * The GROMACS topology to look for next to an opened `.gro` file: same stem,
+ * `.top` extension (`conf.gro` → `conf.top`); `null` for any other file.
+ * Mirrors `siblingTopologyName` in `src/hosts/classifyStandaloneFile.ts`
+ * (used by the JupyterLab DocWidget), which this extension-host bundle cannot
+ * import (it is compiled on its own with `rootDir: ./src`); a unit test pins
+ * the two together.
+ */
+export function siblingTopologyName(fileName: string): string | null {
+  const dot = fileName.lastIndexOf(".");
+  if (dot < 0 || fileName.slice(dot).toLowerCase() !== ".gro") return null;
+  return fileName.slice(0, dot) + ".top";
+}
+
 const SAVE_FILTERS: Record<string, [string, string[]]> = {
   glb: ["3D Model", ["glb"]],
   gltf: ["3D Model", ["gltf"]],
@@ -408,9 +422,8 @@ export class MeganeEditorProvider implements vscode.CustomReadonlyEditorProvider
       const filename = path.basename(document.uri.fsPath);
       let topBytes: ArrayBuffer | null = null;
       let topFilename: string | null = null;
-      if (filename.toLowerCase().endsWith(".gro")) {
-        const stem = filename.slice(0, filename.lastIndexOf("."));
-        const topName = stem + ".top";
+      const topName = siblingTopologyName(filename);
+      if (topName) {
         const topUri = vscode.Uri.file(path.join(path.dirname(document.uri.fsPath), topName));
         try {
           const topData = await vscode.workspace.fs.readFile(topUri);

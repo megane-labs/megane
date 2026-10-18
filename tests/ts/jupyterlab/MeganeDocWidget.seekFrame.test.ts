@@ -15,9 +15,6 @@ vi.mock("../../../jupyterlab-megane/src/wasmLoader", () => ({ ensureWasmUrl: vi.
 vi.mock("../../../jupyterlab-megane/src/filetypes", () => ({
   STRUCTURE_FILETYPES_BINARY: [],
 }));
-vi.mock("../../../jupyterlab-megane/src/trajectoryUtils", () => ({
-  TRAJECTORY_ONLY_EXTENSIONS: new Set<string>(),
-}));
 vi.mock("../../../jupyterlab-megane/src/frameSubscription", () => {
   const factory = () => {
     const listeners = new Set<(value: unknown) => void>();
