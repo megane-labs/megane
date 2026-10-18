@@ -6,21 +6,8 @@ use std::collections::HashSet;
 
 use crate::atomic::element_from_symbol;
 use crate::bonds;
+use crate::cif_lex::{contains_ci, split_line, starts_with_ci, strip_quotes, Document, Item};
 use crate::parser::{cell_params_to_matrix, ParsedStructure};
-
-/// Strip trailing parenthesized uncertainty from a CIF numeric value.
-/// e.g. "5.6402(1)" → "5.6402", "90.000(0)" → "90.000"
-fn strip_su(s: &str) -> &str {
-    match s.find('(') {
-        Some(i) => &s[..i],
-        None => s,
-    }
-}
-
-/// Parse a CIF numeric field, stripping standard uncertainty if present.
-fn parse_cif_float(s: &str) -> Option<f32> {
-    strip_su(s.trim()).parse().ok()
-}
 
 /// Determine column indices from the loop_ header tags.
 struct AtomSiteColumns {
@@ -83,66 +70,10 @@ const SYMOP_TAGS: [&str; 2] = [
 ];
 
 fn is_symop_tag(tag: &str) -> bool {
-    SYMOP_TAGS.contains(&tag)
-}
-
-/// Strip a single pair of surrounding single/double quotes from a CIF value.
-fn strip_quotes(s: &str) -> &str {
-    let s = s.trim();
-    let b = s.as_bytes();
-    if b.len() >= 2
-        && ((b[0] == b'\'' && b[b.len() - 1] == b'\'') || (b[0] == b'"' && b[b.len() - 1] == b'"'))
-    {
-        return &s[1..s.len() - 1];
-    }
-    s
-}
-
-/// Split a `_tag value` line into (tag, value-remainder).
-fn split_tag_value(line: &str) -> Option<(&str, &str)> {
-    line.trim().split_once(char::is_whitespace)
+    SYMOP_TAGS.iter().any(|t| t.eq_ignore_ascii_case(tag))
 }
 
 /// Extract the symop field from a single data row of a symmetry loop.
-fn split_cif_fields(line: &str) -> Vec<String> {
-    let bytes = line.as_bytes();
-    let mut fields = Vec::new();
-    let mut i = 0;
-
-    while i < bytes.len() {
-        while i < bytes.len() && bytes[i].is_ascii_whitespace() {
-            i += 1;
-        }
-        if i == bytes.len() {
-            break;
-        }
-
-        if bytes[i] == b'\'' || bytes[i] == b'"' {
-            let quote = bytes[i];
-            i += 1;
-            let start = i;
-            while i < bytes.len()
-                && !(bytes[i] == quote
-                    && (i + 1 == bytes.len() || bytes[i + 1].is_ascii_whitespace()))
-            {
-                i += 1;
-            }
-            fields.push(line[start..i].to_string());
-            if i < bytes.len() {
-                i += 1;
-            }
-        } else {
-            let start = i;
-            while i < bytes.len() && !bytes[i].is_ascii_whitespace() {
-                i += 1;
-            }
-            fields.push(line[start..i].to_string());
-        }
-    }
-
-    fields
-}
-
 fn extract_symop_field(line: &str, col: usize, col_count: usize) -> Option<String> {
     let line = line.trim();
     // Single-column loop: the entire (possibly quoted) line is the symop.
@@ -150,13 +81,30 @@ fn extract_symop_field(line: &str, col: usize, col_count: usize) -> Option<Strin
         let v = strip_quotes(line);
         return (!v.is_empty()).then(|| v.to_string());
     }
-    let fields = split_cif_fields(line);
+    let fields = split_line(line);
     if fields.len() < col_count {
         // Some malformed-but-common files omit the id/flag columns and provide
         // only the operation. Preserve the existing comma-token fallback.
-        return fields.into_iter().find(|field| field.contains(','));
+        return fields
+            .into_iter()
+            .find(|field| field.contains(','))
+            .map(str::to_string);
     }
-    fields.get(col).cloned()
+    fields.get(col).map(|f| f.to_string())
+}
+
+/// The rest of the line `value` starts on, for an unquoted symop written with
+/// spaces (`_symmetry_equiv_pos_as_xyz x, y, z`), which is malformed but
+/// common enough that the parser has always accepted it.
+fn rest_of_line<'a>(text: &'a str, value: &'a str) -> &'a str {
+    let base = text.as_ptr() as usize;
+    let ptr = value.as_ptr() as usize;
+    if ptr < base || ptr + value.len() > base + text.len() {
+        return value;
+    }
+    let start = ptr - base;
+    let line = &text[start..];
+    line.split('\n').next().unwrap_or(line).trim()
 }
 
 /// Extract crystallographic symmetry operations from CIF/mmCIF text.
@@ -166,109 +114,67 @@ fn extract_symop_field(line: &str, col: usize, col_count: usize) -> Option<Strin
 /// (`_symmetry_equiv_pos_as_xyz 'x,y,z'`). Returns the raw operation strings
 /// (e.g. `"-x+1/2,y+1/2,-z"`) without applying them.
 pub fn extract_symmetry_ops(text: &str) -> Vec<String> {
-    let lines: Vec<&str> = text.lines().collect();
+    // Every symop tag ends in `xyz`; skip lexing documents (most mmCIF
+    // entries) that cannot hold one.
+    if !contains_ci(text, "xyz") {
+        return Vec::new();
+    }
+    symmetry_ops(text, &Document::parse(text))
+}
+
+/// [`extract_symmetry_ops`] over an already-lexed document.
+///
+/// Symmetry loops are read line by line on purpose: unlike atom-site rows,
+/// symop rows are conventionally one per line, and real files write unquoted
+/// operations containing spaces (`x, y, z`) that a strict token stream would
+/// split into three values.
+pub(crate) fn symmetry_ops(text: &str, doc: &Document) -> Vec<String> {
     let mut ops: Vec<String> = Vec::new();
-    let mut i = 0;
-    while i < lines.len() {
-        let trimmed = lines[i].trim();
-        if trimmed == "loop_" {
-            i += 1;
-            // Read loop header tags (tolerate blank/comment lines).
-            let mut tags: Vec<String> = Vec::new();
-            while i < lines.len() {
-                let t = lines[i].trim();
-                if t.is_empty() || t.starts_with('#') {
-                    i += 1;
+    for item in &doc.items {
+        match item {
+            Item::Loop(lp) => {
+                let Some(col) = lp.tags.iter().position(|t| is_symop_tag(t)) else {
                     continue;
-                }
-                if t.starts_with('_') {
-                    tags.push(t.to_ascii_lowercase());
-                    i += 1;
-                } else {
-                    break;
-                }
-            }
-            if let Some(col) = tags.iter().position(|t| is_symop_tag(t)) {
-                let col_count = tags.len();
-                while i < lines.len() {
-                    let t = lines[i].trim();
+                };
+                for line in lp.body().lines() {
+                    let t = line.trim();
                     if t.is_empty() || t.starts_with('#') {
-                        i += 1;
                         continue;
                     }
-                    if t.starts_with("loop_")
-                        || t.starts_with("data_")
-                        || t.starts_with("save_")
-                        || t.starts_with("global_")
-                        || t.starts_with('_')
-                    {
-                        break;
-                    }
-                    if let Some(op) = extract_symop_field(t, col, col_count) {
+                    if let Some(op) = extract_symop_field(t, col, lp.tags.len()) {
                         ops.push(op);
                     }
-                    i += 1;
                 }
             }
-            // `i` already advanced past this loop's header/data; keep scanning.
-        } else {
-            if trimmed.starts_with('_') {
-                if let Some((tag, rest)) = split_tag_value(trimmed) {
-                    if is_symop_tag(&tag.to_ascii_lowercase()) {
-                        let v = strip_quotes(rest.trim());
-                        if !v.is_empty() {
-                            ops.push(v.to_string());
-                        }
-                    }
+            Item::Pair { tag, value } => {
+                if !is_symop_tag(tag) {
+                    continue;
+                }
+                let v = if value.quoted {
+                    value.text
+                } else {
+                    rest_of_line(text, value.text)
+                };
+                if !v.is_empty() {
+                    ops.push(v.to_string());
                 }
             }
-            i += 1;
         }
     }
     ops
 }
 
-/// True when the document carries mmCIF-style dotted `_atom_site.` tags
-/// (`_atom_site.Cartn_x` …) instead of the small-molecule `_atom_site_*` ones.
-fn text_has_mmcif_atom_sites(text: &str) -> bool {
-    text.lines().any(|l| {
-        l.trim_start()
-            .to_ascii_lowercase()
-            .starts_with("_atom_site.")
-    })
-}
-
 pub fn parse(text: &str) -> Result<ParsedStructure, String> {
-    let lines: Vec<&str> = text.lines().collect();
+    let doc = Document::parse(text);
 
-    // --- Parse cell parameters ---
-    let mut cell_a: Option<f32> = None;
-    let mut cell_b: Option<f32> = None;
-    let mut cell_c: Option<f32> = None;
-    let mut cell_alpha: Option<f32> = None;
-    let mut cell_beta: Option<f32> = None;
-    let mut cell_gamma: Option<f32> = None;
-
-    // First pass: extract cell parameters (simple key-value lines)
-    for line in &lines {
-        let trimmed = line.trim();
-        if trimmed.starts_with('_') {
-            let parts: Vec<&str> = trimmed.split_whitespace().collect();
-            if parts.len() >= 2 {
-                let tag = parts[0].to_ascii_lowercase();
-                let val = parts[1];
-                match tag.as_str() {
-                    "_cell_length_a" => cell_a = parse_cif_float(val),
-                    "_cell_length_b" => cell_b = parse_cif_float(val),
-                    "_cell_length_c" => cell_c = parse_cif_float(val),
-                    "_cell_angle_alpha" => cell_alpha = parse_cif_float(val),
-                    "_cell_angle_beta" => cell_beta = parse_cif_float(val),
-                    "_cell_angle_gamma" => cell_gamma = parse_cif_float(val),
-                    _ => {}
-                }
-            }
-        }
-    }
+    // --- Cell parameters (last occurrence wins) ---
+    let cell = |tag: &str| doc.value(tag).and_then(|v| v.as_f32());
+    let cell_a = cell("_cell_length_a");
+    let cell_b = cell("_cell_length_b");
+    let cell_c = cell("_cell_length_c");
+    let cell_alpha = cell("_cell_angle_alpha");
+    let cell_beta = cell("_cell_angle_beta");
+    let cell_gamma = cell("_cell_angle_gamma");
 
     let box_matrix = match (cell_a, cell_b, cell_c, cell_alpha, cell_beta, cell_gamma) {
         (Some(a), Some(b), Some(c), Some(alpha), Some(beta), Some(gamma))
@@ -283,140 +189,81 @@ pub fn parse(text: &str) -> Result<ParsedStructure, String> {
     let mut positions: Vec<f32> = Vec::new();
     let mut elements: Vec<u8> = Vec::new();
     let mut atom_labels: Vec<String> = Vec::new();
+    let mut warnings: Vec<String> = Vec::new();
 
-    let mut i = 0;
-    while i < lines.len() {
-        let trimmed = lines[i].trim();
-
-        // Look for loop_ that contains _atom_site tags
-        if trimmed == "loop_" {
-            i += 1;
-            let mut cols = AtomSiteColumns::new();
-            let mut col_count = 0;
-            let mut is_atom_site_loop = false;
-
-            // Read loop header tags. Tolerate blank lines and `#` comment
-            // lines between `loop_` and the first tag, and between tags.
-            while i < lines.len() {
-                let t = lines[i].trim();
-                if t.is_empty() || t.starts_with('#') {
-                    i += 1;
-                    continue;
-                }
-                if t.starts_with('_') {
-                    if t.to_ascii_lowercase().starts_with("_atom_site") {
-                        is_atom_site_loop = true;
-                        cols.assign(col_count, t);
-                    }
-                    col_count += 1;
-                    i += 1;
-                } else {
-                    break;
-                }
+    // Loop rows are a CIF token stream (see `cif_lex`): a row may wrap lines,
+    // quoted values may contain spaces, and blank/comment lines inside the
+    // loop body are ignored (Issue #458).
+    for lp in doc.loops() {
+        if !lp.has_tag_prefix("_atom_site") {
+            continue;
+        }
+        let mut cols = AtomSiteColumns::new();
+        for (idx, tag) in lp.tags.iter().enumerate() {
+            if starts_with_ci(tag, "_atom_site") {
+                cols.assign(idx, tag);
             }
+        }
 
-            if !is_atom_site_loop || col_count == 0 {
+        let use_fractional = cols.has_fractional() && box_matrix.is_some();
+        let use_cartesian = cols.has_cartesian();
+        if !use_fractional && !use_cartesian {
+            continue;
+        }
+
+        let mut rows = lp.cursor();
+        while let Some(row) = rows.next_row() {
+            let num = |c: usize| row[c].as_f32().unwrap_or(0.0);
+            // Extract coordinates first to avoid desyncing
+            // elements/atom_labels from positions on missing coords
+            let coords = if let (true, Some(fx_col), Some(fy_col), Some(fz_col), Some(bm)) = (
+                use_fractional,
+                cols.fract_x,
+                cols.fract_y,
+                cols.fract_z,
+                box_matrix.as_ref(),
+            ) {
+                Some(fract_to_cart(num(fx_col), num(fy_col), num(fz_col), bm))
+            } else if let (Some(cx), Some(cy), Some(cz)) =
+                (cols.cartn_x, cols.cartn_y, cols.cartn_z)
+            {
+                Some((num(cx), num(cy), num(cz)))
+            } else {
+                None
+            };
+
+            let Some((x, y, z)) = coords else {
                 continue;
-            }
+            };
 
-            let use_fractional = cols.has_fractional() && box_matrix.is_some();
-            let use_cartesian = cols.has_cartesian();
+            // Element: type_symbol, falling back to the label when the type
+            // symbol column is absent or holds a `?`/`.` null.
+            let label = cols.label.and_then(|c| row[c].get());
+            let elem = cols
+                .type_symbol
+                .and_then(|c| row[c].get())
+                .or(label)
+                .map(element_from_symbol)
+                .unwrap_or(0);
+            elements.push(elem);
+            atom_labels.push(label.unwrap_or_default().to_string());
 
-            if !use_fractional && !use_cartesian {
-                i += 1;
-                continue;
-            }
+            positions.push(x);
+            positions.push(y);
+            positions.push(z);
+        }
 
-            // Read data rows. Per CIF semantics a loop's data is only
-            // terminated by EOF or the next reserved word (`loop_`,
-            // `data_`, `save_`, `global_`, `_tag`). Blank lines and `#`
-            // comment lines must be tolerated inside the loop body — many
-            // CCDC/COD CIFs put a blank line between the header and the
-            // first data row (see Issue #458).
-            while i < lines.len() {
-                let t = lines[i].trim();
-                if t.is_empty() || t.starts_with('#') {
-                    i += 1;
-                    continue;
-                }
-                if t.starts_with("loop_")
-                    || t.starts_with("data_")
-                    || t.starts_with("save_")
-                    || t.starts_with("global_")
-                    || t.starts_with('_')
-                {
-                    break;
-                }
+        if lp.partial_row_len() > 0 {
+            warnings.push(format!(
+                "_atom_site loop ends with an incomplete row ({} of {} values); it was skipped",
+                lp.partial_row_len(),
+                lp.tags.len()
+            ));
+        }
 
-                let fields: Vec<&str> = t.split_whitespace().collect();
-                if fields.len() < col_count {
-                    i += 1;
-                    continue;
-                }
-
-                // Extract coordinates first to avoid desyncing
-                // elements/atom_labels from positions on missing coords
-                let coords = if let (true, Some(fx_col), Some(fy_col), Some(fz_col), Some(bm)) = (
-                    use_fractional,
-                    cols.fract_x,
-                    cols.fract_y,
-                    cols.fract_z,
-                    box_matrix.as_ref(),
-                ) {
-                    let fx = parse_cif_float(fields[fx_col]).unwrap_or(0.0);
-                    let fy = parse_cif_float(fields[fy_col]).unwrap_or(0.0);
-                    let fz = parse_cif_float(fields[fz_col]).unwrap_or(0.0);
-                    Some(fract_to_cart(fx, fy, fz, bm))
-                } else if let (Some(cx), Some(cy), Some(cz)) =
-                    (cols.cartn_x, cols.cartn_y, cols.cartn_z)
-                {
-                    let x = parse_cif_float(fields[cx]).unwrap_or(0.0);
-                    let y = parse_cif_float(fields[cy]).unwrap_or(0.0);
-                    let z = parse_cif_float(fields[cz]).unwrap_or(0.0);
-                    Some((x, y, z))
-                } else {
-                    None
-                };
-
-                let (x, y, z) = match coords {
-                    Some(c) => c,
-                    None => {
-                        i += 1;
-                        continue;
-                    }
-                };
-
-                // Extract element
-                let elem = if let Some(ci) = cols.type_symbol {
-                    element_from_symbol(fields[ci])
-                } else if let Some(ci) = cols.label {
-                    element_from_symbol(fields[ci])
-                } else {
-                    0
-                };
-                elements.push(elem);
-
-                // Extract label
-                let label = if let Some(ci) = cols.label {
-                    fields[ci].to_string()
-                } else {
-                    String::new()
-                };
-                atom_labels.push(label);
-
-                positions.push(x);
-                positions.push(y);
-                positions.push(z);
-
-                i += 1;
-            }
-
-            // Only parse the first atom_site loop
-            if !elements.is_empty() {
-                break;
-            }
-        } else {
-            i += 1;
+        // Only parse the first atom_site loop
+        if !elements.is_empty() {
+            break;
         }
     }
 
@@ -426,8 +273,8 @@ pub fn parse(text: &str) -> Result<ParsedStructure, String> {
         // rather than the small-molecule `_atom_site_` ones, yet ship under
         // the same `.cif` extension (e.g. wwPDB downloads). Delegate instead
         // of erroring so hosts don't need to sniff the dialect themselves.
-        if text_has_mmcif_atom_sites(text) {
-            return crate::mmcif::parse(text);
+        if doc.has_tag_prefix("_atom_site.") {
+            return crate::mmcif::parse_document(text, &doc);
         }
         return Err("CIF file contains no atom sites".to_string());
     }
@@ -453,7 +300,7 @@ pub fn parse(text: &str) -> Result<ParsedStructure, String> {
     // (VESTA-style packing) is the `symmetry` pipeline node's job, so the user
     // can see and toggle the expansion instead of it being baked in at parse
     // time.
-    let symmetry_ops = extract_symmetry_ops(text);
+    let symmetry_ops = symmetry_ops(text, &doc);
 
     Ok(ParsedStructure {
         n_atoms,
@@ -464,6 +311,7 @@ pub fn parse(text: &str) -> Result<ParsedStructure, String> {
         box_matrix,
         atom_labels: labels,
         symmetry_ops,
+        warnings,
         ..Default::default()
     })
 }
@@ -672,11 +520,186 @@ O1 O 0.7229 0.8423 0.8321
         assert_eq!(result.symmetry_ops[2], "-x+1/2,y+1/2,-z");
     }
 
+    /// A quoted atom label containing a space used to shift every later
+    /// column, so the type symbol and coordinates were read from the wrong
+    /// fields.
     #[test]
-    fn test_strip_su() {
-        assert_eq!(strip_su("5.6402(1)"), "5.6402");
-        assert_eq!(strip_su("90.000"), "90.000");
-        assert_eq!(strip_su("1.234(56)"), "1.234");
+    fn quoted_label_with_space_keeps_columns_aligned() {
+        let cif = "data_q
+_cell_length_a 10
+_cell_length_b 10
+_cell_length_c 10
+_cell_angle_alpha 90
+_cell_angle_beta 90
+_cell_angle_gamma 90
+loop_
+_atom_site_label
+_atom_site_type_symbol
+_atom_site_fract_x
+_atom_site_fract_y
+_atom_site_fract_z
+'C1 A' C 0.1 0.2 0.3
+\"O5'\" O 0.4 0.5 0.6
+";
+        let s = parse(cif).expect("parse");
+        assert_eq!(s.n_atoms, 2);
+        assert_eq!(s.elements, vec![6, 8]);
+        assert_eq!(
+            s.atom_labels.as_ref().unwrap(),
+            &vec!["C1 A".to_string(), "O5'".to_string()]
+        );
+        assert!((s.positions[0] - 1.0).abs() < 1e-4);
+        assert!((s.positions[5] - 6.0).abs() < 1e-4);
+    }
+
+    /// Loop rows are a token stream: a row may wrap onto several lines and a
+    /// column may hold a `;` text field.
+    #[test]
+    fn wrapped_rows_and_text_fields_in_atom_loop() {
+        let cif = "data_w
+loop_
+_atom_site_label
+_atom_site_type_symbol
+_atom_site_Cartn_x
+_atom_site_Cartn_y
+_atom_site_Cartn_z
+_atom_site_note
+O1 O
+  1.0 2.0
+  3.0 plain
+H1 H 4.0 5.0 6.0
+;multi-line
+note
+;
+";
+        let s = parse(cif).expect("parse");
+        assert_eq!(s.n_atoms, 2);
+        assert_eq!(s.elements, vec![8, 1]);
+        assert_eq!(&s.positions, &[1.0, 2.0, 3.0, 4.0, 5.0, 6.0]);
+    }
+
+    /// Standard uncertainties are stripped from coordinates, a value may sit
+    /// on the line after its tag, and `?`/`.` nulls are handled: a missing
+    /// type symbol falls back to the label, a missing label is no label.
+    #[test]
+    fn uncertainties_and_missing_values() {
+        let cif = "data_su
+_cell_length_a
+  10.0(2)
+_cell_length_b 10.0(2)
+_cell_length_c 10.0(2)
+_cell_angle_alpha 90
+_cell_angle_beta 90
+_cell_angle_gamma 90
+loop_
+_atom_site_label
+_atom_site_type_symbol
+_atom_site_fract_x
+_atom_site_fract_y
+_atom_site_fract_z
+Na1 ? 0.25(3) 0.5(12) 0.75(1)
+? Cl 0.0 0.0 0.0
+";
+        let s = parse(cif).expect("parse");
+        assert!(s.box_matrix.is_some());
+        assert_eq!(s.elements, vec![11, 17]);
+        assert!((s.positions[0] - 2.5).abs() < 1e-4);
+        assert!((s.positions[1] - 5.0).abs() < 1e-4);
+        assert!((s.positions[2] - 7.5).abs() < 1e-4);
+        assert_eq!(
+            s.atom_labels.as_ref().unwrap(),
+            &vec!["Na1".to_string(), String::new()]
+        );
+    }
+
+    /// A dangling partial row at the end of the atom loop is reported, not
+    /// dropped silently.
+    #[test]
+    fn incomplete_last_row_warns() {
+        let cif = "data_p
+loop_
+_atom_site_label
+_atom_site_Cartn_x
+_atom_site_Cartn_y
+_atom_site_Cartn_z
+Na1 1 2 3
+Cl1 4
+";
+        let s = parse(cif).expect("parse");
+        assert_eq!(s.n_atoms, 1);
+        assert_eq!(
+            s.warnings,
+            vec!["_atom_site loop ends with an incomplete row (2 of 4 values); it was skipped"]
+        );
+    }
+
+    #[test]
+    fn atom_site_loop_without_coordinates_is_skipped() {
+        let cif = "data_aniso
+loop_
+_atom_site_aniso_label
+_atom_site_aniso_U_11
+Na1 0.01
+loop_
+_atom_site_label
+_atom_site_Cartn_x
+_atom_site_Cartn_y
+_atom_site_Cartn_z
+Na1 1 2 3
+";
+        let s = parse(cif).expect("parse");
+        assert_eq!(s.n_atoms, 1);
+        assert_eq!(s.elements, vec![11]);
+    }
+
+    #[test]
+    fn test_extract_symmetry_ops_unquoted_keyvalue_with_spaces() {
+        let cif = "data_x\n_symmetry_equiv_pos_as_xyz x, y, z\n_cell_length_a 5\n";
+        assert_eq!(extract_symmetry_ops(cif), vec!["x, y, z"]);
+        // Uppercase tags are matched case-insensitively.
+        let upper = "data_x\nloop_\n_SYMMETRY_EQUIV_POS_AS_XYZ\nx,y,z\n";
+        assert_eq!(extract_symmetry_ops(upper), vec!["x,y,z"]);
+    }
+
+    #[test]
+    fn test_rest_of_line_ignores_foreign_slices() {
+        let text = "_tag x, y, z\nnext";
+        assert_eq!(rest_of_line(text, &text[5..7]), "x, y, z");
+        let other = String::from("abc");
+        assert_eq!(rest_of_line(text, &other), "abc");
+    }
+
+    /// Compact golden digest of every CIF/mmCIF fixture, dispatched the way
+    /// the hosts do. Recorded from the pre-lexer line-based parsers so the
+    /// shared token-stream lexer is pinned to the exact same output.
+    #[test]
+    fn fixture_outputs_are_pinned() {
+        let cases: [(&str, usize, usize, usize, u32, f64); 6] = [
+            ("1ala.mmcif", 10, 11, 0, 68, 152.5),
+            ("alpha_al2o3_aflow.cif", 30, 36, 1, 300, 272.9593),
+            ("delta_glycine.cif", 10, 9, 4, 40, 158.4565),
+            ("glycine_csd.cif", 10, 9, 4, 40, 17.7596),
+            ("nacl.cif", 8, 18, 0, 112, 33.8412),
+            ("pbc_bond_split.cif", 4, 3, 1, 16, 41.56),
+        ];
+        for (name, n_atoms, n_bonds, n_ops, elem_sum, pos_sum) in cases {
+            let path = format!("{}/../../tests/fixtures/{name}", env!("CARGO_MANIFEST_DIR"));
+            let text = std::fs::read_to_string(&path).expect("read fixture");
+            let s = if crate::mmcif::is_mmcif(&text) {
+                crate::mmcif::parse(&text)
+            } else {
+                parse(&text)
+            }
+            .expect("parse fixture");
+            assert_eq!(s.n_atoms, n_atoms, "{name} n_atoms");
+            assert_eq!(s.bonds.len(), n_bonds, "{name} bonds");
+            assert_eq!(s.symmetry_ops.len(), n_ops, "{name} symops");
+            let es: u32 = s.elements.iter().map(|&e| e as u32).sum();
+            assert_eq!(es, elem_sum, "{name} elements");
+            let ps: f64 = s.positions.iter().map(|&p| p as f64).sum();
+            assert!((ps - pos_sum).abs() < 1e-3, "{name} positions {ps}");
+            assert!(s.warnings.is_empty(), "{name} warnings");
+        }
     }
 
     #[test]
