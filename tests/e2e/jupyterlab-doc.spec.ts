@@ -193,6 +193,11 @@ test("Load Structure opens a file from the Jupyter server", async ({ page }) => 
   const viewer = page.locator('[data-testid="megane-viewer"]');
   await expect(viewer).toHaveAttribute("data-atom-count", "327");
 
+  // The pipeline panel starts collapsed in a narrow editor pane.
+  const panel = page.locator('[data-testid="panel-pipeline"]').first();
+  if ((await panel.getAttribute("data-collapsed")) === "true") {
+    await page.locator('[data-testid="panel-pipeline-toggle"]').first().click();
+  }
   await page.locator('[data-testid="pipeline-editor-tab-editor"]').first().click();
   await page.locator('[data-testid="pipeline-node-load_structure"]').first().click();
   const button = page.locator('[data-testid="load-structure-remote"]').first();

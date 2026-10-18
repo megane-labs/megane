@@ -137,6 +137,11 @@ test("Load Structure opens a workspace file through VS Code's open dialog", asyn
     ...defaultViewerContract({ expectedAtoms: 327, context: "vscode" }),
   ]);
 
+  // The pipeline panel starts collapsed in a narrow editor pane.
+  const panel = wv.locator('[data-testid="panel-pipeline"]').first();
+  if ((await panel.getAttribute("data-collapsed")) === "true") {
+    await wv.locator('[data-testid="panel-pipeline-toggle"]').first().click();
+  }
   await wv.locator('[data-testid="pipeline-editor-tab-editor"]').first().click();
   await wv.locator('[data-testid="pipeline-node-load_structure"]').first().click();
   const button = wv.locator('[data-testid="load-structure-remote"]').first();
