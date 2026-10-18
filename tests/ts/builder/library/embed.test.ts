@@ -206,3 +206,27 @@ describe("embedSketch", () => {
     expect(state.terminated).toBe(1);
   });
 });
+
+describe("setRDKitWasmSource", () => {
+  it("takes the .wasm URL from the installed provider, then the bundle again once removed", async () => {
+    const { embedSketch, setRDKitWasmSource } = await freshClient();
+    const source = vi.fn(async () => "blob:rdkit");
+    setRDKitWasmSource(source);
+    await embedSketch("A");
+    expect(source).toHaveBeenCalledTimes(1);
+    expect(state.requests[0].wasmUrl).toBe("blob:rdkit");
+    setRDKitWasmSource(null);
+    await embedSketch("B");
+    expect(state.requests[1].wasmUrl).toMatch(/\/assets\/megane-rdkit\.wasm$/);
+  });
+
+  it("rejects with the provider's error and sends nothing", async () => {
+    const { embedSketch, setRDKitWasmSource } = await freshClient();
+    setRDKitWasmSource(async () => {
+      throw new Error("no kernel");
+    });
+    await expect(embedSketch("A")).rejects.toThrow("no kernel");
+    expect(state.requests).toHaveLength(0);
+    setRDKitWasmSource(null);
+  });
+});

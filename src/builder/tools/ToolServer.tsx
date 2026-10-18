@@ -29,10 +29,13 @@ function groupByCategory(tools: BuilderToolInfo[]): [ToolCategory, BuilderToolIn
   return [...groups.entries()];
 }
 
-/** Connect from a launch link, or to the site's tool server, once on mount. */
-export function useToolServerLaunch() {
+/**
+ * Connect from a launch link, or to the site's tool server, once on mount.
+ * A host without the Tools menu (`enabled` false) leaves the page URL alone.
+ */
+export function useToolServerLaunch(enabled = true) {
   useEffect(() => {
-    if (typeof window === "undefined") return;
+    if (!enabled || typeof window === "undefined") return;
     const launch = readLaunchParams(window.location.hash);
     const api = useToolsStore.getState();
     if (!launch) {
@@ -48,7 +51,7 @@ export function useToolServerLaunch() {
       /* sandboxed frames may refuse */
     }
     void api.connect();
-  }, []);
+  }, [enabled]);
 }
 
 /** The Tools menu: the server's tools by category, then the way to (re)connect. */

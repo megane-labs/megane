@@ -75,6 +75,8 @@ bench/llm/results/
 # Generated anywidget bundle (built by `npm run build:widget`, shipped in the
 # wheel via the maturin [tool.maturin] include of python/megane/static/**)
 python/megane/static/widget.js
+python/megane/static/builder_widget.js
+python/megane/static/megane-rdkit.wasm
 
 # Perf harness run artifacts (scripts/profile-*.mjs → savePerfJson)
 tests/e2e/perf_*.json

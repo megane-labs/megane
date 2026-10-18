@@ -102,6 +102,18 @@ function getWorker(): Worker {
   return w;
 }
 
+/**
+ * Where the RDKit `.wasm` comes from when the bundle does not carry it: the
+ * Jupyter widget asks the kernel for it on first use rather than inlining
+ * 3.5 MB into every notebook. Null (the default) uses the bundled asset.
+ */
+let wasmSource: (() => Promise<string>) | null = null;
+
+/** Install (or, with null, remove) the provider of the RDKit `.wasm` URL. */
+export function setRDKitWasmSource(source: (() => Promise<string>) | null): void {
+  wasmSource = source;
+}
+
 /** True when this environment can run the embedding at all (a Web Worker is needed). */
 export function canEmbed(): boolean {
   return typeof Worker !== "undefined";
@@ -128,12 +140,15 @@ export function embedSketch(
     forceField: options.forceField ?? "MMFF94s",
   };
   if (options.randomSeed !== undefined) rdkitOptions.randomSeed = options.randomSeed;
-  const req: EmbedRequest = {
-    id: nextId++,
-    wasmUrl: resolveWasmUrl(),
-    molfile,
-    options: rdkitOptions,
-  };
+  if (wasmSource) {
+    return wasmSource().then((wasmUrl) => request(molfile, rdkitOptions, wasmUrl));
+  }
+  return request(molfile, rdkitOptions, resolveWasmUrl());
+}
+
+/** Send one request to the worker and wait for its answer. */
+function request(molfile: string, options: EmbedOptions, wasmUrl: string): Promise<EmbeddedSketch> {
+  const req: EmbedRequest = { id: nextId++, wasmUrl, molfile, options };
   return new Promise<EmbeddedSketch>((resolve, reject) => {
     let w: Worker;
     try {

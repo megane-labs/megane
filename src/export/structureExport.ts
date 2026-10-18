@@ -43,6 +43,15 @@ export async function snapshotToText(
   });
 }
 
+/** The name a document called `fileName` is saved under in `format` (`water.pdb` → `water.xyz`). */
+export function exportFileName(
+  fileName: string | null | undefined,
+  format: StructureWriteFormat,
+): string {
+  const ext = STRUCTURE_EXPORT_FORMATS.find((f) => f.value === format)?.ext ?? `.${format}`;
+  return `${exportBaseName(fileName)}${ext}`;
+}
+
 /** Write `snapshot` in `format` and hand the file to the host. Returns the file name. */
 export async function exportSnapshot(
   snapshot: Snapshot,
@@ -51,8 +60,7 @@ export async function exportSnapshot(
   atomLabels: string[] | null = null,
 ): Promise<string> {
   const text = await snapshotToText(snapshot, format, atomLabels);
-  const ext = STRUCTURE_EXPORT_FORMATS.find((f) => f.value === format)?.ext ?? `.${format}`;
-  const name = `${exportBaseName(fileName)}${ext}`;
+  const name = exportFileName(fileName, format);
   downloadBlob(new Blob([text], { type: "text/plain" }), name);
   return name;
 }

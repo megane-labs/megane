@@ -51,6 +51,7 @@ from megane.pipeline import (
 from megane.writers import save_structure, write_structure
 
 if TYPE_CHECKING:
+    from megane.builder import Builder
     from megane.widget import MolecularViewer
 
 __all__ = [
@@ -59,6 +60,7 @@ __all__ = [
     "AddLabels",
     "AddPolyhedra",
     "BoundaryCompletion",
+    "Builder",
     "Color",
     "DrawingBoundary",
     "Filter",
@@ -115,9 +117,14 @@ def __getattr__(name: str) -> object:
 
         globals()["MolecularViewer"] = MolecularViewer
         return MolecularViewer
+    if name == "Builder":
+        from megane.builder import Builder
+
+        globals()["Builder"] = Builder
+        return Builder
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
 def __dir__() -> list[str]:
-    # Keep the lazily imported widget visible to dir() and tab completion.
-    return sorted(set(globals()) | {"MolecularViewer"})
+    # Keep the lazily imported widgets visible to dir() and tab completion.
+    return sorted(set(globals()) | {"MolecularViewer", "Builder"})

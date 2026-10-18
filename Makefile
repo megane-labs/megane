@@ -131,5 +131,5 @@ lint-rust-fix:
 # Clean build artifacts
 clean:
 	cargo clean
-	rm -rf python/megane/static/app python/megane/static/widget.js
+	rm -rf python/megane/static/app python/megane/static/widget.js python/megane/static/builder_widget.js python/megane/static/megane-rdkit.wasm
 	rm -rf dist/ *.egg-info/ target/

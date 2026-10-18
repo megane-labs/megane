@@ -123,6 +123,8 @@ export interface BuilderStore {
   // ── Document actions ──
   /** Start a document from a parsed structure. Replaces everything. */
   openStructure: (snapshot: Snapshot, labels: string[] | null, fileName: string) => void;
+  /** Drop the document: back to the empty start screen. */
+  closeDocument: () => void;
   /** Start a document from an empty cubic cell of edge `edge` Å. */
   newCell: (edge: number) => void;
   /** Start a document from a bulk crystal (`bulkSnapshot`). Throws on a bad spec. */
@@ -263,6 +265,21 @@ export const builderStateCreator: StateCreator<BuilderStore> = (set, get) => ({
       redoStack: [],
       showOriginal: false,
       result: compute(snapshot, []),
+      preview: null,
+      selected: [],
+      pendingBondAtom: null,
+      notice: null,
+    }),
+
+  closeDocument: () =>
+    set({
+      source: null,
+      sourceLabels: null,
+      fileName: null,
+      edits: [],
+      redoStack: [],
+      showOriginal: false,
+      result: null,
       preview: null,
       selected: [],
       pendingBondAtom: null,
