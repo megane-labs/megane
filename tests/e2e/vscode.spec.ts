@@ -15,7 +15,7 @@
  * `window.__MEGANE_TEST__ = true` before the bundle loads.
  */
 
-import { copyFileSync, existsSync, mkdirSync, rmSync, statSync } from "fs";
+import { copyFileSync, existsSync, mkdirSync, rmSync, statSync, writeFileSync } from "fs";
 import { join } from "path";
 import { fileURLToPath } from "url";
 import { test, expect } from "playwright/test";
@@ -74,6 +74,40 @@ const FORMATS: FormatFixture[] = [
   { id: "traj-water", file: "water.traj", expectTrajectory: true },
 ];
 
+/**
+ * A `.megane.json` whose Load Structure node names a *binary* structure file
+ * (ASE `.traj`). The extension host must send the companion as bytes; it used
+ * to decode Load Structure companions as UTF-8 text, which corrupted the file
+ * so the pipeline opened with no atoms.
+ */
+const BINARY_PIPELINE = "water_traj.megane.json";
+const BINARY_PIPELINE_JSON = {
+  version: 3,
+  nodes: [
+    {
+      id: "load-1",
+      type: "load_structure",
+      fileName: "water.traj",
+      hasTrajectory: true,
+      hasCell: false,
+      position: { x: 0, y: 0 },
+      enabled: true,
+    },
+    {
+      id: "viewport-1",
+      type: "viewport",
+      perspective: false,
+      cellAxesVisible: true,
+      pivotMarkerVisible: true,
+      position: { x: 400, y: 0 },
+      enabled: true,
+    },
+  ],
+  edges: [
+    { source: "load-1", sourceHandle: "particle", target: "viewport-1", targetHandle: "particle" },
+  ],
+};
+
 let cs: CodeServerHandle | null = null;
 
 test.describe.configure({ timeout: 300_000 });
@@ -83,6 +117,7 @@ test.beforeAll(async () => {
   for (const f of FORMATS) {
     copyFileSync(join(REPO, "tests", "fixtures", f.file), join(WORKSPACE, f.file));
   }
+  writeFileSync(join(WORKSPACE, BINARY_PIPELINE), JSON.stringify(BINARY_PIPELINE_JSON, null, 2));
   cs = await startCodeServer({ port: PORT, workspace: WORKSPACE, e2eMode: true });
 });
 
@@ -115,6 +150,18 @@ for (const f of FORMATS) {
     }
   });
 }
+
+test("pipeline editor opens a .megane.json whose structure companion is binary (.traj)", async ({
+  page,
+}) => {
+  const wv = await openVscodeFile(page, { port: PORT, file: BINARY_PIPELINE });
+  await assertDomContract(wv, [...defaultViewerContract({ context: "vscode" })]);
+  const viewer = wv.locator('[data-testid="megane-viewer"]');
+  const atoms = Number(await viewer.getAttribute("data-atom-count"));
+  expect(atoms, "binary .traj companion parsed into atoms").toBeGreaterThan(0);
+  const totalFrames = Number(await viewer.getAttribute("data-total-frames"));
+  expect(totalFrames, "the .traj frames reached the timeline").toBeGreaterThan(0);
+});
 
 test("hover tooltip renders beside the cursor", async ({ page }) => {
   const wv = await openVscodeFile(page, { port: PORT, file: "1crn.pdb" });

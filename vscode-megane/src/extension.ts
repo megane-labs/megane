@@ -16,6 +16,87 @@ interface SerializedPipeline {
   edges: unknown[];
 }
 
+/**
+ * Node type → the param naming the companion file it reads, for the pipeline
+ * editor's companion fetch. Mirrors `COMPANION_FILE_PARAMS` in
+ * `src/pipeline/companionFiles.ts`, which this extension-host bundle cannot
+ * import (it is compiled on its own with `rootDir: ./src`); a unit test pins
+ * the two together.
+ */
+export const PIPELINE_COMPANION_FILE_PARAMS: Readonly<Record<string, string>> = {
+  load_structure: "fileName",
+  load_trajectory: "fileName",
+  load_vector: "fileName",
+  load_volumetric: "fileName",
+  load_spectrum: "fileName",
+  add_bond: "bondFileName",
+};
+
+/** `LoadVectorNode`'s marker for vectors embedded in the structure file. */
+const EMBEDDED_VECTOR_PREFIX = "[embedded] ";
+
+/** A companion file of a pipeline, posted to the webview as raw bytes. */
+export interface PipelineCompanionFile {
+  nodeId: string;
+  nodeType: string;
+  filename: string;
+  content: ArrayBuffer;
+}
+
+/**
+ * The exact bytes of `data` as a standalone ArrayBuffer. A Uint8Array handed
+ * out by the filesystem may be a view into a larger (pooled) buffer, so
+ * posting `data.buffer` as-is could ship unrelated bytes along with the file.
+ */
+export function toArrayBuffer(data: Uint8Array): ArrayBuffer {
+  if (data.byteOffset === 0 && data.byteLength === data.buffer.byteLength) {
+    return data.buffer as ArrayBuffer;
+  }
+  return data.buffer.slice(data.byteOffset, data.byteOffset + data.byteLength) as ArrayBuffer;
+}
+
+/**
+ * Read every companion file a pipeline's nodes reference, resolved relative to
+ * `dir` (the pipeline file's folder). Paths that are absolute or escape `dir`
+ * are skipped, as are files that cannot be read — the node then shows its
+ * missing-file state in the webview. Contents stay raw bytes: decoding them as
+ * text would corrupt binary formats such as ASE `.traj`.
+ */
+export async function readPipelineCompanions(
+  pipeline: SerializedPipeline,
+  dir: string,
+  readFile: (uri: vscode.Uri) => Thenable<Uint8Array> = (uri) => vscode.workspace.fs.readFile(uri),
+): Promise<PipelineCompanionFile[]> {
+  const companions: PipelineCompanionFile[] = [];
+  for (const node of pipeline.nodes) {
+    const param = Object.prototype.hasOwnProperty.call(PIPELINE_COMPANION_FILE_PARAMS, node.type)
+      ? PIPELINE_COMPANION_FILE_PARAMS[node.type]
+      : undefined;
+    if (!param) continue;
+    const value = node[param];
+    if (typeof value !== "string" || value === "") continue;
+    if (node.type === "load_vector" && value.startsWith(EMBEDDED_VECTOR_PREFIX)) continue;
+
+    // Reject absolute paths and paths that escape the pipeline file's directory
+    if (path.isAbsolute(value)) continue;
+    const resolvedPath = path.resolve(dir, value);
+    if (!(resolvedPath === dir || resolvedPath.startsWith(dir + path.sep))) continue;
+
+    try {
+      const raw = await readFile(vscode.Uri.file(resolvedPath));
+      companions.push({
+        nodeId: node.id,
+        nodeType: node.type,
+        filename: path.basename(value),
+        content: toArrayBuffer(raw),
+      });
+    } catch {
+      // File not found — skip silently; webview will show a warning on the node
+    }
+  }
+  return companions;
+}
+
 interface SaveFileMessage {
   filename: string;
   bytes: number[];
@@ -227,50 +308,15 @@ class MeganePipelineEditorProvider implements vscode.CustomReadonlyEditorProvide
         );
       }
 
-      const dir = path.dirname(document.uri.fsPath);
-
-      // Read structure files referenced by load_structure nodes
-      const structureFiles: Array<{ nodeId: string; content: string; filename: string }> = [];
-      // Read trajectory files referenced by load_trajectory nodes (binary as ArrayBuffer)
-      const trajectoryFiles: Array<{ nodeId: string; content: ArrayBuffer; filename: string }> = [];
-
-      for (const node of pipeline.nodes) {
-        if (!node.fileName) continue;
-        const filePath = String(node.fileName);
-
-        // Reject absolute paths and paths that escape the pipeline file's directory
-        if (path.isAbsolute(filePath)) {
-          continue;
-        }
-        const resolvedPath = path.resolve(dir, filePath);
-        if (!(resolvedPath === dir || resolvedPath.startsWith(dir + path.sep))) {
-          continue;
-        }
-
-        const fileUri = vscode.Uri.file(resolvedPath);
-        const filename = path.basename(filePath);
-        try {
-          if (node.type === "load_structure") {
-            const raw = await vscode.workspace.fs.readFile(fileUri);
-            structureFiles.push({
-              nodeId: node.id,
-              content: new TextDecoder("utf-8").decode(raw),
-              filename,
-            });
-          } else if (node.type === "load_trajectory") {
-            const raw = await vscode.workspace.fs.readFile(fileUri);
-            trajectoryFiles.push({ nodeId: node.id, content: raw.buffer as ArrayBuffer, filename });
-          }
-        } catch {
-          // File not found — skip silently; webview will show a warning on the node
-        }
-      }
+      const companionFiles = await readPipelineCompanions(
+        pipeline,
+        path.dirname(document.uri.fsPath),
+      );
 
       payload = {
         type: "loadPipeline",
         pipeline,
-        structureFiles,
-        trajectoryFiles,
+        companionFiles,
       };
     } catch (err) {
       payload = { type: "error", message: err instanceof Error ? err.message : String(err) };
@@ -368,7 +414,7 @@ export class MeganeEditorProvider implements vscode.CustomReadonlyEditorProvider
         const topUri = vscode.Uri.file(path.join(path.dirname(document.uri.fsPath), topName));
         try {
           const topData = await vscode.workspace.fs.readFile(topUri);
-          topBytes = topData.buffer as ArrayBuffer;
+          topBytes = toArrayBuffer(topData);
           topFilename = topName;
         } catch {
           // .top file not found — proceed without topology bonds
@@ -376,7 +422,7 @@ export class MeganeEditorProvider implements vscode.CustomReadonlyEditorProvider
       }
       payload = {
         type: "loadFile",
-        contentBytes: fileData.buffer as ArrayBuffer,
+        contentBytes: toArrayBuffer(fileData),
         filename,
         topBytes,
         topFilename,
@@ -510,7 +556,7 @@ export class MeganeBuilderPanels {
           const bytes = await vscode.workspace.fs.readFile(file);
           void webview.postMessage({
             type: "openFile",
-            contentBytes: bytes.buffer as ArrayBuffer,
+            contentBytes: toArrayBuffer(bytes),
             filename: path.basename(file.fsPath),
           });
         } catch (err) {

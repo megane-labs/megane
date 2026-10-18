@@ -34,6 +34,10 @@ declare module "@megane/pipeline/store" {
   };
 }
 
+declare module "@megane/pipeline/companionFiles" {
+  export function companionFileName(node: { type?: unknown }): string | null;
+}
+
 declare module "@megane/pipeline/storeSnapshot" {
   export type PipelineStoreSnapshot = Record<string, unknown>;
   export function capturePipelineStore(state: any): PipelineStoreSnapshot;
