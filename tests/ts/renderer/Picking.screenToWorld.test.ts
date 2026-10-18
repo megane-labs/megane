@@ -94,8 +94,8 @@ describe("MoleculeRenderer drag helpers", () => {
   it("computes a drag delta in the plane of the atom and a pivot-plane point", () => {
     const { renderer, internals } = makeRenderer();
     internals.container = mockContainer(100, 100);
-    internals.camera = ortho();
-    internals.controls = { target: new THREE.Vector3(0, 0, 0) };
+    internals.cameraController.camera = ortho();
+    internals.cameraController.controls = { target: new THREE.Vector3(0, 0, 0) };
     expect(renderer.dragDeltaForAtom(9, 0, 0, 10, 10)).toBeNull();
     const d = renderer.dragDeltaForAtom(1, 10, 10, 20, 10)!;
     expect(d[0]).toBeCloseTo(1, 5);

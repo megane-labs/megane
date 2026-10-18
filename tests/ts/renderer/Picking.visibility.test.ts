@@ -122,7 +122,7 @@ describe("MoleculeRenderer.raycastAtPixel visibility wiring", () => {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const internals = r as any;
     internals.container = container;
-    internals.camera = orthoCamera();
+    internals.cameraController.camera = orthoCamera();
     internals.snapshot = stacked();
     expect((r.raycastAtPixel(50, 50) as { atomIndex: number }).atomIndex).toBe(0);
     r.setAtomOpacityOverrides(new Float32Array([0, 1]));
