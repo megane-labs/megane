@@ -1,27 +1,27 @@
 # Introduction
 
-**megane** is a high-performance molecular viewer that works wherever you do — as a Jupyter widget, a standalone web app, an embeddable React component, and a VS Code extension.
+**Megane** is a high-performance molecular viewer that works wherever you do — as a Jupyter widget, a standalone web app, an embeddable React component, and a VS Code extension.
 
-## What can megane do?
+## What can Megane do?
 
 - **Render 1M+ atoms at 60 fps** in the browser using billboard impostor rendering
 - **Load 29 file formats** — structures (PDB, GRO, XYZ, MOL/SDF, MOL2, CIF, mmCIF, LAMMPS data, VASP, Molden, XCrySDen, CML and more), trajectories (XTC, DCD, ASE `.traj`, LAMMPS dump, AMBER NetCDF), volumetric grids (Gaussian CUBE, OpenDX) and spectra (JCAMP-DX)
 - **Stream large trajectories** — the `megane serve` backend streams XTC frames over WebSocket, so you can scrub multi-GB files without loading every frame into memory; without a backend, the standalone web app decodes trajectories and multi-frame XYZ / PDB files of 8 MB or more on demand in a Web Worker, and the Jupyter widget sends frames from the kernel one at a time
 - **Build visual pipelines** with a drag-and-drop node editor, describe them in natural language to the AI pipeline generator (the editor's **Chat** panel), or write them as Python/TypeScript code
-- **Edit structures in [megane Builder](./guide/builder)** — add, delete, move and re-element atoms, draw bonds, build bulk crystals, supercells and slabs, and save as XYZ / PDB / MOL. It runs at `/builder.html` in the standalone web app, from the megane view in VS Code's activity bar and the megane panel in JupyterLab's left sidebar, and as `megane.Builder()` in notebooks
+- **Edit structures in [Megane Builder](./guide/builder)** — add, delete, move and re-element atoms, draw bonds, build bulk crystals, supercells and slabs, and save as XYZ / PDB / MOL. It runs at `/builder.html` in the standalone web app, from the Megane view in VS Code's activity bar and the Megane panel in JupyterLab's left sidebar, and as `megane.Builder()` in notebooks
 - **Integrate with Plotly**, MDX/Next.js, ipywidgets, and any framework via the framework-agnostic renderer
-- **Light, dark, and auto themes** — cycle through Light / Dark / Auto via the Theme button on the Pipeline panel's left rail; persisted across sessions. Auto follows the VS Code or JupyterLab theme when megane runs inside one, and the OS preference elsewhere
+- **Light, dark, and auto themes** — cycle through Light / Dark / Auto via the Theme button on the Pipeline panel's left rail; persisted across sessions. Auto follows the VS Code or JupyterLab theme when Megane runs inside one, and the OS preference elsewhere
 
 ## Choose your distribution
 
-megane ships in six distributions, grouped by what you want to do — **view** your data interactively, **embed** the viewer in your own app, or **parse** files programmatically.
+Megane ships in six distributions, grouped by what you want to do — **view** your data interactively, **embed** the viewer in your own app, or **parse** files programmatically.
 
 | Category | Distribution | Install | Start here |
 |----------|--------------|---------|------------|
 | **View** | Standalone web app | `pip install megane`, then `megane serve` | [Standalone web app](./guide/cli) |
 | **View** | Jupyter widget | `pip install megane` | [Jupyter widget](./guide/jupyter) |
 | **View** | JupyterLab extension | `pip install megane` | [JupyterLab extension](./guide/jupyterlab) |
-| **View** | VS Code extension | Install the megane extension | [VS Code extension](./guide/vscode) |
+| **View** | VS Code extension | Install the Megane extension | [VS Code extension](./guide/vscode) |
 | **Embed** | React component | `npm install megane-viewer` | [React component](./guide/web) |
 | **Parse** | Python package | `pip install megane` | [Python Pipeline API](./guide/pipeline/python) |
 
@@ -85,7 +85,7 @@ Per-host coverage (which formats each platform's UI can open vs. parser-only acc
 
 ## Architecture at a glance
 
-megane is a Rust core compiled to both WebAssembly (browser) and a Python extension (PyO3), with a TypeScript/React frontend built on Three.js.
+Megane is a Rust core compiled to both WebAssembly (browser) and a Python extension (PyO3), with a TypeScript/React frontend built on Three.js.
 
 ```
 ┌────────────┐     ┌────────────────────┐     ┌──────────────────┐
@@ -100,6 +100,6 @@ All environments share the same parser and pipeline execution engine — a pipel
 
 ## Next steps
 
-- [Installation & Quick Start](./getting-started) — get megane running in 2 minutes
+- [Installation & Quick Start](./getting-started) — get Megane running in 2 minutes
 - [Gallery](/gallery) — live 3D examples with copy-paste code
 - [Live Demo](https://megane-labs.github.io/megane/app/) — interactive viewer in the browser

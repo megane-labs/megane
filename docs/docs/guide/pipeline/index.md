@@ -7,7 +7,7 @@ import LiveViewer from '@site/src/components/LiveViewer';
 
 # Visual Pipeline Editor
 
-megane's pipeline editor lets you build visualization workflows by wiring nodes — no code required. The editor lives in the **Pipeline** panel on the right edge of the viewer; when the panel is collapsed, click its **Pipeline** tab to open it.
+Megane's pipeline editor lets you build visualization workflows by wiring nodes — no code required. The editor lives in the **Pipeline** panel on the right edge of the viewer; when the panel is collapsed, click its **Pipeline** tab to open it.
 
 <Figure src="/screenshots/pipeline-editor.png" alt="megane visual pipeline editor" caption="The visual pipeline editor: nodes on the canvas, live 3D beside it." />
 
@@ -42,19 +42,19 @@ To delete a connection, hover (or select) the edge and click the **×** at its m
 
 ## AI Pipeline Generator
 
-Describe the visualization you want in natural language, and megane builds the node graph for you. Open the AI chat panel with the **Chat** button on the pipeline editor's left rail and type a prompt like:
+Describe the visualization you want in natural language, and Megane builds the node graph for you. Open the AI chat panel with the **Chat** button on the pipeline editor's left rail and type a prompt like:
 
 > Load protein.pdb with bonds and make water translucent
 
 The generator creates the appropriate LoadStructure, AddBond, Filter, Modify, and Viewport nodes, wires them together, and places them in the editor. You can then adjust parameters or add more nodes manually.
 
-Open **AI Settings** (the ⚙ button beside the chat input) to choose a provider (**Anthropic** or **OpenAI**), a model, and your API key. The provider and model are remembered in the browser; the API key is held only for the current session and is not saved. Builds configured with megane's shared proxy also offer a rate-limited free demo that needs no key — tick **Use my own API key** to use your own provider instead.
+Open **AI Settings** (the ⚙ button beside the chat input) to choose a provider (**Anthropic** or **OpenAI**), a model, and your API key. The provider and model are remembered in the browser; the API key is held only for the current session and is not saved. Builds configured with Megane's shared proxy also offer a rate-limited free demo that needs no key — tick **Use my own API key** to use your own provider instead.
 
 The generator checks its own output after each generation: the pipeline schema, the selection-query syntax, edge types, and — when a structure is loaded — the errors the graph actually produces when executed (e.g. `Filter returned 0 atoms`). Any findings are sent back to the model to fix, for up to two repair rounds.
 
 ## VS Code Extension Auto-Setup
 
-When you open a supported molecular file (`.pdb`, `.gro`, `.xyz`, `.cif`, `.data`, `.lammpstrj`, POSCAR, and the rest of the formats listed in [Platform Support](/platform-support)) in the megane VS Code extension, it automatically creates a default pipeline consisting of `LoadStructure → Symmetry → Wrap → Replicate → AddBond → Viewport`. The AddBond source is picked from the format — bonds read from the file for formats that carry them (PDB, MOL/SDF, LAMMPS data, CML, …), distance-based inference otherwise. This gives you an immediate 3D view of the structure with bonds, without needing to build a pipeline manually. You can then modify the auto-generated pipeline in the editor as needed. A `.megane.json` file opens as the pipeline it describes (see [JSON](./json.md)).
+When you open a supported molecular file (`.pdb`, `.gro`, `.xyz`, `.cif`, `.data`, `.lammpstrj`, POSCAR, and the rest of the formats listed in [Platform Support](/platform-support)) in the Megane VS Code extension, it automatically creates a default pipeline consisting of `LoadStructure → Symmetry → Wrap → Replicate → AddBond → Viewport`. The AddBond source is picked from the format — bonds read from the file for formats that carry them (PDB, MOL/SDF, LAMMPS data, CML, …), distance-based inference otherwise. This gives you an immediate 3D view of the structure with bonds, without needing to build a pipeline manually. You can then modify the auto-generated pipeline in the editor as needed. A `.megane.json` file opens as the pipeline it describes (see [JSON](./json.md)).
 
 ## Getting Started
 
@@ -76,9 +76,9 @@ Use the **Templates** menu on the rail to replace the pipeline with a pre-built 
 - **Molecule** — Caffeine (`caffeine_water.pdb`) with structure-based bonds and a vibration trajectory (`caffeine_water_vibration.xtc`). Nodes: `LoadStructure → Symmetry → Wrap → AddBond → Viewport`, with `LoadTrajectory` feeding its frames through the same `Symmetry → Wrap` into the Viewport.
 - **Molecular Crystal** — Glycine (`glycine_csd.cif`) with atoms normalized into the home cell and finite molecules completed across its faces. Nodes: `LoadStructure → Symmetry → Wrap`, followed by parallel `AddBond` and `DrawingBoundary` branches that join at `BoundaryCompletion → Viewport`.
 - **Solid** — Perovskite SrTiO₃ 3×3×3 supercell with TiO₆ coordination polyhedra. Nodes: `LoadStructure → Symmetry → Wrap → DrawingBoundary → Coordination → PolyhedronGenerator → Viewport`. Coordination detects metal centers and neighboring anion-former atoms; its Bond output also renders the neighbor atoms required to complete boundary coordination environments.
-- **Surface Mesh** — Quartz SiO₂ 2×2×2 supercell (`quartz_sio2_2x2x2.xyz`) wrapped in an OVITO-style alpha-shape envelope. Nodes: `LoadStructure → Symmetry → Wrap → SurfaceMesh → Viewport (mesh)`, with the atoms also sent to the Viewport.
-- **Protein** — Ubiquitin (`1ubq.pdb`) as a cartoon ribbon with semi-transparent water. The protein branch is `Filter (resname != "HOH") → Modify (opacity 0) → Representation (both) → Viewport`, the water branch `Filter (resname == "HOH") → Modify (opacity 0.5) → Viewport`.
-- **ESP Isosurface** — Caffeine (`caffeine.sdf`) overlaid with its electrostatic potential read from a cube file (`caffeine_esp.cube`). Nodes: `LoadStructure → Symmetry → Wrap → AddBond → Viewport` alongside an independent `LoadVolumetric → Isosurface → Viewport (mesh)` branch. The two branches never meet in the graph — the molecule and the grid line up because they share a coordinate frame. The Isosurface node runs in dual-contour mode (`showNegative`), so it draws the potential at both `+isoLevel` (blue, over the methyl and imidazole hydrogens) and `−isoLevel` (red, over the two carbonyl oxygens), the usual chemistry convention. The default level, 0.03 Hartree/e, is where the potential sits on caffeine's van der Waals surface; lower it in the node to grow the lobes into a shell around the whole molecule.
+- **Surface Mesh** — A faceted gold nanoparticle (`au_nanoparticle.xyz`, 1385 atoms: a Wulff-shaped fcc cluster with eight {111} and six {100} facets) wrapped in an OVITO-style alpha-shape envelope. Nodes: `LoadStructure → Symmetry → Wrap → SurfaceMesh → Viewport (mesh)`, with the atoms also sent to the Viewport. An alpha-shape is a free-surface construction, so an isolated particle is what it shows best; the 3 Å probe sits just above the 2.88 Å Au–Au distance, small enough to follow the facets.
+- **Protein** — HIV-1 protease with the drug indinavir bound in its active site (`1hsg.pdb`, PDB 1HSG). The polymer is drawn as a cartoon (`Filter (resname != "HOH" and resname != "MK1") → Modify (opacity 0) → Representation (both)`), indinavir ball-and-stick (`Filter (resname == "MK1")`), and the crystal waters are split with `within 3.5 of (resname == "MK1")` into the seven that touch the drug — including the "flap water" bridging it to both Ile50 amides — and the bulk, hidden at opacity 0. Bonds go through `AddBond → Filter (bond_query "not both atom_index >= 1514") → Modify (opacity 0)` so only the drug keeps its sticks: a bond does not inherit its atoms' opacity.
+- **ESP Map** — Caffeine's electron-density surface colored by its electrostatic potential, from one B3LYP/6-31G\* calculation (`generate_caffeine_dft_esp.py`). `LoadStructure (caffeine_b3lyp.sdf) → Symmetry → Wrap → AddBond → Viewport` draws the molecule; two `LoadVolumetric` nodes read the density (`caffeine_b3lyp_density.cube`) and the potential (`caffeine_b3lyp_esp.cube`), and one `Isosurface` contours the density at 0.002 e/Bohr³ — the conventional molecular surface — in color mode `volume`, painting each vertex from the potential wired to its `colorVolumetric` input. Red is negative (the two carbonyl oxygens, the imidazole N9 lone pair), blue positive (the methyl and C8–H hydrogens), over a fixed ±0.04 Hartree/e range. The three files share one coordinate frame, so nothing in the graph aligns them.
 - **Coarse-Grained Overlay** — Ubiquitin before and after coarse-graining, superimposed: the all-atom model (`1ubq.pdb`) ghosted at 30 % opacity behind one bead per residue (`1ubq_cg.pdb`, each bead at its residue's heavy-atom center of mass). Two `LoadStructure` nodes feed one Viewport and render as separate structure layers. The all-atom side splits into two `Filter → Modify` branches — protein at opacity 0.3, the 58 crystallographic waters at opacity 0 — because a Modify behind a Filter writes its opacity only at the selected atoms and leaves the rest fully opaque. The bead side scales up ×3.2 and takes a uniform Color so it reads over the ghost, with its backbone drawn from the CG file's `CONECT` records.
 - **Streaming** — A `Streaming` node wired to the Viewport (particle, bond, trajectory, cell) for live WebSocket data; the Streaming node only works on the standalone `megane serve` host.
 
@@ -246,7 +246,7 @@ other molecule's atoms and bonds fade together — both Filter nodes derive
 ### Expand a Crystal's Asymmetric Unit
 
 A CIF lists only the crystallographic asymmetric unit plus the space-group
-operations, and megane's parser returns exactly that. The **Symmetry** node
+operations, and Megane's parser returns exactly that. The **Symmetry** node
 applies those operations to fill one unit cell with the symmetry-equivalent
 molecules, VESTA-style. Every default pipeline and structure template already
 carries one directly after `LoadStructure` in its `expand` mode, so a loaded

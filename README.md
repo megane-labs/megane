@@ -1,6 +1,8 @@
 <h1 align="center">
-  <img src="docs/public/logo.png" alt="" width="32" />
-  megane
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/public/brand/megane-logo-white.png" />
+    <img src="docs/public/brand/megane-logo.png" alt="Megane" width="320" />
+  </picture>
 </h1>
 
 <p align="center">Spectacles for atomistic data.</p>
@@ -24,7 +26,7 @@
 </p>
 
 <p align="center">
-  <img src="docs/public/screenshots/megane-promo.gif" alt="megane demo" width="640" />
+  <img src="docs/public/screenshots/megane-promo.gif" alt="Megane demo" width="640" />
 </p>
 
 ---
@@ -34,12 +36,12 @@
 - **1M+ Atoms at 60fps** — GPU billboard impostor rendering (ray-cast spheres and cylinders) scales from small molecules to massive complexes in real time. Stream XTC trajectories over WebSocket from `megane serve`.
 - **Runs Everywhere** — Jupyter widget, JupyterLab extension, standalone web app (`megane serve`), React component (npm), and VS Code extension. Rust-based parsers for 26 formats (PDB, GRO, XYZ, MOL/SDF, MOL2, CIF, mmCIF, CML, LAMMPS data, AMBER topology, GROMACS topology, CHARMM/NAMD PSF, XTC, DCD, ASE .traj, LAMMPS dump, AMBER NetCDF, VASP, Molden, XCrySDen XSF, JCAMP-DX, Chem3D XML, Odyssey, CASTEP magres, GAMESS output, CASTEP phonon) shared between Python (PyO3) and browser (WASM) — parse once, run anywhere.
 - **Visual Pipeline Editor** — Build visualization workflows by wiring nodes or let the AI generator build them from natural language. 24 node types with 10 typed data channels flowing through color-coded edges. Load multiple structures with layer-based rendering to compare systems side by side.
-- **megane Builder** — A structure editor next to the viewer (`/builder.html` in `megane serve`, the megane panel in VS Code's activity bar and JupyterLab's left sidebar, and `megane.Builder()` in notebooks): add, delete, move and re-element atoms, draw bonds, sketch molecules in Ketcher (embedded in 3D by RDKit), and build bulk crystals, supercells and slabs. Save as XYZ / PDB / MOL — also available from Python as `megane.save_structure()`.
+- **Megane Builder** — A structure editor next to the viewer (`/builder.html` in `megane serve`, the Megane panel in VS Code's activity bar and JupyterLab's left sidebar, and `megane.Builder()` in notebooks): add, delete, move and re-element atoms, draw bonds, sketch molecules in Ketcher (embedded in 3D by RDKit), and build bulk crystals, supercells and slabs. Save as XYZ / PDB / MOL — also available from Python as `megane.save_structure()`.
 - **Embed & Integrate** — Control the viewer from Plotly via ipywidgets events. Embed in MDX / Next.js docs. React to `frame_change`, `selection_change`, and `measurement` events. Use the framework-agnostic renderer from Vue, Svelte, or vanilla JS.
 
 ### Scale
 
-megane renders over **1 million atoms at 60fps** in the browser. Atoms and bonds are GPU-accelerated billboard impostors at every atom count — screen-aligned quads ray-cast into spheres and cylinders in the fragment shader. No desktop app, no plugin — just a browser tab.
+Megane renders over **1 million atoms at 60fps** in the browser. Atoms and bonds are GPU-accelerated billboard impostors at every atom count — screen-aligned quads ray-cast into spheres and cylinders in the fragment shader. No desktop app, no plugin — just a browser tab.
 
 Trajectory streaming works over WebSocket via a binary protocol from the `megane serve` backend. Load an XTC file and scrub through thousands of frames in real time, without reading everything into memory. Without a backend, the web app parses in a Web Worker and decodes trajectories and multi-frame XYZ / PDB files of 8 MB or more frame by frame on demand.
 
@@ -71,13 +73,13 @@ Pipelines serialize to JSON, so you can save, share, and version-control your vi
 
 ### Integrate
 
-megane is not a walled garden. It fits into your existing workflow.
+Megane is not a walled garden. It fits into your existing workflow.
 
-**Plotly** — Click a point on a Plotly `FigureWidget` to jump to a trajectory frame. Use megane's `on_event("frame_change")` callback to update Plotly markers in sync.
+**Plotly** — Click a point on a Plotly `FigureWidget` to jump to a trajectory frame. Use Megane's `on_event("frame_change")` callback to update Plotly markers in sync.
 
 **MDX / Next.js** — Drop `<MeganeViewer />` or `<Viewport />` into your `.mdx` documentation. WASM parsing works out of the box with a one-line webpack config.
 
-**ipywidgets** — React to `frame_change`, `selection_change`, and `measurement` events. Compose megane with any widget in the Jupyter ecosystem.
+**ipywidgets** — React to `frame_change`, `selection_change`, and `measurement` events. Compose Megane with any widget in the Jupyter ecosystem.
 
 **Framework-agnostic** — `MoleculeRenderer` is a plain Three.js class. Mount it in Vue, Svelte, or a vanilla `<div>`.
 
@@ -124,7 +126,7 @@ docker build -t megane .
 docker run --rm -p 8080:8080 megane
 ```
 
-Open http://localhost:8080 in your browser. megane Builder, the structure editor, is at http://localhost:8080/builder.html.
+Open http://localhost:8080 in your browser. Megane Builder, the structure editor, is at http://localhost:8080/builder.html.
 
 To view your own files, mount them into the container:
 

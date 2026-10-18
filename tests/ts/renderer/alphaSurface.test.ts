@@ -7,6 +7,7 @@ import {
   hexColorToRgb,
   DEFAULT_ALPHA_RADIUS,
   DEFAULT_ALPHA_SURFACE_RESOLUTION,
+  ALPHA_GRID_MARGIN_CELLS,
 } from "@/renderer/alphaSurface";
 
 // ─── helpers ─────────────────────────────────────────────────────────────────
@@ -294,5 +295,33 @@ describe("constants", () => {
   it("DEFAULT_ALPHA_SURFACE_RESOLUTION is a positive integer", () => {
     expect(DEFAULT_ALPHA_SURFACE_RESOLUTION).toBeGreaterThan(0);
     expect(Number.isInteger(DEFAULT_ALPHA_SURFACE_RESOLUTION)).toBe(true);
+  });
+});
+
+describe("buildAlphaSdf – grid margin", () => {
+  it("keeps ALPHA_GRID_MARGIN_CELLS empty cells beyond the probe-expanded box", () => {
+    // A flat 3×3 sheet: its probe spheres touch the expanded bounding box on
+    // every face, which is exactly where an unpadded grid left holes.
+    const coords: number[] = [];
+    for (let i = 0; i < 3; i++) for (let j = 0; j < 3; j++) coords.push(i * 2.5, j * 2.5, 0);
+    const alpha = 3.0;
+    const res = 24;
+    const { sdf, originX, cellSize } = buildAlphaSdf(new Float32Array(coords), 9, alpha, res);
+
+    // Longest axis (x/y: 5 Å span + 2α) leaves exactly the margin on each side.
+    expect(originX).toBeCloseTo(-alpha - ALPHA_GRID_MARGIN_CELLS * cellSize, 4);
+    expect(cellSize).toBeCloseTo((5 + 2 * alpha) / (res - 1 - 2 * ALPHA_GRID_MARGIN_CELLS), 6);
+
+    // Every grid point on the outer faces is outside the envelope, so
+    // marching cubes closes the surface instead of clipping it open.
+    for (let z = 0; z < res; z++) {
+      for (let y = 0; y < res; y++) {
+        for (let x = 0; x < res; x++) {
+          const onFace =
+            x === 0 || y === 0 || z === 0 || x === res - 1 || y === res - 1 || z === res - 1;
+          if (onFace) expect(sdf[z * res * res + y * res + x]).toBeGreaterThan(0);
+        }
+      }
+    }
   });
 });

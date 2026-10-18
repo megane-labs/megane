@@ -87,7 +87,7 @@ serialized; only file names are.
 | `fileUrl`       | `string?`        | Optional URL the React `PipelineViewer` fetches the file from                                                                     |
 | `hasTrajectory` | `boolean`        | Whether the file contains trajectory data                                                                                         |
 | `hasCell`       | `boolean`        | Whether the file contains unit cell data                                                                                          |
-| `edits`         | `EditOp[]?`      | Optional structure edits replayed, in order, on the file as loaded — the [megane Builder](../builder.md) history format (see below) |
+| `edits`         | `EditOp[]?`      | Optional structure edits replayed, in order, on the file as loaded — the [Megane Builder](../builder.md) history format (see below) |
 
 Each `edits` entry is an object whose `op` is one of `add_atom`, `delete_atoms`,
 `move_atoms`, `set_element`, `add_bond`, `delete_bond`, `add_fragment`,
@@ -326,7 +326,7 @@ Terminal node that draws its `spectrum` input as a 2D line chart.
 ## Loading Behavior
 
 When a pipeline is loaded (editor import, a share link, a `.megane.json` in VS
-Code, `PipelineViewer`), megane:
+Code, `PipelineViewer`), Megane:
 
 - rejects any `version` other than `3` and any unknown node `type`;
 - fills missing parameters with the node's defaults and drops fields from older

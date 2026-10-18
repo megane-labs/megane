@@ -53,4 +53,4 @@ COPY tests/fixtures/caffeine_water_vibration.xtc /data/caffeine_water_vibration.
 
 EXPOSE 8080
 
-CMD ["megane", "serve", "/data/caffeine_water.pdb", "--xtc", "/data/caffeine_water_vibration.xtc", "--port", "8080", "--no-browser"]
+CMD ["megane", "serve", "/data/caffeine_water.pdb", "--xtc", "/data/caffeine_water_vibration.xtc", "--port", "8080", "--no-browser", "--no-files"]

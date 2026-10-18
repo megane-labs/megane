@@ -184,6 +184,40 @@ test("DocWidget recovers when switching between two open files", async ({ page }
 });
 
 /**
+ * The Load Structure node's "Open from server..." browses the Jupyter server's
+ * files (the Contents API) — the files the browser's own dialog can't reach
+ * when JupyterLab runs on another machine — and loads the chosen one.
+ */
+test("Load Structure opens a file from the Jupyter server", async ({ page }) => {
+  await openLabFile(page, { port: PORT, token: TOKEN, file: "1crn.pdb" });
+  const viewer = page.locator('[data-testid="megane-viewer"]');
+  await expect(viewer).toHaveAttribute("data-atom-count", "327");
+
+  // The pipeline panel starts collapsed in a narrow editor pane.
+  const panel = page.locator('[data-testid="panel-pipeline"]').first();
+  if ((await panel.getAttribute("data-collapsed")) === "true") {
+    await page.locator('[data-testid="panel-pipeline-toggle"]').first().click();
+  }
+  await page.locator('[data-testid="pipeline-editor-tab-editor"]').first().click();
+  await page.locator('[data-testid="pipeline-node-load_structure"]').first().click();
+  const button = page.locator('[data-testid="load-structure-remote"]').first();
+  await expect(button).toHaveText("Open from server...");
+  await button.click();
+
+  const dialog = page.locator('[data-testid="remote-file-dialog"]');
+  await expect(dialog).toBeVisible();
+  const water = dialog.locator('[data-testid="remote-file-dialog-entry"][data-name="water.gro"]');
+  await expect(water).toBeEnabled();
+  await water.dblclick();
+  await expect(dialog).toHaveCount(0);
+
+  await expect(page.locator('[data-testid="load-structure-filename"]').first()).toHaveText(
+    "water.gro",
+  );
+  await expect.poll(async () => Number(await viewer.getAttribute("data-atom-count"))).not.toBe(327);
+});
+
+/**
  * Regression test for issue #497 — the JupyterLab half of the GIF-export bug
  * whose VSCode twin is #599 (see tests/e2e/vscode.spec.ts).
  *

@@ -1,10 +1,11 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { render, screen, fireEvent, cleanup } from "@testing-library/react";
+import { render, screen, fireEvent, cleanup, waitFor } from "@testing-library/react";
 import { usePipelineStore } from "@/pipeline/store";
 import { usePipelineUIStore } from "@/stores/usePipelineUIStore";
 import { LoadStructureNode, setStructureLoadHandler } from "@/components/nodes/LoadStructureNode";
 import type { LoadStructureParams } from "@/pipeline/types";
 import { seedPipelineStore, renderCard } from "./_helpers";
+import { setRemoteFileSource } from "@/remote/fileSource";
 
 vi.mock("@xyflow/react", () => import("./_xyflowMock"));
 
@@ -241,5 +242,103 @@ describe("LoadStructureNode", () => {
     });
     render(<LoadStructureNode {...nodeProps("ls3", many.data.params as LoadStructureParams)} />);
     expect(screen.getByTestId("load-structure-edits").textContent).toContain("2 edits");
+  });
+});
+
+describe("LoadStructureNode — Open from server", () => {
+  afterEach(() => {
+    cleanup();
+    setRemoteFileSource(null);
+    setStructureLoadHandler(null);
+  });
+
+  function setup() {
+    const updateNodeParams = vi.fn();
+    const handler = vi.fn();
+    const seeded = seedPipelineStore("load_structure", { id: "ls1" });
+    usePipelineStore.setState({ updateNodeParams });
+    setStructureLoadHandler(handler);
+    render(<LoadStructureNode {...nodeProps("ls1", seeded.data.params as LoadStructureParams)} />);
+    return { updateNodeParams, handler };
+  }
+
+  it("shows no remote button when the host registered no source", () => {
+    setup();
+    expect(screen.queryByTestId("load-structure-remote")).toBeNull();
+  });
+
+  it("loads the file a native source picks", async () => {
+    const file = new File(["ATOM"], "remote.pdb");
+    const pick = vi.fn().mockResolvedValue(file);
+    setRemoteFileSource({ mode: "native", label: "Open from remote...", pick });
+    const { updateNodeParams, handler } = setup();
+
+    const button = screen.getByTestId("load-structure-remote");
+    expect(button).toHaveTextContent("Open from remote...");
+    fireEvent.click(button);
+    await waitFor(() => expect(handler).toHaveBeenCalledWith("ls1", file));
+    expect(pick.mock.calls[0][0].kind).toBe("structure");
+    expect(pick.mock.calls[0][0].extensions).toContain(".pdb");
+    expect(updateNodeParams).toHaveBeenCalledWith("ls1", { fileName: "remote.pdb" });
+  });
+
+  it("does nothing when the native dialog is cancelled", async () => {
+    const pick = vi.fn().mockResolvedValue(null);
+    setRemoteFileSource({ mode: "native", label: "Open", pick });
+    const { handler } = setup();
+    fireEvent.click(screen.getByTestId("load-structure-remote"));
+    await waitFor(() => expect(pick).toHaveBeenCalled());
+    expect(handler).not.toHaveBeenCalled();
+    expect(screen.queryByTestId("load-structure-remote-error")).toBeNull();
+  });
+
+  it("says so when the picked file is not a structure, or the pick fails", async () => {
+    const pick = vi
+      .fn()
+      .mockResolvedValueOnce(new File(["x"], "notes.txt"))
+      .mockRejectedValueOnce(new Error("EACCES"))
+      .mockRejectedValueOnce("offline");
+    setRemoteFileSource({ mode: "native", label: "Open", pick });
+    const { handler } = setup();
+    const button = screen.getByTestId("load-structure-remote");
+
+    fireEvent.click(button);
+    await waitFor(() =>
+      expect(screen.getByTestId("load-structure-remote-error")).toHaveTextContent(
+        "notes.txt is not a structure file megane can open.",
+      ),
+    );
+    fireEvent.click(button);
+    await waitFor(() =>
+      expect(screen.getByTestId("load-structure-remote-error")).toHaveTextContent("EACCES"),
+    );
+    fireEvent.click(button);
+    await waitFor(() =>
+      expect(screen.getByTestId("load-structure-remote-error")).toHaveTextContent("offline"),
+    );
+    expect(handler).not.toHaveBeenCalled();
+  });
+
+  it("opens megane's own dialog for a browse source and loads the chosen file", async () => {
+    const read = vi.fn(async (path: string) => new File(["ATOM"], path));
+    setRemoteFileSource({
+      mode: "browse",
+      label: "Open from server...",
+      list: async () => ({
+        path: "",
+        parent: null,
+        entries: [{ name: "b.pdb", path: "b.pdb", isDir: false }],
+      }),
+      read,
+    });
+    const { handler } = setup();
+    fireEvent.click(screen.getByTestId("load-structure-remote"));
+    const dialog = await screen.findByTestId("remote-file-dialog");
+    expect(dialog).toHaveTextContent("Open structure");
+    const entry = await screen.findByText("b.pdb");
+    fireEvent.doubleClick(entry.closest("button")!);
+    await waitFor(() => expect(handler).toHaveBeenCalledTimes(1));
+    expect(read).toHaveBeenCalledWith("b.pdb");
+    expect(screen.queryByTestId("remote-file-dialog")).toBeNull();
   });
 });

@@ -1,6 +1,6 @@
 # MDX / Next.js
 
-Embed the megane viewer in MDX-based documentation frameworks like Next.js. Drop `<PipelineViewer />`, `<MeganeViewer />`, or `<Viewport />` into your `.mdx` files — WASM parsing works out of the box with a one-line webpack config.
+Embed the Megane viewer in MDX-based documentation frameworks like Next.js. Drop `<PipelineViewer />`, `<MeganeViewer />`, or `<Viewport />` into your `.mdx` files — WASM parsing works out of the box with a one-line webpack config.
 
 ## Static embed with `PipelineViewer`
 
@@ -104,7 +104,7 @@ export function SimpleViewer() {
 
 ## Next.js Configuration
 
-Add megane to `next.config.mjs` for WASM support:
+Add Megane to `next.config.mjs` for WASM support:
 
 ```js
 /** @type {import('next').NextConfig} */

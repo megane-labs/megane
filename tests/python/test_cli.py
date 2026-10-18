@@ -196,3 +196,50 @@ def test_main_no_args():
     with patch("sys.argv", ["megane"]):
         with pytest.raises(SystemExit):
             main()
+
+
+# ---------------------------------------------------------------------------
+# Server file browsing ("Open from server..." in the Load nodes)
+# ---------------------------------------------------------------------------
+
+
+@patch("uvicorn.run")
+@patch("megane.cli.webbrowser")
+@patch("megane.server.configure_files")
+def test_main_serve_files_default_to_cwd(mock_files, mock_webbrowser, mock_uvicorn_run):
+    """By default the web UI browses the current directory, loopback only."""
+    import os
+
+    from megane.cli import main
+
+    with patch("sys.argv", ["megane", "serve", "--no-browser"]):
+        main()
+
+    mock_files.assert_called_once_with(os.getcwd(), any_host=False)
+
+
+@patch("uvicorn.run")
+@patch("megane.cli.webbrowser")
+@patch("megane.server.configure_files")
+def test_main_serve_files_root_and_any_host(mock_files, mock_webbrowser, mock_uvicorn_run):
+    """--files-root picks the folder; --files-any-host lifts the loopback limit."""
+    from megane.cli import main
+
+    argv = ["megane", "serve", "--no-browser", "--files-root", "/data", "--files-any-host"]
+    with patch("sys.argv", argv):
+        main()
+
+    mock_files.assert_called_once_with("/data", any_host=True)
+
+
+@patch("uvicorn.run")
+@patch("megane.cli.webbrowser")
+@patch("megane.server.configure_files")
+def test_main_serve_no_files(mock_files, mock_webbrowser, mock_uvicorn_run):
+    """--no-files turns file browsing off."""
+    from megane.cli import main
+
+    with patch("sys.argv", ["megane", "serve", "--no-browser", "--no-files"]):
+        main()
+
+    mock_files.assert_called_once_with(None)

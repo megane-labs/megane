@@ -1,6 +1,6 @@
 # Standalone web app (`megane serve`)
 
-The **standalone web app** is megane's full-featured viewer. You launch it with the `megane serve` command, which starts a local server and opens the viewer in your browser. `megane serve` is the CLI launcher; the FastAPI + WebSocket process it starts is referred to as the `megane serve` backend. The same server also hosts [megane Builder](builder.md), the structure editor, at `/builder.html`.
+The **standalone web app** is Megane's full-featured viewer. You launch it with the `megane serve` command, which starts a local server and opens the viewer in your browser. `megane serve` is the CLI launcher; the FastAPI + WebSocket process it starts is referred to as the `megane serve` backend. The same server also hosts [Megane Builder](builder.md), the structure editor, at `/builder.html`.
 
 :::note
 The viewer page currently starts in its in-browser data mode: it opens with the bundled demo (caffeine in water) and parses every file you drop or pick in the browser with WASM. It does not connect to the backend's `/ws` endpoint, so a file passed on the command line is loaded by the backend but is not what the page shows — open it from the browser instead.
@@ -72,7 +72,35 @@ megane serve [PDB_FILE] [OPTIONS]
 | `--traj PATH` | — | Path to an ASE `.traj` file. Loads both topology and frames from the trajectory; do not pass `PDB_FILE` when using this. |
 | `--port PORT` | `8765` | Server port. The server listens on all interfaces (`0.0.0.0`). |
 | `--no-browser` | `false` | Don't automatically open the browser |
+| `--files-root DIR` | current directory | Folder the Load nodes' *Open from server…* dialog browses |
+| `--no-files` | `false` | Turn *Open from server…* off |
+| `--files-any-host` | `false` | Serve *Open from server…* to every client, not only ones on this machine (an SSH tunnel counts as this machine) |
 | `--dev` | `false` | Development mode (use the Vite dev server for the frontend). Implies not opening the browser. |
+
+## Opening files on a remote machine
+
+When `megane serve` runs on another machine — a workstation or a cluster node
+you reach over SSH — the browser's file dialog only shows *your* computer. The
+**Load Structure** and **Load Trajectory** nodes then also show **Open from
+server…**, which browses the folder the server was started in and loads the
+file straight from the server:
+
+```bash
+# On the remote machine
+cd ~/simulations
+megane serve --no-browser --port 8765
+
+# On your computer
+ssh -L 8765:localhost:8765 user@remote
+# then open http://localhost:8765
+```
+
+Only folders under `--files-root` (default: the directory `megane serve` was
+started in) are reachable; hidden files and symlinks that point outside it are
+left out. Because `megane serve` listens on every network interface, file
+browsing is served only to clients on the server's own machine — a browser
+there, or an SSH tunnel like the one above. Pass `--files-any-host` to let other
+machines on the network browse too, or `--no-files` to turn it off.
 
 ## Examples
 
@@ -122,12 +150,12 @@ In development mode, `megane serve` does not open a browser; start the Vite dev 
 
 `megane serve` starts the backend — a [FastAPI](https://fastapi.tiangolo.com/) server with:
 
-- **Static file serving** — The built frontend from `megane/static/app/` (the viewer at `/`, megane Builder at `/builder.html`). Set the `MEGANE_STATIC_DIR` environment variable to serve a different build directory.
+- **Static file serving** — The built frontend from `megane/static/app/` (the viewer at `/`, Megane Builder at `/builder.html`). Set the `MEGANE_STATIC_DIR` environment variable to serve a different build directory.
 - **WebSocket endpoint** (`/ws`) — Binary protocol streaming for molecular data. On connect it sends the loaded snapshot and metadata; clients can then send `request_frame`, `stream` (`start`, `end`, `stride`, `fps`), and `stop` JSON commands.
 - **Upload endpoint** (`POST /api/upload`) — Accepts a `pdb` file (plus an optional `xtc`) as multipart form data, loads it, and broadcasts it to every connected WebSocket client.
 - **Health check** (`GET /health`) — Returns `{"status": "ok"}`, for load balancers and container orchestrators.
 
-Data is encoded using megane's binary protocol for efficient transfer:
+Data is encoded using Megane's binary protocol for efficient transfer:
 
 | Message Type | Content |
 |-------------|---------|

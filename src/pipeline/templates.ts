@@ -541,13 +541,23 @@ function createSolidTemplate(): {
 }
 
 /**
- * Surface mesh template: quartz SiO2 wrapped in an OVITO-style alpha-shape
- * surface mesh.
+ * Surface mesh template: a faceted gold nanoparticle wrapped in an OVITO-style
+ * alpha-shape surface mesh.
  * LoadStructure → Symmetry → Wrap → SurfaceMesh → Viewport (mesh)
  *                                → Viewport (particle)
- *              → Viewport (cell)
- * The Symmetry node defaults to mode "expand" (a no-op without space-group
- * operations); the Wrap node defaults to mode "none" (pass-through).
+ *
+ * `au_nanoparticle.xyz` is a 1385-atom Wulff-shaped fcc Au cluster (see
+ * `generate_au_nanoparticle.py`): eight hexagonal {111} and six square {100}
+ * facets. An alpha-shape is a free-surface construction, so an isolated
+ * particle is what it is for — the flat facets come back as flat polygons. A
+ * 3.0 Å probe sits just above the 2.88 Å Au–Au nearest-neighbour distance:
+ * small enough to follow the facet edges, large enough not to fall between
+ * surface atoms.
+ *
+ * The particle carries no unit cell, so nothing is wired to the Viewport's
+ * cell input. The Symmetry node defaults to mode "expand" (a no-op without
+ * space-group operations); the Wrap node defaults to mode "none"
+ * (pass-through).
  */
 function createSurfaceMeshTemplate(): {
   nodes: Node<PipelineNodeData>[];
@@ -562,9 +572,9 @@ function createSurfaceMeshTemplate(): {
         data: {
           params: {
             type: "load_structure",
-            fileName: "quartz_sio2_2x2x2.xyz",
+            fileName: "au_nanoparticle.xyz",
             hasTrajectory: false,
-            hasCell: true,
+            hasCell: false,
           },
           enabled: true,
         },
@@ -601,8 +611,8 @@ function createSurfaceMeshTemplate(): {
           params: {
             type: "surface_mesh",
             alphaRadius: 3.0,
-            color: "#4488ff",
-            opacity: 0.5,
+            color: "#38bdf8",
+            opacity: 0.45,
           },
           enabled: true,
         },
@@ -653,13 +663,6 @@ function createSurfaceMeshTemplate(): {
       },
       {
         id: "e5",
-        source: "loader-1",
-        target: "viewport-1",
-        sourceHandle: "cell",
-        targetHandle: "cell",
-      },
-      {
-        id: "e6",
         source: "surface-1",
         target: "viewport-1",
         sourceHandle: "mesh",
@@ -740,20 +743,39 @@ function createStreamingTemplate(): {
 }
 
 /**
- * Protein template: ubiquitin (1UBQ) as a ribbon with semi-transparent
- * all-atom water.
+ * Protein template: HIV-1 protease with the inhibitor indinavir bound (1HSG).
  *
- *   LoadStructure → Symmetry → Wrap ─┬─ Filter(resname != "HOH") → Modify(opacity 0)   → Representation(both) ─┐
- *                                    ├─ Filter(resname == "HOH") → Modify(opacity 0.5) ───────────────────────┤
- *                 └────────────────────────── cell ───────────────────────────────────────────────────────────┴─→ Viewport
+ *   LoadStructure → Symmetry → Wrap ─┬─ Filter(polymer)     → Modify(opacity 0) → Representation(both) ─┐
+ *                                    ├─ Filter(MK1)  ─────────────────────────────────────────────────────┤
+ *                                    ├─ Filter(contact HOH) → Modify(scale 0.7) ──────────────────────────┤
+ *                                    ├─ Filter(bulk HOH)    → Modify(opacity 0) ──────────────────────────┤
+ *                                    └─ AddBond → Filter(bonds outside MK1) → Modify(opacity 0) ── bond ──┴─→ Viewport
  *
- * The Symmetry node defaults to mode "expand" (a no-op without space-group
- * operations); the Wrap node defaults to mode "none" (pass-through).
+ * The protease is a C2-symmetric homodimer of two mostly-β monomers, drawn as
+ * a cartoon colored by the file's HELIX/SHEET records. Polymer atoms are
+ * hidden (opacity 0) so only the ribbon shows; indinavir (residue MK1) keeps
+ * its element colors and is drawn ball-and-stick in the binding cleft under
+ * the two flaps. `within 3.5 of (resname == "MK1")` splits the crystal waters
+ * into the seven in contact with the drug — among them the structural "flap
+ * water" (HOH B308) that bridges the inhibitor to the Ile50 amides of both
+ * flaps — and the bulk, which is hidden. The four particle branches are disjoint, so no atom gets
+ * two competing treatments. Representation "both" makes the global viewport
+ * mode draw atoms + cartoon, which is what each branch needs.
  *
- * Protein atoms are hidden (opacity 0) so only the cartoon ribbon shows;
- * water atoms render as translucent spheres because they have no Cα and
- * therefore inherit no ribbon. Representation "both" makes the global
- * viewport mode draw atoms + cartoon, which is what each branch needs.
+ * Bonds: 1HSG's CONECT records cover only MK1 and the loader infers the
+ * protein's from distances. A bond does not inherit its atoms' opacity, so the
+ * polymer's bonds are hidden on the bond stream itself — the same
+ * Filter(bond_query) → Modify(opacity 0) pattern as hiding any species. The
+ * bond DSL selects by atom index, not residue: 1HSG lists its 1514 protein
+ * atoms first, so `atom_index >= 1514` is the HETATM block (MK1, then the
+ * waters, which carry no bonds).
+ *
+ * The fixture is 1HSG without its CRYST1 cell (see `generate_1hsg.py`): the
+ * viewer frames the camera on a structure's cell, and 1HSG's 59.6 × 87.1 ×
+ * 46.7 Å box holds the dimer in one corner. With no cell, nothing is wired to
+ * the Viewport's cell input. The Symmetry node defaults to mode "expand" (a
+ * no-op: PDB input carries no symmetry operations); the Wrap node defaults to
+ * mode "none" (pass-through).
  */
 function createProteinTemplate(): {
   nodes: Node<PipelineNodeData>[];
@@ -764,13 +786,13 @@ function createProteinTemplate(): {
       {
         id: "loader-1",
         type: "load_structure",
-        position: { x: 425, y: 0 },
+        position: { x: 595, y: 0 },
         data: {
           params: {
             type: "load_structure",
-            fileName: "1ubq.pdb",
+            fileName: "1hsg.pdb",
             hasTrajectory: false,
-            hasCell: true,
+            hasCell: false,
           },
           enabled: true,
         },
@@ -778,7 +800,7 @@ function createProteinTemplate(): {
       {
         id: "symmetry-1",
         type: "symmetry",
-        position: { x: 425, y: 130 },
+        position: { x: 595, y: 130 },
         data: {
           params: {
             type: "symmetry",
@@ -790,7 +812,7 @@ function createProteinTemplate(): {
       {
         id: "wrap-1",
         type: "wrap",
-        position: { x: 425, y: 305 },
+        position: { x: 595, y: 305 },
         data: {
           params: {
             type: "wrap",
@@ -802,11 +824,11 @@ function createProteinTemplate(): {
       {
         id: "protein-filter",
         type: "filter",
-        position: { x: 170, y: 505 },
+        position: { x: 0, y: 505 },
         data: {
           params: {
             type: "filter",
-            query: 'resname != "HOH"',
+            query: 'resname != "HOH" and resname != "MK1"',
           },
           enabled: true,
         },
@@ -814,7 +836,7 @@ function createProteinTemplate(): {
       {
         id: "protein-modify",
         type: "modify",
-        position: { x: 170, y: 665 },
+        position: { x: 0, y: 665 },
         data: {
           params: {
             type: "modify",
@@ -827,11 +849,23 @@ function createProteinTemplate(): {
       {
         id: "protein-rep",
         type: "representation",
-        position: { x: 170, y: 825 },
+        position: { x: 0, y: 825 },
         data: {
           params: {
             type: "representation",
             mode: "both",
+          },
+          enabled: true,
+        },
+      },
+      {
+        id: "ligand-filter",
+        type: "filter",
+        position: { x: 340, y: 505 },
+        data: {
+          params: {
+            type: "filter",
+            query: 'resname == "MK1"',
           },
           enabled: true,
         },
@@ -843,7 +877,7 @@ function createProteinTemplate(): {
         data: {
           params: {
             type: "filter",
-            query: 'resname == "HOH"',
+            query: 'resname == "HOH" and within 3.5 of (resname == "MK1")',
           },
           enabled: true,
         },
@@ -855,8 +889,71 @@ function createProteinTemplate(): {
         data: {
           params: {
             type: "modify",
+            scale: 0.7,
+            opacity: 1,
+          },
+          enabled: true,
+        },
+      },
+      {
+        id: "bulk-water-filter",
+        type: "filter",
+        position: { x: 1020, y: 505 },
+        data: {
+          params: {
+            type: "filter",
+            query: 'resname == "HOH" and not within 3.5 of (resname == "MK1")',
+          },
+          enabled: true,
+        },
+      },
+      {
+        id: "bulk-water-modify",
+        type: "modify",
+        position: { x: 1020, y: 665 },
+        data: {
+          params: {
+            type: "modify",
             scale: 1,
-            opacity: 0.5,
+            opacity: 0,
+          },
+          enabled: true,
+        },
+      },
+      {
+        id: "addbond-1",
+        type: "add_bond",
+        position: { x: 1360, y: 505 },
+        data: {
+          params: {
+            type: "add_bond",
+            bondSource: "structure",
+          },
+          enabled: true,
+        },
+      },
+      {
+        id: "bond-filter",
+        type: "filter",
+        position: { x: 1360, y: 665 },
+        data: {
+          params: {
+            type: "filter",
+            query: "",
+            bond_query: "not both atom_index >= 1514",
+          },
+          enabled: true,
+        },
+      },
+      {
+        id: "bond-modify",
+        type: "modify",
+        position: { x: 1360, y: 825 },
+        data: {
+          params: {
+            type: "modify",
+            scale: 1,
+            opacity: 0,
           },
           enabled: true,
         },
@@ -864,7 +961,7 @@ function createProteinTemplate(): {
       {
         id: "viewport-1",
         type: "viewport",
-        position: { x: 425, y: 1005 },
+        position: { x: 595, y: 1005 },
         data: {
           params: {
             type: "viewport",
@@ -922,58 +1019,117 @@ function createProteinTemplate(): {
       {
         id: "e7",
         source: "wrap-1",
-        target: "water-filter",
+        target: "ligand-filter",
         sourceHandle: "particle",
         targetHandle: "in",
       },
       {
         id: "e8",
+        source: "ligand-filter",
+        target: "viewport-1",
+        sourceHandle: "out",
+        targetHandle: "particle",
+      },
+      {
+        id: "e9",
+        source: "wrap-1",
+        target: "water-filter",
+        sourceHandle: "particle",
+        targetHandle: "in",
+      },
+      {
+        id: "e10",
         source: "water-filter",
         target: "water-modify",
         sourceHandle: "out",
         targetHandle: "in",
       },
       {
-        id: "e9",
+        id: "e11",
         source: "water-modify",
         target: "viewport-1",
         sourceHandle: "out",
         targetHandle: "particle",
       },
       {
-        id: "e10",
-        source: "loader-1",
+        id: "e12",
+        source: "wrap-1",
+        target: "bulk-water-filter",
+        sourceHandle: "particle",
+        targetHandle: "in",
+      },
+      {
+        id: "e13",
+        source: "bulk-water-filter",
+        target: "bulk-water-modify",
+        sourceHandle: "out",
+        targetHandle: "in",
+      },
+      {
+        id: "e14",
+        source: "bulk-water-modify",
         target: "viewport-1",
-        sourceHandle: "cell",
-        targetHandle: "cell",
+        sourceHandle: "out",
+        targetHandle: "particle",
+      },
+      {
+        id: "e15",
+        source: "wrap-1",
+        target: "addbond-1",
+        sourceHandle: "particle",
+        targetHandle: "particle",
+      },
+      {
+        id: "e16",
+        source: "addbond-1",
+        target: "bond-filter",
+        sourceHandle: "bond",
+        targetHandle: "in",
+      },
+      {
+        id: "e17",
+        source: "bond-filter",
+        target: "bond-modify",
+        sourceHandle: "out",
+        targetHandle: "in",
+      },
+      {
+        id: "e18",
+        source: "bond-modify",
+        target: "viewport-1",
+        sourceHandle: "out",
+        targetHandle: "bond",
       },
     ],
   };
 }
 
 /**
- * ESP template: caffeine with its electrostatic potential drawn as a
- * dual-contour isosurface — a molecule and a cube file overlaid in one scene.
+ * ESP template: caffeine's electron-density surface painted by its
+ * electrostatic potential — the standard "ESP map", from a real DFT
+ * calculation.
  *
- *   LoadStructure(caffeine.sdf) → Symmetry → Wrap ─┬→ AddBond → Viewport (bond)
- *                                                  └────────────→ Viewport (particle)
- *   LoadVolumetric(caffeine_esp.cube) → Isosurface ──────────────→ Viewport (mesh)
+ *   LoadStructure(caffeine_b3lyp.sdf) → Symmetry → Wrap ─┬→ AddBond → Viewport (bond)
+ *                                                        └────────────→ Viewport (particle)
+ *   LoadVolumetric(caffeine_b3lyp_density.cube) → Isosurface ────→ Viewport (mesh)
+ *   LoadVolumetric(caffeine_b3lyp_esp.cube) ──────↗ (colorVolumetric)
  *
- * The two branches never meet inside the pipeline: the structure and the grid
- * are independent data sources that only overlap because they share a
- * coordinate frame (both fixtures come from `generate_caffeine_esp.py`).
+ * The structure and both cubes come from `generate_caffeine_dft_esp.py`: one
+ * B3LYP/6-31G* calculation on caffeine (PubChem CID 2519), written in a frame
+ * whose ring plane faces the default camera — the PubChem conformer lies in
+ * xy and would be seen edge-on — so the three files line up without any
+ * alignment step. The
+ * Isosurface node contours the density at 0.002 e/Bohr³ — the conventional
+ * molecular-surface level — and, in colorMode "volume", samples the second
+ * grid at every vertex: red where the potential is negative (the two carbonyl
+ * oxygens, the imidazole N9 lone pair), blue where it is positive (the methyl
+ * and C8–H hydrogens). The potential on that surface spans about ±0.06
+ * Hartree/e; the fixed ±0.04 colorRange saturates only the extremes and keeps
+ * the map comparable between molecules instead of stretching to whichever
+ * extreme this one reaches.
  *
- * `showNegative` draws the second contour at −isoLevel, which is what makes
- * this an ESP map rather than a single lobe: blue is the positive potential
- * (over the methyl and imidazole hydrogens), red the negative one (over the
- * two carbonyl oxygens) — the usual chemistry convention.
- *
- * 0.03 Hartree/e is the level the potential just reaches on caffeine's van der
- * Waals surface, so the lobes hug the most polarized regions instead of
- * swelling into a shell around the whole molecule. That also keeps them inside
- * the frame: `fitCameraToView` frames the atoms, and knows nothing about
- * meshes, so a lower level (0.02 reaches 2.5 Å past the outermost atom) is
- * clipped at the viewport edges on first load.
+ * At opacity 0.8 the colors still read cleanly while the ball-and-stick
+ * molecule shows through.
  *
  * The Symmetry node defaults to mode "expand" (a no-op without space-group
  * operations); the Wrap node defaults to mode "none" (pass-through). Caffeine
@@ -993,7 +1149,7 @@ function createEspTemplate(): {
         data: {
           params: {
             type: "load_structure",
-            fileName: "caffeine.sdf",
+            fileName: "caffeine_b3lyp.sdf",
             hasTrajectory: false,
             hasCell: false,
           },
@@ -1039,11 +1195,23 @@ function createEspTemplate(): {
       {
         id: "volumetric-1",
         type: "load_volumetric",
-        position: { x: 680, y: 155 },
+        position: { x: 680, y: 0 },
         data: {
           params: {
             type: "load_volumetric",
-            fileName: "caffeine_esp.cube",
+            fileName: "caffeine_b3lyp_density.cube",
+          },
+          enabled: true,
+        },
+      },
+      {
+        id: "volumetric-esp",
+        type: "load_volumetric",
+        position: { x: 1020, y: 0 },
+        data: {
+          params: {
+            type: "load_volumetric",
+            fileName: "caffeine_b3lyp_esp.cube",
           },
           enabled: true,
         },
@@ -1055,13 +1223,14 @@ function createEspTemplate(): {
         data: {
           params: {
             type: "isosurface",
-            isoLevel: 0.03,
-            color: "#3b82f6",
-            opacity: 0.55,
-            showNegative: true,
+            isoLevel: 0.002,
+            color: "#e5e7eb",
+            opacity: 0.8,
+            showNegative: false,
             negativeColor: "#ef4444",
-            colorMode: "solid",
+            colorMode: "volume",
             colormap: "rwb",
+            colorRange: [-0.04, 0.04],
           },
           enabled: true,
         },
@@ -1126,6 +1295,13 @@ function createEspTemplate(): {
       },
       {
         id: "e7",
+        source: "volumetric-esp",
+        target: "isosurface-1",
+        sourceHandle: "volumetric",
+        targetHandle: "colorVolumetric",
+      },
+      {
+        id: "e8",
         source: "isosurface-1",
         target: "viewport-1",
         sourceHandle: "mesh",
@@ -1453,19 +1629,19 @@ export const PIPELINE_TEMPLATES: PipelineTemplate[] = [
   {
     id: "surface_mesh",
     label: "Surface Mesh",
-    description: "Quartz SiO2 with OVITO-style alpha-shape surface envelope",
+    description: "Faceted gold nanoparticle in an OVITO-style alpha-shape surface envelope",
     create: createSurfaceMeshTemplate,
   },
   {
     id: "protein",
     label: "Protein",
-    description: "Ubiquitin ribbon with semi-transparent water",
+    description: "HIV-1 protease dimer with the drug indinavir bound in its active site",
     create: createProteinTemplate,
   },
   {
     id: "esp",
-    label: "ESP Isosurface",
-    description: "Caffeine overlaid with its electrostatic potential from a cube file",
+    label: "ESP Map",
+    description: "Caffeine's DFT electron-density surface colored by its electrostatic potential",
     create: createEspTemplate,
   },
   {
