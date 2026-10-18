@@ -18,7 +18,13 @@ import { join } from "path";
 import { fileURLToPath } from "url";
 import { test, expect, type Frame, type Page } from "playwright/test";
 import { waitForReady } from "./lib/setup";
-import { startCodeServer, stopCodeServer, type CodeServerHandle } from "./lib/hosts/code-server";
+import {
+  openVscodeNotebook,
+  startCodeServer,
+  stopCodeServer,
+  type CodeServerHandle,
+} from "./lib/hosts/code-server";
+import { writeNotebook } from "./lib/hosts/jupyterlab";
 import { cleanUpWithRDKit, openSketch, saveAs, waitForKetcher } from "./lib/builder";
 
 const REPO = join(fileURLToPath(import.meta.url), "..", "..", "..");
@@ -34,6 +40,18 @@ test.beforeAll(async () => {
   mkdirSync(WORKSPACE, { recursive: true });
   copyFileSync(join(REPO, "tests", "fixtures", "caffeine.sdf"), join(WORKSPACE, "caffeine.sdf"));
   copyFileSync(join(REPO, "tests", "fixtures", "1crn.pdb"), join(WORKSPACE, "1crn.pdb"));
+  writeNotebook(WORKSPACE, "builder", {
+    cells: [
+      {
+        cell_type: "code",
+        source: [
+          "import megane\n",
+          `b = megane.Builder("${WORKSPACE}/caffeine.sdf", height="460px")\n`,
+          "b",
+        ],
+      },
+    ],
+  });
   cs = await startCodeServer({ port: PORT, workspace: WORKSPACE, e2eMode: true });
 });
 
@@ -143,4 +161,31 @@ test("a megane viewer tab's title bar opens its file in the Builder", async ({ p
     "327",
     { timeout: 60_000 },
   );
+});
+
+test("megane.Builder in a VS Code notebook: RDKit and Save go through the kernel", async ({
+  page,
+}) => {
+  rmSync(join(WORKSPACE, "caffeine.pdb"), { force: true });
+  // Test mode reaches the widget's output frame through `window.parent`.
+  await page.addInitScript(() => {
+    (globalThis as { __MEGANE_TEST__?: boolean }).__MEGANE_TEST__ = true;
+  });
+  const wv = await openVscodeNotebook(page, {
+    port: PORT,
+    file: "builder.ipynb",
+    notebook: "builder.ipynb",
+    folder: WORKSPACE,
+  });
+  const root = wv.locator('[data-testid="megane-builder"]');
+  await expect(root).toHaveAttribute("data-atom-count", "24");
+  // The Jupyter extension's one-time notice about widget scripts covers the output.
+  const notice = page.getByRole("button", { name: "Do not show again" });
+  if (await notice.isVisible({ timeout: 5_000 }).catch(() => false)) await notice.click();
+  await cleanUpWithRDKit(wv);
+  await saveAs(wv, "pdb");
+  await expect(wv.locator('[data-testid="builder-notice"]')).toContainText("Saved caffeine.pdb", {
+    timeout: 30_000,
+  });
+  await expect.poll(() => existsSync(join(WORKSPACE, "caffeine.pdb"))).toBe(true);
 });

@@ -2,7 +2,7 @@
 
 import { describe, it, expect, vi, afterEach } from "vitest";
 import { render, screen, fireEvent, cleanup } from "@testing-library/react";
-import { Menu } from "@/builder/Menu";
+import { Menu, menuBounds } from "@/builder/Menu";
 
 afterEach(cleanup);
 
@@ -143,5 +143,75 @@ describe("Menu", () => {
     } finally {
       Object.defineProperty(HTMLElement.prototype, "offsetHeight", original);
     }
+  });
+
+  it("inside a Builder, stays within the Builder, which may end above the window's bottom", () => {
+    render(
+      <div data-testid="megane-builder">
+        <Menu testId="ops" label="Ops" items={items()} placement="right" caret={false} />
+      </div>,
+    );
+    const builder = screen.getByTestId("megane-builder");
+    vi.spyOn(builder, "getBoundingClientRect").mockReturnValue({
+      left: 0,
+      right: 400,
+      top: 100,
+      bottom: 300,
+      width: 400,
+      height: 200,
+    } as DOMRect);
+    const trigger = screen.getByTestId("ops");
+    vi.spyOn(trigger, "getBoundingClientRect").mockReturnValue({
+      left: 12,
+      right: 50,
+      top: 280,
+      bottom: 300,
+      width: 38,
+      height: 20,
+    } as DOMRect);
+    const original = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "offsetHeight")!;
+    Object.defineProperty(HTMLElement.prototype, "offsetHeight", {
+      configurable: true,
+      value: 100,
+    });
+    try {
+      fireEvent.click(trigger);
+      const menu = screen.getByTestId("ops-menu");
+      // Bottom of the Builder (300) − height (100) − edge (8).
+      expect(menu.style.top).toBe("192px");
+      expect(menu.style.maxHeight).toBe("100px");
+    } finally {
+      Object.defineProperty(HTMLElement.prototype, "offsetHeight", original);
+    }
+  });
+});
+
+describe("menuBounds", () => {
+  const win = { innerWidth: 1000, innerHeight: 800 };
+  const rect = (r: Partial<DOMRect>) =>
+    ({ left: 0, top: 0, right: 0, bottom: 0, width: 0, height: 0, ...r }) as DOMRect;
+
+  it("is the window outside a Builder", () => {
+    const el = document.createElement("button");
+    expect(menuBounds(el, win)).toEqual({ left: 0, top: 0, right: 1000, bottom: 800 });
+  });
+
+  it("is the Builder's part of the window inside one", () => {
+    const builder = document.createElement("div");
+    builder.dataset.testid = "megane-builder";
+    const el = document.createElement("button");
+    builder.appendChild(el);
+    vi.spyOn(builder, "getBoundingClientRect").mockReturnValue(
+      rect({ left: -50, top: 200, right: 600, bottom: 2000, width: 650, height: 1800 }),
+    );
+    expect(menuBounds(el, win)).toEqual({ left: 0, top: 200, right: 600, bottom: 800 });
+  });
+
+  it("ignores a Builder that is not laid out", () => {
+    const builder = document.createElement("div");
+    builder.dataset.testid = "megane-builder";
+    const el = document.createElement("button");
+    builder.appendChild(el);
+    expect(menuBounds(el, win)).toEqual({ left: 0, top: 0, right: 1000, bottom: 800 });
   });
 });
