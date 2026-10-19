@@ -96,10 +96,10 @@ describe("createMeganeStores", () => {
     const a = createMeganeStores();
     const b = createMeganeStores();
 
-    a.pipelineUI.getState().setMode("editor");
+    a.pipelineUI.getState().setMode("inspector");
 
-    expect(a.pipelineUI.getState().mode).toBe("editor");
-    expect(b.pipelineUI.getState().mode).toBe("chat");
+    expect(a.pipelineUI.getState().mode).toBe("inspector");
+    expect(b.pipelineUI.getState().mode).toBe("editor");
   });
 
   it("isolates the file-drop slots so a drop on one viewer does not reach the other", () => {

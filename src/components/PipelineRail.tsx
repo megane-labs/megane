@@ -4,7 +4,8 @@
  * buttons, 20 px stroke icons, rules between groups, ▸ on a button that opens
  * a menu, menus opening to its right). Top to bottom:
  *
- *   Editor, Inspector, Chat     — what the panel shows (its tabs)
+ *   Editor, Inspector           — what the panel shows (its tabs; the AI
+ *                                 assistant is docked inside the Editor)
  *   Add node, Templates, Layout — build the graph (they show the Editor)
  *   File, Render                — import / export / share, and render
  *   Guide, Tutorial, Theme      — help and appearance, at the foot
@@ -86,17 +87,6 @@ const MODES: { value: PipelinePanelMode; label: string; title: string; icon: Rea
         <path d="M4 6h9M4 11h6M4 16h5" />
         <circle cx="16" cy="15" r="4" />
         <path d="M19 18l2.5 2.5" />
-      </RailIcon>
-    ),
-  },
-  {
-    value: "chat",
-    label: "Chat",
-    title: "Chat: describe a pipeline and let the assistant build it",
-    icon: (
-      <RailIcon>
-        <path d="M20 12.5a7.5 7.5 0 0 1-11 6.6L4 20.5l1.4-4.6A7.5 7.5 0 1 1 20 12.5z" />
-        <path d="M9 11h6M9 14.5h4" />
       </RailIcon>
     ),
   },
