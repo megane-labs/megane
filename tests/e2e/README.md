@@ -1,4 +1,4 @@
-# megane E2E test suite
+# Megane E2E test suite
 
 This suite uses **Playwright Test** (`playwright test`) and asserts against
 the cross-platform **3-layer contract** described in

@@ -1,9 +1,9 @@
-# megane E2E coverage roadmap
+# Megane E2E coverage roadmap
 
 A working list of E2E gaps and the order in which they should be filled.
 The goal is to graduate the suite from "viewer mounts and parses files on
 five hosts" (current state, ~41 tests) to "every user-facing feature of
-megane has at least one cross-host regression test."
+Megane has at least one cross-host regression test."
 
 Refer to this file when picking up follow-up work; check items off as
 they land. Items are grouped by phase — earlier phases unblock later
@@ -365,5 +365,5 @@ done
 ```
 
 When this file's checkboxes are all green, the suite covers every
-user-facing megane feature on every host. Treat unchecked items as
+user-facing Megane feature on every host. Treat unchecked items as
 known regressions waiting to happen.

@@ -1,11 +1,11 @@
 ---
 name: e2e-coverage
-description: Run, extend, or re-baseline the megane E2E coverage suite. Covers all 5 platforms (webapp, JupyterLab DocWidget, VSCode custom editor, Jupyter widget in JupyterLab, Jupyter widget in VSCode notebook). Use when adding new E2E specs, debugging baseline drift, reproducing a UI bug across hosts, or running the full local-only matrix.
+description: Run, extend, or re-baseline the Megane E2E coverage suite. Covers all 5 platforms (webapp, JupyterLab DocWidget, VSCode custom editor, Jupyter widget in JupyterLab, Jupyter widget in VSCode notebook). Use when adding new E2E specs, debugging baseline drift, reproducing a UI bug across hosts, or running the full local-only matrix.
 ---
 
 # E2E Coverage Suite (5 Platforms)
 
-The megane viewer ships through 5 distribution targets. Each one renders the same `MeganeViewer` React component, but the host chrome and bootstrap path differ. This skill is the canonical runbook for exercising the full matrix locally.
+The Megane viewer ships through 5 distribution targets. Each one renders the same `MeganeViewer` React component, but the host chrome and bootstrap path differ. This skill is the canonical runbook for exercising the full matrix locally.
 
 ## CRITICAL: Playwright, NOT Puppeteer
 
@@ -131,7 +131,7 @@ npm run test:e2e:widget-api          # programmatic frame_index / selected_atoms
 npm run test:e2e:pipeline-editor     # seeded node kinds + Render button mounts modal (webapp / labext / vscode only — widget hosts intentionally do not mount the editor)
 npm run test:e2e:pipeline-file       # drag-drop .megane.json on webapp
 npm run test:e2e:remote-files        # Load nodes' "Open from server..." (mocked /api/files)
-npm run test:e2e:builder             # megane Builder (/builder.html): the standalone structure editor — new cell / open file, click-driven edits, undo, export
+npm run test:e2e:builder             # Megane Builder (/builder.html): the standalone structure editor — new cell / open file, click-driven edits, undo, export
 npm run test:e2e:render-modal        # snapshot mode (GIF/MP4 gated by MEGANE_E2E_FFMPEG=1)
 npm run test:e2e:atom-bond-junction  # transparent ball-and-stick junction (stick trimmed at the ball surface)
 npm run test:e2e:templates           # the Templates dropdown entries that load more than one file (ESP cube + molecule; all-atom + coarse-grained overlay)

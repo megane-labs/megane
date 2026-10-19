@@ -67,7 +67,7 @@ Out of scope for version 1:
 
 ```mermaid
 flowchart LR
-  subgraph Host["megane host (webapp / VS Code / JupyterLab)"]
+  subgraph Host["Megane host (webapp / VS Code / JupyterLab)"]
     B["Builder UI (browser, JS)"] -- "tools/list, tools/call" --> R["Bridge"]
   end
   R -- "stdio" --> S1["MCP server: megane-builder-tools (Python)"]
@@ -450,7 +450,7 @@ workspaces, and an HTTP entry must use HTTPS unless it is on loopback.
 (`megane-builder-tools`, §10): the `megane-builder-tools` command if it is on
 PATH (or in uv's `~/.local/bin`, which an editor started from the Dock does not
 see), else `uvx --from git+https://github.com/hodakamori/megane-builder-tools@<commit>
-megane-builder-tools` at a commit pinned in megane (`DEFAULT_SERVER_SOURCE` in
+megane-builder-tools` at a commit pinned in Megane (`DEFAULT_SERVER_SOURCE` in
 `builderTools.ts` and `config.py`, kept equal by a test). An entry named
 `megane-builder-tools` replaces it and `null` hides it; the usual confirmation
 still comes first. A stdio server inherits the host's whole environment, not

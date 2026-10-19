@@ -1,6 +1,6 @@
-# Contributing to megane
+# Contributing to Megane
 
-Thank you for your interest in contributing to megane. This document covers the development setup, testing, and submission process.
+Thank you for your interest in contributing to Megane. This document covers the development setup, testing, and submission process.
 
 ## Development Setup
 
@@ -39,7 +39,7 @@ npm run package     # produces vscode-megane-<version>.vsix
 code --install-extension ./vscode-megane-<version>.vsix
 ```
 
-Open any supported molecular file (`.pdb`, `.gro`, `.xyz`, `.mol`, `.sdf`, `.mol2`, `.cif`, `.mmcif`, `.data`, `.lammps`, `.prmtop`, `.traj`, `.xtc`, `.dcd`, `.nc`, `.lammpstrj`, `.dump`) or a `.megane.json` pipeline file in VSCode to launch the megane viewer.
+Open any supported molecular file (`.pdb`, `.gro`, `.xyz`, `.mol`, `.sdf`, `.mol2`, `.cif`, `.mmcif`, `.data`, `.lammps`, `.prmtop`, `.traj`, `.xtc`, `.dcd`, `.nc`, `.lammpstrj`, `.dump`) or a `.megane.json` pipeline file in VSCode to launch the Megane viewer.
 
 To iterate on the extension code without repackaging, open `vscode-megane/` in VSCode and press `F5` to launch the Extension Development Host (after `npm run build`).
 
@@ -59,7 +59,7 @@ import megane
 megane.view("path/to/protein.pdb")
 ```
 
-If `jupyter labextension list` does not show megane after `maturin develop`, copy the labextension manually:
+If `jupyter labextension list` does not show Megane after `maturin develop`, copy the labextension manually:
 
 ```bash
 mkdir -p "$(jupyter --data-dir)/labextensions"
@@ -119,10 +119,10 @@ front saves a round trip:
   inside a parser are lossless canonicalizations (unit conversion declared by
   the file/format, element resolution, bond inference *only* when the format
   carries no connectivity, identity-preserving reindexing). Per-atom data
-  megane doesn't render yet belongs in `ParsedStructure::scalar_channels`,
+  Megane doesn't render yet belongs in `ParsedStructure::scalar_channels`,
   and anything a parser must skip surfaces through
   `ParsedStructure::warnings` — please do not introduce new violations.
-- **New file formats and pipeline nodes must work on every host.** megane
+- **New file formats and pipeline nodes must work on every host.** Megane
   ships as a webapp, Jupyter widget, JupyterLab extension, VSCode extension,
   and Python API. When you add a format or node, register it on all of them
   (the walkthroughs in

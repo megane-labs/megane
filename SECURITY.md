@@ -29,7 +29,7 @@ You should receive an initial response within a week. Once the issue is
 confirmed and fixed, the fix ships in the next release and the advisory is
 published with credit to the reporter (unless you prefer to stay anonymous).
 
-Because megane parses untrusted files (structure and trajectory formats) in
+Because Megane parses untrusted files (structure and trajectory formats) in
 Rust/WASM and Python, parser crashes on malformed input are welcome as
 regular bug reports — the private channel is for issues with a plausible
 security impact such as memory unsafety, sandbox escape, or code execution.

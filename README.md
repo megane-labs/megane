@@ -311,7 +311,7 @@ src/                     TypeScript frontend
   hooks/                 Custom React hooks
   stores/                Zustand stores (per-viewer playback, view, measurement, theme state)
   pipeline/              Pipeline graph, node executors, serialization
-  builder/               megane Builder (structure editor)
+  builder/               Megane Builder (structure editor)
   crystal/               Unit-cell math and bulk crystal prototypes
   export/                Export the on-screen structure through the Rust writers
   hosts/                 File classification shared by the JupyterLab and VS Code hosts
@@ -327,7 +327,7 @@ crates/                  Rust workspace
 python/megane/           Python backend
   parsers/               Python readers for every supported format (`dispatch.py` maps every structure extension the web app opens), plus the PSF / GROMACS .top topology sidecars (Gaussian CUBE and OpenDX are browser-side only)
   pipeline.py            Pipeline builder (NetworkX-style DAG)
-  builder.py             megane Builder Jupyter widget
+  builder.py             Megane Builder Jupyter widget
   builder_tools/         Jupyter server extension bridging the Builder to MCP tool servers (`megane[tools]`)
   writers.py             Structure writers (`save_structure`)
   cli.py                 `megane` CLI entry point

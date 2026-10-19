@@ -1,6 +1,6 @@
 ---
 name: testing
-description: Run tests for megane. Covers TypeScript, Rust, Python, and E2E tests. IMPORTANT: E2E tests use Playwright, NOT Puppeteer.
+description: Run tests for Megane. Covers TypeScript, Rust, Python, and E2E tests. IMPORTANT: E2E tests use Playwright, NOT Puppeteer.
 ---
 
 # Running Tests
@@ -191,7 +191,7 @@ boot prerequisites. Cross-platform parity is asserted via `contract`.
 | `widget-vscode` | anywidget in code-server + ms-toolsai.jupyter | dynamic | `scripts/install-code-server.sh` + VSIX | `MEGANE_E2E_MODE=1 npm run test:e2e:widget-vscode` |
 | `vscode` | VSCode custom editor | dynamic | `scripts/install-code-server.sh` + VSIX | `MEGANE_E2E_MODE=1 npm run test:e2e:vscode` |
 
-`MEGANE_E2E_MODE=1` causes the megane VSCode extension to inject
+`MEGANE_E2E_MODE=1` causes the Megane VSCode extension to inject
 `window.__MEGANE_TEST__ = true` into the webview, which is what triggers
 `MoleculeRenderer` testMode. Without it, the webview-hosted projects time out
 in `waitForReady`.
