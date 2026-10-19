@@ -10,13 +10,22 @@
     "url": "https://github.com/megane-labs/megane.git"
   },
   "engines": {
-    "vscode": "^1.80.0"
+    "vscode": "^1.90.0"
   },
   "categories": [
     "Visualization"
   ],
   "activationEvents": [],
   "main": "./out/extension.js",
+  "capabilities": {
+    "untrustedWorkspaces": {
+      "supported": "limited",
+      "description": "In an untrusted workspace, megane Builder ignores tool servers configured in the workspace's settings (megane.builder.mcpServers), since they run commands on your computer.",
+      "restrictedConfigurations": [
+        "megane.builder.mcpServers"
+      ]
+    }
+  },
   "contributes": {
     "customEditors": [
       {
@@ -226,18 +235,77 @@
           "group": "navigation"
         }
       ]
+    },
+    "configuration": {
+      "title": "megane",
+      "properties": {
+        "megane.builder.mcpServers": {
+          "type": "object",
+          "default": {},
+          "scope": "machine-overridable",
+          "markdownDescription": "MCP tool servers for megane Builder's **Tools** menu ([Builder Tool Contract](https://megane-labs.github.io/megane/dev/builder-tools)), in the `mcpServers` format LLM clients use. A stdio server is `{ \"command\": \"python\", \"args\": [\"my_tools.py\"] }` (optional `env`, `cwd`); a Streamable HTTP server is `{ \"url\": \"https://…/mcp\", \"headers\": { \"Authorization\": \"Bearer …\" } }` (https, or http on this machine). `${workspaceFolder}` and `${userHome}` are replaced. megane asks before it first uses a server.",
+          "additionalProperties": {
+            "type": "object",
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": [
+                  "stdio",
+                  "http",
+                  "streamable-http"
+                ],
+                "description": "Optional: the transport, inferred from command or url."
+              },
+              "command": {
+                "type": "string",
+                "description": "The program that starts a stdio server."
+              },
+              "args": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "description": "Arguments for command."
+              },
+              "env": {
+                "type": "object",
+                "additionalProperties": {
+                  "type": "string"
+                },
+                "description": "Extra environment variables for command."
+              },
+              "cwd": {
+                "type": "string",
+                "description": "Working directory for command (default: the first workspace folder)."
+              },
+              "url": {
+                "type": "string",
+                "description": "The Streamable HTTP endpoint of a server, e.g. http://127.0.0.1:8765/mcp."
+              },
+              "headers": {
+                "type": "object",
+                "additionalProperties": {
+                  "type": "string"
+                },
+                "description": "HTTP headers, e.g. Authorization."
+              }
+            }
+          }
+        }
+      }
     }
   },
   "scripts": {
     "build:webview": "vite build --config vite.webview.config.ts && vite build --config vite.builder.config.ts",
-    "build:extension": "tsc -p tsconfig.json",
+    "build:extension": "tsc -p tsconfig.json && node esbuild.extension.mjs",
     "build": "npm run build:webview && npm run build:extension",
-    "watch": "tsc -p tsconfig.json --watch",
+    "watch": "node esbuild.extension.mjs --watch",
     "vscode:prepublish": "npm run build",
     "package": "vsce package"
   },
   "devDependencies": {
     "@dagrejs/dagre": "^3.0.0",
+    "@modelcontextprotocol/client": "^2.2.0",
     "@types/node": "^25.3.5",
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",
@@ -245,6 +313,7 @@
     "@vitejs/plugin-react": "^4.3.0",
     "@vscode/vsce": "^3.9.2",
     "@xyflow/react": "^12.0.0",
+    "esbuild": "^0.25.12",
     "gif.js": "^0.2.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",

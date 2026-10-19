@@ -4,6 +4,7 @@ import {
   CameraControls,
   ORBIT_SPEED,
   TRACKBALL_ZOOM_SPEED,
+  isPanGesture,
   isShiftPanGesture,
 } from "@/renderer/CameraControls";
 
@@ -294,6 +295,46 @@ describe("isShiftPanGesture", () => {
     expect(isShiftPanGesture({ button: 0, shiftKey: false })).toBe(false);
     expect(isShiftPanGesture({ button: 2, shiftKey: true })).toBe(false);
     expect(isShiftPanGesture({ button: 1, shiftKey: true })).toBe(false);
+  });
+});
+
+describe("isPanGesture", () => {
+  it("pans with right or Shift + left in the viewer, middle or Shift + right in the Builder", () => {
+    expect(isPanGesture("viewer", { button: 2, shiftKey: false })).toBe(true);
+    expect(isPanGesture("viewer", { button: 0, shiftKey: true })).toBe(true);
+    expect(isPanGesture("viewer", { button: 1, shiftKey: false })).toBe(false);
+    expect(isPanGesture("builder", { button: 1, shiftKey: false })).toBe(true);
+    expect(isPanGesture("builder", { button: 2, shiftKey: true })).toBe(true);
+    expect(isPanGesture("builder", { button: 2, shiftKey: false })).toBe(false);
+    expect(isPanGesture("builder", { button: 0, shiftKey: true })).toBe(false);
+  });
+});
+
+describe("CameraControls mouse scheme", () => {
+  it("rotates with a right drag in the Builder's scheme, and leaves Shift + right to the pan", () => {
+    const el = makeElement();
+    const camera = makeCamera();
+    const controls = new CameraControls(camera, el);
+    controls.screen = { ...SCREEN };
+    controls.setMouseScheme("builder");
+    expect(controls.mouseButtons).toEqual({
+      LEFT: THREE.MOUSE.ROTATE,
+      MIDDLE: -1,
+      RIGHT: THREE.MOUSE.ROTATE,
+    });
+    const rightDrag = (shiftKey: boolean) => {
+      const before = camera.position.clone();
+      el.dispatchEvent(pointer("pointerdown", 400, 300, 2, shiftKey));
+      document.dispatchEvent(pointer("pointermove", 500, 300, 2, shiftKey));
+      controls.update();
+      document.dispatchEvent(pointer("pointerup", 500, 300, 2, shiftKey));
+      return camera.position.distanceTo(before);
+    };
+    expect(rightDrag(false)).toBeGreaterThan(1);
+    expect(rightDrag(true)).toBeLessThan(1e-9);
+    controls.setMouseScheme("viewer");
+    expect(controls.mouseButtons.RIGHT).toBe(THREE.MOUSE.PAN);
+    controls.dispose();
   });
 });
 

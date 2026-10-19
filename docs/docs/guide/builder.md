@@ -92,11 +92,11 @@ With nothing open, the view shows *Build a structure* with **Open…**,
 
 | Tool | Key | What a click in the 3D view does |
 |---|---|---|
-| **Select** | S | Selects the atom (Shift-click adds to the selection; clicking empty space clears it). Its settings add **Box** (drag a rectangle to select what it holds, Shift-drag to add it to the selection; the view stops rotating while it is on), **All**, **Invert** and one chip per element with its count, which selects every atom of that element. The selection feeds the [Inspector](#inspector) (*Delete*, *Set to*, *Save as fragment*, *Clean up*, the measurement) and lets *Move* drag several atoms at once. |
+| **Select** | S | Selects the atom (Shift- or Ctrl/⌘-click toggles it in or out of the selection; clicking empty space clears it); a double-click selects the atom's molecule. Dragging a selected atom moves the selection, dragging anywhere else draws a box (see [Mouse](#mouse)). Its settings add **All**, **Invert**, one chip per element with its count (selects every atom of that element), and **Snap**. The selection feeds the [Inspector](#inspector) (*Delete*, *Set to*, *Save as fragment*, *Clean up*, the measurement, *Transform*). |
 | **Add atom** | A | On an atom: attaches a new atom of the chosen element at bond length (sum of covalent radii), pointing away from the atom's existing neighbours, and bonds it with the chosen bond order. On empty space: places a free atom at that point, at the depth of the rotation pivot. |
 | **Bond** | B | Click two atoms to bond them. Clicking an already bonded pair changes the bond order to the one chosen in its settings. |
 | **Delete** | D | Removes the atom and every bond it had. |
-| **Move** | M | Drag an atom in the screen plane (the plane through the atom facing the camera). If the atom is part of the current selection, the whole selection moves. Dragging empty space still orbits the camera. |
+| **Move** | M | Like *Select*, except that dragging *any* atom moves it at once, without selecting it first: the atom alone, or the whole selection when it is part of it. Clicks select as with *Select*. |
 | **Element** | E | Changes the clicked atom to the chosen element (and rebalances its hydrogens, see below). |
 | **Place** | P | Stamps the library molecule chosen in its settings (see [Library](#library)). |
 
@@ -124,9 +124,47 @@ table of every element up to U beside the panel — cells tinted by family,
 and pointing at one shows its name, atomic number, mass, family and the
 colour the view draws it in; or any atomic number in the *Z* field) for
 *Add atom* and *Element*, the bond order (single, double, triple, aromatic)
-for *Add atom* and *Bond*, Box / All / Invert and the element chips for
-*Select*, and the molecule and *On atoms* for *Place*. *Move* and *Delete*
-have no settings.
+for *Add atom* and *Bond*, All / Invert and the element chips for *Select*,
+**Snap** and a list of the drag gestures for *Select* and *Move*, and the
+molecule and *On atoms* for *Place*. *Delete* has no settings.
+
+## Mouse
+
+The Builder takes the mouse the way Materials Studio does: the **left button
+edits, the right button turns the view**, so selecting and moving atoms never
+needs a tool switch and never fights the camera.
+
+| Gesture | What it does |
+|---|---|
+| Click | The current tool's action (*Select* / *Move*: select the atom) |
+| Shift- or Ctrl/⌘-click | Toggle the atom in or out of the selection |
+| Double-click | Select the atom's molecule (Shift adds it to the selection, Alt selects every atom of its element) |
+| Drag from empty space (*Select*, *Move*) | Draw a box and select what it holds; Shift adds to the selection, Ctrl/⌘ removes from it |
+| Drag a selected atom (*Select*), any atom (*Move*) | Move the selection in the screen plane |
+| … with Shift | Move it in depth: up pushes it away from you, down pulls it toward you |
+| … with Ctrl/⌘ | Rotate it about its centre, like a trackball |
+| … with Ctrl/⌘ + Shift | Spin it about the line of sight, following the pointer around the centre |
+| X, Y, Z (or A, B, C with a cell) during a drag | Lock the motion to that axis (moves go along it, rotations turn about it); press it again to free the drag |
+| Esc during a drag | Cancel the drag: the atoms go back where they were |
+| Right drag | Rotate the view (Alt + left drag does too, for trackpads) |
+| Middle drag, Shift + right drag | Pan the view |
+| Wheel | Zoom |
+| Right-click an atom | The [atom menu](#inspector) |
+
+With the other tools a left drag on the view still rotates it, as in the
+viewer.
+
+While a drag runs, the status line under the view says what it did so far —
+`Move 1.20 Å (1.00, 0.50, 0.00)`, `Move 0.80 Å along x`, `Rotate 30.0°` —
+with *snap* when **Snap** is on (moves rounded to 0.1 Å, turns to 15°). Atoms
+the drag brings **too close** to an atom they are not bonded to (nearer than
+half the sum of their van der Waals radii) turn red, and when the drag ends
+there, the notice line says so — Undo takes the move back. However long it
+runs, a drag is **one Undo step**.
+
+Under the pointer, the atom a click would act on is marked in the colour of
+what the click does: blue to select, red to delete, amber to change its
+element, violet to attach to, bond or place onto it.
 
 ## Inspector
 
@@ -148,8 +186,12 @@ panel describes the selection:
   molecule keeps its shape while one coordinate changes. When that atom is
   in a ring with the others, only the atom itself moves. The change is one
   Undo step.
+- **Transform**: **Move by** a typed displacement (Δx Δy Δz in Å), or
+  **Rotate** by a typed angle about x, y or z (or the cell's a, b or c) through
+  the selection's centre. Each is one Undo step.
 
-**Right-click an atom** for a menu (it opens beside the pointer, flipped to
+**Right-click an atom** (click and release without moving; a right *drag*
+turns the view) for a menu (it opens beside the pointer, flipped to
 stay on screen near an edge): *Select molecule* (every atom bonded to
 it, directly or not), *Select all* of its element, *Set to* the current
 element, *Clean up molecule* and *Delete atom*.
@@ -181,7 +223,8 @@ other molecule is cleaned up. All the moved atoms are one Undo step.
 | S A B D M E P | Pick the tool of that letter |
 | Ctrl/⌘ + Z, Ctrl/⌘ + Shift + Z (or Ctrl + Y) | Undo, redo |
 | Delete, Backspace | Delete the selected atoms |
-| Esc | Drop the pending bond, then the selection, then the *Place* molecule |
+| Esc | Drop the pending bond, then the selection, then the *Place* molecule; during a drag, cancel it |
+| X Y Z, A B C (during a drag) | Lock the drag to that axis (see [Mouse](#mouse)) |
 | Ctrl/⌘ + O, Ctrl/⌘ + S | Open a file, save XYZ |
 | Ctrl/⌘ + A | Select every atom |
 | R | Reset the view |
@@ -347,7 +390,8 @@ with HTTP on your machine, allowing the page you opened Builder from (here
 tool server takes below):
 
 ```bash
-uvx megane-builder-tools --transport http --port 8765 \
+uvx --from git+https://github.com/hodakamori/megane-builder-tools \
+    megane-builder-tools --transport http --port 8765 \
     --allow-origin http://localhost:8080
 ```
 
@@ -372,8 +416,12 @@ to 100 seconds, so build large systems with your own server, which replaces it
 once you connect to it (the URL is remembered).
 
 Opening Builder with `#tools=<url>&token=<token>` at the end of its address
-connects on load. Anyone can write a tool server with the
-[`megane-builder-tools` SDK](https://github.com/hodakamori/megane-builder-tools).
+connects on load.
+
+To add buttons of your own, write a tool server with the
+[`megane-builder-tools` SDK](https://github.com/hodakamori/megane-builder-tools):
+[Writing a Builder Tool Server](../dev/builder-tool-server.md) goes from an
+empty folder to your tools in this menu.
 
 ## History
 
@@ -405,6 +453,75 @@ Explorer's context menu, and a Megane viewer tab has the same button in its
 title bar. Each opens the Builder in an editor tab (one tab per file; asking
 again brings it back). *Save* asks where to write with VS Code's save dialog,
 starting beside the file you opened.
+
+The *Tools* menu works in VS Code too (VS Code 1.90 or later). VS Code starts
+the tool server itself, so you need no HTTP, token or `--allow-origin`. To get
+the reference tools (*Liquid box*, *Polymer chain*, *Solvate*):
+
+1. Install the reference server once (it is not on PyPI yet, so from Git):
+
+   ```bash
+   uv tool install git+https://github.com/hodakamori/megane-builder-tools
+   ```
+
+   This puts a `megane-builder-tools` command on your PATH (`uv tool upgrade
+   megane-builder-tools` updates it).
+2. Run **Preferences: Open User Settings (JSON)** from the Command Palette and
+   add:
+
+   ```json
+   "megane.builder.mcpServers": {
+     "megane-builder-tools": { "command": "megane-builder-tools" }
+   }
+   ```
+
+   If connecting later fails with `spawn megane-builder-tools ENOENT`, VS Code
+   was started without your shell's PATH (common when it is launched from the
+   Dock or Start menu). Give the full path that `which megane-builder-tools`
+   prints, e.g. `"command": "${userHome}/.local/bin/megane-builder-tools"`.
+3. Open a Builder tab (the *Megane* icon in the activity bar › **New
+   Structure**, or **Open in Megane Builder** on a file), choose **Tools ›
+   Connect to megane-builder-tools**, and press **Allow** when VS Code shows
+   the command it is about to run. It asks once per command.
+4. The tools appear in the Tools menu. *Liquid box* and *Polymer chain* make a
+   new document. *Solvate* adds solvent to the open structure and needs a
+   cell: give the structure one with **Structure › Set cell…** first (a polymer
+   chain comes without a cell).
+
+Your own server goes in the same setting: any command that runs an MCP server
+over stdio (see [Builder Tool Contract §12.4](../dev/builder-tools.md#124-server-side)),
+for example `{ "command": "uv", "args": ["run", "--directory",
+"${workspaceFolder}", "python", "my_tools.py"] }`. `${workspaceFolder}` and
+`${userHome}` are replaced, and `env` and `cwd` are optional.
+
+A server that is already running over HTTP, such as the reference server
+started with `megane-builder-tools --transport http --port 8765` on your
+machine or a lab server, is an entry with its URL and the token it printed:
+
+```json
+"megane.builder.mcpServers": {
+  "local-http": {
+    "url": "http://127.0.0.1:8765/mcp",
+    "headers": { "Authorization": "Bearer <token>" }
+  }
+}
+```
+
+Set `MEGANE_BUILDER_TOOLS_TOKEN` before starting the server to keep the same
+token across restarts. An HTTP server must use `https://` unless it runs on
+your machine.
+
+More details:
+
+- Builder tabs share one server process, which stops when the last tab
+  disconnects or closes.
+- **Tools › Tool server…** shows what each server runs and has **Configure
+  tool servers…**, which opens the setting.
+- A server's messages (and why it failed to start) are in the *megane Builder
+  Tools* output panel.
+- In an untrusted workspace, VS Code ignores the workspace's own
+  `megane.builder.mcpServers`, so a cloned repository cannot run commands this
+  way. Your user setting still applies.
 
 **JupyterLab.** The Megane extension adds a *Megane* panel (the logo icon)
 to the left sidebar: **Open Builder**, and the structure files of the file
@@ -439,8 +556,9 @@ Each `Builder` edits its own document; displaying the same `Builder` in a
 second output moves it there, and the first offers *Show here* to take it
 back.
 
-What the embedded Builders leave out: the *Tools* menu (MCP tool servers,
-which only the web app can reach), and, in the notebook widget, the Ketcher
+What the JupyterLab and notebook Builders leave out: the *Tools* menu (MCP
+tool servers, which the web app and VS Code can reach), and, in the notebook
+widget, the Ketcher
 sketcher — *Sketch…* opens the dialog with *Paste MOL*, which takes a MOL
 block or a SMILES string and embeds it in 3D with RDKit. RDKit (*Clean up* and
 the 3D embedding) works on every host; the notebook widget fetches it from the

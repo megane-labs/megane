@@ -15,14 +15,18 @@
  * - **Keyboard.** The web app owns the window, so the tool keys work wherever
  *   the focus is. Embedded, the Builder shares the page with an IDE, so with
  *   `scopeShortcuts` the keys only act while the focus is inside the Builder.
- * - **Optional parts.** The Python tools menu needs a reachable MCP tool server
- *   (`tools`), which only the web app can count on.
+ * - **Tool servers.** The web app connects to an MCP tool server itself. A
+ *   host whose page cannot (the VS Code webview) passes a `toolBridge`: the
+ *   host connects to the servers the user configured and relays the calls
+ *   (Builder Tool Contract §8). A host with neither leaves the *Tools* menu
+ *   out (`tools: false`).
  *
  * `BuilderApp` takes the host as a prop; `mountBuilder` (`mount.tsx`) is how a
  * host puts the app on a page.
  */
 
 import type { StructureWriteFormat } from "../parsers/parseCore";
+import type { ToolBridge } from "./tools/bridge";
 
 /** A file Save produced, for the host to deliver. */
 export interface BuilderSaveRequest {
@@ -43,6 +47,12 @@ export interface BuilderHost {
   save?: (file: BuilderSaveRequest) => Promise<string | null | void>;
   /** Show the *Tools* menu (MCP tool servers). Default true. */
   tools?: boolean;
+  /**
+   * Reach tool servers through the host instead of from the page: the *Tools*
+   * menu lists the servers the host was configured with, and the host makes
+   * the connections. Without it, the page connects to an HTTP server itself.
+   */
+  toolBridge?: ToolBridge;
   /** Only handle keyboard shortcuts while the focus is inside the Builder. Default false. */
   scopeShortcuts?: boolean;
 }

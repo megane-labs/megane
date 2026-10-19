@@ -14,9 +14,15 @@
  * - the measurement selection (up to four atoms, blue highlight spheres joined
  *   by a line) behind `toggleAtomSelection` / `getMeasurement`;
  * - the Selection Inspector's preview highlight (any number of atoms, green,
- *   independent of the measurement selection).
+ *   independent of the measurement selection), which is also the Builder's
+ *   selection;
+ * - the Builder's hover highlight (what a click would act on, in the tool's
+ *   colour) and its warning highlight (atoms a drag put too close, red).
  *
- * The renderer adds {@link selectionGroup} and {@link previewSelectionGroup} to
+ * The highlights mark atoms by index and are redrawn where those atoms are
+ * now by {@link refreshHighlights}, after every snapshot or frame.
+ *
+ * The renderer adds {@link selectionGroup} and the three highlight groups to
  * its scene and supplies the view through {@link SelectionView}, read lazily.
  */
 
@@ -80,7 +86,7 @@ function clearGroup(group: THREE.Group): void {
 }
 
 /**
- * Draw translucent highlight spheres (1.6× atom radius) over the given atoms.
+ * Draw translucent highlight spheres (`size` × atom radius) over the given atoms.
  * `radiusScale` must match the fraction of the vdW radius the atoms are drawn
  * at, or the highlight ends up buried inside a spacefill sphere.
  */
@@ -92,9 +98,12 @@ function drawHighlightSpheres(
   color: number,
   opacity: number,
   radiusScale: number = BALL_STICK_ATOM_SCALE,
+  size = 1.6,
 ): void {
   for (const atomIdx of atomIndices) {
-    const r = getRadius(elements[atomIdx]) * radiusScale * 1.6;
+    // A selection made on an earlier structure may name atoms this one lacks.
+    if (atomIdx < 0 || atomIdx >= elements.length) continue;
+    const r = getRadius(elements[atomIdx]) * radiusScale * size;
     const geo = new THREE.SphereGeometry(r, 16, 16);
     const mat = new THREE.MeshBasicMaterial({
       color,
@@ -112,14 +121,71 @@ function drawHighlightSpheres(
   }
 }
 
+/**
+ * A drag in the camera plane, in the terms an editor needs to turn it into
+ * atom motion (structurally the Builder's `BuildDragGesture`).
+ */
+export interface ViewDragGesture {
+  from: [number, number];
+  to: [number, number];
+  right: [number, number, number];
+  up: [number, number, number];
+  toCamera: [number, number, number];
+  worldPerPixel: number;
+  project: (p: [number, number, number]) => [number, number];
+}
+
+/** Atoms marked with halo spheres of one colour, redrawn on demand. */
+class HighlightLayer {
+  readonly group = new THREE.Group();
+  private atoms: number[] | null = null;
+
+  constructor(
+    private color: number,
+    private readonly opacity: number,
+    private readonly size: number,
+  ) {}
+
+  set(atoms: number[] | null, color?: number): void {
+    this.atoms = atoms && atoms.length > 0 ? [...atoms] : null;
+    if (color !== undefined) this.color = color;
+  }
+
+  draw(view: SelectionView): void {
+    clearGroup(this.group);
+    const snapshot = view.getSnapshot();
+    if (!snapshot || !this.atoms) return;
+    drawHighlightSpheres(
+      this.group,
+      this.atoms,
+      view.getCurrentPositions(),
+      snapshot.elements,
+      this.color,
+      this.opacity,
+      view.getAtomRadiusScale(),
+      this.size,
+    );
+  }
+}
+
+/** Default colour of the hover highlight. */
+export const HOVER_COLOR = 0x3b82f6;
+
 export class SelectionController {
   /** Measurement selection overlay (highlight spheres + connecting line). */
   readonly selectionGroup = new THREE.Group();
+  private readonly preview = new HighlightLayer(0x22c55e, 0.3, 1.6);
+  private readonly hover = new HighlightLayer(HOVER_COLOR, 0.28, 1.35);
+  private readonly warning = new HighlightLayer(0xef4444, 0.45, 1.9);
   /**
    * Inspector preview highlight — an arbitrary-size, uncapped set drawn in a
    * distinct color, independent of the measurement selection.
    */
-  readonly previewSelectionGroup = new THREE.Group();
+  readonly previewSelectionGroup = this.preview.group;
+  /** Builder hover highlight: what a click would act on. */
+  readonly hoverGroup = this.hover.group;
+  /** Builder warning highlight: atoms in a close contact. */
+  readonly warningGroup = this.warning.group;
 
   private selectedAtoms: number[] = [];
 
@@ -198,6 +264,45 @@ export class SelectionController {
     return screenDragToWorldDelta(this.view.getCamera(), container, anchor, fromX, fromY, toX, toY);
   }
 
+  /**
+   * A drag from one client pixel to another, grabbed at atom `atomIndex`:
+   * the pointer in viewport pixels, the camera's axes in world space and the
+   * world length of a pixel at the atom's depth. Null when nothing is loaded.
+   */
+  dragGesture(
+    atomIndex: number,
+    fromX: number,
+    fromY: number,
+    toX: number,
+    toY: number,
+  ): ViewDragGesture | null {
+    const container = this.view.getContainer();
+    const unit = this.dragDeltaForAtom(atomIndex, 0, 0, 100, 0);
+    if (!container || !unit) return null;
+    const camera = this.view.getCamera();
+    camera.updateMatrixWorld();
+    const e = camera.matrixWorld.elements;
+    const axis = (k: number): [number, number, number] => {
+      const v = new THREE.Vector3(e[k * 4], e[k * 4 + 1], e[k * 4 + 2]).normalize();
+      return [v.x, v.y, v.z];
+    };
+    const rect = container.getBoundingClientRect();
+    const w = container.clientWidth;
+    const h = container.clientHeight;
+    return {
+      from: [fromX - rect.left, fromY - rect.top],
+      to: [toX - rect.left, toY - rect.top],
+      right: axis(0),
+      up: axis(1),
+      toCamera: axis(2),
+      worldPerPixel: Math.hypot(...unit) / 100,
+      project: (p) => {
+        const { sx, sy } = projectToScreen(camera, p[0], p[1], p[2], w, h);
+        return [sx, sy];
+      },
+    };
+  }
+
   /** Project every atom of the primary snapshot to viewer-space pixels. */
   projectAtoms(): MeganeProjectedAtom[] {
     const container = this.view.getContainer();
@@ -257,21 +362,40 @@ export class SelectionController {
   /**
    * Highlight an arbitrary set of atoms as a live "preview" of the Selection
    * Inspector's current selection (green, translucent). Independent of the
-   * measurement selection. Pass `null` or `[]` to clear.
+   * measurement selection. Pass `null` or `[]` to clear. The set is kept, so
+   * {@link refreshPreview} redraws it where the atoms are now.
    */
   setPreview(atomIndices: number[] | null): void {
-    clearGroup(this.previewSelectionGroup);
-    const snapshot = this.view.getSnapshot();
-    if (!snapshot || !atomIndices || atomIndices.length === 0) return;
-    drawHighlightSpheres(
-      this.previewSelectionGroup,
-      atomIndices,
-      this.view.getCurrentPositions(),
-      snapshot.elements,
-      0x22c55e,
-      0.3,
-      this.view.getAtomRadiusScale(),
-    );
+    this.preview.set(atomIndices);
+    this.refreshPreview();
+  }
+
+  /** Redraw the preview highlight at the current positions. */
+  refreshPreview(): void {
+    this.preview.draw(this.view);
+  }
+
+  /** Mark the atoms a click would act on, in `color` (blue by default); null clears. */
+  setHover(atomIndices: number[] | null, color: number = HOVER_COLOR): void {
+    this.hover.set(atomIndices, color);
+    this.hover.draw(this.view);
+  }
+
+  /** Mark atoms in red (a close contact); null clears. */
+  setWarning(atomIndices: number[] | null): void {
+    this.warning.set(atomIndices);
+    this.warning.draw(this.view);
+  }
+
+  /**
+   * Redraw every highlight at the current positions: after a new snapshot (an
+   * atom moved in the Builder) or a trajectory frame, so each stays on the
+   * atoms it marks.
+   */
+  refreshHighlights(): void {
+    this.preview.draw(this.view);
+    this.hover.draw(this.view);
+    this.warning.draw(this.view);
   }
 
   /** Compute the current geometric measurement based on selected atoms. */

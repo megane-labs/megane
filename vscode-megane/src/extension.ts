@@ -2,6 +2,7 @@ import * as vscode from "vscode";
 import * as os from "os";
 import * as path from "path";
 import { webcrypto } from "crypto";
+import { createBuilderToolsHost, type BuilderToolsHost } from "./builderToolsHost";
 
 interface SerializedPipelineNode {
   id: string;
@@ -534,13 +535,18 @@ function activeFileUri(): vscode.Uri | undefined {
  * in Builder…*), from a structure file's *Open in megane Builder* entry in the
  * Explorer, or from the button in a megane viewer tab's title bar. A file is
  * opened in one Builder tab: asking again reveals it. Each tab is its own
- * webview, so tabs do not share a document.
+ * webview, so tabs do not share a document. With `tools`, each tab gets a
+ * bridge to the MCP tool servers of `megane.builder.mcpServers` (the Builder's
+ * *Tools* menu); the servers' connections are shared by the tabs.
  */
 export class MeganeBuilderPanels {
   static readonly viewType = "megane.builder";
   private readonly panels = new Map<string, vscode.WebviewPanel>();
 
-  constructor(private readonly context: vscode.ExtensionContext) {}
+  constructor(
+    private readonly context: vscode.ExtensionContext,
+    private readonly tools?: BuilderToolsHost,
+  ) {}
 
   /** Open a Builder tab, on `file` when given (revealing its tab if it has one). */
   open(file?: vscode.Uri): vscode.WebviewPanel {
@@ -566,7 +572,9 @@ export class MeganeBuilderPanels {
     if (key) this.panels.set(key, panel);
 
     const webview = panel.webview;
+    const bridge = this.tools?.bridgeFor(webview);
     webview.onDidReceiveMessage(async (message: { type?: string; id?: number }) => {
+      if (bridge?.handle(message)) return;
       if (message.type === "ready") {
         if (!file) return;
         try {
@@ -598,6 +606,7 @@ export class MeganeBuilderPanels {
       }
     });
     panel.onDidDispose(() => {
+      bridge?.dispose();
       if (key && this.panels.get(key) === panel) this.panels.delete(key);
     });
     webview.html = getBuilderHtml(webview, mediaDir);
@@ -753,7 +762,9 @@ export function activate(context: vscode.ExtensionContext) {
   );
 
   // megane Builder: the activity-bar view and its commands.
-  const builder = new MeganeBuilderPanels(context);
+  const builderTools = createBuilderToolsHost(context);
+  context.subscriptions.push({ dispose: builderTools.dispose });
+  const builder = new MeganeBuilderPanels(context, builderTools);
   context.subscriptions.push(
     vscode.window.registerTreeDataProvider("megane.builderView", new EmptyTree()),
     vscode.commands.registerCommand("megane.builder.new", () => builder.open()),

@@ -49,7 +49,8 @@ import { useBuilderStore } from "@/builder/store";
 import { useLibraryUi } from "@/builder/library/ui";
 import { useToolsStore } from "@/builder/tools/store";
 import type { BuilderToolInfo } from "@/builder/tools/contract";
-import type { BuildHandlers } from "@/builder/types";
+import type { BuildDragGesture, BuildHandlers } from "@/builder/types";
+import { HOVER_COLORS } from "@/builder/hover";
 import type { Snapshot } from "@/types";
 import { useThemeStore, themeToHex } from "@/stores/useThemeStore";
 
@@ -72,6 +73,33 @@ function water(): Snapshot {
     atomChainIds: null,
     atomBFactors: null,
   };
+}
+
+const NO_MODS = { shiftKey: false, mod: false, altKey: false };
+
+/**
+ * A drag of (dx, dy) px seen straight down z (screen right = +x, up = +y),
+ * at 0.1 Å per pixel.
+ */
+function gesture(dx: number, dy: number): BuildDragGesture {
+  return {
+    from: [100, 100],
+    to: [100 + dx, 100 + dy],
+    right: [1, 0, 0],
+    up: [0, 1, 0],
+    toCamera: [0, 0, 1],
+    worldPerPixel: 0.1,
+    project: (p) => [100 + p[0] * 10, 100 - p[1] * 10],
+  };
+}
+
+/** Start a drag the way the view does, inside `act` so the app re-renders. */
+function startDrag(atom: number, mods = NO_MODS): boolean {
+  let ok = false;
+  act(() => {
+    ok = handlers().dragStart(atom, mods);
+  });
+  return ok;
 }
 
 function handlers(): BuildHandlers {
@@ -123,6 +151,8 @@ beforeEach(() => {
     handlers: null,
     placeSource: null,
     adsorbHeight: null,
+    snap: false,
+    drag: null,
     notice: null,
   });
   applyViewportState.mockClear();
@@ -240,7 +270,8 @@ describe("BuilderApp — editing", () => {
     render(<BuilderApp />);
     // Select needs neither an element nor a bond order: only its own settings.
     expect(screen.getByTestId("builder-context-label").textContent).toBe("Select");
-    expect(screen.getByTestId("builder-select-box")).toBeTruthy();
+    expect(screen.getByTestId("builder-select-all")).toBeTruthy();
+    expect(screen.getByTestId("builder-snap")).toBeTruthy();
     expect(screen.queryByTestId("builder-element-z")).toBeNull();
     expect(screen.queryByTestId("builder-bond-order")).toBeNull();
     expect(screen.queryByTestId("builder-adsorb-toggle")).toBeNull();
@@ -339,31 +370,202 @@ describe("BuilderApp — editing", () => {
     expect(useBuilderStore.getState().selected).toEqual([]);
   });
 
-  it("Move drags write one op, a zero-length drag leaves none, and the selection moves together", () => {
+  it("Move drags write one step, a zero-length drag leaves none, and the selection moves together", () => {
     render(<BuilderApp />);
     tool("move");
-    expect(handlers().dragStart(0)).toBe(true);
-    act(() => handlers().dragMove([1, 0, 0]));
-    act(() => handlers().dragMove([2, 0, 0]));
+    expect(startDrag(0)).toBe(true);
+    // The grabbed atom becomes the selection, so the halo shows what moves.
+    expect(useBuilderStore.getState().selected).toEqual([0]);
+    act(() => handlers().dragMove(gesture(10, 0)));
+    act(() => handlers().dragMove(gesture(20, 0)));
     act(() => handlers().dragEnd());
     expect(edits()).toEqual([{ op: "move_atoms", atoms: [0], delta: [2, 0, 0] }]);
     // Zero-length drag: nothing left behind, redo stack untouched.
-    expect(handlers().dragStart(1)).toBe(true);
+    act(() => useBuilderStore.getState().undo());
+    expect(startDrag(1)).toBe(true);
     act(() => handlers().dragEnd());
-    expect(edits()).toHaveLength(1);
-    expect(useBuilderStore.getState().redoStack).toEqual([]);
+    expect(edits()).toHaveLength(0);
+    expect(useBuilderStore.getState().redoStack).toHaveLength(1);
+    act(() => useBuilderStore.getState().redo());
     // Grabbing a selected atom drags the whole selection.
     act(() => useBuilderStore.getState().setSelected([1, 2]));
-    expect(handlers().dragStart(2)).toBe(true);
-    act(() => handlers().dragMove([0, 1, 0]));
+    expect(startDrag(2)).toBe(true);
+    act(() => handlers().dragMove(gesture(0, -10)));
     act(() => handlers().dragEnd());
     expect(edits()[1]).toEqual({ op: "move_atoms", atoms: [1, 2], delta: [0, 1, 0] });
+    expect(useBuilderStore.getState().drag).toBeNull();
     // Other tools refuse the drag; a bare click with Move selects.
-    tool("select");
-    expect(handlers().dragStart(0)).toBe(false);
+    tool("add");
+    expect(startDrag(0)).toBe(false);
     tool("move");
     pick(0);
     expect(useBuilderStore.getState().selected).toEqual([0]);
+  });
+
+  it("a press asks Select and Move what a drag from there does", () => {
+    render(<BuilderApp />);
+    const press = (atom: number | null) => handlers().pressAction(atom, NO_MODS);
+    // Select: the selection moves, anything else draws a box.
+    act(() => useBuilderStore.getState().setSelected([1]));
+    expect(press(1)).toBe("move");
+    expect(press(2)).toBe("box");
+    expect(press(null)).toBe("box");
+    // Move: any atom moves.
+    tool("move");
+    expect(press(2)).toBe("move");
+    expect(press(null)).toBe("box");
+    // The other tools leave drags to the camera, as does a paused document.
+    tool("add");
+    expect(press(1)).toBe("camera");
+    tool("select");
+    act(() => useBuilderStore.getState().setShowOriginal(true));
+    expect(press(1)).toBe("camera");
+  });
+
+  it("Ctrl drags turn the selection about its centre as one step; Esc cancels a drag", () => {
+    render(<BuilderApp />);
+    act(() => useBuilderStore.getState().setSelected([0, 1, 2]));
+    expect(startDrag(0, { ...NO_MODS, mod: true })).toBe(true);
+    expect(screen.getByTestId("builder-status-drag").textContent).toBe("Rotate");
+    expect(screen.getByTestId("builder-tool-hint").textContent).toContain("lock an axis");
+    // 180 px at 0.5°/px: half a turn about the screen's up axis (y).
+    act(() => handlers().dragMove(gesture(360, 0)));
+    expect(screen.getByTestId("builder-status-drag").textContent).toBe("Rotate 180.0°");
+    act(() => handlers().dragEnd());
+    const shown = useBuilderStore.getState().result!.snapshot.positions;
+    const c = [0, 0.586 * (2 / 3), 0];
+    // Half a turn about y through the centre mirrors x and z around it.
+    expect(shown[3]).toBeCloseTo(2 * c[0] - 0.757, 5);
+    expect(shown[4]).toBeCloseTo(0.586, 5);
+    expect(edits().length).toBeGreaterThan(1);
+    act(() => useBuilderStore.getState().undo());
+    expect(edits()).toEqual([]);
+
+    // Esc mid-drag puts everything back and ends the drag.
+    act(() => useBuilderStore.getState().setSelected([0, 1, 2]));
+    expect(startDrag(0)).toBe(true);
+    act(() => handlers().dragMove(gesture(10, 0)));
+    expect(edits()).toHaveLength(1);
+    fireEvent.keyDown(window, { key: "Escape" });
+    expect(edits()).toEqual([]);
+    expect(useBuilderStore.getState().drag).toBeNull();
+    // The selection survives the cancelled drag (the Builder's Esc did not run).
+    expect(useBuilderStore.getState().selected).toEqual([0, 1, 2]);
+  });
+
+  it("an axis key locks a drag, Snap rounds it, and tool keys wait for the drag to end", () => {
+    render(<BuilderApp />);
+    tool("move");
+    fireEvent.click(screen.getByTestId("builder-snap"));
+    expect(useBuilderStore.getState().snap).toBe(true);
+    expect(startDrag(1)).toBe(true);
+    fireEvent.keyDown(window, { key: "x" });
+    expect(useBuilderStore.getState().drag?.axis).toBe("x");
+    expect(screen.getByTestId("builder-status-drag").textContent).toBe("Move · locked to x · snap");
+    // 12.7 px right and 30 px down: only the x part counts, snapped to 0.1 Å.
+    act(() => handlers().dragMove(gesture(12.7, 30)));
+    expect(edits()).toEqual([{ op: "move_atoms", atoms: [1], delta: [1.3, 0, 0] }]);
+    expect(screen.getByTestId("builder-status-drag").textContent).toBe(
+      "Move 1.30 Å along x · snap",
+    );
+    // A tool key would switch tools; during a drag it does nothing.
+    fireEvent.keyDown(window, { key: "d" });
+    expect(useBuilderStore.getState().tool).toBe("move");
+    // Pressing the axis again frees it; "a" needs a cell, so it stays free.
+    fireEvent.keyDown(window, { key: "x" });
+    fireEvent.keyDown(window, { key: "a" });
+    expect(useBuilderStore.getState().drag?.axis).toBeNull();
+    act(() => handlers().dragMove(gesture(10, -10)));
+    expect(edits()[0]).toEqual({ op: "move_atoms", atoms: [1], delta: [1, 1, 0] });
+    act(() => handlers().dragEnd());
+    fireEvent.keyDown(window, { key: "x" });
+    expect(useBuilderStore.getState().drag).toBeNull();
+  });
+
+  it("marks atoms a drag brings too close and says so when it ends", () => {
+    render(<BuilderApp />);
+    tool("move");
+    expect(startDrag(1)).toBe(true);
+    // H1 onto H2 (1.514 Å to the left): not bonded, so a close contact.
+    act(() => handlers().dragMove(gesture(-14.5, 0)));
+    expect(useBuilderStore.getState().drag?.contacts).toEqual([1, 2]);
+    expect(viewportProps.current?.warningIndices).toEqual([1, 2]);
+    expect(screen.getByTestId("builder-status-drag").textContent).toContain("2 atoms too close");
+    act(() => handlers().dragEnd());
+    expect(viewportProps.current?.warningIndices).toBeNull();
+    expect(useBuilderStore.getState().notice?.text).toContain("close contact");
+  });
+
+  it("box selection replaces, adds to or takes from the selection; double-click picks molecules", () => {
+    render(<BuilderApp />);
+    const box = (indices: number[], mode: "replace" | "add" | "subtract") =>
+      act(() => handlers().boxSelect(indices, mode));
+    box([1, 2], "replace");
+    expect(useBuilderStore.getState().selected).toEqual([1, 2]);
+    box([2, 0], "add");
+    expect(useBuilderStore.getState().selected).toEqual([1, 2, 0]);
+    box([1], "subtract");
+    expect(useBuilderStore.getState().selected).toEqual([2, 0]);
+    act(() => useBuilderStore.getState().setSelected([]));
+    let handled = false;
+    act(() => {
+      handled = handlers().doubleClick(1, NO_MODS);
+    });
+    expect(handled).toBe(true);
+    expect(useBuilderStore.getState().selected).toEqual([0, 1, 2]);
+    // Alt: every atom of the element; Shift adds to the selection.
+    act(() => void handlers().doubleClick(1, { ...NO_MODS, altKey: true }));
+    expect(useBuilderStore.getState().selected).toEqual([1, 2]);
+    act(() => useBuilderStore.getState().setSelected([0]));
+    act(() => void handlers().doubleClick(2, { ...NO_MODS, altKey: true, shiftKey: true }));
+    expect(useBuilderStore.getState().selected).toEqual([0, 1, 2]);
+    // Other tools leave a double-click to the camera.
+    tool("add");
+    expect(handlers().doubleClick(1, NO_MODS)).toBe(false);
+    expect(handlers().doubleClick(99, NO_MODS)).toBe(false);
+  });
+
+  it("marks the atom under the pointer in the colour of what a click would do", () => {
+    render(<BuilderApp />);
+    const hover = (atomIndex: number | null) =>
+      act(() =>
+        (viewportProps.current?.onHover as (i: unknown) => void)(
+          atomIndex === null ? null : { kind: "atom", atomIndex, position: [0, 0, 0] },
+        ),
+      );
+    hover(1);
+    expect(viewportProps.current?.hoverIndices).toEqual([1]);
+    expect(viewportProps.current?.hoverColor).toBe(HOVER_COLORS.select);
+    tool("delete");
+    expect(viewportProps.current?.hoverColor).toBe(HOVER_COLORS.delete);
+    hover(null);
+    expect(viewportProps.current?.hoverIndices).toBeNull();
+  });
+
+  it("the Transform form moves and turns the selection by numbers, one step each", () => {
+    render(<BuilderApp />);
+    act(() => useBuilderStore.getState().setSelected([1, 2]));
+    fireEvent.change(screen.getByTestId("builder-transform-dx"), { target: { value: "1" } });
+    fireEvent.change(screen.getByTestId("builder-transform-dz"), { target: { value: "-2" } });
+    fireEvent.click(screen.getByTestId("builder-transform-move"));
+    expect(edits()).toEqual([{ op: "move_atoms", atoms: [1, 2], delta: [1, 0, -2] }]);
+    // Half a turn about z through the two hydrogens' centre swaps them.
+    fireEvent.change(screen.getByTestId("builder-transform-angle"), { target: { value: "180" } });
+    fireEvent.click(screen.getByTestId("builder-transform-rotate"));
+    const p = useBuilderStore.getState().result!.snapshot.positions;
+    expect(p[3]).toBeCloseTo(1 - 0.757, 4);
+    expect(p[6]).toBeCloseTo(1 + 0.757, 4);
+    expect(useBuilderStore.getState().edits).toHaveLength(3);
+    // Without a cell only x, y and z are offered; a bad number is reported.
+    const axes = [...screen.getByTestId("builder-transform-axis").querySelectorAll("option")];
+    expect(axes.map((o) => o.textContent)).toEqual(["x", "y", "z"]);
+    fireEvent.change(screen.getByTestId("builder-transform-dy"), { target: { value: "" } });
+    fireEvent.click(screen.getByTestId("builder-transform-move"));
+    expect(useBuilderStore.getState().notice?.level).toBe("error");
+    fireEvent.change(screen.getByTestId("builder-transform-angle"), { target: { value: "" } });
+    fireEvent.click(screen.getByTestId("builder-transform-rotate"));
+    expect(useBuilderStore.getState().notice?.text).toContain("degrees");
+    expect(useBuilderStore.getState().edits).toHaveLength(3);
   });
 
   it("Place stamps the chosen library molecule on empty space only", () => {
@@ -460,7 +662,7 @@ describe("BuilderApp — editing", () => {
     expect(screen.getByTestId("builder-paused")).toBeTruthy();
     pick(1);
     expect(edits()).toHaveLength(1);
-    expect(handlers().dragStart(0)).toBe(false);
+    expect(startDrag(0)).toBe(false);
     fireEvent.click(screen.getByTestId("builder-resume-editing"));
     expect(shownAtoms()).toBe(2);
     expect(screen.queryByTestId("builder-paused")).toBeNull();
@@ -584,8 +786,10 @@ describe("BuilderApp — editing", () => {
     // With no form open, the panel is back to the current tool's settings.
     expect(screen.getByTestId("builder-context-bar")).toBeTruthy();
     // A tool without settings says so.
-    tool("move");
-    expect(screen.getByTestId("builder-empty-hint").textContent).toContain("Move has no settings");
+    tool("delete");
+    expect(screen.getByTestId("builder-empty-hint").textContent).toContain(
+      "Delete has no settings",
+    );
   });
 });
 
@@ -849,29 +1053,10 @@ describe("BuilderApp — selecting and the atom menu", () => {
     useBuilderStore.getState().openStructure(water(), ["HOH", "HOH", "HOH"], "water.pdb");
   });
 
-  it("box selection is on only with the Select tool and its Box toggle", () => {
-    render(<BuilderApp />);
-    expect(viewportProps.current?.boxSelectActive).toBe(false);
-    fireEvent.click(screen.getByTestId("builder-select-box"));
-    expect(viewportProps.current?.boxSelectActive).toBe(true);
-    type BoxSelect = (i: number[], o: { additive: boolean }) => void;
-    const box = (indices: number[], additive: boolean) =>
-      act(() => (viewportProps.current?.onBoxSelect as BoxSelect)(indices, { additive }));
-    box([1, 2], false);
-    expect(useBuilderStore.getState().selected).toEqual([1, 2]);
-    // Shift adds to the selection; a plain box replaces it.
-    box([2, 4], true);
-    expect(useBuilderStore.getState().selected).toEqual([1, 2, 4]);
-    box([0], false);
-    expect(useBuilderStore.getState().selected).toEqual([0]);
-    tool("add");
-    expect(viewportProps.current?.boxSelectActive).toBe(false);
-  });
-
   it("a right-click on an atom opens its menu where the pointer was, and hides the tooltip", () => {
     render(<BuilderApp />);
-    fireEvent.contextMenu(screen.getByTestId("builder-dropzone"), { clientX: 40, clientY: 50 });
-    act(() => (viewportProps.current?.onAtomRightClick as (i: number) => void)(1));
+    type RightClick = (i: number, x: number, y: number) => void;
+    act(() => (viewportProps.current?.onAtomRightClick as RightClick)(1, 40, 50));
     const menu = screen.getByTestId("builder-atom-menu");
     expect(menu.style.left).toBe("40px");
     expect(menu.style.top).toBe("50px");
@@ -883,7 +1068,8 @@ describe("BuilderApp — selecting and the atom menu", () => {
   it("the atom menu does not open over a preview", () => {
     act(() => useBuilderStore.getState().setPreview({ op: "center", axes: [0], vacuum: 3 }));
     render(<BuilderApp />);
-    act(() => (viewportProps.current?.onAtomRightClick as (i: number) => void)(0));
+    type RightClick = (i: number, x: number, y: number) => void;
+    act(() => (viewportProps.current?.onAtomRightClick as RightClick)(0, 1, 1));
     expect(screen.queryByTestId("builder-atom-menu")).toBeNull();
   });
 

@@ -5,8 +5,42 @@
 
 import { useEffect, useRef } from "react";
 import { MoleculeRenderer } from "../renderer/MoleculeRenderer";
+import type { MouseScheme } from "../renderer/CameraControls";
 import type { Snapshot, Frame, HoverInfo } from "../types";
-import type { BuildHandlers } from "../builder/types";
+import type { BuildHandlers, BuildModifiers, BuildPressAction } from "../builder/types";
+
+/** Pointer travel (px) under which a press still counts as a click. */
+const CLICK_SLOP = 3;
+
+function modifiersOf(e: MouseEvent): BuildModifiers {
+  return { shiftKey: e.shiftKey, mod: e.ctrlKey || e.metaKey, altKey: e.altKey };
+}
+
+/** The dashed rubber band a box selection draws, in client pixels. */
+function createBoxElement(x: number, y: number): HTMLDivElement {
+  const el = document.createElement("div");
+  el.setAttribute("data-testid", "viewport-box-select");
+  Object.assign(el.style, {
+    position: "fixed",
+    border: "1px dashed var(--megane-primary-text)",
+    background: "rgba(37, 99, 235, 0.12)",
+    pointerEvents: "none",
+    zIndex: "50",
+    left: `${x}px`,
+    top: `${y}px`,
+    width: "0px",
+    height: "0px",
+  } as CSSStyleDeclaration);
+  document.body.appendChild(el);
+  return el;
+}
+
+function sizeBoxElement(el: HTMLDivElement, x0: number, y0: number, x1: number, y1: number) {
+  el.style.left = `${Math.min(x0, x1)}px`;
+  el.style.top = `${Math.min(y0, y1)}px`;
+  el.style.width = `${Math.abs(x1 - x0)}px`;
+  el.style.height = `${Math.abs(y1 - y0)}px`;
+}
 
 interface ViewportProps {
   snapshot: Snapshot | null;
@@ -15,7 +49,8 @@ interface ViewportProps {
   atomVectors?: Float32Array | null;
   onRendererReady?: (renderer: MoleculeRenderer) => void;
   onHover?: (info: HoverInfo) => void;
-  onAtomRightClick?: (atomIndex: number) => void;
+  /** A right-click on an atom, with the pointer's client position. */
+  onAtomRightClick?: (atomIndex: number, clientX: number, clientY: number) => void;
   onFrameUpdated?: () => void;
   /** Atom indices to highlight live as the Inspector's current selection. */
   previewIndices?: number[] | null;
@@ -31,13 +66,22 @@ interface ViewportProps {
   /** True while the Selection Inspector tab is the active editing surface. */
   inspectorActive?: boolean;
   /**
-   * True while a structure editor (megane Builder) owns the view: a left click
-   * reports the atom (or empty-space point) to `buildHandlers.pick`, and a
-   * left-drag on an atom becomes a move when `buildHandlers.dragStart`
-   * accepts it (camera rotation is suspended for that drag only).
+   * True while a structure editor (megane Builder) owns the view: a left
+   * click reports the atom (or empty-space point) to `buildHandlers.pick`, a
+   * left drag moves atoms or draws a rubber band as `buildHandlers.pressAction`
+   * says (camera rotation is suspended for that drag only), a double-click on
+   * an atom goes to `buildHandlers.doubleClick`, and a right-click opens the
+   * atom menu on release, so a right drag can turn the camera.
    */
   buildActive?: boolean;
   buildHandlers?: BuildHandlers | null;
+  /** Which mouse buttons move the camera; the viewer's when omitted. */
+  mouseScheme?: MouseScheme;
+  /** Builder: atoms a click would act on, drawn in `hoverColor`. */
+  hoverIndices?: number[] | null;
+  hoverColor?: number;
+  /** Builder: atoms in a close contact, drawn red. */
+  warningIndices?: number[] | null;
   /**
    * Changes to this value mark the next snapshot as an in-place edit of the
    * structure already on screen (the `edit` node re-executing after a click
@@ -64,6 +108,10 @@ export function Viewport({
   inspectorActive,
   buildActive,
   buildHandlers,
+  mouseScheme,
+  hoverIndices,
+  hoverColor,
+  warningIndices,
   preserveCameraKey,
 }: ViewportProps) {
   const containerRef = useRef<HTMLDivElement>(null);
@@ -126,9 +174,12 @@ export function Viewport({
 
     const handleContextMenu = (e: MouseEvent) => {
       e.preventDefault();
+      // While building, the menu opens on the right button's release instead
+      // (handleBuildUp), so a right drag can rotate the camera.
+      if (buildActiveRef.current) return;
       const info = renderer.raycastAtPixel(e.clientX, e.clientY);
       if (info && info.kind === "atom") {
-        onAtomRightClickRef.current?.(info.atomIndex);
+        onAtomRightClickRef.current?.(info.atomIndex, e.clientX, e.clientY);
       }
     };
 
@@ -141,6 +192,14 @@ export function Viewport({
     // on empty space it resets to the model center.
     const handleDblClick = (e: MouseEvent) => {
       const info = renderer.raycastAtPixel(e.clientX, e.clientY);
+      // The Builder may take a double-click on an atom (select its molecule).
+      if (
+        info?.kind === "atom" &&
+        buildActiveRef.current &&
+        buildHandlersRef.current?.doubleClick(info.atomIndex, modifiersOf(e))
+      ) {
+        return;
+      }
       if (info?.kind === "atom") {
         renderer.setRotationCenter(...info.position);
       } else if (info?.kind === "bond") {
@@ -184,31 +243,13 @@ export function Viewport({
     const handleBoxDown = (e: PointerEvent) => {
       if (!boxSelectActiveRef.current || e.button !== 0) return;
       boxStart = { x: e.clientX, y: e.clientY, shiftKey: e.shiftKey };
-      boxEl = document.createElement("div");
-      boxEl.setAttribute("data-testid", "viewport-box-select");
-      Object.assign(boxEl.style, {
-        position: "fixed",
-        border: "1px dashed var(--megane-primary-text)",
-        background: "rgba(37, 99, 235, 0.12)",
-        pointerEvents: "none",
-        zIndex: "50",
-        left: `${e.clientX}px`,
-        top: `${e.clientY}px`,
-        width: "0px",
-        height: "0px",
-      } as CSSStyleDeclaration);
-      document.body.appendChild(boxEl);
+      boxEl = createBoxElement(e.clientX, e.clientY);
       (e.target as Element)?.setPointerCapture?.(e.pointerId);
     };
 
     const handleBoxMove = (e: PointerEvent) => {
       if (!boxStart || !boxEl) return;
-      const x = Math.min(boxStart.x, e.clientX);
-      const y = Math.min(boxStart.y, e.clientY);
-      boxEl.style.left = `${x}px`;
-      boxEl.style.top = `${y}px`;
-      boxEl.style.width = `${Math.abs(e.clientX - boxStart.x)}px`;
-      boxEl.style.height = `${Math.abs(e.clientY - boxStart.y)}px`;
+      sizeBoxElement(boxEl, boxStart.x, boxStart.y, e.clientX, e.clientY);
     };
 
     const handleBoxUp = (e: PointerEvent) => {
@@ -223,68 +264,156 @@ export function Viewport({
       onBoxSelectRef.current?.(indices, { additive });
     };
 
-    // ── Builder: click-to-edit and drag-to-move ──
-    // A press on an atom with the Move tool becomes a drag; anything else is a
-    // click reported on release (when the pointer barely moved). Camera
-    // controls are suspended only for the duration of an accepted drag, so
-    // the view still orbits when the user drags empty space.
-    let buildPress: { x: number; y: number; shiftKey: boolean } | null = null;
-    let buildDrag: { atomIndex: number; x: number; y: number } | null = null;
+    // ── Builder: the left button edits, the right one turns the camera ──
+    // A left press asks the Builder what a drag from there does
+    // (`pressAction`): move atoms, draw a rubber band, or leave it to the
+    // camera (Alt always leaves it, for trackpads without a right drag). It is
+    // decided in the capture phase, before the camera controls see the press,
+    // so an editing drag never also rotates the view. A press released within
+    // `CLICK_SLOP` px is a click (`pick`), whatever the press would have done.
+    interface BuildPress {
+      x: number;
+      y: number;
+      lastX: number;
+      lastY: number;
+      mods: BuildModifiers;
+      atomIndex: number | null;
+      action: BuildPressAction;
+      /** What the press became once the pointer moved; null while still a click. */
+      started: "move" | "box" | "none" | null;
+    }
+    let buildPress: BuildPress | null = null;
+    let buildBox: HTMLDivElement | null = null;
     let buildRaf: number | null = null;
+    let rightPress: { x: number; y: number } | null = null;
 
-    const handleBuildDown = (e: PointerEvent): boolean => {
-      if (!buildActiveRef.current || e.button !== 0) return false;
+    const moved = (x0: number, y0: number, x1: number, y1: number) =>
+      Math.abs(x1 - x0) >= CLICK_SLOP || Math.abs(y1 - y0) >= CLICK_SLOP;
+
+    const clearBuildBox = () => {
+      buildBox?.remove();
+      buildBox = null;
+    };
+
+    const handleBuildPressCapture = (e: PointerEvent) => {
+      if (!buildActiveRef.current) return;
       const handlers = buildHandlersRef.current;
-      if (!handlers) return false;
-      const info = renderer.raycastAtPixel(e.clientX, e.clientY);
-      if (info && info.kind === "atom" && handlers.dragStart(info.atomIndex)) {
-        buildDrag = { atomIndex: info.atomIndex, x: e.clientX, y: e.clientY };
-        renderer.setControlsEnabled(false);
-        (e.target as Element)?.setPointerCapture?.(e.pointerId);
-        return true;
+      if (!handlers) return;
+      if (e.button === 2) {
+        rightPress = { x: e.clientX, y: e.clientY };
+        return;
       }
-      buildPress = { x: e.clientX, y: e.clientY, shiftKey: e.shiftKey };
-      return false;
+      if (e.button !== 0 || e.target !== canvas) return;
+      const { x, y } = toCSSCoords(e);
+      if (renderer.hitTestAxesInset(x, y)) return;
+      const mods = modifiersOf(e);
+      const info = renderer.raycastAtPixel(e.clientX, e.clientY);
+      const atomIndex = info && info.kind === "atom" ? info.atomIndex : null;
+      const action = mods.altKey ? "camera" : handlers.pressAction(atomIndex, mods);
+      buildPress = {
+        x: e.clientX,
+        y: e.clientY,
+        lastX: e.clientX,
+        lastY: e.clientY,
+        mods,
+        atomIndex,
+        action,
+        started: null,
+      };
+      if (action !== "camera") {
+        renderer.setControlsEnabled(false);
+        canvas.setPointerCapture?.(e.pointerId);
+      }
     };
 
     const handleBuildMove = (e: PointerEvent) => {
-      if (!buildDrag) return;
-      const drag = buildDrag;
-      if (buildRaf !== null) return;
-      buildRaf = requestAnimationFrame(() => {
-        buildRaf = null;
-        if (!buildDrag) return;
-        const delta = renderer.dragDeltaForAtom(
-          drag.atomIndex,
-          drag.x,
-          drag.y,
-          e.clientX,
-          e.clientY,
-        );
-        if (delta) buildHandlersRef.current?.dragMove(delta);
-      });
+      const press = buildPress;
+      if (!press || press.action === "camera") return;
+      press.lastX = e.clientX;
+      press.lastY = e.clientY;
+      const handlers = buildHandlersRef.current;
+      if (press.started === null) {
+        if (!moved(press.x, press.y, e.clientX, e.clientY)) return;
+        if (press.action === "move" && press.atomIndex !== null) {
+          press.started = handlers?.dragStart(press.atomIndex, press.mods) ? "move" : "none";
+        } else if (press.action === "box") {
+          press.started = "box";
+          buildBox = createBoxElement(press.x, press.y);
+        } else {
+          press.started = "none";
+        }
+      }
+      if (press.started === "box" && buildBox) {
+        sizeBoxElement(buildBox, press.x, press.y, e.clientX, e.clientY);
+      } else if (press.started === "move" && buildRaf === null) {
+        buildRaf = requestAnimationFrame(() => {
+          buildRaf = null;
+          if (buildPress !== press || press.atomIndex === null) return;
+          const gesture = renderer.dragGesture(
+            press.atomIndex,
+            press.x,
+            press.y,
+            press.lastX,
+            press.lastY,
+          );
+          if (gesture) buildHandlersRef.current?.dragMove(gesture);
+        });
+      }
     };
 
-    const handleBuildUp = (e: PointerEvent) => {
-      if (buildDrag) {
-        buildDrag = null;
-        if (buildRaf !== null) {
-          cancelAnimationFrame(buildRaf);
-          buildRaf = null;
+    const handleBuildUp = (e: PointerEvent, cancelled = false) => {
+      if (e.button === 2 && rightPress) {
+        const r = rightPress;
+        rightPress = null;
+        if (cancelled || !buildActiveRef.current || moved(r.x, r.y, e.clientX, e.clientY)) return;
+        const info = renderer.raycastAtPixel(e.clientX, e.clientY);
+        if (info && info.kind === "atom") {
+          onAtomRightClickRef.current?.(info.atomIndex, e.clientX, e.clientY);
         }
-        renderer.setControlsEnabled(true);
-        buildHandlersRef.current?.dragEnd();
         return;
       }
-      if (!buildPress) return;
       const press = buildPress;
+      if (!press || (e.button !== 0 && !cancelled)) return;
       buildPress = null;
-      if (!buildActiveRef.current) return;
-      if (Math.abs(e.clientX - press.x) >= 3 || Math.abs(e.clientY - press.y) >= 3) return;
-      const info = renderer.raycastAtPixel(e.clientX, e.clientY);
-      const atomIndex = info && info.kind === "atom" ? info.atomIndex : null;
-      const world = atomIndex === null ? renderer.screenToWorldAtPivot(e.clientX, e.clientY) : null;
-      buildHandlersRef.current?.pick({ atomIndex, world, shiftKey: press.shiftKey });
+      if (buildRaf !== null) {
+        cancelAnimationFrame(buildRaf);
+        buildRaf = null;
+      }
+      const handlers = buildHandlersRef.current;
+      if (press.started === "move" && press.atomIndex !== null) {
+        // The last move may still be waiting for its frame: apply it first.
+        const gesture = cancelled
+          ? null
+          : renderer.dragGesture(press.atomIndex, press.x, press.y, e.clientX, e.clientY);
+        if (gesture) handlers?.dragMove(gesture);
+        handlers?.dragEnd();
+      } else if (press.started === "box") {
+        clearBuildBox();
+        if (!cancelled) {
+          const indices = renderer.selectAtomsInRect({
+            x0: press.x,
+            y0: press.y,
+            x1: e.clientX,
+            y1: e.clientY,
+          });
+          handlers?.boxSelect(
+            indices,
+            press.mods.shiftKey ? "add" : press.mods.mod ? "subtract" : "replace",
+          );
+        }
+      } else if (
+        press.started === null &&
+        !cancelled &&
+        buildActiveRef.current &&
+        !moved(press.x, press.y, e.clientX, e.clientY)
+      ) {
+        const info = renderer.raycastAtPixel(e.clientX, e.clientY);
+        const atomIndex = info && info.kind === "atom" ? info.atomIndex : null;
+        const world =
+          atomIndex === null ? renderer.screenToWorldAtPivot(e.clientX, e.clientY) : null;
+        handlers?.pick({ atomIndex, world, shiftKey: press.mods.shiftKey, mod: press.mods.mod });
+      }
+      if (press.action !== "camera") renderer.setControlsEnabled(true);
     };
 
     // ── Axes-inset drag handlers (pointer events for mouse+touch) ──
@@ -304,7 +433,6 @@ export function Viewport({
         (e.target as Element)?.setPointerCapture?.(e.pointerId);
         return;
       }
-      if (handleBuildDown(e)) return;
       handleBoxDown(e);
     };
 
@@ -324,15 +452,22 @@ export function Viewport({
       handleBoxUp(e);
     };
 
+    const handlePointerCancel = (e: PointerEvent) => {
+      renderer.endAxesDrag();
+      handleBuildUp(e, true);
+      handleBoxUp(e);
+    };
+
     canvas.addEventListener("mousemove", handleMouseMove);
     canvas.addEventListener("contextmenu", handleContextMenu);
     canvas.addEventListener("mouseleave", handleMouseLeave);
     canvas.addEventListener("dblclick", handleDblClick);
     canvas.addEventListener("click", handleClick);
+    containerEl.addEventListener("pointerdown", handleBuildPressCapture, { capture: true });
     canvas.addEventListener("pointerdown", handlePointerDown);
     canvas.addEventListener("pointermove", handlePointerMove);
     canvas.addEventListener("pointerup", handlePointerUp);
-    canvas.addEventListener("pointercancel", handlePointerUp);
+    canvas.addEventListener("pointercancel", handlePointerCancel);
 
     return () => {
       canvas.removeEventListener("mousemove", handleMouseMove);
@@ -340,14 +475,16 @@ export function Viewport({
       canvas.removeEventListener("mouseleave", handleMouseLeave);
       canvas.removeEventListener("dblclick", handleDblClick);
       canvas.removeEventListener("click", handleClick);
+      containerEl.removeEventListener("pointerdown", handleBuildPressCapture, { capture: true });
       canvas.removeEventListener("pointerdown", handlePointerDown);
       canvas.removeEventListener("pointermove", handlePointerMove);
       canvas.removeEventListener("pointerup", handlePointerUp);
-      canvas.removeEventListener("pointercancel", handlePointerUp);
+      canvas.removeEventListener("pointercancel", handlePointerCancel);
       clearBoxEl();
+      clearBuildBox();
       if (rafId !== null) cancelAnimationFrame(rafId);
       if (buildRaf !== null) cancelAnimationFrame(buildRaf);
-      if (buildDrag) renderer.setControlsEnabled(true);
+      if (buildPress && buildPress.action !== "camera") renderer.setControlsEnabled(true);
     };
   }, []);
 
@@ -355,6 +492,18 @@ export function Viewport({
   useEffect(() => {
     rendererRef.current?.setPreviewSelection(previewIndices ?? null);
   }, [previewIndices]);
+
+  // The Builder's camera buttons, hover and warning highlights; the viewer
+  // never sets them.
+  useEffect(() => {
+    if (mouseScheme) rendererRef.current?.setMouseScheme(mouseScheme);
+  }, [mouseScheme]);
+  useEffect(() => {
+    if (buildActive) rendererRef.current?.setHoverHighlight(hoverIndices ?? null, hoverColor);
+  }, [buildActive, hoverIndices, hoverColor]);
+  useEffect(() => {
+    if (buildActive) rendererRef.current?.setWarningHighlight(warningIndices ?? null);
+  }, [buildActive, warningIndices]);
 
   // Suspend camera rotation while box-select is armed so a drag draws the box
   // instead of orbiting the camera.

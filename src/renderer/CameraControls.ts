@@ -56,6 +56,26 @@ export function isShiftPanGesture(event: { button: number; shiftKey: boolean }):
   return event.button === 0 && event.shiftKey;
 }
 
+/**
+ * Which mouse buttons do what to the camera.
+ *
+ * - `viewer` (OVITO): left-drag rotates, right-drag and Shift+left-drag pan,
+ *   middle-drag zooms.
+ * - `builder` (Materials Studio): the left button belongs to the editor, so
+ *   right-drag rotates and middle-drag or Shift+right-drag pans. A left drag
+ *   the editor leaves alone still rotates.
+ */
+export type MouseScheme = "viewer" | "builder";
+
+/** Whether a pointer-down starts the pan gesture of `scheme` (wheel zoom is separate). */
+export function isPanGesture(
+  scheme: MouseScheme,
+  event: { button: number; shiftKey: boolean },
+): boolean {
+  if (scheme === "builder") return event.button === 1 || (event.button === 2 && event.shiftKey);
+  return event.button === 2 || isShiftPanGesture(event);
+}
+
 export class CameraControls extends TrackballControls {
   /** World axis kept upright by horizontal drags (unit length). */
   readonly upAxis = new THREE.Vector3(0, 0, 1);
@@ -65,6 +85,7 @@ export class CameraControls extends TrackballControls {
    * the horizontal direction under the pointer.
    */
   private yawSign: 1 | -1 | null = null;
+  private scheme: MouseScheme = "viewer";
 
   constructor(
     camera: THREE.OrthographicCamera | THREE.PerspectiveCamera,
@@ -119,8 +140,20 @@ export class CameraControls extends TrackballControls {
     up.applyQuaternion(_quat);
   }
 
+  /** Map the buttons for `scheme` (see `MouseScheme`). */
+  setMouseScheme(scheme: MouseScheme): void {
+    this.scheme = scheme;
+    // -1 matches no MOUSE action: the press leaves the controls idle.
+    const none = -1 as THREE.MOUSE;
+    this.mouseButtons =
+      scheme === "builder"
+        ? { LEFT: THREE.MOUSE.ROTATE, MIDDLE: none, RIGHT: THREE.MOUSE.ROTATE }
+        : { LEFT: THREE.MOUSE.ROTATE, MIDDLE: THREE.MOUSE.DOLLY, RIGHT: THREE.MOUSE.PAN };
+  }
+
   /**
-   * Leave a Shift+left press to CameraController's pan handler: the press
+   * Leave a pan press (Shift+left, or Shift+right in the Builder's scheme) to
+   * CameraController's pan handler: the press
    * still dispatches `start`/`end` (so pivot snapping and the camera-change
    * callback fire), but the controls stay idle instead of rotating.
    */
@@ -129,7 +162,7 @@ export class CameraControls extends TrackballControls {
     const original = internals._onMouseDown;
     internals._onMouseDown = (event: PointerEvent) => {
       original(event);
-      if (isShiftPanGesture(event)) internals.state = STATE_NONE;
+      if (isPanGesture(this.scheme, event)) internals.state = STATE_NONE;
     };
   }
 

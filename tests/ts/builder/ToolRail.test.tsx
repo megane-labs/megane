@@ -61,8 +61,13 @@ describe("toolHint", () => {
 });
 
 describe("ContextBar", () => {
-  it("is absent for a tool with no settings", () => {
-    for (const tool of ["move", "delete"] as const) {
+  it("is absent for a tool with no settings, and Move shows only the drag settings", () => {
+    useBuilderStore.setState({ tool: "move" });
+    const move = render(<ContextBar />);
+    expect(screen.getByTestId("builder-snap")).toBeTruthy();
+    expect(screen.queryByTestId("builder-select-all")).toBeNull();
+    move.unmount();
+    for (const tool of ["delete"] as const) {
       useBuilderStore.setState({ tool });
       const { unmount } = render(<ContextBar />);
       expect(screen.queryByTestId("builder-context-bar")).toBeNull();

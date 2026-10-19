@@ -90,7 +90,15 @@ import { buttonStyle, hintStyle } from "./styles";
 import { trackEvent } from "../analytics";
 import { WEB_HOST, hostHasTools, type BuilderHost } from "./host";
 import { openStructureFile } from "./open";
-import { useBuilderStoreApi, useScopedBuilderStore, useScopedToolsStore } from "./BuilderStores";
+import {
+  useBuilderStoreApi,
+  useScopedBuilderStore,
+  useScopedToolsStore,
+  useToolsStoreApi,
+} from "./BuilderStores";
+import { hoverHighlight } from "./hover";
+import { readoutLabel } from "./manipulate";
+import type { DragStatus } from "./store";
 
 /** Width of the Details and History panels on the right of the view. */
 const PANEL_WIDTH = 372;
@@ -106,6 +114,25 @@ const INFO_LEFT = PERF_HUD_LEFT_DEFAULT;
  * so the rails can run down the whole left edge without being covered.
  */
 const STATUS_LEFT = OVERLAY_INSET + TOOL_RAIL_WIDTH + OVERLAY_INSET;
+
+/** The status line's hint while a drag runs. */
+export const DRAG_KEYS_HINT = "X Y Z (A B C) lock an axis · Esc cancels";
+
+/** What a drag has done so far, for the status line. */
+export function dragStatusText(drag: DragStatus, snap: boolean): string {
+  const parts = [drag.readout ? readoutLabel(drag.readout) : DRAG_MODE_LABELS[drag.mode]];
+  if (drag.axis && !drag.readout) parts.push(`locked to ${drag.axis}`);
+  if (snap) parts.push("snap");
+  if (drag.contacts.length > 0) parts.push(`${drag.contacts.length} atoms too close`);
+  return parts.join(" · ");
+}
+
+const DRAG_MODE_LABELS: Record<DragStatus["mode"], string> = {
+  translate: "Move",
+  depth: "Move in depth",
+  rotate: "Rotate",
+  spin: "Spin",
+};
 
 /** ⌘ on a Mac, Ctrl elsewhere, for the shortcut hints in the tooltips. */
 function modKeyLabel(): string {
@@ -143,12 +170,16 @@ export function BuilderApp({ host = WEB_HOST }: BuilderAppProps = {}) {
   const reportError = useScopedBuilderStore((s) => s.reportError);
   const pushOp = useScopedBuilderStore((s) => s.pushOp);
   const preview = useScopedBuilderStore((s) => s.preview);
-  const boxSelect = useScopedBuilderStore((s) => s.boxSelect);
-  const setSelected = useScopedBuilderStore((s) => s.setSelected);
+  const drag = useScopedBuilderStore((s) => s.drag);
+  const snap = useScopedBuilderStore((s) => s.snap);
+  const adsorbHeight = useScopedBuilderStore((s) => s.adsorbHeight);
   const toolsStatus = useScopedToolsStore((s) => s.status);
   const toolsConnection = useScopedToolsStore((s) => s.connection);
   const openTool = useScopedToolsStore((s) => s.openTool);
   const openForm = useScopedToolsStore((s) => s.openForm);
+  const toolServers = useScopedToolsStore((s) => s.servers);
+  const setToolServer = useScopedToolsStore((s) => s.setUrl);
+  const connectToolServer = useScopedToolsStore((s) => s.connect);
 
   // `shown` is the document (what Save writes); `viewed` is what the view
   // draws, which is the preview of a Structure dialog's op while one is open.
@@ -170,7 +201,12 @@ export function BuilderApp({ host = WEB_HOST }: BuilderAppProps = {}) {
   const [hoverInfo, setHoverInfo] = useState<HoverInfo>(null);
   const [atomMenu, setAtomMenu] = useState<AtomMenuTarget | null>(null);
   const closeAtomMenu = useCallback(() => setAtomMenu(null), []);
-  useToolServerLaunch(hasTools);
+  useToolServerLaunch(hasTools && !host.toolBridge);
+  // A host that reaches tool servers for the page lists the configured ones.
+  const toolsApi = useToolsStoreApi();
+  useEffect(() => {
+    if (hasTools && host.toolBridge) void toolsApi.getState().attachBridge(host.toolBridge);
+  }, [hasTools, host.toolBridge, toolsApi]);
   const [dropActive, setDropActive] = useState(false);
 
   // ── The panels on the right ──
@@ -306,8 +342,16 @@ export function BuilderApp({ host = WEB_HOST }: BuilderAppProps = {}) {
     () => void runCleanup(api),
   );
   const toolsItems = hasTools
-    ? toolsMenuItems({ status: toolsStatus, connection: toolsConnection, openForm }, () =>
-        showForm({ server: true }),
+    ? toolsMenuItems(
+        {
+          status: toolsStatus,
+          connection: toolsConnection,
+          openForm,
+          servers: toolServers,
+          setUrl: setToolServer,
+          connect: connectToolServer,
+        },
+        () => showForm({ server: true }),
       )
     : undefined;
 
@@ -336,7 +380,6 @@ export function BuilderApp({ host = WEB_HOST }: BuilderAppProps = {}) {
     previewSeen.current = preview;
     rendererRef.current?.resetView();
   }, [preview]);
-  const lastContextMenuAt = useRef<{ x: number; y: number } | null>(null);
   const steps = useMemo(() => editSteps(edits).length, [edits]);
 
   const highlighted = useMemo(() => {
@@ -344,6 +387,23 @@ export function BuilderApp({ host = WEB_HOST }: BuilderAppProps = {}) {
     if (pendingBondAtom !== null) set.add(pendingBondAtom);
     return set.size > 0 ? [...set] : null;
   }, [selected, pendingBondAtom]);
+
+  // What a click would act on, under the pointer.
+  const hoveredAtom = hoverInfo?.kind === "atom" && !atomMenu ? hoverInfo.atomIndex : null;
+  const editable = canEdit({ source, result, showOriginal, preview });
+  const hover = useMemo(
+    () =>
+      source
+        ? hoverHighlight(hoveredAtom, {
+            tool,
+            editable,
+            pendingBondAtom,
+            adsorbOnAtoms: adsorbHeight !== null && !!placeSource,
+            dragging: drag !== null,
+          })
+        : null,
+    [source, hoveredAtom, tool, editable, pendingBondAtom, adsorbHeight, placeSource, drag],
+  );
 
   const activeTool = toolInfo(tool);
 
@@ -410,9 +470,6 @@ export function BuilderApp({ host = WEB_HOST }: BuilderAppProps = {}) {
           if (e.currentTarget === e.target) setDropActive(false);
         }}
         onDrop={handleDrop}
-        onContextMenuCapture={(e) => {
-          lastContextMenuAt.current = { x: e.clientX, y: e.clientY };
-        }}
         data-testid="builder-dropzone"
       >
         <Viewport
@@ -425,16 +482,15 @@ export function BuilderApp({ host = WEB_HOST }: BuilderAppProps = {}) {
           previewIndices={highlighted}
           buildActive={true}
           buildHandlers={handlers}
+          mouseScheme="builder"
+          hoverIndices={hover?.atoms ?? null}
+          hoverColor={hover?.color}
+          warningIndices={drag && drag.contacts.length > 0 ? drag.contacts : null}
           preserveCameraKey={revision}
-          boxSelectActive={!!source && tool === "select" && boxSelect}
-          onBoxSelect={(indices, { additive }) =>
-            setSelected(additive ? [...new Set([...api.getState().selected, ...indices])] : indices)
-          }
-          onAtomRightClick={(atom) => {
+          onAtomRightClick={(atom, x, y) => {
             // A preview's atoms are not the document's; nothing to act on.
             if (api.getState().preview) return;
-            const at = lastContextMenuAt.current ?? { x: 0, y: 0 };
-            setAtomMenu({ atom, x: at.x, y: at.y });
+            setAtomMenu({ atom, x, y });
           }}
         />
         <Tooltip info={atomMenu ? null : hoverInfo} />
@@ -756,6 +812,18 @@ export function BuilderApp({ host = WEB_HOST }: BuilderAppProps = {}) {
           {selected.length > 0 && (
             <span data-testid="builder-status-selection">{selected.length} selected</span>
           )}
+          {drag && (
+            <span
+              data-testid="builder-status-drag"
+              data-axis={drag.axis ?? ""}
+              style={{
+                color: "var(--megane-primary-text, #2563eb)",
+                fontVariantNumeric: "tabular-nums",
+              }}
+            >
+              {dragStatusText(drag, snap)}
+            </span>
+          )}
           {showOriginal && <span>Showing original</span>}
           <span data-testid="builder-status-tool">
             <b style={{ fontWeight: 600, color: "var(--megane-text-body, #334155)" }}>
@@ -763,7 +831,7 @@ export function BuilderApp({ host = WEB_HOST }: BuilderAppProps = {}) {
             </b>{" "}
             ·{" "}
             <span data-testid="builder-tool-hint">
-              {toolHint(tool, pendingBondAtom, placeSource)}
+              {drag ? DRAG_KEYS_HINT : toolHint(tool, pendingBondAtom, placeSource)}
             </span>
           </span>
         </div>

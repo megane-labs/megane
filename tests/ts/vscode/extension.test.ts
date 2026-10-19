@@ -235,6 +235,7 @@ import {
   MeganeEditorProvider,
   builderSaveBase,
   getBuilderHtml,
+  MeganeBuilderPanels,
   BUILDER_EXTENSIONS,
   BUILDER_FILENAME_PREFIXES,
   PIPELINE_COMPANION_FILE_PARAMS,
@@ -351,8 +352,8 @@ describe("activate / deactivate", () => {
     const ctx = makeContext();
     activate(ctx as unknown as Parameters<typeof activate>[0]);
 
-    // 2 editor providers + seekFrame + the Builder view + 3 Builder commands.
-    expect(ctx.subscriptions).toHaveLength(7);
+    // 2 editor providers + seekFrame + the Builder's tool servers + the Builder view + 3 Builder commands.
+    expect(ctx.subscriptions).toHaveLength(8);
     for (const sub of ctx.subscriptions) {
       expect(typeof sub.dispose).toBe("function");
     }
@@ -1376,6 +1377,36 @@ describe("megane Builder", () => {
     expect((created.panel.iconPath as { path: string }).path).toBe(
       "/ext/resources/megane-color.svg",
     );
+  });
+
+  it("routes a tab's tool requests to its own bridge and disposes it with the tab", async () => {
+    const bridges: { handle: ReturnType<typeof vi.fn>; dispose: ReturnType<typeof vi.fn> }[] = [];
+    const tools = {
+      bridgeFor: vi.fn(() => {
+        const bridge = {
+          handle: vi.fn((m: { type?: string }) => m.type?.startsWith("tools:") ?? false),
+          dispose: vi.fn(),
+        };
+        bridges.push(bridge);
+        return bridge;
+      }),
+      dispose: vi.fn(),
+    };
+    const panels = new MeganeBuilderPanels(
+      makeContext("/ext") as unknown as ConstructorParameters<typeof MeganeBuilderPanels>[0],
+      tools as unknown as ConstructorParameters<typeof MeganeBuilderPanels>[1],
+    );
+    panels.open();
+    const { panel } = mockState.createdPanels[mockState.createdPanels.length - 1];
+    expect(tools.bridgeFor).toHaveBeenCalledWith(panel.webview);
+    await panel.fireMessage({ type: "tools:servers", requestId: 1 });
+    expect(bridges[0].handle).toHaveBeenCalledWith({ type: "tools:servers", requestId: 1 });
+    // Other messages still reach the tab's own handling.
+    await panel.fireMessage({ type: "ready" });
+    expect(bridges[0].handle).toHaveBeenCalledTimes(2);
+    expect(panel.webview.postMessage).not.toHaveBeenCalled();
+    panel.fireDispose();
+    expect(bridges[0].dispose).toHaveBeenCalled();
   });
 
   it("an empty Builder posts nothing when ready", async () => {
