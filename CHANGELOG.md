@@ -18,7 +18,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
   - The Tools menu offers *Connect to <server>* for each configured server.
   - VS Code asks before it first runs a command or sends structures to a URL, and remembers the answer for exactly that command or URL.
   - Builder tabs share one server process, which stops when the last tab lets go.
-  - A server's stderr goes to the *megane Builder Tools* output panel.
+  - A server's stderr goes to the *Megane Builder Tools* output panel.
   - HTTP servers must use HTTPS unless on loopback.
   - The setting is ignored at workspace level in untrusted workspaces.
   - The extension host is now bundled with esbuild so the MCP SDK ships in the VSIX. The SDK is a separate `out/sdkClient.js` loaded on the first connection, so activation time is unchanged.

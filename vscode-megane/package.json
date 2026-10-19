@@ -1,7 +1,7 @@
 {
   "name": "vscode-megane",
-  "displayName": "megane - Molecular Viewer",
-  "description": "View and build molecular structure files (PDB, GRO, XYZ (incl. extended XYZ .extxyz and Jmol .jxyz), MOL, SDF, MOL2, CIF, mmCIF, LAMMPS data, AMBER prmtop, ASE traj, XTC, LAMMPS dump, DCD, AMBER NetCDF, VASP POSCAR/CONTCAR/XDATCAR, CML, Molden, XCrySDen XSF, Chem3D XML, Odyssey xodydata/odydata, CASTEP magres, GAMESS output, CASTEP phonon), volumetric grids (Gaussian CUBE, OpenDX), and JCAMP-DX spectra (.jdx, .jcamp) with megane",
+  "displayName": "Megane - Molecular Viewer",
+  "description": "View and build molecular structure files (PDB, GRO, XYZ (incl. extended XYZ .extxyz and Jmol .jxyz), MOL, SDF, MOL2, CIF, mmCIF, LAMMPS data, AMBER prmtop, ASE traj, XTC, LAMMPS dump, DCD, AMBER NetCDF, VASP POSCAR/CONTCAR/XDATCAR, CML, Molden, XCrySDen XSF, Chem3D XML, Odyssey xodydata/odydata, CASTEP magres, GAMESS output, CASTEP phonon), volumetric grids (Gaussian CUBE, OpenDX), and JCAMP-DX spectra (.jdx, .jcamp) with Megane",
   "version": "0.17.0",
   "publisher": "hodakamori",
   "license": "MIT",
@@ -20,7 +20,7 @@
   "capabilities": {
     "untrustedWorkspaces": {
       "supported": "limited",
-      "description": "In an untrusted workspace, megane Builder ignores tool servers configured in the workspace's settings (megane.builder.mcpServers), since they run commands on your computer.",
+      "description": "In an untrusted workspace, Megane Builder ignores tool servers configured in the workspace's settings (megane.builder.mcpServers), since they run commands on your computer.",
       "restrictedConfigurations": [
         "megane.builder.mcpServers"
       ]
@@ -30,7 +30,7 @@
     "customEditors": [
       {
         "viewType": "megane.structureViewer",
-        "displayName": "megane Molecular Viewer",
+        "displayName": "Megane Molecular Viewer",
         "selector": [
           {
             "filenamePattern": "*.pdb"
@@ -154,7 +154,7 @@
       },
       {
         "viewType": "megane.pipelineViewer",
-        "displayName": "megane Pipeline Viewer",
+        "displayName": "Megane Pipeline Viewer",
         "selector": [
           {
             "filenamePattern": "*.megane.json"
@@ -167,7 +167,7 @@
       "activitybar": [
         {
           "id": "megane",
-          "title": "megane",
+          "title": "Megane",
           "icon": "resources/megane.svg"
         }
       ]
@@ -178,33 +178,33 @@
           "id": "megane.builderView",
           "name": "Builder",
           "icon": "resources/megane.svg",
-          "contextualTitle": "megane Builder"
+          "contextualTitle": "Megane Builder"
         }
       ]
     },
     "viewsWelcome": [
       {
         "view": "megane.builderView",
-        "contents": "Build or edit a molecular structure with megane Builder: add, delete and move atoms, draw bonds, build crystals and save as XYZ, PDB or MOL.\n[New Structure](command:megane.builder.new)\n[Open File in Builder…](command:megane.builder.open)\nTo edit a file from the Explorer, right-click it and choose \"Open in megane Builder\"."
+        "contents": "Build or edit a molecular structure with Megane Builder: add, delete and move atoms, draw bonds, build crystals and save as XYZ, PDB or MOL.\n[New Structure](command:megane.builder.new)\n[Open File in Builder…](command:megane.builder.open)\nTo edit a file from the Explorer, right-click it and choose \"Open in Megane Builder\"."
       }
     ],
     "commands": [
       {
         "command": "megane.builder.new",
         "title": "New Structure",
-        "category": "megane Builder",
+        "category": "Megane Builder",
         "icon": "$(add)"
       },
       {
         "command": "megane.builder.open",
         "title": "Open File in Builder…",
-        "category": "megane Builder",
+        "category": "Megane Builder",
         "icon": "$(folder-opened)"
       },
       {
         "command": "megane.builder.openFile",
-        "title": "Open in megane Builder",
-        "category": "megane Builder",
+        "title": "Open in Megane Builder",
+        "category": "Megane Builder",
         "icon": "$(tools)"
       }
     ],
@@ -237,13 +237,13 @@
       ]
     },
     "configuration": {
-      "title": "megane",
+      "title": "Megane",
       "properties": {
         "megane.builder.mcpServers": {
           "type": "object",
           "default": {},
           "scope": "machine-overridable",
-          "markdownDescription": "MCP tool servers for megane Builder's **Tools** menu ([Builder Tool Contract](https://megane-labs.github.io/megane/dev/builder-tools)), in the `mcpServers` format LLM clients use. A stdio server is `{ \"command\": \"python\", \"args\": [\"my_tools.py\"] }` (optional `env`, `cwd`); a Streamable HTTP server is `{ \"url\": \"https://…/mcp\", \"headers\": { \"Authorization\": \"Bearer …\" } }` (https, or http on this machine). `${workspaceFolder}` and `${userHome}` are replaced. megane asks before it first uses a server.",
+          "markdownDescription": "MCP tool servers for Megane Builder's **Tools** menu ([Builder Tool Contract](https://megane-labs.github.io/megane/dev/builder-tools)), in the `mcpServers` format LLM clients use. A stdio server is `{ \"command\": \"python\", \"args\": [\"my_tools.py\"] }` (optional `env`, `cwd`); a Streamable HTTP server is `{ \"url\": \"https://…/mcp\", \"headers\": { \"Authorization\": \"Bearer …\" } }` (https, or http on this machine). `${workspaceFolder}` and `${userHome}` are replaced. Megane asks before it first uses a server.",
           "additionalProperties": {
             "type": "object",
             "properties": {

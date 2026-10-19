@@ -193,7 +193,7 @@ export class MoleculeRenderer {
       });
     } catch (err) {
       throw new Error(
-        "Failed to create a WebGL2 context. megane needs WebGL2 with hardware " +
+        "Failed to create a WebGL2 context. Megane needs WebGL2 with hardware " +
           "acceleration enabled. " +
           (err instanceof Error ? err.message : String(err)),
       );

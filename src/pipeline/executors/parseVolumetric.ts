@@ -49,7 +49,7 @@ export function parseVolumetric(fileName: string, text: string): VolumetricData 
     if (!isOpenDx(text)) {
       throw new Error(
         "This .dx file is not an OpenDX grid. It looks like a JCAMP-DX spectrum, " +
-          "which megane cannot display yet — the viewer has no 2D plot surface.",
+          "which Megane cannot display yet — the viewer has no 2D plot surface.",
       );
     }
     return parseDx(text);

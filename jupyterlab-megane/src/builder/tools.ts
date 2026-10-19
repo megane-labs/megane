@@ -24,7 +24,7 @@ export const TOOLS_WS_PATH = "megane/builder-tools/ws";
 export const ALLOWED_SERVERS_KEY = "megane.builder.allowedToolServers";
 export const CONFIG_HINT = "the MeganeBuilderTools.mcp_servers option of jupyter_server_config";
 export const LOST_CONNECTION =
-  "Could not reach megane's tool bridge on the Jupyter server. It needs megane's server " +
+  "Could not reach Megane's tool bridge on the Jupyter server. It needs Megane's server " +
   'extension and the MCP SDK (pip install "megane[tools]"), then a restart of Jupyter.';
 
 /** The part of `ServerConnection.ISettings` the WebSocket needs. */
@@ -177,6 +177,6 @@ export function createJupyterToolBridge(
 /** The question asked before megane first uses a server (§9). */
 export function permissionBody(server: BridgeServer): string {
   return server.kind === "stdio"
-    ? `megane Builder will run this command on the Jupyter server's machine to provide its tool buttons: ${server.description} — allow only servers you trust.`
-    : `megane Builder will send the structures you build with its tools to ${server.description} — allow only servers you trust.`;
+    ? `Megane Builder will run this command on the Jupyter server's machine to provide its tool buttons: ${server.description} — allow only servers you trust.`
+    : `Megane Builder will send the structures you build with its tools to ${server.description} — allow only servers you trust.`;
 }

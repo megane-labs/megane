@@ -408,7 +408,7 @@ async function openPipeline(
   const pipeline = JSON.parse(text) as SerializedPipeline;
   if (pipeline.version !== 3) {
     throw new Error(
-      `Not a valid megane pipeline file (version 3 required, got ${pipeline.version})`,
+      `Not a valid Megane pipeline file (version 3 required, got ${pipeline.version})`,
     );
   }
 

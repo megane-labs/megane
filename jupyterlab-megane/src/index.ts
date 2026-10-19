@@ -31,7 +31,7 @@ const PIPELINE_TRACKER_NAMESPACE = "megane-pipeline";
 const plugin: JupyterFrontEndPlugin<void> = {
   id: PLUGIN_ID,
   description:
-    "Open molecular structure files (PDB, GRO, XYZ, MOL, SDF, CIF, LAMMPS data, ASE traj) and trajectories (XTC, DCD, LAMMPS dump) and megane pipelines",
+    "Open molecular structure files (PDB, GRO, XYZ, MOL, SDF, CIF, LAMMPS data, ASE traj) and trajectories (XTC, DCD, LAMMPS dump) and Megane pipelines",
   autoStart: true,
   requires: [ILayoutRestorer],
   optional: [IStatusBar, IDefaultFileBrowser],

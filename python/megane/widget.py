@@ -181,7 +181,7 @@ class MolecularViewer(anywidget.AnyWidget):
         warnings.warn(
             "MolecularViewer.load() is deprecated and will be removed in a future major release. "
             "Use set_pipeline() with a Pipeline instead. "
-            "See the megane documentation for migration examples.",
+            "See the Megane documentation for migration examples.",
             DeprecationWarning,
             stacklevel=2,
         )

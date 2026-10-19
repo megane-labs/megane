@@ -335,7 +335,7 @@ function render({ model, el }: { model: BuilderWidgetModel; el: HTMLElement }) {
       "justify-content:center;gap:10px;font:13px system-ui,sans-serif;" +
       "color:var(--megane-text-secondary,#64748b)";
     const text = document.createElement("div");
-    text.textContent = "megane Builder is open in another output on this page.";
+    text.textContent = "Megane Builder is open in another output on this page.";
     const button = document.createElement("button");
     button.type = "button";
     button.dataset.testid = "builder-widget-show-here";
