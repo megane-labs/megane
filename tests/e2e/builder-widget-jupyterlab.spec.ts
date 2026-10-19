@@ -138,6 +138,11 @@ test("megane.Builder opens Python's file, syncs edits back, saves through the ke
   await expect(other.locator('[data-testid="builder-welcome"]')).toBeVisible();
   await expect(b.locator('[data-testid="builder-tools"]')).toHaveCount(0);
 
+  // Python reads the file it loaded before any edit.
+  await expect
+    .poll(() => kernelPrint(page, "print(b.n_atoms, b.file_name)"), { timeout: 15_000 })
+    .toBe("24 caffeine.sdf");
+
   // An edit reaches Python: caffeine without its two oxygens.
   await deleteOxygens(b);
   await expect(live).toHaveAttribute("data-atom-count", "22");
