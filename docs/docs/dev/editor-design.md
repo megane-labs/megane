@@ -232,21 +232,18 @@ trajectory, no overlays, ball-and-stick. `BuilderApp` drives the renderer
 through the same `applyViewportState` the viewer uses, so the Builder does not
 fork the renderer.
 
-**Clicks.** The Builder takes the mouse the Materials Studio way: the left
-button edits, the right one turns the view. The app passes
-`mouseScheme="builder"` to the `Viewport`, which has the renderer's
-`CameraController` / `CameraControls` rotate on a right drag and pan on a
-middle or Shift + right drag (`MouseScheme`, `isPanGesture`); the viewer keeps
-OVITO's left-rotate / right-pan. `useBuilderHandlers` installs `pick`,
-`pressAction`, `dragStart`, `dragMove`, `dragEnd`, `boxSelect` and
-`doubleClick` as `BuildHandlers` (`src/builder/types.ts`), and the app passes
-them to the `Viewport` with `buildActive` permanently on:
+**Clicks.** The camera takes the mouse exactly as in the viewer (OVITO's
+left-rotate, right / Shift + left pan, middle / wheel zoom, double-click to
+set the rotation center); the Builder only claims the left drags it can use.
+`useBuilderHandlers` installs `pick`, `pressAction`, `dragStart`, `dragMove`,
+`dragEnd` and `boxSelect` as `BuildHandlers` (`src/builder/types.ts`), and
+the app passes them to the `Viewport` with `buildActive` permanently on:
 
 - a left press asks `pressAction` (in the capture phase on the container, so
   before the camera controls see it) whether a drag from there moves atoms
   (*Select* on a selected atom, *Move* on any atom), draws a rubber band
-  (empty space, an unselected atom with *Select*) or belongs to the camera
-  (the other tools, or Alt held). For the first two the controls are
+  (anywhere else with *Select* while its Box is on) or belongs to the camera
+  (everything else, or Alt held). For the first two the controls are
   suspended until the release;
 - once the pointer moves past the click slop, a move calls `dragStart` with
   the modifiers and then `dragMove` with a `BuildDragGesture` — the pointer
@@ -255,9 +252,8 @@ them to the `Viewport` with `buildActive` permanently on:
   band ends in `boxSelect(indices, "replace" | "add" | "subtract")`;
 - a press that barely moves is a click, reported to `pick` with the atom
   index or, on empty space, the world point at the pivot's depth;
-- a double-click on an atom goes to `doubleClick` (molecule / element
-  selection) before the viewer's re-centre, and a right-click opens the atom
-  menu on the release, so a right drag stays a rotation.
+- a double-click is the viewer's re-centre, and a right-click opens the atom
+  menu on the release, so a right drag stays a pan.
 
 `src/builder/manipulate.ts` turns a gesture into displacements as a pure
 function of the positions at the press: `dragModeFor` picks translate (no

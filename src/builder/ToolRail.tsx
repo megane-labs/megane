@@ -28,13 +28,13 @@ export const TOOLS: ToolInfo[] = [
   {
     value: "select",
     label: "Select",
-    hint: "Click to select (Shift or Ctrl/⌘ toggles), double-click for the molecule; drag the selection to move it, drag elsewhere for a box. Right-drag turns the view.",
+    hint: "Click to select (Shift or Ctrl/⌘ toggles); drag the selection to move it, drag elsewhere to turn the view (Box: select in a box).",
     needs: ["select", "drag"],
   },
   {
     value: "move",
     label: "Move",
-    hint: "Drag any atom (with its selection) to move it; Shift moves in depth, Ctrl/⌘ rotates. Drag empty space for a box.",
+    hint: "Drag any atom (with its selection) to move it; Shift moves in depth, Ctrl/⌘ rotates. Drag empty space to turn the view.",
     needs: ["drag"],
   },
   {

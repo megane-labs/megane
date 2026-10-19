@@ -5,19 +5,20 @@
  * Viewport reports rendered atom indices; they are translated to op refs
  * through `result.refAt` so an op always names the atom the user saw.
  *
- * Select and Move share the Materials Studio style: click to select (Shift /
- * Ctrl / ⌘ toggles), double-click for the molecule, drag the selection to
- * move it (modifiers turn or spin it, see `manipulate.ts`), drag elsewhere
- * for a rubber band. The camera has the right and middle buttons.
+ * The mouse is the viewer's: a drag the Builder does not take turns the view
+ * (left rotates, right and Shift + left pan, middle and the wheel zoom) and a
+ * double-click sets the rotation center. Select and Move click to select
+ * (Shift / Ctrl / ⌘ toggles) and drag the selection to move it (modifiers turn
+ * or spin it, see `manipulate.ts`); Move drags any atom at once, and Select's
+ * Box draws a rubber band instead of turning the view.
  */
 
 import { useCallback, useEffect, useMemo, useRef } from "react";
 import type { StoreApi } from "zustand";
 import type { EditAtomRef, EditOp } from "../pipeline/types";
-import { canEdit, shownSnapshot, viewSnapshot, type BuilderStore } from "./store";
+import { canEdit, shownSnapshot, type BuilderStore } from "./store";
 import { adsorptionSite, newAtomId } from "./placement";
 import { addOnAtomOps, setElementOps } from "./hydrogens";
-import { moleculeOf } from "./geometry";
 import {
   AXIS_KEYS,
   axisVector,
@@ -167,15 +168,15 @@ export function useBuilderHandlers(api: StoreApi<BuilderStore>): BuildHandlers {
 
   // What a left press does if the pointer moves: Select and Move drag atoms
   // (Select only the ones already selected, so a stray drag never moves an
-  // atom by accident) and draw a box from anywhere else; the other tools
-  // leave the drag to the camera.
+  // atom by accident), Select draws a box from anywhere else while its Box is
+  // on, and every other drag is left to the camera, as in the viewer.
   const pressAction = useCallback(
     (atomIndex: number | null): BuildPressAction => {
       const state = api.getState();
       if (!canEdit(state) || (state.tool !== "select" && state.tool !== "move")) return "camera";
-      if (atomIndex === null) return "box";
-      if (state.tool === "move" || state.selected.includes(atomIndex)) return "move";
-      return "box";
+      if (atomIndex !== null && (state.tool === "move" || state.selected.includes(atomIndex)))
+        return "move";
+      return state.tool === "select" && state.boxSelect ? "box" : "camera";
     },
     [api],
   );
@@ -296,28 +297,9 @@ export function useBuilderHandlers(api: StoreApi<BuilderStore>): BuildHandlers {
     [api],
   );
 
-  // A double-click with Select or Move selects the atom's molecule (Shift
-  // adds it to the selection), or with Alt every atom of its element.
-  const doubleClick = useCallback(
-    (atomIndex: number, mods: BuildModifiers): boolean => {
-      const state = api.getState();
-      if (state.tool !== "select" && state.tool !== "move") return false;
-      const snapshot = viewSnapshot(state);
-      if (!snapshot || atomIndex < 0 || atomIndex >= snapshot.nAtoms) return false;
-      const atoms = mods.altKey
-        ? Array.from(snapshot.elements.keys()).filter(
-            (i) => snapshot.elements[i] === snapshot.elements[atomIndex],
-          )
-        : moleculeOf(snapshot, atomIndex);
-      state.setSelected(mods.shiftKey ? [...state.selected, ...atoms] : atoms);
-      return true;
-    },
-    [api],
-  );
-
   const installed = useMemo<BuildHandlers>(
-    () => ({ pick, pressAction, dragStart, dragMove, dragEnd, boxSelect, doubleClick }),
-    [pick, pressAction, dragStart, dragMove, dragEnd, boxSelect, doubleClick],
+    () => ({ pick, pressAction, dragStart, dragMove, dragEnd, boxSelect }),
+    [pick, pressAction, dragStart, dragMove, dragEnd, boxSelect],
   );
   useEffect(() => {
     api.getState().setHandlers(installed);
