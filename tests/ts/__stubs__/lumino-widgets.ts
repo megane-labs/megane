@@ -15,11 +15,20 @@ export class Widget {
   constructor() {
     this.node = document.createElement("div");
   }
-  addClass(_className: string): void {
-    void _className;
+  addClass(className: string): void {
+    this.node.classList.add(className);
   }
+  isAttached = false;
   protected onAfterAttach(_msg?: unknown): void {
     void _msg;
+  }
+  /** As in Lumino: close() sends a close-request, whose default handler only detaches. */
+  close(): void {
+    this.onCloseRequest();
+  }
+  protected onCloseRequest(_msg?: unknown): void {
+    void _msg;
+    this.isAttached = false;
   }
   dispose(): void {
     this.isDisposed = true;

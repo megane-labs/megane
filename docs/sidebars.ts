@@ -74,6 +74,7 @@ const sidebars: SidebarsConfig = {
     { type: "doc", id: "dev/custom-nodes", label: "Custom Nodes" },
     { type: "doc", id: "dev/editor-design", label: "Structure Editor Design" },
     { type: "doc", id: "dev/builder-tools", label: "Builder Tool Contract (MCP)" },
+    { type: "doc", id: "dev/builder-tool-server", label: "Writing a Builder Tool Server" },
     { type: "doc", id: "dev/molstar-illustrative-parity", label: "Mol* Illustrative Parity" },
   ],
 

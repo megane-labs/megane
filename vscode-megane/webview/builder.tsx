@@ -9,12 +9,16 @@
  * dialog and answers with the name it was saved under (`saveResult`), or
  * null when the dialog was cancelled.
  *
- * The webview owns its page, so the keyboard shortcuts need no scope; the MCP
- * Tools menu is left out (no tool server is reachable from a webview).
+ * The webview owns its page, so the keyboard shortcuts need no scope. The
+ * *Tools* menu reaches MCP tool servers through the extension host (the
+ * bridge, `vscode-megane/src/builderTools.ts`): a webview can neither start a
+ * stdio server nor call a loopback one, so the host connects to the servers in
+ * the `megane.builder.mcpServers` setting and relays the calls.
  */
 
 import { mountBuilder } from "../../src/builder/mount";
 import type { BuilderHost } from "../../src/builder/host";
+import { createMessageBridge } from "../../src/builder/tools/bridge";
 import { installCrossOriginWorker } from "../../src/utils/crossOriginWorker";
 import "../../src/styles/megane.css";
 
@@ -43,7 +47,17 @@ const host: BuilderHost = {
         bytes: Array.from(new TextEncoder().encode(file.text)),
       });
     }),
-  tools: false,
+  toolBridge: createMessageBridge(
+    {
+      post: (message) => vscode.postMessage(message),
+      listen: (handler) => {
+        const onMessage = (event: MessageEvent) => handler(event.data);
+        window.addEventListener("message", onMessage);
+        return () => window.removeEventListener("message", onMessage);
+      },
+    },
+    { configHint: "the megane.builder.mcpServers setting", openSettings: true },
+  ),
 };
 
 const builder = mountBuilder(document.getElementById("root")!, host);

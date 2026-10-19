@@ -1,6 +1,6 @@
 /**
  * Selection and editing helpers: the right-click atom menu, the Select tool's
- * bar (box, all, invert), the store's multi-atom moves and selection actions,
+ * bar (snap, all, invert), the store's multi-atom moves and selection actions,
  * and the history grouped into Undo steps.
  */
 
@@ -42,14 +42,14 @@ beforeEach(() => {
 afterEach(cleanup);
 
 describe("store: selection and moves", () => {
-  it("selects all, inverts, and toggles box selection", () => {
+  it("selects all, inverts, and toggles snapping", () => {
     s().selectAll();
     expect(s().selected).toEqual([0, 1, 2, 3, 4, 5, 6]);
     s().setSelected([0, 6]);
     s().invertSelection();
     expect(s().selected).toEqual([1, 2, 3, 4, 5]);
-    s().setBoxSelect(true);
-    expect(s().boxSelect).toBe(true);
+    s().setSnap(true);
+    expect(s().snap).toBe(true);
   });
 
   it("moveAtoms writes one op per distinct displacement, as one Undo step", () => {
@@ -103,12 +103,13 @@ describe("store: selection and moves", () => {
 });
 
 describe("Select tool bar", () => {
-  it("toggles box selection, selects all and inverts", () => {
+  it("toggles Snap, lists the drag gestures, selects all and inverts", () => {
     render(<ContextBar />);
     expect(screen.getByTestId("builder-context-label").textContent).toBe("Select");
-    click("builder-select-box");
-    expect(s().boxSelect).toBe(true);
-    expect(screen.getByTestId("builder-select-box").getAttribute("aria-pressed")).toBe("true");
+    click("builder-snap");
+    expect(s().snap).toBe(true);
+    expect(screen.getByTestId("builder-snap").getAttribute("aria-pressed")).toBe("true");
+    expect(screen.getByTestId("builder-drag-legend").textContent).toContain("rotate the view");
     click("builder-select-all");
     expect(s().selected).toHaveLength(7);
     act(() => s().setSelected([6]));

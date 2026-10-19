@@ -21,7 +21,12 @@
  */
 
 import * as THREE from "three";
-import { CameraControls, isShiftPanGesture } from "./CameraControls";
+import {
+  CameraControls,
+  isPanGesture,
+  isShiftPanGesture,
+  type MouseScheme,
+} from "./CameraControls";
 import type { Snapshot } from "../types";
 import {
   computeViewBounds,
@@ -99,6 +104,7 @@ export class CameraController {
   private customPanLastY = 0;
   private customPanPointerId: number | null = null;
   private customPanCleanup: (() => void) | null = null;
+  private mouseScheme: MouseScheme = "viewer";
   // Reusable temp vectors for applyCustomPan perspective branch.
   private readonly _panRight = new THREE.Vector3();
   private readonly _panUp = new THREE.Vector3();
@@ -311,6 +317,7 @@ export class CameraController {
    */
   private createControls(): CameraControls {
     const controls = new CameraControls(this.camera, this.host.getCanvas());
+    controls.setMouseScheme(this.mouseScheme);
     controls.upAxis.set(...turntableUpAxis(this.host.getSnapshot()?.box ?? null));
     controls.addEventListener("start", () => {
       this.snapPivotAnimToEnd();
@@ -379,8 +386,8 @@ export class CameraController {
     const onPointerDown = (e: PointerEvent) => {
       // Shift+left shares the left button with rotation, box selection and
       // Builder drags; those suspend the controls, and so suspend this pan.
-      const shiftPan = isShiftPanGesture(e) && this.controls.enabled;
-      if (e.button !== 2 && !shiftPan) return;
+      if (!isPanGesture(this.mouseScheme, e)) return;
+      if (isShiftPanGesture(e) && !this.controls.enabled) return;
       if (this.customPanActive) return;
       this.snapPivotAnimToEnd();
       this.customPanActive = true;
@@ -409,13 +416,20 @@ export class CameraController {
       }
     };
 
+    // A middle press would start the browser's autoscroll instead of a pan.
+    const onMouseDown = (e: MouseEvent) => {
+      if (e.button === 1 && this.mouseScheme === "builder") e.preventDefault();
+    };
+
     el.addEventListener("pointerdown", onPointerDown);
+    el.addEventListener("mousedown", onMouseDown);
     el.addEventListener("pointermove", onPointerMove);
     el.addEventListener("pointerup", onPointerEnd);
     el.addEventListener("pointercancel", onPointerEnd);
 
     this.customPanCleanup = () => {
       el.removeEventListener("pointerdown", onPointerDown);
+      el.removeEventListener("mousedown", onMouseDown);
       el.removeEventListener("pointermove", onPointerMove);
       el.removeEventListener("pointerup", onPointerEnd);
       el.removeEventListener("pointercancel", onPointerEnd);
@@ -618,6 +632,12 @@ export class CameraController {
   }
 
   /** Enable/disable the camera controls (and with them Shift+left pan). */
+  /** Which buttons rotate and pan (see `MouseScheme`); kept across camera switches. */
+  setMouseScheme(scheme: MouseScheme): void {
+    this.mouseScheme = scheme;
+    this.controls?.setMouseScheme(scheme);
+  }
+
   setControlsEnabled(enabled: boolean): void {
     if (this.controls) this.controls.enabled = enabled;
   }

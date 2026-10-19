@@ -305,7 +305,7 @@ describe("LoadStructureNode — Open from server", () => {
     fireEvent.click(button);
     await waitFor(() =>
       expect(screen.getByTestId("load-structure-remote-error")).toHaveTextContent(
-        "notes.txt is not a structure file megane can open.",
+        "notes.txt is not a structure file Megane can open.",
       ),
     );
     fireEvent.click(button);

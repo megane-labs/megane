@@ -8,29 +8,35 @@
  */
 
 import type { ReactNode } from "react";
-import { useBuilderStore } from "./store";
+
 import { TOOL_KEYS } from "./shortcuts";
 import type { BuildTool } from "./types";
 import type { LibraryMolecule } from "./library/types";
 import { ACCENT_TEXT, monoStyle } from "./styles";
 import { RailDivider, RailIcon, railButtonStyle, railCornerMarkStyle, railStyle } from "./rail";
+import { useScopedBuilderStore } from "./BuilderStores";
 
 export interface ToolInfo {
   value: BuildTool;
   label: string;
   hint: string;
   /** Which settings the Details panel shows for it. */
-  needs: ("select" | "element" | "bondOrder" | "place")[];
+  needs: ("select" | "drag" | "element" | "bondOrder" | "place")[];
 }
 
 export const TOOLS: ToolInfo[] = [
   {
     value: "select",
     label: "Select",
-    hint: "Click atoms to select them (Shift adds); right-click an atom for more.",
-    needs: ["select"],
+    hint: "Click to select (Shift or Ctrl/⌘ toggles), double-click for the molecule; drag the selection to move it, drag elsewhere for a box. Right-drag turns the view.",
+    needs: ["select", "drag"],
   },
-  { value: "move", label: "Move", hint: "Drag an atom in the screen plane.", needs: [] },
+  {
+    value: "move",
+    label: "Move",
+    hint: "Drag any atom (with its selection) to move it; Shift moves in depth, Ctrl/⌘ rotates. Drag empty space for a box.",
+    needs: ["drag"],
+  },
   {
     value: "add",
     label: "Add atom",
@@ -129,8 +135,8 @@ export function ToolIcon({ tool }: { tool: BuildTool }) {
 }
 
 export function ToolRail() {
-  const tool = useBuilderStore((s) => s.tool);
-  const setTool = useBuilderStore((s) => s.setTool);
+  const tool = useScopedBuilderStore((s) => s.tool);
+  const setTool = useScopedBuilderStore((s) => s.setTool);
 
   return (
     <div

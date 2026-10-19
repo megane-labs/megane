@@ -200,10 +200,14 @@ Code's save dialog, the Jupyter server's contents, the kernel's working
 directory; the web app downloads), whether the *Tools* menu is shown
 (`tools`, off in every embedded host, which cannot count on reaching an MCP
 server) and whether the keyboard shortcuts stay inside the Builder
-(`scopeShortcuts`). The document lives in a module-level store, so a page
-holds one Builder document: VS Code gives each tab a webview of its own,
-JupyterLab keeps one Builder tab, and the widget bundle is loaded once per
-`Builder` object, whose newest output takes the document.
+(`scopeShortcuts`). A Builder's document lives in a bundle of stores
+(`src/builder/BuilderStores.tsx`: the document, the library's dialogs, the
+Python tools). Without a `BuilderProvider` it is the module-level bundle,
+one Builder document per page, which is how `builder.html`, VS Code (which
+gives each tab a webview of its own) and the widget bundle (loaded once per
+`Builder` object, whose newest output takes the document) mount it.
+JupyterLab's tabs share one page, so each mounts with `createBuilderStores()`
+and edits a document of its own; the molecule library stays page-wide.
 
 **Document.** `useBuilderStore` (`src/builder/store.ts`) holds a source
 `Snapshot` (the opened file, or `emptyCellSnapshot(edge)` for *New*), its
@@ -212,7 +216,8 @@ the *Show original* flag, and `result = applyEditOps(source, edits)`
 recomputed on every change. The source is never mutated; what the view shows
 (`shownSnapshot`) is the result, or the source alone under the preview. Undo
 pops the last op onto the redo stack, Redo pushes it back, any new op clears
-the stack; `replaceLastOp` rewrites the tail while a drag is in progress. A
+the stack; `setDragOps(base, ops)` rewrites everything a drag in progress
+has written since `base` (as one Undo step). A
 `revision` counter bumps on every change that reshapes the rendered
 structure without replacing the document, and the app hands it to
 `Viewport.preserveCameraKey` so edits never move the camera while a new file
@@ -227,18 +232,45 @@ trajectory, no overlays, ball-and-stick. `BuilderApp` drives the renderer
 through the same `applyViewportState` the viewer uses, so the Builder does not
 fork the renderer.
 
-**Clicks.** `useBuilderHandlers` installs four callbacks (`pick`, `dragStart`,
-`dragMove`, `dragEnd`) as `BuildHandlers` (`src/builder/types.ts`), and the
-app passes them to the `Viewport` with `buildActive` permanently on. The
-Viewport already implements the "suspend camera, hit-test, act" pattern for
-the Inspector's box select:
+**Clicks.** The Builder takes the mouse the Materials Studio way: the left
+button edits, the right one turns the view. The app passes
+`mouseScheme="builder"` to the `Viewport`, which has the renderer's
+`CameraController` / `CameraControls` rotate on a right drag and pan on a
+middle or Shift + right drag (`MouseScheme`, `isPanGesture`); the viewer keeps
+OVITO's left-rotate / right-pan. `useBuilderHandlers` installs `pick`,
+`pressAction`, `dragStart`, `dragMove`, `dragEnd`, `boxSelect` and
+`doubleClick` as `BuildHandlers` (`src/builder/types.ts`), and the app passes
+them to the `Viewport` with `buildActive` permanently on:
 
-- a left press on an atom asks `dragStart`; if the Move tool accepts, camera
-  controls are suspended for that drag only, and `dragMove` receives the world
-  displacement in the camera-facing plane through the atom
-  (`screenDragToWorldDelta` in `Picking.ts`);
-- otherwise a press that barely moves is a click, reported to `pick` with the
-  atom index or, on empty space, the world point at the pivot's depth.
+- a left press asks `pressAction` (in the capture phase on the container, so
+  before the camera controls see it) whether a drag from there moves atoms
+  (*Select* on a selected atom, *Move* on any atom), draws a rubber band
+  (empty space, an unselected atom with *Select*) or belongs to the camera
+  (the other tools, or Alt held). For the first two the controls are
+  suspended until the release;
+- once the pointer moves past the click slop, a move calls `dragStart` with
+  the modifiers and then `dragMove` with a `BuildDragGesture` — the pointer
+  in viewport pixels, the camera's axes, the world size of a pixel at the
+  atom's depth and a projector (`MoleculeRenderer.dragGesture`); a rubber
+  band ends in `boxSelect(indices, "replace" | "add" | "subtract")`;
+- a press that barely moves is a click, reported to `pick` with the atom
+  index or, on empty space, the world point at the pivot's depth;
+- a double-click on an atom goes to `doubleClick` (molecule / element
+  selection) before the viewer's re-centre, and a right-click opens the atom
+  menu on the release, so a right drag stays a rotation.
+
+`src/builder/manipulate.ts` turns a gesture into displacements as a pure
+function of the positions at the press: `dragModeFor` picks translate (no
+modifier), depth (Shift), trackball rotate (Ctrl/⌘) or spin about the line of
+sight (Ctrl/⌘ + Shift); an axis key pressed mid-drag (`axisVector`: x / y / z,
+or the cell's a / b / c) locks moves along it and turns about it; *Snap*
+rounds to `SNAP_DISTANCE` / `SNAP_ANGLE`; `closeContacts` lists non-bonded
+pairs nearer than `CLOSE_CONTACT_FACTOR` of their van der Waals radii, which
+the app draws in red through the renderer's warning layer. The renderer's
+`SelectionController` keeps three highlight layers by atom index — the
+selection (green), the hover mark (`builder/hover.ts` picks the colour of what
+a click would do) and the warnings — and redraws them after every snapshot
+and frame, so they follow atoms as they move.
 
 **Crystal.** The operations rail's *Structure* menu (`crystal/structureMenu.ts`)
 lists every cell and crystal op: *Wrap*, *Remove cell* and *Expand
@@ -285,8 +317,8 @@ molecule RDKit rejects is counted and left alone rather than failing the
 rest. `editSteps` groups the history into Undo steps (an op and
 its continuations) for the History list and the edit counts; the op list
 itself is unchanged. The right-click menu is `AtomMenu.tsx` (`clampMenuPosition` keeps it on
-screen); box selection reuses the viewer's `Viewport` `boxSelectActive` /
-`onBoxSelect`, whose `additive` flag (Shift held) unions with the selection.
+screen); box selection is the Builder's own rubber band (above); the viewer's
+Inspector keeps `boxSelectActive` / `onBoxSelect`.
 The element picker's periodic table is `PeriodicTable.tsx` (`tablePosition`),
 a popover portalled beside the Details panel, tinted by element family
 (`elements.ts`: `ELEMENT_NAMES`, `elementFamily`), with the pointed element
@@ -330,10 +362,14 @@ the result's cell differs from the document's), pushed as one Undo step; a
 tool that builds a new document replaces the open one.
 
 Rendered atom indices are translated to op refs through `result.refAt`
-before an op is written, so an op always names the atom the user saw. Drags
-write one `move_atoms` op at press time and rewrite its delta while the
-pointer moves, so the history gains a single op; a drag that ends with a zero
-delta is removed again without touching the redo stack.
+before an op is written, so an op always names the atom the user saw. A drag
+recomputes its ops from the positions at the press on every move and writes
+them with `setDragOps` — one `move_atoms` op per distinct displacement
+(`moveOps`: one for a translation, one per atom for a turn) — so the history
+gains a single step; a drag that moves nothing, or is cancelled with Esc,
+leaves the history and the redo stack as they were. The Builder's keyboard
+shortcuts pause while `BuilderStore.drag` is set, so the axis keys reach the
+drag.
 
 ## Sketch embedding (RDKit)
 

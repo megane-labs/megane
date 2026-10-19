@@ -17,8 +17,9 @@ call; the `element` widget is a number field that shows the symbol, and the
 `cell` widget takes an orthorhombic `a, b, c` only (pre-filled from the open
 document's cell, else 20 Å) and sends it as a diagonal 3×3 cell;
 a `new_document` tool warns in its form instead of asking for confirmation;
-the §7 record is kept for the session only; and the §9 confirmation,
-destination notice and chat opt-in are not built.
+the §7 record is kept for the session only; the §9 confirmation is asked
+only by the VS Code bridge (the web app connects only to a URL the user typed
+or opened), and the destination notice and chat opt-in are not built.
 :::
 
 Megane Builder is a JavaScript application, while most structure-generation
@@ -420,10 +421,11 @@ works in LLM clients:
 
 Builder runs in the standalone webapp (`/builder.html`) and, embedded, in the
 VS Code extension, the JupyterLab extension and the Jupyter widget
-(`megane.Builder`), but only the webapp shows the *Tools* menu: the embedded
-hosts turn it off (`BuilderHost.tools: false`, `src/builder/host.ts`) until they
-have a bridge (see `docs/docs/platform-support.md`). **What is implemented today
-is the direct path:** the page connects to a Streamable HTTP server itself (the
+(`megane.Builder`). The webapp and VS Code show the *Tools* menu; JupyterLab and
+the Jupyter widget turn it off (`BuilderHost.tools: false`,
+`src/builder/host.ts`) until they have a bridge (see
+`docs/docs/platform-support.md`). **The webapp uses the direct path:** the page
+connects to a Streamable HTTP server itself (the
 *Tools › Tool server…* form takes the server URL, default
 `http://127.0.0.1:8765/mcp`, and bearer token), whether the page came
 from `megane serve`, a local build or the hosted docs. The server has to allow
@@ -431,6 +433,18 @@ the page's origin (`megane-builder-tools --transport http --allow-origin
 <origin>`). stdio servers need a bridge that spawns them; the rows below say
 where each bridge goes, and they are part of this contract so that the
 page-side API does not change when one is added.
+
+**VS Code has the bridge** (`vscode-megane/src/builderTools.ts`): the extension
+host reads the `megane.builder.mcpServers` setting (stdio entries with
+`command` / `args` / `env` / `cwd`, Streamable HTTP entries with `url` /
+`headers`; `${workspaceFolder}` and `${userHome}` are replaced), asks once per
+command line or URL before it first starts or reaches a server, and connects
+with the MCP TypeScript SDK. The Builder page gets a `ToolBridge`
+(`BuilderHost.toolBridge`, `src/builder/tools/bridge.ts`) whose connections
+behave like direct ones, so the Tools menu, forms and apply path are shared.
+Builder tabs share one connection per server; a stdio server is stopped when
+the last tab disconnects or closes. The setting is restricted in untrusted
+workspaces, and an HTTP entry must use HTTPS unless it is on loopback.
 
 A page opened with `#tools=<url>&token=<token>` in its address connects on
 load and removes the fragment from the address bar; a tool server can print
@@ -449,12 +463,13 @@ server bounds each call's time and the number of concurrent calls.
 | --- | --- | --- | --- | --- |
 | Any webapp page (hosted, local build, `megane serve`) — **implemented** | None: the page connects to HTTP servers directly | *Tools › Tool server…*; the URL is remembered in local storage, the token is not | no | CORS permitting |
 | Standalone webapp via `megane serve` (planned) | FastAPI app spawns servers and relays over its WebSocket | `megane serve --mcp-config <file>` | yes | yes |
-| VS Code extension (planned; its Builder tab has no *Tools* menu yet) | Extension host spawns servers and relays through `postMessage` | `megane.builder.mcpServers` setting | yes | yes |
+| VS Code extension — **implemented** | Extension host spawns servers and relays through `postMessage` (`src/builder/tools/bridgeProtocol.ts`) | `megane.builder.mcpServers` setting | yes | yes (HTTPS, or HTTP on loopback) |
 | JupyterLab labextension (planned; its Builder tab has no *Tools* menu yet) | Jupyter server extension spawns servers and relays | `jupyter_server_config` | yes | yes |
 | Jupyter widget | — | — | — | — (`megane.Builder` has no *Tools* menu; `MolecularViewer` does not mount Builder) |
 
-The bridge exposes only `listTools(serverId)`, `callTool(serverId, name,
-arguments)` with progress events, and `cancel(callId)` to the page. It never
+The bridge exposes only the configured servers, `listTools(serverId)`,
+`callTool(serverId, name, arguments)` with progress events, and
+`cancel(callId)` to the page. It never
 forwards arbitrary JSON-RPC, so a page cannot reach resources, prompts or
 sampling. Hosts that get a bridge must be listed in
 `docs/docs/platform-support.md` when this ships (rule #6).
@@ -659,7 +674,9 @@ tool error telling the user to set a cell (in Builder: *Structure › Set cell�
 
 ### 12.4 Server side
 
-With the reference SDK a tool is a typed Python function:
+[Writing a Builder Tool Server](builder-tool-server.md) walks through a
+complete server, from installing the SDK to buttons in the Builder. With the
+reference SDK a tool is a typed Python function:
 
 ```python
 from typing import Annotated, Literal

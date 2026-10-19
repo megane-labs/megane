@@ -171,23 +171,33 @@ declare module "@megane/builder/host" {
   }
 }
 
+declare module "@megane/builder/BuilderStores" {
+  export interface BuilderStores {
+    id: string;
+    builder: { getState(): { closeDocument(): void; [key: string]: any } };
+    libraryUi: unknown;
+    tools: unknown;
+  }
+  export function createBuilderStores(): BuilderStores;
+}
+
 declare module "@megane/builder/mount" {
   import type { BuilderHost } from "@megane/builder/host";
+  import type { BuilderStores } from "@megane/builder/BuilderStores";
   export interface MountedBuilder {
     open(file: File): Promise<boolean>;
     dispose(): void;
   }
-  export function mountBuilder(el: HTMLElement, host?: BuilderHost): MountedBuilder;
+  export function mountBuilder(
+    el: HTMLElement,
+    host?: BuilderHost,
+    stores?: BuilderStores,
+  ): MountedBuilder;
 }
 
 declare module "@megane/builder/open" {
-  export function openStructureFile(file: File): Promise<boolean>;
-}
-
-declare module "@megane/builder/store" {
-  export const useBuilderStore: {
-    getState(): { closeDocument(): void; [key: string]: any };
-  };
+  import type { BuilderStores } from "@megane/builder/BuilderStores";
+  export function openStructureFile(file: File, api?: BuilderStores["builder"]): Promise<boolean>;
 }
 
 declare module "@megane/remote/fileSource" {

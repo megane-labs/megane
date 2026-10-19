@@ -1,10 +1,10 @@
 /**
  * The megane panel in JupyterLab's left sidebar: the way into megane Builder.
  *
- * It holds *Open Builder* (the Builder tab, with whatever it was editing), and
- * the structure files in the file browser's current folder, each opening in
- * the Builder with a click. The same files have *Open in megane Builder* in the
- * file browser's context menu.
+ * It holds *Open Builder* (a new Builder tab), and the structure files in the
+ * file browser's current folder, each opening in a Builder tab with a click.
+ * The same files have *Open in Megane Builder* in the file browser's context
+ * menu.
  */
 
 import { Widget } from "@lumino/widgets";
@@ -27,7 +27,7 @@ export class BuilderSidebar extends Widget {
   constructor(private readonly options: BuilderSidebarOptions) {
     super();
     this.id = BUILDER_SIDEBAR_ID;
-    this.title.caption = "megane Builder";
+    this.title.caption = "Megane Builder";
     this.addClass("megane-builder-sidebar");
     this.node.style.cssText =
       "padding:12px;display:flex;flex-direction:column;gap:10px;overflow:auto;" +
@@ -35,7 +35,7 @@ export class BuilderSidebar extends Widget {
       "background:var(--jp-layout-color1)";
 
     const title = document.createElement("h2");
-    title.textContent = "megane Builder";
+    title.textContent = "Megane Builder";
     title.style.cssText = "margin:0;font-size:var(--jp-ui-font-size2);font-weight:600";
     const about = document.createElement("p");
     about.textContent =
@@ -66,7 +66,7 @@ export class BuilderSidebar extends Widget {
     const folder = this.options.folder();
     this.list.replaceChildren();
     if (!folder) {
-      this.heading.textContent = "Right-click a structure file and choose Open in megane Builder.";
+      this.heading.textContent = "Right-click a structure file and choose Open in Megane Builder.";
       return;
     }
     const files = folder.items
@@ -82,7 +82,7 @@ export class BuilderSidebar extends Widget {
       button.className = "jp-mod-styled";
       button.dataset.testid = "megane-builder-sidebar-file";
       button.dataset.path = file.path;
-      button.title = `Open ${file.path} in megane Builder`;
+      button.title = `Open ${file.path} in Megane Builder`;
       button.textContent = file.name;
       button.style.cssText =
         "width:100%;text-align:left;background:none;border:none;padding:4px 6px;" +

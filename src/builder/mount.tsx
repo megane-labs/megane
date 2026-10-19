@@ -6,12 +6,12 @@
  * their host gives them, with a `BuilderHost` that says how Save delivers a
  * file there (see `host.ts`).
  *
- * The Builder's document lives in a module-level store (`useBuilderStore`), so
- * a page holds one Builder document: two Builders mounted on the same page
- * would edit the same structure. Each host therefore keeps one mounted per
- * copy of the bundle (VS Code gives every panel a page of its own; JupyterLab
- * reveals its one Builder tab; anywidget loads the bundle once per `Builder`
- * object, and the newest output of an object takes its document).
+ * A Builder mounted with a `BuilderStores` bundle edits that bundle's
+ * document, so several can share a page (JupyterLab opens a tab per Builder,
+ * each with `createBuilderStores()`). Without one it edits the page-wide
+ * document (`useBuilderStore`): `builder.html` and the VS Code webview hold
+ * one Builder per page, and anywidget loads the bundle once per `Builder`
+ * object, whose newest output takes its document.
  */
 
 import { StrictMode } from "react";
@@ -19,6 +19,7 @@ import { createRoot } from "react-dom/client";
 import { ErrorBoundary } from "../components/ErrorBoundary";
 import { ThemeSync } from "../components/ThemeSync";
 import { BuilderApp } from "./BuilderApp";
+import { BuilderProvider, type BuilderStores } from "./BuilderStores";
 import { WEB_HOST, type BuilderHost } from "./host";
 import { openStructureFile } from "./open";
 
@@ -29,20 +30,25 @@ export interface MountedBuilder {
   dispose(): void;
 }
 
-/** Render the Builder into `el`, which it fills. */
-export function mountBuilder(el: HTMLElement, host: BuilderHost = WEB_HOST): MountedBuilder {
+/** Render the Builder into `el`, which it fills, editing `stores`' document when given. */
+export function mountBuilder(
+  el: HTMLElement,
+  host: BuilderHost = WEB_HOST,
+  stores?: BuilderStores,
+): MountedBuilder {
   const root = createRoot(el);
+  const app = <BuilderApp host={host} />;
   root.render(
     <StrictMode>
       <ErrorBoundary context="builder">
         <ThemeSync />
-        <BuilderApp host={host} />
+        {stores ? <BuilderProvider stores={stores}>{app}</BuilderProvider> : app}
       </ErrorBoundary>
     </StrictMode>,
   );
   let disposed = false;
   return {
-    open: (file) => openStructureFile(file),
+    open: (file) => openStructureFile(file, stores?.builder),
     dispose: () => {
       if (disposed) return;
       disposed = true;

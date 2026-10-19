@@ -183,6 +183,8 @@ export function useBuilderShortcuts(
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.defaultPrevented || e.repeat) return;
+      // A drag in the view owns the keys (axis locks, Esc); see useBuilderHandlers.
+      if (api.getState().drag) return;
       if (scope && !inScope(e.target, scope.current)) return;
       if (isTypingTarget(e.target)) return;
       // A modal dialog (the Ketcher sketcher) owns the keyboard; the forms in

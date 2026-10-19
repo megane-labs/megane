@@ -235,6 +235,7 @@ import {
   MeganeEditorProvider,
   builderSaveBase,
   getBuilderHtml,
+  MeganeBuilderPanels,
   BUILDER_EXTENSIONS,
   BUILDER_FILENAME_PREFIXES,
   PIPELINE_COMPANION_FILE_PARAMS,
@@ -351,8 +352,8 @@ describe("activate / deactivate", () => {
     const ctx = makeContext();
     activate(ctx as unknown as Parameters<typeof activate>[0]);
 
-    // 2 editor providers + seekFrame + the Builder view + 3 Builder commands.
-    expect(ctx.subscriptions).toHaveLength(7);
+    // 2 editor providers + seekFrame + the Builder's tool servers + the Builder view + 3 Builder commands.
+    expect(ctx.subscriptions).toHaveLength(8);
     for (const sub of ctx.subscriptions) {
       expect(typeof sub.dispose).toBe("function");
     }
@@ -1352,7 +1353,7 @@ describe("MeganeEditorProvider.seekFrame", () => {
   });
 });
 
-describe("megane Builder", () => {
+describe("Megane Builder", () => {
   function command(name: string) {
     const cmd = mockState.registeredCommands.find((c) => c.command === name);
     if (!cmd) throw new Error(`command not registered: ${name}`);
@@ -1384,7 +1385,7 @@ describe("megane Builder", () => {
     expect(mockState.createdPanels).toHaveLength(1);
     const created = mockState.createdPanels[0];
     expect(created.viewType).toBe("megane.builder");
-    expect(created.title).toBe("megane Builder");
+    expect(created.title).toBe("Megane Builder");
     expect(created.options.enableScripts).toBe(true);
     expect(created.options.retainContextWhenHidden).toBe(true);
     expect(created.options.localResourceRoots!.map((u) => u.path)).toEqual(["/ext/media"]);
@@ -1395,6 +1396,36 @@ describe("megane Builder", () => {
     );
   });
 
+  it("routes a tab's tool requests to its own bridge and disposes it with the tab", async () => {
+    const bridges: { handle: ReturnType<typeof vi.fn>; dispose: ReturnType<typeof vi.fn> }[] = [];
+    const tools = {
+      bridgeFor: vi.fn(() => {
+        const bridge = {
+          handle: vi.fn((m: { type?: string }) => m.type?.startsWith("tools:") ?? false),
+          dispose: vi.fn(),
+        };
+        bridges.push(bridge);
+        return bridge;
+      }),
+      dispose: vi.fn(),
+    };
+    const panels = new MeganeBuilderPanels(
+      makeContext("/ext") as unknown as ConstructorParameters<typeof MeganeBuilderPanels>[0],
+      tools as unknown as ConstructorParameters<typeof MeganeBuilderPanels>[1],
+    );
+    panels.open();
+    const { panel } = mockState.createdPanels[mockState.createdPanels.length - 1];
+    expect(tools.bridgeFor).toHaveBeenCalledWith(panel.webview);
+    await panel.fireMessage({ type: "tools:servers", requestId: 1 });
+    expect(bridges[0].handle).toHaveBeenCalledWith({ type: "tools:servers", requestId: 1 });
+    // Other messages still reach the tab's own handling.
+    await panel.fireMessage({ type: "ready" });
+    expect(bridges[0].handle).toHaveBeenCalledTimes(2);
+    expect(panel.webview.postMessage).not.toHaveBeenCalled();
+    panel.fireDispose();
+    expect(bridges[0].dispose).toHaveBeenCalled();
+  });
+
   it("an empty Builder posts nothing when ready", async () => {
     command("megane.builder.new")();
     const { panel } = mockState.createdPanels[0];
@@ -1402,7 +1433,7 @@ describe("megane Builder", () => {
     expect(panel.webview.postMessage).not.toHaveBeenCalled();
   });
 
-  it("Open in megane Builder sends the file's bytes once the webview is ready", async () => {
+  it("Open in Megane Builder sends the file's bytes once the webview is ready", async () => {
     mockState.readFile.mockResolvedValue(new Uint8Array([1, 2, 3]));
     await command("megane.builder.openFile")(VscodeUri.file("/work/caffeine.sdf"));
     const { title, panel } = mockState.createdPanels[0];
@@ -1434,7 +1465,7 @@ describe("megane Builder", () => {
     await command("megane.builder.openFile")(VscodeUri.file("/work/locked.pdb"));
     await mockState.createdPanels[0].panel.fireMessage({ type: "ready" });
     expect(mockState.showErrorMessage).toHaveBeenCalledWith(
-      "megane Builder could not read locked.pdb: EACCES",
+      "Megane Builder could not read locked.pdb: EACCES",
     );
   });
 
@@ -1519,7 +1550,7 @@ describe("megane Builder", () => {
   });
 });
 
-describe("megane Builder manifest", () => {
+describe("Megane Builder manifest", () => {
   const manifest = JSON.parse(
     readFileSync(resolve(__dirname, "../../../vscode-megane/package.json"), "utf8"),
   ) as {

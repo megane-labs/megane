@@ -44,9 +44,11 @@ vi.mock("@/parsers/structure", () => ({ parseStructureFile }));
 
 import { BuilderApp } from "@/builder/BuilderApp";
 import { useBuilderStore } from "@/builder/store";
+import { useToolsStore } from "@/builder/tools/store";
 import { hostHasTools, WEB_HOST, type BuilderHost } from "@/builder/host";
 import { inScope } from "@/builder/shortcuts";
 import { mountBuilder } from "@/builder/mount";
+import { createBuilderStores } from "@/builder/BuilderStores";
 import { openStructureFile } from "@/builder/open";
 import KetcherUnavailable, { KETCHER_UNAVAILABLE } from "@/builder/library/KetcherUnavailable";
 import type { Snapshot } from "@/types";
@@ -161,6 +163,24 @@ describe("BuilderApp in a host", () => {
     expect(screen.getByTestId("builder-structure")).toBeTruthy();
   });
 
+  it("a tool bridge lists the host's servers in the Tools menu and skips the launch link", async () => {
+    window.history.replaceState(null, "", "/builder.html#tools=http%3A%2F%2Fh%3A1%2Fmcp&token=t");
+    const bridge = {
+      configHint: "the setting",
+      listServers: vi.fn(async () => [{ id: "lab", kind: "stdio" as const, description: "lab" }]),
+      connect: vi.fn(),
+    };
+    render(<BuilderApp host={{ toolBridge: bridge }} />);
+    await waitFor(() => expect(useToolsStore.getState().servers?.length).toBe(1));
+    fireEvent.click(screen.getByTestId("builder-tools"));
+    expect(screen.getByTestId("builder-tools-connect-lab").textContent).toBe("Connect to lab");
+    // The launch link is for a page that connects itself; it is left alone.
+    expect(window.location.hash).toContain("tools=");
+    expect(useToolsStore.getState().url).toBe("lab");
+    window.history.replaceState(null, "", "/");
+    useToolsStore.setState(useToolsStore.getInitialState(), true);
+  });
+
   it("scoped shortcuts act only while the focus is inside the Builder", () => {
     useBuilderStore.getState().openStructure(water(), null, "water.xyz");
     const outside = document.createElement("button");
@@ -231,6 +251,31 @@ describe("mountBuilder", () => {
     expect(el.querySelector('[data-testid="megane-builder"]')).toBeNull();
     act(() => mounted.dispose());
     el.remove();
+  });
+
+  it("Builders mounted with stores of their own edit separate documents on one page", async () => {
+    const els = [document.createElement("div"), document.createElement("div")];
+    els.forEach((el) => document.body.appendChild(el));
+    const stores = [createBuilderStores(), createBuilderStores()];
+    let mounted!: ReturnType<typeof mountBuilder>[];
+    act(() => {
+      mounted = els.map((el, i) => mountBuilder(el, { tools: false }, stores[i]));
+    });
+    const atoms = (el: HTMLElement) =>
+      el.querySelector('[data-testid="megane-builder"]')!.getAttribute("data-atom-count");
+
+    parseStructureFile.mockResolvedValue(parsedWater());
+    await act(async () => {
+      expect(await mounted[0].open(new File(["x"], "water.pdb"))).toBe(true);
+    });
+    expect(atoms(els[0])).toBe("3");
+    expect(atoms(els[1])).toBe("0");
+    expect(stores[0].builder.getState().fileName).toBe("water.pdb");
+    expect(stores[1].builder.getState().fileName).toBeNull();
+    expect(useBuilderStore.getState().fileName).toBeNull();
+
+    act(() => mounted.forEach((m) => m.dispose()));
+    els.forEach((el) => el.remove());
   });
 });
 

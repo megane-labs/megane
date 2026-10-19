@@ -1,12 +1,12 @@
 /**
  * The selection, in the Details panel: the selected atoms — each atom and its position, the distance, angle or
  * dihedral they span (2, 3 or 4 atoms, in the order they were picked), which
- * can be typed in to move the last atom's side — and offers what can be done
- * with them.
+ * can be typed in to move the last atom's side, a Transform form that moves
+ * or turns them by numbers — and offers what can be done with them.
  */
 
 import { useEffect, useState } from "react";
-import { useBuilderStore, canEdit, shownSnapshot } from "./store";
+import { canEdit, shownSnapshot } from "./store";
 import { buttonStyle, hintStyle, inputStyle, monoStyle, rowStyle, sectionStyle } from "./styles";
 import { getElementSymbol } from "../constants";
 import { computeMeasurement } from "../renderer/Selection";
@@ -16,6 +16,14 @@ import type { EditAtomRef } from "../pipeline/types";
 import type { Measurement, Snapshot } from "../types";
 import { setAngle, setDihedral, setDistance } from "./geometry";
 import { runCleanup } from "./cleanup";
+import { useBuilderStoreApi, useScopedBuilderStore } from "./BuilderStores";
+import {
+  AXIS_KEYS,
+  axisVector,
+  rotateDisplacements,
+  translateDisplacements,
+  type AxisKey,
+} from "./manipulate";
 
 /** Selected atoms listed one per row; the rest are counted. */
 export const MAX_ATOM_ROWS = 6;
@@ -35,7 +43,7 @@ const titleStyle: React.CSSProperties = {
  * nothing: the structure's own summary is the info line over the view.
  */
 export function Inspector() {
-  const hasSelection = useBuilderStore((s) => s.selected.length > 0);
+  const hasSelection = useScopedBuilderStore((s) => s.selected.length > 0);
   return hasSelection ? <SelectionInspector /> : null;
 }
 
@@ -45,14 +53,15 @@ function position(shown: Snapshot, i: number): string {
 }
 
 function SelectionInspector() {
-  const source = useBuilderStore((s) => s.source);
-  const result = useBuilderStore((s) => s.result);
-  const showOriginal = useBuilderStore((s) => s.showOriginal);
-  const selected = useBuilderStore((s) => s.selected);
-  const element = useBuilderStore((s) => s.element);
-  const setElement = useBuilderStore((s) => s.setElement);
-  const clearSelected = useBuilderStore((s) => s.clearSelected);
-  const pushOp = useBuilderStore((s) => s.pushOp);
+  const api = useBuilderStoreApi();
+  const source = useScopedBuilderStore((s) => s.source);
+  const result = useScopedBuilderStore((s) => s.result);
+  const showOriginal = useScopedBuilderStore((s) => s.showOriginal);
+  const selected = useScopedBuilderStore((s) => s.selected);
+  const element = useScopedBuilderStore((s) => s.element);
+  const setElement = useScopedBuilderStore((s) => s.setElement);
+  const clearSelected = useScopedBuilderStore((s) => s.clearSelected);
+  const pushOp = useScopedBuilderStore((s) => s.pushOp);
   const { saveSelection } = useLibraryActions();
 
   const shown = shownSnapshot({ source, result, showOriginal });
@@ -156,6 +165,10 @@ function SelectionInspector() {
         )
       )}
 
+      {shown && atoms.length > 0 && (
+        <TransformEditor shown={shown} atoms={atoms} editable={editable} />
+      )}
+
       <div style={{ ...rowStyle, flexWrap: "nowrap" }}>
         <span style={{ ...hintStyle, flex: 1 }}>Change element to</span>
         <select
@@ -197,7 +210,7 @@ function SelectionInspector() {
           data-testid="builder-selection-cleanup"
           style={buttonStyle("default", !editable)}
           disabled={!editable}
-          onClick={() => void runCleanup(useBuilderStore)}
+          onClick={() => void runCleanup(api)}
           title="Re-embed the selected molecules with RDKit (ETKDG + MMFF94s) and put them back in place"
         >
           Clean up
@@ -230,8 +243,8 @@ function MeasureEditor({
   shown: Snapshot;
   editable: boolean;
 }) {
-  const moveAtoms = useBuilderStore((s) => s.moveAtoms);
-  const reportError = useBuilderStore((s) => s.reportError);
+  const moveAtoms = useScopedBuilderStore((s) => s.moveAtoms);
+  const reportError = useScopedBuilderStore((s) => s.reportError);
   const unit = measure.type === "distance" ? "Å" : "°";
   const digits = measure.type === "distance" ? 3 : 1;
   const [draft, setDraft] = useState(measure.value.toFixed(digits));
@@ -290,6 +303,131 @@ function MeasureEditor({
           title="Moves the last picked atom's side of the structure"
         >
           Set
+        </button>
+      </form>
+    </div>
+  );
+}
+
+/** A typed number, or NaN for an empty field (Number("") would read as 0). */
+function parseField(text: string): number {
+  return text.trim() === "" ? NaN : Number(text);
+}
+
+/**
+ * Move the selection by a typed displacement, or turn it by a typed angle
+ * about an axis (x / y / z, or the cell's a / b / c) through its centre. Each
+ * is one Undo step.
+ */
+function TransformEditor({
+  shown,
+  atoms,
+  editable,
+}: {
+  shown: Snapshot;
+  atoms: number[];
+  editable: boolean;
+}) {
+  const moveAtoms = useScopedBuilderStore((s) => s.moveAtoms);
+  const reportError = useScopedBuilderStore((s) => s.reportError);
+  const [delta, setDelta] = useState(["0", "0", "0"]);
+  const [angle, setAngleText] = useState("90");
+  const [axis, setAxis] = useState<AxisKey>("z");
+  const axes = AXIS_KEYS.filter((k) => axisVector(k, shown.box) !== null);
+
+  const move = () => {
+    const d = delta.map(parseField) as [number, number, number];
+    if (!d.every(Number.isFinite)) {
+      reportError("Move by needs three numbers of Å.");
+      return;
+    }
+    moveAtoms(translateDisplacements(atoms, d));
+  };
+  const rotate = () => {
+    const deg = parseField(angle);
+    const vector = axisVector(axis, shown.box);
+    if (!Number.isFinite(deg) || !vector) {
+      reportError("Rotate needs a number of degrees.");
+      return;
+    }
+    moveAtoms(rotateDisplacements(shown.positions, atoms, vector, deg));
+  };
+
+  return (
+    <div
+      data-testid="builder-transform"
+      style={{ display: "flex", flexDirection: "column", gap: 6 }}
+    >
+      <div style={hintStyle}>Transform</div>
+      <form
+        style={{ ...rowStyle, flexWrap: "nowrap" }}
+        onSubmit={(e) => {
+          e.preventDefault();
+          if (editable) move();
+        }}
+      >
+        <span style={{ ...hintStyle, width: 52 }}>Move by</span>
+        {(["x", "y", "z"] as const).map((c, k) => (
+          <input
+            key={c}
+            data-testid={`builder-transform-d${c}`}
+            aria-label={`Move by ${c} in Å`}
+            type="number"
+            step={0.1}
+            value={delta[k]}
+            onChange={(e) => setDelta(delta.map((v, j) => (j === k ? e.target.value : v)))}
+            style={{ ...inputStyle, width: 54, minWidth: 0 }}
+          />
+        ))}
+        <span style={hintStyle}>Å</span>
+        <button
+          type="submit"
+          data-testid="builder-transform-move"
+          style={buttonStyle("default", !editable)}
+          disabled={!editable}
+        >
+          Move
+        </button>
+      </form>
+      <form
+        style={{ ...rowStyle, flexWrap: "nowrap" }}
+        onSubmit={(e) => {
+          e.preventDefault();
+          if (editable) rotate();
+        }}
+      >
+        <span style={{ ...hintStyle, width: 52 }}>Rotate</span>
+        <input
+          data-testid="builder-transform-angle"
+          aria-label="Rotate by degrees"
+          type="number"
+          step={15}
+          value={angle}
+          onChange={(e) => setAngleText(e.target.value)}
+          style={{ ...inputStyle, width: 64, minWidth: 0 }}
+        />
+        <span style={hintStyle}>° about</span>
+        <select
+          data-testid="builder-transform-axis"
+          aria-label="Rotation axis"
+          value={axes.includes(axis) ? axis : "z"}
+          onChange={(e) => setAxis(e.target.value as AxisKey)}
+          style={inputStyle}
+        >
+          {axes.map((k) => (
+            <option key={k} value={k}>
+              {k}
+            </option>
+          ))}
+        </select>
+        <button
+          type="submit"
+          data-testid="builder-transform-rotate"
+          style={buttonStyle("default", !editable)}
+          disabled={!editable}
+          title="Turns the selection about the axis through its centre"
+        >
+          Rotate
         </button>
       </form>
     </div>

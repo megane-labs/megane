@@ -738,7 +738,7 @@ function PipelineEditorInner({
         try {
           const parsed = JSON.parse(reader.result as string);
           if (parsed.version !== 3) {
-            throw new Error("Not a valid megane pipeline JSON (version 3 required)");
+            throw new Error("Not a valid Megane pipeline JSON (version 3 required)");
           }
           deserialize(parsed);
           window.requestAnimationFrame(() => {

@@ -96,7 +96,7 @@ export const NODE_CATALOG: Record<PipelineNodeType, NodeCatalogEntry> = {
         tsType: "EditOp[]",
         default: "[]",
         doc:
-          "Structure edits replayed on the file as loaded, in order — megane Builder's history format " +
+          "Structure edits replayed on the file as loaded, in order — Megane Builder's history format " +
           "(add / delete / move atoms, change elements, add / delete bonds, place a fragment, set " +
           "the cell, and the crystal ops: supercell, slab, expand_symmetry, wrap, center). Atom refs " +
           "are indices into the file's atoms (numbers) or ids of atoms created by an earlier " +
