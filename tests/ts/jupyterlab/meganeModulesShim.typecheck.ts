@@ -25,6 +25,14 @@ import type {
   SelectionState as ShimSelection,
   Measurement as ShimMeasurement,
 } from "@megane/types";
+import type { decodeBase64 as realDecodeBase64 } from "@/utils/base64";
+import type { decodeBase64 as shimDecodeBase64 } from "@megane/utils/base64";
+import type { fileFromBytes as realFileFromBytes } from "@/parsers/fileBytes";
+import type { fileFromBytes as shimFileFromBytes } from "@megane/parsers/fileBytes";
+import type { prewarmParseWorker as realPrewarm } from "@/parsers/structure";
+import type { prewarmParseWorker as shimPrewarm } from "@megane/parsers/structure";
+import type { perfMark as realPerfMark } from "@/perf";
+import type { perfMark as shimPerfMark } from "@megane/perf";
 
 type Assert<T extends true> = T;
 type Equal<A, B> =
@@ -58,4 +66,9 @@ export type MeganeModulesShimChecks = [
   // shim lists is missing from it.
   Assert<Assignable<RealLocalState, ShimLocalState>>,
   Assert<NoExtraKeys<ShimLocalState, RealLocalState>>,
+  // Helpers the DocWidgets call to read and parse a document fast.
+  Assert<Equal<typeof shimDecodeBase64, typeof realDecodeBase64>>,
+  Assert<Equal<typeof shimFileFromBytes, typeof realFileFromBytes>>,
+  Assert<Equal<typeof shimPrewarm, typeof realPrewarm>>,
+  Assert<Equal<typeof shimPerfMark, typeof realPerfMark>>,
 ];

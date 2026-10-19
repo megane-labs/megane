@@ -686,6 +686,12 @@ export function getBuilderHtml(webview: vscode.Webview, mediaDir: vscode.Uri): s
 </html>`;
 }
 
+/**
+ * The viewer webview's page. Files are parsed in a Web Worker served from the
+ * extension's resource origin and started from a blob: bootstrap that imports
+ * it (`installCrossOriginWorker` in webview/main.tsx), so `script-src` and
+ * `worker-src` list that origin besides the nonce'd entry.
+ */
 function getHtmlForWebview(webview: vscode.Webview, mediaDir: vscode.Uri): string {
   const scriptUri = webview.asWebviewUri(vscode.Uri.joinPath(mediaDir, "webview.js"));
   const wasmUri = webview.asWebviewUri(vscode.Uri.joinPath(mediaDir, "megane_wasm_bg.wasm"));
@@ -704,12 +710,12 @@ function getHtmlForWebview(webview: vscode.Webview, mediaDir: vscode.Uri): strin
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <meta http-equiv="Content-Security-Policy"
     content="default-src 'none';
-             script-src 'nonce-${nonce}' 'wasm-unsafe-eval' blob:;
+             script-src 'nonce-${nonce}' ${webview.cspSource} 'wasm-unsafe-eval' blob:;
              style-src ${webview.cspSource} 'unsafe-inline';
              img-src ${webview.cspSource} data: blob:;
              font-src ${webview.cspSource};
              connect-src ${webview.cspSource} blob: data:;
-             worker-src blob:;" />
+             worker-src blob: ${webview.cspSource};" />
   <link rel="stylesheet" href="${cssUri}" />
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }

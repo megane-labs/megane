@@ -31,7 +31,18 @@ import { ErrorBoundary } from "../../src/components/ErrorBoundary";
 import { setRemoteFileSource } from "../../src/remote/fileSource";
 import { createMessageFileSource } from "../../src/remote/messageFiles";
 import { classifyStandaloneFile } from "../../src/hosts/classifyStandaloneFile";
+import { fileFromBytes } from "../../src/parsers/fileBytes";
+import { installCrossOriginWorker } from "../../src/utils/crossOriginWorker";
+import { perfMark } from "../../src/perf";
+import { prewarmParseWorker } from "../../src/parsers/structure";
 import "../../src/styles/megane.css";
+
+// The parse worker is served from the extension's resource origin, which
+// `new Worker` refuses from the webview's own origin.
+installCrossOriginWorker();
+// Compile the parser's WASM in its worker while the extension host is still
+// posting the document's bytes.
+prewarmParseWorker();
 
 // Acquire VS Code API
 const vscode = acquireVsCodeApi();
@@ -85,14 +96,15 @@ function App() {
       const message = event.data;
 
       if (message.type === "loadFile") {
+        perfMark("megane:open:start");
         const { contentBytes, filename, topBytes, topFilename } = message;
         // contentBytes / topBytes arrive as ArrayBuffers (structured clone).
         // The WASM URL is provided by the HTML (window.__MEGANE_WASM_URL__).
         const bytes = new Uint8Array(contentBytes as ArrayBuffer);
-        const file = new File([bytes], filename);
+        const file = fileFromBytes(bytes, filename);
         const topFile: File | undefined =
           topBytes && topFilename
-            ? new File([new Uint8Array(topBytes as ArrayBuffer)], topFilename as string)
+            ? fileFromBytes(new Uint8Array(topBytes as ArrayBuffer), topFilename as string)
             : undefined;
         // Spectra and volumetric grids have nothing to render standalone, and
         // trajectory-only formats (XTC, DCD, NetCDF) need a topology loaded
@@ -109,7 +121,10 @@ function App() {
             ? local.loadXtc(file)
             : local.loadFile(file, topFile);
         loadPromise
-          .then(() => setLoaded(true))
+          .then(() => {
+            perfMark("megane:open:loaded");
+            setLoaded(true);
+          })
           .catch((err) => {
             console.error("Failed to load file:", err);
             const base = err instanceof Error ? err.message : String(err);
@@ -136,6 +151,7 @@ function App() {
         };
         // The WASM URL is provided by the HTML (window.__MEGANE_WASM_URL__).
 
+        perfMark("megane:open:start");
         (async () => {
           // Companions arrive as raw bytes (ArrayBuffers, structured clone) so
           // binary formats such as ASE .traj survive; the shared parsers pick
@@ -149,6 +165,7 @@ function App() {
             type: "application/json",
           });
           await usePipelineStore.getState().openFile(meganeFile, { companions });
+          perfMark("megane:open:pipeline");
 
           // Populate useMeganeLocal so MeganeViewer props (atom selection,
           // measurements) keep working in pipeline mode. applyResult re-runs
@@ -159,6 +176,7 @@ function App() {
           if (firstStructure >= 0) {
             await local.loadFile(companions[firstStructure]);
           }
+          perfMark("megane:open:loaded");
 
           setLoaded(true);
         })().catch((err) => {
@@ -173,6 +191,7 @@ function App() {
     window.addEventListener("message", handler);
 
     // Signal to the extension host that the webview is ready
+    perfMark("megane:webview:ready");
     vscode.postMessage({ type: "ready" });
 
     return () => window.removeEventListener("message", handler);

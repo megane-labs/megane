@@ -86,4 +86,8 @@ describe("parseClient falls back to the synchronous path when no Worker exists",
     expect(await client.decodeTrajectoryFrame0(file("t.xtc"), "xtc", 4)).toBeNull();
     expect(client.shouldUseLazyTrajectory("xtc", 1024 * 1024 * 1024)).toBe(false);
   });
+
+  it("prewarmParseWorker is a no-op without a worker", () => {
+    expect(() => client.prewarmParseWorker()).not.toThrow();
+  });
 });

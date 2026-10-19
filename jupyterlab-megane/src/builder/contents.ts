@@ -6,6 +6,7 @@
 
 import type { Contents } from "@jupyterlab/services";
 import type { BuilderSaveRequest } from "@megane/builder/host";
+import { decodeBase64 } from "@megane/utils/base64";
 
 /**
  * File extensions the file browser offers to open in the Builder: the
@@ -68,10 +69,7 @@ export async function readContentsFile(
   path: string,
 ): Promise<File> {
   const model = await contents.get(path, { type: "file", format: "base64", content: true });
-  const raw = atob(String(model.content ?? "").replace(/\s/g, ""));
-  const bytes = new Uint8Array(raw.length);
-  for (let i = 0; i < raw.length; i++) bytes[i] = raw.charCodeAt(i);
-  return new File([bytes], basename(path));
+  return new File([decodeBase64(String(model.content ?? ""))], basename(path));
 }
 
 /** The questions Save asks: where to write, and whether to replace an existing file. */

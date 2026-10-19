@@ -8,6 +8,7 @@ import { usePipelineStore } from "@megane/pipeline/store";
 import { capturePipelineStore, type PipelineStoreSnapshot } from "@megane/pipeline/storeSnapshot";
 import { useTour } from "@megane/tour/useTour";
 import "@megane/styles/megane.css";
+import { prewarmParseWorker } from "@megane/parsers/structure";
 import { ensureWasmUrl } from "./wasmLoader";
 import {
   basename,
@@ -38,6 +39,9 @@ function DocBody({ context, contents, subscribeActivation }: DocBodyProps): JSX.
     async (token: { cancelled: boolean }) => {
       try {
         await ensureWasmUrl();
+        // Compile the parser's WASM in its worker while the pipeline file and
+        // its companions are still being fetched.
+        prewarmParseWorker();
         await context.ready;
         if (token.cancelled) return;
 

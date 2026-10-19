@@ -13,6 +13,7 @@ export { parseStructureFile, parseStructureText } from "./parseClient";
 export {
   indexStructureLazy,
   parseStructurePrefix,
+  prewarmParseWorker,
   shouldUseLazyStructure,
   type StructureLazyHandle,
   type StructureLazyResult,

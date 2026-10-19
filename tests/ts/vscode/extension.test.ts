@@ -557,6 +557,23 @@ describe("MeganeEditorProvider — structureViewer", () => {
     expect(nonceMatch![1]).toHaveLength(32);
   });
 
+  it("admits the parse worker, served from the resource origin through a blob: bootstrap", async () => {
+    const provider = getProvider("megane.structureViewer");
+    mockState.readFile.mockResolvedValue(new Uint8Array());
+
+    const doc = { uri: VscodeUri.file("/work/sample.pdb"), dispose: vi.fn() };
+    const { panel } = makeWebviewPanel();
+    await provider.resolveCustomEditor(doc, panel, {});
+
+    const html = panel.webview.html;
+    expect(html).toMatch(
+      /script-src 'nonce-[A-Za-z0-9]{32}' vscode-webview:\/\/test 'wasm-unsafe-eval' blob:;/,
+    );
+    expect(html).toContain("worker-src blob: vscode-webview://test;");
+    // Unlike the Builder's page, the viewer never needs eval.
+    expect(html).not.toContain("'unsafe-eval'");
+  });
+
   it("emits __MEGANE_TEST__ when MEGANE_E2E_MODE=1 is set on the extension host", async () => {
     process.env.MEGANE_E2E_MODE = "1";
     const provider = getProvider("megane.structureViewer");

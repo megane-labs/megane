@@ -103,6 +103,17 @@ export interface DecodeFrameRequest {
   frame: number;
 }
 
+/**
+ * Request: start the worker's WASM module and do nothing else, so a host that
+ * is still waiting for a file's bytes has the module compiled by the time they
+ * arrive (see `prewarmParseWorker`).
+ */
+export interface InitRequest {
+  id: number;
+  op: "init";
+  wasmUrl: string | undefined;
+}
+
 /** Request: free a lazy XTC decoder and its retained bytes. */
 export interface DisposeTrajectoryRequest {
   id: number;
@@ -118,7 +129,8 @@ export type ParseRequest =
   | IndexStructureRequest
   | IndexTrajectoryRequest
   | DecodeFrameRequest
-  | DisposeTrajectoryRequest;
+  | DisposeTrajectoryRequest
+  | InitRequest;
 
 /** Response payload for a `decodeFrame` request: one frame's positions (+ vectors). */
 export interface DecodeFrameResult {
@@ -141,7 +153,8 @@ export interface ParseResponse {
     | "indexStructure"
     | "indexTrajectory"
     | "decodeFrame"
-    | "disposeTrajectory";
+    | "disposeTrajectory"
+    | "init";
   result?:
     | StructureParseResult
     | XTCParseResult

@@ -11,6 +11,10 @@ import { useTour } from "@megane/tour/useTour";
 import { ThemeSync } from "@megane/components/ThemeSync";
 import { usePlaybackStore } from "@megane/stores/usePlaybackStore";
 import "@megane/styles/megane.css";
+import { decodeBase64 } from "@megane/utils/base64";
+import { fileFromBytes } from "@megane/parsers/fileBytes";
+import { perfMark } from "@megane/perf";
+import { prewarmParseWorker } from "@megane/parsers/structure";
 import { ensureWasmUrl } from "./wasmLoader";
 import { STRUCTURE_FILETYPES_BINARY } from "./filetypes";
 import { classifyStandaloneFile, siblingTopologyName } from "@megane/hosts/classifyStandaloneFile";
@@ -60,8 +64,13 @@ function DocBody({
   const parseAndLoad = useCallback(
     async (token: { cancelled: boolean }) => {
       try {
+        perfMark("megane:open:start");
         await ensureWasmUrl();
+        // Compile the parser's WASM in its worker while the Contents request
+        // for the document is still in flight.
+        prewarmParseWorker();
         await context.ready;
+        perfMark("megane:open:contextReady");
         if (token.cancelled) return;
         // Reset the global pipeline store before loading. The same
         // singleton store is shared across every JupyterLab document
@@ -82,10 +91,9 @@ function DocBody({
         const dot = filename.lastIndexOf(".");
         const ext = dot >= 0 ? filename.slice(dot).toLowerCase() : "";
         const isBase64 = context.contentsModel?.format === "base64" || BINARY_EXTENSIONS.has(ext);
-        const bytes = isBase64
-          ? Uint8Array.from(atob(raw), (c) => c.charCodeAt(0))
-          : new TextEncoder().encode(raw);
-        const file = new File([bytes], filename);
+        const bytes = isBase64 ? decodeBase64(raw) : new TextEncoder().encode(raw);
+        const file = fileFromBytes(bytes, filename);
+        perfMark("megane:open:decoded");
         // Spectra and volumetric grids have nothing to render standalone, and
         // trajectory-only formats (XTC, DCD, NetCDF) need a topology loaded
         // first; the shared classifier (also used by the VSCode webview)
@@ -125,6 +133,7 @@ function DocBody({
           }
           await local.loadFile(file, topFile);
         }
+        perfMark("megane:open:loaded");
         if (token.cancelled) return;
         cachedRef.current = capturePipelineStore(usePipelineStore.getState());
         setState("ready");

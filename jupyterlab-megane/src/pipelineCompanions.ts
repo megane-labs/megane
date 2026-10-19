@@ -9,6 +9,8 @@
 
 import type { Contents } from "@jupyterlab/services";
 import { companionFileName } from "@megane/pipeline/companionFiles";
+import { decodeBase64 } from "@megane/utils/base64";
+import { fileFromBytes } from "@megane/parsers/fileBytes";
 
 export interface MinimalSerializedPipeline {
   version?: number;
@@ -73,9 +75,8 @@ export async function fetchCompanion(
 ): Promise<File | null> {
   try {
     const model = await contents.get(path, { content: true, format: "base64" });
-    const raw = String(model.content ?? "");
-    const bytes = Uint8Array.from(atob(raw), (c) => c.charCodeAt(0));
-    return new File([bytes], basename(path));
+    const bytes = decodeBase64(String(model.content ?? ""));
+    return fileFromBytes(bytes, basename(path));
   } catch {
     return null;
   }
