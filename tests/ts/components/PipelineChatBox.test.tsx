@@ -1,16 +1,25 @@
 import { describe, it, expect, vi, afterEach, beforeEach } from "vitest";
 import { render, screen, fireEvent, cleanup, waitFor } from "@testing-library/react";
 
-type LoaderNode = { id: string; type?: string; data: { params: Record<string, unknown> } };
+type StoreNode = {
+  id: string;
+  type?: string;
+  selected?: boolean;
+  data: { params: Record<string, unknown> };
+};
 
 const { storeState } = vi.hoisted(() => ({
   storeState: {
-    nodes: [] as LoaderNode[],
+    nodes: [] as StoreNode[],
     nodeSnapshots: {} as Record<string, unknown>,
-    deserialize: vi.fn(),
-    autoLayout: vi.fn(),
-    setNodeSnapshot: vi.fn(),
-    updateNodeParams: vi.fn(),
+    snapshot: null,
+    atomLabels: null,
+    structureFrames: null,
+    structureMeta: null,
+    generatedUndoStack: [] as { id: number }[],
+    serialize: vi.fn(),
+    applyGeneratedPipeline: vi.fn(),
+    undoGeneratedPipeline: vi.fn(),
   },
 }));
 
@@ -56,21 +65,11 @@ vi.mock("@/pipeline/store", () => {
   });
   return { usePipelineStore, createPipelineStore: () => usePipelineStore };
 });
-vi.mock("@/stores/usePipelineUIStore", () => {
-  const uiState = { markPipelineApplied: vi.fn() };
-  const usePipelineUIStore = (selector: (s: typeof uiState) => unknown) => selector(uiState);
-  Object.assign(usePipelineUIStore, {
-    getState: () => uiState,
-    getInitialState: () => uiState,
-    setState: () => {},
-    subscribe: () => () => {},
-  });
-  return { usePipelineUIStore, createPipelineUIStore: () => usePipelineUIStore };
-});
 
 import {
   PipelineChatBox,
-  captureLoadedStructure,
+  chatHistory,
+  promptPlaceholder,
   resolveStructureContext,
   replaceTrailingAssistant,
 } from "@/components/PipelineChatBox";
@@ -108,10 +107,26 @@ beforeEach(() => {
   });
   storeState.nodes = [];
   storeState.nodeSnapshots = {};
-  storeState.deserialize.mockReset();
-  storeState.autoLayout.mockReset();
-  storeState.setNodeSnapshot.mockReset();
-  storeState.updateNodeParams.mockReset();
+  storeState.generatedUndoStack = [];
+  storeState.serialize.mockReset();
+  storeState.serialize.mockReturnValue({ version: 3, nodes: [], edges: [] });
+  storeState.applyGeneratedPipeline.mockReset();
+  // Mirrors the store: a checkpointed apply pushes a new top-of-stack id.
+  let nextId = 1;
+  storeState.applyGeneratedPipeline.mockImplementation(
+    (_p: unknown, opts?: { checkpoint?: boolean }) => {
+      if (!opts?.checkpoint) return null;
+      const id = nextId++;
+      storeState.generatedUndoStack = [...storeState.generatedUndoStack, { id }];
+      return id;
+    },
+  );
+  storeState.undoGeneratedPipeline.mockReset();
+  storeState.undoGeneratedPipeline.mockImplementation(() => {
+    if (storeState.generatedUndoStack.length === 0) return false;
+    storeState.generatedUndoStack = storeState.generatedUndoStack.slice(0, -1);
+    return true;
+  });
 });
 
 describe("PipelineChatBox — use-own-key checkbox", () => {
@@ -159,15 +174,58 @@ describe("PipelineChatBox — use-own-key checkbox", () => {
   });
 });
 
-describe("PipelineChatBox — input box", () => {
-  it("renders the prompt textarea five rows tall by default", () => {
+describe("PipelineChatBox — prompt bar", () => {
+  it("starts as a single line and grows with the prompt up to four rows", () => {
     vi.stubEnv("VITE_LLM_PROXY_URL", "https://proxy.example.com/chat");
     render(<PipelineChatBox />);
 
-    const textarea = screen.getByPlaceholderText(
-      "Describe the pipeline you want...",
-    ) as HTMLTextAreaElement;
-    expect(textarea.rows).toBe(5);
+    const textarea = screen.getByTestId("pipeline-chat-input") as HTMLTextAreaElement;
+    expect(textarea.rows).toBe(1);
+    fireEvent.change(textarea, { target: { value: "a\nb\nc" } });
+    expect(textarea.rows).toBe(3);
+    fireEvent.change(textarea, { target: { value: "1\n2\n3\n4\n5\n6" } });
+    expect(textarea.rows).toBe(4);
+  });
+
+  it("names the selected node in the placeholder", () => {
+    vi.stubEnv("VITE_LLM_PROXY_URL", "https://proxy.example.com/chat");
+    storeState.nodes = [
+      { id: "filter-1", type: "filter", selected: true, data: { params: {} } },
+      { id: "loader-1", type: "load_structure", data: { params: {} } },
+    ];
+    render(<PipelineChatBox />);
+    expect(screen.getByTestId("pipeline-chat-input").getAttribute("placeholder")).toBe(
+      "Ask AI to change Filter (filter-1)…",
+    );
+  });
+
+  it("opens the conversation and the settings one at a time", () => {
+    vi.stubEnv("VITE_LLM_PROXY_URL", "https://proxy.example.com/chat");
+    render(<PipelineChatBox />);
+
+    expect(screen.queryByTestId("pipeline-chat-history")).toBeNull();
+    fireEvent.click(screen.getByTestId("pipeline-chat-toggle"));
+    expect(screen.getByTestId("pipeline-chat-history")).toBeTruthy();
+    expect(screen.getByText(/Ask the assistant to build or edit the pipeline/)).toBeTruthy();
+
+    openConfigPanel();
+    expect(screen.getByTestId("pipeline-chat-settings")).toBeTruthy();
+    expect(screen.queryByTestId("pipeline-chat-history")).toBeNull();
+
+    fireEvent.click(screen.getByTestId("pipeline-chat-toggle"));
+    expect(screen.queryByTestId("pipeline-chat-settings")).toBeNull();
+    expect(screen.getByTestId("pipeline-chat-history")).toBeTruthy();
+
+    fireEvent.click(screen.getByLabelText("Hide conversation"));
+    expect(screen.queryByTestId("pipeline-chat-history")).toBeNull();
+  });
+
+  it("closes the overlays on Escape", () => {
+    vi.stubEnv("VITE_LLM_PROXY_URL", "https://proxy.example.com/chat");
+    render(<PipelineChatBox />);
+    fireEvent.click(screen.getByTestId("pipeline-chat-toggle"));
+    fireEvent.keyDown(screen.getByTestId("pipeline-chat-input"), { key: "Escape" });
+    expect(screen.queryByTestId("pipeline-chat-history")).toBeNull();
   });
 });
 
@@ -191,12 +249,15 @@ describe("PipelineChatBox — submission", () => {
     });
     render(<PipelineChatBox />);
 
-    fireEvent.change(screen.getByPlaceholderText("Describe the pipeline you want..."), {
+    fireEvent.change(screen.getByTestId("pipeline-chat-input"), {
       target: { value: "build me a pipeline" },
     });
     fireEvent.click(screen.getByText("Generate"));
 
-    expect(screen.getByText("Please set your API key in the config panel.")).toBeTruthy();
+    // The settings popover opens on the key field; the error is in the log.
+    expect(screen.getByPlaceholderText("sk-ant-...")).toBeTruthy();
+    fireEvent.click(screen.getByTestId("pipeline-chat-toggle"));
+    expect(screen.getByText("Please set your API key in the AI settings.")).toBeTruthy();
     expect(generatePipeline).not.toHaveBeenCalled();
   });
 
@@ -209,7 +270,7 @@ describe("PipelineChatBox — submission", () => {
       useOwnKey: false,
     });
     render(<PipelineChatBox />);
-    const textarea = screen.getByPlaceholderText("Describe the pipeline you want...");
+    const textarea = screen.getByTestId("pipeline-chat-input");
     fireEvent.change(textarea, { target: { value: "水分子を表示" } });
 
     fireEvent.keyDown(textarea, { key: "Enter", isComposing: true });
@@ -230,12 +291,12 @@ describe("PipelineChatBox — submission", () => {
     });
     render(<PipelineChatBox />);
 
-    fireEvent.change(screen.getByPlaceholderText("Describe the pipeline you want..."), {
+    fireEvent.change(screen.getByTestId("pipeline-chat-input"), {
       target: { value: "build me a pipeline" },
     });
     fireEvent.click(screen.getByText("Generate"));
 
-    expect(screen.queryByText("Please set your API key in the config panel.")).toBeNull();
+    expect(screen.queryByText("Please set your API key in the AI settings.")).toBeNull();
     expect(generatePipeline).toHaveBeenCalledWith(
       expect.objectContaining({ provider: "demo" }),
       "build me a pipeline",
@@ -280,8 +341,8 @@ describe("resolveStructureContext", () => {
   });
 
   it("falls back to the load_structure node's snapshot once the globals are cleared", () => {
-    // deserialize() wipes the global fields, so a second chat turn would
-    // otherwise see no structure at all even though one is on screen.
+    // A structure opened into a loader node (or re-attached to one after the
+    // assistant rebuilt the graph) lives only in that node's snapshot.
     const nodeSnapshot = { nAtoms: 3 } as never;
     const ctx = resolveStructureContext({
       nodes: [{ id: "l1", type: "load_structure", data: { params: {} } }],
@@ -293,58 +354,6 @@ describe("resolveStructureContext", () => {
     expect(ctx.snapshot).toBe(nodeSnapshot);
     expect(ctx.atomLabels).toEqual(["ALA"]);
     expect(ctx.structureFrames).toEqual([]);
-  });
-});
-
-describe("captureLoadedStructure", () => {
-  const snap = { snapshot: {}, frames: null, meta: null, labels: null } as never;
-
-  it("returns null when there is no load_structure node", () => {
-    expect(captureLoadedStructure([], {})).toBeNull();
-    expect(
-      captureLoadedStructure([{ id: "v1", type: "viewport", data: { params: {} } }], { v1: snap }),
-    ).toBeNull();
-  });
-
-  it("returns null when the load_structure node has no snapshot loaded", () => {
-    expect(
-      captureLoadedStructure(
-        [{ id: "l1", type: "load_structure", data: { params: { fileName: "a.pdb" } } }],
-        {},
-      ),
-    ).toBeNull();
-  });
-
-  it("captures the snapshot and file params of the first loaded structure", () => {
-    const result = captureLoadedStructure(
-      [
-        {
-          id: "l1",
-          type: "load_structure",
-          data: { params: { fileName: "a.pdb", hasTrajectory: true, hasCell: true } },
-        },
-      ],
-      { l1: snap },
-    );
-    expect(result).toEqual({
-      snapshot: snap,
-      fileName: "a.pdb",
-      hasTrajectory: true,
-      hasCell: true,
-    });
-  });
-
-  it("defaults missing file params to null/false", () => {
-    const result = captureLoadedStructure(
-      [{ id: "l1", type: "load_structure", data: { params: {} } }],
-      { l1: snap },
-    );
-    expect(result).toEqual({
-      snapshot: snap,
-      fileName: null,
-      hasTrajectory: false,
-      hasCell: false,
-    });
   });
 });
 
@@ -406,7 +415,7 @@ describe("PipelineChatBox — applying a generated pipeline", () => {
   });
 
   function submit(text: string) {
-    fireEvent.change(screen.getByPlaceholderText("Describe the pipeline you want..."), {
+    fireEvent.change(screen.getByTestId("pipeline-chat-input"), {
       target: { value: text },
     });
     fireEvent.click(screen.getByText("Generate"));
@@ -421,16 +430,16 @@ describe("PipelineChatBox — applying a generated pipeline", () => {
     ).toBeTruthy();
     // The raw JSON must never appear in the transcript.
     expect(screen.queryByText(/"version": 3/)).toBeNull();
-    expect(storeState.deserialize).toHaveBeenCalledTimes(1);
+    expect(storeState.applyGeneratedPipeline).toHaveBeenCalledTimes(1);
   });
 
   it("applies the pipeline the instant the JSON block closes, before the prose streams", async () => {
     (generatePipeline as ReturnType<typeof vi.fn>).mockImplementation(
       async (_config, _msg, onChunk: (c: string) => void) => {
-        // The closed fence arrives first; deserialize must fire on this chunk,
+        // The closed fence arrives first; the apply must fire on this chunk,
         // not only after the trailing prose finishes streaming.
         onChunk('```json\n{ "version": 3, "nodes": [] }\n```');
-        expect(storeState.deserialize).toHaveBeenCalledTimes(1);
+        expect(storeState.applyGeneratedPipeline).toHaveBeenCalledTimes(1);
         onChunk("\nLoads the structure.");
         return '```json\n{ "version": 3, "nodes": [] }\n```\nLoads the structure.';
       },
@@ -441,7 +450,7 @@ describe("PipelineChatBox — applying a generated pipeline", () => {
     expect(await screen.findByText("Loads the structure.")).toBeTruthy();
     // Applied exactly once — via the streaming early-apply, not the
     // post-stream fallback.
-    expect(storeState.deserialize).toHaveBeenCalledTimes(1);
+    expect(storeState.applyGeneratedPipeline).toHaveBeenCalledTimes(1);
   });
 
   it("shows the assistant's trailing prose explanation, stripping the JSON payload", async () => {
@@ -483,34 +492,110 @@ describe("PipelineChatBox — applying a generated pipeline", () => {
     expect(screen.queryByText(/fetch the molecule template/)).toBeNull();
   });
 
-  it("re-applies the previously loaded structure to the new load_structure node", async () => {
-    const snap = { snapshot: {}, frames: null, meta: null, labels: null };
-    storeState.nodes = [
-      {
-        id: "old-loader",
-        type: "load_structure",
-        data: { params: { fileName: "mol.pdb", hasTrajectory: true, hasCell: true } },
-      },
-    ];
-    storeState.nodeSnapshots = { "old-loader": snap };
-    // deserialize installs the AI's fresh graph with a new loader id.
-    storeState.deserialize.mockImplementation(() => {
-      storeState.nodes = [
-        { id: "new-loader", type: "load_structure", data: { params: { fileName: null } } },
-      ];
-      storeState.nodeSnapshots = {};
-    });
-
+  it("applies through the store with one undo checkpoint per request", async () => {
     render(<PipelineChatBox />);
     submit("rebuild the view");
 
     await screen.findByText(/Pipeline applied/);
-    expect(storeState.setNodeSnapshot).toHaveBeenCalledWith("new-loader", snap);
-    expect(storeState.updateNodeParams).toHaveBeenCalledWith("new-loader", {
-      fileName: "mol.pdb",
-      hasTrajectory: true,
-      hasCell: true,
+    expect(storeState.applyGeneratedPipeline).toHaveBeenCalledWith(
+      { version: 3, nodes: [{ id: "a" }, { id: "b" }], edges: [] },
+      { checkpoint: true },
+    );
+  });
+
+  it("offers Undo on the latest applied reply and restores the previous graph", async () => {
+    render(<PipelineChatBox />);
+    submit("first");
+    await screen.findByText(/Pipeline applied/);
+    await waitFor(() => expect(screen.getByText("Generate")).toBeTruthy());
+    submit("second");
+    await waitFor(() => expect(screen.getAllByText(/Pipeline applied/)).toHaveLength(2));
+
+    // Only the newest apply can be undone.
+    expect(screen.getAllByTestId("pipeline-chat-undo")).toHaveLength(1);
+    fireEvent.click(screen.getByTestId("pipeline-chat-undo"));
+    expect(storeState.undoGeneratedPipeline).toHaveBeenCalledTimes(1);
+    expect(screen.getByText("(undone)")).toBeTruthy();
+
+    // The previous reply's checkpoint is now on top, so it can be undone too.
+    expect(screen.getAllByTestId("pipeline-chat-undo")).toHaveLength(1);
+    fireEvent.click(screen.getByTestId("pipeline-chat-undo"));
+    expect(screen.getAllByText("(undone)")).toHaveLength(2);
+    expect(screen.queryByTestId("pipeline-chat-undo")).toBeNull();
+  });
+
+  it("leaves the reply alone when there is nothing left to undo", async () => {
+    render(<PipelineChatBox />);
+    submit("first");
+    await screen.findByText(/Pipeline applied/);
+    storeState.undoGeneratedPipeline.mockReturnValueOnce(false);
+    fireEvent.click(screen.getByTestId("pipeline-chat-undo"));
+    expect(screen.queryByText("(undone)")).toBeNull();
+  });
+
+  it("hides Undo once something else replaced the checkpoint", async () => {
+    render(<PipelineChatBox />);
+    submit("first");
+    await screen.findByText(/Pipeline applied/);
+    // e.g. a new file was opened, which empties the store's undo stack.
+    storeState.generatedUndoStack = [];
+    fireEvent.click(screen.getByTestId("pipeline-chat-toggle"));
+    fireEvent.click(screen.getByTestId("pipeline-chat-toggle"));
+    expect(screen.queryByTestId("pipeline-chat-undo")).toBeNull();
+  });
+
+  it("keeps a pipeline applied before a failure undoable", async () => {
+    (generatePipeline as ReturnType<typeof vi.fn>).mockImplementation(
+      async (_config, _msg, onChunk: (c: string) => void) => {
+        onChunk('```json\n{ "version": 3, "nodes": [] }\n```');
+        const err = new Error("aborted");
+        err.name = "AbortError";
+        throw err;
+      },
+    );
+    render(<PipelineChatBox />);
+    submit("show it");
+
+    expect(await screen.findByText("Generation cancelled.")).toBeTruthy();
+    expect(screen.getByTestId("pipeline-chat-undo")).toBeTruthy();
+  });
+
+  it("sends the current graph, the selection, and earlier turns with the request", async () => {
+    storeState.nodes = [
+      { id: "loader-1", type: "load_structure", selected: true, data: { params: {} } },
+    ];
+    storeState.serialize.mockReturnValue({
+      version: 3,
+      nodes: [{ id: "loader-1", type: "load_structure", position: { x: 0, y: 0 } }],
+      edges: [],
     });
+    render(<PipelineChatBox />);
+    submit("first request");
+    await screen.findByText(/Pipeline applied/);
+    await waitFor(() => expect(screen.getByText("Generate")).toBeTruthy());
+    submit("make it bigger");
+    await waitFor(() => expect(generatePipeline).toHaveBeenCalledTimes(2));
+
+    const first = (generatePipeline as ReturnType<typeof vi.fn>).mock.calls[0][1] as string;
+    expect(first).toContain("## Current pipeline");
+    expect(first).toContain("Selected in the editor: `loader-1` (load_structure)");
+    expect(first).not.toContain("## Conversation so far");
+    expect(first.endsWith("## Request\n\nfirst request")).toBe(true);
+
+    const second = (generatePipeline as ReturnType<typeof vi.fn>).mock.calls[1][1] as string;
+    expect(second).toContain("## Conversation so far");
+    expect(second).toContain("User: first request");
+    expect(second).toContain("You: Pipeline applied");
+    expect(second.endsWith("## Request\n\nmake it bigger")).toBe(true);
+  });
+
+  it("clears the conversation", async () => {
+    render(<PipelineChatBox />);
+    submit("first");
+    await screen.findByText(/Pipeline applied/);
+    fireEvent.click(screen.getByText("Clear"));
+    expect(screen.queryByText(/Pipeline applied/)).toBeNull();
+    expect(screen.getByText(/Ask the assistant to build or edit the pipeline/)).toBeTruthy();
   });
 
   it("shows a generic error message when generation fails", async () => {
@@ -594,12 +679,59 @@ describe("PipelineChatBox — applying a generated pipeline", () => {
 
     // Applied twice: once for the template echo, once more for the
     // customized pipeline that supersedes it.
-    expect(storeState.deserialize).toHaveBeenCalledTimes(2);
-    expect(storeState.deserialize).toHaveBeenNthCalledWith(1, templatePipeline);
-    expect(storeState.deserialize).toHaveBeenNthCalledWith(2, customPipeline);
+    expect(storeState.applyGeneratedPipeline).toHaveBeenCalledTimes(2);
+    // Only the first apply of the request records an undo checkpoint.
+    expect(storeState.applyGeneratedPipeline).toHaveBeenNthCalledWith(1, templatePipeline, {
+      checkpoint: true,
+    });
+    expect(storeState.applyGeneratedPipeline).toHaveBeenNthCalledWith(2, customPipeline, {
+      checkpoint: false,
+    });
 
     // The final UI reflects the second (customized) pipeline's node count,
     // not the first template's.
     expect(screen.queryByText(/Pipeline applied — 1 node added to the editor\./)).toBeNull();
+  });
+});
+
+describe("chatHistory", () => {
+  it("keeps finished user and assistant turns and drops errors and placeholders", () => {
+    expect(
+      chatHistory([
+        { role: "user", content: "show water" },
+        { role: "assistant", content: "Shows water." },
+        { role: "user", content: "again" },
+        { role: "error", content: "Something went wrong." },
+        { role: "assistant", content: "" },
+      ]),
+    ).toEqual([
+      { role: "user", content: "show water" },
+      { role: "assistant", content: "Shows water." },
+      { role: "user", content: "again" },
+    ]);
+  });
+});
+
+describe("promptPlaceholder", () => {
+  it("asks for a pipeline when nothing is selected", () => {
+    expect(promptPlaceholder([])).toBe("Ask AI to build or edit the pipeline…");
+  });
+
+  it("names a single selected node by its label", () => {
+    expect(promptPlaceholder([{ id: "c1", type: "color" }])).toBe("Ask AI to change Color (c1)…");
+  });
+
+  it("falls back to the raw type, then to 'node'", () => {
+    expect(promptPlaceholder([{ id: "x", type: "mystery" }])).toBe("Ask AI to change mystery (x)…");
+    expect(promptPlaceholder([{ id: "x" }])).toBe("Ask AI to change node (x)…");
+  });
+
+  it("counts several selected nodes", () => {
+    expect(
+      promptPlaceholder([
+        { id: "a", type: "filter" },
+        { id: "b", type: "color" },
+      ]),
+    ).toBe("Ask AI to change the 2 selected nodes…");
   });
 });

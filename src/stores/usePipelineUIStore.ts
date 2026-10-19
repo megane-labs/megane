@@ -1,24 +1,18 @@
 /**
- * UI state for the Pipeline panel: which tab is active (Editor vs Chat) and a
- * transient "pipeline applied" notice surfaced after the chat assistant
- * rewrites the graph.
+ * UI state for the Pipeline panel: which tab is active (Editor or Inspector).
+ * The AI assistant is not a tab of its own — it is docked inside the Editor
+ * tab, under the graph it edits.
  *
  * Persistence is per-session (sessionStorage) rather than across reloads, so
- * every cold start opens on the Chat tab — the assistant is the primary entry
- * point for building pipelines. Within a session the user's tab choice is
- * preserved across navigations.
+ * every cold start opens on the Editor tab, where the graph and the assistant
+ * are both on screen. Within a session the user's tab choice is preserved
+ * across navigations.
  */
 
 import { create, type StateCreator, type StoreApi } from "zustand";
 import { createStore } from "zustand/vanilla";
 
-export type PipelinePanelMode = "editor" | "chat" | "inspector";
-
-export interface PipelineAppliedNotice {
-  kind: "applied";
-  /** Monotonic id so consumers can de-dupe transient renders. */
-  id: number;
-}
+export type PipelinePanelMode = "editor" | "inspector";
 
 /** sessionStorage key the app-wide singleton persists under. */
 export const PIPELINE_UI_STORAGE_KEY = "megane-pipeline-ui";
@@ -30,17 +24,15 @@ export const PIPELINE_UI_STORAGE_KEY = "megane-pipeline-ui";
 export type PipelineUIStorage = string | false;
 
 function loadMode(storageKey: PipelineUIStorage): PipelinePanelMode {
-  if (storageKey === false) return "chat";
+  if (storageKey === false) return "editor";
   try {
     const raw = sessionStorage.getItem(storageKey);
     if (raw) {
       const parsed = JSON.parse(raw);
-      if (
-        parsed &&
-        (parsed.mode === "editor" || parsed.mode === "chat" || parsed.mode === "inspector")
-      ) {
-        return parsed.mode;
-      }
+      // "chat" was a tab of its own in earlier builds; the assistant now
+      // lives in the Editor tab, so it lands there.
+      if (parsed && (parsed.mode === "editor" || parsed.mode === "chat")) return "editor";
+      if (parsed && parsed.mode === "inspector") return "inspector";
     }
   } catch {
     // ignore parse / storage errors
@@ -52,7 +44,7 @@ function loadMode(storageKey: PipelineUIStorage): PipelinePanelMode {
   } catch {
     // ignore
   }
-  return "chat";
+  return "editor";
 }
 
 function saveMode(storageKey: PipelineUIStorage, mode: PipelinePanelMode) {
@@ -66,36 +58,18 @@ function saveMode(storageKey: PipelineUIStorage, mode: PipelinePanelMode) {
 
 export interface PipelineUIStore {
   mode: PipelinePanelMode;
-  pendingNotice: PipelineAppliedNotice | null;
   setMode: (mode: PipelinePanelMode) => void;
-  /** Surface a one-shot "applied" notice without leaving the current tab. */
-  markPipelineApplied: () => void;
-  dismissNotice: () => void;
 }
-
-let nextNoticeId = 1;
 
 export function pipelineUIStateCreator(
   storageKey: PipelineUIStorage = PIPELINE_UI_STORAGE_KEY,
 ): StateCreator<PipelineUIStore> {
   return (set) => ({
     mode: loadMode(storageKey),
-    pendingNotice: null,
 
     setMode: (mode) => {
       saveMode(storageKey, mode);
       set({ mode });
-    },
-
-    markPipelineApplied: () => {
-      // Stay on the current tab (typically Chat) so the assistant's reply remains
-      // visible; the editor frames the freshly applied graph via its own
-      // mode-change effect when the user switches to it.
-      set({ pendingNotice: { kind: "applied", id: nextNoticeId++ } });
-    },
-
-    dismissNotice: () => {
-      set({ pendingNotice: null });
     },
   });
 }

@@ -31,6 +31,7 @@ import { performOpenFile, type OpenFileOptions } from "./openFile";
 import { reconcileInspectorLayers, isInspectorLayerId, type InspectorLayer } from "./inspectorSync";
 import { applyQuickStyle, type QuickStyle } from "./quickStyle";
 import { findPrimaryLoader, loaderEdits } from "./editHistory";
+import { mergeGeneratedGraph, type GraphCheckpoint } from "./generatedApply";
 import { registerTestStores, GLOBAL_BUNDLE_ID } from "../stores/testRegistry";
 
 let nextNodeId = 1;
@@ -134,6 +135,24 @@ export interface PipelineStore {
   // updates inside a single store transaction so the post-deserialize
   // execute() sees the matching per-node snapshots.
   loadPipeline: (json: SerializedPipeline, nodeSnapshots: Record<string, NodeSnapshotData>) => void;
+
+  // AI chat: replace the graph with a generated pipeline while keeping the
+  // data loaded into it (see generatedApply.ts). With `checkpoint` (the first
+  // apply of a request) the graph being replaced is pushed onto
+  // `generatedUndoStack` and the checkpoint's id is returned; re-applying a
+  // corrected pipeline within the same request passes false and returns null.
+  applyGeneratedPipeline: (
+    json: SerializedPipeline,
+    opts?: { checkpoint?: boolean },
+  ) => number | null;
+  /** Restore the graph from before the latest generated apply. False when there is none. */
+  undoGeneratedPipeline: () => boolean;
+  /**
+   * Graphs replaced by `applyGeneratedPipeline`, newest last. Emptied whenever
+   * new data is loaded or the whole pipeline is replaced, because a checkpoint
+   * holds the per-node data of the files that were loaded when it was taken.
+   */
+  generatedUndoStack: GraphCheckpoint[];
 
   // Selection Inspector: replace the Inspector-owned subgraph with the nodes
   // realizing `layers` (filter → color/representation/modify → viewport),
@@ -245,6 +264,13 @@ function disposeIfLazy(provider: FrameProvider | null | undefined): void {
   if (provider instanceof LazyFrameProvider) provider.dispose();
 }
 
+/** How many generated applies the chat can step back through. */
+const MAX_GENERATED_UNDO = 20;
+let nextCheckpointId = 1;
+
+/** Spread into a `set` that loads new data, which invalidates every checkpoint. */
+const NO_GENERATED_UNDO = { generatedUndoStack: [] as GraphCheckpoint[] };
+
 export const pipelineStateCreator: StateCreator<PipelineStore> = (set, get, api) => ({
   ...createInitialGraph(),
   layoutPending: true,
@@ -265,9 +291,10 @@ export const pipelineStateCreator: StateCreator<PipelineStore> = (set, get, api)
   nodeSnapshots: {},
   nodeParseErrors: {},
   nodeStreamingData: {},
+  generatedUndoStack: [],
 
   setSnapshot: (s) => {
-    set({ snapshot: s });
+    set({ snapshot: s, ...NO_GENERATED_UNDO });
     get().execute();
   },
   setAtomLabels: (labels) => {
@@ -278,28 +305,38 @@ export const pipelineStateCreator: StateCreator<PipelineStore> = (set, get, api)
     // Eager frames and a lazy provider are mutually exclusive; installing frames
     // releases any active lazy structure decoder.
     disposeIfLazy(get().structureProvider);
-    set({ structureFrames: frames, structureMeta: meta, structureProvider: null });
+    set({
+      structureFrames: frames,
+      structureMeta: meta,
+      structureProvider: null,
+      ...NO_GENERATED_UNDO,
+    });
     get().execute();
   },
   setStructureProvider: (provider) => {
     const prev = get().structureProvider;
     if (prev !== provider) disposeIfLazy(prev);
     // Clear the eager structure-frame channel so executeLoadStructure sees only the provider.
-    set({ structureProvider: provider, structureFrames: null, structureMeta: null });
+    set({
+      structureProvider: provider,
+      structureFrames: null,
+      structureMeta: null,
+      ...NO_GENERATED_UNDO,
+    });
     get().execute();
   },
   setFileFrames: (frames, meta) => {
     // Eager frames and a lazy provider are mutually exclusive inputs; installing
     // frames releases any active lazy decoder.
     disposeIfLazy(get().fileProvider);
-    set({ fileFrames: frames, fileMeta: meta, fileProvider: null });
+    set({ fileFrames: frames, fileMeta: meta, fileProvider: null, ...NO_GENERATED_UNDO });
     get().execute();
   },
   setFileProvider: (provider) => {
     const prev = get().fileProvider;
     if (prev !== provider) disposeIfLazy(prev);
     // Clear the eager frame channel so executeLoadTrajectory sees only the provider.
-    set({ fileProvider: provider, fileFrames: null, fileMeta: null });
+    set({ fileProvider: provider, fileFrames: null, fileMeta: null, ...NO_GENERATED_UNDO });
     get().execute();
   },
   setFileVectors: (vectors) => {
@@ -336,6 +373,7 @@ export const pipelineStateCreator: StateCreator<PipelineStore> = (set, get, api)
   setNodeSnapshot: (nodeId, data) => {
     set((state) => ({
       nodeSnapshots: { ...state.nodeSnapshots, [nodeId]: data },
+      ...NO_GENERATED_UNDO,
     }));
     get().execute();
   },
@@ -344,7 +382,7 @@ export const pipelineStateCreator: StateCreator<PipelineStore> = (set, get, api)
     set((state) => {
       const { [nodeId]: _, ...rest } = state.nodeSnapshots;
       const { [nodeId]: __, ...restErrors } = state.nodeParseErrors;
-      return { nodeSnapshots: rest, nodeParseErrors: restErrors };
+      return { nodeSnapshots: rest, nodeParseErrors: restErrors, ...NO_GENERATED_UNDO };
     });
     get().execute();
   },
@@ -628,6 +666,7 @@ export const pipelineStateCreator: StateCreator<PipelineStore> = (set, get, api)
       layoutPending,
       viewportState: { ...DEFAULT_VIEWPORT_STATE },
       ...CLEARED_EXECUTION_CONTEXT,
+      ...NO_GENERATED_UNDO,
     });
     get().execute();
   },
@@ -647,10 +686,61 @@ export const pipelineStateCreator: StateCreator<PipelineStore> = (set, get, api)
       layoutPending,
       viewportState: { ...DEFAULT_VIEWPORT_STATE },
       ...CLEARED_EXECUTION_CONTEXT,
+      ...NO_GENERATED_UNDO,
       nodeSnapshots: { ...nodeSnapshots },
       snapshot: primarySnapshot,
     });
     get().execute();
+  },
+
+  applyGeneratedPipeline: (json, opts) => {
+    const generated = deserializePipeline(json);
+    const prev = get();
+    const merged = mergeGeneratedGraph(prev, generated.nodes);
+    let checkpointId: number | null = null;
+    let stack = prev.generatedUndoStack;
+    if (opts?.checkpoint) {
+      checkpointId = nextCheckpointId++;
+      const checkpoint: GraphCheckpoint = {
+        id: checkpointId,
+        nodes: prev.nodes,
+        edges: prev.edges,
+        nodeSnapshots: prev.nodeSnapshots,
+        nodeParseErrors: prev.nodeParseErrors,
+        nodeStreamingData: prev.nodeStreamingData,
+      };
+      stack = [...stack, checkpoint].slice(-MAX_GENERATED_UNDO);
+    }
+    // Laid out from estimated sizes; the editor refines it once measured.
+    const { nodes } = getLayoutedElements(merged.nodes, generated.edges);
+    set({
+      nodes,
+      edges: generated.edges,
+      layoutPending: true,
+      nodeSnapshots: merged.nodeSnapshots,
+      nodeParseErrors: merged.nodeParseErrors,
+      nodeStreamingData: merged.nodeStreamingData,
+      generatedUndoStack: stack,
+    });
+    get().execute();
+    return checkpointId;
+  },
+
+  undoGeneratedPipeline: () => {
+    const stack = get().generatedUndoStack;
+    const checkpoint = stack[stack.length - 1];
+    if (!checkpoint) return false;
+    set({
+      nodes: checkpoint.nodes,
+      edges: checkpoint.edges,
+      layoutPending: false,
+      nodeSnapshots: checkpoint.nodeSnapshots,
+      nodeParseErrors: checkpoint.nodeParseErrors,
+      nodeStreamingData: checkpoint.nodeStreamingData,
+      generatedUndoStack: stack.slice(0, -1),
+    });
+    get().execute();
+    return true;
   },
 
   setInspectorLayers: (layers) => {
@@ -733,6 +823,7 @@ export const pipelineStateCreator: StateCreator<PipelineStore> = (set, get, api)
       viewportState: { ...DEFAULT_VIEWPORT_STATE },
       pendingTemplateId: templateId,
       ...CLEARED_EXECUTION_CONTEXT,
+      ...NO_GENERATED_UNDO,
     });
     get().execute();
   },
@@ -759,6 +850,7 @@ export const pipelineStateCreator: StateCreator<PipelineStore> = (set, get, api)
       layoutPending: true,
       viewportState: { ...DEFAULT_VIEWPORT_STATE },
       ...CLEARED_EXECUTION_CONTEXT,
+      ...NO_GENERATED_UNDO,
     });
   },
 });

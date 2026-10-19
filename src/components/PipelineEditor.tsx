@@ -103,7 +103,6 @@ const nodeTypes = {
 const MODE_LABELS: Record<PipelinePanelMode, string> = {
   editor: "Editor",
   inspector: "Inspector",
-  chat: "Chat",
 };
 
 const MIN_WIDTH = 320;
@@ -547,13 +546,10 @@ function PipelineEditorInner({
 
   const mode = useScopedPipelineUIStore((s) => s.mode);
   const setMode = useScopedPipelineUIStore((s) => s.setMode);
-  const pendingNotice = useScopedPipelineUIStore((s) => s.pendingNotice);
-  const dismissNotice = useScopedPipelineUIStore((s) => s.dismissNotice);
 
-  // When the panel switches back to the editor (e.g. after the chat assistant
-  // applies a generated pipeline) the ReactFlow viewport may have just been
-  // un-hidden, so we re-fit. Two RAFs give the layout/resize-observer a chance
-  // to pick up the new dimensions before fitView reads them.
+  // When the panel switches back to the editor the ReactFlow viewport may have
+  // just been un-hidden, so we re-fit. Two RAFs give the layout/resize-observer
+  // a chance to pick up the new dimensions before fitView reads them.
   useEffect(() => {
     if (mode !== "editor") return;
     let rafA = 0;
@@ -582,13 +578,6 @@ function PipelineEditorInner({
       fitView({ padding: 0.1, maxZoom: 1.95 });
     });
   }, [layoutPending, nodesMeasured, autoLayout, fitView]);
-
-  // Auto-dismiss the "pipeline applied" notice after a short delay.
-  useEffect(() => {
-    if (!pendingNotice) return;
-    const handle = window.setTimeout(() => dismissNotice(), 3000);
-    return () => window.clearTimeout(handle);
-  }, [pendingNotice, dismissNotice]);
 
   // Resize drag handling
   const handleResizeMouseDown = useCallback(
@@ -771,23 +760,6 @@ function PipelineEditorInner({
 
   const memoizedNodeTypes = useMemo(() => nodeTypes, []);
 
-  const appliedNoticeBanner = pendingNotice && mode === "editor" && (
-    <div
-      role="status"
-      data-testid="pipeline-editor-applied-notice"
-      style={{
-        padding: "4px 10px",
-        background: "rgba(16, 185, 129, 0.1)",
-        color: "var(--megane-success-text)",
-        fontSize: 11,
-        fontWeight: 500,
-        borderBottom: "1px solid var(--megane-border)",
-      }}
-    >
-      Pipeline updated from chat
-    </div>
-  );
-
   const resizeHandle = (
     <div
       style={resizeHandleStyle}
@@ -826,7 +798,6 @@ function PipelineEditorInner({
           onTutorial={() => startPipelineTutorial()}
         />
         <div style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column" }}>
-          {appliedNoticeBanner}
           {/* The tabpanels share one absolute-positioned area inside a
               relative wrapper, and we toggle `visibility` rather than
               `display` or unmounting. That keeps ReactFlow's container
@@ -923,6 +894,10 @@ function PipelineEditorInner({
                   </ReactFlow>
                 </NodeShellModeContext.Provider>
               </div>
+              {/* The assistant sits between the graph it edits and the
+                  selected node's properties; its conversation and settings
+                  open over the bottom of the canvas. */}
+              <PipelineChatBox />
               <div
                 role="separator"
                 aria-orientation="horizontal"
@@ -962,22 +937,6 @@ function PipelineEditorInner({
               }}
             >
               <PipelineInspector />
-            </div>
-            <div
-              role="tabpanel"
-              id="pipeline-tabpanel-chat"
-              aria-labelledby="pipeline-tab-chat"
-              aria-hidden={mode !== "chat"}
-              style={{
-                position: "absolute",
-                inset: 0,
-                display: "flex",
-                flexDirection: "column",
-                background: "var(--megane-surface-solid)",
-                visibility: mode === "chat" ? "visible" : "hidden",
-              }}
-            >
-              <PipelineChatBox />
             </div>
           </div>
         </div>

@@ -103,12 +103,14 @@ const outArg = getFlag("--out", join(OUT_DIR, `megane-promo-${TIMESTAMP}.webm`))
 const OUT_PATH = isAbsolute(outArg) ? outArg : join(ROOT, outArg);
 
 const SEL = {
-  chatTab: '[data-testid="pipeline-editor-tab-chat"]',
+  // The AI assistant is docked in the Editor tab, under the graph.
+  chatTab: '[data-testid="pipeline-editor-tab-editor"]',
   editorTab: '[data-testid="pipeline-editor-tab-editor"]',
-  promptBox: 'textarea[placeholder="Describe the pipeline you want..."]',
+  promptBox: '[data-testid="pipeline-chat-input"]',
   generateBtn: 'button:has-text("Generate")',
   chatMessages: '[data-testid="pipeline-chat-messages"]',
-  appliedNotice: '[data-testid="pipeline-editor-applied-notice"]',
+  // A reply that changed the pipeline offers Undo once it has been applied.
+  appliedNotice: '[data-testid="pipeline-chat-undo"]',
   panelPipeline: '[data-testid="panel-pipeline"]',
   viewer: '[data-testid="viewer-root"]',
   reactFlow: ".react-flow",
@@ -368,7 +370,7 @@ async function setupApiKey(page) {
 /**
  * Force ReactFlow to re-measure every node handle by toggling the container's
  * display off and on (a real layout teardown/rebuild). Call it at #root identity
- * (the editor may still be hidden on the Chat tab) so the handles are measured
+ * (the editor may still be hidden behind another tab) so the handles are measured
  * unscaled.
  */
 async function forceReactFlowRemeasure(page) {
@@ -465,7 +467,7 @@ try {
   await context.addInitScript(() => {
     try {
       localStorage.setItem("megane-tour-prefs", JSON.stringify({ dontShowAgain: true }));
-      sessionStorage.setItem("megane-pipeline-ui", JSON.stringify({ mode: "chat" }));
+      sessionStorage.setItem("megane-pipeline-ui", JSON.stringify({ mode: "editor" }));
     } catch {
       /* noop */
     }
@@ -491,7 +493,7 @@ try {
   }, TRANSITION_MS);
 
   await setupApiKey(page);
-  // Ensure we're on the Chat tab (the opening frame) before recording the moves.
+  // Ensure we're on the Editor tab, where the assistant is docked, before recording the moves.
   await page.locator(SEL.chatTab).first().click().catch(() => {});
   await page.waitForTimeout(500);
 

@@ -121,8 +121,8 @@ function startViteServer() {
 async function waitForApp(page, appUrl) {
   await page.goto(appUrl, { waitUntil: "domcontentloaded", timeout: 30000 });
   await page.waitForSelector("canvas", { timeout: 20000 });
-  // The pipeline panel defaults to the Chat tab, so the Editor tab's
-  // `.react-flow` mounts hidden — wait for it attached, not visible.
+  // Wait for the Editor tab's `.react-flow` attached, not visible: a session
+  // that last left the panel on the Inspector tab mounts it hidden.
   await page.waitForSelector('[data-testid="panel-pipeline"]', { state: "visible", timeout: 15000 });
   await page.waitForSelector(".react-flow", { state: "attached", timeout: 15000 });
   await page.waitForTimeout(3000); // let the first render settle
@@ -193,13 +193,15 @@ async function zoomTo(page, spec, ms = TRANSITION_MS) {
 // ---- Scene actions ("verbs") ----
 
 const SEL = {
-  chatTab: '[data-testid="pipeline-editor-tab-chat"]',
+  // The AI assistant is docked in the Editor tab, under the graph.
+  chatTab: '[data-testid="pipeline-editor-tab-editor"]',
   editorTab: '[data-testid="pipeline-editor-tab-editor"]',
-  promptBox: 'textarea[placeholder="Describe the pipeline you want..."]',
+  promptBox: '[data-testid="pipeline-chat-input"]',
   generateBtn: 'button:has-text("Generate")',
   cancelBtn: 'button:has-text("Cancel")',
   chatMessages: '[data-testid="pipeline-chat-messages"]',
-  appliedNotice: '[data-testid="pipeline-editor-applied-notice"]',
+  // A reply that changed the pipeline offers Undo once it has been applied.
+  appliedNotice: '[data-testid="pipeline-chat-undo"]',
   panelPipeline: '[data-testid="panel-pipeline"]',
   viewer: '[data-testid="viewer-root"]',
   reactFlow: ".react-flow",
@@ -209,7 +211,7 @@ const actions = {
   // Type the prompt into the Chat input — but do NOT submit yet, so generation
   // only starts once the next scene has settled on a fixed frame.
   async typePrompt(page) {
-    // The panel defaults to the Chat tab, so the textarea is already present.
+    // The panel defaults to the Editor tab, where the prompt bar is docked.
     await page.locator(SEL.promptBox).first().waitFor({ state: "visible", timeout: 10000 });
     // Typewriter effect driven entirely in-page: set the value via React's
     // native textarea setter and dispatch an `input` event so React picks it up.
@@ -290,8 +292,8 @@ async function setupApiKey(page) {
     await page.waitForTimeout(300);
     const keyInput = page.locator('input[type="password"]').first();
     await keyInput.fill(API_KEY);
-    // Close the config panel, leaving the panel on the Chat tab (its default)
-    // so the chat scene finds the prompt box without an extra tab switch.
+    // Close the config popover, leaving the panel on the Editor tab (its
+    // default) so the chat scene finds the prompt box without a tab switch.
     await page.locator('button[title="AI Settings"]').first().click();
     await page.waitForTimeout(300);
     console.log("  API key injected via Chat config panel");
@@ -344,13 +346,13 @@ try {
     // Chromium doesn't trust; tolerate it so --url can reach remote sites.
     ignoreHTTPSErrors: true,
   });
-  // Suppress the first-run tour overlay, and boot the pipeline panel on the Chat
-  // tab so the opening frame shows Chat by default (the deployed build may
-  // otherwise default to the Editor tab). Set before the app's scripts run.
+  // Suppress the first-run tour overlay, and boot the pipeline panel on the
+  // Editor tab, where the AI prompt bar is docked. Set before the app's
+  // scripts run.
   await context.addInitScript(() => {
     try {
       localStorage.setItem("megane-tour-prefs", JSON.stringify({ dontShowAgain: true }));
-      sessionStorage.setItem("megane-pipeline-ui", JSON.stringify({ mode: "chat" }));
+      sessionStorage.setItem("megane-pipeline-ui", JSON.stringify({ mode: "editor" }));
     } catch {
       /* noop */
     }
@@ -377,9 +379,9 @@ try {
 
   await setupApiKey(page);
 
-  // Ensure the panel is on the Chat tab so the prompt box is visible. The
-  // current source defaults to Chat, but the deployed build may default to the
-  // Editor tab (which keeps the chat textarea visibility:hidden). Done at full
+  // Ensure the panel is on the Editor tab (where the assistant is docked) so the prompt box is visible. The
+  // deployed build may be older and still keep the prompt on its own tab, in
+  // which case the scene falls back to no-generate. Done at full
   // view, before any zoom, so the tab is on-screen and clickable.
   await page.locator(SEL.chatTab).first().click().catch(() => {});
   await page.waitForTimeout(500);

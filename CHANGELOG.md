@@ -8,6 +8,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ### Added
 
+- **The AI assistant lives in the pipeline editor.** The Chat tab is gone: the assistant's prompt bar is docked in the Editor tab, between the node graph and the properties pane, so a request and the graph it changes are on screen together. The conversation and the AI settings open over the bottom of the graph.
+  - Each request carries the pipeline in the editor, the selected nodes, and the recent exchanges, so the assistant edits that graph instead of starting over, and "this" means the selected node.
+  - A generated pipeline no longer unloads anything: loaders keep their files and parsed data (trajectories, volumetric grids, spectra, structure edits included).
+  - A reply that changed the pipeline offers **Undo** while it is the latest change. Opening another file clears the undo history.
+  - The panel now opens on the Editor tab; a session left on the old Chat tab lands there too.
 - **The reference tools without setup in VS Code and JupyterLab.** With uv installed, the Builder's Tools menu offers **Connect to megane-builder-tools** (Liquid box, Polymer chain, Solvate) with no setting.
   - It runs the `megane-builder-tools` command if it is installed (PATH, or uv's `~/.local/bin` for an editor started from the Dock), else `uvx` at a commit of hodakamori/megane-builder-tools pinned in Megane.
   - An entry named `megane-builder-tools` in `megane.builder.mcpServers` / `MeganeBuilderTools.mcp_servers` replaces it, and `null` hides it. The confirmation before first use still applies.

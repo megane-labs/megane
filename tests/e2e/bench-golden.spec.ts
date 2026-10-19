@@ -10,8 +10,9 @@
  * Two assertions per case, and the second is what makes the first worth
  * anything:
  *
- *   1. the reference pipeline, round-tripped through `deserialize`, draws its
- *      expected image. That round trip is the point: it is what lets the bench
+ *   1. the reference pipeline, applied from its JSON the way the assistant
+ *      applies a generated one, draws its expected image. That round trip is
+ *      the point: it is what lets the bench
  *      grade generated JSON — the same form a model emits — against a reviewed
  *      picture;
  *   2. wrong pipelines derived from it do NOT. Without this a green run would

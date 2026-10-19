@@ -27,12 +27,12 @@ When a node encounters an error or warning — for example, a parse failure in L
 
 The panel has an icon rail down its left edge. From top to bottom:
 
-- **Editor**, **Inspector**, **Chat** — the panel's three tabs: the node graph, the [Selection Inspector](./inspector.md), and the [AI Pipeline Generator](#ai-pipeline-generator).
+- **Editor** and **Inspector** — the panel's two tabs: the node graph (with the [AI assistant](#ai-pipeline-generator) docked under it) and the [Selection Inspector](./inspector.md).
 - **Add Node** and **Templates** menus, and **Auto Layout** — these switch to the Editor tab.
 - **File** menu — *Import pipeline…*, *Export pipeline* (downloads `pipeline.megane.json`; see [JSON](./json.md)), and *Copy share link…*. Then **Render**, which opens the image/video render dialog.
 - **Guide**, **Tutorial**, and the theme toggle at the foot.
 
-In the Editor tab every node is a compact card showing its category icon, title, and a one-line summary of its parameters; port names appear when you hover or select a card. Selecting a node opens its form in the **properties pane** under the graph, whose header holds an On/Off switch (a disabled node is bypassed and drawn with a dashed outline) and a remove button. The divider between graph and pane can be dragged.
+In the Editor tab every node is a compact card showing its category icon, title, and a one-line summary of its parameters; port names appear when you hover or select a card. Under the graph sits the AI assistant's prompt bar, and under that the **properties pane**: selecting a node opens its form there, whose header holds an On/Off switch (a disabled node is bypassed and drawn with a dashed outline) and a remove button. The divider between graph and pane can be dragged.
 
 To delete a connection, hover (or select) the edge and click the **×** at its midpoint, or select it and press <kbd>Backspace</kbd> / <kbd>Delete</kbd>. Dragging an edge's endpoint off its handle onto empty canvas disconnects it; dropping it on another compatible handle rewires it.
 
@@ -42,11 +42,13 @@ To delete a connection, hover (or select) the edge and click the **×** at its m
 
 ## AI Pipeline Generator
 
-Describe the visualization you want in natural language, and Megane builds the node graph for you. Open the AI chat panel with the **Chat** button on the pipeline editor's left rail and type a prompt like:
+Describe the visualization you want in natural language, and Megane builds or edits the node graph for you. The assistant's prompt bar is docked in the Editor tab, between the graph and the properties pane; type a prompt like:
 
 > Load protein.pdb with bonds and make water translucent
 
-The generator creates the appropriate LoadStructure, AddBond, Filter, Modify, and Viewport nodes, wires them together, and places them in the editor. You can then adjust parameters or add more nodes manually.
+and press <kbd>Enter</kbd> (<kbd>Shift</kbd>+<kbd>Enter</kbd> adds a line). The generator creates the appropriate LoadStructure, AddBond, Filter, Modify, and Viewport nodes, wires them together, and places them in the editor, where you can see the graph change as the answer arrives. You can then adjust parameters or add more nodes manually.
+
+The assistant works on the pipeline that is already in the editor: each request is sent with the current graph, the nodes you have selected, and the earlier messages of the conversation, so follow-ups such as *"make it thicker"* or *"color this by element"* (with a node selected) change that graph instead of starting over. Loaded files stay loaded — the assistant only rewires and re-parameterizes nodes. The speech-bubble button at the left of the bar opens the conversation over the bottom of the graph; every reply that changed the pipeline offers **Undo** while it is the latest change, which restores the graph from before that request. Opening another file clears the undo history.
 
 Open **AI Settings** (the ⚙ button beside the chat input) to choose a provider (**Anthropic** or **OpenAI**), a model, and your API key. The provider and model are remembered in the browser; the API key is held only for the current session and is not saved. Builds configured with Megane's shared proxy also offer a rate-limited free demo that needs no key — tick **Use my own API key** to use your own provider instead.
 

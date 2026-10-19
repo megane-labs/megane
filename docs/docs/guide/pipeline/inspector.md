@@ -1,7 +1,7 @@
 # Selection Inspector
 
 The **Selection Inspector** is a lightweight tab in the pipeline panel — the
-**Inspector** button on the panel's rail, between **Editor** and **Chat** — for
+**Inspector** button on the panel's rail, under **Editor** — for
 the most common tasks in molecular visualization: *change how the structure
 looks*, and *select a subset of atoms and change how that looks*. The
 **Quick style** section at the top does the first; the **Selections** below it
@@ -38,7 +38,7 @@ removes them all — an untouched Quick style leaves the pipeline exactly as it
 was. *Pipeline default* for Style or Color means "don't override what the
 pipeline already draws". Everything is read back from the pipeline, so the
 panel stays correct after you edit those nodes in the Editor, apply a template
-or chat result, or re-open a saved `.megane.json`.
+or an AI assistant result, or re-open a saved `.megane.json`.
 
 If the pipeline already carries `color` / `representation` / `modify` nodes of
 its own, the panel says how many: they also affect the look, and Quick style
