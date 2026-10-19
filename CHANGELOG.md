@@ -30,6 +30,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 - **A selection's style beats a whole-structure style.** Per-atom size and opacity were merged as "any value other than 1.0 wins", so a selection could not restore 1.0 under a global 0.5; and the representation of a whole-structure stream ahead of a selection hid the selection's. Whole-structure streams now lay down the base and selection streams override the atoms they cover.
 - **Re-opened default pipelines no longer draw the structure twice.** Loading a `.megane.json` did not see the loader reach the viewport through Symmetry → Wrap → Replicate, and wired a second, untransformed `load_structure → viewport` particle stream (and cell) beside the replicated one.
 
+### Documentation
+
+- **Writing a Builder Tool Server.** A new developer page (`docs/docs/dev/builder-tool-server.md`) walks from an empty folder to your own buttons in megane Builder's *Tools* menu: installing the `megane-builder-tools` SDK, writing a `new_document` and an `insert` tool, checking them with `megane-builder-conformance`, serving them over Streamable HTTP with a token and the page's origin allowed, connecting from *Tools › Tool server…* or a `#tools=` link, and registering the same server with an LLM client. The Builder guide's command for the reference server now installs it from Git (`uvx --from git+https://github.com/hodakamori/megane-builder-tools megane-builder-tools`), since the package is not on PyPI yet and `uvx megane-builder-tools` failed.
+
 ## [0.17.0] - 2026-09-29
 
 ### Added
