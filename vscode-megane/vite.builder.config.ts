@@ -30,7 +30,7 @@ export default defineConfig({
   worker: wasmWorker(() => [rdkitNoDefaultWasm()]),
   resolve: {
     alias: [
-      // Parse on the main thread, as the viewer's webview does.
+      // Parse on the main thread: the Builder only opens single structures.
       syncParseAlias(),
       srcAlias(),
       ...aliasEntries(ketcherAlias),

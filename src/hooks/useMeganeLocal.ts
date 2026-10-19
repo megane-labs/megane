@@ -28,6 +28,7 @@ import type { TrajectoryLazyHandle, LazyTrajectoryKind } from "../parsers/xtc";
 import { parseTrajectoryByName } from "../parsers/trajectoryDispatch";
 import { trajectoryKindFromFileName } from "../parsers/fileNames";
 import { LazyFrameProvider } from "../stream/LazyFrameProvider";
+import { perfMark } from "../perf";
 import { usePipelineStoreApi, usePlaybackStoreApi } from "../stores/MeganeProvider";
 import {
   applyStructureToPipeline,
@@ -248,6 +249,7 @@ export function useMeganeLocal(): MeganeLocalState {
 
       // ── Phase 1: instant frame 0 from a bounded prefix ──
       const prefixFrame0 = await parseStructurePrefix(file, kind);
+      perfMark("megane:lazy:prefix");
       if (prefixFrame0) {
         applyResult(
           {
@@ -264,6 +266,7 @@ export function useMeganeLocal(): MeganeLocalState {
         // ── Phase 2 (background): full index → upgrade to streaming ──
         void indexStructureLazy(file, kind)
           .then(async (indexed) => {
+            perfMark("megane:lazy:indexed");
             if (!indexed) return; // frame 0 already shown; no streaming available
             // Heterogeneous files can't ride the positions-only lazy path — the
             // per-frame atom count / cell would be lost. Discard the lazy handle

@@ -92,6 +92,15 @@ describe("Vite configs use the shared settings", () => {
   const src = srcAlias();
   const sync = syncParseAlias();
 
+  it("vscode-megane/vite.webview.config parses in a wasm worker resolved beside the bundle", () => {
+    const list = aliases(vscodeWebviewConfig);
+    expect(list).toEqual([src]);
+    expect(vscodeWebviewConfig.base).toBe("./");
+    expect(vscodeWebviewConfig.worker?.format).toBe("es");
+    expect(pluginNames(vscodeWebviewConfig.worker!.plugins!())).toEqual(["vite-plugin-wasm"]);
+    expect(vscodeWebviewConfig.define).toMatchObject(prodDefine);
+  });
+
   it.each([
     ["vite.config", appConfig],
     ["vite.docs-demo.config", docsDemoConfig],
@@ -108,7 +117,6 @@ describe("Vite configs use the shared settings", () => {
     ["vite.widget.config", widgetConfig],
     ["vite.lib.config", libConfig],
     ["vite.builder-widget.config", builderWidgetConfig],
-    ["vscode-megane/vite.webview.config", vscodeWebviewConfig],
     ["vscode-megane/vite.builder.config", vscodeBuilderConfig],
   ])("%s parses on the main thread in production mode", (_name, config) => {
     const list = aliases(config);

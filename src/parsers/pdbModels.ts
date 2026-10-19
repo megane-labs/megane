@@ -9,8 +9,10 @@
  * The format puts a MODEL record before each model's first ATOM/HETATM, so the
  * first of those records in the file answers the question from its head alone.
  *
- * Keep it dependency-free — it only reads text.
+ * Keep it dependency-free beyond `fileBytes` — it only reads text.
  */
+
+import { readBlobText } from "./fileBytes";
 
 /** How much of the file's head {@link pdbMayHaveModels} reads. */
 export const PDB_MODEL_SNIFF_BYTES = 1024 * 1024;
@@ -31,5 +33,5 @@ export function pdbHeadMayHaveModels(head: string): boolean {
 
 /** {@link pdbHeadMayHaveModels} over the first {@link PDB_MODEL_SNIFF_BYTES} of `file`. */
 export async function pdbMayHaveModels(file: Blob): Promise<boolean> {
-  return pdbHeadMayHaveModels(await file.slice(0, PDB_MODEL_SNIFF_BYTES).text());
+  return pdbHeadMayHaveModels(await readBlobText(file, 0, PDB_MODEL_SNIFF_BYTES));
 }

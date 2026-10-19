@@ -27,15 +27,13 @@ module.exports = {
       /[\\/]src[\\/]ai[\\/]skillLoader\.ts$/,
       path.resolve(__dirname, "src/skillLoaderStub.ts")
     ),
-    // parseClient.ts imports a Vite `?worker` module that webpack cannot
-    // parse. Swap it for the synchronous main-thread parse client so the
-    // labextension bundles cleanly (same pattern as skillLoaderStub above).
-    // The Vite single-file bundles do the same swap via `syncParseAlias()` in
-    // ../vite.shared.ts (a TS module this CommonJS config cannot require).
-    new webpack.NormalModuleReplacementPlugin(
-      /[\\/]src[\\/]parsers[\\/]parseClient\.ts$/,
-      path.resolve(__dirname, "../src/parsers/parseClientSync.ts")
-    ),
+    // parseClient.ts spawns its parse worker through a Vite `?worker` import;
+    // webpack builds the same worker from the `new Worker(new URL(...))` form.
+    // Parsing off the main thread is what turns on lazy trajectory streaming
+    // (frame 0 first, the rest decoded on demand) in the DocWidget.
+    new webpack.NormalModuleReplacementPlugin(/^\.\/parse\.worker\?worker$/, (resource) => {
+      resource.request = path.resolve(__dirname, "../src/parsers/parseWorker.webpack.ts");
+    }),
     // megane Builder's RDKit worker is a Vite `?worker` import; webpack builds
     // the same worker from the `new Worker(new URL(...))` form instead.
     new webpack.NormalModuleReplacementPlugin(/^\.\/embed\.worker\?worker$/, (resource) => {

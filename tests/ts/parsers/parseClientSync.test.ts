@@ -355,6 +355,7 @@ describe("parseClientSync (main-thread path with mocked wasm)", () => {
     expect(await sync.decodeTrajectoryFrame0(fakeFile("t.xtc"), "xtc", 4)).toBeNull();
     await expect(sync.decodeTrajectoryFrame(0, 0)).rejects.toThrow(/worker-only/);
     expect(() => sync.disposeTrajectoryLazy(0)).not.toThrow();
+    expect(() => sync.prewarmParseWorker()).not.toThrow();
     // Never streams on the sync path, regardless of file size.
     expect(sync.shouldUseLazyTrajectory("xtc", 1)).toBe(false);
     expect(sync.shouldUseLazyTrajectory("lammpstrj", 1024 * 1024 * 1024)).toBe(false);

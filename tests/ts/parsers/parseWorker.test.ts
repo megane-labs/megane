@@ -166,6 +166,13 @@ describe("parse.worker onmessage", () => {
     vi.clearAllMocks();
   });
 
+  it("starts the WASM module for an init request and posts an ok response", async () => {
+    const { handler, posts } = await loadWorker();
+    await handler({ data: { id: 7, op: "init", wasmUrl: undefined } });
+    expect(posts).toHaveLength(1);
+    expect(posts[0]).toMatchObject({ id: 7, ok: true, op: "init" });
+  });
+
   it("parses a structure request and posts an ok response", async () => {
     const { handler, posts } = await loadWorker();
     await handler({

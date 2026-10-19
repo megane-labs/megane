@@ -18,6 +18,7 @@
  * VS Code host once did for Load Structure files — corrupts it.
  */
 
+import { fileFromBytes } from "../parsers/fileBytes";
 import type { PipelineNodeType } from "./types";
 
 /** Node type → the param that names the file it reads. */
@@ -70,5 +71,5 @@ export interface CompanionFilePayload {
 
 /** Rebuild `File`s from companions received as bytes. */
 export function companionFilesFromPayload(payload: readonly CompanionFilePayload[]): File[] {
-  return payload.map((c) => new File([c.content], c.filename));
+  return payload.map((c) => fileFromBytes(new Uint8Array(c.content), c.filename));
 }

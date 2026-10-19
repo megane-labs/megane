@@ -15,11 +15,12 @@
  * in every production bundle, which silently moved all parsing back onto the
  * main thread and disabled lazy trajectory streaming for the session.
  *
- * NOTE: on hosts whose bundler cannot handle the worker import (JupyterLab's
- * webpack, the single-file anywidget bundle, the VSCode webview whose CSP only
- * allows blob: workers), this module is swapped for `parseClientSync` at build
- * time — see `jupyterlab-megane/webpack.config.js`, `vite.widget.config.ts`
- * and `vscode-megane/vite.webview.config.ts`.
+ * NOTE: the single-file bundles (the anywidget widget, the npm library, the
+ * Builder bundles) swap this module for `parseClientSync` at build time via
+ * `syncParseAlias()` in vite.shared.ts. JupyterLab's webpack build keeps it and
+ * builds the worker from `parseWorker.webpack.ts`; the VSCode viewer webview
+ * keeps it too and starts the worker through a blob: bootstrap
+ * (`installCrossOriginWorker`).
  */
 
 import ParseWorker from "./parse.worker?worker";
@@ -27,6 +28,7 @@ import wasmAssetUrl from "../../crates/megane-wasm/pkg/megane_wasm_bg.wasm?url";
 import { perfMark, perfMeasure } from "../perf";
 import * as sync from "./parseClientSync";
 import { structureExtFromFileName } from "./fileNames";
+import { readBlobBuffer, readBlobText } from "./fileBytes";
 import type {
   StructureParseResult,
   XTCParseResult,
@@ -212,11 +214,11 @@ export async function parseStructureFile(file: File): Promise<StructureParseResu
     let req: ParseRequest;
     const transfer: Transferable[] = [];
     if (ext === ".traj") {
-      const buffer = await file.arrayBuffer();
+      const buffer = await readBlobBuffer(file);
       req = { id, op: "structure", wasmUrl: resolveWasmUrl(), ext, bytes: buffer };
       transfer.push(buffer);
     } else {
-      const text = await file.text();
+      const text = await readBlobText(file);
       req = { id, op: "structure", wasmUrl: resolveWasmUrl(), ext, text };
     }
     const result = await send<StructureParseResult>(req, transfer);
@@ -257,10 +259,10 @@ async function parseTrajectoryFile(
     let req: ParseRequest;
     const transfer: Transferable[] = [];
     if (kind === "lammpstrj") {
-      const text = await file.text();
+      const text = await readBlobText(file);
       req = { id, op: "trajectory", wasmUrl: resolveWasmUrl(), kind, text, expectedNAtoms };
     } else {
-      const buffer = await file.arrayBuffer();
+      const buffer = await readBlobBuffer(file);
       req = {
         id,
         op: "trajectory",
@@ -310,7 +312,7 @@ export async function indexTrajectoryLazy(
   try {
     const id = nextId++;
     const trajectoryId = nextTrajId++;
-    const buffer = await file.arrayBuffer();
+    const buffer = await readBlobBuffer(file);
     const index = await send<TrajectoryIndexResult>(
       {
         id,
@@ -350,7 +352,7 @@ export async function decodeTrajectoryFrame0(
   if ((globalThis as Record<string, unknown>).__MEGANE_TRAJ_FRAME0__ === false) return null;
   return withGrowingPrefix(file, async (size) => {
     const id = nextId++;
-    const buffer = await file.slice(0, size).arrayBuffer();
+    const buffer = await readBlobBuffer(file, 0, size);
     const { positions } = await send<TrajectoryFrame0Result>(
       {
         id,
@@ -388,6 +390,24 @@ export function disposeTrajectoryLazy(trajectoryId: number): void {
   void send<undefined>({ id, op: "disposeTrajectory", trajectoryId }, []).catch(() => {
     // best-effort cleanup; worker teardown already frees everything
   });
+}
+
+/**
+ * Start the parse worker and compile its WASM module now, without parsing
+ * anything. Hosts call it while they are still fetching a document's bytes
+ * (the JupyterLab Contents request, the VSCode extension host's message) so
+ * the ~150 ms of worker start-up and WASM compilation overlaps that wait
+ * instead of following it. Best-effort: a failure is left for the real parse
+ * request to surface (it falls back to the main thread).
+ */
+export function prewarmParseWorker(): void {
+  if (workerUnavailable()) return;
+  try {
+    const id = nextId++;
+    void send<undefined>({ id, op: "init", wasmUrl: resolveWasmUrl() }, []).catch(() => {});
+  } catch {
+    // Worker construction failed; the next parse falls back on its own.
+  }
 }
 
 // ── Lazy multi-frame structure files (XYZ / PDB) ────────────────────────
@@ -454,8 +474,8 @@ export async function parseStructurePrefix(
     const wantTail = kind === "pdb" && !isWholeFile && file.size - size > 0;
     const tailStart = Math.max(size, file.size - PDB_TAIL_BYTES);
     const [rawHead, rawTail] = await Promise.all([
-      file.slice(0, size).text(),
-      wantTail ? file.slice(tailStart).text() : Promise.resolve(""),
+      readBlobText(file, 0, size),
+      wantTail ? readBlobText(file, tailStart) : Promise.resolve(""),
     ]);
     // Trim a partial trailing head line, and the partial leading tail line, so no
     // record is cut mid-way where the two chunks are stitched together.
@@ -484,7 +504,7 @@ export async function indexStructureLazy(
   try {
     const id = nextId++;
     const trajectoryId = nextTrajId++;
-    const buffer = await file.arrayBuffer();
+    const buffer = await readBlobBuffer(file);
     const { index, frame0 } = await send<IndexStructureResult>(
       { id, op: "indexStructure", wasmUrl: resolveWasmUrl(), kind, trajectoryId, bytes: buffer },
       [buffer],

@@ -18,8 +18,8 @@ The docs describe Megane along one axis: the **distribution** (host) you run it 
 |---|---|---|
 | **Standalone web app** | `src/index.tsx`, served by `megane serve` | Full-featured viewer with pipeline editor, drag-and-drop, file dialogs, and Web Worker parsing with on-demand frame streaming for large files. |
 | **Jupyter widget** (anywidget) | `src/widget.ts` + `python/megane/widget.py` | Embedded viewer in a notebook cell, driven by Python (`MolecularViewer`). |
-| **JupyterLab extension** (labextension) | `jupyterlab-megane/src/index.ts` | Document-style viewer launched from the JupyterLab file browser. |
-| **VS Code extension** | `vscode-megane/webview/main.tsx` | Custom editor activated when a registered file type is opened in VS Code. |
+| **JupyterLab extension** (labextension) | `jupyterlab-megane/src/index.ts` | Document-style viewer launched from the JupyterLab file browser, with the same Web Worker parsing and on-demand frame streaming as the web app. |
+| **VS Code extension** | `vscode-megane/webview/main.tsx` | Custom editor activated when a registered file type is opened in VS Code, with the same Web Worker parsing and on-demand frame streaming as the web app. |
 | **React component (npm)** | `src/lib.ts`, package `megane-viewer` | Embeddable React components (`MeganeViewer`, `PipelineViewer`, `Viewport`) plus the framework-agnostic `MoleculeRenderer`. The same viewer as Standalone, minus the `megane serve` backend (no built-in WebSocket streaming). |
 | **Python package** (PyO3) | `python/megane/parsers/` | Programmatic API for parsing files into Python objects. No viewer. |
 
@@ -225,7 +225,8 @@ for extended XYZ. It is the same grammar as `.xyz`, so it is also an **alias**
 to the XYZ reader: `Lattice=` becomes the unit cell, `Properties=` columns
 (`forces`, `velocities`, scalar per-atom properties) become channels, and
 multi-frame files open as a trajectory — exactly as they do under `.xyz`,
-including lazy streaming of large files in the web app.
+including lazy streaming of large files in the web app, the JupyterLab
+extension and the VS Code extension.
 
 Note: **Heterogeneous frames** — trajectories whose frames differ in atom count (adsorption/GCMC/reactions), unit cell (variable-cell / NPT), or elements — are supported by every multi-frame structure format: **ASE `.traj`**, **multi-frame / extended XYZ** (per-frame atom count and per-frame `Lattice=`), and **multi-MODEL PDB** (per-model atom count). Frame 0 defines the base topology; per-frame differences are carried alongside and the viewer swaps atoms, bonds, and cell as you scrub. Uniform trajectories (constant atoms/topology/cell, the common case) use an unchanged fast path and are unaffected. Large heterogeneous XYZ/PDB files that would otherwise stream lazily fall back to an eager parse so no frame is dropped.
 
@@ -361,7 +362,7 @@ Sources of truth: `crates/megane-core/src/formats.rs` (the format registry the b
 | Trajectory timeline / scrubbing | ✓ | ✓ | ✓ | ✓ | ✓ | n/a |
 | Trajectory playback without a running backend (shared / reopened document) | ✓ | ✓⁷ | ✓ | ✓ | ✓ | n/a |
 | WebSocket trajectory streaming | backend only¹⁰ | — | — | — | — | n/a |
-| Parsing in a Web Worker; trajectories and multi-frame XYZ / multi-MODEL PDB of 8 MB or more stream frames on demand | ✓ | — | — | — | — | n/a |
+| Parsing in a Web Worker; trajectories and multi-frame XYZ / multi-MODEL PDB of 8 MB or more stream frames on demand¹⁴ | ✓ | — | ✓ | ✓ | — | n/a |
 | Multi-layer rendering | ✓ | ✓ (via pipeline) | ✓ | ✓ | ✓ | n/a |
 | Solvent-accessible surface (SAS) | ✓ | ✓ (via pipeline) | ✓ | ✓ | ✓ | n/a |
 | Surface mesh (alpha-shape envelope) | ✓ | ✓ (via pipeline) | ✓ | ✓ | ✓ | n/a |
@@ -402,11 +403,13 @@ Sources of truth: `crates/megane-core/src/formats.rs` (the format registry the b
 
 ¹³ The node types that carry a file, and the param naming it, are listed once in `src/pipeline/companionFiles.ts` (`COMPANION_FILE_PARAMS`); the JupyterLab pipeline document reads it directly, and the VS Code extension host, compiled apart from `src/`, keeps a copy pinned to it by a unit test. Files are matched back to their nodes by basename in `openPipeline` (`src/pipeline/openFile.ts`), and only paths inside the pipeline file's folder are read. The Jupyter widget has no file side to read from: `set_pipeline()` sends the parsed data itself.
 
+¹⁴ The JupyterLab labextension builds the parse worker with webpack (`src/parsers/parseWorker.webpack.ts`); the VS Code webview ships it beside `webview.js` and starts it through a `blob:` bootstrap (`installCrossOriginWorker`), since the webview's origin is not the extension's resource origin. Both hosts start the worker and compile its WASM while the document's bytes are still on their way (`prewarmParseWorker`), and hand the parsers the bytes they already hold (`fileFromBytes`) rather than reading them back through the Blob API.
+
 Notes:
 
 - **host** means the parent app provides the file picker (the JupyterLab file browser, the VS Code explorer); Megane itself does not render one.
 - The Jupyter widget intentionally does not mount the visual pipeline editor — pipelines are built in Python (`megane.Pipeline`) and pushed via `MolecularViewer.set_pipeline()`. Use the standalone app, JupyterLab extension, VS Code extension, or the npm `MeganeViewer` to edit pipelines visually. The opt-in Quick Style panel (¹²) is the only in-widget control that edits the pipeline, and only the parameters listed above.
-- The standalone app is the only platform that parses in a Web Worker and streams the frames of large (≥ 8 MB) trajectories and multi-frame XYZ / PDB files on demand; the other platforms decode full trajectories into memory.
+- The standalone app, the JupyterLab extension and the VS Code extension parse in a Web Worker and stream the frames of large (≥ 8 MB) trajectories and multi-frame XYZ / PDB files on demand (¹⁴); the Jupyter widget and the npm component decode full trajectories into memory.
 - The standalone React `MeganeViewer` exposes an `onFrameChange?: (frame: number) => void` prop that fires on every trajectory frame transition — useful for keeping a host Plotly figure in sync.
 - The standalone React `MeganeViewer` also exposes `onSelectionChange?: (selection: SelectionState) => void` (fires on every atom selection change; data: `{ atoms: number[] }`) and `onMeasurementChange?: (measurement: Measurement | null) => void` (fires when a distance/angle/dihedral measurement is computed or cleared). `onMeasurementChange` matches the Jupyter widget's `measurement` event; the widget's `selection_change` only reports selections set from Python (see ⁹).
 - ² On **JupyterLab**, `selection_change` / `measurement` events are surfaced via `MeganeReactView.subscribeSelectionChange` and `subscribeMeasurementChange` — consumable by other JupyterLab extensions. On **VS Code**, they are forwarded to the extension host as `selectionChange` / `measurementChange` webview messages and reflected in the status bar (atom count or measurement label).

@@ -95,6 +95,22 @@ declare module "@megane/pipeline/companionFiles" {
   export function companionFileName(node: { type?: unknown }): string | null;
 }
 
+declare module "@megane/parsers/fileBytes" {
+  export function fileFromBytes(bytes: Uint8Array, name: string, options?: FilePropertyBag): File;
+}
+
+declare module "@megane/parsers/structure" {
+  export function prewarmParseWorker(): void;
+}
+
+declare module "@megane/perf" {
+  export function perfMark(name: string): void;
+}
+
+declare module "@megane/utils/base64" {
+  export function decodeBase64(b64: string): Uint8Array<ArrayBuffer>;
+}
+
 declare module "@megane/pipeline/storeSnapshot" {
   export type PipelineStoreSnapshot = Record<string, unknown>;
   export function capturePipelineStore(state: any): PipelineStoreSnapshot;

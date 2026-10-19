@@ -138,6 +138,9 @@ ctx.onmessage = async (e: MessageEvent<ParseRequest>) => {
         } satisfies ParseResponse,
         transfer,
       );
+    } else if (req.op === "init") {
+      await ensureInit(req.wasmUrl);
+      ctx.postMessage({ id: req.id, ok: true, op: "init" } satisfies ParseResponse);
     } else if (req.op === "disposeTrajectory") {
       decoders.get(req.trajectoryId)?.free();
       decoders.delete(req.trajectoryId);

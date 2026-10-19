@@ -16,11 +16,13 @@ const { state, FakeWorker } = vi.hoisted(() => {
     lastReq: null as { id: number; op: string } | null,
     created: 0,
     posted: 0,
+    throwOnCreate: false,
   };
   class FakeWorker {
     onmessage: ((e: { data: unknown }) => void) | null = null;
     onerror: (() => void) | null = null;
     constructor() {
+      if (state.throwOnCreate) throw new Error("worker blocked");
       state.created++;
     }
     postMessage(req: { id: number; op: string }) {
@@ -80,6 +82,7 @@ describe("parseClient worker path", () => {
     state.lastReq = null;
     state.created = 0;
     state.posted = 0;
+    state.throwOnCreate = false;
     vi.clearAllMocks();
   });
 
@@ -203,6 +206,45 @@ describe("parseClient worker path", () => {
     const xyz = bigFile("big.xyz");
     await client.parseStructurePrefix(xyz.file, "xyz");
     expect(xyz.slice).toHaveBeenCalledTimes(1); // head only
+  });
+
+  it("prewarmParseWorker starts the worker with an init request carrying the WASM URL", async () => {
+    const client = await freshClient();
+    (globalThis as Record<string, unknown>).__MEGANE_WASM_URL__ = "https://x/megane.wasm";
+    try {
+      client.prewarmParseWorker();
+      expect(state.created).toBe(1);
+      expect(state.lastReq).toMatchObject({ op: "init", wasmUrl: "https://x/megane.wasm" });
+      // The worker that compiled the module is the one the next parse uses.
+      await client.parseStructureFile(fakeFile("a.pdb"));
+      expect(state.created).toBe(1);
+    } finally {
+      delete (globalThis as Record<string, unknown>).__MEGANE_WASM_URL__;
+    }
+  });
+
+  it("prewarmParseWorker swallows a failed init", async () => {
+    const client = await freshClient();
+    state.mode = "err";
+    expect(() => client.prewarmParseWorker()).not.toThrow();
+    await new Promise((r) => setTimeout(r, 0));
+    expect(state.posted).toBe(1);
+  });
+
+  it("prewarmParseWorker leaves a worker that cannot be constructed to the next parse", async () => {
+    const client = await freshClient();
+    state.throwOnCreate = true;
+    expect(() => client.prewarmParseWorker()).not.toThrow();
+    expect(state.posted).toBe(0);
+  });
+
+  it("prewarmParseWorker does nothing once the worker has crashed", async () => {
+    const client = await freshClient();
+    state.mode = "crash";
+    await client.parseStructureFile(fakeFile("a.pdb"));
+    const posted = state.posted;
+    client.prewarmParseWorker();
+    expect(state.posted).toBe(posted);
   });
 
   it("gives up growing a prefix once the worker crashes, without starting another", async () => {

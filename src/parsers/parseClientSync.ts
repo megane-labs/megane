@@ -22,6 +22,7 @@ import {
   type XTCParseResult,
 } from "./parseCore";
 import { structureExtFromFileName } from "./fileNames";
+import { readBlobBuffer, readBlobText } from "./fileBytes";
 import type { DecodedLazyFrame, StructureLazyResult, TrajectoryLazyHandle } from "./parseMessages";
 export type {
   DecodedLazyFrame,
@@ -42,10 +43,10 @@ export async function parseStructureFile(file: File): Promise<StructureParseResu
 
   let parseResult: StructureParseResult;
   if (ext === ".traj") {
-    const buffer = await file.arrayBuffer();
+    const buffer = await readBlobBuffer(file);
     parseResult = parseStructureCore({ ext, bytes: new Uint8Array(buffer) });
   } else {
-    const text = await file.text();
+    const text = await readBlobText(file);
     parseResult = parseStructureCore({ ext, text });
   }
 
@@ -65,13 +66,13 @@ export async function parseStructureText(
 
 export async function parseXTCFile(file: File, expectedNAtoms: number): Promise<XTCParseResult> {
   await ensureInit();
-  const buffer = await file.arrayBuffer();
+  const buffer = await readBlobBuffer(file);
   return parseTrajectoryCore({ kind: "xtc", bytes: new Uint8Array(buffer), expectedNAtoms });
 }
 
 export async function parseDCDFile(file: File, expectedNAtoms: number): Promise<XTCParseResult> {
   await ensureInit();
-  const buffer = await file.arrayBuffer();
+  const buffer = await readBlobBuffer(file);
   return parseTrajectoryCore({ kind: "dcd", bytes: new Uint8Array(buffer), expectedNAtoms });
 }
 
@@ -80,13 +81,13 @@ export async function parseLammpstrjFile(
   expectedNAtoms: number,
 ): Promise<XTCParseResult> {
   await ensureInit();
-  const text = await file.text();
+  const text = await readBlobText(file);
   return parseTrajectoryCore({ kind: "lammpstrj", text, expectedNAtoms });
 }
 
 export async function parseNetCDFFile(file: File, expectedNAtoms: number): Promise<XTCParseResult> {
   await ensureInit();
-  const buffer = await file.arrayBuffer();
+  const buffer = await readBlobBuffer(file);
   return parseTrajectoryCore({ kind: "netcdf", bytes: new Uint8Array(buffer), expectedNAtoms });
 }
 
@@ -130,6 +131,11 @@ export async function decodeTrajectoryFrame(
 
 /** No-op: there is no persistent decoder on the synchronous path. */
 export function disposeTrajectoryLazy(_trajectoryId: number): void {
+  /* no-op */
+}
+
+/** Worker-only; nothing to warm up on the main-thread path. */
+export function prewarmParseWorker(): void {
   /* no-op */
 }
 
