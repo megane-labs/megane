@@ -7,7 +7,7 @@
  */
 
 export const KETCHER_UNAVAILABLE =
-  "the sketcher is not part of the Jupyter widget; draw in the megane web app, VS Code or JupyterLab";
+  "the sketcher is not part of the Jupyter widget; draw in the Megane web app, VS Code or JupyterLab";
 
 export default function KetcherUnavailable(): never {
   throw new Error(KETCHER_UNAVAILABLE);

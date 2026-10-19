@@ -98,7 +98,7 @@ function welcomeDescription(): string {
   return `
     <div class="megane-tour-welcome">
       <div class="megane-tour-welcome-header">
-        <span class="megane-tour-welcome-name">megane</span>
+        <span class="megane-tour-welcome-name">Megane</span>
         <span class="megane-tour-welcome-version">v${escapeHtml(APP_VERSION)}</span>
       </div>
       <p class="megane-tour-welcome-tagline">Spectacles for atomistic data.</p>
@@ -222,7 +222,7 @@ export function buildPipelineTutorialSteps(): DriveStep[] {
       popover: {
         title: "Pipeline tutorial",
         description: `
-          <p class="megane-tour-paragraph">Let's see how a megane pipeline is wired up.</p>
+          <p class="megane-tour-paragraph">Let's see how a Megane pipeline is wired up.</p>
           <p class="megane-tour-paragraph">In four short steps we'll go from a structure file all the way to what you see in the 3D viewport — <strong>load → connect → edit → viewport</strong>.</p>`,
         side: "over",
         align: "center",

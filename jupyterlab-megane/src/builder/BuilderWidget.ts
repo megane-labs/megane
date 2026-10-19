@@ -29,8 +29,8 @@ export class BuilderWidget extends Widget {
   constructor(private readonly save: (file: BuilderSaveRequest) => Promise<string | null>) {
     super();
     this.id = `megane-builder-${nextTab++}`;
-    this.title.label = "megane Builder";
-    this.title.caption = "megane Builder: build and edit structures";
+    this.title.label = "Megane Builder";
+    this.title.caption = "Megane Builder: build and edit structures";
     this.title.closable = true;
     this.addClass(BUILDER_WIDGET_CLASS);
     // The Builder's own keys (tools, Undo, Save) win over JupyterLab's while

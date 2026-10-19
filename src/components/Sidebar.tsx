@@ -105,7 +105,7 @@ export function Sidebar({
           }}
           title="Open sidebar"
         >
-          megane
+          Megane
           <span style={{ fontSize: 11, color: "var(--megane-text-muted)", fontWeight: 400 }}>
             &#9654;
           </span>
@@ -155,7 +155,7 @@ export function Sidebar({
             letterSpacing: "-0.02em",
           }}
         >
-          megane
+          Megane
         </span>
         <button
           onClick={onToggleCollapse}

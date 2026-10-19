@@ -29,7 +29,7 @@ __all__ = ["app", "configure", "configure_files"]
 
 logger = logging.getLogger(__name__)
 
-app = FastAPI(title="megane")
+app = FastAPI(title="Megane")
 
 # Track connected WebSocket clients for broadcasting
 _clients: set[WebSocket] = set()
@@ -402,7 +402,7 @@ else:
         from fastapi.responses import HTMLResponse
 
         return HTMLResponse(
-            "<h1>megane</h1>"
+            "<h1>Megane</h1>"
             "<p>The web UI is not available.</p>"
             "<p>Build the frontend first:</p>"
             "<pre>npm run build</pre>"
