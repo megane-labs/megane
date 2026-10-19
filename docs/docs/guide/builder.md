@@ -347,7 +347,8 @@ with HTTP on your machine, allowing the page you opened Builder from (here
 tool server takes below):
 
 ```bash
-uvx megane-builder-tools --transport http --port 8765 \
+uvx --from git+https://github.com/hodakamori/megane-builder-tools \
+    megane-builder-tools --transport http --port 8765 \
     --allow-origin http://localhost:8080
 ```
 
@@ -372,8 +373,12 @@ to 100 seconds, so build large systems with your own server, which replaces it
 once you connect to it (the URL is remembered).
 
 Opening Builder with `#tools=<url>&token=<token>` at the end of its address
-connects on load. Anyone can write a tool server with the
-[`megane-builder-tools` SDK](https://github.com/hodakamori/megane-builder-tools).
+connects on load.
+
+To add buttons of your own, write a tool server with the
+[`megane-builder-tools` SDK](https://github.com/hodakamori/megane-builder-tools):
+[Writing a Builder Tool Server](../dev/builder-tool-server.md) goes from an
+empty folder to your tools in this menu.
 
 ## History
 

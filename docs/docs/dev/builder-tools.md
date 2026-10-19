@@ -659,7 +659,9 @@ tool error telling the user to set a cell (in Builder: *Structure â€º Set cellâ€
 
 ### 12.4 Server side
 
-With the reference SDK a tool is a typed Python function:
+[Writing a Builder Tool Server](builder-tool-server.md) walks through a
+complete server, from installing the SDK to buttons in the Builder. With the
+reference SDK a tool is a typed Python function:
 
 ```python
 from typing import Annotated, Literal
