@@ -198,7 +198,23 @@ function ToolForm({
     return runs[src]?.data?.name ?? (n ? blockTitle(n.data.params, null) : src);
   };
   const missing = ports.filter((p) => p.required && (sources[p.key]?.length ?? 0) === 0);
-  const invalid = validate(fields, values, ctx);
+  // The settings, then each wire's row (a component's count).
+  const invalid =
+    validate(fields, values, ctx) ??
+    ports
+      .filter((p) => p.multiple)
+      .flatMap((port) => {
+        const columns = rowFields(tool, port);
+        return (sources[port.key] ?? []).map((src) =>
+          validate(
+            columns,
+            { ...initialValues(columns, ctx), ...(params.rows[port.key]?.[src] ?? {}) },
+            ctx,
+          ),
+        );
+      })
+      .find((p) => p !== null) ??
+    null;
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
@@ -283,7 +299,7 @@ function ToolForm({
           />
         </div>
       )}
-      {(missing.length > 0 || (invalid && Object.keys(upstream).length > 0)) && (
+      {(missing.length > 0 || invalid) && (
         <div
           data-testid="builder-flow-tool-problem"
           style={{ ...hintStyle, color: "var(--megane-warning-text, #b45309)" }}

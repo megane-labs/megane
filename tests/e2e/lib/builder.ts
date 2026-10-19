@@ -116,3 +116,36 @@ export async function saveAs(scope: Root, format: string, menus: Root = scope): 
   await scope.locator('[data-testid="builder-file"]').click();
   await menus.locator(`[data-testid="builder-save-${format}"]`).click();
 }
+
+/**
+ * Flow mode: switch to it, add a molecule-from-SMILES block, check the graph
+ * editor drew it with React Flow's styles (the stylesheet the Builder inlines
+ * for every host bundle: a block is absolutely positioned), run it — RDKit
+ * embeds the SMILES in the page — and open the result in Manual mode. Menus
+ * are portaled to the document body: `menus`.
+ */
+export async function buildSmilesInFlow(
+  scope: Root,
+  smiles: string,
+  menus: Root = scope,
+): Promise<void> {
+  await scope.locator('[data-testid="builder-mode-flow"]').click();
+  await expect(scope.locator('[data-testid="builder-flow-panel"]')).toBeVisible({
+    timeout: 30_000,
+  });
+  await scope.locator('[data-testid="builder-flow-add"]').click();
+  await menus.locator('[data-testid="builder-flow-add-smiles"]').click();
+  await scope.locator('[data-testid="builder-flow-molecule-smiles"]').fill(smiles);
+  await expect(scope.locator(".react-flow__node").first()).toHaveCSS("position", "absolute");
+  await scope.locator('[data-testid="builder-flow-run"]').click();
+  await expect(scope.locator('[data-testid="builder-flow-node-molecule"]')).toHaveAttribute(
+    "data-status",
+    "done",
+    { timeout: 90_000 },
+  );
+  await scope.locator('[data-testid="builder-flow-open-manual"]').click();
+  await expect(scope.locator('[data-testid="megane-builder"]')).toHaveAttribute(
+    "data-mode",
+    "manual",
+  );
+}

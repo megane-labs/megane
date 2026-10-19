@@ -398,6 +398,16 @@ describe("FlowProperties", () => {
     const params = () =>
       stores.flow.getState().nodes[1].data.params as Extract<FlowParams, { type: "tool" }>;
     expect(params().rows.components[m]).toMatchObject({ count: 42 });
+    expect(screen.queryByTestId("builder-flow-tool-problem")).toBeNull();
+    fireEvent.change(within(row).getByTestId(`builder-flow-row-field-${m}-count`), {
+      target: { value: "0" },
+    });
+    expect(screen.getByTestId("builder-flow-tool-problem").textContent).toContain(
+      "Count must be at least 1",
+    );
+    fireEvent.change(within(row).getByTestId(`builder-flow-row-field-${m}-count`), {
+      target: { value: "42" },
+    });
     fireEvent.change(screen.getByTestId("builder-flow-field-density"), {
       target: { value: "0.8" },
     });
