@@ -5,7 +5,8 @@
  * Builder tab: the commands reveal it, and opening a file replaces its
  * document as *File › Open…* inside the Builder does. Closing the tab drops the
  * document. The tab keeps the directory of the file it opened last, which is
- * where Save suggests writing.
+ * where Save suggests writing. With a `toolBridge` (the Jupyter server's tool
+ * servers, `tools.ts`), the Builder has its *Tools* menu.
  */
 
 import { Widget } from "@lumino/widgets";
@@ -13,6 +14,7 @@ import { mountBuilder, type MountedBuilder } from "@megane/builder/mount";
 import { openStructureFile } from "@megane/builder/open";
 import { useBuilderStore } from "@megane/builder/store";
 import type { BuilderSaveRequest } from "@megane/builder/host";
+import type { ToolBridge } from "@megane/builder/tools/bridge";
 
 export const BUILDER_WIDGET_ID = "megane-builder";
 
@@ -22,7 +24,10 @@ export class BuilderWidget extends Widget {
   private readonly target: HTMLElement;
   private mounted: MountedBuilder | null = null;
 
-  constructor(private readonly save: (file: BuilderSaveRequest) => Promise<string | null>) {
+  constructor(
+    private readonly save: (file: BuilderSaveRequest) => Promise<string | null>,
+    private readonly toolBridge: ToolBridge | null = null,
+  ) {
     super();
     this.id = BUILDER_WIDGET_ID;
     this.title.label = "megane Builder";
@@ -49,7 +54,8 @@ export class BuilderWidget extends Widget {
     if (this.mounted) return;
     this.mounted = mountBuilder(this.target, {
       save: (file) => this.save(file),
-      tools: false,
+      tools: !!this.toolBridge,
+      toolBridge: this.toolBridge ?? undefined,
       scopeShortcuts: true,
     });
   }

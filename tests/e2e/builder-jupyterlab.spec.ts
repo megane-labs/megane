@@ -6,7 +6,9 @@
  * browser's context menu and the launcher reach it too. Checks that the
  * labextension's bundle runs the Builder's heavy parts (the RDKit worker built
  * by webpack, the lazily loaded Ketcher), that its keyboard shortcuts stay
- * inside the tab, and that Save writes into the server's contents.
+ * inside the tab, and that Save writes into the server's contents. The
+ * *Tools* menu reaches a stdio MCP tool server configured on the Jupyter
+ * server (`MeganeBuilderTools.mcp_servers`) through megane's server extension.
  */
 
 import { copyFileSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "fs";
@@ -41,7 +43,25 @@ test.beforeAll(async () => {
   mkdirSync(DIR, { recursive: true });
   copyFileSync(join(REPO, "tests", "fixtures", "caffeine.sdf"), join(DIR, "caffeine.sdf"));
   writeFileSync(join(DIR, "notes.txt"), "not a structure\n");
+  // megane's server extension, with a stdio server replaying the reference
+  // tool server's recorded responses.
+  const config = "/tmp/megane-e2e-builder-lab-config.json";
+  writeFileSync(
+    config,
+    JSON.stringify({
+      ServerApp: { jpserver_extensions: { "megane.builder_tools": true } },
+      MeganeBuilderTools: {
+        mcp_servers: {
+          "recorded-tools": {
+            command: "node",
+            args: [join(REPO, "tests", "e2e", "lib", "fake-builder-tools.mjs")],
+          },
+        },
+      },
+    }),
+  );
   lab = await startJupyterLab({
+    configFile: config,
     port: PORT,
     token: TOKEN,
     notebookDir: DIR,
@@ -84,8 +104,8 @@ test("the megane sidebar opens a structure in the Builder tab, which edits, clea
   await expect(builder).toHaveAttribute("data-atom-count", "24", { timeout: 60_000 });
   await waitForReady(page);
   await expect(page.locator('[data-testid="builder-file-name"]')).toHaveText("caffeine.sdf");
-  // No tool server is reachable from JupyterLab: the Tools menu is left out.
-  await expect(page.locator('[data-testid="builder-tools"]')).toHaveCount(0);
+  // The Tools menu reaches the Jupyter server's tool servers.
+  await expect(page.locator('[data-testid="builder-tools"]')).toHaveCount(1);
 
   // The tab's keys act only while the focus is in it.
   await page.locator('#megane-builder [data-testid="viewer-root"]').click();
@@ -113,6 +133,51 @@ test("the megane sidebar opens a structure in the Builder tab, which edits, clea
   await dialog.locator(".jp-Dialog-button.jp-mod-accept").click();
   await expect(dialog).toContainText("caffeine.xyz already exists");
   await dialog.locator(".jp-Dialog-button", { hasText: "Cancel" }).click();
+  await expect(dialog).toHaveCount(0);
+});
+
+test("the Tools menu runs the Jupyter server's stdio tool server", async ({ page }) => {
+  await openLab(page);
+  await sidebarTab(page).click();
+  await page.locator('[data-testid="megane-builder-sidebar-open"]').click();
+  const tools = page.locator('#megane-builder [data-testid="builder-tools"]');
+
+  // The menu offers the configured server; connecting asks first (§9).
+  await tools.click();
+  await page.locator('[data-testid="builder-tools-connect-recorded-tools"]').click();
+  const dialog = page.locator(".jp-Dialog");
+  await expect(dialog).toContainText('Allow the tool server "recorded-tools"?');
+  await expect(dialog).toContainText("fake-builder-tools.mjs");
+  await dialog.locator(".jp-Dialog-button", { hasText: "Allow" }).click();
+  await expect(page.locator('[data-testid="builder-tools-connected"]')).toContainText(
+    "Connected to megane-builder-tools: 3 tools",
+    { timeout: 60_000 },
+  );
+
+  // A new-document tool replaces the empty document.
+  await tools.click();
+  await page.locator('[data-testid="builder-tools-button-liquid_box"]').click();
+  await page
+    .locator('[data-testid="builder-tool-field-components-0-molecule"]')
+    .selectOption("preset:water");
+  await page.locator('[data-testid="builder-tool-field-seed"]').fill("42");
+  await page.locator('[data-testid="builder-tool-run"]').click();
+  const builder = page.locator('#megane-builder [data-testid="megane-builder"]');
+  await expect(builder).toHaveAttribute("data-atom-count", "300", { timeout: 60_000 });
+
+  // An insert tool adds its atoms to the open document as one step.
+  await tools.click();
+  await page.locator('[data-testid="builder-tools-button-solvate"]').click();
+  await page.locator('[data-testid="builder-tool-run"]').click();
+  await expect(builder).toHaveAttribute("data-atom-count", "1098", { timeout: 60_000 });
+  await expect(page.locator('[data-testid="builder-notice"]')).toContainText("Solvate");
+
+  // The answer is remembered: reconnecting does not ask again.
+  await tools.click();
+  await page.locator('[data-testid="builder-tools-server"]').click();
+  await page.locator('[data-testid="builder-tools-disconnect"]').click();
+  await page.locator('[data-testid="builder-tools-connect"]').click();
+  await expect(page.locator('[data-testid="builder-tools-connected"]')).toBeVisible();
   await expect(dialog).toHaveCount(0);
 });
 

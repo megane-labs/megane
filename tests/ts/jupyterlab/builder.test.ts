@@ -44,9 +44,11 @@ import {
   activateBuilder,
   builderPlugin,
   CommandIDs,
+  confirmToolServer,
   dialogPrompts,
   type FileBrowserLike,
 } from "../../../jupyterlab-megane/src/builder/plugin";
+import { CONFIG_HINT } from "../../../jupyterlab-megane/src/builder/tools";
 import { meganeIcon, MEGANE_ICON_SVG } from "../../../jupyterlab-megane/src/builder/icon";
 import * as apputils from "@jupyterlab/apputils";
 import { BUILDER_EXTENSIONS as VSCODE_EXTENSIONS } from "../../../vscode-megane/src/extension";
@@ -208,6 +210,37 @@ describe("BuilderWidget", () => {
   });
 });
 
+describe("BuilderWidget tools", () => {
+  it("gives the Builder the Tools menu through the tool bridge", () => {
+    const bridge = { configHint: "x", listServers: vi.fn(), connect: vi.fn() };
+    const w = new BuilderWidget(vi.fn(), bridge);
+    (w as unknown as { onAfterAttach(): void }).onAfterAttach();
+    expect(mounts[mounts.length - 1].host).toMatchObject({ tools: true, toolBridge: bridge });
+    w.dispose();
+  });
+});
+
+describe("confirmToolServer", () => {
+  it("asks with the command line and allows only on Allow", async () => {
+    const show = vi.spyOn(apputils, "showDialog");
+    show.mockClear();
+    show
+      .mockResolvedValueOnce({ button: { accept: true } } as never)
+      .mockResolvedValueOnce({ button: { accept: false } } as never);
+    const server = { id: "tools", kind: "stdio" as const, description: "megane-builder-tools" };
+    expect(await confirmToolServer(server)).toBe(true);
+    expect(await confirmToolServer(server)).toBe(false);
+    const options = show.mock.calls[0][0] as {
+      title: string;
+      body: string;
+      buttons: { label?: string }[];
+    };
+    expect(options.title).toBe('Allow the tool server "tools"?');
+    expect(options.body).toContain("megane-builder-tools");
+    expect(options.buttons[1].label).toBe("Allow");
+  });
+});
+
 describe("BuilderSidebar", () => {
   it("lists the folder's structure files and opens them; Open Builder opens the tab", () => {
     const openBuilder = vi.fn();
@@ -337,6 +370,21 @@ describe("builder plugin", () => {
     expect(commands.has(CommandIDs.openBuilder)).toBe(true);
     const sidebar = app.shell.add.mock.calls[0][0] as BuilderSidebar;
     expect(sidebar.node.textContent).toContain("Right-click");
+  });
+
+  it("gives the Builder tab the Jupyter server's tool servers by default", async () => {
+    const { app } = fakeApp();
+    activateBuilder(app as never, null, null, null, null);
+    await app.commands.execute(CommandIDs.openBuilder);
+    const tab = app.shell.add.mock.calls.find((c) => c[1] === "main")![0] as BuilderWidget;
+    (tab as unknown as { onAfterAttach(): void }).onAfterAttach();
+    const host = mounts[mounts.length - 1].host as {
+      tools: boolean;
+      toolBridge: { configHint: string };
+    };
+    expect(host.tools).toBe(true);
+    expect(host.toolBridge.configHint).toBe(CONFIG_HINT);
+    tab.dispose();
   });
 
   it("megane Builder opens one tab and brings it back", async () => {

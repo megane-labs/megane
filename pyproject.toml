@@ -46,7 +46,9 @@ Issues = "https://github.com/megane-labs/megane/issues"
 
 [project.optional-dependencies]
 traj = ["ase>=3.22"]
-dev = ["pytest>=7.0", "httpx>=0.24", "pytest-cov>=4.0", "nbconvert>=7.0", "ipykernel>=6.0", "jupyterlab>=4.0", "plotly>=5.0"]
+# The MCP client JupyterLab's Builder needs to reach tool servers (megane.builder_tools).
+tools = ["mcp>=2.2,<3"]
+dev = ["pytest>=7.0", "httpx>=0.24", "pytest-cov>=4.0", "nbconvert>=7.0", "ipykernel>=6.0", "jupyterlab>=4.0", "plotly>=5.0", "mcp>=2.2,<3", "pytest-jupyter[server]>=0.10"]
 
 [project.scripts]
 megane = "megane.cli:main"

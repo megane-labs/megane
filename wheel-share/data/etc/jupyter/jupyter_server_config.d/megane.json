@@ -1,0 +1,7 @@
+{
+  "ServerApp": {
+    "jpserver_extensions": {
+      "megane.builder_tools": true
+    }
+  }
+}
