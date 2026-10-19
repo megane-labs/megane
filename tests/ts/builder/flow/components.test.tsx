@@ -545,9 +545,10 @@ describe("FlowProperties", () => {
 describe("openInManual", () => {
   it("replaces the document and switches modes", () => {
     stores.flow.getState().setMode("flow");
-    openInManual(stores.builder, stores.flow, waterData("box"));
+    openInManual(stores.builder, stores.flow, waterData("box"), "k1");
     expect(stores.builder.getState().fileName).toBe("box");
     expect(stores.flow.getState().mode).toBe("manual");
+    expect(stores.flow.getState().adoptedKey).toBe("k1");
     expect(downloadBlob).not.toHaveBeenCalled();
   });
 });

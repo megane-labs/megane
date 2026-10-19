@@ -50,6 +50,7 @@ import {
 } from "./describe";
 import { incoming, type FlowDeps } from "./engine";
 import { asLibraryMolecule, rowFields, toolPorts } from "./ports";
+import { adoptResult } from "./shared";
 import type { FlowStore, FlowNode } from "./store";
 import {
   IDLE_RUN,
@@ -83,13 +84,17 @@ const warningTextStyle: React.CSSProperties = {
   color: "var(--megane-warning-text)",
 };
 
-/** Put a block's result into Manual mode as a new document, and switch to it. */
+/**
+ * Make a block's result the structure shared with Manual mode (a new
+ * document), and switch to Manual mode.
+ */
 export function openInManual(
   builder: StoreApi<BuilderStore>,
   flow: StoreApi<FlowStore>,
   data: FlowData,
+  key: string | null = null,
 ): void {
-  builder.getState().openStructure(data.snapshot, data.labels, data.name);
+  adoptResult(builder, flow, data, key);
   builder.getState().reportInfo(`Opened ${data.name} from Flow (${data.snapshot.nAtoms} atoms).`);
   flow.getState().setMode("manual");
 }
@@ -500,7 +505,7 @@ export function FlowProperties({ deps, height, serverOpen, onCloseServer }: Flow
                 ? "Open this result in Manual mode; it replaces the open structure and its history"
                 : "Open this result in Manual mode to edit or save it"
             }
-            onClick={() => data && openInManual(builderApi, flowApi, data)}
+            onClick={() => data && openInManual(builderApi, flowApi, data, nodeRun.key)}
           >
             Open in Manual
           </button>
@@ -523,7 +528,7 @@ export function FlowProperties({ deps, height, serverOpen, onCloseServer }: Flow
           text={
             nodes.length === 0
               ? "Add blocks with + on the rail, wire each block's output (bottom) to an input (top) of the next, then press Run."
-              : "Select a block to edit it. Run builds every block; the 3D view shows the selected block's result."
+              : "Select a block to edit it and see its result. Run builds every block and makes the last one's result the structure Manual mode edits; with no block selected, the 3D view shows that structure."
           }
         />
       }

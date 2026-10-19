@@ -9,7 +9,9 @@
  * mode switch at the head of the left rails, builds a model from blocks
  * wired together instead (a SMILES molecule into a packmol box); the rails
  * and the right panels change with the mode, and the view shows the picked
- * block's result.
+ * block's result. Both modes share the document: a Flow run makes its result
+ * the document, and Flow shows the document while no block is picked
+ * (`flow/shared.ts`).
  *
  * The shell follows the viewer's design: the 3D view fills the window and
  * every control floats over it on frosted-glass panels, each control in
@@ -192,7 +194,8 @@ export function BuilderApp({ host = WEB_HOST }: BuilderAppProps = {}) {
   const toolServers = useScopedToolsStore((s) => s.servers);
   const setToolServer = useScopedToolsStore((s) => s.setUrl);
   const connectToolServer = useScopedToolsStore((s) => s.connect);
-  // Flow mode: blocks wired into a model. The view shows the picked block's result.
+  // Flow mode: blocks wired into a model. The view shows the picked block's
+  // result, else the document both modes share.
   const [flowOpen, toggleFlow] = useSectionOpen("flow", true);
   const flow = useFlowMode(host);
   // The Flow panel is resizable like the viewer's Pipeline panel; it reports its width.
@@ -210,7 +213,7 @@ export function BuilderApp({ host = WEB_HOST }: BuilderAppProps = {}) {
     [source, result, showOriginal, preview],
   );
   // What the view draws: the document in Manual mode, the picked block's
-  // result in Flow mode.
+  // result (else the document) in Flow mode.
   const displayed = inFlow ? (flow.view?.data.snapshot ?? null) : viewed;
   const displayedLabels = inFlow ? (flow.view?.data.labels ?? null) : sourceLabels;
   const viewportState = useMemo(() => builderViewportState(displayed), [displayed]);

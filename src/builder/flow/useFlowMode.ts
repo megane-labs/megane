@@ -3,22 +3,30 @@
  * the 3D view shows while in Flow mode, the actions the Flow panel's rail
  * runs (Run, Stop, the flow file), and the status line. Keeps the app's own
  * body about layout.
+ *
+ * It also keeps the structure shared with Manual mode in step (`shared.ts`):
+ * Run makes the flow's result the Manual document, the view shows that
+ * document while no block is picked, and a change to the document marks the
+ * *Manual structure* blocks that read it stale.
  */
 
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { downloadBlob } from "../../renderer/RenderCapture";
 import { hostHasTools, type BuilderHost } from "../host";
 import {
   useBuilderStoreApi,
   useFlowStoreApi,
+  useScopedBuilderStore,
   useScopedFlowStore,
   useScopedToolsStore,
 } from "../BuilderStores";
+import { shownSnapshot, UNTITLED } from "../store";
 import { useFlowDeps } from "./deps";
 import { blockTitle } from "./describe";
 import type { FlowDeps } from "./engine";
 import type { FlowActions } from "./FlowRail";
-import { flowViewData, parseSerializedFlow } from "./store";
+import { runAndShare } from "./shared";
+import { flowViewData, parseSerializedFlow, type FlowView } from "./store";
 import type { FlowData, FlowMode } from "./types";
 
 /** File name a saved flow gets. */
@@ -27,8 +35,8 @@ export const FLOW_FILE_NAME = "builder.megane-flow.json";
 export interface FlowModeState {
   mode: FlowMode;
   setMode: (mode: FlowMode) => void;
-  /** What the 3D view shows in Flow mode, or null. */
-  view: { id: string; data: FlowData } | null;
+  /** What the 3D view shows in Flow mode (`id` null: the shared structure), or null. */
+  view: FlowView | null;
   /** Run, Stop and the flow file, for the Flow panel's rail. */
   actions: FlowActions;
   deps: FlowDeps;
@@ -58,10 +66,34 @@ export function useFlowMode(host: BuilderHost): FlowModeState {
   const viewNodeId = useScopedFlowStore((s) => s.viewNodeId);
   const running = useScopedFlowStore((s) => s.running);
   const toolsConnection = useScopedToolsStore((s) => s.connection);
+  const source = useScopedBuilderStore((s) => s.source);
+  const result = useScopedBuilderStore((s) => s.result);
+  const showOriginal = useScopedBuilderStore((s) => s.showOriginal);
+  const fileName = useScopedBuilderStore((s) => s.fileName);
+  const sourceLabels = useScopedBuilderStore((s) => s.sourceLabels);
   const deps = useFlowDeps();
   const [serverOpen, setServerOpen] = useState(false);
 
-  const view = useMemo(() => flowViewData({ nodes, runs, viewNodeId }), [nodes, runs, viewNodeId]);
+  // The structure shared with Manual mode, as the Manual structure block reads it.
+  const docSnapshot = useMemo(
+    () => shownSnapshot({ source, result, showOriginal }),
+    [source, result, showOriginal],
+  );
+  const document = useMemo<FlowData | null>(
+    () =>
+      docSnapshot
+        ? { name: fileName ?? UNTITLED, snapshot: docSnapshot, labels: sourceLabels }
+        : null,
+    [docSnapshot, fileName, sourceLabels],
+  );
+  useEffect(() => {
+    flowApi.getState().documentChanged(deps.document()?.key ?? null);
+  }, [docSnapshot, deps, flowApi]);
+
+  const view = useMemo(
+    () => flowViewData({ nodes, runs, viewNodeId }, document),
+    [nodes, runs, viewNodeId, document],
+  );
 
   const onOpenFile = useCallback(
     async (file: File) => {
@@ -113,7 +145,7 @@ export function useFlowMode(host: BuilderHost): FlowModeState {
   const status =
     runningTitle ??
     (nodes.length === 0
-      ? "Add blocks, wire them, then Run"
+      ? `${view ? `showing ${view.data.name} · ` : ""}Add blocks, wire them, then Run`
       : `${nodes.length} block${nodes.length === 1 ? "" : "s"} · ${
           view ? `showing ${view.data.name}` : "pick a block to see its result"
         }`);
@@ -134,7 +166,7 @@ export function useFlowMode(host: BuilderHost): FlowModeState {
       onClear: () => flowApi.getState().clear(),
       hasBlocks: nodes.length > 0,
       running: !!running,
-      onRun: () => void flowApi.getState().run(deps),
+      onRun: () => void runAndShare(builderApi, flowApi, deps),
       onStop: () => flowApi.getState().cancel(),
     },
   };
