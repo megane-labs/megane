@@ -23,7 +23,13 @@ import {
   openLabNotebook,
   type JupyterLabHandle,
 } from "./lib/hosts/jupyterlab";
-import { addPastedMolecule, cleanUpWithRDKit, openSketch, saveAs } from "./lib/builder";
+import {
+  addPastedMolecule,
+  buildSmilesInFlow,
+  cleanUpWithRDKit,
+  openSketch,
+  saveAs,
+} from "./lib/builder";
 
 const REPO = join(fileURLToPath(import.meta.url), "..", "..", "..");
 const DIR = "/tmp/megane-e2e-builder-widget";
@@ -197,4 +203,17 @@ test("the outputs of one Builder hand its document back and forth", async ({ pag
   await expect(firstView.locator('[data-testid="builder-op-count"]')).toHaveText("1 edit");
   await expect(secondView.locator('[data-testid="builder-widget-show-here"]')).toBeVisible();
   await expect(secondView.locator('[data-testid="megane-builder"]')).toHaveCount(0);
+});
+
+test("Flow mode builds a molecule from SMILES, and the result reaches Python", async ({ page }) => {
+  await openLabNotebook(page, { port: PORT, token: TOKEN, notebook: "builder.ipynb" });
+  const other = outputs(page).nth(2);
+  await expect(other.locator('[data-testid="builder-welcome"]')).toBeVisible();
+  // The single-file widget bundle carries the graph editor and its styles.
+  await buildSmilesInFlow(other, "CCO", page);
+  await expect(other.locator('[data-testid="megane-builder"]')).toHaveAttribute(
+    "data-atom-count",
+    "9",
+  );
+  await expect.poll(() => kernelPrint(page, "print(other.n_atoms)"), { timeout: 15_000 }).toBe("9");
 });

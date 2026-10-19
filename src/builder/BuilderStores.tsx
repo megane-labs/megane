@@ -1,9 +1,10 @@
 /**
  * Store scoping for megane Builder: one document per mounted Builder.
  *
- * A Builder's document state is three stores: the document itself
- * (`store.ts`), the library's dialogs (`library/uiStore.ts`) and the Python
- * tools, which write into that document (`tools/store.ts`). Mount a Builder
+ * A Builder's document state is four stores: the document itself
+ * (`store.ts`), the library's dialogs (`library/uiStore.ts`), the Python
+ * tools, which write into that document (`tools/store.ts`), and the Flow
+ * mode's graph of blocks (`flow/store.ts`). Mount a Builder
  * inside a `BuilderProvider` with a bundle from `createBuilderStores()` and it
  * edits a document of its own, so one page can hold several. The JupyterLab
  * extension opens a tab per Builder this way.
@@ -23,6 +24,7 @@ import { registerTestStores, GLOBAL_BUNDLE_ID } from "../stores/testRegistry";
 import { createBuilderStore, useBuilderStore, type BuilderStore } from "./store";
 import { createLibraryUi, useLibraryUi, type LibraryUi } from "./library/uiStore";
 import { createBuilderToolsStore, useToolsStore, type ToolsStore } from "./tools/store";
+import { createFlowStore, useFlowStore, type FlowStore } from "./flow/store";
 
 export interface BuilderStores {
   /** The id the bundle registers under for the E2E hooks. */
@@ -30,6 +32,7 @@ export interface BuilderStores {
   builder: StoreApi<BuilderStore>;
   libraryUi: StoreApi<LibraryUi>;
   tools: StoreApi<ToolsStore>;
+  flow: StoreApi<FlowStore>;
 }
 
 let nextBundle = 1;
@@ -42,6 +45,7 @@ export function createBuilderStores(): BuilderStores {
     builder,
     libraryUi: createLibraryUi(),
     tools: createBuilderToolsStore(builder),
+    flow: createFlowStore(),
   };
 }
 
@@ -51,6 +55,7 @@ export const globalBuilderStores: BuilderStores = {
   builder: useBuilderStore,
   libraryUi: useLibraryUi,
   tools: useToolsStore,
+  flow: useFlowStore,
 };
 
 const BuilderStoresContext = createContext<BuilderStores | null>(null);
@@ -63,7 +68,10 @@ export interface BuilderProviderProps {
 export function BuilderProvider({ stores, children }: BuilderProviderProps) {
   // Publish to the E2E registry at mount, as MeganeProvider does, so
   // `window.__megane_test_builder_store` drives a store something renders.
-  useLayoutEffect(() => registerTestStores(stores.id, { builder: stores.builder }), [stores]);
+  useLayoutEffect(
+    () => registerTestStores(stores.id, { builder: stores.builder, builderFlow: stores.flow }),
+    [stores],
+  );
   return <BuilderStoresContext.Provider value={stores}>{children}</BuilderStoresContext.Provider>;
 }
 
@@ -85,6 +93,9 @@ export function useLibraryUiApi(): StoreApi<LibraryUi> {
 }
 export function useToolsStoreApi(): StoreApi<ToolsStore> {
   return useBuilderStores().tools;
+}
+export function useFlowStoreApi(): StoreApi<FlowStore> {
+  return useBuilderStores().flow;
 }
 
 // ── Scoped selector hooks ──────────────────────────────────────────────
@@ -108,4 +119,10 @@ export function useScopedToolsStore(): ToolsStore;
 export function useScopedToolsStore<T>(selector: (state: ToolsStore) => T): T;
 export function useScopedToolsStore<T>(selector?: (state: ToolsStore) => T) {
   return useStore(useToolsStoreApi(), selector ?? (identity as (state: ToolsStore) => T));
+}
+
+export function useScopedFlowStore(): FlowStore;
+export function useScopedFlowStore<T>(selector: (state: FlowStore) => T): T;
+export function useScopedFlowStore<T>(selector?: (state: FlowStore) => T) {
+  return useStore(useFlowStoreApi(), selector ?? (identity as (state: FlowStore) => T));
 }

@@ -3,9 +3,13 @@
  *
  * Open a structure file or start from an empty cell, edit atoms, bonds and
  * the cell by clicking in the 3D view, and save the result as XYZ / PDB /
- * MOL. There is no pipeline here: the view always shows the document
- * (`BuilderStore`) as ball-and-stick with every atom, its bonds and its cell,
- * and every click is an edit.
+ * MOL. In Manual mode there is no pipeline: the view always shows the
+ * document (`BuilderStore`) as ball-and-stick with every atom, its bonds and
+ * its cell, and every click is an edit. Flow mode (`flow/`), picked with the
+ * mode switch at the head of the left rails, builds a model from blocks
+ * wired together instead (a SMILES molecule into a packmol box); the rails
+ * and the right panels change with the mode, and the view shows the picked
+ * block's result.
  *
  * The shell follows the viewer's design: the 3D view fills the window and
  * every control floats over it on frosted-glass panels, each control in
@@ -35,6 +39,8 @@
  */
 
 import {
+  lazy,
+  Suspense,
   useCallback,
   useEffect,
   useMemo,
@@ -97,6 +103,12 @@ import {
   useToolsStoreApi,
 } from "./BuilderStores";
 import { hoverHighlight } from "./hover";
+import { ModeSwitch } from "./flow/ModeSwitch";
+import { useFlowMode } from "./flow/useFlowMode";
+import { GRAPH_PANEL_DEFAULT_WIDTH } from "../components/graph/GraphEditorPanel";
+
+/** The Flow graph editor, loaded the first time Flow mode opens. */
+const FlowPanel = lazy(() => import("./flow/FlowPanel"));
 import { readoutLabel } from "./manipulate";
 import type { DragStatus } from "./store";
 
@@ -180,6 +192,12 @@ export function BuilderApp({ host = WEB_HOST }: BuilderAppProps = {}) {
   const toolServers = useScopedToolsStore((s) => s.servers);
   const setToolServer = useScopedToolsStore((s) => s.setUrl);
   const connectToolServer = useScopedToolsStore((s) => s.connect);
+  // Flow mode: blocks wired into a model. The view shows the picked block's result.
+  const [flowOpen, toggleFlow] = useSectionOpen("flow", true);
+  const flow = useFlowMode(host);
+  // The Flow panel is resizable like the viewer's Pipeline panel; it reports its width.
+  const [flowPanelWidth, setFlowPanelWidth] = useState(GRAPH_PANEL_DEFAULT_WIDTH);
+  const inFlow = flow.mode === "flow";
 
   // `shown` is the document (what Save writes); `viewed` is what the view
   // draws, which is the preview of a Structure dialog's op while one is open.
@@ -191,7 +209,11 @@ export function BuilderApp({ host = WEB_HOST }: BuilderAppProps = {}) {
     () => viewSnapshot({ source, result, showOriginal, preview }),
     [source, result, showOriginal, preview],
   );
-  const viewportState = useMemo(() => builderViewportState(viewed), [viewed]);
+  // What the view draws: the document in Manual mode, the picked block's
+  // result in Flow mode.
+  const displayed = inFlow ? (flow.view?.data.snapshot ?? null) : viewed;
+  const displayedLabels = inFlow ? (flow.view?.data.labels ?? null) : sourceLabels;
+  const viewportState = useMemo(() => builderViewportState(displayed), [displayed]);
 
   const handlers = useBuilderHandlers(api);
 
@@ -252,11 +274,11 @@ export function BuilderApp({ host = WEB_HOST }: BuilderAppProps = {}) {
         vs,
         prevViewportStateRef.current,
         BUILDER_SOURCE_ID,
-        sourceLabels,
+        displayedLabels,
       );
       prevViewportStateRef.current = vs;
     },
-    [sourceLabels],
+    [displayedLabels],
   );
 
   const handleRendererReady = useCallback(
@@ -294,9 +316,9 @@ export function BuilderApp({ host = WEB_HOST }: BuilderAppProps = {}) {
       e.preventDefault();
       setDropActive(false);
       const file = e.dataTransfer?.files?.[0];
-      if (file) void openFile(file);
+      if (file && !inFlow) void openFile(file);
     },
-    [openFile],
+    [openFile, inFlow],
   );
 
   const handleExport = useCallback(
@@ -327,7 +349,7 @@ export function BuilderApp({ host = WEB_HOST }: BuilderAppProps = {}) {
     (axis: ViewAxis) => rendererRef.current?.alignCameraToAxis(axis),
     [],
   );
-  const hasCell = latticeVectors(viewed?.box) !== null;
+  const hasCell = latticeVectors(displayed?.box) !== null;
   const structureItems = structureMenuItems(
     {
       hasDocument: !!shown,
@@ -364,7 +386,7 @@ export function BuilderApp({ host = WEB_HOST }: BuilderAppProps = {}) {
     }),
     [handleExport],
   );
-  useBuilderShortcuts(api, shortcutHost, host.scopeShortcuts ? rootRef : undefined);
+  useBuilderShortcuts(api, shortcutHost, host.scopeShortcuts ? rootRef : undefined, !inFlow);
   const mod = modKeyLabel();
 
   // The view's background follows the theme, as in the viewer.
@@ -389,7 +411,8 @@ export function BuilderApp({ host = WEB_HOST }: BuilderAppProps = {}) {
   }, [selected, pendingBondAtom]);
 
   // What a click would act on, under the pointer.
-  const hoveredAtom = hoverInfo?.kind === "atom" && !atomMenu ? hoverInfo.atomIndex : null;
+  const hoveredAtom =
+    hoverInfo?.kind === "atom" && !atomMenu && !inFlow ? hoverInfo.atomIndex : null;
   const editable = canEdit({ source, result, showOriginal, preview });
   const hover = useMemo(
     () =>
@@ -411,9 +434,25 @@ export function BuilderApp({ host = WEB_HOST }: BuilderAppProps = {}) {
   // the part of the view left of them, as the viewer does beside its Pipeline
   // panel; the info line (beside Details) and the status line (beside
   // History) keep clear of them or of their stubs.
-  const panelInset = detailsOpen || historyOpen ? PANEL_WIDTH + OVERLAY_INSET : 0;
-  const infoRight = detailsOpen ? PANEL_WIDTH + 2 * OVERLAY_INSET : STUB_CLEARANCE;
-  const statusRight = historyOpen ? PANEL_WIDTH + 2 * OVERLAY_INSET : STUB_CLEARANCE;
+  const panelInset = inFlow
+    ? flowOpen
+      ? flowPanelWidth + OVERLAY_INSET
+      : 0
+    : detailsOpen || historyOpen
+      ? PANEL_WIDTH + OVERLAY_INSET
+      : 0;
+  const infoRight = inFlow
+    ? flowOpen
+      ? flowPanelWidth + 2 * OVERLAY_INSET
+      : STUB_CLEARANCE
+    : detailsOpen
+      ? PANEL_WIDTH + 2 * OVERLAY_INSET
+      : STUB_CLEARANCE;
+  const statusRight = inFlow
+    ? infoRight
+    : historyOpen
+      ? PANEL_WIDTH + 2 * OVERLAY_INSET
+      : STUB_CLEARANCE;
   const detailsBottom = OVERLAY_INSET + (historyOpen ? HISTORY_HEIGHT : STUB_HEIGHT) + 8;
   useEffect(() => {
     panelInsetRef.current = panelInset;
@@ -438,6 +477,7 @@ export function BuilderApp({ host = WEB_HOST }: BuilderAppProps = {}) {
             }
           : undefined
       }
+      data-mode={flow.mode}
       data-atom-count={shown?.nAtoms ?? 0}
       data-bond-count={shown?.nBonds ?? 0}
       data-edit-count={edits.length}
@@ -464,7 +504,7 @@ export function BuilderApp({ host = WEB_HOST }: BuilderAppProps = {}) {
         style={{ position: "absolute", inset: 0 }}
         onDragOver={(e) => {
           e.preventDefault();
-          setDropActive(true);
+          if (!inFlow) setDropActive(true);
         }}
         onDragLeave={(e) => {
           if (e.currentTarget === e.target) setDropActive(false);
@@ -473,22 +513,23 @@ export function BuilderApp({ host = WEB_HOST }: BuilderAppProps = {}) {
         data-testid="builder-dropzone"
       >
         <Viewport
-          snapshot={viewed}
+          snapshot={displayed}
           frame={null}
           atomLabels={null}
           atomVectors={null}
           onRendererReady={handleRendererReady}
           onHover={setHoverInfo}
-          previewIndices={highlighted}
-          buildActive={true}
-          buildHandlers={handlers}
+          previewIndices={inFlow ? null : highlighted}
+          buildActive={!inFlow}
+          buildHandlers={inFlow ? null : handlers}
           hoverIndices={hover?.atoms ?? null}
           hoverColor={hover?.color}
-          warningIndices={drag && drag.contacts.length > 0 ? drag.contacts : null}
+          warningIndices={!inFlow && drag && drag.contacts.length > 0 ? drag.contacts : null}
           preserveCameraKey={revision}
           onAtomRightClick={(atom, x, y) => {
-            // A preview's atoms are not the document's; nothing to act on.
-            if (api.getState().preview) return;
+            // A preview's atoms (or a Flow result's) are not the document's;
+            // nothing to act on.
+            if (api.getState().preview || inFlow) return;
             setAtomMenu({ atom, x, y });
           }}
         />
@@ -548,37 +589,44 @@ export function BuilderApp({ host = WEB_HOST }: BuilderAppProps = {}) {
             gap: 8,
           }}
         >
-          <ToolRail />
-          <OperationsRail
-            fileItems={fileMenuItems({
-              open: () => inputRef.current?.click(),
-              newCell: () => showForm({ create: "cell" }),
-              newBulk: () => showForm({ create: "bulk" }),
-              formats: STRUCTURE_EXPORT_FORMATS,
-              save: (f) => void handleExport(f as StructureWriteFormat),
-              canSave: !!shown,
-              mod,
-            })}
-            structureItems={structureItems}
-            toolsItems={toolsItems}
-            hasDocument={!!shown}
-            canUndo={edits.length > 0}
-            canRedo={redoStack.length > 0}
-            onUndo={() => undo()}
-            onRedo={() => redo()}
-            mod={mod}
-          />
+          <ModeSwitch mode={flow.mode} onChange={flow.setMode} />
+          {/* In Flow mode the actions are on the Flow panel's own rail, as
+              in the viewer's Pipeline panel. */}
+          {!inFlow && (
+            <>
+              <ToolRail />
+              <OperationsRail
+                fileItems={fileMenuItems({
+                  open: () => inputRef.current?.click(),
+                  newCell: () => showForm({ create: "cell" }),
+                  newBulk: () => showForm({ create: "bulk" }),
+                  formats: STRUCTURE_EXPORT_FORMATS,
+                  save: (f) => void handleExport(f as StructureWriteFormat),
+                  canSave: !!shown,
+                  mod,
+                })}
+                structureItems={structureItems}
+                toolsItems={toolsItems}
+                hasDocument={!!shown}
+                canUndo={edits.length > 0}
+                canRedo={redoStack.length > 0}
+                onUndo={() => undo()}
+                onRedo={() => redo()}
+                mod={mod}
+              />
+            </>
+          )}
         </div>
       </div>
 
       <InfoHud
-        fileName={fileName}
-        steps={steps}
-        viewed={viewed}
+        fileName={inFlow ? (flow.view?.data.name ?? null) : fileName}
+        steps={inFlow ? 0 : steps}
+        viewed={displayed}
         left={INFO_LEFT}
         right={infoRight}
       />
-      {!source && tool !== "place" && (
+      {!inFlow && !source && tool !== "place" && (
         <div
           data-testid="builder-welcome"
           style={{
@@ -665,76 +713,101 @@ export function BuilderApp({ host = WEB_HOST }: BuilderAppProps = {}) {
         </div>
       )}
 
-      <CollapsiblePanel
-        title="Details"
-        collapsed={!detailsOpen}
-        onToggleCollapse={toggleDetails}
-        width={PANEL_WIDTH}
-        bottom={detailsBottom}
-      >
-        <div
-          data-testid="builder-sidebar"
-          style={{
-            flex: 1,
-            minHeight: 0,
-            display: "flex",
-            flexDirection: "column",
-            gap: 10,
-            padding: 10,
-            overflowY: "auto",
-            fontSize: 13,
-            color: "var(--megane-text, #1e293b)",
-          }}
-        >
-          {crystalDialog ? (
-            <CrystalDialog key={crystalDialog} kind={crystalDialog} onClose={closeCrystalDialog} />
-          ) : newDialog ? (
-            <NewStructureDialog
-              key={newDialog}
-              initialKind={newDialog}
-              hasDocument={!!source}
-              onNewCell={newCell}
-              onNewBulk={newBulk}
-              onClose={() => setNewDialog(null)}
-            />
-          ) : openTool ? (
-            <ToolDialog key={openTool.name} tool={openTool} />
-          ) : toolServerOpen ? (
-            <ToolServerDialog onClose={closeToolServer} />
-          ) : (
-            <>
-              {/* Place works with nothing open, so its settings (and gallery) do too. */}
-              {(source || tool === "place") && <ContextBar />}
-              <Inspector />
-              <SymmetryOffer />
-              {(!(source || tool === "place") || activeTool.needs.length === 0) &&
-                selected.length === 0 && (
-                  <div style={hintStyle} data-testid="builder-empty-hint">
-                    {source
-                      ? `${activeTool.label} has no settings. Pick a tool or an operation on the left; its options appear here.`
-                      : "Open a structure or start a new one from the File menu on the left; the options of what you pick there appear here."}
-                  </div>
-                )}
-            </>
-          )}
-        </div>
-      </CollapsiblePanel>
+      {inFlow ? (
+        // The Flow panel (the viewer's graph-editor panel: its own rail,
+        // the graph, the selected block) loads the first time Flow opens.
+        <Suspense fallback={null}>
+          <FlowPanel
+            deps={flow.deps}
+            actions={flow.actions}
+            hasTools={flow.hasTools}
+            serverOpen={flow.serverOpen}
+            onOpenServer={flow.openServer}
+            onCloseServer={flow.closeServer}
+            collapsed={!flowOpen}
+            onToggleCollapse={toggleFlow}
+            onWidthChange={setFlowPanelWidth}
+            bottom={OVERLAY_INSET}
+          />
+        </Suspense>
+      ) : (
+        <>
+          <CollapsiblePanel
+            title="Details"
+            collapsed={!detailsOpen}
+            onToggleCollapse={toggleDetails}
+            width={PANEL_WIDTH}
+            bottom={detailsBottom}
+          >
+            <div
+              data-testid="builder-sidebar"
+              style={{
+                flex: 1,
+                minHeight: 0,
+                display: "flex",
+                flexDirection: "column",
+                gap: 10,
+                padding: 10,
+                overflowY: "auto",
+                fontSize: 13,
+                color: "var(--megane-text, #1e293b)",
+              }}
+            >
+              {crystalDialog ? (
+                <CrystalDialog
+                  key={crystalDialog}
+                  kind={crystalDialog}
+                  onClose={closeCrystalDialog}
+                />
+              ) : newDialog ? (
+                <NewStructureDialog
+                  key={newDialog}
+                  initialKind={newDialog}
+                  hasDocument={!!source}
+                  onNewCell={newCell}
+                  onNewBulk={newBulk}
+                  onClose={() => setNewDialog(null)}
+                />
+              ) : openTool ? (
+                <ToolDialog key={openTool.name} tool={openTool} />
+              ) : toolServerOpen ? (
+                <ToolServerDialog onClose={closeToolServer} />
+              ) : (
+                <>
+                  {/* Place works with nothing open, so its settings (and gallery) do too. */}
+                  {(source || tool === "place") && <ContextBar />}
+                  <Inspector />
+                  <SymmetryOffer />
+                  {(!(source || tool === "place") || activeTool.needs.length === 0) &&
+                    selected.length === 0 && (
+                      <div style={hintStyle} data-testid="builder-empty-hint">
+                        {source
+                          ? `${activeTool.label} has no settings. Pick a tool or an operation on the left; its options appear here.`
+                          : "Open a structure or start a new one from the File menu on the left; the options of what you pick there appear here."}
+                      </div>
+                    )}
+                </>
+              )}
+            </div>
+          </CollapsiblePanel>
 
-      <CollapsiblePanel
-        title="History"
-        subtitle={
-          <span data-testid="builder-op-count">
-            {steps} edit{steps === 1 ? "" : "s"}
-          </span>
-        }
-        collapsed={!historyOpen}
-        onToggleCollapse={toggleHistory}
-        width={PANEL_WIDTH}
-        bottom={OVERLAY_INSET}
-        height={HISTORY_HEIGHT}
-      >
-        <HistoryBody />
-      </CollapsiblePanel>
+          <CollapsiblePanel
+            title="History"
+            subtitle={
+              <span data-testid="builder-op-count">
+                {steps} edit{steps === 1 ? "" : "s"}
+              </span>
+            }
+            collapsed={!historyOpen}
+            onToggleCollapse={toggleHistory}
+            width={PANEL_WIDTH}
+            bottom={OVERLAY_INSET}
+            height={HISTORY_HEIGHT}
+          >
+            <HistoryBody />
+          </CollapsiblePanel>
+        </>
+      )}
 
       {/* Bottom-left, right of the rails: the one notice line over the
           status line. */}
@@ -823,16 +896,23 @@ export function BuilderApp({ host = WEB_HOST }: BuilderAppProps = {}) {
               {dragStatusText(drag, snap)}
             </span>
           )}
-          {showOriginal && <span>Showing original</span>}
-          <span data-testid="builder-status-tool">
-            <b style={{ fontWeight: 600, color: "var(--megane-text-body, #334155)" }}>
-              {activeTool.label} ({TOOL_KEYS[activeTool.value]})
-            </b>{" "}
-            ·{" "}
-            <span data-testid="builder-tool-hint">
-              {drag ? DRAG_KEYS_HINT : toolHint(tool, pendingBondAtom, placeSource)}
+          {showOriginal && !inFlow && <span>Showing original</span>}
+          {inFlow ? (
+            <span data-testid="builder-status-flow">
+              <b style={{ fontWeight: 600, color: "var(--megane-text-body, #334155)" }}>Flow</b> ·{" "}
+              {flow.status}
             </span>
-          </span>
+          ) : (
+            <span data-testid="builder-status-tool">
+              <b style={{ fontWeight: 600, color: "var(--megane-text-body, #334155)" }}>
+                {activeTool.label} ({TOOL_KEYS[activeTool.value]})
+              </b>{" "}
+              ·{" "}
+              <span data-testid="builder-tool-hint">
+                {drag ? DRAG_KEYS_HINT : toolHint(tool, pendingBondAtom, placeSource)}
+              </span>
+            </span>
+          )}
         </div>
       </div>
 

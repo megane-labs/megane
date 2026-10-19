@@ -8,6 +8,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ### Added
 
+- **megane Builder's *Flow* mode: build a model by connecting blocks.** A mode switch at the top of the Builder's left rails picks *Manual* (editing by clicking in the view, as before) or *Flow*, where a model is a graph of blocks like the viewer's pipeline editor: a molecule from SMILES (embedded in 3D by RDKit) or the library, the structure open in Manual mode, and every tool of the connected tool server (a packmol liquid box, a polymer chain, solvation). A tool's molecule and structure arguments become inputs on the block; a liquid box's components take one wire per molecule, each with its own count.
+  - **Run** builds the blocks in order and caches each result under its settings and inputs, so changing a count re-runs only the box. *Run to here* runs one block and what it needs; *Stop* abandons a run.
+  - The view shows the picked block's result; *Open in Manual* makes it the Manual document, to edit or save.
+  - Flows are saved and opened as `.megane-flow.json`, written where the host saves structures.
+  - The graph editor is loaded the first time Flow mode opens, so the Builder page does not load React Flow until then.
+  - The Flow panel is the viewer's graph editor: the panel, its in-panel rail, the node cards, the wires, the canvas chrome (minimap, zoom controls) and the properties pane are now shared components (`src/components/graph/`) that the viewer's Pipeline panel is built from too, and a tool block's settings use the viewer's node-form rows. The viewer's editor looks and behaves as before.
 - **The AI assistant lives in the pipeline editor.** The Chat tab is gone: the assistant's prompt bar is docked in the Editor tab, between the node graph and the properties pane, so a request and the graph it changes are on screen together. The conversation and the AI settings open over the bottom of the graph.
   - Each request carries the pipeline in the editor, the selected nodes, and the recent exchanges, so the assistant edits that graph instead of starting over, and "this" means the selected node.
   - A generated pipeline no longer unloads anything: loaders keep their files and parsed data (trajectories, volumetric grids, spectra, structure edits included).

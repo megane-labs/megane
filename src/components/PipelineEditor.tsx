@@ -1,19 +1,15 @@
 /**
  * Pipeline editor panel using xyflow.
  * Typed data-flow pipeline with color-coded handles per data type.
+ *
+ * The panel, the canvas, the node cards, the edges and the properties pane
+ * are the shared node-graph kit (`components/graph/`), which megane
+ * Builder's Flow mode is built from too; this file wires the pipeline store
+ * into them.
  */
 
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import {
-  ReactFlow,
-  ReactFlowProvider,
-  MiniMap,
-  Controls,
-  Background,
-  BackgroundVariant,
-  useReactFlow,
-} from "@xyflow/react";
-import { useThemeStore } from "../stores/useThemeStore";
+import { ReactFlowProvider, useReactFlow } from "@xyflow/react";
 import {
   useScopedPipelineStore,
   useScopedPipelineUIStore,
@@ -21,7 +17,6 @@ import {
 } from "../stores/MeganeProvider";
 import type { Connection, Edge, Node } from "@xyflow/react";
 import type { PipelineNodeData } from "../pipeline/execute";
-import "@xyflow/react/dist/style.css";
 import { downloadBlob } from "../renderer/RenderCapture";
 import { shareCurrentPipeline } from "../pipeline/shareLink";
 import type { NodeError, PipelineNodeType } from "../pipeline/types";
@@ -35,8 +30,14 @@ import {
 import { NODE_CATEGORY } from "../pipeline/types";
 import { summarizeNodeParams } from "../pipeline/nodeSummary";
 import { allNodesMeasured } from "../pipeline/layout";
-import { CollapsiblePanel } from "./CollapsiblePanel";
-import { edgeTypes } from "./DeletableEdge";
+import { DEFAULT_EDGE_COLOR, FIT_VIEW_OPTIONS, GraphCanvas, styleEdges } from "./graph/GraphCanvas";
+import { GraphEditorPanel, SplitSeparator, useSplitFraction } from "./graph/GraphEditorPanel";
+import {
+  NodeMessages,
+  PropertiesEmpty,
+  PropertiesHeader,
+  PropertiesPaneView,
+} from "./graph/GraphProperties";
 import { LoadStructureNode } from "./nodes/LoadStructureNode";
 import { LoadTrajectoryNode } from "./nodes/LoadTrajectoryNode";
 import { AddBondNode } from "./nodes/AddBondNode";
@@ -63,7 +64,6 @@ import { SpectrumPlotNode } from "./nodes/SpectrumPlotNode";
 import { IsosurfaceNode } from "./nodes/IsosurfaceNode";
 import { NodeShellModeContext } from "./nodes/NodeShell";
 import { CATEGORY_ICONS } from "./nodes/categoryIcons";
-import { NODE_CARD_CSS } from "./nodes/NodeCard";
 import { PipelineChatBox } from "./PipelineChatBox";
 import { PipelineInspector } from "./PipelineInspector";
 import { RenderModal } from "./RenderModal";
@@ -105,33 +105,15 @@ const MODE_LABELS: Record<PipelinePanelMode, string> = {
   inspector: "Inspector",
 };
 
-const MIN_WIDTH = 320;
-const MAX_WIDTH = 600;
-const DEFAULT_WIDTH = 480;
-
-const resizeHandleStyle: React.CSSProperties = {
-  position: "absolute",
-  left: 0,
-  top: 0,
-  bottom: 0,
-  width: 5,
-  cursor: "col-resize",
-  zIndex: 20,
-  background: "transparent",
-};
-
-/** Backspace (macOS habit) and Delete (Windows/Linux habit) both delete. */
-const DELETE_KEY_CODES = ["Backspace", "Delete"];
-
 /**
  * Determine edge color from the source handle's data type.
  */
 function getEdgeColor(sourceNodeType: string | undefined, sourceHandle: string | null): string {
-  if (!sourceNodeType || !sourceHandle) return "#94a3b8";
+  if (!sourceNodeType || !sourceHandle) return DEFAULT_EDGE_COLOR;
   const ports = NODE_PORTS[sourceNodeType as PipelineNodeType];
-  if (!ports) return "#94a3b8";
+  if (!ports) return DEFAULT_EDGE_COLOR;
   const port = ports.outputs.find((p) => p.name === sourceHandle);
-  if (!port) return "#94a3b8";
+  if (!port) return DEFAULT_EDGE_COLOR;
   return DATA_TYPE_COLORS[port.dataType];
 }
 
@@ -181,142 +163,45 @@ function PropertiesPane({ height }: { height: string }) {
     selected ? (s.nodeErrors[selected.id] ?? NO_ERRORS) : NO_ERRORS,
   );
   return (
-    <div
-      data-testid="pipeline-properties"
-      style={{
-        flex: `0 0 ${height}`,
-        minHeight: 0,
-        display: "flex",
-        flexDirection: "column",
-        background: "var(--megane-surface-solid)",
-      }}
-    >
-      {selected ? (
-        <>
-          <PropertiesHeader
-            node={selected}
-            onToggle={() => toggleNode(selected.id)}
-            onRemove={() => removeNode(selected.id)}
-          />
-          {errors.length > 0 && <NodeMessages errors={errors} />}
-        </>
-      ) : (
-        <div
-          data-testid="pipeline-properties-empty"
-          style={{
-            margin: "auto",
-            display: "flex",
-            flexDirection: "column",
-            alignItems: "center",
-            gap: 8,
-            fontSize: 12,
-            color: "var(--megane-text-muted)",
-            textAlign: "center",
-            padding: 16,
-            lineHeight: 1.5,
-          }}
-        >
-          <svg
-            width="28"
-            height="28"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="1.5"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            aria-hidden="true"
-          >
-            <rect x="3" y="4" width="13" height="8" rx="2" />
-            <path d="M6.5 8h6" />
-            <path d="M14 14l6 2.2-2.6 1.1-1.1 2.6z" />
-          </svg>
-          Select a node to edit its parameters
-        </div>
-      )}
-      <div
-        data-testid="pipeline-properties-body"
-        style={{
-          flex: 1,
-          overflow: "auto",
-          padding: "12px 14px 14px",
-          display: selected ? "block" : "none",
-          // A node that is off keeps its settings; they are shown faded.
-          opacity: selected && !selected.data.enabled ? 0.55 : 1,
-        }}
-      >
-        {nodes.map((n) =>
-          n.type ? (
-            <NodeForm
-              key={n.id}
-              id={n.id}
-              type={n.type as PipelineNodeType}
-              data={n.data}
-              visible={n.id === selected?.id}
+    <PropertiesPaneView
+      height={height}
+      bodyVisible={!!selected}
+      scrollKey={selected?.id ?? null}
+      // A node that is off keeps its settings; they are shown faded.
+      bodyFaded={!!selected && !selected.data.enabled}
+      head={
+        selected && (
+          <>
+            <PipelinePropertiesHeader
+              node={selected}
+              onToggle={() => toggleNode(selected.id)}
+              onRemove={() => removeNode(selected.id)}
             />
-          ) : null,
-        )}
-      </div>
-    </div>
+            {errors.length > 0 && <NodeMessages messages={errors} />}
+          </>
+        )
+      }
+      empty={<PropertiesEmpty text="Select a node to edit its parameters" />}
+    >
+      {nodes.map((n) =>
+        n.type ? (
+          <NodeForm
+            key={n.id}
+            id={n.id}
+            type={n.type as PipelineNodeType}
+            data={n.data}
+            visible={n.id === selected?.id}
+          />
+        ) : null,
+      )}
+    </PropertiesPaneView>
   );
 }
 
 const NO_ERRORS: NodeError[] = [];
 
-/** The selected node's errors and warnings, under its header. */
-function NodeMessages({ errors }: { errors: NodeError[] }) {
-  return (
-    <div
-      data-testid="pipeline-properties-messages"
-      style={{ display: "flex", flexDirection: "column", gap: 4, padding: "8px 14px 0" }}
-    >
-      {errors.map((e, i) => {
-        const isError = e.severity === "error";
-        const rgb = isError ? "239, 68, 68" : "245, 158, 11";
-        return (
-          <div
-            key={i}
-            role={isError ? "alert" : "status"}
-            style={{
-              display: "flex",
-              gap: 6,
-              alignItems: "flex-start",
-              fontSize: 11.5,
-              lineHeight: 1.4,
-              padding: "5px 8px",
-              borderRadius: 6,
-              background: `rgba(${rgb}, 0.08)`,
-              border: `1px solid rgba(${rgb}, 0.3)`,
-              color: isError ? "var(--megane-danger-text)" : "var(--megane-warning-text)",
-            }}
-          >
-            <span aria-hidden="true" style={{ fontWeight: 700 }}>
-              {isError ? "!" : "⚠"}
-            </span>
-            <span style={{ minWidth: 0, overflowWrap: "anywhere" }}>{e.message}</span>
-          </div>
-        );
-      })}
-    </div>
-  );
-}
-
-/** The header's icon buttons: square, muted until hovered. */
-const headerIconButtonStyle: React.CSSProperties = {
-  width: 28,
-  height: 28,
-  flexShrink: 0,
-  display: "grid",
-  placeItems: "center",
-  border: "none",
-  borderRadius: 6,
-  background: "transparent",
-  cursor: "pointer",
-  color: "var(--megane-text-muted)",
-  padding: 0,
-};
-
-function PropertiesHeader({
+/** The properties pane's header for a pipeline node. */
+function PipelinePropertiesHeader({
   node,
   onToggle,
   onRemove,
@@ -327,142 +212,16 @@ function PropertiesHeader({
 }) {
   const type = node.type as PipelineNodeType;
   const category = NODE_CATEGORY[type];
-  const color = NODE_CATEGORY_COLORS[category];
-  const enabled = node.data.enabled;
-  const summary = summarizeNodeParams(node.data.params);
   return (
-    <div
-      data-testid="pipeline-properties-header"
-      style={{
-        display: "flex",
-        alignItems: "center",
-        gap: 10,
-        padding: "10px 10px 10px 14px",
-        borderBottom: "1px solid var(--megane-border)",
-        background: `color-mix(in srgb, ${color} 5%, transparent)`,
-      }}
-    >
-      <div
-        aria-hidden="true"
-        style={{
-          width: 30,
-          height: 30,
-          flexShrink: 0,
-          borderRadius: 8,
-          display: "grid",
-          placeItems: "center",
-          color,
-          background: `color-mix(in srgb, ${color} 15%, transparent)`,
-        }}
-      >
-        {CATEGORY_ICONS[category]}
-      </div>
-      <div style={{ flex: 1, minWidth: 0 }}>
-        <div
-          style={{
-            fontWeight: 600,
-            fontSize: 13,
-            letterSpacing: "-0.01em",
-            color: "var(--megane-text)",
-          }}
-        >
-          {NODE_TYPE_LABELS[type]}
-        </div>
-        <div
-          title={summary}
-          style={{
-            fontSize: 11,
-            color: "var(--megane-text-muted)",
-            overflow: "hidden",
-            textOverflow: "ellipsis",
-            whiteSpace: "nowrap",
-          }}
-        >
-          {summary}
-        </div>
-      </div>
-      <label
-        style={{
-          display: "flex",
-          alignItems: "center",
-          gap: 6,
-          fontSize: 11,
-          fontWeight: 600,
-          color: enabled ? "var(--megane-primary-text)" : "var(--megane-text-muted)",
-          cursor: "pointer",
-        }}
-      >
-        {enabled ? "On" : "Off"}
-        <button
-          type="button"
-          role="switch"
-          aria-checked={enabled}
-          aria-label={enabled ? "Disable node" : "Enable node"}
-          title={enabled ? "Disable node" : "Enable node"}
-          onClick={onToggle}
-          style={{
-            width: 30,
-            height: 17,
-            flexShrink: 0,
-            borderRadius: 9,
-            border: "none",
-            padding: 0,
-            cursor: "pointer",
-            position: "relative",
-            background: enabled ? "var(--megane-primary)" : "var(--megane-border-strong)",
-            transition: "background 0.15s",
-          }}
-        >
-          <span
-            style={{
-              position: "absolute",
-              top: 2,
-              left: enabled ? 15 : 2,
-              width: 13,
-              height: 13,
-              borderRadius: "50%",
-              background: "#fff",
-              boxShadow: "0 1px 2px rgba(0,0,0,0.2)",
-              transition: "left 0.15s",
-            }}
-          />
-        </button>
-      </label>
-      {type !== "viewport" && (
-        <button
-          type="button"
-          onClick={onRemove}
-          title="Remove node"
-          aria-label="Remove node"
-          style={headerIconButtonStyle}
-          onMouseEnter={(e) => {
-            e.currentTarget.style.color = "var(--megane-danger)";
-            e.currentTarget.style.background = "rgba(239, 68, 68, 0.1)";
-          }}
-          onMouseLeave={(e) => {
-            e.currentTarget.style.color = "var(--megane-text-muted)";
-            e.currentTarget.style.background = "transparent";
-          }}
-        >
-          <svg
-            width="15"
-            height="15"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="2"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            aria-hidden="true"
-          >
-            <polyline points="3 6 5 6 21 6" />
-            <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" />
-            <path d="M10 11v6M14 11v6" />
-            <path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2" />
-          </svg>
-        </button>
-      )}
-    </div>
+    <PropertiesHeader
+      icon={CATEGORY_ICONS[category]}
+      color={NODE_CATEGORY_COLORS[category]}
+      title={NODE_TYPE_LABELS[type]}
+      summary={summarizeNodeParams(node.data.params)}
+      enabled={node.data.enabled}
+      onToggle={onToggle}
+      onRemove={type !== "viewport" ? onRemove : undefined}
+    />
   );
 }
 
@@ -509,40 +268,11 @@ function PipelineEditorInner({
     url: string;
     tooLong: boolean;
   } | null>(null);
-  const [panelWidth, setPanelWidth] = useState(DEFAULT_WIDTH);
-  const dragRef = useRef<{ startX: number; startWidth: number } | null>(null);
-
-  // The parent mirrors this width to size the renderer's frustum inset, but
-  // `panelWidth` is local state that resets whenever the panel unmounts (e.g.
-  // `ui.pipelineEditor` toggled off and back on) while the parent's mirror
-  // keeps the last dragged value. Reporting on mount keeps the two in sync.
-  useEffect(() => {
-    onWidthChange?.(panelWidth);
-  }, [panelWidth, onWidthChange]);
   const flowContainerRef = useRef<HTMLDivElement | null>(null);
   // Share of the editor tab given to the properties pane (dragged by the
   // separator above it).
-  const [paneFraction, setPaneFraction] = useState(0.34);
-  const handleSplitMouseDown = useCallback((e: React.MouseEvent) => {
-    e.preventDefault();
-    const column = (e.currentTarget as HTMLElement).parentElement;
-    if (!column) return;
-    const rect = column.getBoundingClientRect();
-    if (rect.height <= 0) return;
-    const onMove = (ev: MouseEvent) => {
-      const fraction = (rect.bottom - ev.clientY) / rect.height;
-      setPaneFraction(Math.max(0.15, Math.min(0.7, fraction)));
-    };
-    const onUp = () => {
-      document.removeEventListener("mousemove", onMove);
-      document.removeEventListener("mouseup", onUp);
-    };
-    document.addEventListener("mousemove", onMove);
-    document.addEventListener("mouseup", onUp);
-  }, []);
+  const [paneFraction, handleSplitMouseDown] = useSplitFraction();
   const importInputRef = useRef<HTMLInputElement | null>(null);
-
-  const resolvedTheme = useThemeStore((s) => s.resolvedTheme);
 
   const mode = useScopedPipelineUIStore((s) => s.mode);
   const setMode = useScopedPipelineUIStore((s) => s.setMode);
@@ -556,7 +286,7 @@ function PipelineEditorInner({
     let rafB = 0;
     rafA = window.requestAnimationFrame(() => {
       rafB = window.requestAnimationFrame(() => {
-        fitView({ padding: 0.1, maxZoom: 1.95, duration: 300 });
+        fitView({ ...FIT_VIEW_OPTIONS, duration: 300 });
       });
     });
     return () => {
@@ -575,36 +305,9 @@ function PipelineEditorInner({
     if (!layoutPending || !nodesMeasured) return;
     autoLayout();
     window.requestAnimationFrame(() => {
-      fitView({ padding: 0.1, maxZoom: 1.95 });
+      fitView(FIT_VIEW_OPTIONS);
     });
   }, [layoutPending, nodesMeasured, autoLayout, fitView]);
-
-  // Resize drag handling
-  const handleResizeMouseDown = useCallback(
-    (e: React.MouseEvent) => {
-      e.preventDefault();
-      dragRef.current = { startX: e.clientX, startWidth: panelWidth };
-
-      const handleMouseMove = (ev: MouseEvent) => {
-        if (!dragRef.current) return;
-        // Panel is on the right: dragging left increases width
-        const newWidth = dragRef.current.startWidth - (ev.clientX - dragRef.current.startX);
-        const clamped = Math.max(MIN_WIDTH, Math.min(MAX_WIDTH, newWidth));
-        setPanelWidth(clamped);
-        onWidthChange?.(clamped);
-      };
-
-      const handleMouseUp = () => {
-        dragRef.current = null;
-        document.removeEventListener("mousemove", handleMouseMove);
-        document.removeEventListener("mouseup", handleMouseUp);
-      };
-
-      document.addEventListener("mousemove", handleMouseMove);
-      document.addEventListener("mouseup", handleMouseUp);
-    },
-    [panelWidth, onWidthChange],
-  );
 
   // Connection validation using typed port matching
   const isValidConnection = useCallback(
@@ -633,21 +336,17 @@ function PipelineEditorInner({
   );
 
   // Color edges based on data type
-  const styledEdges = useMemo(() => {
-    return edges.map((edge) => {
-      const sourceNode = nodes.find((n) => n.id === edge.source);
-      const color = getEdgeColor(sourceNode?.type, edge.sourceHandle ?? null);
-      return {
-        ...edge,
-        type: "deletable",
-        animated: true,
-        style: {
-          stroke: color,
-          strokeWidth: 2,
-        },
-      };
-    });
-  }, [edges, nodes]);
+  const styledEdges = useMemo(
+    () =>
+      styleEdges(edges, (edge) =>
+        getEdgeColor(nodes.find((n) => n.id === edge.source)?.type, edge.sourceHandle ?? null),
+      ),
+    [edges, nodes],
+  );
+  const edgeActions = useMemo(
+    () => ({ remove: removeEdge, testIdPrefix: "pipeline-edge-delete-" }),
+    [removeEdge],
+  );
 
   // Dragging an edge's endpoint off its handle and dropping it on empty
   // canvas disconnects it; dropping it on another valid handle rewires it.
@@ -704,7 +403,7 @@ function PipelineEditorInner({
     autoLayout();
     setMode("editor");
     window.requestAnimationFrame(() => {
-      fitView({ padding: 0.1, maxZoom: 1.95, duration: 300 });
+      fitView({ ...FIT_VIEW_OPTIONS, duration: 300 });
     });
   }, [autoLayout, fitView, setMode]);
 
@@ -731,7 +430,7 @@ function PipelineEditorInner({
           }
           deserialize(parsed);
           window.requestAnimationFrame(() => {
-            fitView({ padding: 0.1, maxZoom: 1.95, duration: 300 });
+            fitView({ ...FIT_VIEW_OPTIONS, duration: 300 });
           });
         } catch (err) {
           window.alert("Failed to load pipeline: " + (err as Error).message);
@@ -760,30 +459,15 @@ function PipelineEditorInner({
 
   const memoizedNodeTypes = useMemo(() => nodeTypes, []);
 
-  const resizeHandle = (
-    <div
-      style={resizeHandleStyle}
-      onMouseDown={handleResizeMouseDown}
-      onMouseEnter={(e) => {
-        (e.currentTarget as HTMLElement).style.background = "rgba(59,130,246,0.15)";
-      }}
-      onMouseLeave={(e) => {
-        (e.currentTarget as HTMLElement).style.background = "transparent";
-      }}
-    />
-  );
-
   return (
-    <CollapsiblePanel
+    <GraphEditorPanel
       title="Pipeline"
       collapsed={collapsed}
       onToggleCollapse={onToggleCollapse}
-      width={panelWidth}
+      onWidthChange={onWidthChange}
       bottom={bottom}
       subtitle={MODE_LABELS[mode]}
-      containerExtra={resizeHandle}
-    >
-      <div style={{ flex: 1, minHeight: 0, display: "flex" }}>
+      rail={
         <PipelineRail
           mode={mode}
           onModeChange={setMode}
@@ -797,172 +481,106 @@ function PipelineEditorInner({
           onGuide={() => startTour()}
           onTutorial={() => startPipelineTutorial()}
         />
-        <div style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column" }}>
-          {/* The tabpanels share one absolute-positioned area inside a
+      }
+      extra={
+        <>
+          <input
+            ref={importInputRef}
+            type="file"
+            accept=".megane.json,.json,application/json"
+            style={{ display: "none" }}
+            onChange={handleImportFile}
+          />
+          <RenderModal
+            open={showRenderModal}
+            onClose={() => setShowRenderModal(false)}
+            rendererRef={rendererRef}
+            totalFrames={totalFrames}
+            currentFrame={currentFrame}
+            onSeek={onSeek}
+          />
+          <ShareDialog
+            open={shareDialog !== null}
+            url={shareDialog?.url ?? ""}
+            tooLong={shareDialog?.tooLong ?? false}
+            onClose={() => setShareDialog(null)}
+          />
+        </>
+      }
+    >
+      {/* The tabpanels share one absolute-positioned area inside a
               relative wrapper, and we toggle `visibility` rather than
               `display` or unmounting. That keeps ReactFlow's container
               measured at all times — the graph never collapses to 0×0 when
               the user comes back to the Editor tab — while still being
               treated as "hidden" by Playwright/`toBeHidden` and inert to
               keyboard focus. */}
-          <div
-            style={{
-              position: "relative",
-              flex: 1,
-              minHeight: 0,
-            }}
-          >
-            <div
-              role="tabpanel"
-              id="pipeline-tabpanel-editor"
-              aria-labelledby="pipeline-tab-editor"
-              aria-hidden={mode !== "editor"}
-              style={{
-                position: "absolute",
-                inset: 0,
-                display: "flex",
-                flexDirection: "column",
-                visibility: mode === "editor" ? "visible" : "hidden",
-              }}
-            >
-              <div
-                ref={flowContainerRef}
-                className="megane-split-editor"
-                style={{ flex: 1, position: "relative", minHeight: 0 }}
-              >
-                <style>{NODE_CARD_CSS}</style>
-                <NodeShellModeContext.Provider value="card">
-                  <ReactFlow
-                    nodes={nodes}
-                    edges={styledEdges}
-                    onNodesChange={onNodesChange}
-                    onEdgesChange={onEdgesChange}
-                    onConnect={onConnect}
-                    onReconnectStart={onReconnectStart}
-                    onReconnect={onReconnect}
-                    onReconnectEnd={onReconnectEnd}
-                    isValidConnection={isValidConnection}
-                    nodeTypes={memoizedNodeTypes}
-                    edgeTypes={edgeTypes}
-                    deleteKeyCode={DELETE_KEY_CODES}
-                    fitView
-                    fitViewOptions={{ padding: 0.1, maxZoom: 1.95 }}
-                    minZoom={0.3}
-                    maxZoom={2}
-                    defaultEdgeOptions={{
-                      type: "deletable",
-                      animated: true,
-                      style: { stroke: "#94a3b8", strokeWidth: 3 },
-                    }}
-                    proOptions={{ hideAttribution: true }}
-                    colorMode={resolvedTheme}
-                    // xyflow's dark mode paints its own #141414 canvas; let the
-                    // panel's themed surface show through instead.
-                    style={{ background: "transparent" }}
-                  >
-                    <Background
-                      variant={BackgroundVariant.Dots}
-                      gap={16}
-                      size={1}
-                      color="var(--megane-border-solid)"
-                      bgColor="transparent"
-                    />
-                    <MiniMap
-                      style={{
-                        background: "var(--megane-surface-solid)",
-                        border: "1px solid var(--megane-border-solid)",
-                        borderRadius: 6,
-                        width: 72,
-                        height: 52,
-                      }}
-                      nodeColor={(n) =>
-                        n.type
-                          ? NODE_CATEGORY_COLORS[NODE_CATEGORY[n.type as PipelineNodeType]]
-                          : "var(--megane-primary)"
-                      }
-                      nodeBorderRadius={6}
-                      maskColor="rgba(100,116,139,0.08)"
-                    />
-                    <Controls
-                      showInteractive={false}
-                      style={{
-                        border: "1px solid var(--megane-border-solid)",
-                        borderRadius: 6,
-                        boxShadow: "none",
-                      }}
-                    />
-                  </ReactFlow>
-                </NodeShellModeContext.Provider>
-              </div>
-              {/* The assistant sits between the graph it edits and the
+      <div
+        style={{
+          position: "relative",
+          flex: 1,
+          minHeight: 0,
+        }}
+      >
+        <div
+          role="tabpanel"
+          id="pipeline-tabpanel-editor"
+          aria-labelledby="pipeline-tab-editor"
+          aria-hidden={mode !== "editor"}
+          style={{
+            position: "absolute",
+            inset: 0,
+            display: "flex",
+            flexDirection: "column",
+            visibility: mode === "editor" ? "visible" : "hidden",
+          }}
+        >
+          <NodeShellModeContext.Provider value="card">
+            <GraphCanvas<Node<PipelineNodeData>>
+              containerRef={flowContainerRef}
+              nodes={nodes}
+              edges={styledEdges}
+              onNodesChange={onNodesChange}
+              onEdgesChange={onEdgesChange}
+              onConnect={onConnect}
+              onReconnectStart={onReconnectStart}
+              onReconnect={onReconnect}
+              onReconnectEnd={onReconnectEnd}
+              isValidConnection={isValidConnection}
+              nodeTypes={memoizedNodeTypes}
+              edgeActions={edgeActions}
+              miniMapNodeColor={(n) =>
+                n.type
+                  ? NODE_CATEGORY_COLORS[NODE_CATEGORY[n.type as PipelineNodeType]]
+                  : "var(--megane-primary)"
+              }
+            />
+          </NodeShellModeContext.Provider>
+          {/* The assistant sits between the graph it edits and the
                   selected node's properties; its conversation and settings
                   open over the bottom of the canvas. */}
-              <PipelineChatBox />
-              <div
-                role="separator"
-                aria-orientation="horizontal"
-                aria-label="Resize properties pane"
-                onMouseDown={handleSplitMouseDown}
-                style={{
-                  flex: "0 0 7px",
-                  cursor: "row-resize",
-                  borderTop: "1px solid var(--megane-border-solid)",
-                  display: "grid",
-                  placeItems: "center",
-                }}
-              >
-                <span
-                  style={{
-                    width: 28,
-                    height: 3,
-                    borderRadius: 2,
-                    background: "var(--megane-border-strong)",
-                  }}
-                />
-              </div>
-              <PropertiesPane height={`${Math.round(paneFraction * 100)}%`} />
-            </div>
-            <div
-              role="tabpanel"
-              id="pipeline-tabpanel-inspector"
-              aria-labelledby="pipeline-tab-inspector"
-              aria-hidden={mode !== "inspector"}
-              style={{
-                position: "absolute",
-                inset: 0,
-                display: "flex",
-                flexDirection: "column",
-                background: "var(--megane-surface-solid)",
-                visibility: mode === "inspector" ? "visible" : "hidden",
-              }}
-            >
-              <PipelineInspector />
-            </div>
-          </div>
+          <PipelineChatBox />
+          <SplitSeparator onMouseDown={handleSplitMouseDown} />
+          <PropertiesPane height={`${Math.round(paneFraction * 100)}%`} />
+        </div>
+        <div
+          role="tabpanel"
+          id="pipeline-tabpanel-inspector"
+          aria-labelledby="pipeline-tab-inspector"
+          aria-hidden={mode !== "inspector"}
+          style={{
+            position: "absolute",
+            inset: 0,
+            display: "flex",
+            flexDirection: "column",
+            background: "var(--megane-surface-solid)",
+            visibility: mode === "inspector" ? "visible" : "hidden",
+          }}
+        >
+          <PipelineInspector />
         </div>
       </div>
-      <input
-        ref={importInputRef}
-        type="file"
-        accept=".megane.json,.json,application/json"
-        style={{ display: "none" }}
-        onChange={handleImportFile}
-      />
-      <RenderModal
-        open={showRenderModal}
-        onClose={() => setShowRenderModal(false)}
-        rendererRef={rendererRef}
-        totalFrames={totalFrames}
-        currentFrame={currentFrame}
-        onSeek={onSeek}
-      />
-      <ShareDialog
-        open={shareDialog !== null}
-        url={shareDialog?.url ?? ""}
-        tooLong={shareDialog?.tooLong ?? false}
-        onClose={() => setShareDialog(null)}
-      />
-    </CollapsiblePanel>
+    </GraphEditorPanel>
   );
 }
 

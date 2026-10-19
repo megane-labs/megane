@@ -29,7 +29,13 @@ import {
   type CodeServerHandle,
 } from "./lib/hosts/code-server";
 import { writeNotebook } from "./lib/hosts/jupyterlab";
-import { cleanUpWithRDKit, openSketch, saveAs, waitForKetcher } from "./lib/builder";
+import {
+  buildSmilesInFlow,
+  cleanUpWithRDKit,
+  openSketch,
+  saveAs,
+  waitForKetcher,
+} from "./lib/builder";
 
 const REPO = join(fileURLToPath(import.meta.url), "..", "..", "..");
 const WORKSPACE = "/tmp/megane-e2e-builder-vscode";
@@ -124,6 +130,27 @@ test("the megane activity-bar view opens an empty Builder tab", async ({ page })
   await expect(wv.locator('[data-testid="builder-welcome"]')).toBeVisible();
   await expect(wv.locator('[data-testid="builder-tools"]')).toHaveCount(1);
   await expect(page.locator(".tab", { hasText: "Megane Builder" }).first()).toBeVisible();
+});
+
+test("Flow mode builds a molecule from SMILES in the webview and opens it in Manual mode", async ({
+  page,
+}) => {
+  await openWorkbench(page);
+  await page
+    .getByRole("tab", { name: /^Megane/ })
+    .first()
+    .click();
+  await page
+    .locator(".welcome-view-content")
+    .getByRole("button", { name: "New Structure" })
+    .click();
+  const wv = await builderFrame(page);
+  // The graph editor's chunk loads from the extension's resource origin.
+  await buildSmilesInFlow(wv, "CCO");
+  await expect(wv.locator('[data-testid="megane-builder"]')).toHaveAttribute(
+    "data-atom-count",
+    "9",
+  );
 });
 
 test("the Tools menu runs a configured stdio tool server through the extension host", async ({

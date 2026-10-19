@@ -179,8 +179,11 @@ export function useBuilderShortcuts(
   api: StoreApi<BuilderStore>,
   host: ShortcutHost,
   scope?: RefObject<HTMLElement | null>,
+  /** False while the keys belong to something else (Flow mode's graph). */
+  enabled = true,
 ) {
   useEffect(() => {
+    if (!enabled) return;
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.defaultPrevented || e.repeat) return;
       // A drag in the view owns the keys (axis locks, Esc); see useBuilderHandlers.
@@ -198,5 +201,5 @@ export function useBuilderShortcuts(
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [api, host, scope]);
+  }, [api, host, scope, enabled]);
 }

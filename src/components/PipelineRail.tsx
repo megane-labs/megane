@@ -11,23 +11,18 @@
  *   Guide, Tutorial, Theme      — help and appearance, at the foot
  */
 
-import type { CSSProperties, ReactNode } from "react";
+import type { ReactNode } from "react";
 import type { PipelinePanelMode } from "../stores/usePipelineUIStore";
 import type { NodeCategory, PipelineNodeType } from "../pipeline/types";
 import { NODE_CATEGORY_COLORS, NODE_TYPE_LABELS } from "../pipeline/types";
 import { PIPELINE_TEMPLATES } from "../pipeline/templates";
 import { CATEGORY_ICONS } from "./nodes/categoryIcons";
 import { ThemeCycleButton } from "./ThemeCycleButton";
-import { Menu, type MenuItem } from "../builder/Menu";
-import {
-  FlyoutMark,
-  RailDivider,
-  RailIcon,
-  TOOL_RAIL_WIDTH,
-  railButtonStyle,
-} from "../builder/rail";
+import type { MenuItem } from "../builder/Menu";
+import { RailDivider, RailIcon, railButtonStyle } from "../builder/rail";
+import { PANEL_RAIL_WIDTH, PanelRail, RailButton, RailMenu, RailSpacer } from "./graph/PanelRail";
 
-export const PIPELINE_RAIL_WIDTH = TOOL_RAIL_WIDTH;
+export const PIPELINE_RAIL_WIDTH = PANEL_RAIL_WIDTH;
 
 export const ADD_NODE_GROUPS: {
   category: NodeCategory;
@@ -155,47 +150,6 @@ function TemplateLabel({ label, description }: { label: string; description: str
   );
 }
 
-const railColumnStyle: CSSProperties = {
-  width: PIPELINE_RAIL_WIDTH,
-  flexShrink: 0,
-  boxSizing: "border-box",
-  padding: "6px 0",
-  display: "flex",
-  flexDirection: "column",
-  alignItems: "center",
-  gap: 2,
-  overflowY: "auto",
-  overflowX: "hidden",
-  borderRight: "1px solid var(--megane-border)",
-};
-
-function RailButton({
-  testId,
-  label,
-  title,
-  icon,
-  onClick,
-}: {
-  testId: string;
-  label: string;
-  title: string;
-  icon: ReactNode;
-  onClick: () => void;
-}) {
-  return (
-    <button
-      type="button"
-      data-testid={testId}
-      aria-label={label}
-      title={title}
-      style={railButtonStyle(false)}
-      onClick={onClick}
-    >
-      {icon}
-    </button>
-  );
-}
-
 export interface PipelineRailProps {
   mode: PipelinePanelMode;
   onModeChange: (mode: PipelinePanelMode) => void;
@@ -255,40 +209,8 @@ export function PipelineRail({
     { label: "Copy share link…", testId: "pipeline-editor-share", onSelect: onShare },
   ];
 
-  const menu = (
-    testId: string,
-    label: string,
-    title: string,
-    icon: ReactNode,
-    items: MenuItem[],
-  ) => (
-    <Menu
-      testId={testId}
-      label={
-        <>
-          {icon}
-          <FlyoutMark />
-        </>
-      }
-      ariaLabel={label}
-      title={title}
-      placement="right"
-      caret={false}
-      triggerStyle={railButtonStyle(false)}
-      openTriggerStyle={railButtonStyle(true)}
-      heading={label}
-      items={items}
-    />
-  );
-
   return (
-    <div
-      data-testid="pipeline-rail"
-      role="toolbar"
-      aria-label="Pipeline"
-      aria-orientation="vertical"
-      style={railColumnStyle}
-    >
+    <PanelRail testId="pipeline-rail" label="Pipeline">
       <div
         role="tablist"
         aria-label="Pipeline panel mode"
@@ -317,14 +239,20 @@ export function PipelineRail({
         })}
       </div>
       <RailDivider />
-      {menu("pipeline-editor-add", "Add Node", "Add Node", IconAdd, addItems)}
-      {menu(
-        "pipeline-editor-templates",
-        "Templates",
-        "Templates: replace the pipeline with a ready-made one",
-        IconTemplates,
-        templateItems,
-      )}
+      <RailMenu
+        testId="pipeline-editor-add"
+        label="Add Node"
+        title="Add Node"
+        icon={IconAdd}
+        items={addItems}
+      />
+      <RailMenu
+        testId="pipeline-editor-templates"
+        label="Templates"
+        title="Templates: replace the pipeline with a ready-made one"
+        icon={IconTemplates}
+        items={templateItems}
+      />
       <RailButton
         testId="pipeline-editor-layout"
         label="Auto Layout"
@@ -333,13 +261,13 @@ export function PipelineRail({
         onClick={onAutoLayout}
       />
       <RailDivider />
-      {menu(
-        "pipeline-editor-file",
-        "File",
-        "File: import, export or share the pipeline",
-        IconFile,
-        fileItems,
-      )}
+      <RailMenu
+        testId="pipeline-editor-file"
+        label="File"
+        title="File: import, export or share the pipeline"
+        icon={IconFile}
+        items={fileItems}
+      />
       <RailButton
         testId="pipeline-editor-render"
         label="Render"
@@ -347,7 +275,7 @@ export function PipelineRail({
         icon={IconRender}
         onClick={onRender}
       />
-      <div style={{ flex: 1, minHeight: 6 }} />
+      <RailSpacer />
       <RailButton
         testId="pipeline-editor-guide"
         label="Show user guide"
@@ -369,6 +297,6 @@ export function PipelineRail({
         iconOnly
         iconSize={18}
       />
-    </div>
+    </PanelRail>
   );
 }

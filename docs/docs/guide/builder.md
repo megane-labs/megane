@@ -12,10 +12,13 @@ JupyterLab and Jupyter notebooks (see
 
 The viewer and the Builder are deliberately different tools. The viewer's
 pipeline describes how a structure is *shown* (bonds, filters, colours,
-supercells, trajectories); the Builder changes what a structure *is*. So the
-Builder has no pipeline: its 3D view always shows the document — the structure
-as opened plus your edits — drawn as ball-and-stick with every atom, its own
-bonds and its cell, and every click in the view is an edit. Bringing a Builder
+supercells, trajectories); the Builder changes what a structure *is*. It has
+two modes, switched at the top of the rails on the left. In **Manual** mode
+the 3D view always shows the document — the structure as opened plus your
+edits — drawn as ball-and-stick with every atom, its own bonds and its cell,
+and every click in the view is an edit. In **Flow** mode you build a model by
+connecting blocks instead — a molecule from SMILES, a packmol liquid box fed
+by it — and run them (see [Flow mode](#flow-mode)). Bringing a Builder
 document into the viewer is a planned follow-up; the two already share the
 same edit-history format (the `load_structure` node's `edits` list), so
 nothing has to be re-encoded when they meet.
@@ -31,7 +34,8 @@ the top.
 
 The **top-left corner** has the viewer's camera controls — *Reset View* and
 the axis buttons (look along ±x / ±y / ±z, and ±a / ±b / ±c while there is a
-cell). Under them the **tool rail** picks the tool, one icon per tool, each
+cell). Under them the **mode switch** picks *Manual* or *Flow*; the rails
+under it follow the mode. In Manual mode the **tool rail** picks the tool, one icon per tool, each
 marked with its key, and under that the **operations rail** holds every
 action, top to bottom: **File** (*Open…*, *New empty cell…* /
 *New bulk crystal…* and *Save* in each format); **Structure**, the operations
@@ -420,6 +424,63 @@ To add buttons of your own, write a tool server with the
 [`megane-builder-tools` SDK](https://github.com/hodakamori/megane-builder-tools):
 [Writing a Builder Tool Server](../dev/builder-tool-server.md) goes from an
 empty folder to your tools in this menu.
+
+## Flow mode
+
+Building a model often takes several programs in a row: draw one molecule,
+embed it in 3D, then hand it to packmol to fill a box. **Flow** mode shows that
+recipe as blocks wired together, like the viewer's pipeline editor, and runs
+it. Pick **Flow** in the mode switch at the top of the left rails: Manual
+mode's rails make way, and the panel on the right becomes the Flow editor,
+built like the viewer's Pipeline panel — the same resizable panel, node
+cards, wires, minimap and properties pane. Its own rail, down the panel's
+left edge, holds **Add**, **Auto Layout**, **Run** (**Stop** while a run is
+going), the **File** menu (*Open flow…*, *Save flow*, *Clear all blocks*)
+and the theme button; the graph is on top, and the selected block's settings
+are under it, in the same rows as a pipeline node's.
+
+**Add** puts a block in the middle of the graph and selects it. It offers
+these blocks:
+
+- **Molecule from SMILES**: type a SMILES string; when the flow runs, RDKit
+  embeds it in 3D (hydrogens added, MMFF94s), as the library's sketches are.
+  The optional name is the residue name tools give its copies.
+- **Molecule from the library**: a preset or one of your own molecules.
+- **Manual structure**: the structure open in Manual mode, as it is when the
+  flow runs (so a slab you built by hand can be solvated here).
+- **Tools**: every tool of the connected tool server (see
+  [Python tools](#python-tools); *Tool server…* is in this menu too). The
+  tool's form is the block's settings, except its molecule and structure
+  arguments, which become **inputs** on top of the block. A liquid box's
+  *Components* input takes any number of wires — one per molecule — and its
+  *Count* is set per wire on the block.
+
+Drag from a block's output (the dot at its bottom) to another block's input
+(a dot on its top) to wire them; a wire that would make a loop is refused.
+Hover a wire for its × to delete it, or select a block or wire and press
+Delete.
+
+**Run** builds every block in order. Each block's line shows what happened —
+*3 atoms*, *300 atoms*, a tool's warning, or why it failed (a missing input,
+the server's own error) — and the blocks after a failed one wait. Results are
+kept: change the count of a liquid box and Run again, and only the box runs
+again, not the molecules before it; a block you have changed since its last
+run says so. *Run to here* in a block's settings runs just that block and the
+ones it needs, and **Stop** abandons a run.
+
+The 3D view shows the result of the block you pick in the graph (else the
+last one the run reached), with its name and counts on the info line;
+editing in the view is Manual mode's job. **Open in Manual** makes the picked
+block's result the Manual document — replacing the open one and its history —
+so you can edit it further or save it as XYZ, PDB or MOL.
+
+*Save flow* writes the blocks, their settings and their wires as
+`builder.megane-flow.json` (where *Save* writes structures on that host, see
+[In VS Code, JupyterLab and notebooks](#in-vs-code-jupyterlab-and-notebooks));
+*Open flow…* reads one back. A flow keeps each tool's settings, seed included,
+so running it again with the same server builds the same structure. Library
+blocks name the library molecule by id, so a flow that uses your own
+molecules opens elsewhere only where those molecules are in the library.
 
 ## History
 

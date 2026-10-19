@@ -174,6 +174,100 @@ test.describe("builder-tools: webapp", () => {
     expect((await builderState(page)).nAtoms).toBe(0);
   });
 
+  test("Flow mode wires a SMILES molecule into a liquid box, runs it, and opens the result in Manual", async ({
+    page,
+  }) => {
+    const calls: { name: string; args: Record<string, unknown> }[] = [];
+    await fakeToolServer(page, calls);
+    await page.addInitScript(() => {
+      (globalThis as { __MEGANE_TEST__?: boolean }).__MEGANE_TEST__ = true;
+    });
+    await page.goto(`/builder.html?test=1#tools=${encodeURIComponent(SERVER)}&token=${TOKEN}`);
+    await page.getByTestId("builder-tools").click();
+    await expect(page.getByTestId("builder-tools-server-name")).toHaveText("megane-builder-tools");
+    await page.getByTestId("builder-tools").click();
+
+    // The mode switch swaps the left rails and the right panels.
+    await page.getByTestId("builder-mode-flow").click();
+    await expect(page.getByTestId("megane-builder")).toHaveAttribute("data-mode", "flow");
+    await expect(page.getByTestId("builder-flow-rail")).toBeVisible();
+    await expect(page.getByTestId("builder-tool-rail")).toHaveCount(0);
+    await expect(page.getByTestId("builder-flow-panel")).toBeVisible();
+
+    // A molecule from SMILES, and a liquid box from the tool server.
+    await page.getByTestId("builder-flow-add").click();
+    await page.getByTestId("builder-flow-add-smiles").click();
+    await page.getByTestId("builder-flow-molecule-smiles").fill("O");
+    await page.getByTestId("builder-flow-molecule-name").fill("water");
+    await page.getByTestId("builder-flow-add").click();
+    await page.getByTestId("builder-tools-button-liquid_box").click();
+
+    // Wire the molecule's output to the box's Components input by dragging.
+    const node = (id: string) => page.locator(`.react-flow__node[data-id="${id}"]`);
+    const out = node("n1").locator('.react-flow__handle[data-handleid="out"]');
+    const input = node("n2").locator('.react-flow__handle[data-handleid="components"]');
+    const from = (await out.boundingBox())!;
+    const to = (await input.boundingBox())!;
+    await page.mouse.move(from.x + from.width / 2, from.y + from.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(to.x + to.width / 2, to.y + to.height / 2, { steps: 8 });
+    await page.mouse.up();
+    await expect(page.locator(".react-flow__edge")).toHaveCount(1);
+
+    // One row per wire; the count is set on the box.
+    await node("n2").click();
+    await page.getByTestId("builder-flow-row-field-n1-count").fill("50");
+    await page.getByTestId("builder-flow-field-seed").fill("42");
+
+    // Run: RDKit embeds the SMILES in the page, the server packs the box.
+    await page.getByTestId("builder-flow-run").click();
+    await expect(node("n2").getByTestId("builder-flow-node-tool")).toHaveAttribute(
+      "data-status",
+      "done",
+      { timeout: 60_000 },
+    );
+    await expect(node("n1").getByTestId("builder-flow-node-molecule")).toHaveAttribute(
+      "data-status",
+      "done",
+    );
+    expect(calls.map((c) => c.name)).toEqual(["liquid_box"]);
+    const args = calls[0].args as {
+      seed: number;
+      components: { count: number; molecule: { name: string; molblock: string } }[];
+    };
+    expect(args.seed).toBe(42);
+    expect(args.components).toHaveLength(1);
+    expect(args.components[0].count).toBe(50);
+    expect(args.components[0].molecule.name).toBe("water");
+    // RDKit added the two hydrogens of water: three atoms in the mol block's counts line.
+    expect(args.components[0].molecule.molblock.split("\n")[3].slice(0, 3).trim()).toBe("3");
+    await expect(page.getByTestId("builder-status-flow")).toContainText("showing water");
+
+    // A second Run reuses every cached result: no new call.
+    await page.getByTestId("builder-flow-run").click();
+    await expect
+      .poll(() =>
+        page.evaluate(
+          () =>
+            (
+              window as unknown as {
+                __megane_test_builder_flow_store: { getState: () => { running: unknown } };
+              }
+            ).__megane_test_builder_flow_store.getState().running,
+        ),
+      )
+      .toBeNull();
+    await expect(page.getByTestId("builder-flow-run")).toBeVisible();
+    expect(calls).toHaveLength(1);
+
+    // Open the box in Manual mode as the document.
+    await page.getByTestId("builder-flow-open-manual").click();
+    await expect(page.getByTestId("megane-builder")).toHaveAttribute("data-mode", "manual");
+    await expect(page.getByTestId("megane-builder")).toHaveAttribute("data-atom-count", "300");
+    await expect(page.getByTestId("builder-tool-rail")).toBeVisible();
+    expect((await builderState(page)).fileName).toBe("water");
+  });
+
   test("a wrong token is reported and nothing connects", async ({ page }) => {
     await fakeToolServer(page, []);
     await page.goto("/builder.html?test=1");

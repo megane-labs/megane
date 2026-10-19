@@ -24,6 +24,12 @@ interface BuilderState {
   tool: string;
 }
 
+/**
+ * Left edge of an empty bottom-left corner of the view: right of the rails
+ * (mode switch, tools, operations), which run down the whole left edge.
+ */
+const EMPTY_CORNER_X = 100;
+
 async function builderState(page: Page): Promise<BuilderState> {
   return await page.evaluate(() => {
     const store = (
@@ -348,7 +354,7 @@ test.describe("builder: webapp", () => {
     // A left drag from empty space turns the view as in the viewer: no box,
     // no edit, the selection kept.
     const view = (await camera())!.position;
-    const corner = { x: box.x + 20, y: box.y + box.height - 60 };
+    const corner = { x: box.x + EMPTY_CORNER_X, y: box.y + box.height - 60 };
     await page.mouse.move(corner.x, corner.y);
     await page.mouse.down();
     await page.mouse.move(corner.x + 120, corner.y - 30, { steps: 8 });
@@ -380,7 +386,7 @@ test.describe("builder: webapp", () => {
     const band = page.locator('[data-testid="viewport-box-select"]');
     await page.locator('[data-testid="builder-select-box"]').click();
     // An empty corner, so the band holds no atom.
-    const x = box.x + 20;
+    const x = box.x + EMPTY_CORNER_X;
     const y = box.y + box.height - 60;
 
     // Left released while the right button is still down: the browser sends

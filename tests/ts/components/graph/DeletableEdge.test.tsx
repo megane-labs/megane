@@ -15,8 +15,12 @@ vi.mock("@xyflow/react", async () => {
   };
 });
 
-import { DeletableEdge, EDGE_INTERACTION_WIDTH, edgeTypes } from "@/components/DeletableEdge";
-import { usePipelineStore } from "@/pipeline/store";
+import {
+  DeletableEdge,
+  EDGE_INTERACTION_WIDTH,
+  EdgeActionsContext,
+  edgeTypes,
+} from "@/components/graph/DeletableEdge";
 
 function edgeProps(overrides: Record<string, unknown> = {}) {
   return {
@@ -36,23 +40,26 @@ function edgeProps(overrides: Record<string, unknown> = {}) {
   } as any;
 }
 
+let removeEdge: ReturnType<typeof vi.fn>;
+
 function renderEdge(overrides: Record<string, unknown> = {}) {
   return render(
-    <svg>
-      <DeletableEdge {...edgeProps(overrides)} />
-    </svg>,
+    <EdgeActionsContext.Provider
+      value={{ remove: removeEdge, testIdPrefix: "pipeline-edge-delete-" }}
+    >
+      <svg>
+        <DeletableEdge {...edgeProps(overrides)} />
+      </svg>
+    </EdgeActionsContext.Provider>,
   );
 }
 
 const deleteButton = () => screen.queryByTestId("pipeline-edge-delete-e1");
 
 describe("DeletableEdge", () => {
-  let removeEdge: ReturnType<typeof vi.fn>;
-
   beforeEach(() => {
     vi.useFakeTimers();
     removeEdge = vi.fn();
-    usePipelineStore.setState({ removeEdge });
   });
 
   afterEach(() => {
@@ -122,5 +129,14 @@ describe("DeletableEdge", () => {
     fireEvent.mouseLeave(g);
     unmount();
     expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it("has no delete button outside an editor that provides edge actions", () => {
+    render(
+      <svg>
+        <DeletableEdge {...edgeProps({ selected: true })} />
+      </svg>,
+    );
+    expect(deleteButton()).toBeNull();
   });
 });

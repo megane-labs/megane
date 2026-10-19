@@ -20,6 +20,7 @@ import { waitForReady } from "./lib/setup";
 import { startJupyterLab, stopJupyterLab, type JupyterLabHandle } from "./lib/hosts/jupyterlab";
 import {
   builderState,
+  buildSmilesInFlow,
   cleanUpWithRDKit,
   deleteAtom,
   openSketch,
@@ -275,4 +276,15 @@ test("Open Builder adds a tab with a document of its own each time; a file opens
   await openBuilder.click();
   await expect(panels).toHaveCount(3);
   await expect(shownBuilder(page)).toHaveAttribute("data-atom-count", "0");
+});
+
+test("Flow mode builds a molecule from SMILES and opens it in Manual mode", async ({ page }) => {
+  await openLab(page);
+  await sidebarTab(page).click();
+  await page.locator('#megane-builder-sidebar [data-testid="megane-builder-sidebar-open"]').click();
+  const panel = page.locator(".megane-builder-panel").filter({ visible: true });
+  await expect(shownBuilder(page)).toHaveAttribute("data-atom-count", "0");
+  // Webpack's lazy chunk of the graph editor loads, and RDKit embeds the SMILES.
+  await buildSmilesInFlow(panel, "CCO", page);
+  await expect(shownBuilder(page)).toHaveAttribute("data-atom-count", "9");
 });

@@ -162,7 +162,7 @@ declare module "@megane/builder/host" {
   export interface BuilderSaveRequest {
     name: string;
     text: string;
-    format: "xyz" | "pdb" | "mol";
+    format: "xyz" | "pdb" | "mol" | "flow";
   }
   export interface BuilderHost {
     save?: (file: BuilderSaveRequest) => Promise<string | null | void>;
