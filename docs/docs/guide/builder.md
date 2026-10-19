@@ -568,7 +568,7 @@ The tools then work as in the web app: *Solvate* needs a cell (**Structure ›
 Set cell…**). Builder tabs and browser windows share one server process,
 which stops when the last one disconnects. The server's messages, and why
 one failed to start, are in the Jupyter server's log. Megane's server
-extension (`megane.builder_tools`) is enabled when megane is installed; if
+extension (`megane.builder_tools`) is enabled when Megane is installed; if
 the Tools menu cannot reach it, check `jupyter server extension list`.
 
 **Jupyter notebooks** (JupyterLab, Notebook, VS Code): `megane.Builder` is a

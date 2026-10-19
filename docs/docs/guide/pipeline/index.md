@@ -9,7 +9,7 @@ import LiveViewer from '@site/src/components/LiveViewer';
 
 Megane's pipeline editor lets you build visualization workflows by wiring nodes — no code required. The editor lives in the **Pipeline** panel on the right edge of the viewer; when the panel is collapsed, click its **Pipeline** tab to open it.
 
-<Figure src="/screenshots/pipeline-editor.png" alt="megane visual pipeline editor" caption="The visual pipeline editor: nodes on the canvas, live 3D beside it." />
+<Figure src="/screenshots/pipeline-editor.png" alt="Megane visual pipeline editor" caption="The visual pipeline editor: nodes on the canvas, live 3D beside it." />
 
 Pipelines can also be built programmatically in [Python](./python.md), [TypeScript](./typescript.md), or written directly as [JSON](./json.md).
 

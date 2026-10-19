@@ -1,9 +1,9 @@
 ---
 name: add-format
-description: Register a new file format across every megane host (standalone webapp, Jupyter widget, JupyterLab labextension, VSCode extension, Python). Use whenever you add a parser to `megane-core`, expose it via WASM/PyO3, or notice that an existing parser is missing from one of the host openers. Enforces CRITICAL RULE #6 in AGENTS.md.
+description: Register a new file format across every Megane host (standalone webapp, Jupyter widget, JupyterLab labextension, VSCode extension, Python). Use whenever you add a parser to `megane-core`, expose it via WASM/PyO3, or notice that an existing parser is missing from one of the host openers. Enforces CRITICAL RULE #6 in AGENTS.md.
 ---
 
-# Adding a new file format to megane
+# Adding a new file format to Megane
 
 A new format is **not done** until it is openable on every host where it makes sense. The Rust core, WASM bindings, and Python bindings only get you the parser — each host has a separate registration point and they drift independently. This checklist mirrors CRITICAL RULE #6 in `AGENTS.md`.
 

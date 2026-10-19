@@ -24,7 +24,7 @@ fig = go.FigureWidget(
     ),
 )
 
-# Plotly click → megane frame selection
+# Plotly click → Megane frame selection
 def on_click(trace, points, state):
     if points.point_inds:
         viewer.frame_index = points.point_inds[0]
@@ -40,7 +40,7 @@ widgets.VBox([fig, viewer])
 Use Megane's `on_event("frame_change")` callback to update a marker on the Plotly chart:
 
 ```python
-# megane → Plotly (update red marker on the chart)
+# Megane → Plotly (update red marker on the chart)
 marker_trace = fig.data[1]
 
 @viewer.on_event("frame_change")

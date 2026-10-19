@@ -1,6 +1,6 @@
 ---
 name: post-release
-description: Post-release checklist for megane. Run after pushing a release tag to verify all publish workflows succeeded and packages are live.
+description: Post-release checklist for Megane. Run after pushing a release tag to verify all publish workflows succeeded and packages are live.
 ---
 
 # Post-Release Checklist
@@ -128,7 +128,7 @@ This test verifies:
 
 ### 3.2 VS Code extension: rendering via code-server
 
-Download the VSIX from the VS Code Marketplace (the same artifact users install), run it in code-server, and verify the megane custom editor renders a molecule.
+Download the VSIX from the VS Code Marketplace (the same artifact users install), run it in code-server, and verify the Megane custom editor renders a molecule.
 
 ```bash
 # Run the VS Code rendering E2E test
@@ -292,7 +292,7 @@ git remote set-url origin https://github.com/megane-labs/megane.git
 gh run list --workflow=deploy.yml --limit 1
 git remote set-url origin "$ORIG_REMOTE"
 ```
-The demo is served at https://megane.tech-office-mori.com (the viewer at `/`, megane Builder at `/builder.html`). Verify it loads in a browser: the Welcome dialog shows `vX.Y.Z`, a structure renders, and the console has no errors. Check the docs landing hero and https://megane-labs.github.io/megane/app/ the same way.
+The demo is served at https://megane.tech-office-mori.com (the viewer at `/`, Megane Builder at `/builder.html`). Verify it loads in a browser: the Welcome dialog shows `vX.Y.Z`, a structure renders, and the console has no errors. Check the docs landing hero and https://megane-labs.github.io/megane/app/ the same way.
 
 In the sandbox, headless Chromium rejects every HTTPS site with `ERR_CERT_AUTHORITY_INVALID` until the proxy CA is in its NSS store. Import it; never ignore certificate errors:
 

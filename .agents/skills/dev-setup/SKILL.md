@@ -1,6 +1,6 @@
 ---
 name: dev-setup
-description: Set up and verify the megane development environment. Use at session start or when build tools are missing.
+description: Set up and verify the Megane development environment. Use at session start or when build tools are missing.
 ---
 
 # Dev Environment Setup & Verification
@@ -45,7 +45,7 @@ This step is REQUIRED before `npm run dev` or `npm run build` will work.
 
 Only needed to run the `vscode` / `widget-vscode` Playwright projects.
 `scripts/install-code-server.sh` installs code-server + the Jupyter extensions +
-the megane VSIX. In a **sandboxed / proxied** environment the default installer
+the Megane VSIX. In a **sandboxed / proxied** environment the default installer
 downloads a binary from GitHub and gets **HTTP 403**; force the npm build path
 instead:
 

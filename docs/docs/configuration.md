@@ -64,7 +64,7 @@ megane/
 │   └── megane-wasm/           # WASM bindings
 ├── python/megane/             # Python package
 │   ├── widget.py              # Jupyter widget (anywidget)
-│   ├── builder.py             # megane Builder Jupyter widget
+│   ├── builder.py             # Megane Builder Jupyter widget
 │   ├── writers.py             # Structure writers (XYZ / PDB / MOL)
 │   ├── pipeline.py            # Pipeline builder (NetworkX-style DAG)
 │   ├── server.py              # FastAPI WebSocket server
@@ -74,7 +74,7 @@ megane/
 ├── src/                       # TypeScript frontend
 │   ├── components/            # React components
 │   ├── pipeline/              # Pipeline graph, node executors, serialization
-│   ├── builder/               # megane Builder (structure editor)
+│   ├── builder/               # Megane Builder (structure editor)
 │   ├── renderer/              # Three.js rendering
 │   ├── protocol/              # Binary protocol decoder
 │   └── parsers/               # File parsers (WASM)

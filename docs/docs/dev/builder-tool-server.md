@@ -39,7 +39,7 @@ A tool is a typed Python function under `@builder_tool`. Save this as
 `my_tools.py`:
 
 ```python
-"""My lab's megane Builder tools."""
+"""My lab's Megane Builder tools."""
 
 import argparse
 import secrets

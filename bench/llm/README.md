@@ -1,6 +1,6 @@
-# megane LLM benchmark
+# Megane LLM benchmark
 
-Evaluates the quality of megane's **LLM pipeline generator** — the feature that
+Evaluates the quality of Megane's **LLM pipeline generator** — the feature that
 turns a natural-language request (e.g. _"show a molecule with bonds"_) into a
 `SerializedPipeline` JSON that the pipeline editor can apply.
 

@@ -1,6 +1,6 @@
 ---
 name: pre-release
-description: Pre-release checklist for megane. Run before tagging and publishing a new version. Covers tests, build, versioning, docs, and dry-run validation.
+description: Pre-release checklist for Megane. Run before tagging and publishing a new version. Covers tests, build, versioning, docs, and dry-run validation.
 ---
 
 # Pre-Release Checklist
@@ -64,7 +64,7 @@ The bumpversion config in `pyproject.toml` updates these files:
 The lockfile entries are anchored on the package's own `name` line, so a
 dependency that happens to share the old version number is never touched.
 Confirm with `git diff package-lock.json */package-lock.json uv.lock`: each
-file changes only megane's own version lines.
+file changes only Megane's own version lines.
 
 Sanity-check no stale references remain (replace `0.6.2` with the previous
 version — output should be empty):

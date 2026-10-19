@@ -1,9 +1,9 @@
 ---
 name: build
-description: Build megane components (WASM, frontend, Python wheel). Use when asked to build or when build errors occur.
+description: Build Megane components (WASM, frontend, Python wheel). Use when asked to build or when build errors occur.
 ---
 
-# Building megane
+# Building Megane
 
 ## Build Order (IMPORTANT)
 

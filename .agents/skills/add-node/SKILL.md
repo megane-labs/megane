@@ -3,7 +3,7 @@ name: add-node
 description: Register a new pipeline node type across every surface it must touch (types, catalog, executor, engine dispatch, React component, editor palette, and the JS/Python builders). Use whenever you add a node to the visual pipeline, or notice a node is only half-wired. Complements the `add-format` skill (formats vs. nodes) and the prose walkthrough at docs/docs/dev/custom-nodes.md.
 ---
 
-# Adding a new pipeline node to megane
+# Adding a new pipeline node to Megane
 
 A node type is **not** a single class — it is a set of coordinated declarations
 spread across ~8 files. Miss one and the node either fails to compile, never
