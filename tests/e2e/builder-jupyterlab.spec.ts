@@ -212,7 +212,7 @@ test("the file browser's context menu and the launcher reach the Builder", async
   await openLab(page);
   const item = page.locator(".jp-DirListing-item", { hasText: "caffeine.sdf" });
   await item.click({ button: "right" });
-  const entry = page.locator(".lm-Menu-item", { hasText: "Open in megane Builder" });
+  const entry = page.locator(".lm-Menu-item", { hasText: "Open in Megane Builder" });
   await expect(entry).toBeVisible();
   await entry.click();
   await expect(
@@ -222,7 +222,7 @@ test("the file browser's context menu and the launcher reach the Builder", async
   // A file that is not a structure has no such entry.
   await page.locator(".jp-DirListing-item", { hasText: "notes.txt" }).click({ button: "right" });
   await expect(page.locator(".lm-Menu").first()).toBeVisible();
-  await expect(page.locator(".lm-Menu-item", { hasText: "Open in megane Builder" })).toBeHidden();
+  await expect(page.locator(".lm-Menu-item", { hasText: "Open in Megane Builder" })).toBeHidden();
   await page.keyboard.press("Escape");
 
   await page.evaluate(() =>
@@ -231,7 +231,7 @@ test("the file browser's context menu and the launcher reach the Builder", async
     ).jupyterapp.commands.execute("launcher:create"),
   );
   await expect(
-    page.locator(".jp-LauncherCard", { hasText: "megane Builder" }).filter({ visible: true }),
+    page.locator(".jp-LauncherCard", { hasText: "Megane Builder" }).filter({ visible: true }),
   ).toBeVisible();
 });
 
@@ -251,7 +251,7 @@ test("Open Builder adds a tab with a document of its own each time; a file opens
   await expect(panels).toHaveCount(1);
   await openBuilder.click();
   await expect(panels).toHaveCount(2);
-  await expect(mainTabs(page, "megane Builder")).toHaveCount(2);
+  await expect(mainTabs(page, "Megane Builder")).toHaveCount(2);
 
   // The file opens in a tab of its own.
   await file.click();
@@ -260,7 +260,7 @@ test("Open Builder adds a tab with a document of its own each time; a file opens
   await expect(mainTabs(page, "caffeine.sdf — Builder")).toHaveClass(/lm-mod-current/);
 
   // The empty Builders kept their own (empty) documents.
-  await mainTabs(page, "megane Builder").first().click();
+  await mainTabs(page, "Megane Builder").first().click();
   await expect(shownBuilder(page)).toHaveAttribute("data-atom-count", "0");
 
   // Asking for the file again brings its tab back instead of adding one.

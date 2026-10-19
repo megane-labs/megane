@@ -58,7 +58,7 @@ export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundarySt
     const webgl = isWebGLError(error);
     const title = webgl ? "WebGL is unavailable" : "Something went wrong";
     const hint = webgl
-      ? "megane renders molecules with WebGL2, which this environment could not initialize. " +
+      ? "Megane renders molecules with WebGL2, which this environment could not initialize. " +
         "This usually means hardware acceleration is disabled. In VS Code, set " +
         '"disable-hardware-acceleration" to false (or remove it) and restart, and make sure ' +
         "your GPU drivers are up to date."

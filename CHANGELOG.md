@@ -9,7 +9,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 ### Added
 
 - **The reference tools without setup in VS Code and JupyterLab.** With uv installed, the Builder's Tools menu offers **Connect to megane-builder-tools** (Liquid box, Polymer chain, Solvate) with no setting.
-  - It runs the `megane-builder-tools` command if it is installed (PATH, or uv's `~/.local/bin` for an editor started from the Dock), else `uvx` at a commit of hodakamori/megane-builder-tools pinned in megane.
+  - It runs the `megane-builder-tools` command if it is installed (PATH, or uv's `~/.local/bin` for an editor started from the Dock), else `uvx` at a commit of hodakamori/megane-builder-tools pinned in Megane.
   - An entry named `megane-builder-tools` in `megane.builder.mcpServers` / `MeganeBuilderTools.mcp_servers` replaces it, and `null` hides it. The confirmation before first use still applies.
   - The first connection through uvx downloads about 600 MB into uv's cache: 21 s in VS Code and 13 s in JupyterLab here. Reconnecting with the cache warm takes about 4 s.
   - Stdio servers now inherit the editor's or Jupyter server's whole environment instead of the MCP SDK's short list, so that download sees `HTTPS_PROXY`, `SSL_CERT_FILE` and uv's settings.
@@ -25,7 +25,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
   - The Tools menu offers *Connect to <server>* for each configured server.
   - VS Code asks before it first runs a command or sends structures to a URL, and remembers the answer for exactly that command or URL.
   - Builder tabs share one server process, which stops when the last tab lets go.
-  - A server's stderr goes to the *megane Builder Tools* output panel.
+  - A server's stderr goes to the *Megane Builder Tools* output panel.
   - HTTP servers must use HTTPS unless on loopback.
   - The setting is ignored at workspace level in untrusted workspaces.
   - The extension host is now bundled with esbuild so the MCP SDK ships in the VSIX. The SDK is a separate `out/sdkClient.js` loaded on the first connection, so activation time is unchanged.

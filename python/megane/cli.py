@@ -12,7 +12,7 @@ from threading import Timer
 def main() -> None:
     parser = argparse.ArgumentParser(
         prog="megane",
-        description="megane - A fast, beautiful molecular viewer",
+        description="Megane - A fast, beautiful molecular viewer",
     )
     parser.add_argument("command", choices=["serve"], help="Command to run")
     parser.add_argument(

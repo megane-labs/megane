@@ -471,7 +471,7 @@ VS Code starts the reference server itself when you connect and stops it when
 the last Builder tab disconnects or closes. If `megane-builder-tools` is on
 your PATH (`uv tool install
 git+https://github.com/hodakamori/megane-builder-tools`), that is what runs;
-otherwise `uvx` runs the version megane was tested with. The first connection
+otherwise `uvx` runs the version Megane was tested with. The first connection
 through `uvx` downloads the server and its dependencies (RDKit, packmol,
 RadonPy; about 600 MB in uv's cache) and takes from a few seconds to a few
 minutes depending on your connection; later ones start in seconds. Without uv
@@ -510,7 +510,7 @@ More details:
   disconnects or closes.
 - **Tools › Tool server…** shows what each server runs and has **Configure
   tool servers…**, which opens the setting.
-- A server's messages (and why it failed to start) are in the *megane Builder
+- A server's messages (and why it failed to start) are in the *Megane Builder
   Tools* output panel.
 - In an untrusted workspace, VS Code ignores the workspace's own
   `megane.builder.mcpServers`, so a cloned repository cannot run commands this
@@ -531,7 +531,7 @@ server where Jupyter runs, not in the browser, so you need no HTTP, token or
 `--allow-origin`. With [uv](https://docs.astral.sh/uv/) installed, the
 reference tools need one step:
 
-1. In the environment Jupyter runs from, install megane with its `tools` extra
+1. In the environment Jupyter runs from, install Megane with its `tools` extra
    (the MCP client) and restart JupyterLab:
 
    ```bash
@@ -569,7 +569,7 @@ and `null` hides it.
 The tools then work as in the web app: *Solvate* needs a cell (**Structure ›
 Set cell…**). Builder tabs and browser windows share one server process,
 which stops when the last one disconnects. The server's messages, and why
-one failed to start, are in the Jupyter server's log. megane's server
+one failed to start, are in the Jupyter server's log. Megane's server
 extension (`megane.builder_tools`) is enabled when megane is installed; if
 the Tools menu cannot reach it, check `jupyter server extension list`.
 

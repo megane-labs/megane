@@ -1336,7 +1336,7 @@ describe("MeganeEditorProvider.seekFrame", () => {
   });
 });
 
-describe("megane Builder", () => {
+describe("Megane Builder", () => {
   function command(name: string) {
     const cmd = mockState.registeredCommands.find((c) => c.command === name);
     if (!cmd) throw new Error(`command not registered: ${name}`);
@@ -1368,7 +1368,7 @@ describe("megane Builder", () => {
     expect(mockState.createdPanels).toHaveLength(1);
     const created = mockState.createdPanels[0];
     expect(created.viewType).toBe("megane.builder");
-    expect(created.title).toBe("megane Builder");
+    expect(created.title).toBe("Megane Builder");
     expect(created.options.enableScripts).toBe(true);
     expect(created.options.retainContextWhenHidden).toBe(true);
     expect(created.options.localResourceRoots!.map((u) => u.path)).toEqual(["/ext/media"]);
@@ -1416,7 +1416,7 @@ describe("megane Builder", () => {
     expect(panel.webview.postMessage).not.toHaveBeenCalled();
   });
 
-  it("Open in megane Builder sends the file's bytes once the webview is ready", async () => {
+  it("Open in Megane Builder sends the file's bytes once the webview is ready", async () => {
     mockState.readFile.mockResolvedValue(new Uint8Array([1, 2, 3]));
     await command("megane.builder.openFile")(VscodeUri.file("/work/caffeine.sdf"));
     const { title, panel } = mockState.createdPanels[0];
@@ -1448,7 +1448,7 @@ describe("megane Builder", () => {
     await command("megane.builder.openFile")(VscodeUri.file("/work/locked.pdb"));
     await mockState.createdPanels[0].panel.fireMessage({ type: "ready" });
     expect(mockState.showErrorMessage).toHaveBeenCalledWith(
-      "megane Builder could not read locked.pdb: EACCES",
+      "Megane Builder could not read locked.pdb: EACCES",
     );
   });
 
@@ -1533,7 +1533,7 @@ describe("megane Builder", () => {
   });
 });
 
-describe("megane Builder manifest", () => {
+describe("Megane Builder manifest", () => {
   const manifest = JSON.parse(
     readFileSync(resolve(__dirname, "../../../vscode-megane/package.json"), "utf8"),
   ) as {

@@ -43,7 +43,7 @@ export function useRemoteFilePick({
   const deliver = useCallback(
     (file: File) => {
       if (!accept(file.name)) {
-        setError(`${file.name} is not a ${kind} file megane can open.`);
+        setError(`${file.name} is not a ${kind} file Megane can open.`);
         return;
       }
       setError(null);
