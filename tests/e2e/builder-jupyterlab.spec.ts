@@ -158,3 +158,67 @@ test("the file browser's context menu and the launcher reach the Builder", async
     page.locator(".jp-LauncherCard", { hasText: "megane Builder" }).filter({ visible: true }),
   ).toBeVisible();
 });
+
+test("the right button turns the view, and a right-click opens the Builder's atom menu, not JupyterLab's", async ({
+  page,
+}) => {
+  await openLab(page);
+  await sidebarTab(page).click();
+  await page
+    .locator('#megane-builder-sidebar [data-testid="megane-builder-sidebar-file"]')
+    .first()
+    .click();
+  const builder = page.locator('#megane-builder [data-testid="megane-builder"]');
+  await expect(builder).toHaveAttribute("data-atom-count", "24", { timeout: 60_000 });
+  await waitForReady(page);
+  const box = (await page.locator('#megane-builder [data-testid="viewer-root"]').boundingBox())!;
+  const front = await page.evaluate(() => {
+    const atoms = (
+      window as unknown as {
+        __megane_test: {
+          getProjectedAtomPositions: () => { sx: number; sy: number; depth: number }[];
+        };
+      }
+    ).__megane_test.getProjectedAtomPositions();
+    return atoms.reduce((best, a) => (a.depth < best.depth ? a : best));
+  });
+  const at = { x: box.x + front.sx, y: box.y + front.sy };
+  const cameraPosition = () =>
+    page.evaluate(
+      () =>
+        (
+          window as unknown as {
+            __megane_test: { getCameraState: () => { position: number[] } };
+          }
+        ).__megane_test.getCameraState().position,
+    );
+  const atomMenu = page.locator('[data-testid="builder-atom-menu"]');
+  // JupyterLab's own context menu.
+  const labMenu = page.locator(".lm-Menu.jp-ContextMenu");
+
+  const before = await cameraPosition();
+  await page.mouse.move(at.x, at.y);
+  await page.mouse.down({ button: "right" });
+  await page.mouse.move(at.x + 120, at.y + 20, { steps: 8 });
+  await page.mouse.up({ button: "right" });
+  const after = await cameraPosition();
+  expect(Math.hypot(...after.map((v, k) => v - before[k]))).toBeGreaterThan(1);
+  await expect(atomMenu).toHaveCount(0);
+  await expect(labMenu).toHaveCount(0);
+
+  // A right-click on an atom (where it is after the turn) opens the Builder's menu.
+  const turned = await page.evaluate(() => {
+    const atoms = (
+      window as unknown as {
+        __megane_test: {
+          getProjectedAtomPositions: () => { sx: number; sy: number; depth: number }[];
+        };
+      }
+    ).__megane_test.getProjectedAtomPositions();
+    return atoms.reduce((best, a) => (a.depth < best.depth ? a : best));
+  });
+  await page.mouse.click(box.x + turned.sx, box.y + turned.sy, { button: "right" });
+  await expect(atomMenu).toBeVisible();
+  await expect(labMenu).toHaveCount(0);
+  expect((await builderState(page)).edits).toBe(0);
+});
