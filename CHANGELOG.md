@@ -8,11 +8,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ### Added
 
+- **megane Builder's *Tools* menu in JupyterLab.** The JupyterLab Builder tab now reaches MCP tool servers through megane's new Jupyter server extension, `megane.builder_tools`. The extension is enabled by the wheel's `jupyter_server_config.d/megane.json`.
+  - The servers are listed under `MeganeBuilderTools.mcp_servers` in the Jupyter server's configuration, with the same entries as VS Code's `megane.builder.mcpServers`.
+  - The server relays only the tool list, a call with its progress, and a cancel, over a WebSocket (`/megane/builder-tools/ws`). The socket is authenticated like the server's other sockets and open only to users who may execute kernels.
+  - The page asks before it first uses a server and remembers the answer per command or URL.
+  - The MCP client is the new optional `tools` extra (`pip install "megane[tools]"`). Without it, the Tools menu says what to install.
+  - The page side is the same bridge as VS Code's (`src/builder/tools/bridge.ts`), so forms, Undo and both apply modes behave as in the web app.
 - **megane Builder's *Tools* menu in VS Code.** The VS Code Builder tab now has the *Tools* menu. Its MCP tool servers come from the new `megane.builder.mcpServers` setting, in the `mcpServers` format LLM clients use: a stdio server (`command` / `args` / `env` / `cwd`) that VS Code starts itself, or a Streamable HTTP server (`url` / `headers`). A webview can neither start a process nor call a loopback server, so the extension host owns the connections and relays only the tool list, a call with its progress, and a cancel (the Builder Tool Contract §8 bridge, `src/builder/tools/bridge.ts` ↔ `vscode-megane/src/builderTools.ts`). The page side is the same as the web app's, so forms, Undo and the apply modes behave identically.
   - The Tools menu offers *Connect to <server>* for each configured server.
   - VS Code asks before it first runs a command or sends structures to a URL, and remembers the answer for exactly that command or URL.
   - Builder tabs share one server process, which stops when the last tab lets go.
-  - A server's stderr goes to the *megane Builder Tools* output panel.
+  - A server's stderr goes to the *Megane Builder Tools* output panel.
   - HTTP servers must use HTTPS unless on loopback.
   - The setting is ignored at workspace level in untrusted workspaces.
   - The extension host is now bundled with esbuild so the MCP SDK ships in the VSIX. The SDK is a separate `out/sdkClient.js` loaded on the first connection, so activation time is unchanged.

@@ -533,6 +533,49 @@ a new tab every time, and a file opens in one tab (asking again brings it
 back), as in VS Code. *Save* asks for a path in the server's file tree
 (beside the opened file by default) and asks before replacing a file.
 
+The *Tools* menu works in JupyterLab too. The Jupyter server starts the tool
+server (it runs where Jupyter runs, not in the browser), so you need no HTTP,
+token or `--allow-origin`. To get the reference tools:
+
+1. In the environment Jupyter runs from, install megane with its `tools` extra
+   (the MCP client) and the reference server:
+
+   ```bash
+   pip install "megane[tools]"
+   uv tool install git+https://github.com/hodakamori/megane-builder-tools
+   ```
+
+2. Name the server in the Jupyter server's configuration, e.g.
+   `~/.jupyter/jupyter_server_config.json` (`jupyter --config-dir` prints the
+   folder):
+
+   ```json
+   {
+     "MeganeBuilderTools": {
+       "mcp_servers": {
+         "megane-builder-tools": { "command": "megane-builder-tools" }
+       }
+     }
+   }
+   ```
+
+   The entries are the same as VS Code's `megane.builder.mcpServers` above:
+   stdio servers with `command`, `args`, `env` and `cwd`, and HTTP servers
+   with `url` and `headers`. `${workspaceFolder}` is the Jupyter server's root
+   directory. If the command is not found, give its full path (`which
+   megane-builder-tools`).
+3. Restart JupyterLab. The configuration is read when the server starts.
+4. In the Builder tab, choose **Tools › Connect to megane-builder-tools** and
+   press **Allow** when JupyterLab shows the command. This browser remembers
+   the answer for that exact command.
+
+The tools then work as in the web app: *Solvate* needs a cell (**Structure ›
+Set cell…**). Builder tabs and browser windows share one server process,
+which stops when the last one disconnects. The server's messages, and why
+one failed to start, are in the Jupyter server's log. megane's server
+extension (`megane.builder_tools`) is enabled when megane is installed; if
+the Tools menu cannot reach it, check `jupyter server extension list`.
+
 **Jupyter notebooks** (JupyterLab, Notebook, VS Code): `megane.Builder` is a
 widget.
 
@@ -556,9 +599,8 @@ Each `Builder` edits its own document; displaying the same `Builder` in a
 second output moves it there, and the first offers *Show here* to take it
 back.
 
-What the JupyterLab and notebook Builders leave out: the *Tools* menu (MCP
-tool servers, which the web app and VS Code can reach), and, in the notebook
-widget, the Ketcher
+What the notebook widget leaves out: the *Tools* menu (MCP tool servers,
+which the web app, VS Code and JupyterLab can reach), and the Ketcher
 sketcher — *Sketch…* opens the dialog with *Paste MOL*, which takes a MOL
 block or a SMILES string and embeds it in 3D with RDKit. RDKit (*Clean up* and
 the 3D embedding) works on every host; the notebook widget fetches it from the

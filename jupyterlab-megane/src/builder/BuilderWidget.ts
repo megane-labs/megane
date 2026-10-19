@@ -5,7 +5,9 @@
  * commands open as many as asked for, as VS Code does. Opening a file replaces
  * the tab's document as *File › Open…* inside the Builder does; closing the
  * tab drops it. The tab keeps the directory of the file it opened last, which
- * is where Save suggests writing.
+ * is where Save suggests writing. With a `toolBridge` (its own connection to
+ * the Jupyter server's tool servers, `tools.ts`), the tab has the *Tools* menu;
+ * closing the tab closes that connection, so a tool server it alone used stops.
  */
 
 import { Widget } from "@lumino/widgets";
@@ -13,6 +15,7 @@ import { createBuilderStores, type BuilderStores } from "@megane/builder/Builder
 import { mountBuilder, type MountedBuilder } from "@megane/builder/mount";
 import { openStructureFile } from "@megane/builder/open";
 import type { BuilderSaveRequest } from "@megane/builder/host";
+import type { JupyterToolBridge } from "./tools";
 
 /** The class of every Builder tab; each has its own id. */
 export const BUILDER_WIDGET_CLASS = "megane-builder-panel";
@@ -26,7 +29,10 @@ export class BuilderWidget extends Widget {
   private readonly target: HTMLElement;
   private mounted: MountedBuilder | null = null;
 
-  constructor(private readonly save: (file: BuilderSaveRequest) => Promise<string | null>) {
+  constructor(
+    private readonly save: (file: BuilderSaveRequest) => Promise<string | null>,
+    private readonly toolBridge: JupyterToolBridge | null = null,
+  ) {
     super();
     this.id = `megane-builder-${nextTab++}`;
     this.title.label = "Megane Builder";
@@ -53,7 +59,12 @@ export class BuilderWidget extends Widget {
     if (this.mounted) return;
     this.mounted = mountBuilder(
       this.target,
-      { save: (file) => this.save(file), tools: false, scopeShortcuts: true },
+      {
+        save: (file) => this.save(file),
+        tools: !!this.toolBridge,
+        toolBridge: this.toolBridge ?? undefined,
+        scopeShortcuts: true,
+      },
       this.stores,
     );
   }
@@ -72,6 +83,7 @@ export class BuilderWidget extends Widget {
     this.mounted?.dispose();
     this.mounted = null;
     this.stores.builder.getState().closeDocument();
+    this.toolBridge?.dispose();
     super.dispose();
   }
 }

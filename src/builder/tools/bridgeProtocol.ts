@@ -9,9 +9,11 @@
  * a call with its progress, and a cancel. It never forwards arbitrary
  * JSON-RPC, so a page cannot reach resources, prompts or sampling.
  *
- * Types only, shared by the page (`bridge.ts`) and the VS Code extension host
- * (`vscode-megane/src/builderTools.ts`). The host does not interpret tools or
- * results: the page parses them as it does for a direct connection.
+ * Shared by the page (`bridge.ts`), the VS Code extension host
+ * (`vscode-megane/src/builderTools.ts`) and the Jupyter server extension
+ * (`python/megane/builder_tools/bridge.py`, over a WebSocket). The host does
+ * not interpret tools or results: the page parses them as it does for a
+ * direct connection.
  */
 
 /** One server the user configured, as the page lists it. */
@@ -22,6 +24,11 @@ export interface BridgeServer {
   kind: "stdio" | "http";
   /** What connecting runs or reaches: the command line, or the URL (§9). */
   description: string;
+  /**
+   * Everything that decides what runs or where data goes (command, args, env,
+   * cwd; or the URL), for a page that remembers what the user allowed.
+   */
+  fingerprint?: string;
 }
 
 /** What a connect resolves to: the server's identity and its raw `tools/list`. */

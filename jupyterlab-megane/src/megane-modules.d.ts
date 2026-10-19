@@ -151,8 +151,52 @@ declare module "@megane/builder/host" {
   export interface BuilderHost {
     save?: (file: BuilderSaveRequest) => Promise<string | null | void>;
     tools?: boolean;
+    toolBridge?: import("@megane/builder/tools/bridge").ToolBridge;
     scopeShortcuts?: boolean;
   }
+}
+
+declare module "@megane/builder/tools/bridgeProtocol" {
+  export interface BridgeServer {
+    id: string;
+    kind: "stdio" | "http";
+    description: string;
+    fingerprint?: string;
+  }
+  export type BridgeRequest =
+    | { type: "tools:servers"; requestId: number }
+    | { type: "tools:connect"; requestId: number; server: string }
+    | {
+        type: "tools:call";
+        requestId: number;
+        server: string;
+        name: string;
+        arguments: Record<string, unknown>;
+        timeoutMs: number;
+      }
+    | { type: "tools:cancel"; requestId: number }
+    | { type: "tools:disconnect"; server: string }
+    | { type: "tools:openSettings" };
+}
+
+declare module "@megane/builder/tools/bridge" {
+  import type { BridgeRequest, BridgeServer } from "@megane/builder/tools/bridgeProtocol";
+  export interface BridgePort {
+    post: (message: BridgeRequest) => void;
+    listen: (handler: (message: unknown) => void) => () => void;
+  }
+  /** Opaque here: the labextension only passes connections through to the Builder. */
+  export type ToolConnection = unknown;
+  export interface ToolBridge {
+    configHint: string;
+    listServers: () => Promise<BridgeServer[]>;
+    connect: (serverId: string) => Promise<ToolConnection>;
+    openSettings?: () => void;
+  }
+  export function createMessageBridge(
+    port: BridgePort,
+    options: { configHint: string; openSettings?: boolean },
+  ): ToolBridge;
 }
 
 declare module "@megane/builder/BuilderStores" {

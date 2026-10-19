@@ -30,6 +30,8 @@ export interface StartJupyterLabOpts {
   runtimeDir?: string;
   /** Working directory for the spawned process; defaults to repo root inferred from cwd. */
   cwd?: string;
+  /** An extra Jupyter config file (`--config`), e.g. to enable a server extension. */
+  configFile?: string;
   timeoutMs?: number;
 }
 
@@ -70,6 +72,7 @@ export function startJupyterLab(opts: StartJupyterLabOpts): Promise<JupyterLabHa
         "--PasswordIdentityProvider.hashed_password=",
         "--ServerApp.allow_origin=*",
         `--notebook-dir=${opts.notebookDir}`,
+        ...(opts.configFile ? [`--config=${opts.configFile}`] : []),
       ],
       {
         cwd: opts.cwd ?? process.cwd(),

@@ -12,6 +12,10 @@
  *   VS Code. Save writes into the server's contents, suggesting the folder of
  *   the file the tab opened (else the file browser's folder), and asks before
  *   replacing a file.
+ * - Each tab's *Tools* menu reaches the MCP tool servers configured on the
+ *   Jupyter server (`MeganeBuilderTools.mcp_servers`) through megane's server
+ *   extension, over a connection of its own (`tools.ts`), asking before it
+ *   first uses each one.
  */
 
 import {
@@ -29,6 +33,7 @@ import {
 import { IDefaultFileBrowser } from "@jupyterlab/filebrowser";
 import { ILauncher } from "@jupyterlab/launcher";
 import type { BuilderSaveRequest } from "@megane/builder/host";
+import type { BridgeServer } from "@megane/builder/tools/bridgeProtocol";
 import { BuilderWidget } from "./BuilderWidget";
 import { BuilderSidebar, BUILDER_SIDEBAR_ID } from "./sidebar";
 import {
@@ -40,6 +45,7 @@ import {
   type SavePrompts,
 } from "./contents";
 import { meganeIcon } from "./icon";
+import { createJupyterToolBridge, permissionBody, type JupyterToolBridge } from "./tools";
 
 export const CommandIDs = {
   openBuilder: "megane:open-builder",
@@ -78,6 +84,24 @@ export const dialogPrompts: SavePrompts = {
   },
 };
 
+/** Ask before megane first uses a tool server (Builder Tool Contract §9). */
+export async function confirmToolServer(server: BridgeServer): Promise<boolean> {
+  const result = await showDialog({
+    title: `Allow the tool server "${server.id}"?`,
+    body: permissionBody(server),
+    buttons: [Dialog.cancelButton(), Dialog.warnButton({ label: "Allow" })],
+  });
+  return result.button.accept;
+}
+
+function browserStorage(): Storage | null {
+  try {
+    return typeof localStorage === "undefined" ? null : localStorage;
+  } catch {
+    return null;
+  }
+}
+
 export function activateBuilder(
   app: JupyterFrontEnd,
   restorer: ILayoutRestorer | null,
@@ -85,6 +109,12 @@ export function activateBuilder(
   launcher: ILauncher | null,
   palette: ICommandPalette | null,
   prompts: SavePrompts = dialogPrompts,
+  /** Each Builder tab's own connection to the Jupyter server's tool servers. */
+  makeToolBridge: (() => JupyterToolBridge) | null = () =>
+    createJupyterToolBridge(app.serviceManager.serverSettings, {
+      confirm: confirmToolServer,
+      storage: browserStorage(),
+    }),
 ): void {
   const contents = app.serviceManager.contents;
   /** The tab each file was opened in. */
@@ -92,8 +122,10 @@ export function activateBuilder(
 
   /** A new Builder tab in the main area, brought to front. */
   const addBuilder = (label?: string): BuilderWidget => {
-    const tab: BuilderWidget = new BuilderWidget((file: BuilderSaveRequest) =>
-      saveToContents(contents, file, tab.dir || browser?.model.path || "", prompts),
+    const tab: BuilderWidget = new BuilderWidget(
+      (file: BuilderSaveRequest) =>
+        saveToContents(contents, file, tab.dir || browser?.model.path || "", prompts),
+      makeToolBridge?.() ?? null,
     );
     tab.title.icon = meganeIcon;
     if (label) tab.title.label = label;
