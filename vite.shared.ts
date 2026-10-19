@@ -34,6 +34,20 @@ export function syncParseAlias(): Alias {
   };
 }
 
+/**
+ * `resolve.alias` entry for the VSCode viewer webview: build the parse worker
+ * inline (`?worker&inline`, a blob: script inside the bundle) instead of as a
+ * file beside it, because a worker in a webview cannot load scripts from the
+ * extension's resource origin. Pair it with {@link inlineWasmWorker}, which
+ * folds the WASM glue into the worker.
+ */
+export function inlineParseWorkerAlias(): Alias {
+  return {
+    find: /^\.\/parse\.worker\?worker$/,
+    replacement: path.resolve(repoRoot, "src/parsers/parse.worker.ts") + "?worker&inline",
+  };
+}
+
 /** Turn a `{ find: replacement }` record (e.g. `ketcherAlias`) into alias entries. */
 export function aliasEntries(record: Record<string, string>): Alias[] {
   return Object.entries(record).map(([find, replacement]) => ({ find, replacement }));
@@ -55,6 +69,15 @@ export function wasmWorker(
     format: "es",
     plugins: () => [wasm(), ...extra()],
   };
+}
+
+/**
+ * {@link wasmWorker} for an inline worker: the WASM glue, which the parse worker
+ * imports dynamically, goes into the worker itself, since a blob: worker
+ * cannot resolve a chunk by relative URL.
+ */
+export function inlineWasmWorker(): NonNullable<UserConfig["worker"]> {
+  return { ...wasmWorker(), rollupOptions: { output: { inlineDynamicImports: true } } };
 }
 
 /**

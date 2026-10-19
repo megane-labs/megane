@@ -8,12 +8,13 @@
  * test cannot reach.
  */
 
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
 const { state, FakeWorker } = vi.hoisted(() => {
   const state = {
     mode: "ok" as "ok" | "err" | "crash",
     lastReq: null as { id: number; op: string } | null,
+    reqs: [] as { id: number; op: string; wasm?: unknown }[],
     created: 0,
     posted: 0,
     throwOnCreate: false,
@@ -27,6 +28,7 @@ const { state, FakeWorker } = vi.hoisted(() => {
     }
     postMessage(req: { id: number; op: string }) {
       state.lastReq = req;
+      state.reqs.push(req);
       state.posted++;
       queueMicrotask(() => {
         if (state.mode === "crash") {
@@ -80,6 +82,7 @@ describe("parseClient worker path", () => {
   beforeEach(() => {
     state.mode = "ok";
     state.lastReq = null;
+    state.reqs = [];
     state.created = 0;
     state.posted = 0;
     state.throwOnCreate = false;
@@ -261,11 +264,13 @@ describe("parseClient worker path", () => {
 
   it("prewarmParseWorker starts the worker with an init request carrying the WASM URL", async () => {
     const client = await freshClient();
-    (globalThis as Record<string, unknown>).__MEGANE_WASM_URL__ = "https://x/megane.wasm";
+    const url = `${location.origin}/assets/megane.wasm`;
+    (globalThis as Record<string, unknown>).__MEGANE_WASM_URL__ = url;
     try {
       client.prewarmParseWorker();
       expect(state.created).toBe(1);
-      expect(state.lastReq).toMatchObject({ op: "init", wasmUrl: "https://x/megane.wasm" });
+      // Same-origin: the worker fetches the URL itself, posted at once.
+      expect(state.lastReq).toMatchObject({ op: "init", wasm: url });
       // The worker that compiled the module is the one the next parse uses.
       await client.parseStructureFile(fakeFile("a.pdb"));
       expect(state.created).toBe(1);
@@ -309,5 +314,100 @@ describe("parseClient worker path", () => {
     ).toBeNull();
     expect(state.created).toBe(1);
     expect(state.posted).toBe(1);
+  });
+
+  describe("a WASM URL on another origin (VS Code webview)", () => {
+    const url = "https://res.example/media/megane_wasm_bg.wasm";
+    const module = { tag: "compiled" } as unknown as WebAssembly.Module;
+
+    function stubWasm(fetchImpl: () => Promise<unknown>, compile = vi.fn(async () => module)) {
+      vi.stubGlobal("fetch", vi.fn(fetchImpl));
+      vi.spyOn(WebAssembly, "compile").mockImplementation(compile);
+      (globalThis as Record<string, unknown>).__MEGANE_WASM_URL__ = url;
+      return compile;
+    }
+
+    afterEach(() => {
+      vi.unstubAllGlobals();
+      vi.restoreAllMocks();
+      delete (globalThis as Record<string, unknown>).__MEGANE_WASM_URL__;
+    });
+
+    it("compiles the module on the page once and hands it to the worker, in order", async () => {
+      const compile = stubWasm(async () => ({
+        ok: true,
+        arrayBuffer: async () => new ArrayBuffer(8),
+      }));
+      const client = await freshClient();
+      client.prewarmParseWorker();
+      // Nothing reaches the worker before the module is ready.
+      expect(state.posted).toBe(0);
+      const out = await client.parseStructureFile(fakeFile("a.pdb"));
+      expect(out).toEqual({ tag: "worker" });
+      await client.parseStructureFile(fakeFile("b.pdb"));
+      expect(state.reqs.map((r) => r.op)).toEqual(["init", "structure", "structure"]);
+      expect(state.reqs.every((r) => r.wasm === module)).toBe(true);
+      expect(fetch).toHaveBeenCalledTimes(1);
+      expect(fetch).toHaveBeenCalledWith(url);
+      expect(compile).toHaveBeenCalledTimes(1);
+    });
+
+    it("queues requests without a WASM field behind the module too", async () => {
+      stubWasm(async () => ({ ok: true, arrayBuffer: async () => new ArrayBuffer(8) }));
+      const client = await freshClient();
+      client.prewarmParseWorker();
+      client.disposeTrajectoryLazy(5);
+      expect(state.posted).toBe(0);
+      await new Promise((r) => setTimeout(r, 0));
+      expect(state.reqs.map((r) => r.op)).toEqual(["init", "disposeTrajectory"]);
+      expect(state.reqs[1].wasm).toBeUndefined();
+    });
+
+    it("falls back to the main thread when the module cannot be fetched", async () => {
+      stubWasm(async () => ({
+        ok: false,
+        status: 404,
+        arrayBuffer: async () => new ArrayBuffer(0),
+      }));
+      const client = await freshClient();
+      expect(await client.parseStructureFile(fakeFile("a.pdb"))).toEqual({ tag: "sync" });
+      expect(state.posted).toBe(0);
+    });
+
+    it("falls back to the main thread when the module does not compile", async () => {
+      stubWasm(
+        async () => ({ ok: true, arrayBuffer: async () => new ArrayBuffer(8) }),
+        vi.fn(async () => {
+          throw new Error("bad wasm");
+        }),
+      );
+      const client = await freshClient();
+      expect(await client.parseStructureFile(fakeFile("a.pdb"))).toEqual({ tag: "sync" });
+      expect(state.posted).toBe(0);
+    });
+  });
+});
+
+describe("isCrossOriginWasm", () => {
+  it("tells the page's own URLs from another origin's", async () => {
+    const { isCrossOriginWasm } = await import("@/parsers/parseClient");
+    const page = "http://localhost:5173/index.html";
+    expect(isCrossOriginWasm("/assets/a.wasm", page)).toBe(false);
+    expect(isCrossOriginWasm("http://localhost:5173/a.wasm", page)).toBe(false);
+    expect(isCrossOriginWasm("https://cdn.example/a.wasm", page)).toBe(true);
+    expect(isCrossOriginWasm("blob:http://localhost:5173/x", page)).toBe(false);
+    expect(isCrossOriginWasm("data:application/wasm;base64,AA==", page)).toBe(false);
+  });
+
+  it("treats every http(s) URL as foreign to an opaque-origin webview page", async () => {
+    const { isCrossOriginWasm } = await import("@/parsers/parseClient");
+    const page = "vscode-webview://abc/index.html?id=1";
+    expect(isCrossOriginWasm("https://x.vscode-resource.vscode-cdn.net/m.wasm", page)).toBe(true);
+  });
+
+  it("is false without a page URL or for an unparsable URL", async () => {
+    const { isCrossOriginWasm } = await import("@/parsers/parseClient");
+    expect(isCrossOriginWasm("https://cdn.example/a.wasm", undefined)).toBe(false);
+    expect(isCrossOriginWasm("http://[bad", "http://localhost/")).toBe(false);
   });
 });

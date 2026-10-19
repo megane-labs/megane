@@ -2,20 +2,28 @@ import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 import wasm from "vite-plugin-wasm";
 import path from "path";
-import { prodDefine, srcAlias, vscodeModules, wasmWorker } from "../vite.shared";
+import {
+  inlineParseWorkerAlias,
+  inlineWasmWorker,
+  prodDefine,
+  srcAlias,
+  vscodeModules,
+} from "../vite.shared";
 
 export default defineConfig({
   // Parse files in the same Web Worker the webapp uses: off the main thread,
   // and with lazy trajectory streaming (frame 0 first, the rest decoded on
-  // demand). The worker is its own file beside webview.js; `base: "./"` makes
-  // its URL resolve against `import.meta.url` (the webview resource URI), and
-  // webview/main.tsx starts it through a blob: bootstrap because the webview's
-  // origin differs from the resource origin.
+  // demand). The worker is inlined into webview.js as a blob: script, with the
+  // wasm-bindgen glue folded in, because a worker cannot load anything from the
+  // extension's resource origin: those requests are answered only through the
+  // webview's service worker, which a Web Worker's requests bypass, and they
+  // hang for ~30 s before failing. parseClient hands the worker a WASM module
+  // compiled on the page for the same reason.
   base: "./",
   plugins: [react(), wasm()],
-  worker: wasmWorker(),
+  worker: inlineWasmWorker(),
   resolve: {
-    alias: [srcAlias()],
+    alias: [inlineParseWorkerAlias(), srcAlias()],
     // Resolve dependencies from both vscode-megane/node_modules and parent node_modules
     modules: vscodeModules(),
   },

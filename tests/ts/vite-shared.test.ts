@@ -8,6 +8,8 @@ import { describe, expect, it } from "vitest";
 import type { Alias, Plugin, PluginOption } from "vite";
 import {
   aliasEntries,
+  inlineParseWorkerAlias,
+  inlineWasmWorker,
   prodDefine,
   repoRoot,
   srcAlias,
@@ -54,6 +56,24 @@ describe("vite.shared helpers", () => {
     expect(alias.replacement).toBe(path.join(ROOT, "src/parsers/parseClientSync.ts"));
   });
 
+  it("inlineParseWorkerAlias builds the parse worker inline", () => {
+    const alias = inlineParseWorkerAlias();
+    const find = alias.find as RegExp;
+    expect(find.test("./parse.worker?worker")).toBe(true);
+    expect(find.test("./parse.worker?worker&inline")).toBe(false);
+    expect(find.test("./embed.worker?worker")).toBe(false);
+    expect(alias.replacement).toBe(
+      path.join(ROOT, "src/parsers/parse.worker.ts") + "?worker&inline",
+    );
+  });
+
+  it("inlineWasmWorker folds dynamic imports into the worker", () => {
+    const worker = inlineWasmWorker();
+    expect(worker.format).toBe("es");
+    expect(pluginNames(worker.plugins!())).toEqual(["vite-plugin-wasm"]);
+    expect(worker.rollupOptions?.output).toEqual({ inlineDynamicImports: true });
+  });
+
   it("aliasEntries turns a record into ordered alias entries", () => {
     expect(aliasEntries({ a: "/x", b: "/y" })).toEqual([
       { find: "a", replacement: "/x" },
@@ -92,11 +112,14 @@ describe("Vite configs use the shared settings", () => {
   const src = srcAlias();
   const sync = syncParseAlias();
 
-  it("vscode-megane/vite.webview.config parses in a wasm worker resolved beside the bundle", () => {
+  it("vscode-megane/vite.webview.config parses in an inline wasm worker", () => {
     const list = aliases(vscodeWebviewConfig);
-    expect(list).toEqual([src]);
+    expect(list).toEqual([inlineParseWorkerAlias(), src]);
     expect(vscodeWebviewConfig.base).toBe("./");
     expect(vscodeWebviewConfig.worker?.format).toBe("es");
+    expect(vscodeWebviewConfig.worker?.rollupOptions?.output).toEqual({
+      inlineDynamicImports: true,
+    });
     expect(pluginNames(vscodeWebviewConfig.worker!.plugins!())).toEqual(["vite-plugin-wasm"]);
     expect(vscodeWebviewConfig.define).toMatchObject(prodDefine);
   });

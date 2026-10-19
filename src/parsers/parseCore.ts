@@ -257,10 +257,11 @@ interface WasmModule {
 /**
  * Initialise the WASM module (memoized). `wasmUrl` is resolved on the main
  * thread and passed explicitly so this works inside a Web Worker, whose global
- * scope cannot see `globalThis.__MEGANE_WASM_URL__`. When omitted it falls back
- * to that global (the main-thread default).
+ * scope cannot see `globalThis.__MEGANE_WASM_URL__`; it may also be a module the
+ * main thread already compiled. When omitted it falls back to that global (the
+ * main-thread default).
  */
-export async function ensureInit(wasmUrl?: string): Promise<void> {
+export async function ensureInit(wasmUrl?: string | WebAssembly.Module): Promise<void> {
   if (wasmModule) return;
   if (!initPromise) {
     initPromise = (async () => {
