@@ -35,12 +35,13 @@
  * ## What the images do and do not prove
  *
  * `expected.png` is the picture the reference pipeline draws *in the bench
- * harness* — `applyPipeline` in `render.ts`, which mirrors `PipelineChatBox`
- * step for step. That matters, because the harness only re-attaches the loaded
- * structure across `deserialize`; trajectory frames, volumetric grids and
- * `fileVectors` are ephemeral store state that a `SerializedPipeline` does not
- * carry, so `load_trajectory` and `load_vector` draw nothing after a round trip
- * (the product behaves the same way — see `imageDiscriminates` below).
+ * harness* — `applyPipeline` in `render.ts`, which applies it the way the AI
+ * assistant does (`applyGeneratedPipeline`: the graph is replaced, the loaded
+ * data stays). That matters, because a case's fixture is one structure file:
+ * trajectory frames, volumetric grids and `fileVectors` are store state a
+ * `SerializedPipeline` does not carry and no fixture loads, so
+ * `load_trajectory`, `load_volumetric` and `load_vector` have nothing to draw
+ * (see `imageDiscriminates` below).
  *
  * Each case's `imageStability` records what three independent boots of the same
  * pipeline actually produced. Most render byte-identically. A handful do not,

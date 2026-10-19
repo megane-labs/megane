@@ -210,7 +210,7 @@ A picture is ground truth only if the same pipeline draws it again. Two things
 had to be pinned down before that was true, and `renderPipeline` now does both
 before every capture:
 
-- **Re-fit the camera.** `deserialize` does not re-frame the scene, and the
+- **Re-fit the camera.** Applying a pipeline does not re-frame the scene, and the
   Viewport keeps its zoom when a new snapshot has the same topology as the last,
   so framing is inherited from whatever ran before in the same page.
   `molecule-basic` and `color-by-element` render byte-identical pixels, yet two
@@ -245,12 +245,14 @@ counterexamples are still checked, against a reference rendered in the same
 page. Silently widening the pixel budget to absorb an unstable render would turn
 the suite green without making it true.
 
-Two cases carry `imageDiscriminates: false`. `molecule-trajectory` and
-`vectors-forces` depend on data a `SerializedPipeline` does not carry —
-trajectory frames and `fileVectors` — which `deserialize` clears, so
-`load_trajectory` and `load_vector` draw nothing after the round trip. The
-product drops them the same way (`PipelineChatBox` re-attaches only the loaded
-structure), so no pipeline can draw a different picture for those prompts:
+`molecule-trajectory`, `vectors-forces` and `volumetric-isosurface` carry
+`imageDiscriminates: false` because they depend on data a
+`SerializedPipeline` does not carry — trajectory frames, `fileVectors` and the
+cube grid — and a case's fixture is a single structure file, so
+`load_trajectory`, `load_vector` and `load_volumetric` have nothing to draw. (The
+harness drops the trajectory of the demo the webapp boots first, which would
+otherwise survive the fixture drop because `caffeine_water.pdb` has the demo's
+atom count.) No pipeline can draw a different picture for those prompts:
 `vectors-forces` renders byte-identically to `molecule-basic`. Their rubrics are
 the only grading available, and the metadata says so rather than implying the
 image is doing work.
@@ -277,13 +279,13 @@ are recorded here because anyone extending the bench will hit them:
   parenthesised expression. "Only the alanines, bonds included" therefore has to
   be spelled with atom-index ranges — `filter-residue` uses 1UBQ's Ala28
   (211–215) and Ala46 (358–362).
-- **An assistant edit drops the loaded trajectory and forces.**
-  `PipelineChatBox` re-attaches only the structure snapshot across
-  `deserialize`, so frames and `fileVectors` are lost while the loader keeps
-  `hasTrajectory: true`. The harness mirrors this deliberately — grading against
-  a picture the product cannot produce would be grading the wrong thing — and it
-  is why `molecule-trajectory` and `vectors-forces` carry
-  `imageDiscriminates: false`.
+- **An assistant edit used to drop the loaded trajectory and forces.** The
+  chat applied a generated pipeline with `deserialize` and re-attached only the
+  structure snapshot, so frames and `fileVectors` were lost while the loader
+  kept `hasTrajectory: true`. It now uses `applyGeneratedPipeline`, which keeps
+  the loaded data, and the harness applies pipelines the same way — grading
+  against a picture the product cannot produce would be grading the wrong
+  thing.
 - **A node whose parameters fail to parse contributes nothing rather than
   failing.** An earlier `filter-residue` reference carried a `bond_query` the DSL
   rejects and still drew a plausible picture; only `collectPipelineErrors` in

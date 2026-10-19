@@ -49,6 +49,13 @@ export interface RenderScore {
  * picture the product would draw from it. Applying it with a bare
  * `deserialize` instead would clear the loaded structure and render an empty
  * viewport, which would make every candidate look equally (and wrongly) broken.
+ *
+ * A case's fixture is a structure file and nothing else, but the webapp boots
+ * its bundled demo first, and the demo's trajectory survives the fixture drop
+ * whenever the atom counts match (`caffeine_water.pdb` is the demo's own
+ * structure). The trajectory is dropped before applying, so every pipeline with
+ * a `load_trajectory` node is drawn from the fixture as the case describes it
+ * rather than from a frame of a trajectory the case never loaded.
  */
 export async function applyPipeline(
   scope: Page | Frame,
@@ -60,6 +67,7 @@ export async function applyPipeline(
     (json) => {
       interface StoreState {
         applyGeneratedPipeline: (p: unknown) => number | null;
+        setFileFrames: (frames: null, meta: null) => void;
       }
       const store = (
         window as Window & {
@@ -67,6 +75,7 @@ export async function applyPipeline(
         }
       ).__megane_test_pipeline_store;
       if (!store) throw new Error("__megane_test_pipeline_store not exposed; testMode off?");
+      store.getState().setFileFrames(null, null);
       store.getState().applyGeneratedPipeline(json);
     },
     pipeline as unknown as Record<string, unknown>,
@@ -81,9 +90,10 @@ export async function applyPipeline(
  * collapsed, camera re-fit to whatever is drawn.
  *
  * The camera fit is load-bearing and was established by measurement.
- * `deserialize` does not re-frame the scene, and the Viewport keeps the current
- * zoom whenever a new snapshot has the same topology as the last, so the framing
- * a render inherits depends on which pipelines ran before it in the same page.
+ * Applying a pipeline does not re-frame the scene, and the Viewport keeps the
+ * current zoom whenever a new snapshot has the same topology as the last, so the
+ * framing a render inherits depends on which pipelines ran before it in the same
+ * page.
  * `molecule-basic` and `color-by-element` describe the same scene (byElement is
  * the default palette) and render byte-identical pixels, yet two reference
  * images captured in different batches differed by 10.9% of pixels, purely in
