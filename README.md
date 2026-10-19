@@ -35,8 +35,8 @@
 
 - **1M+ Atoms at 60fps** — GPU billboard impostor rendering (ray-cast spheres and cylinders) scales from small molecules to massive complexes in real time. Stream XTC trajectories over WebSocket from `megane serve`.
 - **Runs Everywhere** — Jupyter widget, JupyterLab extension, standalone web app (`megane serve`), React component (npm), and VS Code extension. Rust-based parsers for 26 formats (PDB, GRO, XYZ, MOL/SDF, MOL2, CIF, mmCIF, CML, LAMMPS data, AMBER topology, GROMACS topology, CHARMM/NAMD PSF, XTC, DCD, ASE .traj, LAMMPS dump, AMBER NetCDF, VASP, Molden, XCrySDen XSF, JCAMP-DX, Chem3D XML, Odyssey, CASTEP magres, GAMESS output, CASTEP phonon) shared between Python (PyO3) and browser (WASM) — parse once, run anywhere.
-- **Visual Pipeline Editor** — Build visualization workflows by wiring nodes or let the AI generator build them from natural language. 24 node types with 10 typed data channels flowing through color-coded edges. Load multiple structures with layer-based rendering to compare systems side by side.
-- **Megane Builder** — A structure editor next to the viewer (`/builder.html` in `megane serve`, the Megane panel in VS Code's activity bar and JupyterLab's left sidebar, and `megane.Builder()` in notebooks): add, delete, move and re-element atoms, draw bonds, sketch molecules in Ketcher (embedded in 3D by RDKit), and build bulk crystals, supercells and slabs. Save as XYZ / PDB / MOL — also available from Python as `megane.save_structure()`.
+- **Visual Pipeline Editor** — Build visualization workflows by wiring nodes or let the AI generator build them from natural language. 24 node types with 10 typed data channels flowing through color-coded edges. Load multiple structures with layer-based rendering to compare systems side by side. Draw atoms, licorice, lines, cartoon, molecular surfaces, or an illustrative style, and restyle a layer from the Quick Style panel without editing the graph.
+- **Megane Builder** — A structure editor next to the viewer (`/builder.html` in `megane serve`, the Megane panel in VS Code's activity bar and JupyterLab's left sidebar, and `megane.Builder()` in notebooks): add, delete, move and re-element atoms, draw bonds, sketch molecules in Ketcher (embedded in 3D by RDKit), and build bulk crystals, supercells and slabs. Save as XYZ / PDB / MOL — also available from Python as `megane.save_structure()`. Python structure generators (packmol liquid boxes, polymer chains, solvation) plug into its *Tools* menu as MCP tool servers.
 - **Embed & Integrate** — Control the viewer from Plotly via ipywidgets events. Embed in MDX / Next.js docs. React to `frame_change`, `selection_change`, and `measurement` events. Use the framework-agnostic renderer from Vue, Svelte, or vanilla JS.
 
 ### Scale
@@ -68,6 +68,8 @@ Wire nodes to build visualization workflows — no code required.
 **24 node types** across 6 categories: load data (structure, trajectory, streaming, vector, volumetric, spectrum), bonds (distance / file bonds, coordination), filter, modify (modify, color, representation, symmetry expansion, wrap / unwrap, replicate, drawing boundary, boundary completion), overlay (labels, polyhedra, surface meshes, isosurfaces, vectors), and display in a 3D viewport or a 2D spectrum plot.
 
 **10 typed data channels** — particle, bond, coordination, cell, label, mesh, trajectory, vector, volumetric, spectrum — flow through color-coded edges. Only matching types can connect.
+
+The `Representation` node switches a layer between atoms, licorice, line, cartoon, molecular surface, and illustrative rendering; `Color` colors by element, residue, chain, B-factor, or any per-atom property. For quick tweaks without touching the graph, the **Quick Style** panel in the Inspector tab edits style, color, atom size and opacity, bond width and opacity, labels, perspective, and cell axes, and writes them back into the pipeline.
 
 Pipelines serialize to JSON, so you can save, share, and version-control your visualization recipes.
 
@@ -117,7 +119,7 @@ viewer = megane.view_traj("protein.pdb", xtc="trajectory.xtc")
 viewer.frame_index = 50  # jump to frame 50
 ```
 
-For advanced usage (filtering, multi-layer rendering, custom pipelines), see the [Python Pipeline API](https://megane-labs.github.io/megane/guide/pipeline/python).
+The widget does not show the pipeline editor, but `MolecularViewer(quick_style=True)` (or `viewer.quick_style = True`) adds the Quick Style panel for restyling inside the cell. For advanced usage (filtering, multi-layer rendering, custom pipelines), see the [Python Pipeline API](https://megane-labs.github.io/megane/guide/pipeline/python).
 
 ### Standalone web app (`megane serve`)
 
@@ -134,6 +136,26 @@ To view your own files, mount them into the container:
 docker run --rm -p 8080:8080 -v ./mydata:/data megane \
   megane serve /data/protein.pdb --port 8080 --no-browser
 ```
+
+Without Docker, `megane serve` also lets the Load nodes browse files on the machine it runs on (*Open from server…*), which is handy over an SSH tunnel to a workstation or cluster node. `--files-root DIR` sets the folder it browses, `--no-files` turns it off, and `--files-any-host` serves it to other machines on the network (by default only clients on the server's own machine). See the [CLI guide](https://megane-labs.github.io/megane/guide/cli).
+
+### Megane Builder tools
+
+The Builder's *Tools* menu runs Python structure generators — *Liquid box*, *Polymer chain*, *Solvate* — from an [MCP](https://modelcontextprotocol.io/) tool server. In VS Code (1.90+) and JupyterLab, **Tools › Connect to megane-builder-tools** starts the reference server for you with [uv](https://docs.astral.sh/uv/); JupyterLab reaches it through Megane's Jupyter server extension, which needs the `tools` extra:
+
+```bash
+pip install "megane[tools]"
+```
+
+In the browser (`megane serve`), start the reference server yourself and connect to it from **Tools › Tool server…**:
+
+```bash
+uvx --from git+https://github.com/hodakamori/megane-builder-tools \
+    megane-builder-tools --transport http --port 8765 \
+    --allow-origin http://localhost:8080
+```
+
+See the [Builder guide](https://megane-labs.github.io/megane/guide/builder#python-tools) for setup on each host and for writing your own tool server.
 
 ### React component (npm)
 
@@ -183,6 +205,15 @@ function App() {
 | CASTEP magres | `.magres` | CASTEP / Quantum ESPRESSO NMR output — the `[atoms]` block (lattice + labelled atoms) with per-block units |
 | GAMESS output | `.gamess` | GAMESS (US / Firefly) log output — every `COORDINATES OF ALL ATOMS ARE` block becomes a frame |
 | CASTEP phonon | `.phonon` | CASTEP lattice-dynamics output — the header (cell + fractional coordinates + species) renders as a periodic structure |
+
+### Topology formats (`AddBond` node)
+
+| Format | Extension | Description |
+|--------|-----------|-------------|
+| GROMACS topology | `.top` | Bonds for a structure that does not carry them (e.g. a GRO file). Picked up automatically when a `.gro` is opened next to a `.top` of the same name |
+| CHARMM/NAMD PSF | `.psf` | Bonds for a PDB or other coordinate file |
+
+These files supply bonds only, so they are loaded on the Add Bond node (bond source *file*), or from Python with `AddBonds(top="topol.top")`.
 
 ### Volumetric formats (`LoadVolumetric` node)
 
@@ -274,22 +305,30 @@ make test-all              # All tests
 src/                     TypeScript frontend
   renderer/              Three.js rendering (impostor, mesh, shaders)
   protocol/              Binary protocol decoder + web workers
-  parsers/               WASM-based file parsers (26 formats: PDB, GRO, XYZ, MOL/SDF, MOL2, CIF, mmCIF, CML, LAMMPS data/dump, AMBER topology/NetCDF, GROMACS topology, CHARMM/NAMD PSF, XTC, DCD, ASE .traj, VASP, Molden, XCrySDen XSF, JCAMP-DX, Chem3D XML, Odyssey, CASTEP magres, GAMESS output, CASTEP phonon)
+  parsers/               WASM-based file parsers for every supported format (see Supported File Formats)
   logic/                 Bond / label / vector source logic
   components/            React UI components
   hooks/                 Custom React hooks
+  stores/                Zustand stores (per-viewer playback, view, measurement, theme state)
   pipeline/              Pipeline graph, node executors, serialization
   builder/               megane Builder (structure editor)
+  crystal/               Unit-cell math and bulk crystal prototypes
+  export/                Export the on-screen structure through the Rust writers
+  hosts/                 File classification shared by the JupyterLab and VS Code hosts
+  remote/                Opening files from the server / host ("Open from server...")
   ai/                    LLM pipeline generator
   stream/                WebSocket client
+  tour/                  Guided onboarding tour
+  types/, utils/         Shared types and helpers
 crates/                  Rust workspace
   megane-core/           Core parsers and bond inference
   megane-python/         PyO3 Python extension
   megane-wasm/           WASM bindings (wasm-bindgen)
 python/megane/           Python backend
-  parsers/               Python readers for all 26 supported formats (`dispatch.py` maps every structure extension the web app opens), plus the PSF / GROMACS .top topology sidecars (Gaussian CUBE and OpenDX are browser-side only)
+  parsers/               Python readers for every supported format (`dispatch.py` maps every structure extension the web app opens), plus the PSF / GROMACS .top topology sidecars (Gaussian CUBE and OpenDX are browser-side only)
   pipeline.py            Pipeline builder (NetworkX-style DAG)
   builder.py             megane Builder Jupyter widget
+  builder_tools/         Jupyter server extension bridging the Builder to MCP tool servers (`megane[tools]`)
   writers.py             Structure writers (`save_structure`)
   cli.py                 `megane` CLI entry point
   protocol.py            Binary protocol encoder
