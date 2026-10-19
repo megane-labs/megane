@@ -32,6 +32,7 @@ import { generateDrawingBoundaryImages } from "../logic/cellBoundaryImages";
 import type { MeshData } from "../pipeline/types";
 import type { ClientRect } from "./Picking";
 import { FpsCounter } from "./FpsCounter";
+import { skipFrameForBackgroundLoad } from "./backgroundLoad";
 import { perfMark, perfMeasure, perfPushFrame, perfRendererReady } from "../perf";
 import {
   CameraController,
@@ -108,6 +109,12 @@ export class MoleculeRenderer {
   private polyhedronRenderer: PolyhedronRenderer | null = null;
   private pivotMarker: PivotMarker | null = null;
   private animationId: number | null = null;
+  /** rAF time of the last drawn frame (see `skipFrameForBackgroundLoad`). */
+  private lastDrawAt = -Infinity;
+  /** Camera pose at the last drawn frame: a moved camera is always redrawn. */
+  private readonly drawnCameraPosition = new THREE.Vector3(NaN, NaN, NaN);
+  private readonly drawnCameraQuaternion = new THREE.Quaternion(NaN, NaN, NaN, NaN);
+  private drawnCameraZoom = NaN;
   private fpsCounter = new FpsCounter();
   private snapshot: Snapshot | null = null;
   private currentPositions: Float32Array | null = null;
@@ -1430,7 +1437,7 @@ export class MoleculeRenderer {
     this.controls.handleResize();
   }
 
-  private animate = (): void => {
+  private animate = (frameTime: number = performance.now()): void => {
     this.animationId = requestAnimationFrame(this.animate);
 
     // Synchronize renderer state BEFORE rendering — this eliminates
@@ -1452,6 +1459,19 @@ export class MoleculeRenderer {
 
     // Pivot animation / drag momentum, perspective clipping.
     this.cameraController.tick();
+
+    // While a file is still loading behind the first frame, leave the main
+    // thread to it: redraw at once when the camera moves, otherwise rarely.
+    const camera = this.camera;
+    const cameraMoved =
+      !camera.position.equals(this.drawnCameraPosition) ||
+      !camera.quaternion.equals(this.drawnCameraQuaternion) ||
+      camera.zoom !== this.drawnCameraZoom;
+    if (!cameraMoved && skipFrameForBackgroundLoad(frameTime, this.lastDrawAt)) return;
+    this.lastDrawAt = frameTime;
+    this.drawnCameraPosition.copy(camera.position);
+    this.drawnCameraQuaternion.copy(camera.quaternion);
+    this.drawnCameraZoom = camera.zoom;
 
     // Update pivot marker position and scale
     if (this.pivotMarker) {

@@ -8,7 +8,7 @@
  * test will catch a regression where the host context is misreported.
  */
 
-import { existsSync, mkdirSync, copyFileSync } from "fs";
+import { existsSync, mkdirSync, copyFileSync, readFileSync } from "fs";
 import { join } from "path";
 import { fileURLToPath } from "url";
 import { test, expect } from "playwright/test";
@@ -113,6 +113,31 @@ for (const f of FORMATS) {
     ).toHaveText(f.file);
   });
 }
+
+/**
+ * The structure viewer opens its file with a content-less document model
+ * (jupyterlab-megane/src/rawModel.ts) and reads the bytes itself. Saving that
+ * model would write an empty file, so it refuses to serialize: Ctrl+S on the
+ * viewer tab must leave the file on disk byte-for-byte unchanged.
+ */
+test("saving the viewer tab never overwrites the file", async ({ page }) => {
+  const onDisk = join(NOTEBOOK_DIR, "1crn.pdb");
+  const before = readFileSync(onDisk);
+  await openLabFile(page, { port: PORT, token: TOKEN, file: "1crn.pdb" });
+  await assertDomContract(page, [
+    ...defaultViewerContract({ expectedAtoms: 327, context: "jupyterlab-doc" }),
+  ]);
+  await page.locator('[data-testid="megane-viewer"]').click();
+  await page.keyboard.press("Control+s");
+  // Also through the command, which bypasses any focus handling.
+  await page.evaluate(async () => {
+    const app = (window as { jupyterapp?: { commands: { execute(id: string): Promise<unknown> } } })
+      .jupyterapp;
+    await app?.commands.execute("docmanager:save").catch(() => {});
+  });
+  await page.waitForTimeout(1_500);
+  expect(readFileSync(onDisk).equals(before)).toBe(true);
+});
 
 /**
  * Regression: Lumino gives every dock panel `contain: strict`, which makes the

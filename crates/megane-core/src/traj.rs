@@ -309,6 +309,93 @@ fn extract_cell(data: &[u8], json: &serde_json::Value, little_endian: bool) -> O
     None
 }
 
+/// The ULM header fields the parser needs.
+struct UlmHeader {
+    little_endian: bool,
+    nitems: usize,
+    pos0: usize,
+}
+
+/// Validate the magic and read the header (the first 48 bytes).
+fn read_ulm_header(data: &[u8]) -> Result<UlmHeader, String> {
+    if data.len() < 48 {
+        return Err("file too small for ULM header".into());
+    }
+
+    // Validate magic
+    if &data[0..8] != ULM_MAGIC {
+        return Err("not a ULM file (bad magic)".into());
+    }
+
+    // Determine endianness: ULM header integers are written in the machine's
+    // native byte order.  We try little-endian first (the common case) and
+    // fall back to big-endian if the values look unreasonable. Every known
+    // version is supported, so the version is only used for this check.
+    let hdr_v = read_bytes::<8>(data, 24, "version")?;
+    let hdr_n = read_bytes::<8>(data, 32, "nitems")?;
+    let hdr_p = read_bytes::<8>(data, 40, "pos0")?;
+
+    let v_le = i64::from_le_bytes(hdr_v);
+    let n_le = i64::from_le_bytes(hdr_n);
+    let p_le = i64::from_le_bytes(hdr_p);
+
+    if v_le > 0 && v_le <= 10 && n_le > 0 && n_le < 1_000_000_000 && p_le > 0 {
+        return Ok(UlmHeader {
+            little_endian: true,
+            nitems: n_le as usize,
+            pos0: p_le as usize,
+        });
+    }
+    let v_be = i64::from_be_bytes(hdr_v);
+    let n_be = i64::from_be_bytes(hdr_n);
+    let p_be = i64::from_be_bytes(hdr_p);
+    if v_be > 0 && v_be <= 10 && n_be > 0 {
+        Ok(UlmHeader {
+            little_endian: false,
+            nitems: n_be as usize,
+            pos0: p_be as usize,
+        })
+    } else {
+        Err(format!(
+            "cannot determine ULM endianness (version_le={}, version_be={})",
+            v_le, v_be
+        ))
+    }
+}
+
+/// Frame 0's metadata and the topology it defines.
+struct Frame0 {
+    json: serde_json::Value,
+    /// Byte order of the frame's arrays (`_little_endian`, which may differ
+    /// from the header's).
+    array_le: bool,
+    elements: Vec<u8>,
+    box_matrix: Option<[f32; 9]>,
+}
+
+/// Read frame 0 (its JSON at `offset`, and the elements and cell it carries).
+fn read_frame0(data: &[u8], offset: usize, little_endian_header: bool) -> Result<Frame0, String> {
+    let json = read_json_metadata(data, offset, little_endian_header)?;
+
+    // Check _little_endian flag in JSON (may differ from header endianness)
+    let array_le = json
+        .get("_little_endian")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(true);
+
+    let elements = extract_numbers(data, &json, array_le)?;
+    if elements.is_empty() {
+        return Err("zero atoms in first frame".into());
+    }
+    let box_matrix = extract_cell(data, &json, array_le);
+    Ok(Frame0 {
+        json,
+        array_le,
+        elements,
+        box_matrix,
+    })
+}
+
 // ---------- Public API ----------
 
 /// Parse an ASE .traj file (ULM binary format) and return a ParsedStructure.
@@ -321,45 +408,9 @@ fn extract_cell(data: &[u8], json: &serde_json::Value, little_endian: bool) -> O
 /// (`None` for the common uniform case, which keeps the fast fixed-stride
 /// path). See [`HeteroFrames`] for the per-frame layout.
 pub fn parse_traj(data: &[u8]) -> Result<ParsedStructure, String> {
-    if data.len() < 48 {
-        return Err("file too small for ULM header".into());
-    }
-
-    // Validate magic
-    if &data[0..8] != ULM_MAGIC {
-        return Err("not a ULM file (bad magic)".into());
-    }
-
-    // Determine endianness: ULM header integers are written in the machine's
-    // native byte order.  We try little-endian first (the common case) and
-    // fall back to big-endian if the values look unreasonable.
-    let (little_endian_header, version, nitems, pos0) = {
-        let hdr_v = read_bytes::<8>(data, 24, "version")?;
-        let hdr_n = read_bytes::<8>(data, 32, "nitems")?;
-        let hdr_p = read_bytes::<8>(data, 40, "pos0")?;
-
-        let v_le = i64::from_le_bytes(hdr_v);
-        let n_le = i64::from_le_bytes(hdr_n);
-        let p_le = i64::from_le_bytes(hdr_p);
-
-        if v_le > 0 && v_le <= 10 && n_le > 0 && n_le < 1_000_000_000 && p_le > 0 {
-            (true, v_le, n_le as usize, p_le as usize)
-        } else {
-            let v_be = i64::from_be_bytes(hdr_v);
-            let n_be = i64::from_be_bytes(hdr_n);
-            let p_be = i64::from_be_bytes(hdr_p);
-            if v_be > 0 && v_be <= 10 && n_be > 0 {
-                (false, v_be, n_be as usize, p_be as usize)
-            } else {
-                return Err(format!(
-                    "cannot determine ULM endianness (version_le={}, version_be={})",
-                    v_le, v_be
-                ));
-            }
-        }
-    };
-
-    let _ = version; // We support all known versions
+    let header = read_ulm_header(data)?;
+    let little_endian_header = header.little_endian;
+    let (nitems, pos0) = (header.nitems, header.pos0);
 
     // Read offset table
     if pos0 + nitems * 8 > data.len() {
@@ -376,22 +427,13 @@ pub fn parse_traj(data: &[u8]) -> Result<ParsedStructure, String> {
     }
 
     // Parse first frame to get element info
-    let first_json = read_json_metadata(data, offsets[0], little_endian_header)?;
-
-    // Check _little_endian flag in JSON (may differ from header endianness)
-    let array_le = first_json
-        .get("_little_endian")
-        .and_then(|v| v.as_bool())
-        .unwrap_or(true);
-
-    let elements = extract_numbers(data, &first_json, array_le)?;
+    let Frame0 {
+        json: first_json,
+        elements,
+        box_matrix,
+        ..
+    } = read_frame0(data, offsets[0], little_endian_header)?;
     let n_atoms = elements.len();
-
-    if n_atoms == 0 {
-        return Err("zero atoms in first frame".into());
-    }
-
-    let box_matrix = extract_cell(data, &first_json, array_le);
 
     // Collect positions: frame 0 into `positions`, the rest flat into
     // `frame_positions_flat`. While scanning we also classify whether the
@@ -511,6 +553,65 @@ pub fn parse_traj(data: &[u8]) -> Result<ParsedStructure, String> {
     })
 }
 
+/// Parse frame 0 of an ASE .traj from the start and the end of the file
+/// alone, for a first paint before the rest of the file has arrived.
+///
+/// Frame 0 is written right after the 48-byte header, but the offset table
+/// that locates it sits at `pos0`, which ASE rewrites near the end of the file
+/// as frames are appended. `head` is the file's first bytes and `tail` its
+/// last `tail.len()` bytes of `total_len`; the table's first entry is read
+/// from whichever holds it, everything else from `head`. Any read that falls
+/// outside them fails (as an EOF) rather than reading a gap, so the caller
+/// falls back to the full [`parse_traj`].
+///
+/// The result is exactly [`parse_traj`]'s frame-0 snapshot (positions,
+/// elements, cell, inferred bonds) without the extra frames.
+pub fn parse_traj_frame0(
+    head: &[u8],
+    tail: &[u8],
+    total_len: usize,
+) -> Result<ParsedStructure, String> {
+    let header = read_ulm_header(head)?;
+    if header.pos0 + header.nitems * 8 > total_len {
+        return Err("offset table extends past EOF".into());
+    }
+    let tail_start = total_len
+        .checked_sub(tail.len())
+        .ok_or("tail is longer than the file")?;
+    let offset0 = if header.pos0 + 8 <= head.len() {
+        read_i64(head, header.pos0, header.little_endian)?
+    } else if header.pos0 >= tail_start {
+        read_i64(tail, header.pos0 - tail_start, header.little_endian)?
+    } else {
+        return Err("the frame offset table is in neither the head nor the tail".into());
+    } as usize;
+
+    let Frame0 {
+        json,
+        array_le,
+        elements,
+        box_matrix,
+    } = read_frame0(head, offset0, header.little_endian)?;
+    let positions = extract_positions(head, &json, array_le)?;
+    if positions.len() % 3 != 0 {
+        return Err(format!(
+            "frame 0 has {} coordinates (not a multiple of 3)",
+            positions.len()
+        ));
+    }
+    let n_atoms = elements.len();
+    let bonds = bonds::infer_bonds(&positions, &elements, n_atoms, &HashSet::new());
+    Ok(ParsedStructure {
+        n_atoms,
+        positions,
+        elements,
+        bonds,
+        n_file_bonds: 0,
+        box_matrix,
+        ..Default::default()
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -540,6 +641,64 @@ mod tests {
             result.hetero.is_none(),
             "uniform .traj must stay on fast path"
         );
+    }
+
+    /// `parse_traj_frame0` on a head/tail split must reproduce `parse_traj`'s
+    /// frame-0 snapshot exactly.
+    fn assert_frame0_matches(data: &[u8], head_len: usize, tail_len: usize) {
+        let full = parse_traj(data).expect("full parse");
+        let head = &data[..head_len.min(data.len())];
+        let tail = &data[data.len() - tail_len.min(data.len())..];
+        let partial = parse_traj_frame0(head, tail, data.len()).expect("frame-0 parse");
+        assert_eq!(partial.n_atoms, full.n_atoms);
+        assert_eq!(partial.positions, full.positions);
+        assert_eq!(partial.elements, full.elements);
+        assert_eq!(partial.bonds, full.bonds);
+        assert_eq!(partial.box_matrix, full.box_matrix);
+        assert_eq!(partial.extra_frame_count(), 0);
+    }
+
+    #[test]
+    fn test_parse_traj_frame0_matches_full_parse() {
+        for name in ["water.traj", "bond_change.traj"] {
+            let Some(data) = read_fixture(name) else {
+                continue;
+            };
+            // The whole file as the head; a head holding only frame 0 plus the
+            // tail holding the offset table.
+            assert_frame0_matches(&data, data.len(), 0);
+            let header = read_ulm_header(&data).unwrap();
+            let table_len = data.len() - header.pos0;
+            let frame0_end = read_i64(&data, header.pos0 + 8, header.little_endian)
+                .map(|o| o as usize)
+                .unwrap_or(data.len());
+            assert_frame0_matches(&data, frame0_end, table_len);
+        }
+    }
+
+    #[test]
+    fn test_parse_traj_frame0_rejects_what_it_cannot_see() {
+        let Some(data) = read_fixture("water.traj") else {
+            return;
+        };
+        let header = read_ulm_header(&data).unwrap();
+        // The offset table falls in the gap between head and tail.
+        let err = parse_traj_frame0(&data[..64], &data[data.len() - 1..], data.len())
+            .err()
+            .expect("table in the gap must fail");
+        assert!(err.contains("neither the head nor the tail"), "{err}");
+        // Frame 0's JSON is past the head: reported as EOF, not read from a gap.
+        let tail = &data[header.pos0..];
+        assert!(parse_traj_frame0(&data[..64], tail, data.len()).is_err());
+        // A tail longer than the file, a table past EOF, and a non-ULM head.
+        assert!(parse_traj_frame0(&data, &data, 10).is_err());
+        assert!(parse_traj_frame0(&data, &[], header.pos0).is_err());
+        assert!(parse_traj_frame0(
+            b"not a ulm file at all, but long enough to hold a header....",
+            &[],
+            60
+        )
+        .is_err());
     }
 
     /// Read a fixture, or return `None` (skipping the test) if it's missing.

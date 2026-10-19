@@ -8,6 +8,24 @@ export class ABCWidgetFactory<T = unknown, U = unknown> {
   }
 }
 
+// Minimal stand-in for the text document model `rawModel.ts` extends.
+export class DocumentModel {
+  readOnly = false;
+  dirty = false;
+  constructor(_options?: unknown) {
+    void _options;
+  }
+  toString(): string {
+    return "";
+  }
+  fromString(_value: string): void {
+    void _value;
+  }
+  toJSON(): unknown {
+    return null;
+  }
+}
+
 export class DocumentWidget<T = unknown, U = unknown> {
   content: unknown;
   context: unknown;
@@ -30,6 +48,11 @@ export namespace DocumentRegistry {
     contentType?: string;
   };
   export type IWidgetFactoryOptions<T = unknown> = unknown;
+  export type IModelOptions = Record<string, unknown>;
+  export interface IModelFactory<T = unknown> {
+    readonly name: string;
+    createNew(options?: IModelOptions): T;
+  }
 }
 
 export type IDocumentWidget<T = unknown, U = unknown> = unknown;

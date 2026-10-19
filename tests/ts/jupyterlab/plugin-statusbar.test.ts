@@ -41,6 +41,7 @@ const mockApp = {
   docRegistry: {
     addFileType: vi.fn(),
     addWidgetFactory: vi.fn(),
+    addModelFactory: vi.fn(),
   },
   serviceManager: {
     contents: { getDownloadUrl: vi.fn(async (path: string) => `/files/${path}`) },
@@ -87,6 +88,18 @@ describe("megane JupyterLab plugin – IStatusBar optional integration", () => {
     plugin.activate(mockApp as never, mockRestorer as never, null as never);
     expect(mockApp.docRegistry.addFileType).toHaveBeenCalled();
     expect(mockApp.docRegistry.addWidgetFactory).toHaveBeenCalled();
+  });
+
+  it("registers the content-less model the structure viewers open their files with", () => {
+    vi.mocked(mockApp.docRegistry.addModelFactory).mockClear();
+    plugin.activate(mockApp as never, mockRestorer as never, null as never);
+    expect(mockApp.docRegistry.addModelFactory).toHaveBeenCalledTimes(1);
+    const factory = vi.mocked(mockApp.docRegistry.addModelFactory).mock.calls[0][0] as {
+      name: string;
+      fileFormat: unknown;
+    };
+    expect(factory.name).toBe("megane-raw");
+    expect(factory.fileFormat).toBeNull();
   });
 });
 

@@ -134,6 +134,16 @@ export function disposeTrajectoryLazy(_trajectoryId: number): void {
   /* no-op */
 }
 
+/** Worker-only; returns `null` so the caller waits for the whole file. */
+export async function parseStructureHead(
+  _head: Uint8Array,
+  _tail: Uint8Array,
+  _totalSize: number,
+  _kind: import("./parseCore").LazyStructureKind | "traj",
+): Promise<StructureParseResult | null> {
+  return null;
+}
+
 /** Worker-only; nothing to warm up on the main-thread path. */
 export function prewarmParseWorker(): void {
   /* no-op */

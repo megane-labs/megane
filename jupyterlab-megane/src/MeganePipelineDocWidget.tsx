@@ -10,6 +10,7 @@ import { useTour } from "@megane/tour/useTour";
 import "@megane/styles/megane.css";
 import { prewarmParseWorker } from "@megane/parsers/structure";
 import { ensureWasmUrl } from "./wasmLoader";
+import type { ServerRequest } from "./serverFileBytes";
 import {
   basename,
   dirname,
@@ -22,12 +23,13 @@ type ActivationSubscribe = (cb: () => void) => () => void;
 interface DocBodyProps {
   context: DocumentRegistry.Context;
   contents: Contents.IManager;
+  request: ServerRequest;
   subscribeActivation: ActivationSubscribe;
 }
 
 type LoadState = "loading" | "ready" | { error: string };
 
-function DocBody({ context, contents, subscribeActivation }: DocBodyProps): JSX.Element {
+function DocBody({ context, contents, request, subscribeActivation }: DocBodyProps): JSX.Element {
   const [state, setState] = useState<LoadState>("loading");
   useTour({ host: "jupyterlab" });
 
@@ -62,7 +64,7 @@ function DocBody({ context, contents, subscribeActivation }: DocBodyProps): JSX.
         // in parallel. We delegate the rest (deserialize, parse,
         // setNodeSnapshot) to the shared `usePipelineStore.openFile` entry
         // point.
-        const companions = await fetchPipelineCompanions(contents, pipeline, dir);
+        const companions = await fetchPipelineCompanions(contents, request, pipeline, dir);
         if (token.cancelled) return;
 
         const meganeFile = new File([pipelineText], basename(context.path), {
@@ -83,7 +85,7 @@ function DocBody({ context, contents, subscribeActivation }: DocBodyProps): JSX.
         }
       }
     },
-    [context, contents],
+    [context, contents, request],
   );
 
   useEffect(() => {
@@ -148,6 +150,7 @@ export class MeganePipelineReactView extends ReactWidget {
   constructor(
     private readonly context: DocumentRegistry.Context,
     private readonly contents: Contents.IManager,
+    private readonly request: ServerRequest,
   ) {
     super();
     this.addClass("megane-jupyter-doc");
@@ -177,6 +180,7 @@ export class MeganePipelineReactView extends ReactWidget {
         <DocBody
           context={this.context}
           contents={this.contents}
+          request={this.request}
           subscribeActivation={this.subscribeActivation}
         />
       </ErrorBoundary>

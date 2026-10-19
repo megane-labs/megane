@@ -9,8 +9,8 @@
 
 import type { Contents } from "@jupyterlab/services";
 import { companionFileName } from "@megane/pipeline/companionFiles";
-import { decodeBase64 } from "@megane/utils/base64";
 import { fileFromBytes } from "@megane/parsers/fileBytes";
+import { readServerFileBytes, type ServerRequest } from "./serverFileBytes";
 
 export interface MinimalSerializedPipeline {
   version?: number;
@@ -66,17 +66,16 @@ export function collectCompanionTargets(
 }
 
 /**
- * Fetch one file as bytes (base64 over the Contents API, so binary formats such
- * as ASE `.traj` arrive intact), or `null` when it cannot be read.
+ * Fetch one file as raw bytes (so binary formats such as ASE `.traj` arrive
+ * intact), or `null` when it cannot be read.
  */
 export async function fetchCompanion(
   contents: Contents.IManager,
+  request: ServerRequest,
   path: string,
 ): Promise<File | null> {
   try {
-    const model = await contents.get(path, { content: true, format: "base64" });
-    const bytes = decodeBase64(String(model.content ?? ""));
-    return fileFromBytes(bytes, basename(path));
+    return fileFromBytes(await readServerFileBytes(contents, request, path), basename(path));
   } catch {
     return null;
   }
@@ -85,10 +84,11 @@ export async function fetchCompanion(
 /** Fetch every companion of `pipeline` in parallel, dropping unreadable ones. */
 export async function fetchPipelineCompanions(
   contents: Contents.IManager,
+  request: ServerRequest,
   pipeline: MinimalSerializedPipeline,
   dir: string,
 ): Promise<File[]> {
   const targets = collectCompanionTargets(pipeline, dir);
-  const fetched = await Promise.all(targets.map((p) => fetchCompanion(contents, p)));
+  const fetched = await Promise.all(targets.map((p) => fetchCompanion(contents, request, p)));
   return fetched.filter((f): f is File => f !== null);
 }

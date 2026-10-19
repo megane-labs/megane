@@ -108,6 +108,29 @@ const BINARY_PIPELINE_JSON = {
   ],
 };
 
+/**
+ * A multi-frame XYZ larger than the extension's 8 MB head + 4 MB tail, so the
+ * host posts it in pieces (src/hosts/progressiveFile.ts): frame 0 is drawn
+ * from the head, and every frame must still be there once the rest arrives.
+ */
+const PROGRESSIVE_XYZ = "progressive_1000x420.xyz";
+const PROGRESSIVE_ATOMS = 1000;
+const PROGRESSIVE_FRAMES = 420;
+
+function progressiveXyz(): string {
+  const parts: string[] = [];
+  for (let f = 0; f < PROGRESSIVE_FRAMES; f++) {
+    parts.push(`${PROGRESSIVE_ATOMS}\nframe ${f}\n`);
+    for (let i = 0; i < PROGRESSIVE_ATOMS; i++) {
+      const x = (i % 10) * 3 + 0.1 * Math.sin(f + i);
+      const y = (Math.floor(i / 10) % 10) * 3;
+      const z = Math.floor(i / 100) * 3;
+      parts.push(`Ar ${x.toFixed(6)} ${y.toFixed(6)} ${z.toFixed(6)}\n`);
+    }
+  }
+  return parts.join("");
+}
+
 let cs: CodeServerHandle | null = null;
 
 test.describe.configure({ timeout: 300_000 });
@@ -118,12 +141,27 @@ test.beforeAll(async () => {
     copyFileSync(join(REPO, "tests", "fixtures", f.file), join(WORKSPACE, f.file));
   }
   writeFileSync(join(WORKSPACE, BINARY_PIPELINE), JSON.stringify(BINARY_PIPELINE_JSON, null, 2));
+  writeFileSync(join(WORKSPACE, PROGRESSIVE_XYZ), progressiveXyz());
   cs = await startCodeServer({ port: PORT, workspace: WORKSPACE, e2eMode: true });
 });
 
 test.afterAll(() => {
   stopCodeServer(cs);
   cs = null;
+});
+
+test("a file larger than head + tail arrives in pieces and keeps every frame", async ({ page }) => {
+  expect(statSync(join(WORKSPACE, PROGRESSIVE_XYZ)).size).toBeGreaterThan(12 * 1024 * 1024);
+  const wv = await openVscodeFile(page, {
+    port: PORT,
+    file: PROGRESSIVE_XYZ,
+    waitTimeoutMs: 120_000,
+  });
+  const viewer = wv.locator('[data-testid="megane-viewer"]');
+  await expect(viewer).toHaveAttribute("data-atom-count", String(PROGRESSIVE_ATOMS));
+  await expect
+    .poll(async () => Number(await viewer.getAttribute("data-total-frames")), { timeout: 120_000 })
+    .toBe(PROGRESSIVE_FRAMES);
 });
 
 for (const f of FORMATS) {

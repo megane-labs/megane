@@ -11,17 +11,14 @@ import { useTour } from "@megane/tour/useTour";
 import { ThemeSync } from "@megane/components/ThemeSync";
 import { usePlaybackStore } from "@megane/stores/usePlaybackStore";
 import "@megane/styles/megane.css";
-import { decodeBase64 } from "@megane/utils/base64";
 import { fileFromBytes } from "@megane/parsers/fileBytes";
 import { perfMark } from "@megane/perf";
 import { prewarmParseWorker } from "@megane/parsers/structure";
 import { ensureWasmUrl } from "./wasmLoader";
-import { STRUCTURE_FILETYPES_BINARY } from "./filetypes";
+import { readServerFileBytes, type ServerRequest } from "./serverFileBytes";
 import { classifyStandaloneFile, siblingTopologyName } from "@megane/hosts/classifyStandaloneFile";
 import { createSubscription, createFrameSubscription } from "./frameSubscription";
 import type { SelectionState, Measurement } from "@megane/types";
-
-const BINARY_EXTENSIONS = new Set(STRUCTURE_FILETYPES_BINARY.flatMap((f) => f.extensions ?? []));
 
 /**
  * Subscription channel used by `DocBody` to re-load when the host
@@ -35,6 +32,7 @@ type ActivationSubscribe = (cb: () => void) => () => void;
 interface DocBodyProps {
   context: DocumentRegistry.Context;
   contents: Contents.IManager;
+  request: ServerRequest;
   subscribeActivation: ActivationSubscribe;
   onFrameChange?: (frame: number) => void;
   onSelectionChange?: (selection: SelectionState) => void;
@@ -46,6 +44,7 @@ type LoadState = "loading" | "ready" | { error: string };
 function DocBody({
   context,
   contents,
+  request,
   subscribeActivation,
   onFrameChange,
   onSelectionChange,
@@ -66,9 +65,13 @@ function DocBody({
       try {
         perfMark("megane:open:start");
         await ensureWasmUrl();
-        // Compile the parser's WASM in its worker while the Contents request
-        // for the document is still in flight.
+        // Compile the parser's WASM in its worker while the file is still
+        // being downloaded.
         prewarmParseWorker();
+        // The document model holds no content (rawModel.ts): download the
+        // file's raw bytes ourselves, alongside the context's metadata fetch.
+        const bytesRequest = readServerFileBytes(contents, request, context.path);
+        bytesRequest.catch(() => {}); // surfaced by the await below
         await context.ready;
         perfMark("megane:open:contextReady");
         if (token.cancelled) return;
@@ -81,18 +84,10 @@ function DocBody({
         // had no load_structure node.
         usePipelineStore.getState().reset();
         const filename = context.path.split("/").pop() ?? "structure";
-        const raw = context.model.toString();
-        // Binary file types (e.g. ASE .traj) are registered with
-        // fileFormat: "base64" in filetypes.ts, so the model serializes to a
-        // base64 string. Decode to bytes and let parseStructureFile dispatch
-        // to the right WASM parser via file.arrayBuffer(). We check both the
-        // contentsModel format and the file extension as a safety net,
-        // because contentsModel can be null in some restore paths.
-        const dot = filename.lastIndexOf(".");
-        const ext = dot >= 0 ? filename.slice(dot).toLowerCase() : "";
-        const isBase64 = context.contentsModel?.format === "base64" || BINARY_EXTENSIONS.has(ext);
-        const bytes = isBase64 ? decodeBase64(raw) : new TextEncoder().encode(raw);
-        const file = fileFromBytes(bytes, filename);
+        // Raw bytes for every format: the shared parser dispatches by
+        // extension to text or binary (e.g. ASE .traj) decoding.
+        const file = fileFromBytes(await bytesRequest, filename);
+        if (token.cancelled) return;
         perfMark("megane:open:decoded");
         // Spectra and volumetric grids have nothing to render standalone, and
         // trajectory-only formats (XTC, DCD, NetCDF) need a topology loaded
@@ -147,7 +142,7 @@ function DocBody({
     // object on every render, so including it would re-fire this effect
     // on every state update and re-parse the file in a loop.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [context],
+    [context, contents, request],
   );
 
   useEffect(() => {
@@ -245,6 +240,7 @@ export class MeganeReactView extends ReactWidget {
   constructor(
     private readonly context: DocumentRegistry.Context,
     private readonly contents: Contents.IManager,
+    private readonly request: ServerRequest,
   ) {
     super();
     this.addClass("megane-jupyter-doc");
@@ -275,6 +271,7 @@ export class MeganeReactView extends ReactWidget {
         <DocBody
           context={this.context}
           contents={this.contents}
+          request={this.request}
           subscribeActivation={this.subscribeActivation}
           onFrameChange={this._handleFrameChange}
           onSelectionChange={this._handleSelectionChange}

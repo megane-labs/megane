@@ -208,6 +208,57 @@ describe("parseClient worker path", () => {
     expect(xyz.slice).toHaveBeenCalledTimes(1); // head only
   });
 
+  it("parseStructureHead reads an ASE .traj's frame 0 from head and tail in the worker", async () => {
+    const client = await freshClient();
+    const head = new Uint8Array([1, 2, 3]);
+    const tail = new Uint8Array([9]);
+    const result = await client.parseStructureHead(head, tail, 100, "traj");
+    expect(result).toEqual({ tag: "worker" });
+    expect(state.lastReq).toMatchObject({ op: "trajFrame0", totalSize: 100 });
+    const req = state.lastReq as unknown as { head: ArrayBuffer; tail: ArrayBuffer };
+    expect(new Uint8Array(req.head)).toEqual(head);
+    expect(new Uint8Array(req.tail)).toEqual(tail);
+    // The caller's own chunks are copied, never transferred away.
+    expect(head.byteLength).toBe(3);
+  });
+
+  it("parseStructureHead stitches a PDB head to its CONECT tail, trimming cut lines", async () => {
+    const client = await freshClient();
+    const enc = (s: string) => new TextEncoder().encode(s);
+    await client.parseStructureHead(
+      enc("ATOM 1\nATOM 2\nATO"),
+      enc("NDMDL\nCONECT 1 2\n"),
+      999,
+      "pdb",
+    );
+    expect(state.lastReq).toMatchObject({
+      op: "structurePrefix",
+      kind: "pdb",
+      text: "ATOM 1\nATOM 2\nCONECT 1 2\n",
+      isWholeFile: false,
+    });
+  });
+
+  it("parseStructureHead ignores the tail for XYZ and passes a whole-file head as is", async () => {
+    const client = await freshClient();
+    const enc = (s: string) => new TextEncoder().encode(s);
+    await client.parseStructureHead(enc("3\nc\nC 0 0 0"), enc("tail"), 11, "xyz");
+    expect(state.lastReq).toMatchObject({
+      op: "structurePrefix",
+      kind: "xyz",
+      text: "3\nc\nC 0 0 0",
+      isWholeFile: true,
+    });
+  });
+
+  it("parseStructureHead returns null when the chunks do not hold frame 0", async () => {
+    const client = await freshClient();
+    state.mode = "err";
+    expect(
+      await client.parseStructureHead(new Uint8Array(1), new Uint8Array(1), 50, "traj"),
+    ).toBeNull();
+  });
+
   it("prewarmParseWorker starts the worker with an init request carrying the WASM URL", async () => {
     const client = await freshClient();
     (globalThis as Record<string, unknown>).__MEGANE_WASM_URL__ = "https://x/megane.wasm";
