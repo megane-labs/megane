@@ -5,12 +5,20 @@
  */
 
 import { describe, it, expect, vi } from "vitest";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import {
   BuilderToolsBridge,
   ToolServerPool,
   checkServerUrl,
   createPermissionGate,
+  DEFAULT_SERVER_ID,
+  DEFAULT_SERVER_SOURCE,
+  defaultServer,
   describeServer,
+  extraSearchDirs,
+  findExecutable,
+  withDefaultServer,
   parseServerConfigs,
   serverFingerprint,
   substitute,
@@ -111,6 +119,89 @@ describe("parseServerConfigs", () => {
     expect(parseServerConfigs({ a: { command: "x" } }).servers[0]).toMatchObject({
       cwd: undefined,
     });
+  });
+});
+
+describe("the default reference server", () => {
+  it("skips entries set to null or false, which hide a server", () => {
+    expect(parseServerConfigs({ a: null, b: false, c: { command: "x" } })).toEqual({
+      servers: [expect.objectContaining({ id: "c" })],
+      problems: [],
+    });
+  });
+
+  it("finds programs on PATH and in the extra directories, with Windows extensions", () => {
+    const files = new Set(["/usr/bin/uvx", "/home/me/.local/bin/megane-builder-tools"]);
+    const isExecutable = (f: string) => files.has(f);
+    const env = { PATH: "/bin:/usr/bin" };
+    expect(findExecutable("uvx", { env, isExecutable, platform: "linux" })).toBe("/usr/bin/uvx");
+    expect(findExecutable("megane-builder-tools", { env, isExecutable, platform: "linux" })).toBe(
+      null,
+    );
+    expect(
+      findExecutable("megane-builder-tools", {
+        env,
+        isExecutable,
+        platform: "linux",
+        extraDirs: extraSearchDirs("/home/me", "linux"),
+      }),
+    ).toBe("/home/me/.local/bin/megane-builder-tools");
+    const win = new Set(["C:\\uv\\uvx.exe"]);
+    expect(
+      findExecutable("uvx", {
+        env: { PATH: "C:\\x;C:\\uv", PATHEXT: ".COM;.EXE" },
+        isExecutable: (f) => win.has(f),
+        platform: "win32",
+      }),
+    ).toBe("C:\\uv\\uvx.exe");
+    expect(findExecutable("uvx", { env: {}, isExecutable, platform: "win32" })).toBeNull();
+    // The real filesystem: node itself is executable; a directory is not.
+    const nodeDir = process.execPath.replace(/[\\/][^\\/]+$/, "");
+    expect(findExecutable("node", { env: { PATH: nodeDir } })).not.toBeNull();
+    expect(findExecutable("bin", { env: { PATH: "/usr" } })).toBeNull();
+  });
+
+  it("looks where uv installs, and Homebrew on macOS", () => {
+    expect(extraSearchDirs("/h", "linux")).toEqual(["/h/.local/bin", "/h/.cargo/bin"]);
+    expect(extraSearchDirs("/h", "darwin")).toContain("/opt/homebrew/bin");
+    expect(extraSearchDirs("/h").length).toBeGreaterThan(1);
+  });
+
+  it("prefers an installed megane-builder-tools, else uvx at the pinned version", () => {
+    const only = (which: Record<string, string>) => (name: string) => which[name] ?? null;
+    expect(defaultServer(only({ "megane-builder-tools": "/b/mbt", uvx: "/b/uvx" }), "/w")).toEqual({
+      id: DEFAULT_SERVER_ID,
+      kind: "stdio",
+      command: "/b/mbt",
+      args: [],
+      env: {},
+      cwd: "/w",
+    });
+    expect(defaultServer(only({ uvx: "/b/uvx" }))).toMatchObject({
+      command: "/b/uvx",
+      args: ["--from", DEFAULT_SERVER_SOURCE, "megane-builder-tools"],
+    });
+    expect(DEFAULT_SERVER_SOURCE).toMatch(/@[0-9a-f]{40}$/);
+    expect(defaultServer(only({}))).toBeNull();
+  });
+
+  it("pins the same version as the Jupyter server extension", () => {
+    const python = readFileSync(
+      join(__dirname, "../../../python/megane/builder_tools/config.py"),
+      "utf8",
+    );
+    expect(python).toContain(`"${DEFAULT_SERVER_SOURCE}"`);
+  });
+
+  it("adds the default unless the setting names it", () => {
+    const fallback = () => defaultServer(() => "/b/uvx");
+    const parsed = parseServerConfigs({ a: { command: "x" } });
+    expect(withDefaultServer({ a: {} }, parsed, fallback).servers.map((s) => s.id)).toEqual([
+      DEFAULT_SERVER_ID,
+      "a",
+    ]);
+    expect(withDefaultServer({ [DEFAULT_SERVER_ID]: null }, parsed, fallback)).toBe(parsed);
+    expect(withDefaultServer(undefined, parsed, () => null)).toBe(parsed);
   });
 });
 

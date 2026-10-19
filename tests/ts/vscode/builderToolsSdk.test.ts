@@ -8,7 +8,7 @@ import { describe, it, expect, afterEach } from "vitest";
 import { createServer, type Server } from "node:http";
 import { join } from "node:path";
 import type { ToolClient } from "../../../vscode-megane/src/builderTools";
-import { connectWithSdk } from "../../../vscode-megane/src/sdkClient";
+import { connectWithSdk, inheritedEnvironment } from "../../../vscode-megane/src/sdkClient";
 import { handle } from "./fixtures/fakeMcpServer.mjs";
 
 const SERVER = join(__dirname, "fixtures", "fakeMcpServer.mjs");
@@ -20,6 +20,15 @@ afterEach(async () => {
   client = null;
   await new Promise<void>((resolve) => (http ? http.close(() => resolve()) : resolve()));
   http = null;
+});
+
+describe("inheritedEnvironment", () => {
+  it("passes the editor's whole environment, without unset variables", () => {
+    expect(inheritedEnvironment({ HTTPS_PROXY: "http://proxy:3128", GONE: undefined })).toEqual({
+      HTTPS_PROXY: "http://proxy:3128",
+    });
+    expect(inheritedEnvironment().PATH).toBe(process.env.PATH);
+  });
 });
 
 describe("connectWithSdk", () => {

@@ -1,14 +1,20 @@
 """The ``MeganeBuilderTools.mcp_servers`` option, read as VS Code reads ``megane.builder.mcpServers``."""
 
 from megane.builder_tools.config import (
+    DEFAULT_SERVER_ID,
+    DEFAULT_SERVER_SOURCE,
     HttpServer,
     StdioServer,
     check_server_url,
+    default_server,
     describe_server,
+    extra_search_dirs,
+    find_executable,
     parse_server_configs,
     server_fingerprint,
     substitute,
     to_bridge_server,
+    with_default_server,
 )
 
 STDIO = StdioServer(id="tools", command="uvx", args=("megane-builder-tools",), cwd="/w")
@@ -115,3 +121,48 @@ def test_descriptions_and_fingerprints():
         "description": "https://lab.example/mcp",
         "fingerprint": server_fingerprint(HTTP),
     }
+
+
+def test_null_and_false_entries_are_turned_off():
+    servers, problems = parse_server_configs({"a": None, "b": False, "c": {"command": "x"}})
+    assert [s.id for s in servers] == ["c"] and problems == []
+
+
+def test_find_executable_on_path_and_extra_dirs(tmp_path):
+    tool = tmp_path / "bin" / "megane-builder-tools"
+    tool.parent.mkdir()
+    tool.write_text("#!/bin/sh\n")
+    tool.chmod(0o755)
+    assert find_executable("megane-builder-tools", path="/nonexistent") is None
+    assert find_executable("megane-builder-tools", [str(tool.parent)], path="") == str(tool)
+    assert find_executable("python3") is not None
+
+
+def test_extra_search_dirs():
+    assert extra_search_dirs("/h", "linux") == ["/h/.local/bin", "/h/.cargo/bin"]
+    assert "/opt/homebrew/bin" in extra_search_dirs("/h", "darwin")
+    assert extra_search_dirs("/h")
+
+
+def test_default_server_prefers_an_installed_one_else_uvx_at_the_pinned_version():
+    def only(found):
+        return lambda name: found.get(name)
+
+    assert default_server(only({"megane-builder-tools": "/b/mbt", "uvx": "/b/uvx"}), "/w") == StdioServer(
+        id=DEFAULT_SERVER_ID, command="/b/mbt", cwd="/w"
+    )
+    assert default_server(only({"uvx": "/b/uvx"})) == StdioServer(
+        id=DEFAULT_SERVER_ID, command="/b/uvx", args=("--from", DEFAULT_SERVER_SOURCE, "megane-builder-tools")
+    )
+    assert default_server(only({})) is None
+
+
+def test_the_default_is_added_unless_the_option_names_it():
+    parsed = parse_server_configs({"a": {"command": "x"}})
+
+    def fallback():
+        return default_server(lambda name: "/b/uvx" if name == "uvx" else None)
+
+    assert [s.id for s in with_default_server({"a": {}}, parsed, fallback)[0]] == [DEFAULT_SERVER_ID, "a"]
+    assert with_default_server({DEFAULT_SERVER_ID: None}, parsed, fallback) is parsed
+    assert with_default_server(None, parsed, lambda: None) is parsed

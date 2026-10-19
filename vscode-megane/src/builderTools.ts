@@ -22,6 +22,11 @@
  * stdio server is started once however many tabs use it, and stopped when the
  * last tab lets go of it.
  *
+ * Without any setting, the reference server (`megane-builder-tools`: liquid
+ * box, polymer chain, solvate) is offered too, started from the user's PATH or
+ * else with uv at a pinned version (`defaultServer`); an entry of the same
+ * name replaces it, and `"megane-builder-tools": null` hides it.
+ *
  * Adding a server is installing software (§9): the first connection to a
  * server asks the user, showing the command line or URL, and the answer is
  * remembered for exactly that command or URL. The setting is restricted in
@@ -29,6 +34,8 @@
  * cannot put a command there.
  */
 
+import * as fs from "fs";
+import * as path from "path";
 import {
   isBridgeRequest,
   type BridgeConnected,
@@ -109,6 +116,7 @@ export function parseServerConfigs(
   if (!isRecord(raw)) return { servers, problems: ["the setting must be an object of servers"] };
   for (const [id, entry] of Object.entries(raw)) {
     const fail = (why: string) => problems.push(`"${id}" ${why}`);
+    if (entry === null || entry === false) continue; // turned off (hides the default server)
     if (!isRecord(entry)) {
       fail("must be an object with a command or a url");
       continue;
@@ -181,6 +189,103 @@ export function serverFingerprint(config: ServerConfig): string {
   return config.kind === "stdio"
     ? JSON.stringify(["stdio", config.command, config.args, config.env, config.cwd ?? null])
     : JSON.stringify(["http", config.url]);
+}
+
+/** The reference tool server, offered without any setting. */
+export const DEFAULT_SERVER_ID = "megane-builder-tools";
+/**
+ * The version uv starts when `megane-builder-tools` is not installed: a commit
+ * of hodakamori/megane-builder-tools, pinned so megane never runs code it was
+ * not tested with. Move it with megane releases.
+ */
+export const DEFAULT_SERVER_SOURCE =
+  "git+https://github.com/hodakamori/megane-builder-tools@b2aa9436c6030889ae18f04607fabe47c3a1f19f";
+
+/**
+ * Where a program is looked for besides PATH. An editor started from the Dock
+ * or the Start menu does not see the shell's PATH, while uv and the tools it
+ * installs live in `~/.local/bin` (formerly `~/.cargo/bin`).
+ */
+export function extraSearchDirs(
+  home: string,
+  platform: NodeJS.Platform = process.platform,
+): string[] {
+  const dirs = [path.join(home, ".local", "bin"), path.join(home, ".cargo", "bin")];
+  if (platform === "darwin") dirs.push("/opt/homebrew/bin", "/usr/local/bin");
+  return dirs;
+}
+
+function isExecutableFile(file: string): boolean {
+  try {
+    fs.accessSync(file, fs.constants.X_OK);
+    return fs.statSync(file).isFile();
+  } catch {
+    return false;
+  }
+}
+
+/** The full path of program `name` on PATH or in `extraDirs`, or null. */
+export function findExecutable(
+  name: string,
+  options: {
+    env?: Record<string, string | undefined>;
+    extraDirs?: string[];
+    platform?: NodeJS.Platform;
+    isExecutable?: (file: string) => boolean;
+  } = {},
+): string | null {
+  const env = options.env ?? process.env;
+  const platform = options.platform ?? process.platform;
+  const isExecutable = options.isExecutable ?? isExecutableFile;
+  const separator = platform === "win32" ? ";" : ":";
+  const join = platform === "win32" ? path.win32.join : path.posix.join;
+  const exts =
+    platform === "win32" ? (env.PATHEXT ?? ".EXE;.CMD;.BAT").split(";").filter(Boolean) : [""];
+  const dirs = [...(env.PATH ?? "").split(separator), ...(options.extraDirs ?? [])].filter(Boolean);
+  for (const dir of dirs) {
+    for (const ext of exts) {
+      const file = join(dir, name + ext.toLowerCase());
+      if (isExecutable(file)) return file;
+    }
+  }
+  return null;
+}
+
+/**
+ * The reference server as a stdio entry: `megane-builder-tools` from PATH if
+ * the user installed it, else run by uvx at `DEFAULT_SERVER_SOURCE`, else
+ * null (neither is available).
+ */
+export function defaultServer(
+  find: (name: string) => string | null,
+  cwd?: string,
+): ServerConfig | null {
+  const own = find("megane-builder-tools");
+  if (own) return { id: DEFAULT_SERVER_ID, kind: "stdio", command: own, args: [], env: {}, cwd };
+  const uvx = find("uvx");
+  if (!uvx) return null;
+  return {
+    id: DEFAULT_SERVER_ID,
+    kind: "stdio",
+    command: uvx,
+    args: ["--from", DEFAULT_SERVER_SOURCE, "megane-builder-tools"],
+    env: {},
+    cwd,
+  };
+}
+
+/**
+ * The configured servers plus the default one, unless the setting names a
+ * server `megane-builder-tools` (its own, or `null` to hide it).
+ */
+export function withDefaultServer(
+  raw: unknown,
+  parsed: { servers: ServerConfig[]; problems: string[] },
+  fallback: () => ServerConfig | null,
+): { servers: ServerConfig[]; problems: string[] } {
+  if (isRecord(raw) && DEFAULT_SERVER_ID in raw) return parsed;
+  const server = fallback();
+  return server ? { ...parsed, servers: [server, ...parsed.servers] } : parsed;
 }
 
 export function toBridgeServer(config: ServerConfig): BridgeServer {

@@ -41,7 +41,13 @@ def test_extension_points():
     assert "mcpServers format" in MeganeBuilderTools.mcp_servers.help
 
 
+def without_programs(serverapp):
+    """No program is installed: no default server (tests that are not about it)."""
+    serverapp.web_app.settings[SETTINGS_KEY].find = lambda name: None
+
+
 async def test_lists_connects_and_calls_through_the_websocket(jp_serverapp, jp_ws_fetch, jp_root_dir):
+    without_programs(jp_serverapp)
     ws = await jp_ws_fetch("megane", "builder-tools", "ws")
     try:
         reply, _ = await rpc(ws, {"type": "tools:servers", "requestId": 1})
@@ -76,6 +82,19 @@ async def test_lists_connects_and_calls_through_the_websocket(jp_serverapp, jp_w
         await ws.write_message(json.dumps({"type": "tools:disconnect", "server": "fake"}))
         reply, _ = await rpc(ws, {"type": "tools:call", "requestId": 4, "server": "fake", "name": "echo"})
         assert reply["error"] == 'Not connected to "fake".'
+    finally:
+        ws.close()
+
+
+async def test_offers_the_reference_server_by_default(jp_serverapp, jp_ws_fetch, jp_root_dir):
+    jp_serverapp.web_app.settings[SETTINGS_KEY].find = lambda name: "/b/uvx" if name == "uvx" else None
+    ws = await jp_ws_fetch("megane", "builder-tools", "ws")
+    try:
+        reply, _ = await rpc(ws, {"type": "tools:servers", "requestId": 1})
+        assert [s["id"] for s in reply["value"]] == ["megane-builder-tools", "fake"]
+        assert reply["value"][0]["description"].startswith(
+            "/b/uvx --from git+https://github.com/hodakamori/megane-builder-tools@"
+        )
     finally:
         ws.close()
 

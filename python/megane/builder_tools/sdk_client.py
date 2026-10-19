@@ -108,7 +108,7 @@ class SdkToolClient:
 
     async def _run(self) -> None:
         from mcp import ClientSession, StdioServerParameters
-        from mcp.client.stdio import get_default_environment, stdio_client
+        from mcp.client.stdio import stdio_client
         from mcp.client.streamable_http import create_mcp_http_client, streamable_http_client
 
         errlog = None
@@ -120,7 +120,9 @@ class SdkToolClient:
                     params = StdioServerParameters(
                         command=self.config.command,
                         args=list(self.config.args),
-                        env={**get_default_environment(), **self.config.env},
+                        # The server's whole environment, not the SDK's few variables: a server
+                        # started by uvx downloads on first use and needs the proxy and uv settings.
+                        env={**os.environ, **self.config.env},
                         cwd=self.config.cwd,
                     )
                     read, write = await stack.enter_async_context(stdio_client(params, errlog=errlog))

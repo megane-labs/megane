@@ -446,6 +446,17 @@ Builder tabs share one connection per server; a stdio server is stopped when
 the last tab disconnects or closes. The setting is restricted in untrusted
 workspaces, and an HTTP entry must use HTTPS unless it is on loopback.
 
+**Both bridges offer the reference server without any configuration**
+(`megane-builder-tools`, §10): the `megane-builder-tools` command if it is on
+PATH (or in uv's `~/.local/bin`, which an editor started from the Dock does not
+see), else `uvx --from git+https://github.com/hodakamori/megane-builder-tools@<commit>
+megane-builder-tools` at a commit pinned in megane (`DEFAULT_SERVER_SOURCE` in
+`builderTools.ts` and `config.py`, kept equal by a test). An entry named
+`megane-builder-tools` replaces it and `null` hides it; the usual confirmation
+still comes first. A stdio server inherits the host's whole environment, not
+the SDK's short list, so uvx's first download sees the proxy and uv settings;
+the VS Code client allows 10 minutes for that first `initialize`.
+
 **JupyterLab has the bridge in the Jupyter server** (`megane.builder_tools`,
 a server extension enabled by `etc/jupyter/jupyter_server_config.d/megane.json`
 in the wheel). It reads the same entries from `MeganeBuilderTools.mcp_servers`

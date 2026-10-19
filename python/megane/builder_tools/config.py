@@ -15,13 +15,22 @@ HTTP entry is a Streamable HTTP ``url`` with optional ``headers``.
 ``${workspaceFolder}`` (the Jupyter server's root directory) and
 ``${userHome}`` are replaced. Entries that cannot be used are skipped and
 described, so one typo does not hide the rest.
+
+Without any entry, the reference server (``megane-builder-tools``: liquid box,
+polymer chain, solvate) is offered too, started from PATH or else with uv at a
+pinned version (``default_server``); an entry of the same name replaces it,
+and ``"megane-builder-tools": null`` hides it.
 """
 
 from __future__ import annotations
 
 import json
+import os
 import re
 import shlex
+import shutil
+import sys
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 from urllib.parse import urlsplit
@@ -92,6 +101,8 @@ def parse_server_configs(
     if not isinstance(raw, dict):
         return servers, ["the setting must be an object of servers"]
     for server_id, entry in raw.items():
+        if entry is None or entry is False:
+            continue  # turned off (hides the default server)
 
         def fail(why: str, server_id: str = server_id) -> None:
             problems.append(f'"{server_id}" {why}')
@@ -167,3 +178,55 @@ def to_bridge_server(config: ServerConfig) -> dict[str, str]:
         "description": describe_server(config),
         "fingerprint": server_fingerprint(config),
     }
+
+
+#: The reference tool server, offered without any entry.
+DEFAULT_SERVER_ID = "megane-builder-tools"
+#: The version uv starts when ``megane-builder-tools`` is not installed: a pinned commit, kept
+#: equal to ``DEFAULT_SERVER_SOURCE`` in ``vscode-megane/src/builderTools.ts``.
+DEFAULT_SERVER_SOURCE = (
+    "git+https://github.com/hodakamori/megane-builder-tools@b2aa9436c6030889ae18f04607fabe47c3a1f19f"
+)
+
+
+def extra_search_dirs(home: str, platform: str = sys.platform) -> list[str]:
+    """Where programs are looked for besides PATH: where uv and the tools it installs live."""
+    dirs = [os.path.join(home, ".local", "bin"), os.path.join(home, ".cargo", "bin")]
+    if platform == "darwin":
+        dirs += ["/opt/homebrew/bin", "/usr/local/bin"]
+    return dirs
+
+
+def find_executable(name: str, extra_dirs: list[str] | None = None, path: str | None = None) -> str | None:
+    """The full path of program ``name`` on PATH or in ``extra_dirs``, or None."""
+    search = [path if path is not None else os.environ.get("PATH", ""), *(extra_dirs or [])]
+    return shutil.which(name, path=os.pathsep.join(p for p in search if p))
+
+
+def default_server(find: Callable[[str], str | None], cwd: str | None = None) -> StdioServer | None:
+    """The reference server: installed ``megane-builder-tools``, else uvx at the pinned version, else None."""
+    own = find("megane-builder-tools")
+    if own:
+        return StdioServer(id=DEFAULT_SERVER_ID, command=own, cwd=cwd)
+    uvx = find("uvx")
+    if not uvx:
+        return None
+    return StdioServer(
+        id=DEFAULT_SERVER_ID,
+        command=uvx,
+        args=("--from", DEFAULT_SERVER_SOURCE, "megane-builder-tools"),
+        cwd=cwd,
+    )
+
+
+def with_default_server(
+    raw: Any,
+    parsed: tuple[list[ServerConfig], list[str]],
+    fallback: Callable[[], ServerConfig | None],
+) -> tuple[list[ServerConfig], list[str]]:
+    """The configured servers plus the default one, unless the option names ``megane-builder-tools``."""
+    if isinstance(raw, dict) and DEFAULT_SERVER_ID in raw:
+        return parsed
+    server = fallback()
+    servers, problems = parsed
+    return ([server, *servers], problems) if server else parsed

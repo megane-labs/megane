@@ -243,9 +243,12 @@
           "type": "object",
           "default": {},
           "scope": "machine-overridable",
-          "markdownDescription": "MCP tool servers for Megane Builder's **Tools** menu ([Builder Tool Contract](https://megane-labs.github.io/megane/dev/builder-tools)), in the `mcpServers` format LLM clients use. A stdio server is `{ \"command\": \"python\", \"args\": [\"my_tools.py\"] }` (optional `env`, `cwd`); a Streamable HTTP server is `{ \"url\": \"https://…/mcp\", \"headers\": { \"Authorization\": \"Bearer …\" } }` (https, or http on this machine). `${workspaceFolder}` and `${userHome}` are replaced. Megane asks before it first uses a server.",
+          "markdownDescription": "MCP tool servers for Megane Builder's **Tools** menu ([Builder Tool Contract](https://megane-labs.github.io/megane/dev/builder-tools)), in the `mcpServers` format LLM clients use. A stdio server is `{ \"command\": \"python\", \"args\": [\"my_tools.py\"] }` (optional `env`, `cwd`); a Streamable HTTP server is `{ \"url\": \"https://…/mcp\", \"headers\": { \"Authorization\": \"Bearer …\" } }` (https, or http on this machine). `${workspaceFolder}` and `${userHome}` are replaced. Megane asks before it first uses a server. Without a setting, the reference server `megane-builder-tools` (liquid box, polymer chain, solvate) is offered too: the `megane-builder-tools` command if it is installed, else run by `uvx` at the version Megane was tested with. An entry named `megane-builder-tools` replaces it; `\"megane-builder-tools\": null` hides it.",
           "additionalProperties": {
-            "type": "object",
+            "type": [
+              "object",
+              "null"
+            ],
             "properties": {
               "type": {
                 "type": "string",
@@ -289,7 +292,8 @@
                 },
                 "description": "HTTP headers, e.g. Authorization."
               }
-            }
+            },
+            "description": "A server (an object), or null to hide the default megane-builder-tools."
           }
         }
       }

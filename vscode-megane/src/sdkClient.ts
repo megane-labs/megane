@@ -11,6 +11,27 @@ import { describeServer, type ServerConfig, type ToolClient } from "./builderToo
 
 /** Large enough for a `document` argument or a result of the maximum size (§5.1). */
 const MAX_MESSAGE_BYTES = 64 * 1024 * 1024;
+/**
+ * How long a stdio server may take to answer `initialize`: the first start of
+ * one run by uvx downloads its environment (the reference server's is over
+ * 100 MB), which the SDK's 60 s default does not allow for.
+ */
+export const STDIO_START_TIMEOUT_MS = 10 * 60 * 1000;
+
+/**
+ * The editor's environment, for a server the user allowed. The SDK would pass
+ * only a few variables (HOME, PATH, …), but a server started by uvx downloads
+ * its environment on first use and needs the proxy (`HTTPS_PROXY`,
+ * `SSL_CERT_FILE`) and uv settings (`UV_CACHE_DIR`, …), as a command run in a
+ * terminal would have them.
+ */
+export function inheritedEnvironment(
+  env: Record<string, string | undefined> = process.env,
+): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const [key, value] of Object.entries(env)) if (value !== undefined) out[key] = value;
+  return out;
+}
 
 /**
  * A `ToolClient` on the MCP TypeScript SDK: stdio servers are started as a
@@ -23,12 +44,11 @@ export async function connectWithSdk(
   const { Client, StreamableHTTPClientTransport } = await import("@modelcontextprotocol/client");
   let transport;
   if (config.kind === "stdio") {
-    const { StdioClientTransport, getDefaultEnvironment } =
-      await import("@modelcontextprotocol/client/stdio");
+    const { StdioClientTransport } = await import("@modelcontextprotocol/client/stdio");
     const stdio = new StdioClientTransport({
       command: config.command,
       args: config.args,
-      env: { ...getDefaultEnvironment(), ...config.env },
+      env: { ...inheritedEnvironment(), ...config.env },
       cwd: config.cwd ?? os.homedir(),
       stderr: "pipe",
       maxBufferSize: MAX_MESSAGE_BYTES,
@@ -49,7 +69,10 @@ export async function connectWithSdk(
     log(`[${config.id}] disconnected`);
   };
   log(`[${config.id}] connecting: ${describeServer(config)}`);
-  await client.connect(transport);
+  await client.connect(
+    transport,
+    config.kind === "stdio" ? { timeout: STDIO_START_TIMEOUT_MS } : undefined,
+  );
   const info = client.getServerVersion();
   return {
     serverName: info?.name || config.id,

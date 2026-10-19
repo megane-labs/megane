@@ -51,6 +51,8 @@ import {
 import type { BridgeReply } from "@/builder/tools/bridgeProtocol";
 
 const SERVER = join(__dirname, "fixtures", "fakeMcpServer.mjs");
+/** No program is installed: no default server (tests that are not about it). */
+const none = () => null;
 
 function memento() {
   const data = new Map<string, unknown>();
@@ -86,7 +88,7 @@ describe("createBuilderToolsHost", () => {
       fake: { command: "node", args: ["${workspaceFolder}/tools.mjs"] },
       broken: { args: [] },
     };
-    const host = createBuilderToolsHost({ globalState: memento() } as never);
+    const host = createBuilderToolsHost({ globalState: memento() } as never, none);
     const { webview, reply } = tab();
     const bridge = host.bridgeFor(webview as never);
     bridge.handle({ type: "tools:servers", requestId: 1 });
@@ -108,7 +110,7 @@ describe("createBuilderToolsHost", () => {
     state.setting = { fake: { command: process.execPath, args: [SERVER] } };
     state.folder = __dirname;
     const globalState = memento();
-    const host = createBuilderToolsHost({ globalState } as never);
+    const host = createBuilderToolsHost({ globalState } as never, none);
     const { webview, reply, posted } = tab();
     const bridge = host.bridgeFor(webview as never);
     bridge.handle({ type: "tools:connect", requestId: 1, server: "fake" });
@@ -168,7 +170,7 @@ describe("createBuilderToolsHost", () => {
   it("does not run a server the user did not allow", async () => {
     state.setting = { fake: { command: process.execPath, args: [SERVER] } };
     state.answer = undefined;
-    const host = createBuilderToolsHost({ globalState: memento() } as never);
+    const host = createBuilderToolsHost({ globalState: memento() } as never, none);
     const { webview, reply } = tab();
     host
       .bridgeFor(webview as never)
@@ -179,8 +181,35 @@ describe("createBuilderToolsHost", () => {
     host.dispose();
   });
 
+  it("offers the reference server without a setting, unless one replaces or hides it", async () => {
+    const find = (name: string) => (name === "uvx" ? "/home/me/.local/bin/uvx" : null);
+    const host = createBuilderToolsHost({ globalState: memento() } as never, find);
+    const list = async (setting: unknown) => {
+      state.setting = setting;
+      const { webview, reply } = tab();
+      host.bridgeFor(webview as never).handle({ type: "tools:servers", requestId: 1 });
+      await vi.waitFor(() => expect(reply(1)).toBeTruthy());
+      return reply(1)!.value as { id: string; description: string }[];
+    };
+    const [reference] = await list(undefined);
+    expect(reference.id).toBe("megane-builder-tools");
+    expect(reference.description).toMatch(
+      /^\/home\/me\/\.local\/bin\/uvx --from git\+https:\/\/github\.com\/hodakamori\/megane-builder-tools@[0-9a-f]{40} megane-builder-tools$/,
+    );
+    expect((await list({ mine: { command: "x" } })).map((s) => s.id)).toEqual([
+      "megane-builder-tools",
+      "mine",
+    ]);
+    expect(await list({ "megane-builder-tools": { command: "/opt/tools" } })).toEqual([
+      expect.objectContaining({ id: "megane-builder-tools", description: "/opt/tools" }),
+    ]);
+    expect(await list({ "megane-builder-tools": null })).toEqual([]);
+    expect(state.warnings).toEqual([]);
+    host.dispose();
+  });
+
   it("opens the setting", async () => {
-    const host = createBuilderToolsHost({ globalState: memento() } as never);
+    const host = createBuilderToolsHost({ globalState: memento() } as never, none);
     host.bridgeFor(tab().webview as never).handle({ type: "tools:openSettings" });
     await vi.waitFor(() => expect(state.commands.length).toBe(1));
     expect(state.commands[0]).toEqual([
