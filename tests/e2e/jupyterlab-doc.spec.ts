@@ -149,7 +149,7 @@ test("DocWidget recovers when switching between two open files", async ({ page }
     if (!w.jupyterapp) return false;
     await w.jupyterapp.commands.execute("docmanager:open", {
       path: fileName,
-      factory: "megane Molecular Viewer",
+      factory: "Megane Molecular Viewer",
     });
     return true;
   }, "water.gro");

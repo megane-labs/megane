@@ -319,7 +319,7 @@ class MeganePipelineEditorProvider implements vscode.CustomReadonlyEditorProvide
 
       if (pipeline.version !== 3) {
         throw new Error(
-          `Not a valid megane pipeline file (version 3 required, got ${pipeline.version})`,
+          `Not a valid Megane pipeline file (version 3 required, got ${pipeline.version})`,
         );
       }
 
@@ -557,7 +557,7 @@ export class MeganeBuilderPanels {
       return existing;
     }
     const mediaDir = vscode.Uri.joinPath(this.context.extensionUri, "media");
-    const title = file ? `${path.basename(file.fsPath)} — Builder` : "megane Builder";
+    const title = file ? `${path.basename(file.fsPath)} — Builder` : "Megane Builder";
     const panel = vscode.window.createWebviewPanel(
       MeganeBuilderPanels.viewType,
       title,
@@ -586,7 +586,7 @@ export class MeganeBuilderPanels {
           });
         } catch (err) {
           void vscode.window.showErrorMessage(
-            `megane Builder could not read ${path.basename(file.fsPath)}: ${
+            `Megane Builder could not read ${path.basename(file.fsPath)}: ${
               err instanceof Error ? err.message : String(err)
             }`,
           );

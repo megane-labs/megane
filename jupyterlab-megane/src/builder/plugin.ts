@@ -3,7 +3,7 @@
  *
  * - The **megane panel** in the left sidebar (`BuilderSidebar`) opens the
  *   Builder tab and lists the structure files of the file browser's folder.
- * - **Open in megane Builder** on structure files in the file browser's
+ * - **Open in Megane Builder** on structure files in the file browser's
  *   context menu, and **megane Builder** in the launcher and the command
  *   palette.
  * - The Builder is one main-area tab (`BuilderWidget`). Save writes into the
@@ -109,7 +109,7 @@ export function activateBuilder(
   };
 
   app.commands.addCommand(CommandIDs.openBuilder, {
-    label: "megane Builder",
+    label: "Megane Builder",
     caption: "Build and edit molecular structures",
     icon: meganeIcon,
     execute: () => {
@@ -118,8 +118,8 @@ export function activateBuilder(
   });
 
   app.commands.addCommand(CommandIDs.openInBuilder, {
-    label: "Open in megane Builder",
-    caption: "Edit this structure in megane Builder",
+    label: "Open in Megane Builder",
+    caption: "Edit this structure in Megane Builder",
     icon: meganeIcon,
     isVisible: (args) => !!((args.path as string | undefined) ?? selectedPath()),
     execute: async (args) => {
@@ -136,7 +136,7 @@ export function activateBuilder(
         await tab.open(file, dirname(path));
       } catch (err) {
         Notification.error(
-          `megane Builder could not read ${path}: ${err instanceof Error ? err.message : String(err)}`,
+          `Megane Builder could not read ${path}: ${err instanceof Error ? err.message : String(err)}`,
           { autoClose: 6000 },
         );
       }
@@ -150,8 +150,8 @@ export function activateBuilder(
   });
 
   launcher?.add({ command: CommandIDs.openBuilder, category: "Other", rank: 10 });
-  palette?.addItem({ command: CommandIDs.openBuilder, category: "megane" });
-  palette?.addItem({ command: CommandIDs.openInBuilder, category: "megane" });
+  palette?.addItem({ command: CommandIDs.openBuilder, category: "Megane" });
+  palette?.addItem({ command: CommandIDs.openInBuilder, category: "Megane" });
 
   const sidebar = new BuilderSidebar({
     openBuilder: () => void app.commands.execute(CommandIDs.openBuilder),
@@ -169,8 +169,8 @@ export function activateBuilder(
 export const builderPlugin: JupyterFrontEndPlugin<void> = {
   id: "megane-jupyterlab:builder",
   description:
-    "megane Builder (structure editor): a megane panel in the left sidebar, a launcher item and " +
-    "an Open in megane Builder entry on structure files",
+    "Megane Builder (structure editor): a Megane panel in the left sidebar, a launcher item and " +
+    "an Open in Megane Builder entry on structure files",
   autoStart: true,
   optional: [ILayoutRestorer, IDefaultFileBrowser, ILauncher, ICommandPalette],
   activate: (

@@ -104,13 +104,13 @@ async function builderFrame(page: Page, timeoutMs = 60_000): Promise<Frame> {
     }
     await page.waitForTimeout(250);
   }
-  throw new Error("no megane Builder webview appeared");
+  throw new Error("no Megane Builder webview appeared");
 }
 
 test("the megane activity-bar view opens an empty Builder tab", async ({ page }) => {
   await openWorkbench(page);
   await page
-    .getByRole("tab", { name: /^megane/ })
+    .getByRole("tab", { name: /^Megane/ })
     .first()
     .click();
   // The welcome buttons (the view's title bar repeats them as icons).
@@ -123,7 +123,7 @@ test("the megane activity-bar view opens an empty Builder tab", async ({ page })
   const wv = await builderFrame(page);
   await expect(wv.locator('[data-testid="builder-welcome"]')).toBeVisible();
   await expect(wv.locator('[data-testid="builder-tools"]')).toHaveCount(1);
-  await expect(page.locator(".tab", { hasText: "megane Builder" }).first()).toBeVisible();
+  await expect(page.locator(".tab", { hasText: "Megane Builder" }).first()).toBeVisible();
 });
 
 test("the Tools menu runs a configured stdio tool server through the extension host", async ({
@@ -131,7 +131,7 @@ test("the Tools menu runs a configured stdio tool server through the extension h
 }) => {
   await openWorkbench(page);
   await page
-    .getByRole("tab", { name: /^megane/ })
+    .getByRole("tab", { name: /^Megane/ })
     .first()
     .click();
   await page
@@ -177,7 +177,7 @@ test("the Tools menu runs a configured stdio tool server through the extension h
   await expect(wv.locator('[data-testid="builder-notice"]')).toContainText("Solvate");
 });
 
-test("Open in megane Builder from the Explorer: RDKit, Ketcher and Save work in the webview", async ({
+test("Open in Megane Builder from the Explorer: RDKit, Ketcher and Save work in the webview", async ({
   page,
 }) => {
   rmSync(join(WORKSPACE, "caffeine.xyz"), { force: true });
@@ -185,7 +185,7 @@ test("Open in megane Builder from the Explorer: RDKit, Ketcher and Save work in 
   const row = page.getByRole("treeitem", { name: "caffeine.sdf", exact: true });
   await row.waitFor({ state: "visible", timeout: 30_000 });
   await row.click({ button: "right" });
-  const entry = page.getByRole("menuitem", { name: "Open in megane Builder" });
+  const entry = page.getByRole("menuitem", { name: "Open in Megane Builder" });
   await expect(entry).toBeVisible();
   // The context menu ignores clicks while it is still animating in.
   await page.waitForTimeout(500);
@@ -220,7 +220,7 @@ test("a megane viewer tab's title bar opens its file in the Builder", async ({ p
   await row.waitFor({ state: "visible", timeout: 30_000 });
   await row.click({ force: true });
   await row.dblclick({ force: true });
-  const action = page.getByRole("button", { name: "Open in megane Builder" });
+  const action = page.getByRole("button", { name: "Open in Megane Builder" });
   await expect(action).toBeVisible({ timeout: 60_000 });
   await action.click();
   const wv = await builderFrame(page);

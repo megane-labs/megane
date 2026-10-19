@@ -509,7 +509,7 @@ export function PipelineChatBox({ onPipelineApplied }: { onPipelineApplied?: () 
             <div
               style={{ color: "var(--megane-text-secondary)", fontSize: 11, fontStyle: "italic" }}
             >
-              The free demo runs through megane&apos;s shared proxy — no API key needed. It uses a
+              The free demo runs through Megane&apos;s shared proxy — no API key needed. It uses a
               rate-limited free-tier model, so responses may be slower or lower quality than your
               own API key.
             </div>

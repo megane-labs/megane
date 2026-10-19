@@ -27,14 +27,14 @@ export interface BuilderToolsHost {
 /** The question asked before megane first uses a server (Builder Tool Contract §9). */
 export function permissionDetail(config: ServerConfig, description: string): string {
   return config.kind === "stdio"
-    ? `megane Builder will run this command on your computer to provide its tool buttons:\n\n${description}\n\nAllow only servers you trust.`
-    : `megane Builder will send the structures you build with its tools to:\n\n${description}\n\nAllow only servers you trust.`;
+    ? `Megane Builder will run this command on your computer to provide its tool buttons:\n\n${description}\n\nAllow only servers you trust.`
+    : `Megane Builder will send the structures you build with its tools to:\n\n${description}\n\nAllow only servers you trust.`;
 }
 
 export function createBuilderToolsHost(context: vscode.ExtensionContext): BuilderToolsHost {
   let channel: vscode.OutputChannel | undefined;
   const log = (line: string) => {
-    channel ??= vscode.window.createOutputChannel("megane Builder Tools");
+    channel ??= vscode.window.createOutputChannel("Megane Builder Tools");
     channel.appendLine(line);
   };
   // The SDK is a bundle of its own, loaded on the first connection.

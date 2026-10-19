@@ -99,8 +99,8 @@ export async function wrapInEPS(pngBlob: Blob, width: number, height: number): P
 
   const eps = `%!PS-Adobe-3.0 EPSF-3.0
 %%BoundingBox: 0 0 ${width} ${height}
-%%Title: megane export
-%%Creator: megane molecular viewer
+%%Title: Megane export
+%%Creator: Megane molecular viewer
 %%EndComments
 gsave
 ${width} ${height} scale
@@ -130,7 +130,7 @@ export async function wrapInSVG(pngBlob: Blob, width: number, height: number): P
   const dataURL = await blobToDataURL(pngBlob);
   const svg = `<?xml version="1.0" encoding="UTF-8"?>
 <svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}">
-  <title>megane export</title>
+  <title>Megane export</title>
   <image x="0" y="0" width="${width}" height="${height}" xlink:href="${dataURL}"/>
 </svg>`;
   return new Blob([svg], { type: "image/svg+xml" });

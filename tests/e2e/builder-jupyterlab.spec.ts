@@ -134,7 +134,7 @@ test("the file browser's context menu and the launcher reach the Builder", async
   await openLab(page);
   const item = page.locator(".jp-DirListing-item", { hasText: "caffeine.sdf" });
   await item.click({ button: "right" });
-  const entry = page.locator(".lm-Menu-item", { hasText: "Open in megane Builder" });
+  const entry = page.locator(".lm-Menu-item", { hasText: "Open in Megane Builder" });
   await expect(entry).toBeVisible();
   await entry.click();
   await expect(page.locator('#megane-builder [data-testid="megane-builder"]')).toHaveAttribute(
@@ -146,7 +146,7 @@ test("the file browser's context menu and the launcher reach the Builder", async
   // A file that is not a structure has no such entry.
   await page.locator(".jp-DirListing-item", { hasText: "notes.txt" }).click({ button: "right" });
   await expect(page.locator(".lm-Menu").first()).toBeVisible();
-  await expect(page.locator(".lm-Menu-item", { hasText: "Open in megane Builder" })).toBeHidden();
+  await expect(page.locator(".lm-Menu-item", { hasText: "Open in Megane Builder" })).toBeHidden();
   await page.keyboard.press("Escape");
 
   await page.evaluate(() =>
@@ -155,6 +155,6 @@ test("the file browser's context menu and the launcher reach the Builder", async
     ).jupyterapp.commands.execute("launcher:create"),
   );
   await expect(
-    page.locator(".jp-LauncherCard", { hasText: "megane Builder" }).filter({ visible: true }),
+    page.locator(".jp-LauncherCard", { hasText: "Megane Builder" }).filter({ visible: true }),
   ).toBeVisible();
 });

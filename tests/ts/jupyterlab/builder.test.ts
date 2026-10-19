@@ -183,7 +183,7 @@ describe("BuilderWidget", () => {
     const save = vi.fn(async () => "Saved");
     const w = new BuilderWidget(save);
     expect(w.id).toBe(BUILDER_WIDGET_ID);
-    expect(w.title.label).toBe("megane Builder");
+    expect(w.title.label).toBe("Megane Builder");
     expect(w.title.closable).toBe(true);
     expect(w.node.dataset.lmSuppressShortcuts).toBe("true");
 
@@ -248,7 +248,7 @@ describe("BuilderSidebar", () => {
       openFile: vi.fn(),
       folder: () => null,
     });
-    expect(sidebar.node.textContent).toContain("Open in megane Builder");
+    expect(sidebar.node.textContent).toContain("Open in Megane Builder");
   });
 });
 
@@ -339,7 +339,7 @@ describe("builder plugin", () => {
     expect(sidebar.node.textContent).toContain("Right-click");
   });
 
-  it("megane Builder opens one tab and brings it back", async () => {
+  it("Megane Builder opens one tab and brings it back", async () => {
     const { app } = fakeApp();
     activateBuilder(app as never, null, null, null, null);
     await app.commands.execute(CommandIDs.openBuilder);
@@ -353,7 +353,7 @@ describe("builder plugin", () => {
     expect(app.shell.add.mock.calls.filter((c) => c[1] === "main")).toHaveLength(2);
   });
 
-  it("Open in megane Builder reads the file into the tab and saves beside it", async () => {
+  it("Open in Megane Builder reads the file into the tab and saves beside it", async () => {
     const { app, commands } = fakeApp({ "proj/w.pdb": [65, 66] });
     const prompts: SavePrompts = { path: vi.fn(async (p: string) => p), overwrite: vi.fn() };
     activateBuilder(app as never, null, fakeBrowser() as never, null, null, prompts);
@@ -391,7 +391,7 @@ describe("builder plugin", () => {
     await app.commands.execute(CommandIDs.openInBuilder);
     expect(warning).toHaveBeenCalledTimes(1);
     await app.commands.execute(CommandIDs.openInBuilder, { path: "gone.pdb" });
-    expect(error.mock.calls[0][0]).toBe("megane Builder could not read gone.pdb: not found");
+    expect(error.mock.calls[0][0]).toBe("Megane Builder could not read gone.pdb: not found");
     expect(openStructureFile).not.toHaveBeenCalled();
   });
 
