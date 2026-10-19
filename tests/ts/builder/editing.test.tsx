@@ -103,13 +103,21 @@ describe("store: selection and moves", () => {
 });
 
 describe("Select tool bar", () => {
-  it("toggles Snap, lists the drag gestures, selects all and inverts", () => {
+  it("toggles Box and Snap, lists the drag gestures, selects all and inverts", () => {
     render(<ContextBar />);
     expect(screen.getByTestId("builder-context-label").textContent).toBe("Select");
+    expect(screen.getByTestId("builder-select-box").getAttribute("aria-pressed")).toBe("false");
+    click("builder-select-box");
+    expect(s().boxSelect).toBe(true);
+    expect(screen.getByTestId("builder-select-box").getAttribute("aria-pressed")).toBe("true");
+    click("builder-select-box");
+    expect(s().boxSelect).toBe(false);
     click("builder-snap");
     expect(s().snap).toBe(true);
     expect(screen.getByTestId("builder-snap").getAttribute("aria-pressed")).toBe("true");
-    expect(screen.getByTestId("builder-drag-legend").textContent).toContain("rotate the view");
+    expect(screen.getByTestId("builder-drag-legend").textContent).toContain(
+      "turn the view, as in the viewer",
+    );
     click("builder-select-all");
     expect(s().selected).toHaveLength(7);
     act(() => s().setSelected([6]));

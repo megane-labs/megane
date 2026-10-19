@@ -11,7 +11,7 @@
  */
 
 import * as THREE from "three";
-import type { CameraControls, MouseScheme } from "./CameraControls";
+import type { CameraControls } from "./CameraControls";
 import type { Snapshot, Frame, HoverInfo, SelectionState, Measurement } from "../types";
 import { ImpostorAtomMesh } from "./ImpostorAtomMesh";
 import { ImpostorBondMesh } from "./ImpostorBondMesh";
@@ -1368,11 +1368,6 @@ export class MoleculeRenderer {
     toY: number,
   ): ViewDragGesture | null {
     return this.selection.dragGesture(atomIndex, fromX, fromY, toX, toY);
-  }
-
-  /** Which mouse buttons rotate and pan the camera (see `MouseScheme`). */
-  setMouseScheme(scheme: MouseScheme): void {
-    this.cameraController.setMouseScheme(scheme);
   }
 
   /**

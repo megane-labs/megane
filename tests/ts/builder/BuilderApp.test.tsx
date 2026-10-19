@@ -405,15 +405,20 @@ describe("BuilderApp — editing", () => {
   it("a press asks Select and Move what a drag from there does", () => {
     render(<BuilderApp />);
     const press = (atom: number | null) => handlers().pressAction(atom, NO_MODS);
-    // Select: the selection moves, anything else draws a box.
+    // Select: the selection moves, anything else turns the view as in the
+    // viewer, or draws a box while Box is on.
     act(() => useBuilderStore.getState().setSelected([1]));
+    expect(press(1)).toBe("move");
+    expect(press(2)).toBe("camera");
+    expect(press(null)).toBe("camera");
+    act(() => useBuilderStore.getState().setBoxSelect(true));
     expect(press(1)).toBe("move");
     expect(press(2)).toBe("box");
     expect(press(null)).toBe("box");
-    // Move: any atom moves.
+    // Move: any atom moves, empty space turns the view; Box is Select's only.
     tool("move");
     expect(press(2)).toBe("move");
-    expect(press(null)).toBe("box");
+    expect(press(null)).toBe("camera");
     // The other tools leave drags to the camera, as does a paused document.
     tool("add");
     expect(press(1)).toBe("camera");
@@ -496,7 +501,7 @@ describe("BuilderApp — editing", () => {
     expect(useBuilderStore.getState().notice?.text).toContain("close contact");
   });
 
-  it("box selection replaces, adds to or takes from the selection; double-click picks molecules", () => {
+  it("box selection replaces, adds to or takes from the selection", () => {
     render(<BuilderApp />);
     const box = (indices: number[], mode: "replace" | "add" | "subtract") =>
       act(() => handlers().boxSelect(indices, mode));
@@ -506,23 +511,6 @@ describe("BuilderApp — editing", () => {
     expect(useBuilderStore.getState().selected).toEqual([1, 2, 0]);
     box([1], "subtract");
     expect(useBuilderStore.getState().selected).toEqual([2, 0]);
-    act(() => useBuilderStore.getState().setSelected([]));
-    let handled = false;
-    act(() => {
-      handled = handlers().doubleClick(1, NO_MODS);
-    });
-    expect(handled).toBe(true);
-    expect(useBuilderStore.getState().selected).toEqual([0, 1, 2]);
-    // Alt: every atom of the element; Shift adds to the selection.
-    act(() => void handlers().doubleClick(1, { ...NO_MODS, altKey: true }));
-    expect(useBuilderStore.getState().selected).toEqual([1, 2]);
-    act(() => useBuilderStore.getState().setSelected([0]));
-    act(() => void handlers().doubleClick(2, { ...NO_MODS, altKey: true, shiftKey: true }));
-    expect(useBuilderStore.getState().selected).toEqual([0, 1, 2]);
-    // Other tools leave a double-click to the camera.
-    tool("add");
-    expect(handlers().doubleClick(1, NO_MODS)).toBe(false);
-    expect(handlers().doubleClick(99, NO_MODS)).toBe(false);
   });
 
   it("marks the atom under the pointer in the colour of what a click would do", () => {

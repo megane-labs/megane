@@ -127,6 +127,11 @@ export interface BuilderStore {
    * cell) — an adsorbate on a surface site. Null keeps clicks on atoms inert.
    */
   adsorbHeight: number | null;
+  /**
+   * With the Select tool, a left drag that does not move the selection draws
+   * a box and selects what it holds, instead of turning the view.
+   */
+  boxSelect: boolean;
   /** Round drags to `SNAP_DISTANCE` Å / `SNAP_ANGLE`°. */
   snap: boolean;
   /** The drag in progress, or null. Keyboard shortcuts pause while it is set. */
@@ -178,6 +183,7 @@ export interface BuilderStore {
   /** Choose the molecule the Place tool stamps (and switch to that tool), or clear it. */
   setPlaceSource: (molecule: LibraryMolecule | null) => void;
   setAdsorbHeight: (height: number | null) => void;
+  setBoxSelect: (on: boolean) => void;
   setSnap: (on: boolean) => void;
   setDrag: (drag: DragStatus | null) => void;
   /** Show a message (replacing the current one), or clear it with null. */
@@ -274,6 +280,7 @@ export const builderStateCreator: StateCreator<BuilderStore> = (set, get) => ({
   handlers: null,
   placeSource: null,
   adsorbHeight: null,
+  boxSelect: false,
   snap: false,
   drag: null,
   notice: null,
@@ -465,6 +472,7 @@ export const builderStateCreator: StateCreator<BuilderStore> = (set, get) => ({
     ),
   setAdsorbHeight: (height) =>
     set({ adsorbHeight: height !== null && Number.isFinite(height) ? height : null }),
+  setBoxSelect: (boxSelect) => set({ boxSelect }),
   setSnap: (snap) => set({ snap }),
   setDrag: (drag) => set({ drag }),
   setNotice: (notice) => set({ notice }),
