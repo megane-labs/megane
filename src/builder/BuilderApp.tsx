@@ -93,6 +93,7 @@ import { ToolDialog } from "./tools/ToolDialog";
 
 import { LibraryHost } from "./library/LibraryPanel";
 import { AtomMenu, type AtomMenuTarget } from "./AtomMenu";
+import { ConfirmHost } from "./ConfirmDialog";
 import { runCleanup } from "./cleanup";
 import { buttonStyle, hintStyle } from "./styles";
 import { trackEvent } from "../analytics";
@@ -920,6 +921,7 @@ export function BuilderApp({ host = WEB_HOST }: BuilderAppProps = {}) {
       </div>
 
       <LibraryHost />
+      <ConfirmHost />
       {atomMenu && <AtomMenu target={atomMenu} onClose={closeAtomMenu} />}
     </div>
   );

@@ -190,10 +190,11 @@ export function useBuilderShortcuts(
       if (api.getState().drag) return;
       if (scope && !inScope(e.target, scope.current)) return;
       if (isTypingTarget(e.target)) return;
-      // A modal dialog (the Ketcher sketcher) owns the keyboard; the forms in
+      // A modal dialog (the Ketcher sketcher, a confirm) owns the keyboard; the forms in
       // the Details panel (a Structure dialog, a new document, a Python tool,
       // the Place gallery) do not, so the tool keys keep working beside them.
-      if (document.querySelector('[role="dialog"][aria-modal="true"]')) return;
+      if (document.querySelector('[role="dialog"][aria-modal="true"], [role="alertdialog"]'))
+        return;
       const action = resolveShortcut(e);
       if (!action) return;
       if (runShortcut(action, api, host)) e.preventDefault();

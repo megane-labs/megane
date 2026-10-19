@@ -6,6 +6,8 @@ import {
   shownSnapshot,
   viewSnapshot,
   canEdit,
+  confirmDiscard,
+  isDirty,
   UNTITLED,
 } from "@/builder/store";
 import type { Snapshot } from "@/types";
@@ -116,18 +118,39 @@ describe("useBuilderStore — document", () => {
     expect(shownSnapshot(s())!.positions[0]).toBeCloseTo(1);
   });
 
-  it("clearOps drops the whole history and the redo stack", () => {
+  it("clearOps undoes every step, and Redo brings them back one by one", () => {
     s().openStructure(water(), null, "w.xyz");
     s().pushOp({ op: "delete_atoms", atoms: [1] });
-    s().undo();
-    s().pushOp({ op: "delete_atoms", atoms: [2] });
+    s().pushOps([
+      { op: "set_element", atoms: [0], element: 16 },
+      { op: "set_element", atoms: [2], element: 9 },
+    ]);
     s().clearOps();
     expect(s().edits).toEqual([]);
-    expect(s().redoStack).toEqual([]);
+    expect(s().redoStack).toHaveLength(3);
     expect(shownSnapshot(s())!.nAtoms).toBe(3);
     const rev = s().revision;
     s().clearOps();
     expect(s().revision).toBe(rev);
+    // The first step comes back first, the two-op group as one step.
+    s().redo();
+    expect(s().edits).toEqual([{ op: "delete_atoms", atoms: [1] }]);
+    s().redo();
+    expect(s().edits).toHaveLength(3);
+    expect(s().redoStack).toEqual([]);
+  });
+
+  it("undo, redo and clear leave the edits alone while the original is shown", () => {
+    s().openStructure(water(), null, "w.xyz");
+    s().pushOp({ op: "delete_atoms", atoms: [1] });
+    s().pushOp({ op: "delete_atoms", atoms: [0] });
+    s().undo();
+    s().setShowOriginal(true);
+    expect(s().undo()).toBeNull();
+    expect(s().redo()).toBeNull();
+    s().clearOps();
+    expect(s().edits).toHaveLength(1);
+    expect(s().redoStack).toHaveLength(1);
   });
 
   it("Show original previews the source and pauses editing", () => {
@@ -378,5 +401,93 @@ describe("useBuilderStore — library placement", () => {
     expect(s().source!.box).toBeNull();
     expect(shownSnapshot(s())!.nAtoms).toBe(2);
     expect(s().edits).toHaveLength(1);
+  });
+});
+
+describe("useBuilderStore — unsaved edits and confirmation", () => {
+  it("is dirty from the first edit until saved or replaced", () => {
+    const api = createBuilderStore();
+    const g = () => api.getState();
+    expect(isDirty(g())).toBe(false);
+    g().openStructure(water(), null, "w.xyz");
+    expect(isDirty(g())).toBe(false);
+    g().pushOp({ op: "delete_atoms", atoms: [1] });
+    expect(isDirty(g())).toBe(true);
+    g().markSaved();
+    expect(isDirty(g())).toBe(false);
+    g().undo();
+    expect(isDirty(g())).toBe(true);
+    g().redo();
+    g().replaceLastOp({ op: "delete_atoms", atoms: [2] });
+    g().setDragOps(1, []);
+    g().clearOps();
+    expect(isDirty(g())).toBe(true);
+    g().openStructure(water(), null, "x.xyz");
+    expect(isDirty(g())).toBe(false);
+    g().pushOp({ op: "delete_atoms", atoms: [1] });
+    g().closeDocument();
+    expect(isDirty(g())).toBe(false);
+  });
+
+  it("confirmDiscard goes ahead at once with nothing unsaved", async () => {
+    const api = createBuilderStore();
+    api.getState().openStructure(water(), null, "w.xyz");
+    await expect(confirmDiscard(api, "Open b.pdb")).resolves.toBe(true);
+    expect(api.getState().confirm).toBeNull();
+  });
+
+  it("confirmDiscard asks, naming the action, the file and the edits", async () => {
+    const api = createBuilderStore();
+    api.getState().openStructure(water(), null, "w.xyz");
+    api.getState().pushOp({ op: "delete_atoms", atoms: [1] });
+    const answer = confirmDiscard(api, "Open b.pdb");
+    const asked = api.getState().confirm!;
+    expect(asked.message).toContain("Open b.pdb");
+    expect(asked.message).toContain("w.xyz");
+    expect(asked.message).toContain("1 edit");
+    expect(asked.danger).toBe(true);
+    api.getState().resolveConfirm(false);
+    await expect(answer).resolves.toBe(false);
+    expect(api.getState().confirm).toBeNull();
+
+    api.getState().pushOp({ op: "delete_atoms", atoms: [1] });
+    const again = confirmDiscard(api, "New empty cell");
+    expect(api.getState().confirm!.message).toContain("2 edits");
+    api.getState().resolveConfirm(true);
+    await expect(again).resolves.toBe(true);
+  });
+
+  it("a second question answers the first one no", async () => {
+    const api = createBuilderStore();
+    const first = api.getState().requestConfirm({ title: "A", message: "a", confirmLabel: "Go" });
+    const second = api.getState().requestConfirm({ title: "B", message: "b", confirmLabel: "Go" });
+    await expect(first).resolves.toBe(false);
+    expect(api.getState().confirm!.title).toBe("B");
+    api.getState().resolveConfirm(true);
+    await expect(second).resolves.toBe(true);
+    // Answering with nothing open is harmless.
+    api.getState().resolveConfirm(true);
+  });
+
+  it("a new edit clears an error notice but keeps an info one", () => {
+    const api = createBuilderStore();
+    const g = () => api.getState();
+    g().openStructure(water(), null, "w.xyz");
+    g().reportError("A distance must be a positive number of Å.");
+    g().pushOp({ op: "delete_atoms", atoms: [1] });
+    expect(g().notice).toBeNull();
+    g().reportInfo("Saved w.xyz");
+    g().pushOps([{ op: "delete_atoms", atoms: [0] }]);
+    expect(g().notice?.level).toBe("info");
+    g().reportError("bad");
+    g().setDragOps(g().edits.length, [{ op: "delete_atoms", atoms: [0] }]);
+    expect(g().notice).toBeNull();
+  });
+
+  it("keeps the hydrogen mode the user picks", () => {
+    const api = createBuilderStore();
+    expect(api.getState().hydrogenMode).toBe("auto");
+    api.getState().setHydrogenMode("off");
+    expect(api.getState().hydrogenMode).toBe("off");
   });
 });

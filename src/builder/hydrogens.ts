@@ -16,6 +16,7 @@
 import { getCovalentRadius } from "../constants";
 import type { EditAtomRef, EditOp } from "../pipeline/types";
 import type { Snapshot } from "../types";
+import type { HydrogenMode } from "./store";
 import { newAtomId, placeBondedAtom } from "./placement";
 
 type Vec3 = [number, number, number];
@@ -48,6 +49,11 @@ export function typicalValence(z: number): number | null {
 export function hasHydrogens(snapshot: Snapshot): boolean {
   for (let i = 0; i < snapshot.nAtoms; i++) if (snapshot.elements[i] === 1) return true;
   return false;
+}
+
+/** Whether edits keep hydrogens balanced under `mode` (see `HydrogenMode`). */
+export function balancesHydrogens(mode: HydrogenMode, snapshot: Snapshot): boolean {
+  return mode === "on" || (mode === "auto" && hasHydrogens(snapshot));
 }
 
 interface Neighbour {

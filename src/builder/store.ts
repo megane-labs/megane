@@ -81,6 +81,29 @@ export interface BuilderNotice {
   text: string;
 }
 
+/**
+ * A question the app asks before it does something that cannot be undone
+ * (replacing a document with unsaved edits, deleting a library molecule):
+ * `requestConfirm` puts it here, `ConfirmHost` draws it over the Builder, and
+ * the answer resolves the promise. An in-app dialog rather than
+ * `window.confirm`, which VS Code webviews do not show.
+ */
+export interface ConfirmRequest {
+  title: string;
+  message: string;
+  /** Label of the button that goes ahead ("Discard edits"). */
+  confirmLabel: string;
+  /** Draw the go-ahead button in the danger colour. */
+  danger?: boolean;
+}
+
+/**
+ * How Add, Element, Delete and Bond keep explicit hydrogens balanced:
+ * `auto` does it while the document has any H atom (a bare skeleton stays
+ * bare), `on` always, `off` never.
+ */
+export type HydrogenMode = "auto" | "on" | "off";
+
 export interface BuilderStore {
   // ── Document ──
   /** The structure as loaded (or the blank cell); never mutated. */
@@ -106,6 +129,14 @@ export interface BuilderStore {
    * keeps its camera across such changes and re-fits only for a new document.
    */
   revision: number;
+  /**
+   * Bumped by every change to the document's content (an op, undo, redo,
+   * clear); `savedVersion` is its value when the document was opened or last
+   * saved, so the two differ exactly while there are unsaved edits
+   * (`isDirty`).
+   */
+  docVersion: number;
+  savedVersion: number;
 
   // ── Tools ──
   tool: BuildTool;
@@ -138,6 +169,10 @@ export interface BuilderStore {
   drag: DragStatus | null;
   /** The message on screen, if any; see `BuilderNotice`. */
   notice: BuilderNotice | null;
+  /** How explicit hydrogens are kept balanced; see `HydrogenMode`. */
+  hydrogenMode: HydrogenMode;
+  /** The question on screen, if any; see `ConfirmRequest`. */
+  confirm: ConfirmRequest | null;
 
   // ── Document actions ──
   /** Start a document from a parsed structure. Replaces everything. */
@@ -170,6 +205,15 @@ export interface BuilderStore {
    * showing it with null. An op that cannot be applied shows nothing.
    */
   setPreview: (op: EditOp | null) => void;
+  /** Record that the document as it is now has been saved (`isDirty` turns false). */
+  markSaved: () => void;
+  /**
+   * Ask `request` in the confirm dialog; resolves to whether the user went
+   * ahead. A question still open is answered "no" first.
+   */
+  requestConfirm: (request: ConfirmRequest) => Promise<boolean>;
+  /** Answer the open question (the confirm dialog's buttons). */
+  resolveConfirm: (ok: boolean) => void;
 
   // ── Tool actions ──
   setTool: (tool: BuildTool) => void;
@@ -185,6 +229,7 @@ export interface BuilderStore {
   setAdsorbHeight: (height: number | null) => void;
   setBoxSelect: (on: boolean) => void;
   setSnap: (on: boolean) => void;
+  setHydrogenMode: (mode: HydrogenMode) => void;
   setDrag: (drag: DragStatus | null) => void;
   /** Show a message (replacing the current one), or clear it with null. */
   setNotice: (notice: BuilderNotice | null) => void;
@@ -235,6 +280,35 @@ export function canEdit(
   return !!state.source && !!state.result && !state.showOriginal && !state.preview;
 }
 
+/** Whether the open document has edits that were not saved. */
+export function isDirty(state: Pick<BuilderStore, "source" | "docVersion" | "savedVersion">) {
+  return !!state.source && state.docVersion !== state.savedVersion;
+}
+
+/**
+ * Ask before an action replaces the open document (`action` names it: "Open
+ * water.pdb"). Resolves to true at once when there is nothing unsaved to lose.
+ */
+export function confirmDiscard(api: StoreApi<BuilderStore>, action: string): Promise<boolean> {
+  const s = api.getState();
+  if (!isDirty(s)) return Promise.resolve(true);
+  const steps = s.edits.length;
+  return s.requestConfirm({
+    title: "Discard unsaved edits?",
+    message: `${action} replaces the open structure${s.fileName ? ` (${s.fileName})` : ""} and its history${steps > 0 ? ` of ${steps} edit${steps === 1 ? "" : "s"}` : ""}. Save it first to keep the edits.`,
+    confirmLabel: "Discard edits",
+    danger: true,
+  });
+}
+
+/** The answer waiting on the open `ConfirmRequest`, per store. */
+const confirmResolvers = new WeakMap<object, (ok: boolean) => void>();
+
+/** A content change also clears an error notice: the error is about what came before. */
+function clearedError(s: Pick<BuilderStore, "notice">): Partial<BuilderStore> {
+  return s.notice?.level === "error" ? { notice: null } : {};
+}
+
 /**
  * Ops pushed as the tail of a `pushOps` group. Undo keeps popping while it
  * pops one of these, and Redo keeps re-applying while the next one is, so a
@@ -261,7 +335,7 @@ function compute(source: Snapshot | null, edits: EditOp[]): EditResult | null {
   return source ? applyEditOps(source, edits) : null;
 }
 
-export const builderStateCreator: StateCreator<BuilderStore> = (set, get) => ({
+export const builderStateCreator: StateCreator<BuilderStore> = (set, get, storeApi) => ({
   source: null,
   sourceLabels: null,
   fileName: null,
@@ -271,6 +345,8 @@ export const builderStateCreator: StateCreator<BuilderStore> = (set, get) => ({
   result: null,
   preview: null,
   revision: 0,
+  docVersion: 0,
+  savedVersion: 0,
 
   tool: "select",
   element: 6,
@@ -284,9 +360,11 @@ export const builderStateCreator: StateCreator<BuilderStore> = (set, get) => ({
   snap: false,
   drag: null,
   notice: null,
+  hydrogenMode: "auto",
+  confirm: null,
 
   openStructure: (snapshot, labels, fileName) =>
-    set({
+    set((s) => ({
       source: snapshot,
       sourceLabels: labels,
       fileName,
@@ -298,10 +376,12 @@ export const builderStateCreator: StateCreator<BuilderStore> = (set, get) => ({
       selected: [],
       pendingBondAtom: null,
       notice: null,
-    }),
+      docVersion: s.docVersion + 1,
+      savedVersion: s.docVersion + 1,
+    })),
 
   closeDocument: () =>
-    set({
+    set((s) => ({
       source: null,
       sourceLabels: null,
       fileName: null,
@@ -313,7 +393,9 @@ export const builderStateCreator: StateCreator<BuilderStore> = (set, get) => ({
       selected: [],
       pendingBondAtom: null,
       notice: null,
-    }),
+      docVersion: s.docVersion + 1,
+      savedVersion: s.docVersion + 1,
+    })),
 
   newCell: (edge) => get().openStructure(emptyCellSnapshot(edge), null, UNTITLED),
   newBulk: (spec) => get().openStructure(bulkSnapshot(spec), null, bulkName(spec)),
@@ -327,6 +409,8 @@ export const builderStateCreator: StateCreator<BuilderStore> = (set, get) => ({
         result: compute(s.source, edits),
         preview: null,
         revision: s.revision + 1,
+        docVersion: s.docVersion + 1,
+        ...clearedError(s),
       };
     }),
 
@@ -341,6 +425,8 @@ export const builderStateCreator: StateCreator<BuilderStore> = (set, get) => ({
         result: compute(s.source, edits),
         preview: null,
         revision: s.revision + 1,
+        docVersion: s.docVersion + 1,
+        ...clearedError(s),
       };
     });
   },
@@ -349,7 +435,13 @@ export const builderStateCreator: StateCreator<BuilderStore> = (set, get) => ({
     set((s) => {
       if (s.edits.length === 0) return {};
       const edits = [...s.edits.slice(0, -1), op];
-      return { edits, result: compute(s.source, edits), preview: null, revision: s.revision + 1 };
+      return {
+        edits,
+        result: compute(s.source, edits),
+        preview: null,
+        revision: s.revision + 1,
+        docVersion: s.docVersion + 1,
+      };
     }),
 
   setDragOps: (base, ops) => {
@@ -363,13 +455,16 @@ export const builderStateCreator: StateCreator<BuilderStore> = (set, get) => ({
         result: compute(s.source, edits),
         preview: null,
         revision: s.revision + 1,
+        docVersion: s.docVersion + 1,
+        ...clearedError(s),
       };
     });
   },
 
   undo: () => {
     const s = get();
-    if (s.edits.length === 0) return null;
+    // While the original is shown the edits are out of sight: leave them be.
+    if (s.edits.length === 0 || s.showOriginal) return null;
     const edits = s.edits.slice();
     const redoStack = s.redoStack.slice();
     let op: EditOp;
@@ -383,6 +478,7 @@ export const builderStateCreator: StateCreator<BuilderStore> = (set, get) => ({
       result: compute(s.source, edits),
       preview: null,
       revision: s.revision + 1,
+      docVersion: s.docVersion + 1,
       selected: [],
       pendingBondAtom: null,
     });
@@ -391,7 +487,7 @@ export const builderStateCreator: StateCreator<BuilderStore> = (set, get) => ({
 
   redo: () => {
     const s = get();
-    if (s.redoStack.length === 0) return null;
+    if (s.redoStack.length === 0 || s.showOriginal) return null;
     const redoStack = s.redoStack.slice();
     const op = redoStack.pop()!;
     const edits = [...s.edits, op];
@@ -404,20 +500,24 @@ export const builderStateCreator: StateCreator<BuilderStore> = (set, get) => ({
       result: compute(s.source, edits),
       preview: null,
       revision: s.revision + 1,
+      docVersion: s.docVersion + 1,
     });
     return op;
   },
 
+  // Undo every step at once: the ops go onto the redo stack in the order
+  // single undos would leave them, so Redo brings them back step by step.
   clearOps: () =>
     set((s) =>
-      s.edits.length === 0
+      s.edits.length === 0 || s.showOriginal
         ? {}
         : {
             edits: [],
-            redoStack: [],
+            redoStack: [...s.redoStack, ...s.edits.slice().reverse()],
             result: compute(s.source, []),
             preview: null,
             revision: s.revision + 1,
+            docVersion: s.docVersion + 1,
             selected: [],
             pendingBondAtom: null,
           },
@@ -451,6 +551,23 @@ export const builderStateCreator: StateCreator<BuilderStore> = (set, get) => ({
       return { preview, revision: s.revision + 1, selected: [], pendingBondAtom: null };
     }),
 
+  markSaved: () => set((s) => ({ savedVersion: s.docVersion })),
+
+  requestConfirm: (request) => {
+    confirmResolvers.get(storeApi)?.(false);
+    return new Promise<boolean>((resolve) => {
+      confirmResolvers.set(storeApi, resolve);
+      set({ confirm: request });
+    });
+  },
+
+  resolveConfirm: (ok) => {
+    const resolve = confirmResolvers.get(storeApi);
+    confirmResolvers.delete(storeApi);
+    set({ confirm: null });
+    resolve?.(ok);
+  },
+
   setTool: (tool) => set({ tool, pendingBondAtom: null }),
   setElement: (element) => set({ element }),
   setBondOrder: (bondOrder) => set({ bondOrder }),
@@ -474,6 +591,7 @@ export const builderStateCreator: StateCreator<BuilderStore> = (set, get) => ({
     set({ adsorbHeight: height !== null && Number.isFinite(height) ? height : null }),
   setBoxSelect: (boxSelect) => set({ boxSelect }),
   setSnap: (snap) => set({ snap }),
+  setHydrogenMode: (hydrogenMode) => set({ hydrogenMode }),
   setDrag: (drag) => set({ drag }),
   setNotice: (notice) => set({ notice }),
   reportError: (text) => set({ notice: { level: "error", text } }),

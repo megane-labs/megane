@@ -7,6 +7,7 @@ import {
   neighboursOf,
   setElementOps,
   typicalValence,
+  balancesHydrogens,
 } from "@/builder/hydrogens";
 import { createBuilderStore } from "@/builder/store";
 import { applyEditOps, type EditResult } from "@/pipeline/executors/edit";
@@ -300,5 +301,28 @@ describe("store.pushOps", () => {
     s().redo();
     expect(s().edits).toHaveLength(n);
     expect(s().redo()).toBeNull();
+  });
+});
+
+describe("balancesHydrogens", () => {
+  const bare: Snapshot = {
+    nAtoms: 1,
+    nBonds: 0,
+    nFileBonds: 0,
+    positions: new Float32Array(3),
+    elements: new Uint8Array([6]),
+    bonds: new Uint32Array(0),
+    bondOrders: null,
+    box: null,
+    boxOrigin: null,
+    atomChainIds: null,
+    atomBFactors: null,
+  };
+  const withH: Snapshot = { ...bare, elements: new Uint8Array([1]) };
+  it("follows the document in auto, and the user otherwise", () => {
+    expect(balancesHydrogens("auto", bare)).toBe(false);
+    expect(balancesHydrogens("auto", withH)).toBe(true);
+    expect(balancesHydrogens("on", bare)).toBe(true);
+    expect(balancesHydrogens("off", withH)).toBe(false);
   });
 });

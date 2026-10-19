@@ -43,6 +43,25 @@ export async function snapshotToText(
   });
 }
 
+/**
+ * The format Save writes without asking (⌘/Ctrl + S): the document's own
+ * format when Megane can write it, so `caffeine.sdf` stays a MOL file with its
+ * bond orders, else XYZ (extended, with the cell, when there is one).
+ */
+export function defaultExportFormat(fileName: string | null | undefined): StructureWriteFormat {
+  const ext = /\.([a-z0-9]+)$/i.exec(fileName ?? "")?.[1]?.toLowerCase() ?? "";
+  switch (ext) {
+    case "pdb":
+    case "ent":
+      return "pdb";
+    case "mol":
+    case "sdf":
+      return "mol";
+    default:
+      return "xyz";
+  }
+}
+
 /** The name a document called `fileName` is saved under in `format` (`water.pdb` → `water.xyz`). */
 export function exportFileName(
   fileName: string | null | undefined,
