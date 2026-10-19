@@ -8,9 +8,9 @@
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useBuilderStore, shownSnapshot } from "./store";
+import { shownSnapshot } from "./store";
 import { toolInfo } from "./ToolRail";
-import { DEFAULT_ADSORB_HEIGHT, useLibraryUi } from "./library/ui";
+import { DEFAULT_ADSORB_HEIGHT } from "./library/ui";
 import { LibraryPanel } from "./library/LibraryPanel";
 import { PeriodicTable } from "./PeriodicTable";
 import { getElementSymbol } from "../constants";
@@ -25,6 +25,7 @@ import {
 } from "./styles";
 import { TOOL_KEYS } from "./shortcuts";
 import { elementGroups } from "./elements";
+import { useScopedBuilderStore, useScopedLibraryUi } from "./BuilderStores";
 
 /** Elements offered as one-click buttons; anything else via the Z field. */
 export const QUICK_ELEMENTS = [6, 1, 7, 8, 9, 15, 16, 17, 35, 14];
@@ -87,25 +88,25 @@ const wrapRow: React.CSSProperties = {
 };
 
 export function ContextBar() {
-  const tool = useBuilderStore((s) => s.tool);
-  const element = useBuilderStore((s) => s.element);
-  const bondOrder = useBuilderStore((s) => s.bondOrder);
-  const adsorbHeight = useBuilderStore((s) => s.adsorbHeight);
-  const boxSelect = useBuilderStore((s) => s.boxSelect);
-  const setBoxSelect = useBuilderStore((s) => s.setBoxSelect);
-  const selectAll = useBuilderStore((s) => s.selectAll);
-  const invertSelection = useBuilderStore((s) => s.invertSelection);
-  const setSelected = useBuilderStore((s) => s.setSelected);
-  const setElement = useBuilderStore((s) => s.setElement);
-  const setBondOrder = useBuilderStore((s) => s.setBondOrder);
-  const setAdsorbHeight = useBuilderStore((s) => s.setAdsorbHeight);
-  const source = useBuilderStore((s) => s.source);
-  const result = useBuilderStore((s) => s.result);
-  const showOriginal = useBuilderStore((s) => s.showOriginal);
+  const tool = useScopedBuilderStore((s) => s.tool);
+  const element = useScopedBuilderStore((s) => s.element);
+  const bondOrder = useScopedBuilderStore((s) => s.bondOrder);
+  const adsorbHeight = useScopedBuilderStore((s) => s.adsorbHeight);
+  const boxSelect = useScopedBuilderStore((s) => s.boxSelect);
+  const setBoxSelect = useScopedBuilderStore((s) => s.setBoxSelect);
+  const selectAll = useScopedBuilderStore((s) => s.selectAll);
+  const invertSelection = useScopedBuilderStore((s) => s.invertSelection);
+  const setSelected = useScopedBuilderStore((s) => s.setSelected);
+  const setElement = useScopedBuilderStore((s) => s.setElement);
+  const setBondOrder = useScopedBuilderStore((s) => s.setBondOrder);
+  const setAdsorbHeight = useScopedBuilderStore((s) => s.setAdsorbHeight);
+  const source = useScopedBuilderStore((s) => s.source);
+  const result = useScopedBuilderStore((s) => s.result);
+  const showOriginal = useScopedBuilderStore((s) => s.showOriginal);
 
-  const placeSource = useBuilderStore((s) => s.placeSource);
-  const galleryOpen = useLibraryUi((s) => s.galleryOpen);
-  const setGalleryOpen = useLibraryUi((s) => s.setGalleryOpen);
+  const placeSource = useScopedBuilderStore((s) => s.placeSource);
+  const galleryOpen = useScopedLibraryUi((s) => s.galleryOpen);
+  const setGalleryOpen = useScopedLibraryUi((s) => s.setGalleryOpen);
   const [tableOpen, setTableOpen] = useState(false);
   const tableButton = useRef<HTMLButtonElement>(null);
   const closeTable = useCallback(() => setTableOpen(false), []);

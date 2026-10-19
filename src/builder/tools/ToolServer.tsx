@@ -17,7 +17,8 @@ import { DetailForm } from "../DetailForm";
 import type { MenuItem } from "../Menu";
 import { buttonStyle, hintStyle, inputStyle, rowStyle } from "../styles";
 import { CATEGORY_LABELS, type BuilderToolInfo, type ToolCategory } from "./contract";
-import { readLaunchParams, siteToolServerUrl, useToolsStore, type ToolsStore } from "./store";
+import { readLaunchParams, siteToolServerUrl, type ToolsStore } from "./store";
+import { useScopedToolsStore, useToolsStoreApi } from "../BuilderStores";
 
 function groupByCategory(tools: BuilderToolInfo[]): [ToolCategory, BuilderToolInfo[]][] {
   const groups = new Map<ToolCategory, BuilderToolInfo[]>();
@@ -34,10 +35,11 @@ function groupByCategory(tools: BuilderToolInfo[]): [ToolCategory, BuilderToolIn
  * A host without the Tools menu (`enabled` false) leaves the page URL alone.
  */
 export function useToolServerLaunch(enabled = true) {
+  const tools = useToolsStoreApi();
   useEffect(() => {
     if (!enabled || typeof window === "undefined") return;
     const launch = readLaunchParams(window.location.hash);
-    const api = useToolsStore.getState();
+    const api = tools.getState();
     if (!launch) {
       const site = siteToolServerUrl();
       if (site && api.url.trim() === site && api.status === "idle") void api.connect();
@@ -51,7 +53,7 @@ export function useToolServerLaunch(enabled = true) {
       /* sandboxed frames may refuse */
     }
     void api.connect();
-  }, [enabled]);
+  }, [enabled, tools]);
 }
 
 /** The Tools menu: the server's tools by category, then the way to (re)connect. */
@@ -97,15 +99,15 @@ export function toolsMenuItems(
 
 /** Connect to (or disconnect from) a tool server. */
 export function ToolServerDialog({ onClose }: { onClose: () => void }) {
-  const url = useToolsStore((s) => s.url);
-  const token = useToolsStore((s) => s.token);
-  const status = useToolsStore((s) => s.status);
-  const error = useToolsStore((s) => s.error);
-  const connection = useToolsStore((s) => s.connection);
-  const setUrl = useToolsStore((s) => s.setUrl);
-  const setToken = useToolsStore((s) => s.setToken);
-  const connect = useToolsStore((s) => s.connect);
-  const disconnect = useToolsStore((s) => s.disconnect);
+  const url = useScopedToolsStore((s) => s.url);
+  const token = useScopedToolsStore((s) => s.token);
+  const status = useScopedToolsStore((s) => s.status);
+  const error = useScopedToolsStore((s) => s.error);
+  const connection = useScopedToolsStore((s) => s.connection);
+  const setUrl = useScopedToolsStore((s) => s.setUrl);
+  const setToken = useScopedToolsStore((s) => s.setToken);
+  const connect = useScopedToolsStore((s) => s.connect);
+  const disconnect = useScopedToolsStore((s) => s.disconnect);
 
   return (
     <DetailForm

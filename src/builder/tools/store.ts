@@ -255,7 +255,7 @@ export function createToolsStore(deps: ToolsStoreDeps): StoreApi<ToolsStore> {
   return createStore<ToolsStore>(toolsStateCreator(deps));
 }
 
-/** The app's tools store, bound to the app's Builder store. */
+/** The page-wide tools store, bound to the page-wide Builder store. */
 export const useToolsStore = create<ToolsStore>(
   toolsStateCreator({
     connector: connectToolServer,
@@ -263,3 +263,8 @@ export const useToolsStore = create<ToolsStore>(
     storage: defaultStorage(),
   }),
 );
+
+/** A tools store of its own for one Builder, bound to that Builder's document. */
+export function createBuilderToolsStore(builder: StoreApi<BuilderStore>): StoreApi<ToolsStore> {
+  return createToolsStore({ connector: connectToolServer, builder, storage: defaultStorage() });
+}

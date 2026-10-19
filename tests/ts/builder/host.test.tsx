@@ -47,6 +47,7 @@ import { useBuilderStore } from "@/builder/store";
 import { hostHasTools, WEB_HOST, type BuilderHost } from "@/builder/host";
 import { inScope } from "@/builder/shortcuts";
 import { mountBuilder } from "@/builder/mount";
+import { createBuilderStores } from "@/builder/BuilderStores";
 import { openStructureFile } from "@/builder/open";
 import KetcherUnavailable, { KETCHER_UNAVAILABLE } from "@/builder/library/KetcherUnavailable";
 import type { Snapshot } from "@/types";
@@ -231,6 +232,31 @@ describe("mountBuilder", () => {
     expect(el.querySelector('[data-testid="megane-builder"]')).toBeNull();
     act(() => mounted.dispose());
     el.remove();
+  });
+
+  it("Builders mounted with stores of their own edit separate documents on one page", async () => {
+    const els = [document.createElement("div"), document.createElement("div")];
+    els.forEach((el) => document.body.appendChild(el));
+    const stores = [createBuilderStores(), createBuilderStores()];
+    let mounted!: ReturnType<typeof mountBuilder>[];
+    act(() => {
+      mounted = els.map((el, i) => mountBuilder(el, { tools: false }, stores[i]));
+    });
+    const atoms = (el: HTMLElement) =>
+      el.querySelector('[data-testid="megane-builder"]')!.getAttribute("data-atom-count");
+
+    parseStructureFile.mockResolvedValue(parsedWater());
+    await act(async () => {
+      expect(await mounted[0].open(new File(["x"], "water.pdb"))).toBe(true);
+    });
+    expect(atoms(els[0])).toBe("3");
+    expect(atoms(els[1])).toBe("0");
+    expect(stores[0].builder.getState().fileName).toBe("water.pdb");
+    expect(stores[1].builder.getState().fileName).toBeNull();
+    expect(useBuilderStore.getState().fileName).toBeNull();
+
+    act(() => mounted.forEach((m) => m.dispose()));
+    els.forEach((el) => el.remove());
   });
 });
 

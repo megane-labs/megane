@@ -6,7 +6,7 @@
  */
 
 import { useEffect, useState } from "react";
-import { useBuilderStore, canEdit, shownSnapshot } from "./store";
+import { canEdit, shownSnapshot } from "./store";
 import { buttonStyle, hintStyle, inputStyle, monoStyle, rowStyle, sectionStyle } from "./styles";
 import { getElementSymbol } from "../constants";
 import { computeMeasurement } from "../renderer/Selection";
@@ -16,6 +16,7 @@ import type { EditAtomRef } from "../pipeline/types";
 import type { Measurement, Snapshot } from "../types";
 import { setAngle, setDihedral, setDistance } from "./geometry";
 import { runCleanup } from "./cleanup";
+import { useBuilderStoreApi, useScopedBuilderStore } from "./BuilderStores";
 
 /** Selected atoms listed one per row; the rest are counted. */
 export const MAX_ATOM_ROWS = 6;
@@ -35,7 +36,7 @@ const titleStyle: React.CSSProperties = {
  * nothing: the structure's own summary is the info line over the view.
  */
 export function Inspector() {
-  const hasSelection = useBuilderStore((s) => s.selected.length > 0);
+  const hasSelection = useScopedBuilderStore((s) => s.selected.length > 0);
   return hasSelection ? <SelectionInspector /> : null;
 }
 
@@ -45,14 +46,15 @@ function position(shown: Snapshot, i: number): string {
 }
 
 function SelectionInspector() {
-  const source = useBuilderStore((s) => s.source);
-  const result = useBuilderStore((s) => s.result);
-  const showOriginal = useBuilderStore((s) => s.showOriginal);
-  const selected = useBuilderStore((s) => s.selected);
-  const element = useBuilderStore((s) => s.element);
-  const setElement = useBuilderStore((s) => s.setElement);
-  const clearSelected = useBuilderStore((s) => s.clearSelected);
-  const pushOp = useBuilderStore((s) => s.pushOp);
+  const api = useBuilderStoreApi();
+  const source = useScopedBuilderStore((s) => s.source);
+  const result = useScopedBuilderStore((s) => s.result);
+  const showOriginal = useScopedBuilderStore((s) => s.showOriginal);
+  const selected = useScopedBuilderStore((s) => s.selected);
+  const element = useScopedBuilderStore((s) => s.element);
+  const setElement = useScopedBuilderStore((s) => s.setElement);
+  const clearSelected = useScopedBuilderStore((s) => s.clearSelected);
+  const pushOp = useScopedBuilderStore((s) => s.pushOp);
   const { saveSelection } = useLibraryActions();
 
   const shown = shownSnapshot({ source, result, showOriginal });
@@ -197,7 +199,7 @@ function SelectionInspector() {
           data-testid="builder-selection-cleanup"
           style={buttonStyle("default", !editable)}
           disabled={!editable}
-          onClick={() => void runCleanup(useBuilderStore)}
+          onClick={() => void runCleanup(api)}
           title="Re-embed the selected molecules with RDKit (ETKDG + MMFF94s) and put them back in place"
         >
           Clean up
@@ -230,8 +232,8 @@ function MeasureEditor({
   shown: Snapshot;
   editable: boolean;
 }) {
-  const moveAtoms = useBuilderStore((s) => s.moveAtoms);
-  const reportError = useBuilderStore((s) => s.reportError);
+  const moveAtoms = useScopedBuilderStore((s) => s.moveAtoms);
+  const reportError = useScopedBuilderStore((s) => s.reportError);
   const unit = measure.type === "distance" ? "Å" : "°";
   const digits = measure.type === "distance" ? 3 : 1;
   const [draft, setDraft] = useState(measure.value.toFixed(digits));

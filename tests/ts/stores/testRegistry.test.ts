@@ -134,6 +134,21 @@ describe("testRegistry", () => {
       expect(w.__megane_test_store_bundles?.left).toBeUndefined();
     });
 
+    it("resolves each hook to the earliest bundle that carries its store", () => {
+      enableTestMode();
+      const globalBuilder = { tag: "global builder" };
+      registerTestStores(GLOBAL_BUNDLE_ID, { builder: globalBuilder });
+      const viewer = { tag: "viewer" };
+      const builder = { tag: "builder" };
+      registerTestStores("viewer-1", { pipeline: viewer });
+      const unregister = registerTestStores("builder-1", { builder });
+
+      expect(w.__megane_test_pipeline_store).toBe(viewer);
+      expect(w.__megane_test_builder_store).toBe(builder);
+      unregister();
+      expect(w.__megane_test_builder_store).toBe(globalBuilder);
+    });
+
     it("merges the pipeline and playback stores registered separately", () => {
       enableTestMode();
       const pipeline = { tag: "pipeline" };

@@ -481,10 +481,10 @@ export const builderStateCreator: StateCreator<BuilderStore> = (set, get) => ({
     }),
 });
 
-/** The app's store. */
+/** The page-wide store: the document of a Builder mounted without `BuilderProvider`. */
 export const useBuilderStore = create<BuilderStore>(builderStateCreator);
 
-/** A private store (tests, embedding). */
+/** A private store (tests, one Builder of several on a page: `BuilderStores.tsx`). */
 export function createBuilderStore(): StoreApi<BuilderStore> {
   return createStore<BuilderStore>(builderStateCreator);
 }

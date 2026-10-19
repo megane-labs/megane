@@ -410,10 +410,11 @@ starting beside the file you opened.
 to the left sidebar: **Open Builder**, and the structure files of the file
 browser's current folder — click one to edit it. Structure files also have
 **Open in Megane Builder** in the file browser's context menu, and the
-launcher has a **Megane Builder** card. The Builder is one main-area tab;
-opening another file replaces its document, as *File › Open…* does. *Save*
-asks for a path in the server's file tree (beside the opened file by default)
-and asks before replacing a file.
+launcher has a **Megane Builder** card. Each opens the Builder in a
+main-area tab with a document of its own: **Open Builder** and the card open
+a new tab every time, and a file opens in one tab (asking again brings it
+back), as in VS Code. *Save* asks for a path in the server's file tree
+(beside the opened file by default) and asks before replacing a file.
 
 **Jupyter notebooks** (JupyterLab, Notebook, VS Code): `megane.Builder` is a
 widget.
