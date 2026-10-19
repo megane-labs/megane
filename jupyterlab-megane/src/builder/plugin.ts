@@ -6,9 +6,12 @@
  * - **Open in megane Builder** on structure files in the file browser's
  *   context menu, and **megane Builder** in the launcher and the command
  *   palette.
- * - The Builder is one main-area tab (`BuilderWidget`). Save writes into the
- *   server's contents, suggesting the folder of the file it opened (else the
- *   file browser's folder), and asks before replacing a file.
+ * - Each Builder is a main-area tab (`BuilderWidget`) with a document of its
+ *   own. *megane Builder* (and *Open Builder*) opens a new tab every time; a
+ *   file opens in one tab, and asking for it again reveals that tab, as in
+ *   VS Code. Save writes into the server's contents, suggesting the folder of
+ *   the file the tab opened (else the file browser's folder), and asks before
+ *   replacing a file.
  */
 
 import {
@@ -29,6 +32,7 @@ import type { BuilderSaveRequest } from "@megane/builder/host";
 import { BuilderWidget } from "./BuilderWidget";
 import { BuilderSidebar, BUILDER_SIDEBAR_ID } from "./sidebar";
 import {
+  basename,
   dirname,
   isBuilderPath,
   readContentsFile,
@@ -83,20 +87,19 @@ export function activateBuilder(
   prompts: SavePrompts = dialogPrompts,
 ): void {
   const contents = app.serviceManager.contents;
-  let builder: BuilderWidget | null = null;
+  /** The tab each file was opened in. */
+  const tabsByPath = new Map<string, BuilderWidget>();
 
-  const save = (file: BuilderSaveRequest) =>
-    saveToContents(contents, file, builder?.dir || browser?.model.path || "", prompts);
-
-  /** The Builder tab, created (and added to the main area) on first use, brought to front. */
-  const revealBuilder = (): BuilderWidget => {
-    if (!builder || builder.isDisposed) {
-      builder = new BuilderWidget(save);
-      builder.title.icon = meganeIcon;
-      app.shell.add(builder, "main");
-    }
-    app.shell.activateById(builder.id);
-    return builder;
+  /** A new Builder tab in the main area, brought to front. */
+  const addBuilder = (label?: string): BuilderWidget => {
+    const tab: BuilderWidget = new BuilderWidget((file: BuilderSaveRequest) =>
+      saveToContents(contents, file, tab.dir || browser?.model.path || "", prompts),
+    );
+    tab.title.icon = meganeIcon;
+    if (label) tab.title.label = label;
+    app.shell.add(tab, "main");
+    app.shell.activateById(tab.id);
+    return tab;
   };
 
   /** The structure file selected in the file browser, if one is. */
@@ -113,7 +116,7 @@ export function activateBuilder(
     caption: "Build and edit molecular structures",
     icon: meganeIcon,
     execute: () => {
-      revealBuilder();
+      addBuilder();
     },
   });
 
@@ -130,11 +133,18 @@ export function activateBuilder(
         });
         return;
       }
-      const tab = revealBuilder();
+      const opened = tabsByPath.get(path);
+      if (opened && !opened.isDisposed) {
+        app.shell.activateById(opened.id);
+        return;
+      }
+      const tab = addBuilder(`${basename(path)} — Builder`);
+      tabsByPath.set(path, tab);
       try {
         const file = await readContentsFile(contents, path);
         await tab.open(file, dirname(path));
       } catch (err) {
+        tab.dispose();
         Notification.error(
           `megane Builder could not read ${path}: ${err instanceof Error ? err.message : String(err)}`,
           { autoClose: 6000 },

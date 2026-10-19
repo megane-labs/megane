@@ -200,10 +200,14 @@ Code's save dialog, the Jupyter server's contents, the kernel's working
 directory; the web app downloads), whether the *Tools* menu is shown
 (`tools`, off in every embedded host, which cannot count on reaching an MCP
 server) and whether the keyboard shortcuts stay inside the Builder
-(`scopeShortcuts`). The document lives in a module-level store, so a page
-holds one Builder document: VS Code gives each tab a webview of its own,
-JupyterLab keeps one Builder tab, and the widget bundle is loaded once per
-`Builder` object, whose newest output takes the document.
+(`scopeShortcuts`). A Builder's document lives in a bundle of stores
+(`src/builder/BuilderStores.tsx`: the document, the library's dialogs, the
+Python tools). Without a `BuilderProvider` it is the module-level bundle,
+one Builder document per page, which is how `builder.html`, VS Code (which
+gives each tab a webview of its own) and the widget bundle (loaded once per
+`Builder` object, whose newest output takes the document) mount it.
+JupyterLab's tabs share one page, so each mounts with `createBuilderStores()`
+and edits a document of its own; the molecule library stays page-wide.
 
 **Document.** `useBuilderStore` (`src/builder/store.ts`) holds a source
 `Snapshot` (the opened file, or `emptyCellSnapshot(edge)` for *New*), its

@@ -13,7 +13,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { DetailForm } from "../DetailForm";
-import { useBuilderStore, canEdit, shownSnapshot } from "../store";
+import { canEdit, shownSnapshot } from "../store";
 import { buttonStyle, hintStyle, inputStyle, rowStyle, toggleStyle } from "../styles";
 import { boxToCellParams, cellParamsToBox, det3, type CellParams } from "../../crystal/cell";
 import { slabPreview } from "../../crystal/transform";
@@ -22,6 +22,7 @@ import type { Snapshot } from "../../types";
 import { newFragmentId } from "../library/fragment";
 import { NumberField } from "./NumberField";
 import { hasCellBox } from "./structure";
+import { useScopedBuilderStore } from "../BuilderStores";
 
 export type CrystalDialogKind = "cell" | "center" | "supercell" | "slab";
 
@@ -87,12 +88,12 @@ function committed(op: EditOp): EditOp {
 }
 
 export function CrystalDialog({ kind, onClose }: { kind: CrystalDialogKind; onClose: () => void }) {
-  const source = useBuilderStore((s) => s.source);
-  const result = useBuilderStore((s) => s.result);
-  const showOriginal = useBuilderStore((s) => s.showOriginal);
-  const pushOp = useBuilderStore((s) => s.pushOp);
-  const setPreview = useBuilderStore((s) => s.setPreview);
-  const previewing = useBuilderStore((s) => s.preview !== null);
+  const source = useScopedBuilderStore((s) => s.source);
+  const result = useScopedBuilderStore((s) => s.result);
+  const showOriginal = useScopedBuilderStore((s) => s.showOriginal);
+  const pushOp = useScopedBuilderStore((s) => s.pushOp);
+  const setPreview = useScopedBuilderStore((s) => s.setPreview);
+  const previewing = useScopedBuilderStore((s) => s.preview !== null);
 
   // The committed structure, never the preview: the forms read their defaults
   // from it, and editing is judged without the preview this dialog set.
@@ -117,7 +118,7 @@ export function CrystalDialog({ kind, onClose }: { kind: CrystalDialogKind; onCl
     return () => clearTimeout(timer);
   }, [draft, previewable, setPreview, result]);
   // Closing the dialog, however it happens, leaves no preview behind.
-  useEffect(() => () => useBuilderStore.getState().setPreview(null), []);
+  useEffect(() => () => setPreview(null), [setPreview]);
 
   const canApply = !!draft.op && editable && (!spec.needsCell || hasCell);
   const apply = () => {
