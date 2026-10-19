@@ -6,17 +6,18 @@
  * info line over the view.
  */
 
-import { useBuilderStore, canEdit } from "../store";
+import { canEdit } from "../store";
 import { buttonStyle, hintStyle, rowStyle } from "../styles";
 import { newFragmentId } from "../library/fragment";
 import { symmetryOpsAvailable } from "./structure";
+import { useScopedBuilderStore } from "../BuilderStores";
 
 export function SymmetryOffer() {
-  const source = useBuilderStore((s) => s.source);
-  const result = useBuilderStore((s) => s.result);
-  const showOriginal = useBuilderStore((s) => s.showOriginal);
-  const edits = useBuilderStore((s) => s.edits);
-  const pushOp = useBuilderStore((s) => s.pushOp);
+  const source = useScopedBuilderStore((s) => s.source);
+  const result = useScopedBuilderStore((s) => s.result);
+  const showOriginal = useScopedBuilderStore((s) => s.showOriginal);
+  const edits = useScopedBuilderStore((s) => s.edits);
+  const pushOp = useScopedBuilderStore((s) => s.pushOp);
 
   const symOps = symmetryOpsAvailable(source, edits);
   if (symOps === 0) return null;

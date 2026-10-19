@@ -3,23 +3,24 @@
  * on the right of the view: the edit list, Undo / Redo / Clear all, "Show
  * original" (and, while it is on, the way back to the edited structure), and
  * any warnings the edit engine raised replaying the history. Pure UI over
- * `useBuilderStore`.
+ * the Builder store.
  */
 
-import { useBuilderStore, editSteps } from "./store";
+import { editSteps } from "./store";
 import { describeStep } from "./placement";
 import { buttonStyle, hintStyle, rowStyle, sectionStyle, toggleStyle } from "./styles";
+import { useScopedBuilderStore } from "./BuilderStores";
 
 export function HistoryBody() {
-  const source = useBuilderStore((s) => s.source);
-  const edits = useBuilderStore((s) => s.edits);
-  const redoStack = useBuilderStore((s) => s.redoStack);
-  const result = useBuilderStore((s) => s.result);
-  const showOriginal = useBuilderStore((s) => s.showOriginal);
-  const undo = useBuilderStore((s) => s.undo);
-  const redo = useBuilderStore((s) => s.redo);
-  const clearOps = useBuilderStore((s) => s.clearOps);
-  const setShowOriginal = useBuilderStore((s) => s.setShowOriginal);
+  const source = useScopedBuilderStore((s) => s.source);
+  const edits = useScopedBuilderStore((s) => s.edits);
+  const redoStack = useScopedBuilderStore((s) => s.redoStack);
+  const result = useScopedBuilderStore((s) => s.result);
+  const showOriginal = useScopedBuilderStore((s) => s.showOriginal);
+  const undo = useScopedBuilderStore((s) => s.undo);
+  const redo = useScopedBuilderStore((s) => s.redo);
+  const clearOps = useScopedBuilderStore((s) => s.clearOps);
+  const setShowOriginal = useScopedBuilderStore((s) => s.setShowOriginal);
   const steps = editSteps(edits);
 
   return (

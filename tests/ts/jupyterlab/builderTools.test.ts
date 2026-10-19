@@ -155,6 +155,36 @@ function fakeHost(servers: unknown[]) {
   return { port, sent };
 }
 
+describe("closing a tab's connection", () => {
+  it("closes the socket and drops what was queued; a closed port opens anew if used", () => {
+    FakeSocket.instances = [];
+    const port = createSocketPort(settings());
+    port.close(); // nothing open yet
+    port.post({ type: "tools:servers", requestId: 1 });
+    const socket = FakeSocket.instances[0];
+    port.close();
+    expect(socket.readyState).toBe(3);
+    socket.open(); // a late open sends nothing that was queued
+    expect(socket.sent).toEqual([]);
+    port.post({ type: "tools:servers", requestId: 2 });
+    expect(FakeSocket.instances).toHaveLength(2);
+  });
+
+  it("dispose closes the bridge's own socket", () => {
+    FakeSocket.instances = [];
+    const bridge = createJupyterToolBridge(settings(), { confirm: vi.fn(), storage: null });
+    void bridge.listServers();
+    bridge.dispose();
+    expect(FakeSocket.instances[0].readyState).toBe(3);
+    // A port without close (a test double) is fine to dispose.
+    createJupyterToolBridge(settings(), {
+      confirm: vi.fn(),
+      storage: null,
+      port: fakeHost([]).port,
+    }).dispose();
+  });
+});
+
 describe("createJupyterToolBridge", () => {
   const TOOLS = {
     id: "tools",

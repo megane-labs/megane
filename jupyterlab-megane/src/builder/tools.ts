@@ -44,12 +44,17 @@ export function toolsSocketUrl(settings: ToolsSocketSettings): string {
     : url;
 }
 
+/** A `BridgePort` that can be closed (the Builder tab went away). */
+export interface SocketPort extends BridgePort {
+  close: () => void;
+}
+
 /**
  * A `BridgePort` on a WebSocket opened on first use (and again after it
  * closed). When it closes, every request still waiting is answered with an
  * error, so no form waits forever on a server that went away.
  */
-export function createSocketPort(settings: ToolsSocketSettings): BridgePort {
+export function createSocketPort(settings: ToolsSocketSettings): SocketPort {
   let socket: WebSocket | null = null;
   const queue: string[] = [];
   const handlers = new Set<(message: unknown) => void>();
@@ -96,6 +101,13 @@ export function createSocketPort(settings: ToolsSocketSettings): BridgePort {
       handlers.add(handler);
       return () => handlers.delete(handler);
     },
+    close: () => {
+      // The Jupyter server then releases this tab's tool servers.
+      const ws = socket;
+      socket = null;
+      queue.length = 0;
+      ws?.close();
+    },
   };
 }
 
@@ -121,19 +133,29 @@ export interface JupyterToolBridgeOptions {
   confirm: (server: BridgeServer) => Promise<boolean>;
   /** Where the answers are remembered (localStorage), or null to ask every time. */
   storage: Storage | null;
-  port?: BridgePort;
+  port?: BridgePort & Partial<Pick<SocketPort, "close">>;
 }
 
-/** The JupyterLab Builder's `ToolBridge`: the Jupyter server's tool servers, asked about once. */
+/** One Builder tab's bridge; `dispose` closes its connection to the Jupyter server. */
+export interface JupyterToolBridge extends ToolBridge {
+  dispose: () => void;
+}
+
+/**
+ * A JupyterLab Builder tab's `ToolBridge`: the Jupyter server's tool servers,
+ * asked about once, over a connection of the tab's own. Each tab has its own,
+ * as each VS Code Builder tab has its own webview: the server tracks what a
+ * connection uses, so one tab's Disconnect never cuts off another.
+ */
 export function createJupyterToolBridge(
   settings: ToolsSocketSettings,
   options: JupyterToolBridgeOptions,
-): ToolBridge {
-  const inner = createMessageBridge(options.port ?? createSocketPort(settings), {
-    configHint: CONFIG_HINT,
-  });
+): JupyterToolBridge {
+  const port = options.port ?? createSocketPort(settings);
+  const inner = createMessageBridge(port, { configHint: CONFIG_HINT });
   return {
     ...inner,
+    dispose: () => port.close?.(),
     connect: async (id) => {
       const server = (await inner.listServers()).find((s) => s.id === id);
       if (server) {

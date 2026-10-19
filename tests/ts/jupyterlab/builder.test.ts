@@ -1,30 +1,41 @@
 /**
  * megane Builder in JupyterLab: the megane sidebar panel, the commands, the
- * file-browser entry, the one Builder tab, and files read from and saved into
- * the server's contents.
+ * file-browser entry, the Builder tabs (each with a document of its own), and
+ * files read from and saved into the server's contents.
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
-const { mountBuilder, openStructureFile, closeDocument, mounts } = vi.hoisted(() => {
-  const mounts: { el: HTMLElement; host: Record<string, unknown>; dispose: () => void }[] = [];
-  return {
-    mounts,
-    mountBuilder: vi.fn((el: HTMLElement, host: Record<string, unknown>) => {
-      const m = { el, host, dispose: vi.fn() };
-      mounts.push(m);
-      return { open: vi.fn(), dispose: m.dispose };
-    }),
-    openStructureFile: vi.fn(async (_file: File) => true),
-    closeDocument: vi.fn(),
-  };
-});
+const { mountBuilder, openStructureFile, createBuilderStores, closeDocument, mounts } = vi.hoisted(
+  () => {
+    const mounts: {
+      el: HTMLElement;
+      host: Record<string, unknown>;
+      stores: unknown;
+      dispose: () => void;
+    }[] = [];
+    const closeDocument = vi.fn();
+    let n = 0;
+    return {
+      mounts,
+      mountBuilder: vi.fn((el: HTMLElement, host: Record<string, unknown>, stores: unknown) => {
+        const m = { el, host, stores, dispose: vi.fn() };
+        mounts.push(m);
+        return { open: vi.fn(), dispose: m.dispose };
+      }),
+      openStructureFile: vi.fn(async (_file: File, _api?: unknown) => true),
+      createBuilderStores: vi.fn(() => ({
+        id: `builder-${++n}`,
+        builder: { getState: () => ({ closeDocument }) },
+      })),
+      closeDocument,
+    };
+  },
+);
 
 vi.mock("@megane/builder/mount", () => ({ mountBuilder }));
 vi.mock("@megane/builder/open", () => ({ openStructureFile }));
-vi.mock("@megane/builder/store", () => ({
-  useBuilderStore: { getState: () => ({ closeDocument }) },
-}));
+vi.mock("@megane/builder/BuilderStores", () => ({ createBuilderStores }));
 
 import {
   basename,
@@ -37,7 +48,7 @@ import {
 } from "../../../jupyterlab-megane/src/builder/contents";
 import {
   BuilderWidget,
-  BUILDER_WIDGET_ID,
+  BUILDER_WIDGET_CLASS,
 } from "../../../jupyterlab-megane/src/builder/BuilderWidget";
 import { BuilderSidebar } from "../../../jupyterlab-megane/src/builder/sidebar";
 import {
@@ -181,10 +192,14 @@ describe("dialogPrompts", () => {
 });
 
 describe("BuilderWidget", () => {
-  it("is one closable tab that mounts the Builder once, scoped, without Tools", async () => {
+  it("is a closable tab with a document of its own that mounts the Builder once, scoped, without Tools", async () => {
     const save = vi.fn(async () => "Saved");
     const w = new BuilderWidget(save);
-    expect(w.id).toBe(BUILDER_WIDGET_ID);
+    const other = new BuilderWidget(save);
+    expect(w.id).toMatch(/^megane-builder-\d+$/);
+    expect(other.id).not.toBe(w.id);
+    expect(other.stores).not.toBe(w.stores);
+    expect(w.node.classList.contains(BUILDER_WIDGET_CLASS)).toBe(true);
     expect(w.title.label).toBe("megane Builder");
     expect(w.title.closable).toBe(true);
     expect(w.node.dataset.lmSuppressShortcuts).toBe("true");
@@ -194,12 +209,13 @@ describe("BuilderWidget", () => {
     expect(mountBuilder).toHaveBeenCalledTimes(1);
     const host = mounts[0].host as { save: (f: unknown) => Promise<string>; tools: boolean };
     expect(host).toMatchObject({ tools: false, scopeShortcuts: true });
+    expect(mounts[0].stores).toBe(w.stores);
     await host.save({ name: "a" });
     expect(save).toHaveBeenCalledWith({ name: "a" });
 
     const file = new File(["x"], "w.pdb");
     expect(await w.open(file, "data")).toBe(true);
-    expect(openStructureFile).toHaveBeenCalledWith(file);
+    expect(openStructureFile).toHaveBeenCalledWith(file, w.stores.builder);
     expect(w.dir).toBe("data");
 
     w.dispose();
@@ -208,15 +224,26 @@ describe("BuilderWidget", () => {
     w.dispose();
     expect(closeDocument).toHaveBeenCalledTimes(1);
   });
+
+  it("closing the tab disposes it and drops the document", () => {
+    const w = new BuilderWidget(vi.fn(async () => null));
+    (w as unknown as { onAfterAttach(): void }).onAfterAttach();
+    w.close();
+    expect(w.isDisposed).toBe(true);
+    expect(mounts[0].dispose).toHaveBeenCalledTimes(1);
+    expect(closeDocument).toHaveBeenCalledTimes(1);
+  });
 });
 
 describe("BuilderWidget tools", () => {
   it("gives the Builder the Tools menu through the tool bridge", () => {
-    const bridge = { configHint: "x", listServers: vi.fn(), connect: vi.fn() };
+    const bridge = { configHint: "x", listServers: vi.fn(), connect: vi.fn(), dispose: vi.fn() };
     const w = new BuilderWidget(vi.fn(), bridge);
     (w as unknown as { onAfterAttach(): void }).onAfterAttach();
     expect(mounts[mounts.length - 1].host).toMatchObject({ tools: true, toolBridge: bridge });
+    // Closing the tab closes its connection, which releases its tool servers.
     w.dispose();
+    expect(bridge.dispose).toHaveBeenCalledTimes(1);
   });
 });
 
@@ -372,33 +399,64 @@ describe("builder plugin", () => {
     expect(sidebar.node.textContent).toContain("Right-click");
   });
 
-  it("gives the Builder tab the Jupyter server's tool servers by default", async () => {
+  const tabs = (app: ReturnType<typeof fakeApp>["app"]) =>
+    app.shell.add.mock.calls.filter((c) => c[1] === "main").map((c) => c[0] as BuilderWidget);
+
+  it("gives every Builder tab a connection of its own to the Jupyter server's tool servers", async () => {
     const { app } = fakeApp();
     activateBuilder(app as never, null, null, null, null);
     await app.commands.execute(CommandIDs.openBuilder);
-    const tab = app.shell.add.mock.calls.find((c) => c[1] === "main")![0] as BuilderWidget;
-    (tab as unknown as { onAfterAttach(): void }).onAfterAttach();
-    const host = mounts[mounts.length - 1].host as {
-      tools: boolean;
-      toolBridge: { configHint: string };
-    };
-    expect(host.tools).toBe(true);
-    expect(host.toolBridge.configHint).toBe(CONFIG_HINT);
-    tab.dispose();
+    await app.commands.execute(CommandIDs.openBuilder);
+    const [first, second] = tabs(app);
+    for (const tab of [first, second]) {
+      (tab as unknown as { onAfterAttach(): void }).onAfterAttach();
+    }
+    const hosts = mounts
+      .slice(-2)
+      .map((m) => m.host as { tools: boolean; toolBridge: { configHint: string } });
+    expect(hosts.every((h) => h.tools)).toBe(true);
+    expect(hosts[0].toolBridge.configHint).toBe(CONFIG_HINT);
+    expect(hosts[0].toolBridge).not.toBe(hosts[1].toolBridge);
+    first.dispose();
+    second.dispose();
   });
 
-  it("megane Builder opens one tab and brings it back", async () => {
+  it("megane Builder opens a new tab, with a document of its own, every time", async () => {
     const { app } = fakeApp();
     activateBuilder(app as never, null, null, null, null);
     await app.commands.execute(CommandIDs.openBuilder);
     await app.commands.execute(CommandIDs.openBuilder);
-    const mains = app.shell.add.mock.calls.filter((c) => c[1] === "main");
-    expect(mains).toHaveLength(1);
-    expect((mains[0][0] as BuilderWidget).title.icon).toBe(meganeIcon);
-    expect(app.shell.activateById).toHaveBeenCalledTimes(2);
-    (mains[0][0] as BuilderWidget).dispose();
+    const [first, second] = tabs(app);
+    expect(tabs(app)).toHaveLength(2);
+    expect(first.stores).not.toBe(second.stores);
+    expect(first.title.icon).toBe(meganeIcon);
+    expect(first.title.label).toBe("megane Builder");
+    expect(app.shell.activateById.mock.calls.map((c) => c[0])).toEqual([first.id, second.id]);
+    // The tab's close button: close(), not dispose().
+    first.close();
+    expect(first.isDisposed).toBe(true);
     await app.commands.execute(CommandIDs.openBuilder);
-    expect(app.shell.add.mock.calls.filter((c) => c[1] === "main")).toHaveLength(2);
+    expect(tabs(app)).toHaveLength(3);
+  });
+
+  it("a file opens in one tab: asking again reveals it, until it is closed", async () => {
+    const { app } = fakeApp({ "proj/w.pdb": [1], "proj/x.pdb": [2] });
+    activateBuilder(app as never, null, null, null, null);
+    await app.commands.execute(CommandIDs.openInBuilder, { path: "proj/w.pdb" });
+    await app.commands.execute(CommandIDs.openInBuilder, { path: "proj/w.pdb" });
+    const [w] = tabs(app);
+    expect(tabs(app)).toHaveLength(1);
+    expect(w.title.label).toBe("w.pdb — Builder");
+    expect(app.shell.activateById).toHaveBeenLastCalledWith(w.id);
+    expect(openStructureFile).toHaveBeenCalledTimes(1);
+
+    await app.commands.execute(CommandIDs.openInBuilder, { path: "proj/x.pdb" });
+    expect(tabs(app)).toHaveLength(2);
+    expect(openStructureFile.mock.calls[1][1]).toBe(tabs(app)[1].stores.builder);
+
+    w.close();
+    await app.commands.execute(CommandIDs.openInBuilder, { path: "proj/w.pdb" });
+    expect(tabs(app)).toHaveLength(3);
   });
 
   it("Open in megane Builder reads the file into the tab and saves beside it", async () => {
@@ -441,6 +499,8 @@ describe("builder plugin", () => {
     await app.commands.execute(CommandIDs.openInBuilder, { path: "gone.pdb" });
     expect(error.mock.calls[0][0]).toBe("megane Builder could not read gone.pdb: not found");
     expect(openStructureFile).not.toHaveBeenCalled();
+    // The tab opened for the unreadable file goes away again.
+    expect(tabs(app).map((t) => t.isDisposed)).toEqual([true]);
   });
 
   it("the sidebar follows the file browser and opens through the commands", async () => {

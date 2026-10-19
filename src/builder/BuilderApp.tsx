@@ -62,7 +62,7 @@ import {
 import type { StructureWriteFormat } from "../parsers/parseCore";
 import { applyThemeBackground, useRendererThemeBackground } from "../stores/useThemeStore";
 import type { HoverInfo } from "../types";
-import { useBuilderStore, canEdit, editSteps, shownSnapshot, viewSnapshot } from "./store";
+import { canEdit, editSteps, shownSnapshot, viewSnapshot } from "./store";
 import { builderViewportState, BUILDER_SOURCE_ID } from "./view";
 import { useBuilderHandlers } from "./useBuilderHandlers";
 import { useBuilderShortcuts, TOOL_KEYS } from "./shortcuts";
@@ -82,7 +82,7 @@ import { structureMenuItems } from "./crystal/structureMenu";
 import { hasCellBox, symmetryOpsAvailable } from "./crystal/structure";
 import { ToolServerDialog, toolsMenuItems, useToolServerLaunch } from "./tools/ToolServer";
 import { ToolDialog } from "./tools/ToolDialog";
-import { useToolsStore } from "./tools/store";
+
 import { LibraryHost } from "./library/LibraryPanel";
 import { AtomMenu, type AtomMenuTarget } from "./AtomMenu";
 import { runCleanup } from "./cleanup";
@@ -90,6 +90,12 @@ import { buttonStyle, hintStyle } from "./styles";
 import { trackEvent } from "../analytics";
 import { WEB_HOST, hostHasTools, type BuilderHost } from "./host";
 import { openStructureFile } from "./open";
+import {
+  useBuilderStoreApi,
+  useScopedBuilderStore,
+  useScopedToolsStore,
+  useToolsStoreApi,
+} from "./BuilderStores";
 import { hoverHighlight } from "./hover";
 import { readoutLabel } from "./manipulate";
 import type { DragStatus } from "./store";
@@ -140,40 +146,40 @@ export interface BuilderAppProps {
 }
 
 export function BuilderApp({ host = WEB_HOST }: BuilderAppProps = {}) {
-  const api = useBuilderStore;
+  const api = useBuilderStoreApi();
   const rootRef = useRef<HTMLDivElement>(null);
   const hasTools = hostHasTools(host);
-  const source = useBuilderStore((s) => s.source);
-  const result = useBuilderStore((s) => s.result);
-  const showOriginal = useBuilderStore((s) => s.showOriginal);
-  const fileName = useBuilderStore((s) => s.fileName);
-  const sourceLabels = useBuilderStore((s) => s.sourceLabels);
-  const edits = useBuilderStore((s) => s.edits);
-  const redoStack = useBuilderStore((s) => s.redoStack);
-  const revision = useBuilderStore((s) => s.revision);
-  const selected = useBuilderStore((s) => s.selected);
-  const tool = useBuilderStore((s) => s.tool);
-  const pendingBondAtom = useBuilderStore((s) => s.pendingBondAtom);
-  const placeSource = useBuilderStore((s) => s.placeSource);
-  const notice = useBuilderStore((s) => s.notice);
-  const undo = useBuilderStore((s) => s.undo);
-  const redo = useBuilderStore((s) => s.redo);
-  const newCell = useBuilderStore((s) => s.newCell);
-  const newBulk = useBuilderStore((s) => s.newBulk);
-  const setNotice = useBuilderStore((s) => s.setNotice);
-  const reportError = useBuilderStore((s) => s.reportError);
-  const pushOp = useBuilderStore((s) => s.pushOp);
-  const preview = useBuilderStore((s) => s.preview);
-  const drag = useBuilderStore((s) => s.drag);
-  const snap = useBuilderStore((s) => s.snap);
-  const adsorbHeight = useBuilderStore((s) => s.adsorbHeight);
-  const toolsStatus = useToolsStore((s) => s.status);
-  const toolsConnection = useToolsStore((s) => s.connection);
-  const openTool = useToolsStore((s) => s.openTool);
-  const openForm = useToolsStore((s) => s.openForm);
-  const toolServers = useToolsStore((s) => s.servers);
-  const setToolServer = useToolsStore((s) => s.setUrl);
-  const connectToolServer = useToolsStore((s) => s.connect);
+  const source = useScopedBuilderStore((s) => s.source);
+  const result = useScopedBuilderStore((s) => s.result);
+  const showOriginal = useScopedBuilderStore((s) => s.showOriginal);
+  const fileName = useScopedBuilderStore((s) => s.fileName);
+  const sourceLabels = useScopedBuilderStore((s) => s.sourceLabels);
+  const edits = useScopedBuilderStore((s) => s.edits);
+  const redoStack = useScopedBuilderStore((s) => s.redoStack);
+  const revision = useScopedBuilderStore((s) => s.revision);
+  const selected = useScopedBuilderStore((s) => s.selected);
+  const tool = useScopedBuilderStore((s) => s.tool);
+  const pendingBondAtom = useScopedBuilderStore((s) => s.pendingBondAtom);
+  const placeSource = useScopedBuilderStore((s) => s.placeSource);
+  const notice = useScopedBuilderStore((s) => s.notice);
+  const undo = useScopedBuilderStore((s) => s.undo);
+  const redo = useScopedBuilderStore((s) => s.redo);
+  const newCell = useScopedBuilderStore((s) => s.newCell);
+  const newBulk = useScopedBuilderStore((s) => s.newBulk);
+  const setNotice = useScopedBuilderStore((s) => s.setNotice);
+  const reportError = useScopedBuilderStore((s) => s.reportError);
+  const pushOp = useScopedBuilderStore((s) => s.pushOp);
+  const preview = useScopedBuilderStore((s) => s.preview);
+  const drag = useScopedBuilderStore((s) => s.drag);
+  const snap = useScopedBuilderStore((s) => s.snap);
+  const adsorbHeight = useScopedBuilderStore((s) => s.adsorbHeight);
+  const toolsStatus = useScopedToolsStore((s) => s.status);
+  const toolsConnection = useScopedToolsStore((s) => s.connection);
+  const openTool = useScopedToolsStore((s) => s.openTool);
+  const openForm = useScopedToolsStore((s) => s.openForm);
+  const toolServers = useScopedToolsStore((s) => s.servers);
+  const setToolServer = useScopedToolsStore((s) => s.setUrl);
+  const connectToolServer = useScopedToolsStore((s) => s.connect);
 
   // `shown` is the document (what Save writes); `viewed` is what the view
   // draws, which is the preview of a Structure dialog's op while one is open.
@@ -197,9 +203,10 @@ export function BuilderApp({ host = WEB_HOST }: BuilderAppProps = {}) {
   const closeAtomMenu = useCallback(() => setAtomMenu(null), []);
   useToolServerLaunch(hasTools && !host.toolBridge);
   // A host that reaches tool servers for the page lists the configured ones.
+  const toolsApi = useToolsStoreApi();
   useEffect(() => {
-    if (hasTools && host.toolBridge) void useToolsStore.getState().attachBridge(host.toolBridge);
-  }, [hasTools, host.toolBridge]);
+    if (hasTools && host.toolBridge) void toolsApi.getState().attachBridge(host.toolBridge);
+  }, [hasTools, host.toolBridge, toolsApi]);
   const [dropActive, setDropActive] = useState(false);
 
   // ── The panels on the right ──
@@ -212,7 +219,7 @@ export function BuilderApp({ host = WEB_HOST }: BuilderAppProps = {}) {
   const [newDialog, setNewDialog] = useState<NewStructureKind | null>(null);
   const [crystalDialog, setCrystalDialog] = useState<CrystalDialogKind | null>(null);
   const [toolServerOpen, setToolServerOpen] = useState(false);
-  const closeForm = useToolsStore((s) => s.closeForm);
+  const closeForm = useScopedToolsStore((s) => s.closeForm);
   const showForm = useCallback(
     (form: { crystal?: CrystalDialogKind; create?: NewStructureKind; server?: boolean }) => {
       setCrystalDialog(form.crystal ?? null);
