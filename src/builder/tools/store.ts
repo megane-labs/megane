@@ -5,6 +5,10 @@
  * Applying a result goes through the Builder store's ordinary actions
  * (`openStructure`, `pushOps`), so Undo, Save and the edit history treat a
  * tool's output like any other edit (§5.2).
+ *
+ * With a host bridge attached (`attachBridge`, the VS Code webview), `url`
+ * holds the id of a server the host was configured with instead of a URL, and
+ * the host makes the connection (§8).
  */
 
 import { create, type StateCreator, type StoreApi } from "zustand";
@@ -13,6 +17,7 @@ import { canEdit, useBuilderStore, type BuilderStore } from "../store";
 import { newFragmentId } from "../library/fragment";
 import { callTimeoutMs, sanitizeName, type BuilderResult, type BuilderToolInfo } from "./contract";
 import { connectToolServer, errorMessage, type CallOutcome, type ToolConnection } from "./client";
+import type { BridgeServer, ToolBridge } from "./bridge";
 import { insertOps, residueLabels, structureToSnapshot } from "./payload";
 
 export const TOOLS_STORAGE_KEY = "megane.builder.tools.v1";
@@ -51,6 +56,7 @@ export interface RunningCall {
 }
 
 export interface ToolsStore {
+  /** The server's URL, or with a bridge the id of a configured server. */
   url: string;
   token: string;
   status: ConnectionStatus;
@@ -60,6 +66,10 @@ export interface ToolsStore {
   openTool: BuilderToolInfo | null;
   running: RunningCall | null;
   applied: AppliedToolResult[];
+  /** The host's bridge, when the page reaches servers through it. */
+  bridge: ToolBridge | null;
+  /** The servers the bridge offers; null until listed. */
+  servers: BridgeServer[] | null;
 
   setUrl: (url: string) => void;
   setToken: (token: string) => void;
@@ -70,6 +80,10 @@ export interface ToolsStore {
   /** Call `tool` and apply its result; resolves to the outcome (errors stay in the form). */
   run: (tool: BuilderToolInfo, args: Record<string, unknown>) => Promise<CallOutcome>;
   cancel: () => void;
+  /** Reach servers through `bridge` from now on, and list them. */
+  attachBridge: (bridge: ToolBridge) => Promise<void>;
+  /** List the bridge's servers again (the user may have changed the configuration). */
+  refreshServers: () => Promise<void>;
 }
 
 export interface ToolsStoreDeps {
@@ -168,17 +182,21 @@ export function toolsStateCreator(deps: ToolsStoreDeps): StateCreator<ToolsStore
     openTool: null,
     running: null,
     applied: [],
+    bridge: null,
+    servers: null,
 
     setUrl: (url) => set({ url }),
     setToken: (token) => set({ token }),
 
     connect: async () => {
-      const { url, token, connection } = get();
+      const { url, token, connection, bridge } = get();
       if (connection) await connection.close().catch(() => undefined);
       set({ status: "connecting", error: null, connection: null, openTool: null });
       try {
-        const next = await deps.connector(url.trim(), token.trim());
-        writeStoredUrl(deps.storage, url.trim());
+        const next = bridge
+          ? await bridge.connect(url.trim())
+          : await deps.connector(url.trim(), token.trim());
+        if (!bridge) writeStoredUrl(deps.storage, url.trim());
         set({ status: "connected", connection: next });
       } catch (err) {
         set({ status: "error", error: `Could not connect to ${url}: ${errorMessage(err)}` });
@@ -247,6 +265,30 @@ export function toolsStateCreator(deps: ToolsStoreDeps): StateCreator<ToolsStore
     },
 
     cancel: () => get().running?.controller.abort(),
+
+    attachBridge: async (bridge) => {
+      if (get().bridge === bridge) return;
+      set({ bridge, servers: null, url: "", token: "" });
+      await get().refreshServers();
+    },
+
+    refreshServers: async () => {
+      const { bridge } = get();
+      if (!bridge) return;
+      try {
+        const servers = await bridge.listServers();
+        // An open connection keeps its server even if the configuration dropped it.
+        set((s) => ({
+          servers,
+          url:
+            s.connection || servers.some((server) => server.id === s.url)
+              ? s.url
+              : (servers[0]?.id ?? ""),
+        }));
+      } catch (err) {
+        set({ servers: [], error: `Could not list the tool servers: ${errorMessage(err)}` });
+      }
+    },
   });
 }
 

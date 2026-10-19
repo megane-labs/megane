@@ -406,6 +406,31 @@ title bar. Each opens the Builder in an editor tab (one tab per file; asking
 again brings it back). *Save* asks where to write with VS Code's save dialog,
 starting beside the file you opened.
 
+The *Tools* menu works in VS Code too, with the servers you list in the
+`megane.builder.mcpServers` setting (user or workspace `settings.json`, in the
+`mcpServers` format LLM clients use). VS Code starts a stdio server itself,
+so you don't need HTTP, a token or `--allow-origin`:
+
+```json
+"megane.builder.mcpServers": {
+  "my-tools": {
+    "command": "uv",
+    "args": ["run", "--directory", "${workspaceFolder}", "python", "my_tools.py"]
+  },
+  "lab": { "url": "https://tools.example.org/mcp", "headers": { "Authorization": "Bearer …" } }
+}
+```
+
+The Tools menu then offers **Connect to my-tools**. The first time, VS Code
+asks whether to run that command (or send structures to that URL) and
+remembers your answer for exactly that command or URL. Builder tabs share
+one server process, which stops when the last tab disconnects or closes.
+**Tools › Tool server…** shows what a server runs and has **Configure tool
+servers…**, which opens the setting. The server's messages are in the
+*megane Builder Tools* output panel. An HTTP server must use `https://` unless
+it runs on your machine. In an untrusted workspace, VS Code ignores the
+workspace's own setting. Tool servers need VS Code 1.90 or later.
+
 **JupyterLab.** The Megane extension adds a *Megane* panel (the logo icon)
 to the left sidebar: **Open Builder**, and the structure files of the file
 browser's current folder — click one to edit it. Structure files also have
@@ -438,8 +463,9 @@ Each `Builder` edits its own document; displaying the same `Builder` in a
 second output moves it there, and the first offers *Show here* to take it
 back.
 
-What the embedded Builders leave out: the *Tools* menu (MCP tool servers,
-which only the web app can reach), and, in the notebook widget, the Ketcher
+What the JupyterLab and notebook Builders leave out: the *Tools* menu (MCP
+tool servers, which the web app and VS Code can reach), and, in the notebook
+widget, the Ketcher
 sketcher — *Sketch…* opens the dialog with *Paste MOL*, which takes a MOL
 block or a SMILES string and embeds it in 3D with RDKit. RDKit (*Clean up* and
 the 3D embedding) works on every host; the notebook widget fetches it from the

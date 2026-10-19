@@ -248,3 +248,74 @@ describe("run", () => {
     ).toThrow("Open a structure");
   });
 });
+
+describe("host bridge", () => {
+  function bridgeOf(servers: { id: string; kind: "stdio" | "http"; description: string }[]) {
+    const connection = fakeConnection(async (name) => recorded(name));
+    return {
+      connection,
+      bridge: {
+        configHint: "the setting",
+        listServers: vi.fn(async () => servers),
+        connect: vi.fn(async () => connection),
+      },
+    };
+  }
+
+  it("lists the configured servers and picks the first", async () => {
+    const { store, storage } = setup();
+    const { bridge } = bridgeOf([
+      { id: "a", kind: "stdio", description: "uvx a" },
+      { id: "b", kind: "http", description: "https://b/mcp" },
+    ]);
+    await store.getState().attachBridge(bridge);
+    expect(store.getState().servers?.map((s) => s.id)).toEqual(["a", "b"]);
+    expect(store.getState().url).toBe("a");
+    // The same bridge again is a no-op; a refresh keeps a server that still exists.
+    store.getState().setUrl("b");
+    await store.getState().attachBridge(bridge);
+    await store.getState().refreshServers();
+    expect(store.getState().url).toBe("b");
+    expect(bridge.listServers).toHaveBeenCalledTimes(2);
+    expect(storage.getItem(TOOLS_STORAGE_KEY)).toBeNull();
+  });
+
+  it("connects through the bridge, not the page's connector, and stores nothing", async () => {
+    const { store, connector, storage } = setup();
+    const { bridge, connection } = bridgeOf([{ id: "a", kind: "stdio", description: "uvx a" }]);
+    await store.getState().attachBridge(bridge);
+    await store.getState().connect();
+    expect(bridge.connect).toHaveBeenCalledWith("a");
+    expect(connector).not.toHaveBeenCalled();
+    expect(store.getState().connection).toBe(connection);
+    expect(storage.getItem(TOOLS_STORAGE_KEY)).toBeNull();
+  });
+
+  it("keeps the connected server chosen when the configuration drops it", async () => {
+    const { store } = setup();
+    const { bridge } = bridgeOf([{ id: "a", kind: "stdio", description: "uvx a" }]);
+    await store.getState().attachBridge(bridge);
+    await store.getState().connect();
+    bridge.listServers.mockResolvedValueOnce([{ id: "b", kind: "stdio", description: "uvx b" }]);
+    await store.getState().refreshServers();
+    expect(store.getState().url).toBe("a");
+    expect(store.getState().servers?.map((s) => s.id)).toEqual(["b"]);
+  });
+
+  it("clears the choice when no server is configured, and reports a listing failure", async () => {
+    const { store } = setup();
+    const { bridge } = bridgeOf([]);
+    await store.getState().attachBridge(bridge);
+    expect(store.getState().servers).toEqual([]);
+    expect(store.getState().url).toBe("");
+    bridge.listServers.mockRejectedValueOnce(new Error("no host"));
+    await store.getState().refreshServers();
+    expect(store.getState().error).toBe("Could not list the tool servers: no host");
+  });
+
+  it("refreshes nothing without a bridge", async () => {
+    const { store } = setup();
+    await store.getState().refreshServers();
+    expect(store.getState().servers).toBeNull();
+  });
+});

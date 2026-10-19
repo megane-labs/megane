@@ -3,16 +3,13 @@
     "target": "ES2022",
     "lib": ["ES2022"],
     "types": ["node"],
-    "module": "commonjs",
-    "moduleResolution": "node",
-    "outDir": "./out",
-    "rootDir": "./src",
+    "module": "preserve",
+    "moduleResolution": "bundler",
+    "noEmit": true,
     "strict": true,
     "esModuleInterop": true,
     "skipLibCheck": true,
-    "forceConsistentCasingInFileNames": true,
-    "declaration": true,
-    "sourceMap": true
+    "forceConsistentCasingInFileNames": true
   },
   "include": ["src/**/*.ts"],
   "exclude": ["webview", "media", "node_modules"]

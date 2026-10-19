@@ -148,6 +148,9 @@ export function BuilderApp({ host = WEB_HOST }: BuilderAppProps = {}) {
   const toolsConnection = useToolsStore((s) => s.connection);
   const openTool = useToolsStore((s) => s.openTool);
   const openForm = useToolsStore((s) => s.openForm);
+  const toolServers = useToolsStore((s) => s.servers);
+  const setToolServer = useToolsStore((s) => s.setUrl);
+  const connectToolServer = useToolsStore((s) => s.connect);
 
   // `shown` is the document (what Save writes); `viewed` is what the view
   // draws, which is the preview of a Structure dialog's op while one is open.
@@ -169,7 +172,11 @@ export function BuilderApp({ host = WEB_HOST }: BuilderAppProps = {}) {
   const [hoverInfo, setHoverInfo] = useState<HoverInfo>(null);
   const [atomMenu, setAtomMenu] = useState<AtomMenuTarget | null>(null);
   const closeAtomMenu = useCallback(() => setAtomMenu(null), []);
-  useToolServerLaunch(hasTools);
+  useToolServerLaunch(hasTools && !host.toolBridge);
+  // A host that reaches tool servers for the page lists the configured ones.
+  useEffect(() => {
+    if (hasTools && host.toolBridge) void useToolsStore.getState().attachBridge(host.toolBridge);
+  }, [hasTools, host.toolBridge]);
   const [dropActive, setDropActive] = useState(false);
 
   // ── The panels on the right ──
@@ -305,8 +312,16 @@ export function BuilderApp({ host = WEB_HOST }: BuilderAppProps = {}) {
     () => void runCleanup(api),
   );
   const toolsItems = hasTools
-    ? toolsMenuItems({ status: toolsStatus, connection: toolsConnection, openForm }, () =>
-        showForm({ server: true }),
+    ? toolsMenuItems(
+        {
+          status: toolsStatus,
+          connection: toolsConnection,
+          openForm,
+          servers: toolServers,
+          setUrl: setToolServer,
+          connect: connectToolServer,
+        },
+        () => showForm({ server: true }),
       )
     : undefined;
 
