@@ -454,41 +454,34 @@ title bar. Each opens the Builder in an editor tab (one tab per file; asking
 again brings it back). *Save* asks where to write with VS Code's save dialog,
 starting beside the file you opened.
 
-The *Tools* menu works in VS Code too (VS Code 1.90 or later). VS Code starts
-the tool server itself, so you need no HTTP, token or `--allow-origin`. To get
-the reference tools (*Liquid box*, *Polymer chain*, *Solvate*):
+The *Tools* menu works in VS Code too (VS Code 1.90 or later), and the
+reference tools (*Liquid box*, *Polymer chain*, *Solvate*) need no setup
+beyond [uv](https://docs.astral.sh/uv/):
 
-1. Install the reference server once (it is not on PyPI yet, so from Git):
-
-   ```bash
-   uv tool install git+https://github.com/hodakamori/megane-builder-tools
-   ```
-
-   This puts a `megane-builder-tools` command on your PATH (`uv tool upgrade
-   megane-builder-tools` updates it).
-2. Run **Preferences: Open User Settings (JSON)** from the Command Palette and
-   add:
-
-   ```json
-   "megane.builder.mcpServers": {
-     "megane-builder-tools": { "command": "megane-builder-tools" }
-   }
-   ```
-
-   If connecting later fails with `spawn megane-builder-tools ENOENT`, VS Code
-   was started without your shell's PATH (common when it is launched from the
-   Dock or Start menu). Give the full path that `which megane-builder-tools`
-   prints, e.g. `"command": "${userHome}/.local/bin/megane-builder-tools"`.
-3. Open a Builder tab (the *Megane* icon in the activity bar › **New
-   Structure**, or **Open in Megane Builder** on a file), choose **Tools ›
-   Connect to megane-builder-tools**, and press **Allow** when VS Code shows
-   the command it is about to run. It asks once per command.
-4. The tools appear in the Tools menu. *Liquid box* and *Polymer chain* make a
+1. Open a Builder tab (the *Megane* icon in the activity bar › **New
+   Structure**, or **Open in Megane Builder** on a file).
+2. Choose **Tools › Connect to megane-builder-tools** and press **Allow** when
+   VS Code shows the command it is about to run. It asks once per command.
+3. The tools appear in the Tools menu. *Liquid box* and *Polymer chain* make a
    new document. *Solvate* adds solvent to the open structure and needs a
    cell: give the structure one with **Structure › Set cell…** first (a polymer
    chain comes without a cell).
 
-Your own server goes in the same setting: any command that runs an MCP server
+VS Code starts the reference server itself when you connect and stops it when
+the last Builder tab disconnects or closes. If `megane-builder-tools` is on
+your PATH (`uv tool install
+git+https://github.com/hodakamori/megane-builder-tools`), that is what runs;
+otherwise `uvx` runs the version megane was tested with. The first connection
+through `uvx` downloads the server and its dependencies (RDKit, packmol,
+RadonPy; about 600 MB in uv's cache) and takes from a few seconds to a few
+minutes depending on your connection; later ones start in seconds. Without uv
+and without the command, the Tools menu has no server to offer.
+
+To add servers, or to replace or hide the reference one, use the
+`megane.builder.mcpServers` setting (**Preferences: Open User Settings
+(JSON)**). An entry named `megane-builder-tools` replaces the built-in one, and
+`"megane-builder-tools": null` hides it. Your own server goes in the same
+setting: any command that runs an MCP server
 over stdio (see [Builder Tool Contract §12.4](../dev/builder-tools.md#124-server-side)),
 for example `{ "command": "uv", "args": ["run", "--directory",
 "${workspaceFolder}", "python", "my_tools.py"] }`. `${workspaceFolder}` and
@@ -533,40 +526,44 @@ asks for a path in the server's file tree (beside the opened file by default)
 and asks before replacing a file.
 
 The *Tools* menu works in JupyterLab too. The Jupyter server starts the tool
-server (it runs where Jupyter runs, not in the browser), so you need no HTTP,
-token or `--allow-origin`. To get the reference tools:
+server where Jupyter runs, not in the browser, so you need no HTTP, token or
+`--allow-origin`. With [uv](https://docs.astral.sh/uv/) installed, the
+reference tools need one step:
 
 1. In the environment Jupyter runs from, install megane with its `tools` extra
-   (the MCP client) and the reference server:
+   (the MCP client) and restart JupyterLab:
 
    ```bash
    pip install "megane[tools]"
-   uv tool install git+https://github.com/hodakamori/megane-builder-tools
    ```
 
-2. Name the server in the Jupyter server's configuration, e.g.
-   `~/.jupyter/jupyter_server_config.json` (`jupyter --config-dir` prints the
-   folder):
-
-   ```json
-   {
-     "MeganeBuilderTools": {
-       "mcp_servers": {
-         "megane-builder-tools": { "command": "megane-builder-tools" }
-       }
-     }
-   }
-   ```
-
-   The entries are the same as VS Code's `megane.builder.mcpServers` above:
-   stdio servers with `command`, `args`, `env` and `cwd`, and HTTP servers
-   with `url` and `headers`. `${workspaceFolder}` is the Jupyter server's root
-   directory. If the command is not found, give its full path (`which
-   megane-builder-tools`).
-3. Restart JupyterLab. The configuration is read when the server starts.
-4. In the Builder tab, choose **Tools › Connect to megane-builder-tools** and
+2. In the Builder tab, choose **Tools › Connect to megane-builder-tools** and
    press **Allow** when JupyterLab shows the command. This browser remembers
    the answer for that exact command.
+
+As in VS Code, the server runs `megane-builder-tools` from PATH if it is
+installed, else the tested version through `uvx`. The first connection through
+`uvx` downloads it, from a few seconds to a few minutes.
+
+To add servers, or to replace or hide the reference one, name them in the
+Jupyter server's configuration, e.g. `~/.jupyter/jupyter_server_config.json`
+(`jupyter --config-dir` prints the folder), then restart JupyterLab:
+
+```json
+{
+  "MeganeBuilderTools": {
+    "mcp_servers": {
+      "my-tools": { "command": "uv", "args": ["run", "--directory", "/path/to/my-tools", "python", "my_tools.py"] }
+    }
+  }
+}
+```
+
+The entries are the same as VS Code's `megane.builder.mcpServers` above:
+stdio servers with `command`, `args`, `env` and `cwd`, and HTTP servers with
+`url` and `headers`. `${workspaceFolder}` is the Jupyter server's root
+directory. An entry named `megane-builder-tools` replaces the built-in one,
+and `null` hides it.
 
 The tools then work as in the web app: *Solvate* needs a cell (**Structure ›
 Set cell…**). Builder tabs and browser windows share one server process,

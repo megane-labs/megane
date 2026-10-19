@@ -8,6 +8,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ### Added
 
+- **The reference tools without setup in VS Code and JupyterLab.** With uv installed, the Builder's Tools menu offers **Connect to megane-builder-tools** (Liquid box, Polymer chain, Solvate) with no setting.
+  - It runs the `megane-builder-tools` command if it is installed (PATH, or uv's `~/.local/bin` for an editor started from the Dock), else `uvx` at a commit of hodakamori/megane-builder-tools pinned in megane.
+  - An entry named `megane-builder-tools` in `megane.builder.mcpServers` / `MeganeBuilderTools.mcp_servers` replaces it, and `null` hides it. The confirmation before first use still applies.
+  - The first connection through uvx downloads about 600 MB into uv's cache: 21 s in VS Code and 13 s in JupyterLab here. Reconnecting with the cache warm takes about 4 s.
+  - Stdio servers now inherit the editor's or Jupyter server's whole environment instead of the MCP SDK's short list, so that download sees `HTTPS_PROXY`, `SSL_CERT_FILE` and uv's settings.
+  - VS Code allows 10 minutes for a stdio server's first `initialize`.
+  - The how-to page for writing a tool server now lists VS Code and JupyterLab among the hosts with a Tools menu.
 - **megane Builder's *Tools* menu in JupyterLab.** The JupyterLab Builder tab now reaches MCP tool servers through megane's new Jupyter server extension, `megane.builder_tools`. The extension is enabled by the wheel's `jupyter_server_config.d/megane.json`.
   - The servers are listed under `MeganeBuilderTools.mcp_servers` in the Jupyter server's configuration, with the same entries as VS Code's `megane.builder.mcpServers`.
   - The server relays only the tool list, a call with its progress, and a cancel, over a WebSocket (`/megane/builder-tools/ws`). The socket is authenticated like the server's other sockets and open only to users who may execute kernels.

@@ -14,7 +14,11 @@ import {
   SETTING_SECTION,
   ToolServerPool,
   createPermissionGate,
+  defaultServer,
+  extraSearchDirs,
+  findExecutable,
   parseServerConfigs,
+  withDefaultServer,
   type ServerConfig,
 } from "./builderTools";
 
@@ -31,7 +35,11 @@ export function permissionDetail(config: ServerConfig, description: string): str
     : `megane Builder will send the structures you build with its tools to:\n\n${description}\n\nAllow only servers you trust.`;
 }
 
-export function createBuilderToolsHost(context: vscode.ExtensionContext): BuilderToolsHost {
+export function createBuilderToolsHost(
+  context: vscode.ExtensionContext,
+  find: (name: string) => string | null = (name) =>
+    findExecutable(name, { extraDirs: extraSearchDirs(os.homedir()) }),
+): BuilderToolsHost {
   let channel: vscode.OutputChannel | undefined;
   const log = (line: string) => {
     channel ??= vscode.window.createOutputChannel("megane Builder Tools");
@@ -52,12 +60,13 @@ export function createBuilderToolsHost(context: vscode.ExtensionContext): Builde
 
   let shownProblems = "";
   const servers = () => {
-    const parsed = parseServerConfigs(
-      vscode.workspace.getConfiguration(SETTING_SECTION).get(SETTING_KEY),
-      {
-        workspaceFolder: vscode.workspace.workspaceFolders?.[0]?.uri.fsPath,
-        userHome: os.homedir(),
-      },
+    const raw = vscode.workspace.getConfiguration(SETTING_SECTION).get(SETTING_KEY);
+    const workspaceFolder = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+    // The reference server is offered without any setting.
+    const parsed = withDefaultServer(
+      raw,
+      parseServerConfigs(raw, { workspaceFolder, userHome: os.homedir() }),
+      () => defaultServer(find, workspaceFolder),
     );
     // Say once what is wrong with the setting, not on every listing.
     const problems = parsed.problems.join("; ");

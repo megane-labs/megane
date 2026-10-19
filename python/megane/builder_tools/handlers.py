@@ -34,7 +34,13 @@ from traitlets import Dict
 from traitlets.config import Configurable
 
 from megane.builder_tools.bridge import BridgeDeps, BuilderToolsBridge, ToolServerPool
-from megane.builder_tools.config import parse_server_configs
+from megane.builder_tools.config import (
+    default_server,
+    extra_search_dirs,
+    find_executable,
+    parse_server_configs,
+    with_default_server,
+)
 from megane.builder_tools.sdk_client import connect_with_sdk
 
 WS_PATH = "megane/builder-tools/ws"
@@ -52,7 +58,8 @@ class MeganeBuilderTools(Configurable):
             "clients use: {name: {command, args, env, cwd}} for a stdio server, or "
             "{name: {url, headers}} for a Streamable HTTP server (https, or http on this "
             "machine). ${workspaceFolder} (the server's root directory) and ${userHome} are "
-            "replaced."
+            "replaced. Without an entry named megane-builder-tools, the reference server is "
+            "offered (installed, else run by uvx at a pinned version); null hides it."
         ),
     )
 
@@ -64,16 +71,19 @@ class ToolsState:
         self.tools = tools
         self.root_dir = root_dir
         self.log = log
+        home = os.path.expanduser("~")
+        #: How programs are found (replaced in tests).
+        self.find = lambda name: find_executable(name, extra_search_dirs(home))
         self.pool = ToolServerPool(lambda config: connect_with_sdk(config, self.info))
 
     def info(self, line: str) -> None:
         self.log.info("megane Builder tools: %s", line)
 
     def servers(self):
-        return parse_server_configs(
-            self.tools.mcp_servers,
-            {"workspaceFolder": self.root_dir, "userHome": os.path.expanduser("~")},
-        )
+        raw = self.tools.mcp_servers
+        parsed = parse_server_configs(raw, {"workspaceFolder": self.root_dir, "userHome": os.path.expanduser("~")})
+        # The reference server is offered without any entry.
+        return with_default_server(raw, parsed, lambda: default_server(self.find, self.root_dir))
 
 
 class BuilderToolsWebSocket(JupyterHandler, websocket.WebSocketHandler):

@@ -21,10 +21,9 @@ Builder.
 - The SDK, which ships with the reference server in
   [hodakamori/megane-builder-tools](https://github.com/hodakamori/megane-builder-tools).
   It is not on PyPI yet, so install it from Git.
-- A Megane Builder page: `megane serve` (the Builder is at `/builder.html`), a
-  local build (`npm run dev`), or the hosted demo. The Tools menu is in the
-  standalone web app only; the VS Code, JupyterLab and Jupyter-widget Builders
-  do not show it yet (see [Where it works](#where-it-works)).
+- A Megane Builder with a *Tools* menu: the web app (`megane serve`, a local
+  build, the hosted demo), VS Code, or JupyterLab (see
+  [Where it works](#where-it-works)).
 
 ```bash
 uv init my-tools && cd my-tools
@@ -241,14 +240,20 @@ Other clients take the common `mcpServers` entry:
 
 | Builder host | Tools menu | Your server |
 | --- | --- | --- |
-| Standalone web app (`megane serve`, a local build, the hosted demo) | ✓ | Streamable HTTP, started by you, with the page's origin allowed |
-| VS Code, JupyterLab, Jupyter widget (`megane.Builder`) | — | Not yet: these hosts hide the Tools menu until they have the bridge planned in [§8](builder-tools.md#8-hosts-and-the-bridge) |
+| Standalone web app (`megane serve`, a local build, the hosted demo) | ✓ | Streamable HTTP, started by you, with the page's origin allowed (*Tools › Tool server…*) |
+| VS Code (1.90+) | ✓ | An entry in the `megane.builder.mcpServers` setting: stdio (VS Code starts it) or Streamable HTTP |
+| JupyterLab | ✓ | An entry in `MeganeBuilderTools.mcp_servers` of the Jupyter server's configuration (needs `megane[tools]`): stdio or Streamable HTTP |
+| Jupyter widget (`megane.Builder`) | — | — |
 
-A stdio entry (`"command": …`) works for LLM clients only. The Builder cannot
-start processes, so for the Builder you start the server yourself in HTTP mode.
-Once a host has its bridge, it will read the same `mcpServers` entries (in VS
-Code from the planned `megane.builder.mcpServers` setting) and start stdio
-servers itself.
+In VS Code and JupyterLab the host starts a stdio server itself, so the entry
+for this page's server is simply the command:
+
+```json
+"my-tools": { "command": "uv", "args": ["run", "--directory", "/path/to/my-tools", "python", "my_tools.py"] }
+```
+
+The web app cannot start processes, so there you start the server yourself in
+HTTP mode, as above.
 
 ## Before you share it
 
