@@ -369,6 +369,9 @@ function render({ model, el }: { model: BuilderWidgetModel; el: HTMLElement }) {
           sync();
         }
       });
+      // takeOver opened the document before this subscription existed, so
+      // Python has not seen it yet.
+      if (useBuilderStore.getState().source) sync();
     },
     release: () => {
       unsubscribe?.();

@@ -389,6 +389,34 @@ describe("render: one Builder per page", () => {
     view.el.remove();
   });
 
+  it("writes back the file Python loaded before any edit", async () => {
+    parseStructureFile.mockResolvedValue(parsed());
+    const model = new FakeModel({
+      _source: new DataView(new TextEncoder().encode("SRC").buffer),
+      _source_name: "water.pdb",
+    });
+    const view = show(model);
+    await flush();
+    await act(async () => await new Promise((r) => setTimeout(r, SYNC_DEBOUNCE_MS + 50)));
+    await flush();
+    const doc = model.state._document as Record<string, unknown>;
+    expect(doc.name).toBe("water.pdb");
+    expect(doc.n_atoms).toBe(3);
+    view.dispose();
+    view.el.remove();
+  });
+
+  it("writes nothing back for an empty Builder", async () => {
+    const model = new FakeModel();
+    const view = show(model);
+    await flush();
+    await act(async () => await new Promise((r) => setTimeout(r, SYNC_DEBOUNCE_MS + 50)));
+    expect(model.state._document).toBeUndefined();
+    expect(model.saves).toBe(0);
+    view.dispose();
+    view.el.remove();
+  });
+
   it("does not write back or open files while another output has the Builder", async () => {
     const a = new FakeModel();
     const b = new FakeModel();
