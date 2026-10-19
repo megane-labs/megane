@@ -168,7 +168,7 @@ describe("parse.worker onmessage", () => {
 
   it("starts the WASM module for an init request and posts an ok response", async () => {
     const { handler, posts } = await loadWorker();
-    await handler({ data: { id: 7, op: "init", wasmUrl: undefined } });
+    await handler({ data: { id: 7, op: "init", wasm: undefined } });
     expect(posts).toHaveLength(1);
     expect(posts[0]).toMatchObject({ id: 7, ok: true, op: "init" });
   });
@@ -176,7 +176,7 @@ describe("parse.worker onmessage", () => {
   it("parses a structure request and posts an ok response", async () => {
     const { handler, posts } = await loadWorker();
     await handler({
-      data: { id: 1, op: "structure", wasmUrl: undefined, ext: ".pdb", text: "ATOM" },
+      data: { id: 1, op: "structure", wasm: undefined, ext: ".pdb", text: "ATOM" },
     });
     expect(posts).toHaveLength(1);
     expect(posts[0].ok).toBe(true);
@@ -190,7 +190,7 @@ describe("parse.worker onmessage", () => {
       data: {
         id: 2,
         op: "trajectory",
-        wasmUrl: undefined,
+        wasm: undefined,
         kind: "xtc",
         bytes: new Uint8Array([1, 2]).buffer,
         expectedNAtoms: 4,
@@ -207,7 +207,7 @@ describe("parse.worker onmessage", () => {
       data: {
         id: 3,
         op: "trajectory",
-        wasmUrl: undefined,
+        wasm: undefined,
         kind: "xtc",
         bytes: new Uint8Array([1]).buffer,
         expectedNAtoms: 999,
@@ -225,7 +225,7 @@ describe("parse.worker onmessage", () => {
       data: {
         id: 10,
         op: "indexTrajectory",
-        wasmUrl: undefined,
+        wasm: undefined,
         kind: "xtc",
         trajectoryId: 100,
         bytes: new Uint8Array([1, 2, 3, 4]).buffer,
@@ -262,7 +262,7 @@ describe("parse.worker onmessage", () => {
       data: {
         id: 30,
         op: "indexTrajectory",
-        wasmUrl: undefined,
+        wasm: undefined,
         kind: "lammpstrj",
         trajectoryId: 300,
         bytes: new Uint8Array([1, 2, 3, 4]).buffer,
@@ -292,7 +292,7 @@ describe("parse.worker onmessage", () => {
       data: {
         id: 20,
         op: "indexTrajectory",
-        wasmUrl: undefined,
+        wasm: undefined,
         kind: "xtc",
         trajectoryId: 200,
         bytes: new Uint8Array([1]).buffer,
@@ -309,7 +309,7 @@ describe("parse.worker onmessage", () => {
       data: {
         id: 45,
         op: "structurePrefix",
-        wasmUrl: undefined,
+        wasm: undefined,
         kind: "xyz",
         text: "3\n\nO 0 0 0\nH 1 0 0\nH 0 1 0\n",
         isWholeFile: false,
@@ -327,7 +327,7 @@ describe("parse.worker onmessage", () => {
       data: {
         id: 46,
         op: "trajectoryFrame0",
-        wasmUrl: undefined,
+        wasm: undefined,
         kind: "xtc",
         bytes: new Uint8Array([1, 2, 3, 4]).buffer,
         expectedNAtoms: 4,
@@ -347,7 +347,7 @@ describe("parse.worker onmessage", () => {
       data: {
         id: 50,
         op: "indexStructure",
-        wasmUrl: undefined,
+        wasm: undefined,
         kind: "xyz",
         trajectoryId: 500,
         bytes: new Uint8Array([1, 2, 3]).buffer,

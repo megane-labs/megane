@@ -18,9 +18,10 @@
  * NOTE: the single-file bundles (the anywidget widget, the npm library, the
  * Builder bundles) swap this module for `parseClientSync` at build time via
  * `syncParseAlias()` in vite.shared.ts. JupyterLab's webpack build keeps it and
- * builds the worker from `parseWorker.webpack.ts`; the VSCode viewer webview
- * keeps it too and starts the worker through a blob: bootstrap
- * (`installCrossOriginWorker`).
+ * builds the worker from `parseWorker.webpack.ts`. The VSCode viewer webview
+ * keeps it too, with the worker inlined after all (its build folds the glue
+ * into the worker, see vscode-megane/vite.webview.config.ts) and fed a WASM
+ * module compiled on the page (`compileWasm` below).
  */
 
 import ParseWorker from "./parse.worker?worker";
@@ -185,6 +186,55 @@ function resolveWasmUrl(): string | undefined {
   return wasmAssetUrl as unknown as string;
 }
 
+/**
+ * The compiled module for a WASM URL the worker cannot fetch itself (one per
+ * URL, kept for later workers: the idle release terminates the worker, not the
+ * module).
+ *
+ * In a VS Code webview the `.wasm` lives on the extension's resource origin,
+ * which only answers requests that pass through the webview's service worker.
+ * The page's own requests do; a Web Worker's do not, and its fetch of the
+ * resource URL hangs (about 30 s) before failing. So the page fetches and
+ * compiles the module, and the worker is handed the `WebAssembly.Module`.
+ */
+const compiledWasm = new Map<string, Promise<WebAssembly.Module>>();
+
+/** Whether `url` is on another origin than the page (so the worker should not fetch it). */
+export function isCrossOriginWasm(url: string, pageUrl: string | undefined): boolean {
+  if (!pageUrl) return false;
+  try {
+    const resolved = new URL(url, pageUrl);
+    if (resolved.protocol === "blob:" || resolved.protocol === "data:") return false;
+    const pageOrigin = new URL(pageUrl).origin;
+    // A custom-scheme page (`vscode-webview://…`) has an opaque origin.
+    return pageOrigin === "null" || resolved.origin !== pageOrigin;
+  } catch {
+    return false;
+  }
+}
+
+function compileWasm(url: string): Promise<WebAssembly.Module> {
+  let module = compiledWasm.get(url);
+  if (!module) {
+    module = fetch(url)
+      .then((res) => {
+        if (!res.ok) throw new Error(`failed to fetch ${url}: HTTP ${res.status}`);
+        return res.arrayBuffer();
+      })
+      .then((bytes) => WebAssembly.compile(bytes));
+    module.catch(() => compiledWasm.delete(url));
+    compiledWasm.set(url, module);
+  }
+  return module;
+}
+
+/**
+ * The module every request waits for once the WASM turned out to be
+ * cross-origin. Requests are then posted after it resolves, all through the
+ * same promise, so they still reach the worker in the order they were sent.
+ */
+let wasmGate: Promise<WebAssembly.Module> | null = null;
+
 function send<T>(req: ParseRequest, transfer: Transferable[]): Promise<T> {
   return new Promise<T>((resolve, reject) => {
     cancelIdleRelease();
@@ -199,7 +249,22 @@ function send<T>(req: ParseRequest, transfer: Transferable[]): Promise<T> {
       reject,
       timer,
     });
-    w.postMessage(req, transfer);
+    const url = "wasm" in req ? req.wasm : undefined;
+    if (typeof url === "string" && isCrossOriginWasm(url, globalThis.location?.href)) {
+      wasmGate = compileWasm(url);
+    }
+    if (!wasmGate) {
+      w.postMessage(req, transfer);
+      return;
+    }
+    wasmGate.then(
+      (module) => w.postMessage("wasm" in req ? { ...req, wasm: module } : req, transfer),
+      (err: unknown) => {
+        clearTimeout(timer);
+        pending.delete(req.id);
+        reject(err instanceof Error ? err : new Error(String(err)));
+      },
+    );
   });
 }
 
@@ -215,11 +280,11 @@ export async function parseStructureFile(file: File): Promise<StructureParseResu
     const transfer: Transferable[] = [];
     if (ext === ".traj") {
       const buffer = await readBlobBuffer(file);
-      req = { id, op: "structure", wasmUrl: resolveWasmUrl(), ext, bytes: buffer };
+      req = { id, op: "structure", wasm: resolveWasmUrl(), ext, bytes: buffer };
       transfer.push(buffer);
     } else {
       const text = await readBlobText(file);
-      req = { id, op: "structure", wasmUrl: resolveWasmUrl(), ext, text };
+      req = { id, op: "structure", wasm: resolveWasmUrl(), ext, text };
     }
     const result = await send<StructureParseResult>(req, transfer);
     perfMark(`megane:parse:end:${tag}`);
@@ -239,7 +304,7 @@ export async function parseStructureText(
   const ext = fileName ? structureExtFromFileName(fileName) : ".pdb";
   try {
     const id = nextId++;
-    const req: ParseRequest = { id, op: "structure", wasmUrl: resolveWasmUrl(), ext, text };
+    const req: ParseRequest = { id, op: "structure", wasm: resolveWasmUrl(), ext, text };
     return await send<StructureParseResult>(req, []);
   } catch {
     tearDown("falling back to synchronous parse");
@@ -260,13 +325,13 @@ async function parseTrajectoryFile(
     const transfer: Transferable[] = [];
     if (kind === "lammpstrj") {
       const text = await readBlobText(file);
-      req = { id, op: "trajectory", wasmUrl: resolveWasmUrl(), kind, text, expectedNAtoms };
+      req = { id, op: "trajectory", wasm: resolveWasmUrl(), kind, text, expectedNAtoms };
     } else {
       const buffer = await readBlobBuffer(file);
       req = {
         id,
         op: "trajectory",
-        wasmUrl: resolveWasmUrl(),
+        wasm: resolveWasmUrl(),
         kind,
         bytes: buffer,
         expectedNAtoms,
@@ -317,7 +382,7 @@ export async function indexTrajectoryLazy(
       {
         id,
         op: "indexTrajectory",
-        wasmUrl: resolveWasmUrl(),
+        wasm: resolveWasmUrl(),
         kind,
         trajectoryId,
         bytes: buffer,
@@ -357,7 +422,7 @@ export async function decodeTrajectoryFrame0(
       {
         id,
         op: "trajectoryFrame0",
-        wasmUrl: resolveWasmUrl(),
+        wasm: resolveWasmUrl(),
         kind,
         bytes: buffer,
         expectedNAtoms,
@@ -404,7 +469,7 @@ export function prewarmParseWorker(): void {
   if (workerUnavailable()) return;
   try {
     const id = nextId++;
-    void send<undefined>({ id, op: "init", wasmUrl: resolveWasmUrl() }, []).catch(() => {});
+    void send<undefined>({ id, op: "init", wasm: resolveWasmUrl() }, []).catch(() => {});
   } catch {
     // Worker construction failed; the next parse falls back on its own.
   }
@@ -484,7 +549,7 @@ export async function parseStructurePrefix(
     const text = tail ? head + tail : head;
     const id = nextId++;
     return send<StructureParseResult>(
-      { id, op: "structurePrefix", wasmUrl: resolveWasmUrl(), kind, text, isWholeFile },
+      { id, op: "structurePrefix", wasm: resolveWasmUrl(), kind, text, isWholeFile },
       [],
     );
   });
@@ -506,7 +571,7 @@ export async function indexStructureLazy(
     const trajectoryId = nextTrajId++;
     const buffer = await readBlobBuffer(file);
     const { index, frame0 } = await send<IndexStructureResult>(
-      { id, op: "indexStructure", wasmUrl: resolveWasmUrl(), kind, trajectoryId, bytes: buffer },
+      { id, op: "indexStructure", wasm: resolveWasmUrl(), kind, trajectoryId, bytes: buffer },
       [buffer],
     );
     liveDecoders.add(trajectoryId);

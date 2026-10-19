@@ -557,7 +557,7 @@ describe("MeganeEditorProvider — structureViewer", () => {
     expect(nonceMatch![1]).toHaveLength(32);
   });
 
-  it("admits the parse worker, served from the resource origin through a blob: bootstrap", async () => {
+  it("admits only the nonce'd entry and blob: workers (the parse worker is inlined)", async () => {
     const provider = getProvider("megane.structureViewer");
     mockState.readFile.mockResolvedValue(new Uint8Array());
 
@@ -566,10 +566,8 @@ describe("MeganeEditorProvider — structureViewer", () => {
     await provider.resolveCustomEditor(doc, panel, {});
 
     const html = panel.webview.html;
-    expect(html).toMatch(
-      /script-src 'nonce-[A-Za-z0-9]{32}' vscode-webview:\/\/test 'wasm-unsafe-eval' blob:;/,
-    );
-    expect(html).toContain("worker-src blob: vscode-webview://test;");
+    expect(html).toMatch(/script-src 'nonce-[A-Za-z0-9]{32}' 'wasm-unsafe-eval' blob:;/);
+    expect(html).toContain("worker-src blob:;");
     // Unlike the Builder's page, the viewer never needs eval.
     expect(html).not.toContain("'unsafe-eval'");
   });

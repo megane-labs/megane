@@ -13,11 +13,18 @@ import type {
   StructureIndexResult,
 } from "./parseCore";
 
+/**
+ * The WASM module a request initialises the worker with: the `.wasm` URL, the
+ * module the page compiled when the worker cannot fetch that URL itself (see
+ * `parseClient.ts`), or undefined for the worker's default.
+ */
+export type WasmSource = string | WebAssembly.Module | undefined;
+
 /** Request: parse a structure file's already-read contents. */
 export interface StructureParseRequest {
   id: number;
   op: "structure";
-  wasmUrl: string | undefined;
+  wasm: WasmSource;
   ext: string;
   text?: string;
   bytes?: ArrayBuffer;
@@ -27,7 +34,7 @@ export interface StructureParseRequest {
 export interface TrajectoryParseRequest {
   id: number;
   op: "trajectory";
-  wasmUrl: string | undefined;
+  wasm: WasmSource;
   kind: TrajectoryKind;
   text?: string;
   bytes?: ArrayBuffer;
@@ -38,7 +45,7 @@ export interface TrajectoryParseRequest {
 export interface IndexTrajectoryRequest {
   id: number;
   op: "indexTrajectory";
-  wasmUrl: string | undefined;
+  wasm: WasmSource;
   kind: LazyTrajectoryKind;
   trajectoryId: number;
   bytes: ArrayBuffer;
@@ -53,7 +60,7 @@ export interface IndexTrajectoryRequest {
 export interface IndexStructureRequest {
   id: number;
   op: "indexStructure";
-  wasmUrl: string | undefined;
+  wasm: WasmSource;
   kind: LazyStructureKind;
   /** Reuses the trajectory decoder map, so `decodeFrame` / `disposeTrajectory` apply. */
   trajectoryId: number;
@@ -74,7 +81,7 @@ export interface IndexStructureResult {
 export interface StructurePrefixRequest {
   id: number;
   op: "structurePrefix";
-  wasmUrl: string | undefined;
+  wasm: WasmSource;
   kind: LazyStructureKind;
   text: string;
   isWholeFile: boolean;
@@ -84,7 +91,7 @@ export interface StructurePrefixRequest {
 export interface TrajectoryFrame0Request {
   id: number;
   op: "trajectoryFrame0";
-  wasmUrl: string | undefined;
+  wasm: WasmSource;
   kind: LazyTrajectoryKind;
   bytes: ArrayBuffer;
   expectedNAtoms: number;
@@ -111,7 +118,7 @@ export interface DecodeFrameRequest {
 export interface InitRequest {
   id: number;
   op: "init";
-  wasmUrl: string | undefined;
+  wasm: WasmSource;
 }
 
 /** Request: free a lazy XTC decoder and its retained bytes. */

@@ -39,7 +39,7 @@ ctx.onmessage = async (e: MessageEvent<ParseRequest>) => {
   const req = e.data;
   try {
     if (req.op === "structure") {
-      await ensureInit(req.wasmUrl);
+      await ensureInit(req.wasm);
       const result = parseStructureCore({
         ext: req.ext,
         text: req.text,
@@ -51,7 +51,7 @@ ctx.onmessage = async (e: MessageEvent<ParseRequest>) => {
         transfer,
       );
     } else if (req.op === "trajectory") {
-      await ensureInit(req.wasmUrl);
+      await ensureInit(req.wasm);
       const result = parseTrajectoryCore({
         kind: req.kind,
         text: req.text,
@@ -64,7 +64,7 @@ ctx.onmessage = async (e: MessageEvent<ParseRequest>) => {
         transfer,
       );
     } else if (req.op === "structurePrefix") {
-      await ensureInit(req.wasmUrl);
+      await ensureInit(req.wasm);
       // Parse frame 0 from a bounded prefix; throws if frame 0 isn't fully in it.
       const result = parseStructurePrefixCore(req.text, req.kind, req.isWholeFile);
       const transfer = collectResultBuffers(result);
@@ -73,7 +73,7 @@ ctx.onmessage = async (e: MessageEvent<ParseRequest>) => {
         transfer,
       );
     } else if (req.op === "trajectoryFrame0") {
-      await ensureInit(req.wasmUrl);
+      await ensureInit(req.wasm);
       // Decode frame 0 from a bounded prefix; throws if the prefix is too small.
       const positions = decodeTrajectoryFrame0Core(
         new Uint8Array(req.bytes),
@@ -90,7 +90,7 @@ ctx.onmessage = async (e: MessageEvent<ParseRequest>) => {
         [positions.buffer],
       );
     } else if (req.op === "indexStructure") {
-      await ensureInit(req.wasmUrl);
+      await ensureInit(req.wasm);
       // One read: build the persistent decoder (index) AND parse frame 0.
       const { decoder, index, frame0 } = indexStructureCore(new Uint8Array(req.bytes), req.kind);
       decoders.set(req.trajectoryId, decoder);
@@ -106,7 +106,7 @@ ctx.onmessage = async (e: MessageEvent<ParseRequest>) => {
         transfer,
       );
     } else if (req.op === "indexTrajectory") {
-      await ensureInit(req.wasmUrl);
+      await ensureInit(req.wasm);
       const { decoder, index } = indexTrajectoryCore(
         new Uint8Array(req.bytes),
         req.kind,
@@ -139,7 +139,7 @@ ctx.onmessage = async (e: MessageEvent<ParseRequest>) => {
         transfer,
       );
     } else if (req.op === "init") {
-      await ensureInit(req.wasmUrl);
+      await ensureInit(req.wasm);
       ctx.postMessage({ id: req.id, ok: true, op: "init" } satisfies ParseResponse);
     } else if (req.op === "disposeTrajectory") {
       decoders.get(req.trajectoryId)?.free();

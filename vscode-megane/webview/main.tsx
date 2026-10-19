@@ -32,14 +32,10 @@ import { setRemoteFileSource } from "../../src/remote/fileSource";
 import { createMessageFileSource } from "../../src/remote/messageFiles";
 import { classifyStandaloneFile } from "../../src/hosts/classifyStandaloneFile";
 import { fileFromBytes } from "../../src/parsers/fileBytes";
-import { installCrossOriginWorker } from "../../src/utils/crossOriginWorker";
 import { perfMark } from "../../src/perf";
 import { prewarmParseWorker } from "../../src/parsers/structure";
 import "../../src/styles/megane.css";
 
-// The parse worker is served from the extension's resource origin, which
-// `new Worker` refuses from the webview's own origin.
-installCrossOriginWorker();
 // Compile the parser's WASM in its worker while the extension host is still
 // posting the document's bytes.
 prewarmParseWorker();
