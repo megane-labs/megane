@@ -160,6 +160,33 @@ describe("runBlock", () => {
     expect(named.data.name).toBe("ethanol");
   });
 
+  it("runs a built-in block with its wired inputs", async () => {
+    const r = await runBlock(
+      {
+        type: "crystal",
+        structure: "fcc",
+        elements: ["Au", "", ""],
+        a: 4.08,
+        covera: 1,
+        cubic: true,
+      },
+      ctx(),
+    );
+    expect(r).toMatchObject({ data: { name: "Au-fcc" }, warnings: [], summary: null });
+    expect(r.data.snapshot.nAtoms).toBe(4);
+    const big = await runBlock(
+      { type: "supercell", repeat: [2, 2, 2] },
+      { ...ctx(), sources: { structure: ["c"] }, inputs: { c: r.data } },
+    );
+    expect(big.data.snapshot.nAtoms).toBe(32);
+  });
+
+  it("refuses a block type it does not know", async () => {
+    await expect(runBlock({ type: "nope" } as unknown as FlowParams, ctx())).rejects.toThrow(
+      "Unknown block.",
+    );
+  });
+
   it("refuses an empty SMILES", async () => {
     await expect(runBlock(smiles("  "), ctx())).rejects.toThrow("Enter a SMILES string.");
   });

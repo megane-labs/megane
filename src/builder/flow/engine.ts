@@ -8,6 +8,7 @@
  * change nothing and nothing runs. A stochastic tool's seed is one of its
  * parameters, so a cached result is the result those parameters give.
  *
+ * The built-in blocks (crystal, slab, polymer, …) run in `builtins.ts`.
  * Everything the blocks need from the outside (RDKit, the library, the
  * Manual document, the tool server) comes in through `FlowDeps`, so the
  * engine is plain data in, data out, and tests replace each dependency.
@@ -21,7 +22,8 @@ import { callTimeoutMs, sanitizeName, type BuilderToolInfo } from "../tools/cont
 import type { CallOptions, CallOutcome } from "../tools/client";
 import { buildArguments, validate } from "../tools/form";
 import { insertOps, residueLabels, structureToSnapshot } from "../tools/payload";
-import { toolForm, toolPorts, type PortSources } from "./ports";
+import { isBuiltin, runBuiltin } from "./builtins";
+import { completeToolParams, toolForm, toolPorts, type PortSources } from "./ports";
 import {
   IDLE_RUN,
   type FlowData,
@@ -197,6 +199,7 @@ async function runTool(params: ToolParams, ctx: BlockContext): Promise<BlockResu
   }
   const { ports, problem } = toolPorts(tool);
   if (problem) throw new Error(problem);
+  params = completeToolParams(params, tool);
   for (const port of ports) {
     if (port.required && (ctx.sources[port.key]?.length ?? 0) === 0) {
       throw new Error(
@@ -255,6 +258,11 @@ export async function runBlock(params: FlowParams, ctx: BlockContext): Promise<B
     }
     case "tool":
       return runTool(params, ctx);
+    default: {
+      if (!isBuiltin(params)) throw new Error("Unknown block.");
+      const { data, warnings } = await runBuiltin(params, ctx.sources, ctx.inputs, ctx.deps);
+      return { data, warnings, summary: null };
+    }
   }
 }
 

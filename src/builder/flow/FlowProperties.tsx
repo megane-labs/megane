@@ -48,6 +48,7 @@ import {
   runStatusColor,
   runStatusText,
 } from "./describe";
+import { BuiltinForm } from "./BuiltinForms";
 import { incoming, type FlowDeps } from "./engine";
 import { asLibraryMolecule, rowFields, toolPorts } from "./ports";
 import type { FlowStore, FlowNode } from "./store";
@@ -478,6 +479,7 @@ export function FlowProperties({ deps, height, serverOpen, onCloseServer }: Flow
         {params.type === "tool" && (
           <ToolForm node={node} params={params} tool={tool} library={library} />
         )}
+        <BuiltinForm id={node.id} params={params} />
         <RunSummary run={nodeRun} />
         <div style={{ display: "flex", gap: 8 }}>
           <button
