@@ -8,5 +8,5 @@
     "asserted": true
   },
   "imageDiscriminates": false,
-  "discriminationNote": "a SerializedPipeline carries the load_trajectory node but not its frames, and deserialize clears them, so after the round trip this pipeline draws exactly what molecule-basic draws — measured byte-identical. The product drops the frames the same way (PipelineChatBox re-attaches only the loaded structure), so no pipeline can draw a different picture for this prompt and the image grades nothing"
+  "discriminationNote": "a SerializedPipeline carries the load_trajectory node but not its frames, and the fixture is a single structure file (the harness drops the trajectory of the demo the webapp boots first), so this pipeline draws exactly what molecule-basic draws — measured byte-identical. No pipeline can draw a different picture for this prompt, so the image grades nothing"
 }

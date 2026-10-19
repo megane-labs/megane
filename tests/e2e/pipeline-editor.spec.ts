@@ -77,7 +77,6 @@ test.describe("pipeline-editor: webapp default graph", () => {
   });
 
   test("Add Node menu adds a Replicate node with its controls", async ({ page }) => {
-    // The Chat tab is the default, so switch to the Editor tab first.
     await page.locator('[data-testid="pipeline-editor-tab-editor"]').click();
     // Open the Add Node palette and add a Replicate (supercell builder) node.
     await page.getByTitle("Add Node").click();
@@ -302,32 +301,27 @@ test.describe("pipeline-editor: webapp default graph", () => {
     await expect(page.locator('[data-testid="isosurface-color"]').first()).toBeVisible();
   });
 
-  test("tab selector switches between editor and chat panes", async ({ page }) => {
+  test("the assistant is docked in the default Editor tab, between graph and properties", async ({
+    page,
+  }) => {
     const editorTab = page.locator('[data-testid="pipeline-editor-tab-editor"]');
-    const chatTab = page.locator('[data-testid="pipeline-editor-tab-chat"]');
+    const inspectorTab = page.locator('[data-testid="pipeline-editor-tab-inspector"]');
     const editorPanel = page.locator("#pipeline-tabpanel-editor");
-    const chatPanel = page.locator("#pipeline-tabpanel-chat");
+    const inspectorPanel = page.locator("#pipeline-tabpanel-inspector");
+    const chatInput = page.locator('[data-testid="pipeline-chat-input"]');
 
-    // Chat is the default tab — the assistant is the primary entry point.
-    await expect(chatTab).toHaveAttribute("aria-selected", "true");
-    await expect(editorTab).toHaveAttribute("aria-selected", "false");
-    await expect(chatPanel).toBeVisible();
-    // The editor pane stays in the layout (visibility:hidden) so ReactFlow
-    // keeps its measurements; Playwright still treats it as hidden.
-    await expect(editorPanel).toBeHidden();
-    // The rail sits beside the tab panels, so its buttons stay on every tab.
-    const rail = page.locator('[data-testid="pipeline-rail"]');
-    await expect(rail).toBeVisible();
-    await expect(page.locator('[data-testid="pipeline-editor-templates"]')).toBeVisible();
-    await expect(page.locator('[data-testid="pipeline-editor-render"]')).toBeVisible();
-    await expect(page.locator('[data-testid="pipeline-editor-theme"]')).toBeVisible();
-
-    // Switch to the Editor tab.
-    await editorTab.click();
+    // The Editor tab is the default, and there is no Chat tab any more.
     await expect(editorTab).toHaveAttribute("aria-selected", "true");
-    await expect(chatTab).toHaveAttribute("aria-selected", "false");
+    await expect(page.locator('[data-testid="pipeline-editor-tab-chat"]')).toHaveCount(0);
     await expect(editorPanel).toBeVisible();
-    await expect(chatPanel).toBeHidden();
+    await expect(chatInput).toBeVisible();
+
+    // Graph above, prompt bar, properties pane below.
+    const flowBox = await editorPanel.locator(".react-flow").boundingBox();
+    const chatBox = await chatInput.boundingBox();
+    const propsBox = await page.locator('[data-testid="pipeline-properties"]').boundingBox();
+    expect(flowBox!.y + flowBox!.height).toBeLessThanOrEqual(chatBox!.y + 1);
+    expect(chatBox!.y + chatBox!.height).toBeLessThanOrEqual(propsBox!.y + 1);
 
     // Regression guard: the editor canvas must have non-zero size. Earlier
     // builds toggled with display:none, which collapsed ReactFlow to 0×0.
@@ -337,24 +331,119 @@ test.describe("pipeline-editor: webapp default graph", () => {
 
     // The rail is a narrow column down the panel's left edge, beside (not
     // above) the editor pane, so the graph keeps the panel's full height.
+    const rail = page.locator('[data-testid="pipeline-rail"]');
     const railBox = await rail.boundingBox();
     expect(railBox?.width ?? 0).toBeGreaterThan(0);
     expect(railBox?.width ?? 0).toBeLessThan(60);
     expect((railBox?.x ?? 0) + (railBox?.width ?? 0)).toBeLessThanOrEqual((editorBox?.x ?? 0) + 1);
 
-    // Back to Chat: editor pane hides again.
-    await chatTab.click();
-    await expect(chatTab).toHaveAttribute("aria-selected", "true");
-    await expect(editorTab).toHaveAttribute("aria-selected", "false");
-    await expect(chatPanel).toBeVisible();
-    await expect(editorPanel).toBeHidden();
+    // The conversation opens over the bottom of the canvas.
+    await page.locator('[data-testid="pipeline-chat-toggle"]').click();
+    const history = page.locator('[data-testid="pipeline-chat-history"]');
+    await expect(history).toBeVisible();
+    const historyBox = await history.boundingBox();
+    expect(historyBox!.y + historyBox!.height).toBeLessThanOrEqual(chatBox!.y + 1);
 
-    // Toggle back to the Editor tab; canvas is still non-zero.
+    // The Inspector tab hides the editor pane, assistant included; the editor
+    // pane stays in the layout (visibility:hidden) so ReactFlow keeps its size.
+    await inspectorTab.click();
+    await expect(inspectorPanel).toBeVisible();
+    await expect(editorPanel).toBeHidden();
+    await expect(chatInput).toBeHidden();
     await editorTab.click();
-    await expect(editorPanel).toBeVisible();
+    await expect(chatInput).toBeVisible();
     const reboundBox = await editorPanel.boundingBox();
     expect(reboundBox?.width ?? 0).toBeGreaterThan(100);
     expect(reboundBox?.height ?? 0).toBeGreaterThan(100);
+  });
+
+  test("the assistant edits the current graph, keeps the loaded files, and can undo", async ({
+    page,
+  }) => {
+    // Stand in for the Anthropic API: read the pipeline the chat sent, make
+    // the change a model would (replicate twice along a, and — like every
+    // generated pipeline — no file names), and stream it back.
+    const requests: string[] = [];
+    await page.route("https://api.anthropic.com/v1/messages", async (route) => {
+      const cors = {
+        "access-control-allow-origin": "*",
+        "access-control-allow-headers": "*",
+        "access-control-allow-methods": "POST, OPTIONS",
+      };
+      if (route.request().method() === "OPTIONS") {
+        await route.fulfill({ status: 204, headers: cors });
+        return;
+      }
+      const body = route.request().postDataJSON() as {
+        messages: { role: string; content: unknown }[];
+      };
+      const message = String(body.messages[body.messages.length - 1].content);
+      requests.push(message);
+      // A self-check repair round carries no graph; answer from the request.
+      const current = /## Current pipeline[\s\S]*?```json\n([\s\S]*?)\n```/.exec(requests[0]);
+      const pipeline = JSON.parse(current![1]) as {
+        nodes: Record<string, unknown>[];
+      };
+      for (const node of pipeline.nodes) {
+        if (node.type === "replicate") node.nx = 2;
+        if ("fileName" in node) node.fileName = null;
+      }
+      const reply =
+        "```json\n" + JSON.stringify(pipeline) + "\n```\nReplicates the cell twice along a.";
+      const sse =
+        "event: content_block_delta\n" +
+        `data: ${JSON.stringify({ type: "content_block_delta", delta: { type: "text_delta", text: reply } })}\n\n` +
+        "event: message_delta\n" +
+        `data: ${JSON.stringify({ type: "message_delta", delta: { stop_reason: "end_turn" } })}\n\n`;
+      await route.fulfill({
+        status: 200,
+        headers: { ...cors, "content-type": "text/event-stream" },
+        body: sse,
+      });
+    });
+
+    const loader = page.locator('[data-testid="pipeline-node-load_structure"]').first();
+    const replicate = page.locator('[data-testid="pipeline-node-replicate"]').first();
+    await expect(loader).toContainText("caffeine_water.pdb");
+    await expect(replicate).toContainText("1 × 1 × 1");
+
+    // This build has no free-demo proxy, so enter a key in the settings.
+    await page.locator('button[title="AI Settings"]').click();
+    await page
+      .locator('[data-testid="pipeline-chat-settings"] input[type="password"]')
+      .fill("sk-ant-test");
+
+    // Select the Replicate node, then ask about "this".
+    await replicate.click();
+    const input = page.locator('[data-testid="pipeline-chat-input"]');
+    await expect(input).toHaveAttribute("placeholder", /Replicate/);
+    await input.fill("make this 2 along a");
+    await input.press("Enter");
+
+    await expect(page.getByText("Replicates the cell twice along a.")).toBeVisible();
+    // The pipeline passes the self-check, so no repair round was needed.
+    expect(requests, requests.slice(1).join("\n---\n")).toHaveLength(1);
+    expect(requests[0]).toContain("## Current pipeline");
+    expect(requests[0]).toMatch(/Selected in the editor: `[^`]+` \(replicate\)/);
+    expect(requests[0]).toContain("make this 2 along a");
+
+    // The graph changed in place, and it drew from the files that stayed
+    // loaded: the structure replicated twice, the trajectory still attached.
+    const viewer = page.locator('[data-testid="megane-viewer"]');
+    await expect(replicate).toContainText("2 × 1 × 1");
+    await expect(loader).toContainText("caffeine_water.pdb");
+    await expect(viewer).toHaveAttribute("data-atom-count", String(2 * ATOM_COUNT_CAFFEINE));
+    await expect(viewer).toHaveAttribute("data-total-frames", "100");
+
+    // Undo puts the previous graph back.
+    await page.locator('[data-testid="pipeline-chat-undo"]').click();
+    await expect(page.getByText("(undone)")).toBeVisible();
+    await expect(page.locator('[data-testid="pipeline-node-replicate"]').first()).toContainText(
+      "1 × 1 × 1",
+    );
+    await expect(loader).toContainText("caffeine_water.pdb");
+    await expect(viewer).toHaveAttribute("data-atom-count", String(ATOM_COUNT_CAFFEINE));
+    await expect(viewer).toHaveAttribute("data-total-frames", "100");
   });
 });
 

@@ -115,7 +115,7 @@ beforeEach(() => {
 
 afterEach(() => {
   usePlaybackStore.setState({ totalFrames: 0 });
-  usePipelineUIStore.setState({ mode: "chat" });
+  usePipelineUIStore.setState({ mode: "editor" });
   viewportProps.current = null;
   tooltipProps.current = null;
 });
@@ -131,7 +131,7 @@ describe("MeganeViewer ui options", () => {
     viewportProps.current = null;
     rendererStub.toggleAtomSelection.mockReturnValue({ atoms: [0] });
     rendererStub.getMeasurement.mockReturnValue(null);
-    usePipelineUIStore.setState({ mode: "chat" });
+    usePipelineUIStore.setState({ mode: "editor" });
   });
 
   // Public API read on every render as the fallback for each unset key: a

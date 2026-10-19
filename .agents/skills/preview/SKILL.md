@@ -92,9 +92,8 @@ npm run demo:video -- --url https://<demo-site>/megane/app/
   live generation there needs `ANTHROPIC_API_KEY` since the local build has no
   LLM proxy.
 - **Notes:** `deviceScaleFactor: 2` keeps CSS-zoomed pixels reasonably crisp.
-  The pipeline panel defaults to the **Chat** tab, so `.react-flow` mounts
-  hidden until the Editor tab is selected (the `pipeline` scene handles this via
-  `actionFirst`). Live generation needs `ANTHROPIC_API_KEY` + network; without
+  The pipeline panel defaults to the **Editor** tab, with the AI prompt bar
+  (`[data-testid="pipeline-chat-input"]`) docked under the graph. Live generation needs `ANTHROPIC_API_KEY` + network; without
   them the run still completes (prompt typed, generation skipped).
 
 ## Promo Video (camera-zoom variant)

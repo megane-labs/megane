@@ -39,12 +39,14 @@ describe("PipelineRail", () => {
   it("marks the current mode's tab selected and switches mode on click", () => {
     const props = renderRail({ mode: "inspector" });
     const tabs = screen.getAllByRole("tab");
-    expect(tabs.map((t) => t.getAttribute("aria-selected"))).toEqual(["false", "true", "false"]);
+    expect(tabs.map((t) => t.getAttribute("aria-selected"))).toEqual(["false", "true"]);
     expect(tabs[1].getAttribute("aria-controls")).toBe("pipeline-tabpanel-inspector");
     expect(tabs[1].id).toBe("pipeline-tab-inspector");
+    // The assistant is docked in the Editor tab, not a tab of its own.
+    expect(screen.queryByTestId("pipeline-editor-tab-chat")).toBeNull();
 
-    fireEvent.click(screen.getByTestId("pipeline-editor-tab-chat"));
-    expect(props.onModeChange).toHaveBeenCalledWith("chat");
+    fireEvent.click(screen.getByTestId("pipeline-editor-tab-editor"));
+    expect(props.onModeChange).toHaveBeenCalledWith("editor");
   });
 
   it("lists every Add Node group under a caption and adds the picked type", () => {

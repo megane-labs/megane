@@ -108,8 +108,12 @@ The `:vscode` / `:widget-vscode` projects need code-server. In a sandboxed/proxi
 
 ## LLM pipeline generator (src/ai)
 
-The chat tab of the pipeline editor turns a natural-language request into a
-`SerializedPipeline`. It **self-checks its own output**: after each generation
+The AI assistant docked in the pipeline editor's Editor tab
+(`src/components/PipelineChatBox.tsx`) turns a natural-language request into a
+`SerializedPipeline`. Each request carries the current graph, the selected
+nodes, and the recent turns (`src/ai/editContext.ts`), and the result is
+installed with the store's `applyGeneratedPipeline`, which keeps loaded files
+attached and records an undo checkpoint (`src/pipeline/generatedApply.ts`). It **self-checks its own output**: after each generation
 `collectPipelineErrors()` (`src/ai/validatePipeline.ts`) runs the schema check,
 the selection-DSL syntax check, and `src/ai/selfCheck.ts` — edge typing via
 `canConnect`, two viewport branches that both change how the same atoms are

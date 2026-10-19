@@ -8,5 +8,5 @@
     "asserted": true
   },
   "imageDiscriminates": false,
-  "discriminationNote": "load_vector reads fileVectors, which is ephemeral store state a SerializedPipeline does not carry and deserialize clears, so vector_overlay emits nothing and this pipeline draws the plain structure. The product behaves the same way, so the image grades nothing"
+  "discriminationNote": "load_vector reads fileVectors, which is store state a SerializedPipeline does not carry and the fixture does not load, so vector_overlay emits nothing and this pipeline draws the plain structure. No pipeline can draw a different picture for this prompt, so the image grades nothing"
 }

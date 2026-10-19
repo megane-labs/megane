@@ -65,7 +65,7 @@ import { defaultParams } from "@/pipeline/types";
 beforeEach(() => {
   // The Chat tab is the default; these tests exercise the editor, so pin the
   // panel to the Editor tab.
-  usePipelineUIStore.setState({ mode: "editor", pendingNotice: null });
+  usePipelineUIStore.setState({ mode: "editor" });
 });
 
 afterEach(() => {
