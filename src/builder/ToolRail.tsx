@@ -8,12 +8,13 @@
  */
 
 import type { ReactNode } from "react";
-import { useBuilderStore } from "./store";
+
 import { TOOL_KEYS } from "./shortcuts";
 import type { BuildTool } from "./types";
 import type { LibraryMolecule } from "./library/types";
 import { ACCENT_TEXT, monoStyle } from "./styles";
 import { RailDivider, RailIcon, railButtonStyle, railCornerMarkStyle, railStyle } from "./rail";
+import { useScopedBuilderStore } from "./BuilderStores";
 
 export interface ToolInfo {
   value: BuildTool;
@@ -134,8 +135,8 @@ export function ToolIcon({ tool }: { tool: BuildTool }) {
 }
 
 export function ToolRail() {
-  const tool = useBuilderStore((s) => s.tool);
-  const setTool = useBuilderStore((s) => s.setTool);
+  const tool = useScopedBuilderStore((s) => s.tool);
+  const setTool = useScopedBuilderStore((s) => s.setTool);
 
   return (
     <div

@@ -1,34 +1,38 @@
 /**
  * megane Builder as a JupyterLab main-area tab.
  *
- * The Builder's document lives in a page-wide store, so JupyterLab has one
- * Builder tab: the commands reveal it, and opening a file replaces its
- * document as *File › Open…* inside the Builder does. Closing the tab drops the
- * document. The tab keeps the directory of the file it opened last, which is
- * where Save suggests writing.
+ * Every tab edits a document of its own (`createBuilderStores()`), so the
+ * commands open as many as asked for, as VS Code does. Opening a file replaces
+ * the tab's document as *File › Open…* inside the Builder does; closing the
+ * tab drops it. The tab keeps the directory of the file it opened last, which
+ * is where Save suggests writing.
  */
 
 import { Widget } from "@lumino/widgets";
+import { createBuilderStores, type BuilderStores } from "@megane/builder/BuilderStores";
 import { mountBuilder, type MountedBuilder } from "@megane/builder/mount";
 import { openStructureFile } from "@megane/builder/open";
-import { useBuilderStore } from "@megane/builder/store";
 import type { BuilderSaveRequest } from "@megane/builder/host";
 
-export const BUILDER_WIDGET_ID = "megane-builder";
+/** The class of every Builder tab; each has its own id. */
+export const BUILDER_WIDGET_CLASS = "megane-builder-panel";
+
+let nextTab = 1;
 
 export class BuilderWidget extends Widget {
   /** Directory of the file opened last ("" for none): where Save starts. */
   dir = "";
+  readonly stores: BuilderStores = createBuilderStores();
   private readonly target: HTMLElement;
   private mounted: MountedBuilder | null = null;
 
   constructor(private readonly save: (file: BuilderSaveRequest) => Promise<string | null>) {
     super();
-    this.id = BUILDER_WIDGET_ID;
+    this.id = `megane-builder-${nextTab++}`;
     this.title.label = "Megane Builder";
     this.title.caption = "Megane Builder: build and edit structures";
     this.title.closable = true;
-    this.addClass("megane-builder-panel");
+    this.addClass(BUILDER_WIDGET_CLASS);
     // The Builder's own keys (tools, Undo, Save) win over JupyterLab's while
     // the focus is in it; outside it, the Builder ignores keys (scopeShortcuts).
     this.node.dataset.lmSuppressShortcuts = "true";
@@ -41,24 +45,33 @@ export class BuilderWidget extends Widget {
   /** Open `file` (read from `dir`) as the document. */
   open(file: File, dir: string): Promise<boolean> {
     this.dir = dir;
-    return openStructureFile(file);
+    return openStructureFile(file, this.stores.builder);
   }
 
   /** Mount the app the first time the tab is on the page. */
   protected onAfterAttach(): void {
     if (this.mounted) return;
-    this.mounted = mountBuilder(this.target, {
-      save: (file) => this.save(file),
-      tools: false,
-      scopeShortcuts: true,
-    });
+    this.mounted = mountBuilder(
+      this.target,
+      { save: (file) => this.save(file), tools: false, scopeShortcuts: true },
+      this.stores,
+    );
+  }
+
+  /**
+   * Closing the tab disposes it. A plain Widget is only detached on close, so
+   * the commands would keep revealing a tab that is no longer in the shell.
+   */
+  protected onCloseRequest(msg: import("@lumino/messaging").Message): void {
+    super.onCloseRequest(msg);
+    this.dispose();
   }
 
   dispose(): void {
     if (this.isDisposed) return;
     this.mounted?.dispose();
     this.mounted = null;
-    useBuilderStore.getState().closeDocument();
+    this.stores.builder.getState().closeDocument();
     super.dispose();
   }
 }

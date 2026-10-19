@@ -6,10 +6,11 @@
 
 import { useLayoutEffect, useRef, useState } from "react";
 import { useDismiss } from "../hooks/useDismiss";
-import { useBuilderStore, canEdit, shownSnapshot } from "./store";
+import { canEdit, shownSnapshot } from "./store";
 import { getElementSymbol } from "../constants";
 import { moleculeOf } from "./geometry";
 import { runCleanup } from "./cleanup";
+import { useBuilderStoreApi, useScopedBuilderStore } from "./BuilderStores";
 
 export interface AtomMenuTarget {
   atom: number;
@@ -43,12 +44,13 @@ export function clampMenuPosition(
 }
 
 export function AtomMenu({ target, onClose }: { target: AtomMenuTarget; onClose: () => void }) {
-  const source = useBuilderStore((s) => s.source);
-  const result = useBuilderStore((s) => s.result);
-  const showOriginal = useBuilderStore((s) => s.showOriginal);
-  const element = useBuilderStore((s) => s.element);
-  const setSelected = useBuilderStore((s) => s.setSelected);
-  const pushOp = useBuilderStore((s) => s.pushOp);
+  const api = useBuilderStoreApi();
+  const source = useScopedBuilderStore((s) => s.source);
+  const result = useScopedBuilderStore((s) => s.result);
+  const showOriginal = useScopedBuilderStore((s) => s.showOriginal);
+  const element = useScopedBuilderStore((s) => s.element);
+  const setSelected = useScopedBuilderStore((s) => s.setSelected);
+  const pushOp = useScopedBuilderStore((s) => s.pushOp);
   const rootRef = useRef<HTMLDivElement>(null);
   const [place, setPlace] = useState({ left: target.x, top: target.y });
 
@@ -102,7 +104,7 @@ export function AtomMenu({ target, onClose }: { target: AtomMenuTarget; onClose:
       disabled: !editable,
       run: () => {
         setSelected(moleculeOf(shown, target.atom));
-        void runCleanup(useBuilderStore);
+        void runCleanup(api);
       },
     },
     {

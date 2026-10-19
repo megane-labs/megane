@@ -2,8 +2,9 @@
  * megane Builder in the JupyterLab extension.
  *
  * The megane panel in the left sidebar lists the structure files of the file
- * browser's folder and opens one in the Builder's main-area tab; the file
- * browser's context menu and the launcher reach it too. Checks that the
+ * browser's folder and opens one in a main-area Builder tab; the file
+ * browser's context menu and the launcher reach it too. Every Builder tab
+ * edits a document of its own, so *Open Builder* adds one each time. Checks that the
  * labextension's bundle runs the Builder's heavy parts (the RDKit worker built
  * by webpack, the lazily loaded Ketcher), that its keyboard shortcuts stay
  * inside the tab, and that Save writes into the server's contents.
@@ -69,6 +70,17 @@ async function openLab(page: Page) {
 const sidebarTab = (page: Page) =>
   page.locator('.jp-SideBar.jp-mod-left [data-id="megane-builder-sidebar"]');
 
+/** The Builder in the main-area tab on screen. */
+const shownBuilder = (page: Page) =>
+  page
+    .locator(".megane-builder-panel")
+    .filter({ visible: true })
+    .locator('[data-testid="megane-builder"]');
+
+/** The main area's tabs titled `text`. */
+const mainTabs = (page: Page, text: string) =>
+  page.locator("#jp-main-dock-panel .lm-TabBar-tab", { hasText: text });
+
 test("the megane sidebar opens a structure in the Builder tab, which edits, cleans up and saves it", async ({
   page,
 }) => {
@@ -80,7 +92,7 @@ test("the megane sidebar opens a structure in the Builder tab, which edits, clea
   await expect(files).toHaveText(["caffeine.sdf"]);
 
   await files.first().click();
-  const builder = page.locator('#megane-builder [data-testid="megane-builder"]');
+  const builder = page.locator('.megane-builder-panel [data-testid="megane-builder"]');
   await expect(builder).toHaveAttribute("data-atom-count", "24", { timeout: 60_000 });
   await waitForReady(page);
   await expect(page.locator('[data-testid="builder-file-name"]')).toHaveText("caffeine.sdf");
@@ -88,7 +100,7 @@ test("the megane sidebar opens a structure in the Builder tab, which edits, clea
   await expect(page.locator('[data-testid="builder-tools"]')).toHaveCount(0);
 
   // The tab's keys act only while the focus is in it.
-  await page.locator('#megane-builder [data-testid="viewer-root"]').click();
+  await page.locator('.megane-builder-panel [data-testid="viewer-root"]').click();
   await page.keyboard.press("m");
   expect((await builderState(page)).tool).toBe("move");
   await sidebar.locator("h2").click();
@@ -124,7 +136,7 @@ test("Ketcher loads in the labextension's sketch dialog", async ({ page }) => {
       window as unknown as { jupyterapp: { commands: { execute: (id: string) => Promise<void> } } }
     ).jupyterapp.commands.execute("megane:open-builder"),
   );
-  await expect(page.locator('#megane-builder [data-testid="megane-builder"]')).toBeVisible();
+  await expect(page.locator('.megane-builder-panel [data-testid="megane-builder"]')).toBeVisible();
   await openSketch(page);
   await waitForKetcher(page);
   await expect(page.locator('[data-testid="sketch-fallback"]')).toHaveCount(0);
@@ -137,11 +149,9 @@ test("the file browser's context menu and the launcher reach the Builder", async
   const entry = page.locator(".lm-Menu-item", { hasText: "Open in Megane Builder" });
   await expect(entry).toBeVisible();
   await entry.click();
-  await expect(page.locator('#megane-builder [data-testid="megane-builder"]')).toHaveAttribute(
-    "data-atom-count",
-    "24",
-    { timeout: 60_000 },
-  );
+  await expect(
+    page.locator('.megane-builder-panel [data-testid="megane-builder"]'),
+  ).toHaveAttribute("data-atom-count", "24", { timeout: 60_000 });
 
   // A file that is not a structure has no such entry.
   await page.locator(".jp-DirListing-item", { hasText: "notes.txt" }).click({ button: "right" });
@@ -157,4 +167,46 @@ test("the file browser's context menu and the launcher reach the Builder", async
   await expect(
     page.locator(".jp-LauncherCard", { hasText: "Megane Builder" }).filter({ visible: true }),
   ).toBeVisible();
+});
+
+test("Open Builder adds a tab with a document of its own each time; a file opens in one tab", async ({
+  page,
+}) => {
+  await openLab(page);
+  await sidebarTab(page).click();
+  const sidebar = page.locator("#megane-builder-sidebar");
+  const openBuilder = sidebar.locator('[data-testid="megane-builder-sidebar-open"]');
+  const file = sidebar.locator('[data-testid="megane-builder-sidebar-file"]', {
+    hasText: "caffeine.sdf",
+  });
+  const panels = page.locator(".megane-builder-panel");
+
+  await openBuilder.click();
+  await expect(panels).toHaveCount(1);
+  await openBuilder.click();
+  await expect(panels).toHaveCount(2);
+  await expect(mainTabs(page, "Megane Builder")).toHaveCount(2);
+
+  // The file opens in a tab of its own.
+  await file.click();
+  await expect(panels).toHaveCount(3);
+  await expect(shownBuilder(page)).toHaveAttribute("data-atom-count", "24", { timeout: 60_000 });
+  await expect(mainTabs(page, "caffeine.sdf — Builder")).toHaveClass(/lm-mod-current/);
+
+  // The empty Builders kept their own (empty) documents.
+  await mainTabs(page, "Megane Builder").first().click();
+  await expect(shownBuilder(page)).toHaveAttribute("data-atom-count", "0");
+
+  // Asking for the file again brings its tab back instead of adding one.
+  await file.click();
+  await expect(panels).toHaveCount(3);
+  await expect(mainTabs(page, "caffeine.sdf — Builder")).toHaveClass(/lm-mod-current/);
+  await expect(shownBuilder(page)).toHaveAttribute("data-atom-count", "24");
+
+  // A closed tab is gone, and Open Builder still opens a new one.
+  await mainTabs(page, "caffeine.sdf — Builder").locator(".lm-TabBar-tabCloseIcon").click();
+  await expect(panels).toHaveCount(2);
+  await openBuilder.click();
+  await expect(panels).toHaveCount(3);
+  await expect(shownBuilder(page)).toHaveAttribute("data-atom-count", "0");
 });

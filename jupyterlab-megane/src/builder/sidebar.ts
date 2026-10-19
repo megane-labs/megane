@@ -1,10 +1,10 @@
 /**
  * The megane panel in JupyterLab's left sidebar: the way into megane Builder.
  *
- * It holds *Open Builder* (the Builder tab, with whatever it was editing), and
- * the structure files in the file browser's current folder, each opening in
- * the Builder with a click. The same files have *Open in Megane Builder* in the
- * file browser's context menu.
+ * It holds *Open Builder* (a new Builder tab), and the structure files in the
+ * file browser's current folder, each opening in a Builder tab with a click.
+ * The same files have *Open in Megane Builder* in the file browser's context
+ * menu.
  */
 
 import { Widget } from "@lumino/widgets";

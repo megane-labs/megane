@@ -10,11 +10,12 @@
  */
 
 import { useEffect, useRef } from "react";
-import { useBuilderStore, canEdit } from "../store";
+import { canEdit } from "../store";
 import { buttonStyle, chipStyle, hintStyle } from "../styles";
 import { SketchModal } from "./SketchModal";
 import { allMolecules, isUserMolecule, useLibraryStore } from "./store";
-import { useLibraryActions, useLibraryUi } from "./ui";
+import { useLibraryActions } from "./ui";
+import { useScopedBuilderStore, useScopedLibraryUi } from "../BuilderStores";
 
 const smallChip = (active: boolean, disabled = false): React.CSSProperties => ({
   ...chipStyle(active, disabled),
@@ -24,9 +25,9 @@ const smallChip = (active: boolean, disabled = false): React.CSSProperties => ({
 });
 
 export function LibraryHost() {
-  const sketch = useLibraryUi((s) => s.sketch);
-  const closeSketch = useLibraryUi((s) => s.closeSketch);
-  const setImporter = useLibraryUi((s) => s.setImporter);
+  const sketch = useScopedLibraryUi((s) => s.sketch);
+  const closeSketch = useScopedLibraryUi((s) => s.closeSketch);
+  const setImporter = useScopedLibraryUi((s) => s.setImporter);
   const { keep, importFile } = useLibraryActions();
   const fileRef = useRef<HTMLInputElement>(null);
 
@@ -64,14 +65,14 @@ export function LibraryHost() {
 }
 
 export function LibraryPanel({ onClose }: { onClose: () => void }) {
-  const source = useBuilderStore((s) => s.source);
-  const result = useBuilderStore((s) => s.result);
-  const showOriginal = useBuilderStore((s) => s.showOriginal);
-  const placeSource = useBuilderStore((s) => s.placeSource);
-  const tool = useBuilderStore((s) => s.tool);
+  const source = useScopedBuilderStore((s) => s.source);
+  const result = useScopedBuilderStore((s) => s.result);
+  const showOriginal = useScopedBuilderStore((s) => s.showOriginal);
+  const placeSource = useScopedBuilderStore((s) => s.placeSource);
+  const tool = useScopedBuilderStore((s) => s.tool);
   const user = useLibraryStore((s) => s.user);
-  const openSketch = useLibraryUi((s) => s.openSketch);
-  const importer = useLibraryUi((s) => s.importer);
+  const openSketch = useScopedLibraryUi((s) => s.openSketch);
+  const importer = useScopedLibraryUi((s) => s.importer);
   const { add, place, remove } = useLibraryActions();
 
   // With nothing open, Add starts a new document with the molecule.

@@ -7,7 +7,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { DetailForm } from "../DetailForm";
 import { getElementSymbol } from "../../constants";
-import { useBuilderStore, shownSnapshot } from "../store";
+import { shownSnapshot } from "../store";
 import { allMolecules, useLibraryStore } from "../library/store";
 import { buttonStyle, hintStyle, inputStyle, rowStyle } from "../styles";
 import { unitLabel, type BuilderToolInfo, type FieldSpec } from "./contract";
@@ -20,19 +20,19 @@ import {
   type FormContext,
   type FormValues,
 } from "./form";
-import { useToolsStore } from "./store";
+import { useScopedBuilderStore, useScopedToolsStore } from "../BuilderStores";
 
 export function ToolDialog({ tool }: { tool: BuilderToolInfo }) {
-  const source = useBuilderStore((s) => s.source);
-  const result = useBuilderStore((s) => s.result);
-  const showOriginal = useBuilderStore((s) => s.showOriginal);
-  const selected = useBuilderStore((s) => s.selected);
-  const edits = useBuilderStore((s) => s.edits);
+  const source = useScopedBuilderStore((s) => s.source);
+  const result = useScopedBuilderStore((s) => s.result);
+  const showOriginal = useScopedBuilderStore((s) => s.showOriginal);
+  const selected = useScopedBuilderStore((s) => s.selected);
+  const edits = useScopedBuilderStore((s) => s.edits);
   const user = useLibraryStore((s) => s.user);
-  const running = useToolsStore((s) => s.running);
-  const run = useToolsStore((s) => s.run);
-  const cancel = useToolsStore((s) => s.cancel);
-  const closeForm = useToolsStore((s) => s.closeForm);
+  const running = useScopedToolsStore((s) => s.running);
+  const run = useScopedToolsStore((s) => s.run);
+  const cancel = useScopedToolsStore((s) => s.cancel);
+  const closeForm = useScopedToolsStore((s) => s.closeForm);
 
   const shown = useMemo(
     () => shownSnapshot({ source, result, showOriginal }),
