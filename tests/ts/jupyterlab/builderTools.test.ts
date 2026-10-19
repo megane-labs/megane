@@ -170,12 +170,13 @@ describe("closing a tab's connection", () => {
     expect(FakeSocket.instances).toHaveLength(2);
   });
 
-  it("dispose closes the bridge's own socket", () => {
+  it("dispose closes the bridge's own socket and fails what was still waiting", async () => {
     FakeSocket.instances = [];
     const bridge = createJupyterToolBridge(settings(), { confirm: vi.fn(), storage: null });
-    void bridge.listServers();
+    const listing = bridge.listServers();
     bridge.dispose();
     expect(FakeSocket.instances[0].readyState).toBe(3);
+    await expect(listing).rejects.toThrow(LOST_CONNECTION);
     // A port without close (a test double) is fine to dispose.
     createJupyterToolBridge(settings(), {
       confirm: vi.fn(),
