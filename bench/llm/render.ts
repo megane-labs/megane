@@ -3,7 +3,7 @@
  *
  * `scorer.ts` grades the shape of a generated pipeline. This module grades the
  * *picture* it produces: it loads a candidate `SerializedPipeline` into a
- * booted webapp exactly the way the chat pane does, screenshots the viewer, and
+ * booted webapp exactly the way the AI assistant does, screenshots the viewer, and
  * compares the result against a committed reference image.
  *
  * The pixel comparison itself is delegated to the E2E suite's
@@ -42,12 +42,13 @@ export interface RenderScore {
 /**
  * Load `pipeline` into an already-booted viewer that has a structure open.
  *
- * This mirrors `applyPipeline` in `src/components/PipelineChatBox.tsx` step for
- * step, and for the same reason: a generated pipeline's `load_structure` node
- * carries `fileName: null` and `deserialize()` clears `nodeSnapshots`, so the
- * loaded structure has to be captured beforehand and re-attached to the new
- * loader afterwards. Skipping that renders an empty viewport, which would make
- * every candidate look equally (and wrongly) broken.
+ * This is the call `PipelineChatBox` makes for a generated pipeline:
+ * `applyGeneratedPipeline` replaces the graph while keeping the data loaded
+ * into it — kept loaders keep their files and parsed data, and a loader with a
+ * new id gets the old structure re-attached — so a candidate is graded on the
+ * picture the product would draw from it. Applying it with a bare
+ * `deserialize` instead would clear the loaded structure and render an empty
+ * viewport, which would make every candidate look equally (and wrongly) broken.
  */
 export async function applyPipeline(
   scope: Page | Frame,
@@ -57,15 +58,8 @@ export async function applyPipeline(
 
   await scope.evaluate(
     (json) => {
-      interface Snapshotish {
-        snapshot: unknown;
-      }
       interface StoreState {
-        nodes: Array<{ id: string; type?: string; data: { params: Record<string, unknown> } }>;
-        nodeSnapshots: Record<string, Snapshotish>;
-        deserialize: (p: unknown) => void;
-        setNodeSnapshot: (id: string, data: Snapshotish) => void;
-        updateNodeParams: (id: string, patch: Record<string, unknown>) => void;
+        applyGeneratedPipeline: (p: unknown) => number | null;
       }
       const store = (
         window as Window & {
@@ -73,32 +67,7 @@ export async function applyPipeline(
         }
       ).__megane_test_pipeline_store;
       if (!store) throw new Error("__megane_test_pipeline_store not exposed; testMode off?");
-
-      const pre = store.getState();
-      const oldLoader = pre.nodes.find((n) => n.type === "load_structure");
-      const preserved = oldLoader
-        ? {
-            snapshot: pre.nodeSnapshots[oldLoader.id],
-            fileName: oldLoader.data.params.fileName ?? null,
-            hasTrajectory: oldLoader.data.params.hasTrajectory ?? false,
-            hasCell: oldLoader.data.params.hasCell ?? false,
-          }
-        : null;
-
-      pre.deserialize(json);
-
-      if (preserved?.snapshot) {
-        const post = store.getState();
-        const newLoader = post.nodes.find((n) => n.type === "load_structure");
-        if (newLoader) {
-          post.setNodeSnapshot(newLoader.id, preserved.snapshot);
-          post.updateNodeParams(newLoader.id, {
-            fileName: preserved.fileName,
-            hasTrajectory: preserved.hasTrajectory,
-            hasCell: preserved.hasCell,
-          });
-        }
-      }
+      store.getState().applyGeneratedPipeline(json);
     },
     pipeline as unknown as Record<string, unknown>,
   );
