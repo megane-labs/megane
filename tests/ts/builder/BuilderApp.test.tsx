@@ -674,9 +674,21 @@ describe("BuilderApp — editing", () => {
     expect((snapshot as Snapshot).nAtoms).toBe(2);
     expect(format).toBe("pdb");
     expect(name).toBe("water.pdb");
-    expect(labels).toEqual(["HOH", "HOH", "HOH"]);
+    // One label per atom left, each still its own atom's.
+    expect(labels).toEqual(["HOH", "HOH"]);
+    expect(useBuilderStore.getState().savedVersion).toBe(useBuilderStore.getState().docVersion);
     save("xyz");
     await waitFor(() => expect(exportSnapshot).toHaveBeenCalledTimes(2));
+  });
+
+  it("saves the edited structure while the original is shown", async () => {
+    render(<BuilderApp />);
+    tool("delete");
+    pick(2);
+    act(() => useBuilderStore.getState().setShowOriginal(true));
+    save("xyz");
+    await waitFor(() => expect(exportSnapshot).toHaveBeenCalledTimes(1));
+    expect((exportSnapshot.mock.calls[0][0] as Snapshot).nAtoms).toBe(2);
   });
 
   it("New from the top bar replaces the document", () => {

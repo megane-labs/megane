@@ -280,6 +280,25 @@ export function canEdit(
   return !!state.source && !!state.result && !state.showOriginal && !state.preview;
 }
 
+/**
+ * The residue labels of the edited structure, atom by atom: each atom keeps
+ * the label of the source atom it came from (followed through deletions and
+ * reorders by its op ref), and an atom the edits added gets none (`UNK` in a
+ * PDB). Null when the source had no labels.
+ */
+export function editedLabels(
+  state: Pick<BuilderStore, "source" | "sourceLabels" | "result">,
+): string[] | null {
+  const { sourceLabels, result } = state;
+  if (!sourceLabels || !result) return sourceLabels;
+  const out: string[] = [];
+  for (let i = 0; i < result.snapshot.nAtoms; i++) {
+    const ref = result.refAt(i);
+    out.push(typeof ref === "number" ? (sourceLabels[ref] ?? "") : "");
+  }
+  return out;
+}
+
 /** Whether the open document has edits that were not saved. */
 export function isDirty(state: Pick<BuilderStore, "source" | "docVersion" | "savedVersion">) {
   return !!state.source && state.docVersion !== state.savedVersion;

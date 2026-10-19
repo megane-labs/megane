@@ -70,7 +70,7 @@ import {
 import type { StructureWriteFormat } from "../parsers/parseCore";
 import { applyThemeBackground, useRendererThemeBackground } from "../stores/useThemeStore";
 import type { HoverInfo } from "../types";
-import { canEdit, editSteps, shownSnapshot, viewSnapshot } from "./store";
+import { canEdit, editedLabels, editSteps, shownSnapshot, viewSnapshot } from "./store";
 import { builderViewportState, BUILDER_SOURCE_ID } from "./view";
 import { useBuilderHandlers } from "./useBuilderHandlers";
 import { useBuilderShortcuts, TOOL_KEYS } from "./shortcuts";
@@ -327,12 +327,18 @@ export function BuilderApp({ host = WEB_HOST }: BuilderAppProps = {}) {
 
   const handleExport = useCallback(
     async (format: StructureWriteFormat) => {
-      if (!shown) return;
+      // Save writes the edited structure, also while the original is shown
+      // for comparison, with each atom's residue label followed through the
+      // edits.
+      const state = api.getState();
+      const doc = state.result?.snapshot ?? state.source;
+      if (!doc) return;
+      const labels = editedLabels(state);
       if (host.save) {
         // The host writes the file itself (a save dialog, the Jupyter
         // server's contents, the kernel's working directory).
         try {
-          const text = await snapshotToText(shown, format, sourceLabels);
+          const text = await snapshotToText(doc, format, labels);
           const said = await host.save({ name: exportFileName(fileName, format), text, format });
           if (said) setNotice({ level: "info", text: said });
         } catch (err) {
@@ -340,11 +346,12 @@ export function BuilderApp({ host = WEB_HOST }: BuilderAppProps = {}) {
           return;
         }
       } else {
-        await exportSnapshot(shown, format, fileName, sourceLabels);
+        await exportSnapshot(doc, format, fileName, labels);
       }
+      state.markSaved();
       trackEvent("export_structure", { file_format: format });
     },
-    [host, shown, fileName, sourceLabels, setNotice, reportError],
+    [api, host, fileName, setNotice, reportError],
   );
 
   // ── View controls ──

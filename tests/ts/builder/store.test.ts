@@ -7,6 +7,7 @@ import {
   viewSnapshot,
   canEdit,
   confirmDiscard,
+  editedLabels,
   isDirty,
   UNTITLED,
 } from "@/builder/store";
@@ -489,5 +490,24 @@ describe("useBuilderStore — unsaved edits and confirmation", () => {
     expect(api.getState().hydrogenMode).toBe("auto");
     api.getState().setHydrogenMode("off");
     expect(api.getState().hydrogenMode).toBe("off");
+  });
+});
+
+describe("editedLabels", () => {
+  it("follows each atom's label through deletions and leaves added atoms unlabelled", () => {
+    const api = createBuilderStore();
+    const g = () => api.getState();
+    expect(editedLabels(g())).toBeNull();
+    g().openStructure(water(), ["HOH1", "HOH2", "HOH3"], "w.pdb");
+    expect(editedLabels(g())).toEqual(["HOH1", "HOH2", "HOH3"]);
+    g().pushOp({ op: "delete_atoms", atoms: [1] });
+    g().pushOp({ op: "add_atom", id: "n1", element: 6, position: [1, 1, 1] });
+    expect(editedLabels(g())).toEqual(["HOH1", "HOH3", ""]);
+  });
+
+  it("is null without source labels", () => {
+    const api = createBuilderStore();
+    api.getState().openStructure(water(), null, "w.xyz");
+    expect(editedLabels(api.getState())).toBeNull();
   });
 });
