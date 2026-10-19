@@ -558,7 +558,11 @@ export class MeganeBuilderPanels {
       vscode.ViewColumn.Active,
       { enableScripts: true, retainContextWhenHidden: true, localResourceRoots: [mediaDir] },
     );
-    panel.iconPath = vscode.Uri.joinPath(this.context.extensionUri, "resources", "megane.svg");
+    panel.iconPath = vscode.Uri.joinPath(
+      this.context.extensionUri,
+      "resources",
+      "megane-color.svg",
+    );
     if (key) this.panels.set(key, panel);
 
     const webview = panel.webview;

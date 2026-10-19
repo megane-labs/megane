@@ -417,8 +417,9 @@ describe("builder plugin", () => {
 });
 
 describe("meganeIcon", () => {
-  it("is a LabIcon of the glasses", () => {
+  it("is a LabIcon of the Megane logo", () => {
     expect(MEGANE_ICON_SVG).toContain("<svg");
+    expect(MEGANE_ICON_SVG).toContain('fill="#2aa590"');
     expect((meganeIcon as unknown as { name: string }).name).toBe("megane-jupyterlab:megane");
   });
 });

@@ -40,7 +40,7 @@ The **Load Structure** and **Load Trajectory** nodes have two buttons: *Load str
 
 ## Megane Builder (structure editor)
 
-Click the *Megane* panel (a pair of glasses) in the left sidebar: **Open
+Click the *Megane* panel (the Megane logo) in the left sidebar: **Open
 Builder**, or click one of the structure files it lists from the file
 browser's folder. Structure files also have **Open in Megane Builder** in the
 file browser's context menu, and the launcher has a **Megane Builder** card (both

@@ -41,7 +41,7 @@ In a remote window (Remote - SSH, WSL, Dev Containers, Codespaces) or in code-se
 
 ## Megane Builder (structure editor)
 
-Click the *Megane* icon (a pair of glasses) in the activity bar: its *Builder*
+Click the *Megane* icon (the Megane logo) in the activity bar: its *Builder*
 view has **New Structure** and **Open File in Builder…**. A structure file
 also has **Open in Megane Builder** in the Explorer's context menu, and a
 Megane viewer tab has the same button in its title bar. The Builder opens in
