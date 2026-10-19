@@ -12,14 +12,6 @@ import { describeServer, type ServerConfig, type ToolClient } from "./builderToo
 /** Large enough for a `document` argument or a result of the maximum size (§5.1). */
 const MAX_MESSAGE_BYTES = 64 * 1024 * 1024;
 
-/** The MCP SDK needs Node.js 20, which VS Code ships from 1.90; older editors get this error. */
-export function nodeVersionProblem(version: string = process.versions.node): string | null {
-  const major = Number(version.split(".")[0]);
-  return major >= 20
-    ? null
-    : `Tool servers need VS Code 1.90 or later (Node.js 20); this VS Code runs Node.js ${version}.`;
-}
-
 /**
  * A `ToolClient` on the MCP TypeScript SDK: stdio servers are started as a
  * child process (stderr goes to `log`), HTTP servers are reached directly.
@@ -28,8 +20,6 @@ export async function connectWithSdk(
   config: ServerConfig,
   log: (line: string) => void,
 ): Promise<ToolClient> {
-  const tooOld = nodeVersionProblem();
-  if (tooOld) throw new Error(tooOld);
   const { Client, StreamableHTTPClientTransport } = await import("@modelcontextprotocol/client");
   let transport;
   if (config.kind === "stdio") {

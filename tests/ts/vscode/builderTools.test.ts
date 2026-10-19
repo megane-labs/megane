@@ -19,7 +19,6 @@ import {
   type ServerConfig,
   type ToolClient,
 } from "../../../vscode-megane/src/builderTools";
-import { nodeVersionProblem } from "../../../vscode-megane/src/sdkClient";
 import type { BridgeReply } from "@/builder/tools/bridgeProtocol";
 
 const STDIO: ServerConfig = {
@@ -139,17 +138,6 @@ describe("server descriptions", () => {
     expect(checkServerUrl("http://localhost:1/mcp")).toBeNull();
     expect(checkServerUrl("http://[::1]:1/mcp")).toBeNull();
     expect(checkServerUrl("http://10.0.0.1/mcp")).toContain("https://");
-  });
-});
-
-describe("nodeVersionProblem", () => {
-  it("accepts Node.js 20 and later, and explains an older VS Code", () => {
-    expect(nodeVersionProblem("20.9.0")).toBeNull();
-    expect(nodeVersionProblem("22.1.0")).toBeNull();
-    expect(nodeVersionProblem()).toBeNull();
-    expect(nodeVersionProblem("18.18.2")).toBe(
-      "Tool servers need VS Code 1.90 or later (Node.js 20); this VS Code runs Node.js 18.18.2.",
-    );
   });
 });
 

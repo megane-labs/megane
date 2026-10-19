@@ -6,16 +6,15 @@
 // out/sdkClient.js, which extension.js loads on the first tool-server
 // connection (the `./sdkClient` import stays a runtime `require`), so
 // activating the extension does not parse it. The target is the Node.js of
-// the oldest VS Code in `engines`, so every supported editor loads
-// extension.js; connecting to a tool server needs Node.js 20 (VS Code 1.90,
-// see `nodeVersionProblem`).
+// the oldest VS Code in `engines` (1.90 ships Node.js 20, the MCP SDK's
+// minimum).
 import { build, context } from "esbuild";
 
 const shared = {
   bundle: true,
   platform: "node",
   format: "cjs",
-  target: "node16",
+  target: "node20",
   external: ["vscode", "./sdkClient"],
   // `import("./sdkClient")` becomes `require("./sdkClient")`, resolved beside
   // extension.js; a native import() from CommonJS would need the extension.

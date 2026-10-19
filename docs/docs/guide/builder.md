@@ -429,7 +429,7 @@ one server process, which stops when the last tab disconnects or closes.
 servers…**, which opens the setting. The server's messages are in the
 *megane Builder Tools* output panel. An HTTP server must use `https://` unless
 it runs on your machine. In an untrusted workspace, VS Code ignores the
-workspace's own setting. Tool servers need VS Code 1.90 or later.
+workspace's own setting.
 
 **JupyterLab.** The Megane extension adds a *Megane* panel (the logo icon)
 to the left sidebar: **Open Builder**, and the structure files of the file
