@@ -6,10 +6,12 @@
  * Per file and run it records
  *   - first : open → first frame drawn with data loaded (`__megane_test_ready`)
  *   - all   : open → `data-total-frames` reaches the file's frame count
- * where "open" is the navigation to `/lab/tree/<file>` in JupyterLab (so the
- * figure includes JupyterLab's own start-up, ~3 s here) and the explorer
- * double-click in VS Code. The first run of each file warms the server and
- * browser caches and is discarded; the table prints medians.
+ * where "open" is the double-click on the file in JupyterLab's file browser or
+ * VS Code's explorer, after the host has finished starting — so the figures
+ * leave out the host's own start-up and cover only opening the file (reading
+ * it, handing it to the viewer, parsing, first render). The first run of each
+ * file warms the server and browser caches and is discarded; the table prints
+ * medians.
  *
  * Fixtures: `python tests/e2e/perf/gen_fixtures.py <dir>` writes a 1002-atom,
  * 900-frame water box as PDB+XTC (with a `.megane.json` naming both), a
@@ -52,10 +54,21 @@ test.describe.configure({ timeout: 3_600_000 });
 type Opener = (page: Page, file: string) => Promise<{ scope: Page | Frame; t0: number }>;
 
 async function openInJupyterLab(page: Page, file: string) {
-  const t0 = Date.now();
-  await page.goto(`http://127.0.0.1:${LAB_PORT}/lab/tree/${file}?token=${LAB_TOKEN}&test=1&reset`, {
+  // Start JupyterLab with no document open, then open the file from the file
+  // browser, so the figure covers opening the file and not JupyterLab's boot.
+  await page.goto(`http://127.0.0.1:${LAB_PORT}/lab?token=${LAB_TOKEN}&test=1&reset`, {
     waitUntil: "domcontentloaded",
   });
+  const item = page
+    .locator(".jp-DirListing-item")
+    .filter({ has: page.getByText(file, { exact: true }) })
+    .first();
+  await item.waitFor({ state: "visible", timeout: 60_000 });
+  // Let the extensions finish activating before opening (as for VS Code).
+  await page.waitForTimeout(3_000);
+  await item.click();
+  const t0 = Date.now();
+  await item.dblclick();
   return { scope: page, t0 };
 }
 
