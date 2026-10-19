@@ -192,6 +192,28 @@ describe("SelectionController — preview highlight", () => {
     expect(sel.previewSelectionGroup.children.length).toBe(0);
   });
 
+  it("refreshPreview() redraws the kept set at the current positions", () => {
+    const { sel, state } = setup();
+    sel.setPreview([1, 2]);
+    state.positions = new Float32Array([0, 0, 0, 9, 9, 9, 1, 2, 3, 0, 0, 0]);
+    sel.refreshPreview();
+    const [a, b] = sel.previewSelectionGroup.children;
+    expect(a.position.toArray()).toEqual([9, 9, 9]);
+    expect(b.position.toArray()).toEqual([1, 2, 3]);
+    sel.setPreview([]);
+    sel.refreshPreview();
+    expect(sel.previewSelectionGroup.children.length).toBe(0);
+  });
+
+  it("skips atoms the current structure no longer has", () => {
+    const { sel, state } = setup();
+    sel.setPreview([0, 3]);
+    state.snapshot = { ...makeSnapshot(), nAtoms: 2, elements: new Uint8Array([6, 7]) };
+    state.positions = new Float32Array([0, 0, 0, 3, 0, 0]);
+    sel.refreshPreview();
+    expect(sel.previewSelectionGroup.children.length).toBe(1);
+  });
+
   it("draws nothing without a snapshot", () => {
     const { sel } = setup({ snapshot: null });
     sel.setPreview([0]);

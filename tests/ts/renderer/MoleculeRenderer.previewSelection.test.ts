@@ -7,6 +7,8 @@
 
 import { describe, it, expect } from "vitest";
 import { MoleculeRenderer } from "@/renderer/MoleculeRenderer";
+import { ImpostorAtomMesh } from "@/renderer/ImpostorAtomMesh";
+import { ImpostorBondMesh } from "@/renderer/ImpostorBondMesh";
 import type { Snapshot } from "@/types";
 
 function makeSnapshot(): Snapshot {
@@ -48,6 +50,37 @@ describe("MoleculeRenderer — preview selection", () => {
     const { renderer, internals } = makeRenderer();
     renderer.setPreviewSelection([0, 1]);
     expect(internals.selection.selectionGroup.children.length).toBe(0);
+  });
+
+  it("follows the atoms when a new snapshot moves them (a Builder drag)", () => {
+    const { renderer, internals } = makeRenderer();
+    internals.atomRenderer = new ImpostorAtomMesh(8);
+    internals.bondRenderer = new ImpostorBondMesh(8);
+    internals.scene = { add: () => {}, remove: () => {} };
+    // No mounted camera: keep the camera step out of a geometry-only test.
+    internals.cameraController.syncExtent = () => {};
+    renderer.setPreviewSelection([1]);
+    const moved = makeSnapshot();
+    moved.positions = new Float32Array([0, 0, 0, 5, 6, 7, 2, 0, 0]);
+    renderer.loadSnapshot(moved, { fit: false });
+    const spheres = internals.selection.previewSelectionGroup.children;
+    expect(spheres.length).toBe(1);
+    expect(spheres[0].position.toArray()).toEqual([5, 6, 7]);
+  });
+
+  it("follows the atoms through a trajectory frame", () => {
+    const { renderer, internals } = makeRenderer();
+    internals.atomRenderer = new ImpostorAtomMesh(8);
+    internals.atomRenderer.loadSnapshot(internals.snapshot);
+    internals.bondRenderer = new ImpostorBondMesh(8);
+    renderer.setPreviewSelection([2]);
+    renderer.updateFrame({
+      frameId: 1,
+      nAtoms: 3,
+      positions: new Float32Array([0, 0, 0, 1, 0, 0, 4, 4, 4]),
+    });
+    const spheres = internals.selection.previewSelectionGroup.children;
+    expect(spheres[0].position.toArray()).toEqual([4, 4, 4]);
   });
 
   it("selectAtomsInRect returns [] without a container", () => {

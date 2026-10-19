@@ -149,6 +149,66 @@ test.describe("builder: webapp", () => {
     );
   });
 
+  test("the selection highlight follows atoms dragged with the Move tool", async ({ page }) => {
+    const root = page.locator('[data-testid="megane-builder"]');
+    const viewport = page.locator('[data-testid="viewer-root"]');
+    await newEmptyCell(page);
+    await waitForReady(page);
+    await page.locator('[data-testid="builder-tool-add"]').click();
+    const box = (await viewport.boundingBox())!;
+    // Off the pivot marker at the centre, whose green axis would read as halo.
+    await page.mouse.click(box.x + box.width * 0.2, box.y + box.height * 0.35);
+    await expect(root).toHaveAttribute("data-atom-count", "1");
+
+    // Select the atom, then drag it with the Move tool: a real press on the
+    // atom, moves, release.
+    await page.locator('[data-testid="builder-tool-select"]').click();
+    await pickAtom(page, 0);
+    expect((await builderState(page)).selected).toEqual([0]);
+    await page.locator('[data-testid="builder-tool-move"]').click();
+    const atomAt = () =>
+      page.evaluate(() => {
+        const t = (
+          window as unknown as {
+            __megane_test: { getProjectedAtomPositions: () => { sx: number; sy: number }[] };
+          }
+        ).__megane_test;
+        const [a] = t.getProjectedAtomPositions();
+        return { x: a.sx, y: a.sy };
+      });
+    const from = await atomAt();
+    await page.mouse.move(box.x + from.x, box.y + from.y);
+    await page.mouse.down();
+    for (let i = 1; i <= 10; i++) {
+      await page.mouse.move(box.x + from.x + 25 * i, box.y + from.y);
+    }
+    await page.mouse.up();
+    await expect.poll(async () => (await atomAt()).x - from.x).toBeGreaterThan(200);
+    const to = await atomAt();
+    expect((await builderState(page)).edits.map((e) => e.op)).toEqual(["add_atom", "move_atoms"]);
+
+    // The green selection halo is drawn around the atom where it is now, and
+    // nothing of it is left where the atom was.
+    const greenAround = async (at: { x: number; y: number }) => {
+      const png = PNG.sync.read(await viewport.screenshot());
+      const scale = png.width / box.width;
+      let n = 0;
+      for (let dy = -60; dy <= 60; dy++) {
+        for (let dx = -60; dx <= 60; dx++) {
+          const x = Math.round((at.x + dx) * scale);
+          const y = Math.round((at.y + dy) * scale);
+          if (x < 0 || y < 0 || x >= png.width || y >= png.height) continue;
+          const i = (y * png.width + x) * 4;
+          const [r, g, b] = [png.data[i], png.data[i + 1], png.data[i + 2]];
+          if (g - r > 25 && g - b > 15) n++;
+        }
+      }
+      return n;
+    };
+    await expect.poll(() => greenAround(to)).toBeGreaterThan(200);
+    expect(await greenAround(from)).toBeLessThan(20);
+  });
+
   test("Place starts a document with nothing open; the periodic table and the theme", async ({
     page,
   }) => {

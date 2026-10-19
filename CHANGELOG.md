@@ -21,6 +21,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ### Fixed
 
+- **Builder: the selection highlight follows dragged atoms.** The green halo on the selected atoms was drawn once, where the atoms were when they were selected, so dragging them with the Move tool left it behind. The highlight is now redrawn wherever the atoms are after every structure update (a drag, a set distance, undo) and every trajectory frame, which also keeps the viewer's Inspector preview on its atoms during playback.
 - **The Surface Mesh envelope no longer has holes where the structure reaches its bounding box.** The alpha-shape grid stopped exactly at the probe-expanded bounding box, so the outermost probe spheres touched its faces and marching cubes left the envelope open there — a hole on every flat facet facing an axis. The grid now keeps two empty cells beyond that box.
 - **`resname == "MK1"` selects residues whose name contains a digit.** Atom labels glue the residue name to its number (`MK1902`), and the selection DSL read the name as the leading letters only (`MK`), so ligands such as indinavir (`MK1`) or `1PE` could not be selected by name. `==` and `!=` now also match a label that starts with the queried name followed by the residue number; this applies only to names containing a digit, so alphabetic queries (`resname == "NA"` against sodium `NA12`) are unchanged.
 

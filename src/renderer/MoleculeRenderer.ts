@@ -388,6 +388,10 @@ export class MoleculeRenderer {
       this.setRepresentationByAtom(this.representationByAtom);
     }
 
+    // The preview highlight marks atoms by index: put it where they are now
+    // (a Builder drag reloads the snapshot with the moved positions).
+    this.selection.refreshPreview();
+
     if (opts.fit !== false) {
       this.cameraController.fitToView(snapshot);
     } else {
@@ -461,6 +465,7 @@ export class MoleculeRenderer {
     if (this.selection.hasSelection) {
       this.selection.refresh();
     }
+    this.selection.refreshPreview();
 
     const _ready = getTestReady();
     if (_ready) {

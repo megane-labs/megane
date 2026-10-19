@@ -94,6 +94,8 @@ function drawHighlightSpheres(
   radiusScale: number = BALL_STICK_ATOM_SCALE,
 ): void {
   for (const atomIdx of atomIndices) {
+    // A selection made on an earlier structure may name atoms this one lacks.
+    if (atomIdx < 0 || atomIdx >= elements.length) continue;
     const r = getRadius(elements[atomIdx]) * radiusScale * 1.6;
     const geo = new THREE.SphereGeometry(r, 16, 16);
     const mat = new THREE.MeshBasicMaterial({
@@ -122,6 +124,7 @@ export class SelectionController {
   readonly previewSelectionGroup = new THREE.Group();
 
   private selectedAtoms: number[] = [];
+  private previewAtoms: number[] | null = null;
 
   constructor(private readonly view: SelectionView) {}
 
@@ -257,15 +260,26 @@ export class SelectionController {
   /**
    * Highlight an arbitrary set of atoms as a live "preview" of the Selection
    * Inspector's current selection (green, translucent). Independent of the
-   * measurement selection. Pass `null` or `[]` to clear.
+   * measurement selection. Pass `null` or `[]` to clear. The set is kept, so
+   * {@link refreshPreview} redraws it where the atoms are now.
    */
   setPreview(atomIndices: number[] | null): void {
+    this.previewAtoms = atomIndices && atomIndices.length > 0 ? [...atomIndices] : null;
+    this.refreshPreview();
+  }
+
+  /**
+   * Redraw the preview highlight at the current positions: after a new
+   * snapshot (an atom moved in the Builder) or a trajectory frame, so the
+   * highlight stays on the atoms it marks.
+   */
+  refreshPreview(): void {
     clearGroup(this.previewSelectionGroup);
     const snapshot = this.view.getSnapshot();
-    if (!snapshot || !atomIndices || atomIndices.length === 0) return;
+    if (!snapshot || !this.previewAtoms) return;
     drawHighlightSpheres(
       this.previewSelectionGroup,
-      atomIndices,
+      this.previewAtoms,
       this.view.getCurrentPositions(),
       snapshot.elements,
       0x22c55e,
