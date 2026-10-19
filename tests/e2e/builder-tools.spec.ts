@@ -204,8 +204,8 @@ test.describe("builder-tools: webapp", () => {
 
     // Wire the molecule's output to the box's Components input by dragging.
     const node = (id: string) => page.locator(`.react-flow__node[data-id="${id}"]`);
-    const out = node("n1").getByTestId("builder-flow-handle-out");
-    const input = node("n2").getByTestId("builder-flow-handle-components");
+    const out = node("n1").locator('.react-flow__handle[data-handleid="out"]');
+    const input = node("n2").locator('.react-flow__handle[data-handleid="components"]');
     const from = (await out.boundingBox())!;
     const to = (await input.boundingBox())!;
     await page.mouse.move(from.x + from.width / 2, from.y + from.height / 2);

@@ -54,6 +54,11 @@ vi.mock("@xyflow/react", async () => {
       React.createElement(React.Fragment, null, children),
     Background: () => null,
     Controls: () => null,
+    MiniMap: () => null,
+    useReactFlow: () => ({
+      screenToFlowPosition: ({ x, y }: { x: number; y: number }) => ({ x, y }),
+      fitView: () => {},
+    }),
     useUpdateNodeInternals: () => () => {},
   };
 });
@@ -160,7 +165,9 @@ describe("Builder Flow mode", () => {
       "document",
       "tool",
     ]);
-    expect(screen.getByTestId("builder-flow-properties").textContent).toContain("Liquid box");
+    expect(screen.getByTestId("builder-flow-properties-header").textContent).toContain(
+      "Liquid box",
+    );
 
     addBlock("builder-tools-server");
     expect(screen.queryByTestId("builder-flow-properties")).toBeNull();

@@ -1,11 +1,12 @@
 /**
- * The left rail in Flow mode, in place of Manual mode's tool and operations
- * rails:
+ * The Flow panel's rail: a column of icon buttons down the panel's left edge,
+ * built from the same pieces as the viewer's Pipeline rail
+ * (`components/graph/PanelRail`). Top to bottom:
  *
- *   Add          — a molecule, the Manual structure, or a tool of the server
- *   File         — open / save the flow as JSON, clear it
- *   Run / Stop   — build every block (or stop the run)
- *   Theme        — as in Manual mode
+ *   Add, Layout   — build the graph
+ *   Run / Stop    — build every block (or stop the run)
+ *   File          — open / save the flow as JSON, clear it
+ *   Theme         — at the foot, as in the viewer
  *
  * The menus are pure item lists (`addMenuItems`, `flowFileMenuItems`) so the
  * rail and its tests read the same thing.
@@ -13,17 +14,26 @@
 
 import { useRef } from "react";
 import type { MenuItem } from "../Menu";
-import { Menu } from "../Menu";
 import { ThemeCycleButton } from "../../components/ThemeCycleButton";
-import { FlyoutMark, RailDivider, RailIcon, railButtonStyle, railStyle } from "../rail";
+import { PanelRail, RailButton, RailMenu, RailSpacer } from "../../components/graph/PanelRail";
+import { RailDivider, RailIcon, railButtonStyle } from "../rail";
 import type { BuilderToolInfo } from "../tools/contract";
 import { toolsMenuItems } from "../tools/ToolServer";
 import type { ToolsStore } from "../tools/store";
 
 const IconAdd = (
   <RailIcon>
-    <rect x="3" y="3" width="18" height="18" rx="3" />
+    <rect x="3.5" y="3.5" width="17" height="17" rx="3" />
     <path d="M12 8v8M8 12h8" />
+  </RailIcon>
+);
+
+const IconLayout = (
+  <RailIcon>
+    <rect x="9" y="3" width="6" height="4.5" rx="1" />
+    <rect x="3" y="16.5" width="6" height="4.5" rx="1" />
+    <rect x="15" y="16.5" width="6" height="4.5" rx="1" />
+    <path d="M12 7.5V12M6 16.5V12h12v4.5" />
   </RailIcon>
 );
 
@@ -101,7 +111,7 @@ export function flowFileMenuItems(a: FlowFileMenuActions): MenuItem[] {
     {
       label: "Save flow",
       testId: "builder-flow-save",
-      title: "Download the blocks and wires as a .megane-flow.json file",
+      title: "Save the blocks and wires as a .megane-flow.json file",
       disabled: !a.hasBlocks,
       onSelect: a.save,
     },
@@ -115,8 +125,8 @@ export function flowFileMenuItems(a: FlowFileMenuActions): MenuItem[] {
   ];
 }
 
-export interface FlowRailProps {
-  addItems: MenuItem[];
+/** What the rail does that is not about adding blocks: files and runs. */
+export interface FlowActions {
   /** A flow file the user picked with Open flow…. */
   onOpenFile: (file: File) => void;
   onSave: () => void;
@@ -127,8 +137,14 @@ export interface FlowRailProps {
   onStop: () => void;
 }
 
+export interface FlowRailProps extends FlowActions {
+  addItems: MenuItem[];
+  onAutoLayout: () => void;
+}
+
 export function FlowRail({
   addItems,
+  onAutoLayout,
   onOpenFile,
   onSave,
   onClear,
@@ -144,30 +160,8 @@ export function FlowRail({
     clear: onClear,
     hasBlocks,
   });
-  const menus = [
-    {
-      testId: "builder-flow-add",
-      label: "Add",
-      title: "Add a block",
-      icon: IconAdd,
-      items: addItems,
-    },
-    {
-      testId: "builder-flow-file",
-      label: "Flow",
-      title: "Open, save or clear the flow",
-      icon: IconFile,
-      items: fileItems,
-    },
-  ];
   return (
-    <div
-      data-testid="builder-flow-rail"
-      role="toolbar"
-      aria-label="Flow"
-      aria-orientation="vertical"
-      style={railStyle}
-    >
+    <PanelRail testId="builder-flow-rail" label="Flow">
       <input
         ref={inputRef}
         type="file"
@@ -180,58 +174,56 @@ export function FlowRail({
           if (file) onOpenFile(file);
         }}
       />
-      {menus.map((m) => (
-        <Menu
-          key={m.testId}
-          testId={m.testId}
-          label={
-            <>
-              {m.icon}
-              <FlyoutMark />
-            </>
-          }
-          ariaLabel={m.label}
-          title={m.title}
-          placement="right"
-          caret={false}
-          triggerStyle={railButtonStyle(false)}
-          openTriggerStyle={railButtonStyle(true)}
-          heading={m.label}
-          items={m.items}
-        />
-      ))}
+      <RailMenu
+        testId="builder-flow-add"
+        label="Add"
+        title="Add a block"
+        icon={IconAdd}
+        items={addItems}
+      />
+      <RailButton
+        testId="builder-flow-layout"
+        label="Auto Layout"
+        title="Auto Layout"
+        icon={IconLayout}
+        onClick={onAutoLayout}
+        disabled={!hasBlocks}
+      />
       <RailDivider />
       {running ? (
-        <button
-          type="button"
-          data-testid="builder-flow-stop"
-          aria-label="Stop"
+        <RailButton
+          testId="builder-flow-stop"
+          label="Stop"
           title="Stop the run (a tool call in progress is abandoned)"
-          style={railButtonStyle(true)}
+          icon={IconStop}
           onClick={onStop}
-        >
-          {IconStop}
-        </button>
+          active
+        />
       ) : (
-        <button
-          type="button"
-          data-testid="builder-flow-run"
-          aria-label="Run"
+        <RailButton
+          testId="builder-flow-run"
+          label="Run"
           title="Run: build every block whose settings or inputs changed"
-          disabled={!hasBlocks}
-          style={{ ...railButtonStyle(false), opacity: hasBlocks ? 1 : 0.45 }}
+          icon={IconRun}
           onClick={onRun}
-        >
-          {IconRun}
-        </button>
+          disabled={!hasBlocks}
+        />
       )}
       <RailDivider />
+      <RailMenu
+        testId="builder-flow-file"
+        label="Flow"
+        title="File: open, save or clear the flow"
+        icon={IconFile}
+        items={fileItems}
+      />
+      <RailSpacer />
       <ThemeCycleButton
         testId="builder-flow-theme"
         style={railButtonStyle(false)}
         iconOnly
         iconSize={18}
       />
-    </div>
+    </PanelRail>
   );
 }

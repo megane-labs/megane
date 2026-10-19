@@ -13,6 +13,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
   - The view shows the picked block's result; *Open in Manual* makes it the Manual document, to edit or save.
   - Flows are saved and opened as `.megane-flow.json`, written where the host saves structures.
   - The graph editor is loaded the first time Flow mode opens, so the Builder page does not load React Flow until then.
+  - The Flow panel is the viewer's graph editor: the panel, its in-panel rail, the node cards, the wires, the canvas chrome (minimap, zoom controls) and the properties pane are now shared components (`src/components/graph/`) that the viewer's Pipeline panel is built from too, and a tool block's settings use the viewer's node-form rows. The viewer's editor looks and behaves as before.
 - **The AI assistant lives in the pipeline editor.** The Chat tab is gone: the assistant's prompt bar is docked in the Editor tab, between the node graph and the properties pane, so a request and the graph it changes are on screen together. The conversation and the AI settings open over the bottom of the graph.
   - Each request carries the pipeline in the editor, the selected nodes, and the recent exchanges, so the assistant edits that graph instead of starting over, and "this" means the selected node.
   - A generated pipeline no longer unloads anything: loaders keep their files and parsed data (trajectories, volumetric grids, spectra, structure edits included).

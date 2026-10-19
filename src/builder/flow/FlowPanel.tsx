@@ -1,21 +1,21 @@
 /**
- * The Flow panel: the graph of blocks on top, the picked block's settings
- * under it. It takes the place of the Details and History panels on the
- * right of the view while the Builder is in Flow mode.
+ * The Flow panel: megane Builder's node-graph editor, built from the same
+ * kit as the viewer's Pipeline panel (`components/graph/`) — the resizable
+ * panel with its rail on the left, the graph canvas, the draggable split,
+ * and the selected block's pane under it. It takes the place of the Details
+ * and History panels on the right of the view while the Builder is in Flow
+ * mode.
  *
  * Loaded on demand (`React.lazy` in `BuilderApp`), so a Builder that never
  * leaves Manual mode does not load the graph editor.
  */
 
-import { useCallback, useEffect } from "react";
+import { useCallback, useEffect, useMemo, useRef } from "react";
 import {
+  ReactFlowProvider,
   applyEdgeChanges,
   applyNodeChanges,
-  Background,
-  BackgroundVariant,
-  Controls,
-  ReactFlow,
-  ReactFlowProvider,
+  useReactFlow,
   useUpdateNodeInternals,
   type Connection,
   type Edge,
@@ -23,33 +23,69 @@ import {
   type IsValidConnection,
   type NodeChange,
 } from "@xyflow/react";
-import { useThemeStore } from "../../stores/useThemeStore";
+import { FIT_VIEW_OPTIONS, GraphCanvas, styleEdges } from "../../components/graph/GraphCanvas";
+import {
+  GraphEditorPanel,
+  SplitSeparator,
+  useSplitFraction,
+} from "../../components/graph/GraphEditorPanel";
+import { NODE_CARD_WIDTH } from "../../components/graph/NodeCardView";
+import { getLayoutedElements } from "../../pipeline/layout";
+import { allMolecules, useLibraryStore } from "../library/store";
+import type { BuilderToolInfo } from "../tools/contract";
 import { useFlowStoreApi, useScopedFlowStore, useScopedToolsStore } from "../BuilderStores";
-import { ToolServerDialog } from "../tools/ToolServer";
+import { STRUCTURE_COLOR, blockColor } from "./describe";
 import { wouldCycle, type FlowDeps } from "./engine";
-import { flowEdgeTypes } from "./FlowEdge";
-import { FLOW_CARD_CSS, flowNodeTypes } from "./FlowNodeCard";
+import { flowNodeTypes } from "./FlowNodeCard";
 import { FlowProperties } from "./FlowProperties";
-import { blockPorts } from "./ports";
-import { REACT_FLOW_BASE_CSS } from "./reactFlowCss";
+import { FlowRail, addMenuItems, type FlowActions } from "./FlowRail";
+import { blockPorts, initialToolParams } from "./ports";
 import type { FlowNode } from "./store";
+import type { FlowParams } from "./types";
 
-/** Backspace (macOS habit) and Delete (Windows/Linux habit) both delete. */
-const DELETE_KEY_CODES = ["Backspace", "Delete"];
-
-const EDGE_OPTIONS = {
-  type: "deletable",
-  style: { stroke: "#94a3b8", strokeWidth: 2 },
-};
+/** Vertical step between a new block and one already where it would land. */
+const STACK_STEP = 110;
 
 export interface FlowPanelProps {
   deps: FlowDeps;
-  /** Show the tool server form under the graph instead of the picked block. */
+  /** Run, Stop and the flow file's actions. */
+  actions: FlowActions;
+  /** The host reaches tool servers: the Add menu lists their tools. */
+  hasTools: boolean;
+  /** Show the tool server form in the pane instead of the selected block. */
   serverOpen: boolean;
+  onOpenServer: () => void;
   onCloseServer: () => void;
+  collapsed: boolean;
+  onToggleCollapse: () => void;
+  onWidthChange?: (width: number) => void;
+  bottom?: number | string;
 }
 
-function FlowGraph() {
+/** `pos`, moved down until no block sits there. */
+function freePosition(pos: { x: number; y: number }, nodes: FlowNode[]) {
+  const out = { ...pos };
+  while (
+    nodes.some((n) => Math.abs(n.position.x - out.x) < 40 && Math.abs(n.position.y - out.y) < 40)
+  ) {
+    out.y += STACK_STEP;
+  }
+  return out;
+}
+
+function FlowEditor({
+  deps,
+  actions,
+  hasTools,
+  serverOpen,
+  onOpenServer,
+  onCloseServer,
+  collapsed,
+  onToggleCollapse,
+  onWidthChange,
+  bottom,
+}: FlowPanelProps) {
+  const flowApi = useFlowStoreApi();
   const nodes = useScopedFlowStore((s) => s.nodes);
   const edges = useScopedFlowStore((s) => s.edges);
   const setNodes = useScopedFlowStore((s) => s.setNodes);
@@ -57,23 +93,71 @@ function FlowGraph() {
   const removeNodes = useScopedFlowStore((s) => s.removeNodes);
   const removeEdges = useScopedFlowStore((s) => s.removeEdges);
   const connect = useScopedFlowStore((s) => s.connect);
-  const flowApi = useFlowStoreApi();
+  const toolsStatus = useScopedToolsStore((s) => s.status);
   const connection = useScopedToolsStore((s) => s.connection);
-  const resolvedTheme = useThemeStore((s) => s.resolvedTheme);
+  const toolServers = useScopedToolsStore((s) => s.servers);
+  const setToolServer = useScopedToolsStore((s) => s.setUrl);
+  const connectToolServer = useScopedToolsStore((s) => s.connect);
+  const user = useLibraryStore((s) => s.user);
+  const { screenToFlowPosition, fitView } = useReactFlow();
+  const containerRef = useRef<HTMLDivElement | null>(null);
+  const [paneFraction, handleSplitMouseDown] = useSplitFraction();
 
-  const portsOf = useCallback(
-    (node: FlowNode | undefined) => {
-      if (!node) return [];
-      const params = node.data.params;
-      const tool =
-        params.type === "tool"
-          ? (connection?.listing.tools.find((t) => t.name === params.tool) ?? null)
-          : null;
-      const wired = edges.filter((e) => e.target === node.id).map((e) => e.targetHandle ?? "");
-      return blockPorts(params, tool, wired);
+  // A new block lands in the middle of the graph's view, selected, so its
+  // settings open in the pane right away (as the viewer's Add Node does).
+  const addBlock = useCallback(
+    (params: FlowParams) => {
+      const rect = containerRef.current?.getBoundingClientRect();
+      const center = rect
+        ? screenToFlowPosition({ x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 })
+        : null;
+      const position = center
+        ? freePosition(
+            { x: center.x - NODE_CARD_WIDTH / 2, y: center.y - 26 },
+            flowApi.getState().nodes,
+          )
+        : undefined;
+      flowApi.getState().addNode(params, position);
+      onCloseServer();
     },
-    [connection, edges],
+    [flowApi, screenToFlowPosition, onCloseServer],
   );
+
+  const addItems = addMenuItems({
+    addSmiles: () =>
+      addBlock({ type: "molecule", source: "smiles", smiles: "", libraryId: "", name: "" }),
+    addLibrary: () =>
+      addBlock({
+        type: "molecule",
+        source: "library",
+        smiles: "",
+        libraryId: allMolecules({ user })[0]?.id ?? "",
+        name: "",
+      }),
+    addDocument: () => addBlock({ type: "document" }),
+    addTool: (tool: BuilderToolInfo) => addBlock(initialToolParams(tool)),
+    openServer: onOpenServer,
+    tools: hasTools
+      ? {
+          status: toolsStatus,
+          connection,
+          servers: toolServers,
+          setUrl: setToolServer,
+          connect: connectToolServer,
+        }
+      : undefined,
+  });
+
+  const handleAutoLayout = useCallback(() => {
+    const { nodes: laidOut } = getLayoutedElements(
+      flowApi.getState().nodes,
+      flowApi.getState().edges,
+    );
+    setNodes(laidOut);
+    window.requestAnimationFrame(() => {
+      void fitView({ ...FIT_VIEW_OPTIONS, duration: 300 });
+    });
+  }, [flowApi, setNodes, fitView]);
 
   // Deletions go through the store, which also drops the wires and marks
   // what was downstream stale; everything else is xyflow's own bookkeeping.
@@ -92,6 +176,20 @@ function FlowGraph() {
       if (rest.length > 0) setEdges(applyEdgeChanges(rest, flowApi.getState().edges));
     },
     [flowApi, removeEdges, setEdges],
+  );
+
+  const portsOf = useCallback(
+    (node: FlowNode | undefined) => {
+      if (!node) return [];
+      const params = node.data.params;
+      const tool =
+        params.type === "tool"
+          ? (connection?.listing.tools.find((t) => t.name === params.tool) ?? null)
+          : null;
+      const wired = edges.filter((e) => e.target === node.id).map((e) => e.targetHandle ?? "");
+      return blockPorts(params, tool, wired);
+    },
+    [connection, edges],
   );
 
   const isValidConnection: IsValidConnection = useCallback(
@@ -125,71 +223,55 @@ function FlowGraph() {
     if (toolIds) updateNodeInternals(toolIds.split(","));
   }, [connection, toolIds, updateNodeInternals]);
 
+  // Every Flow wire carries a structure: drawn as the viewer draws particle data.
+  const styledEdges = useMemo(() => styleEdges(edges, () => STRUCTURE_COLOR), [edges]);
+  const edgeActions = useMemo(
+    () => ({
+      remove: (id: string) => removeEdges([id]),
+      testIdPrefix: "builder-flow-edge-delete-",
+    }),
+    [removeEdges],
+  );
+
   return (
-    <ReactFlow
-      nodes={nodes}
-      edges={edges}
-      onNodesChange={onNodesChange}
-      onEdgesChange={onEdgesChange}
-      onConnect={onConnect}
-      isValidConnection={isValidConnection}
-      nodeTypes={flowNodeTypes}
-      edgeTypes={flowEdgeTypes}
-      defaultEdgeOptions={EDGE_OPTIONS}
-      deleteKeyCode={DELETE_KEY_CODES}
-      fitView
-      fitViewOptions={{ padding: 0.2, maxZoom: 1.2 }}
-      minZoom={0.3}
-      maxZoom={2}
-      proOptions={{ hideAttribution: true }}
-      colorMode={resolvedTheme}
-      style={{ background: "transparent" }}
+    <GraphEditorPanel
+      title="Flow"
+      subtitle={`${nodes.length} block${nodes.length === 1 ? "" : "s"}`}
+      collapsed={collapsed}
+      onToggleCollapse={onToggleCollapse}
+      onWidthChange={onWidthChange}
+      bottom={bottom}
+      testId="builder-flow-panel"
+      rail={<FlowRail addItems={addItems} onAutoLayout={handleAutoLayout} {...actions} />}
     >
-      <Background
-        variant={BackgroundVariant.Dots}
-        gap={16}
-        size={1}
-        color="var(--megane-border-solid)"
-        bgColor="transparent"
+      <GraphCanvas<FlowNode>
+        testId="builder-flow-graph"
+        containerRef={containerRef}
+        nodes={nodes}
+        edges={styledEdges}
+        onNodesChange={onNodesChange}
+        onEdgesChange={onEdgesChange}
+        onConnect={onConnect}
+        isValidConnection={isValidConnection}
+        nodeTypes={flowNodeTypes}
+        edgeActions={edgeActions}
+        miniMapNodeColor={(n) => blockColor(n.data.params)}
       />
-      <Controls showInteractive={false} position="bottom-right" />
-    </ReactFlow>
+      <SplitSeparator onMouseDown={handleSplitMouseDown} />
+      <FlowProperties
+        deps={deps}
+        height={`${Math.round(paneFraction * 100)}%`}
+        serverOpen={serverOpen}
+        onCloseServer={onCloseServer}
+      />
+    </GraphEditorPanel>
   );
 }
 
-export default function FlowPanel({ deps, serverOpen, onCloseServer }: FlowPanelProps) {
+export default function FlowPanel(props: FlowPanelProps) {
   return (
-    <div
-      data-testid="builder-flow-panel"
-      style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column" }}
-    >
-      <style>{REACT_FLOW_BASE_CSS + FLOW_CARD_CSS}</style>
-      <div
-        className="megane-flow-editor"
-        data-testid="builder-flow-graph"
-        style={{
-          flex: "1 1 55%",
-          minHeight: 160,
-          position: "relative",
-          borderBottom: "1px solid var(--megane-border-solid, #e2e8f0)",
-        }}
-      >
-        <ReactFlowProvider>
-          <FlowGraph />
-        </ReactFlowProvider>
-      </div>
-      <div
-        style={{
-          flex: "1 1 45%",
-          minHeight: 0,
-          overflowY: "auto",
-          padding: 10,
-          fontSize: 13,
-          color: "var(--megane-text, #1e293b)",
-        }}
-      >
-        {serverOpen ? <ToolServerDialog onClose={onCloseServer} /> : <FlowProperties deps={deps} />}
-      </div>
-    </div>
+    <ReactFlowProvider>
+      <FlowEditor {...props} />
+    </ReactFlowProvider>
   );
 }

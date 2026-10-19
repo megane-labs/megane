@@ -1,15 +1,26 @@
 /**
- * Pipeline editor edge with an inline delete button.
+ * Node-graph edge with an inline delete button, shared by the viewer's
+ * pipeline editor and megane Builder's Flow mode.
  *
  * The edge is drawn like xyflow's bezier edge, but hovering it (or selecting
  * it with a click) reveals a small × button at its midpoint that removes the
  * connection. A wide invisible hit area makes the 2px stroke easy to target.
+ * What "remove" means is the editor's: it provides `EdgeActionsContext`.
  */
 
-import { memo, useCallback, useEffect, useRef, useState } from "react";
+import { createContext, memo, useCallback, useContext, useEffect, useRef, useState } from "react";
 import { BaseEdge, EdgeLabelRenderer, getBezierPath } from "@xyflow/react";
 import type { EdgeProps } from "@xyflow/react";
-import { useScopedPipelineStore } from "../stores/MeganeProvider";
+
+/** What the editor around the graph does with its edges. */
+export interface EdgeActions {
+  remove: (edgeId: string) => void;
+  /** The × button's test id is `<prefix><edge id>`. */
+  testIdPrefix: string;
+}
+
+/** Provided by each editor; an edge outside one has no × button. */
+export const EdgeActionsContext = createContext<EdgeActions | null>(null);
 
 /** Width (px) of the invisible stroke that receives hover/click. */
 export const EDGE_INTERACTION_WIDTH = 24;
@@ -34,7 +45,7 @@ export const DeletableEdge = memo(function DeletableEdge({
   markerStart,
   selected,
 }: EdgeProps) {
-  const removeEdge = useScopedPipelineStore((s) => s.removeEdge);
+  const actions = useContext(EdgeActionsContext);
   const [hovered, setHovered] = useState(false);
   const hideTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -80,19 +91,19 @@ export const DeletableEdge = memo(function DeletableEdge({
           style={active ? { ...style, strokeWidth: strokeWidth + 1.5 } : style}
         />
       </g>
-      {active && (
+      {active && actions && (
         <EdgeLabelRenderer>
           <button
             type="button"
             className="nodrag nopan"
-            data-testid={`pipeline-edge-delete-${id}`}
+            data-testid={`${actions.testIdPrefix}${id}`}
             aria-label="Delete connection"
             title="Delete connection"
             onMouseEnter={show}
             onMouseLeave={hide}
             onClick={(e) => {
               e.stopPropagation();
-              removeEdge(id);
+              actions.remove(id);
             }}
             style={{
               position: "absolute",

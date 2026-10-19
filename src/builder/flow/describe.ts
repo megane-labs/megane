@@ -1,11 +1,35 @@
 /**
- * The words a Flow block is shown with: its title, the line under it, and
- * what its last run says.
+ * The words, icons and colours a Flow block is shown with: its category (the
+ * viewer's node categories, so a block looks like a pipeline node of the same
+ * kind), its title, its one-line summary, and what its last run says.
  */
 
+import type { ReactNode } from "react";
+import { CATEGORY_ICONS } from "../../components/nodes/categoryIcons";
+import type { CardStatus } from "../../components/graph/NodeCardView";
+import { DATA_TYPE_COLORS, NODE_CATEGORY_COLORS, type NodeCategory } from "../../pipeline/types";
 import type { LibraryMolecule } from "../library/types";
 import type { BuilderToolInfo } from "../tools/contract";
 import type { FlowParams, NodeRun } from "./types";
+
+/**
+ * The colour of what a Flow wire carries: a structure, drawn like the
+ * viewer's particle data.
+ */
+export const STRUCTURE_COLOR = DATA_TYPE_COLORS.particle;
+
+/** The viewer category a block is drawn as: inputs load data, tools change it. */
+export function blockCategory(params: FlowParams): NodeCategory {
+  return params.type === "tool" ? "modify" : "data_load";
+}
+
+export function blockIcon(params: FlowParams): ReactNode {
+  return CATEGORY_ICONS[blockCategory(params)];
+}
+
+export function blockColor(params: FlowParams): string {
+  return NODE_CATEGORY_COLORS[blockCategory(params)];
+}
 
 export function blockTitle(params: FlowParams, tool: BuilderToolInfo | null): string {
   switch (params.type) {
@@ -18,8 +42,8 @@ export function blockTitle(params: FlowParams, tool: BuilderToolInfo | null): st
   }
 }
 
-/** The block's own settings in a few words. */
-export function blockSubtitle(params: FlowParams, library: LibraryMolecule[]): string {
+/** What the block is set to, in a few words ("" for a tool: its result says it). */
+export function blockSettings(params: FlowParams, library: LibraryMolecule[]): string {
   switch (params.type) {
     case "molecule":
       if (params.source === "library") {
@@ -28,10 +52,28 @@ export function blockSubtitle(params: FlowParams, library: LibraryMolecule[]): s
       }
       return params.smiles.trim() ? `SMILES ${params.smiles.trim()}` : "No SMILES yet";
     case "document":
-      return "The structure open in Manual mode";
+      return "From Manual mode";
     case "tool":
-      return "Tool server";
+      return "";
   }
+}
+
+/**
+ * The name the block's structure goes by before it has run: the molecule's
+ * name, else its SMILES or library entry; the block's title otherwise.
+ */
+export function blockName(
+  params: FlowParams,
+  tool: BuilderToolInfo | null,
+  library: LibraryMolecule[],
+): string {
+  if (params.type === "molecule") {
+    if (params.name.trim()) return params.name.trim();
+    if (params.source === "smiles" && params.smiles.trim()) return params.smiles.trim();
+    const m = library.find((x) => x.id === params.libraryId);
+    if (params.source === "library" && m) return m.name;
+  }
+  return blockTitle(params, tool);
 }
 
 /** What the last run says, in one line. */
@@ -54,6 +96,18 @@ export function runStatusText(run: NodeRun): string {
   }
 }
 
+/** The card's one line: the settings, then how the last run went. */
+export function blockSummary(params: FlowParams, run: NodeRun, library: LibraryMolecule[]): string {
+  const settings = blockSettings(params, library);
+  const result =
+    run.status === "error"
+      ? "Failed"
+      : run.status === "idle" && params.type !== "tool"
+        ? ""
+        : runStatusText(run);
+  return [settings, result].filter(Boolean).join(" · ");
+}
+
 /** Colour of the status dot. */
 export function runStatusColor(run: NodeRun): string {
   switch (run.status) {
@@ -68,4 +122,14 @@ export function runStatusColor(run: NodeRun): string {
     default:
       return "var(--megane-border-strong, #cbd5e1)";
   }
+}
+
+/** The card's status dot, or none for a block that never ran. */
+export function runStatusDot(run: NodeRun): CardStatus | null {
+  if (run.status === "idle") return null;
+  return {
+    color: runStatusColor(run),
+    title: [runStatusText(run), ...run.warnings].join("\n"),
+    testId: "builder-flow-node-status",
+  };
 }

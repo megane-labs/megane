@@ -430,12 +430,17 @@ empty folder to your tools in this menu.
 Building a model often takes several programs in a row: draw one molecule,
 embed it in 3D, then hand it to packmol to fill a box. **Flow** mode shows that
 recipe as blocks wired together, like the viewer's pipeline editor, and runs
-it. Pick **Flow** in the mode switch at the top of the left rails: the rails
-change to **Add**, **Flow** (*Open flow…*, *Save flow*, *Clear all blocks*),
-**Run** and the theme button, and the panel on the right holds the graph,
-with the picked block's settings under it.
+it. Pick **Flow** in the mode switch at the top of the left rails: Manual
+mode's rails make way, and the panel on the right becomes the Flow editor,
+built like the viewer's Pipeline panel — the same resizable panel, node
+cards, wires, minimap and properties pane. Its own rail, down the panel's
+left edge, holds **Add**, **Auto Layout**, **Run** (**Stop** while a run is
+going), the **File** menu (*Open flow…*, *Save flow*, *Clear all blocks*)
+and the theme button; the graph is on top, and the selected block's settings
+are under it, in the same rows as a pipeline node's.
 
-**Add** offers these blocks:
+**Add** puts a block in the middle of the graph and selects it. It offers
+these blocks:
 
 - **Molecule from SMILES**: type a SMILES string; when the flow runs, RDKit
   embeds it in 3D (hydrogens added, MMFF94s), as the library's sketches are.

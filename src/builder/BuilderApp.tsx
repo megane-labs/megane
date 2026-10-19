@@ -104,8 +104,8 @@ import {
 } from "./BuilderStores";
 import { hoverHighlight } from "./hover";
 import { ModeSwitch } from "./flow/ModeSwitch";
-import { FlowRail } from "./flow/FlowRail";
 import { useFlowMode } from "./flow/useFlowMode";
+import { GRAPH_PANEL_DEFAULT_WIDTH } from "../components/graph/GraphEditorPanel";
 
 /** The Flow graph editor, loaded the first time Flow mode opens. */
 const FlowPanel = lazy(() => import("./flow/FlowPanel"));
@@ -114,8 +114,6 @@ import type { DragStatus } from "./store";
 
 /** Width of the Details and History panels on the right of the view. */
 const PANEL_WIDTH = 372;
-/** Width of the Flow panel (graph and block settings) in Flow mode. */
-const FLOW_PANEL_WIDTH = 460;
 /** Height of the History panel, under the Details panel. */
 const HISTORY_HEIGHT = 220;
 /** Room a collapsed panel's stub takes, for what sits beside or above it. */
@@ -195,8 +193,10 @@ export function BuilderApp({ host = WEB_HOST }: BuilderAppProps = {}) {
   const setToolServer = useScopedToolsStore((s) => s.setUrl);
   const connectToolServer = useScopedToolsStore((s) => s.connect);
   // Flow mode: blocks wired into a model. The view shows the picked block's result.
-  const [flowOpen, toggleFlow, revealFlow] = useSectionOpen("flow", true);
-  const flow = useFlowMode(host, revealFlow);
+  const [flowOpen, toggleFlow] = useSectionOpen("flow", true);
+  const flow = useFlowMode(host);
+  // The Flow panel is resizable like the viewer's Pipeline panel; it reports its width.
+  const [flowPanelWidth, setFlowPanelWidth] = useState(GRAPH_PANEL_DEFAULT_WIDTH);
   const inFlow = flow.mode === "flow";
 
   // `shown` is the document (what Save writes); `viewed` is what the view
@@ -436,14 +436,14 @@ export function BuilderApp({ host = WEB_HOST }: BuilderAppProps = {}) {
   // History) keep clear of them or of their stubs.
   const panelInset = inFlow
     ? flowOpen
-      ? FLOW_PANEL_WIDTH + OVERLAY_INSET
+      ? flowPanelWidth + OVERLAY_INSET
       : 0
     : detailsOpen || historyOpen
       ? PANEL_WIDTH + OVERLAY_INSET
       : 0;
   const infoRight = inFlow
     ? flowOpen
-      ? FLOW_PANEL_WIDTH + 2 * OVERLAY_INSET
+      ? flowPanelWidth + 2 * OVERLAY_INSET
       : STUB_CLEARANCE
     : detailsOpen
       ? PANEL_WIDTH + 2 * OVERLAY_INSET
@@ -590,9 +590,9 @@ export function BuilderApp({ host = WEB_HOST }: BuilderAppProps = {}) {
           }}
         >
           <ModeSwitch mode={flow.mode} onChange={flow.setMode} />
-          {inFlow ? (
-            <FlowRail {...flow.rail} />
-          ) : (
+          {/* In Flow mode the actions are on the Flow panel's own rail, as
+              in the viewer's Pipeline panel. */}
+          {!inFlow && (
             <>
               <ToolRail />
               <OperationsRail
@@ -714,26 +714,22 @@ export function BuilderApp({ host = WEB_HOST }: BuilderAppProps = {}) {
       )}
 
       {inFlow ? (
-        <CollapsiblePanel
-          title="Flow"
-          subtitle={
-            <span data-testid="builder-flow-count">{flow.rail.hasBlocks ? flow.status : ""}</span>
-          }
-          collapsed={!flowOpen}
-          onToggleCollapse={toggleFlow}
-          width={FLOW_PANEL_WIDTH}
-          bottom={OVERLAY_INSET}
-        >
-          <Suspense
-            fallback={<div style={{ ...hintStyle, padding: 10 }}>Loading the Flow editor…</div>}
-          >
-            <FlowPanel
-              deps={flow.deps}
-              serverOpen={flow.serverOpen}
-              onCloseServer={flow.closeServer}
-            />
-          </Suspense>
-        </CollapsiblePanel>
+        // The Flow panel (the viewer's graph-editor panel: its own rail,
+        // the graph, the selected block) loads the first time Flow opens.
+        <Suspense fallback={null}>
+          <FlowPanel
+            deps={flow.deps}
+            actions={flow.actions}
+            hasTools={flow.hasTools}
+            serverOpen={flow.serverOpen}
+            onOpenServer={flow.openServer}
+            onCloseServer={flow.closeServer}
+            collapsed={!flowOpen}
+            onToggleCollapse={toggleFlow}
+            onWidthChange={setFlowPanelWidth}
+            bottom={OVERLAY_INSET}
+          />
+        </Suspense>
       ) : (
         <>
           <CollapsiblePanel

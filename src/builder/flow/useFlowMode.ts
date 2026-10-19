@@ -1,13 +1,12 @@
 /**
  * Everything `BuilderApp` needs from Flow mode, in one hook: the mode, what
- * the 3D view shows while in Flow mode, the left rail's actions, and the
- * status line. Keeps the app's own body about layout.
+ * the 3D view shows while in Flow mode, the actions the Flow panel's rail
+ * runs (Run, Stop, the flow file), and the status line. Keeps the app's own
+ * body about layout.
  */
 
 import { useCallback, useMemo, useState } from "react";
 import { downloadBlob } from "../../renderer/RenderCapture";
-import { allMolecules, useLibraryStore } from "../library/store";
-import type { BuilderToolInfo } from "../tools/contract";
 import { hostHasTools, type BuilderHost } from "../host";
 import {
   useBuilderStoreApi,
@@ -18,10 +17,9 @@ import {
 import { useFlowDeps } from "./deps";
 import { blockTitle } from "./describe";
 import type { FlowDeps } from "./engine";
-import { addMenuItems, type FlowRailProps } from "./FlowRail";
-import { initialToolParams } from "./ports";
+import type { FlowActions } from "./FlowRail";
 import { flowViewData, parseSerializedFlow } from "./store";
-import type { FlowData, FlowMode, FlowParams } from "./types";
+import type { FlowData, FlowMode } from "./types";
 
 /** File name a saved flow gets. */
 export const FLOW_FILE_NAME = "builder.megane-flow.json";
@@ -31,10 +29,14 @@ export interface FlowModeState {
   setMode: (mode: FlowMode) => void;
   /** What the 3D view shows in Flow mode, or null. */
   view: { id: string; data: FlowData } | null;
-  rail: FlowRailProps;
+  /** Run, Stop and the flow file, for the Flow panel's rail. */
+  actions: FlowActions;
   deps: FlowDeps;
+  /** The host reaches tool servers: the Add menu lists their tools. */
+  hasTools: boolean;
   /** The tool server form is open under the graph. */
   serverOpen: boolean;
+  openServer: () => void;
   closeServer: () => void;
   /** The status line in Flow mode. */
   status: string;
@@ -43,9 +45,9 @@ export interface FlowModeState {
 /**
  * Flow mode for the Builder on `host`: Save writes a flow where the host saves
  * structures (or downloads it), and the Add menu lists tools where the host
- * has them. `onReveal` opens the Flow panel when a block is added.
+ * has them.
  */
-export function useFlowMode(host: BuilderHost, onReveal: () => void): FlowModeState {
+export function useFlowMode(host: BuilderHost): FlowModeState {
   const hasTools = hostHasTools(host);
   const flowApi = useFlowStoreApi();
   const builderApi = useBuilderStoreApi();
@@ -55,53 +57,11 @@ export function useFlowMode(host: BuilderHost, onReveal: () => void): FlowModeSt
   const runs = useScopedFlowStore((s) => s.runs);
   const viewNodeId = useScopedFlowStore((s) => s.viewNodeId);
   const running = useScopedFlowStore((s) => s.running);
-  const toolsStatus = useScopedToolsStore((s) => s.status);
   const toolsConnection = useScopedToolsStore((s) => s.connection);
-  const toolServers = useScopedToolsStore((s) => s.servers);
-  const setToolServer = useScopedToolsStore((s) => s.setUrl);
-  const connectToolServer = useScopedToolsStore((s) => s.connect);
-  const user = useLibraryStore((s) => s.user);
   const deps = useFlowDeps();
   const [serverOpen, setServerOpen] = useState(false);
 
   const view = useMemo(() => flowViewData({ nodes, runs, viewNodeId }), [nodes, runs, viewNodeId]);
-
-  const addBlock = useCallback(
-    (params: FlowParams) => {
-      flowApi.getState().addNode(params);
-      setServerOpen(false);
-      onReveal();
-    },
-    [flowApi, onReveal],
-  );
-
-  const addItems = addMenuItems({
-    addSmiles: () =>
-      addBlock({ type: "molecule", source: "smiles", smiles: "", libraryId: "", name: "" }),
-    addLibrary: () =>
-      addBlock({
-        type: "molecule",
-        source: "library",
-        smiles: "",
-        libraryId: allMolecules({ user })[0]?.id ?? "",
-        name: "",
-      }),
-    addDocument: () => addBlock({ type: "document" }),
-    addTool: (tool: BuilderToolInfo) => addBlock(initialToolParams(tool)),
-    openServer: () => {
-      setServerOpen(true);
-      onReveal();
-    },
-    tools: hasTools
-      ? {
-          status: toolsStatus,
-          connection: toolsConnection,
-          servers: toolServers,
-          setUrl: setToolServer,
-          connect: connectToolServer,
-        }
-      : undefined,
-  });
 
   const onOpenFile = useCallback(
     async (file: File) => {
@@ -163,11 +123,12 @@ export function useFlowMode(host: BuilderHost, onReveal: () => void): FlowModeSt
     setMode,
     view,
     deps,
+    hasTools,
     serverOpen,
+    openServer: () => setServerOpen(true),
     closeServer: () => setServerOpen(false),
     status,
-    rail: {
-      addItems,
+    actions: {
       onOpenFile: (file) => void onOpenFile(file),
       onSave: () => void saveFlow(),
       onClear: () => flowApi.getState().clear(),
