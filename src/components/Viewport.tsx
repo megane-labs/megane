@@ -304,6 +304,9 @@ export function Viewport({
         return;
       }
       if (e.button !== 0 || e.target !== canvas) return;
+      // A press whose release never arrived must not outlive the next one,
+      // or its rubber band stays on screen with nothing left to remove it.
+      finishBuildPress(e, true);
       const { x, y } = toCSSCoords(e);
       if (renderer.hitTestAxesInset(x, y)) return;
       const mods = modifiersOf(e);
@@ -329,6 +332,13 @@ export function Viewport({
     const handleBuildMove = (e: PointerEvent) => {
       const press = buildPress;
       if (!press || press.action === "camera") return;
+      // The left button is up but no pointerup came: a release while another
+      // button is still held is reported as a move (with `button` 0), and one
+      // outside the page after the capture was lost is not reported at all.
+      if ((e.buttons & 1) === 0) {
+        finishBuildPress(e, e.button !== 0);
+        return;
+      }
       press.lastX = e.clientX;
       press.lastY = e.clientY;
       const handlers = buildHandlersRef.current;
@@ -372,8 +382,17 @@ export function Viewport({
         }
         return;
       }
+      if (e.button !== 0 && !cancelled) return;
+      finishBuildPress(e, cancelled);
+    };
+
+    const handleBuildLostCapture = (e: PointerEvent) => {
+      if (buildPress && buildPress.action !== "camera") finishBuildPress(e, true);
+    };
+
+    const finishBuildPress = (e: PointerEvent, cancelled: boolean) => {
       const press = buildPress;
-      if (!press || (e.button !== 0 && !cancelled)) return;
+      if (!press) return;
       buildPress = null;
       if (buildRaf !== null) {
         cancelAnimationFrame(buildRaf);
@@ -468,6 +487,7 @@ export function Viewport({
     canvas.addEventListener("pointermove", handlePointerMove);
     canvas.addEventListener("pointerup", handlePointerUp);
     canvas.addEventListener("pointercancel", handlePointerCancel);
+    canvas.addEventListener("lostpointercapture", handleBuildLostCapture);
 
     return () => {
       canvas.removeEventListener("mousemove", handleMouseMove);
@@ -480,6 +500,7 @@ export function Viewport({
       canvas.removeEventListener("pointermove", handlePointerMove);
       canvas.removeEventListener("pointerup", handlePointerUp);
       canvas.removeEventListener("pointercancel", handlePointerCancel);
+      canvas.removeEventListener("lostpointercapture", handleBuildLostCapture);
       clearBoxEl();
       clearBuildBox();
       if (rafId !== null) cancelAnimationFrame(rafId);
