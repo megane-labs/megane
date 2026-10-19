@@ -8,6 +8,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ### Added
 
+- **megane Builder's *Tools* menu in VS Code.** The VS Code Builder tab now has the *Tools* menu. Its MCP tool servers come from the new `megane.builder.mcpServers` setting, in the `mcpServers` format LLM clients use: a stdio server (`command` / `args` / `env` / `cwd`) that VS Code starts itself, or a Streamable HTTP server (`url` / `headers`). A webview can neither start a process nor call a loopback server, so the extension host owns the connections and relays only the tool list, a call with its progress, and a cancel (the Builder Tool Contract §8 bridge, `src/builder/tools/bridge.ts` ↔ `vscode-megane/src/builderTools.ts`). The page side is the same as the web app's, so forms, Undo and the apply modes behave identically.
+  - The Tools menu offers *Connect to <server>* for each configured server.
+  - VS Code asks before it first runs a command or sends structures to a URL, and remembers the answer for exactly that command or URL.
+  - Builder tabs share one server process, which stops when the last tab lets go.
+  - A server's stderr goes to the *megane Builder Tools* output panel.
+  - HTTP servers must use HTTPS unless on loopback.
+  - The setting is ignored at workspace level in untrusted workspaces.
+  - The extension host is now bundled with esbuild so the MCP SDK ships in the VSIX. The SDK is a separate `out/sdkClient.js` loaded on the first connection, so activation time is unchanged.
+  - The extension now requires VS Code 1.90 or later (it was 1.80): the MCP SDK needs Node.js 20, which VS Code ships from 1.90.
 - **`.extxyz` (extended XYZ) opens on every host.** ASE and ML-potential tools write extended XYZ under `.extxyz`; megane's XYZ reader already understood the grammar (`Lattice=` cells, `Properties=` columns such as forces, multi-frame blocks) but only under `.xyz`. The extension is now an alias to the XYZ reader in the web app, JupyterLab, VS Code and Python, and large multi-frame `.extxyz` files stream lazily in the web app just like `.xyz`.
 - **Inspector: Quick style.** The old Appearance panel is back, built on the pipeline this time. A *Quick style* section at the top of the Inspector tab sets the style, color, atom size and opacity, bond width and opacity, bond tolerance (distance-inferred bonds), labels (element / residue / index), arrow scale, perspective and cell axes for the whole structure. Each control edits an existing node's parameter or owns one `insp-global-*` node spliced in line before the viewport; a control set back to its default removes its node, and *Reset* restores the original graph. Selection layers branch from the end of that chain and override it for their own atoms.
 - **Jupyter widget: `MolecularViewer(quick_style=True)`.** Shows the same Quick style controls in the widget's top-right corner (off by default; `viewer.quick_style` toggles it live). Changes are written back to `_pipeline_json`, debounced while a slider moves, so they survive re-displaying the widget and are kept in the notebook's saved widget state; `set_pipeline()` replaces them. Disabled on the deprecated `load()` path.

@@ -8,12 +8,16 @@
  * from the extension's resource origin (the RDKit worker, the lazily loaded
  * Ketcher and its Indigo worker) and that Save goes through the extension
  * host (in E2E mode it skips the save dialog and writes beside the file).
+ * The *Tools* menu reaches the MCP tool servers of `megane.builder.mcpServers`
+ * through the extension host: a stdio server replaying the reference tool
+ * server's recorded responses is started after the user allows it, and its
+ * results enter the document.
  *
  * Prereqs: `bash scripts/install-code-server.sh` with a VSIX packaged from
  * this tree (`npm --prefix vscode-megane run package`).
  */
 
-import { copyFileSync, existsSync, mkdirSync, readFileSync, rmSync } from "fs";
+import { copyFileSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "fs";
 import { join } from "path";
 import { fileURLToPath } from "url";
 import { test, expect, type Frame, type Page } from "playwright/test";
@@ -40,6 +44,19 @@ test.beforeAll(async () => {
   mkdirSync(WORKSPACE, { recursive: true });
   copyFileSync(join(REPO, "tests", "fixtures", "caffeine.sdf"), join(WORKSPACE, "caffeine.sdf"));
   copyFileSync(join(REPO, "tests", "fixtures", "1crn.pdb"), join(WORKSPACE, "1crn.pdb"));
+  // Workspace trust is off in the E2E profile, so the workspace setting applies.
+  mkdirSync(join(WORKSPACE, ".vscode"), { recursive: true });
+  writeFileSync(
+    join(WORKSPACE, ".vscode", "settings.json"),
+    JSON.stringify({
+      "megane.builder.mcpServers": {
+        "recorded-tools": {
+          command: process.execPath,
+          args: [join(REPO, "tests", "e2e", "lib", "fake-builder-tools.mjs")],
+        },
+      },
+    }),
+  );
   writeNotebook(WORKSPACE, "builder", {
     cells: [
       {
@@ -105,8 +122,59 @@ test("the megane activity-bar view opens an empty Builder tab", async ({ page })
 
   const wv = await builderFrame(page);
   await expect(wv.locator('[data-testid="builder-welcome"]')).toBeVisible();
-  await expect(wv.locator('[data-testid="builder-tools"]')).toHaveCount(0);
+  await expect(wv.locator('[data-testid="builder-tools"]')).toHaveCount(1);
   await expect(page.locator(".tab", { hasText: "megane Builder" }).first()).toBeVisible();
+});
+
+test("the Tools menu runs a configured stdio tool server through the extension host", async ({
+  page,
+}) => {
+  await openWorkbench(page);
+  await page
+    .getByRole("tab", { name: /^megane/ })
+    .first()
+    .click();
+  await page
+    .locator(".welcome-view-content")
+    .getByRole("button", { name: "New Structure" })
+    .click();
+  const wv = await builderFrame(page);
+  const tools = wv.locator('[data-testid="builder-tools"]');
+
+  // The menu offers the configured server; connecting asks first (§9).
+  await tools.click();
+  await wv.locator('[data-testid="builder-tools-connect-recorded-tools"]').click();
+  const dialog = page.locator(".monaco-dialog-box");
+  await expect(dialog).toContainText('Allow the tool server "recorded-tools"?', {
+    timeout: 30_000,
+  });
+  await expect(dialog).toContainText("fake-builder-tools.mjs");
+  await dialog.getByRole("button", { name: "Allow" }).click();
+  await expect(wv.locator('[data-testid="builder-tools-connected"]')).toContainText(
+    "Connected to megane-builder-tools: 3 tools",
+    { timeout: 60_000 },
+  );
+  await expect(wv.locator('[data-testid="builder-tools-server-description"]')).toContainText(
+    "fake-builder-tools.mjs",
+  );
+
+  // A new-document tool replaces the empty document.
+  await tools.click();
+  await wv.locator('[data-testid="builder-tools-button-liquid_box"]').click();
+  await wv
+    .locator('[data-testid="builder-tool-field-components-0-molecule"]')
+    .selectOption("preset:water");
+  await wv.locator('[data-testid="builder-tool-field-seed"]').fill("42");
+  await wv.locator('[data-testid="builder-tool-run"]').click();
+  const root = wv.locator('[data-testid="megane-builder"]');
+  await expect(root).toHaveAttribute("data-atom-count", "300", { timeout: 60_000 });
+
+  // An insert tool adds its atoms to the open document as one step.
+  await tools.click();
+  await wv.locator('[data-testid="builder-tools-button-solvate"]').click();
+  await wv.locator('[data-testid="builder-tool-run"]').click();
+  await expect(root).toHaveAttribute("data-atom-count", "1098", { timeout: 60_000 });
+  await expect(wv.locator('[data-testid="builder-notice"]')).toContainText("Solvate");
 });
 
 test("Open in megane Builder from the Explorer: RDKit, Ketcher and Save work in the webview", async ({

@@ -359,3 +359,105 @@ describe("ToolDialog", () => {
     });
   });
 });
+
+describe("Tools through a host bridge", () => {
+  const SERVERS = [
+    { id: "builder-tools", kind: "stdio" as const, description: "uvx megane-builder-tools" },
+    { id: "lab", kind: "http" as const, description: "https://lab.example/mcp" },
+  ];
+
+  function bridgeOf(servers = SERVERS, openSettings?: () => void) {
+    return {
+      configHint: "the megane.builder.mcpServers setting",
+      listServers: vi.fn(async () => servers),
+      connect: vi.fn(async () => connection()),
+      openSettings,
+    };
+  }
+
+  /** As `BuilderApp` wires the menu when the host has a bridge. */
+  function BridgeTools({ serverOpen = false }: { serverOpen?: boolean }) {
+    const status = useToolsStore((s) => s.status);
+    const connection = useToolsStore((s) => s.connection);
+    const openForm = useToolsStore((s) => s.openForm);
+    const servers = useToolsStore((s) => s.servers);
+    const setUrl = useToolsStore((s) => s.setUrl);
+    const connect = useToolsStore((s) => s.connect);
+    const [server, setServer] = useState(serverOpen);
+    return (
+      <>
+        <Menu
+          testId="builder-tools"
+          label="Tools"
+          items={toolsMenuItems({ status, connection, openForm, servers, setUrl, connect }, () =>
+            setServer(true),
+          )}
+        />
+        {server && <ToolServerDialog onClose={() => setServer(false)} />}
+      </>
+    );
+  }
+
+  it("offers each configured server in the menu and connects to the one chosen", async () => {
+    const bridge = bridgeOf();
+    await act(async () => useToolsStore.getState().attachBridge(bridge));
+    render(<BridgeTools />);
+    click("builder-tools");
+    const lab = screen.getByTestId("builder-tools-connect-lab") as HTMLButtonElement;
+    expect(lab.textContent).toBe("Connect to lab");
+    expect(lab.title).toBe("https://lab.example/mcp");
+    await act(async () => click("builder-tools-connect-lab"));
+    expect(bridge.connect).toHaveBeenCalledWith("lab");
+    expect(screen.getByTestId("builder-tools-connected")).toBeTruthy();
+    expect(mocks.connect).not.toHaveBeenCalled();
+    // While connected, the menu lists the tools instead of the servers.
+    click("builder-tools");
+    expect(screen.queryByTestId("builder-tools-connect-lab")).toBeNull();
+    expect(screen.getByTestId("builder-tools-button-solvate")).toBeTruthy();
+  });
+
+  it("picks a server in the form, says what it runs, and opens the settings", async () => {
+    const openSettings = vi.fn();
+    const bridge = bridgeOf(SERVERS, openSettings);
+    await act(async () => useToolsStore.getState().attachBridge(bridge));
+    render(<BridgeTools serverOpen />);
+    await act(async () => undefined);
+    expect(screen.queryByTestId("builder-tools-url")).toBeNull();
+    expect(screen.queryByTestId("builder-tools-token")).toBeNull();
+    expect(screen.getByTestId("builder-tools-server-description").textContent).toBe(
+      "Runs uvx megane-builder-tools",
+    );
+    change("builder-tools-server-select", "lab");
+    expect(screen.getByTestId("builder-tools-server-description").textContent).toBe(
+      "Connects to https://lab.example/mcp",
+    );
+    await act(async () => click("builder-tools-connect"));
+    expect(bridge.connect).toHaveBeenCalledWith("lab");
+    expect((screen.getByTestId("builder-tools-server-select") as HTMLSelectElement).disabled).toBe(
+      true,
+    );
+    click("builder-tools-open-settings");
+    expect(openSettings).toHaveBeenCalled();
+  });
+
+  it("says where to add a server when none is configured", async () => {
+    await act(async () => useToolsStore.getState().attachBridge(bridgeOf([])));
+    render(<BridgeTools serverOpen />);
+    await act(async () => undefined);
+    expect(screen.getByTestId("builder-tools-no-servers").textContent).toContain(
+      "the megane.builder.mcpServers setting",
+    );
+    expect(screen.queryByTestId("builder-tools-open-settings")).toBeNull();
+  });
+
+  it("says it is listing until the host answers", async () => {
+    let answer!: (servers: typeof SERVERS) => void;
+    const bridge = bridgeOf();
+    bridge.listServers.mockImplementation(() => new Promise((r) => (answer = r)));
+    act(() => void useToolsStore.getState().attachBridge(bridge));
+    render(<BridgeTools serverOpen />);
+    expect(screen.getByText("Listing the tool servers…")).toBeTruthy();
+    await act(async () => answer(SERVERS));
+    expect(screen.getByTestId("builder-tools-server-select")).toBeTruthy();
+  });
+});
