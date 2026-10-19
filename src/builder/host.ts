@@ -34,7 +34,8 @@ export interface BuilderSaveRequest {
   name: string;
   /** The file's contents (every format the Builder writes is text). */
   text: string;
-  format: StructureWriteFormat;
+  /** A structure format, or `flow` for a Flow mode graph (`.megane-flow.json`). */
+  format: StructureWriteFormat | "flow";
 }
 
 export interface BuilderHost {

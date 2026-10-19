@@ -156,7 +156,7 @@ export function ToolDialog({ tool }: { tool: BuilderToolInfo }) {
   );
 }
 
-interface FieldsProps {
+export interface FieldsProps {
   fields: FieldSpec[];
   values: FormValues;
   onChange: (values: FormValues) => void;
@@ -164,7 +164,7 @@ interface FieldsProps {
   testPrefix: string;
 }
 
-function Fields({ fields, values, onChange, ctx, testPrefix }: FieldsProps) {
+export function Fields({ fields, values, onChange, ctx, testPrefix }: FieldsProps) {
   const set = (key: string, value: unknown) => onChange({ ...values, [key]: value });
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>

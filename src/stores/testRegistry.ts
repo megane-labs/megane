@@ -29,6 +29,8 @@ export interface TestStoreBundle {
   playback?: unknown;
   /** Builder app state; lets specs drive its pick/drag handlers. */
   builder?: unknown;
+  /** The Builder's Flow mode graph and runs. */
+  builderFlow?: unknown;
 }
 
 interface TestWindow {
@@ -36,6 +38,7 @@ interface TestWindow {
   __megane_test_pipeline_store?: unknown;
   __megane_test_playback_store?: unknown;
   __megane_test_builder_store?: unknown;
+  __megane_test_builder_flow_store?: unknown;
   __megane_test_store_bundles?: Record<string, TestStoreBundle>;
 }
 
@@ -105,6 +108,7 @@ function syncPrimary(): void {
   w.__megane_test_pipeline_store = resolveStore("pipeline");
   w.__megane_test_playback_store = resolveStore("playback");
   w.__megane_test_builder_store = resolveStore("builder");
+  w.__megane_test_builder_flow_store = resolveStore("builderFlow");
 }
 
 /**
@@ -144,5 +148,6 @@ export function _resetTestRegistry(): void {
   delete w.__megane_test_pipeline_store;
   delete w.__megane_test_playback_store;
   delete w.__megane_test_builder_store;
+  delete w.__megane_test_builder_flow_store;
   delete w.__megane_test_store_bundles;
 }

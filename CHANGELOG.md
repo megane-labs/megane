@@ -8,6 +8,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ### Added
 
+- **megane Builder's *Flow* mode: build a model by connecting blocks.** A mode switch at the top of the Builder's left rails picks *Manual* (editing by clicking in the view, as before) or *Flow*, where a model is a graph of blocks like the viewer's pipeline editor: a molecule from SMILES (embedded in 3D by RDKit) or the library, the structure open in Manual mode, and every tool of the connected tool server (a packmol liquid box, a polymer chain, solvation). A tool's molecule and structure arguments become inputs on the block; a liquid box's components take one wire per molecule, each with its own count.
+  - **Run** builds the blocks in order and caches each result under its settings and inputs, so changing a count re-runs only the box. *Run to here* runs one block and what it needs; *Stop* abandons a run.
+  - The view shows the picked block's result; *Open in Manual* makes it the Manual document, to edit or save.
+  - Flows are saved and opened as `.megane-flow.json`, written where the host saves structures.
+  - The graph editor is loaded the first time Flow mode opens, so the Builder page does not load React Flow until then.
 - **The reference tools without setup in VS Code and JupyterLab.** With uv installed, the Builder's Tools menu offers **Connect to megane-builder-tools** (Liquid box, Polymer chain, Solvate) with no setting.
   - It runs the `megane-builder-tools` command if it is installed (PATH, or uv's `~/.local/bin` for an editor started from the Dock), else `uvx` at a commit of hodakamori/megane-builder-tools pinned in Megane.
   - An entry named `megane-builder-tools` in `megane.builder.mcpServers` / `MeganeBuilderTools.mcp_servers` replaces it, and `null` hides it. The confirmation before first use still applies.
