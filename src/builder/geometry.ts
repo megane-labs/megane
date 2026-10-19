@@ -126,7 +126,7 @@ export function unwrappedPositions(snapshot: Snapshot, atoms: number[]): Float64
 }
 
 /** Rotate `p` about the axis through `origin` along unit `axis` by `angle` (rad). */
-function rotateAbout(p: Vec3, origin: Vec3, axis: Vec3, angle: number): Vec3 {
+export function rotateAbout(p: Vec3, origin: Vec3, axis: Vec3, angle: number): Vec3 {
   const v = sub(p, origin);
   const c = Math.cos(angle);
   const s = Math.sin(angle);

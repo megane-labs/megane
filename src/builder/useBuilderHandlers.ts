@@ -4,15 +4,57 @@
  * Every click becomes one `EditOp` on the store (or a selection change). The
  * Viewport reports rendered atom indices; they are translated to op refs
  * through `result.refAt` so an op always names the atom the user saw.
+ *
+ * Select and Move share the Materials Studio style: click to select (Shift /
+ * Ctrl / ⌘ toggles), double-click for the molecule, drag the selection to
+ * move it (modifiers turn or spin it, see `manipulate.ts`), drag elsewhere
+ * for a rubber band. The camera has the right and middle buttons.
  */
 
 import { useCallback, useEffect, useMemo, useRef } from "react";
 import type { StoreApi } from "zustand";
-import type { EditAtomRef } from "../pipeline/types";
-import { canEdit, shownSnapshot, type BuilderStore } from "./store";
+import type { EditAtomRef, EditOp } from "../pipeline/types";
+import { canEdit, shownSnapshot, viewSnapshot, type BuilderStore } from "./store";
 import { adsorptionSite, newAtomId } from "./placement";
 import { addOnAtomOps, setElementOps } from "./hydrogens";
-import type { BuildHandlers, BuildPickInfo } from "./types";
+import { moleculeOf } from "./geometry";
+import {
+  AXIS_KEYS,
+  axisVector,
+  closeContacts,
+  dragDisplacements,
+  dragModeFor,
+  moveOps,
+  type AxisKey,
+  type DragMode,
+} from "./manipulate";
+import type {
+  BuildBoxMode,
+  BuildDragGesture,
+  BuildHandlers,
+  BuildModifiers,
+  BuildPickInfo,
+  BuildPressAction,
+} from "./types";
+
+/** Undo's shortcut, for the close-contact notice. */
+const UNDO_KEYS = "Ctrl/⌘ + Z";
+
+/** A drag in progress: what it carries and what it started from. */
+interface ActiveDrag {
+  /** Length of the history before the drag; its ops follow. */
+  base: number;
+  /** The redo stack at the press, put back if the drag writes nothing. */
+  redoStack: EditOp[];
+  atoms: number[];
+  refs: Map<number, EditAtomRef>;
+  /** Rendered positions at the press. */
+  start: Float32Array;
+  mode: DragMode;
+  axis: AxisKey | null;
+  /** The pointer's gesture so far; null until it moves. */
+  gesture: BuildDragGesture | null;
+}
 
 /** Build the handlers for `api` and install them in the store while mounted. */
 export function useBuilderHandlers(api: StoreApi<BuilderStore>): BuildHandlers {
@@ -39,12 +81,15 @@ export function useBuilderHandlers(api: StoreApi<BuilderStore>): BuildHandlers {
       if (!canEdit(state) || !snapshot) return;
       const { atomIndex } = info;
       switch (state.tool) {
-        case "select": {
+        // Move selects like Select; its drags are what differ (pressAction).
+        case "select":
+        case "move": {
+          const extend = info.shiftKey || !!info.mod;
           if (atomIndex === null) {
-            if (!info.shiftKey) state.clearSelected();
+            if (!extend) state.clearSelected();
             return;
           }
-          if (info.shiftKey) state.toggleSelected(atomIndex);
+          if (extend) state.toggleSelected(atomIndex);
           else state.setSelected([atomIndex]);
           return;
         }
@@ -97,10 +142,6 @@ export function useBuilderHandlers(api: StoreApi<BuilderStore>): BuildHandlers {
           state.pushOps(setElementOps(snapshot, state.result!.refAt, atomIndex, state.element));
           return;
         }
-        case "move":
-          // Moves are drags (below); a bare click selects.
-          if (atomIndex !== null) state.setSelected([atomIndex]);
-          return;
         case "place": {
           // Stamp the chosen library molecule at the clicked point. A click on
           // an atom is ignored so a molecule never lands on top of one —
@@ -124,46 +165,159 @@ export function useBuilderHandlers(api: StoreApi<BuilderStore>): BuildHandlers {
     [api, refFor],
   );
 
-  // A drag writes one move_atoms op at press time and rewrites its delta while
-  // the pointer moves, so the history gains a single op.
-  const dragRefs = useRef<EditAtomRef[] | null>(null);
-  const dragStart = useCallback(
-    (atomIndex: number): boolean => {
+  // What a left press does if the pointer moves: Select and Move drag atoms
+  // (Select only the ones already selected, so a stray drag never moves an
+  // atom by accident) and draw a box from anywhere else; the other tools
+  // leave the drag to the camera.
+  const pressAction = useCallback(
+    (atomIndex: number | null): BuildPressAction => {
       const state = api.getState();
-      if (!canEdit(state) || state.tool !== "move") return false;
-      // Drag the whole selection when the grabbed atom is part of it.
-      const group = state.selected.includes(atomIndex) ? state.selected : [atomIndex];
-      const refs = group.map(refFor).filter((r): r is EditAtomRef => r !== null);
-      if (refs.length === 0) return false;
-      dragRefs.current = refs;
-      state.pushOp({ op: "move_atoms", atoms: refs, delta: [0, 0, 0] });
+      if (!canEdit(state) || (state.tool !== "select" && state.tool !== "move")) return "camera";
+      if (atomIndex === null) return "box";
+      if (state.tool === "move" || state.selected.includes(atomIndex)) return "move";
+      return "box";
+    },
+    [api],
+  );
+
+  // A drag rewrites the ops it wrote so far on every move, from the positions
+  // at the press, so the history gains a single step however long it runs.
+  const drag = useRef<ActiveDrag | null>(null);
+
+  const applyDrag = useCallback(() => {
+    const d = drag.current;
+    if (!d || !d.gesture) return;
+    const state = api.getState();
+    const vector = d.axis ? axisVector(d.axis, state.result?.snapshot.box ?? null) : null;
+    const { displacements, readout } = dragDisplacements(d.start, d.atoms, d.mode, d.gesture, {
+      axis: d.axis && vector ? { key: d.axis, vector } : null,
+      snap: state.snap,
+    });
+    state.setDragOps(d.base, moveOps(displacements, d.refs));
+    const moved = api.getState().result?.snapshot;
+    state.setDrag({
+      mode: d.mode,
+      axis: d.axis && vector ? d.axis : null,
+      readout,
+      contacts: moved ? closeContacts(moved, d.atoms) : [],
+    });
+  }, [api]);
+
+  const dragStart = useCallback(
+    (atomIndex: number, mods: BuildModifiers): boolean => {
+      const state = api.getState();
+      if (!canEdit(state) || (state.tool !== "select" && state.tool !== "move")) return false;
+      const snapshot = state.result!.snapshot;
+      // Drag the whole selection when the grabbed atom is part of it; else
+      // the atom alone, which becomes the selection so the halo shows it.
+      const inSelection = state.selected.includes(atomIndex);
+      const group = (inSelection ? state.selected : [atomIndex]).filter(
+        (i) => i >= 0 && i < snapshot.nAtoms && refFor(i) !== null,
+      );
+      if (group.length === 0) return false;
+      if (!inSelection) state.setSelected([atomIndex]);
+      const mode = dragModeFor(mods);
+      drag.current = {
+        base: state.edits.length,
+        redoStack: state.redoStack,
+        atoms: group,
+        refs: new Map(group.map((i) => [i, refFor(i)!])),
+        start: new Float32Array(snapshot.positions),
+        mode,
+        axis: null,
+        gesture: null,
+      };
+      state.setDrag({ mode, axis: null, readout: null, contacts: [] });
       return true;
     },
     [api, refFor],
   );
   const dragMove = useCallback(
-    (delta: [number, number, number]) => {
-      if (!dragRefs.current) return;
-      api.getState().replaceLastOp({ op: "move_atoms", atoms: dragRefs.current, delta });
+    (gesture: BuildDragGesture) => {
+      if (!drag.current) return;
+      drag.current.gesture = gesture;
+      applyDrag();
+    },
+    [applyDrag],
+  );
+  const finishDrag = useCallback(
+    (cancel: boolean) => {
+      const d = drag.current;
+      if (!d) return;
+      drag.current = null;
+      const state = api.getState();
+      const contacts = state.drag?.contacts.length ?? 0;
+      if (cancel) state.setDragOps(d.base, []);
+      // A drag that moved nothing leaves no step, and the redo stack as it was.
+      if (api.getState().edits.length === d.base) api.setState({ redoStack: d.redoStack });
+      state.setDrag(null);
+      if (!cancel && contacts > 0 && api.getState().edits.length > d.base) {
+        state.reportInfo(
+          `${contacts} atoms are in close contact after the move. Undo (${UNDO_KEYS}) takes it back.`,
+        );
+      }
     },
     [api],
   );
-  const dragEnd = useCallback(() => {
-    if (!dragRefs.current) return;
-    dragRefs.current = null;
-    // A drag that never moved leaves a zero-delta op behind; drop it without
-    // leaving it on the redo stack.
-    const state = api.getState();
-    const tail = state.edits[state.edits.length - 1];
-    if (tail && tail.op === "move_atoms" && tail.delta.every((d) => d === 0)) {
-      state.undo();
-      api.setState({ redoStack: state.redoStack });
-    }
-  }, [api]);
+  const dragEnd = useCallback(() => finishDrag(false), [finishDrag]);
+
+  // Mid-drag keys: an axis key locks (or, pressed again, frees) the motion,
+  // Esc cancels the drag. The Builder's shortcuts pause while a drag runs.
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      const d = drag.current;
+      if (!d || e.ctrlKey || e.metaKey || e.altKey) return;
+      if (e.key === "Escape") {
+        e.preventDefault();
+        finishDrag(true);
+        return;
+      }
+      const key = e.key.toLowerCase() as AxisKey;
+      if (!AXIS_KEYS.includes(key)) return;
+      e.preventDefault();
+      d.axis = d.axis === key ? null : key;
+      if (d.gesture) applyDrag();
+      else api.getState().setDrag({ ...api.getState().drag!, axis: d.axis });
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [api, applyDrag, finishDrag]);
+
+  const boxSelect = useCallback(
+    (indices: number[], mode: BuildBoxMode) => {
+      const state = api.getState();
+      if (mode === "replace") state.setSelected(indices);
+      else if (mode === "add") state.setSelected([...state.selected, ...indices]);
+      else {
+        const drop = new Set(indices);
+        state.setSelected(state.selected.filter((i) => !drop.has(i)));
+      }
+    },
+    [api],
+  );
+
+  // A double-click with Select or Move selects the atom's molecule (Shift
+  // adds it to the selection), or with Alt every atom of its element.
+  const doubleClick = useCallback(
+    (atomIndex: number, mods: BuildModifiers): boolean => {
+      const state = api.getState();
+      if (state.tool !== "select" && state.tool !== "move") return false;
+      const snapshot = viewSnapshot(state);
+      if (!snapshot || atomIndex < 0 || atomIndex >= snapshot.nAtoms) return false;
+      const atoms = mods.altKey
+        ? Array.from(snapshot.elements.keys()).filter(
+            (i) => snapshot.elements[i] === snapshot.elements[atomIndex],
+          )
+        : moleculeOf(snapshot, atomIndex);
+      state.setSelected(mods.shiftKey ? [...state.selected, ...atoms] : atoms);
+      return true;
+    },
+    [api],
+  );
 
   const installed = useMemo<BuildHandlers>(
-    () => ({ pick, dragStart, dragMove, dragEnd }),
-    [pick, dragStart, dragMove, dragEnd],
+    () => ({ pick, pressAction, dragStart, dragMove, dragEnd, boxSelect, doubleClick }),
+    [pick, pressAction, dragStart, dragMove, dragEnd, boxSelect, doubleClick],
   );
   useEffect(() => {
     api.getState().setHandlers(installed);
