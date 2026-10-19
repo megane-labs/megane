@@ -51,8 +51,10 @@ vi.mock("@/renderer/MoleculeRenderer", () => ({
 import { Viewport } from "@/components/Viewport";
 
 function pointer(type: string, x: number, y: number, init: MouseEventInit = {}) {
+  // A move reports no button change and, mid-press, the left button held.
+  const buttons = type === "pointermove" ? { button: -1, buttons: 1 } : { button: 0 };
   canvas.dispatchEvent(
-    new MouseEvent(type, { clientX: x, clientY: y, button: 0, bubbles: true, ...init }) as Event,
+    new MouseEvent(type, { clientX: x, clientY: y, bubbles: true, ...buttons, ...init }) as Event,
   );
 }
 
@@ -230,6 +232,73 @@ describe("Viewport — Builder interactions", () => {
     pointer("pointercancel", 30, 30);
     expect(b.boxSelect).not.toHaveBeenCalled();
     expect(rendererMock.setControlsEnabled).toHaveBeenLastCalledWith(true);
+  });
+
+  it("never leaves a rubber band behind when the left release goes unreported", () => {
+    const h = handlers({ pressAction: vi.fn(() => "box" as const) });
+    mountBuilder(h);
+    const boxes = () => document.querySelectorAll('[data-testid="viewport-box-select"]').length;
+
+    // Left released while the right button is held: a move with `button` 0
+    // ends the band as a release there, and the later right release is inert.
+    pointer("pointerdown", 50, 50);
+    pointer("pointermove", 20, 90);
+    expect(boxes()).toBe(1);
+    pointer("pointermove", 25, 95, { button: 0, buttons: 2 });
+    expect(boxes()).toBe(0);
+    expect(h.boxSelect).toHaveBeenLastCalledWith([1, 2], "replace");
+    expect(rendererMock.selectAtomsInRect).toHaveBeenLastCalledWith({
+      x0: 50,
+      y0: 50,
+      x1: 25,
+      y1: 95,
+    });
+    expect(rendererMock.setControlsEnabled).toHaveBeenLastCalledWith(true);
+    pointer("pointerup", 25, 95, { button: 2 });
+    expect(h.boxSelect).toHaveBeenCalledTimes(1);
+
+    // A hover move with no button held after a release that never came:
+    // the band is dropped without selecting.
+    pointer("pointerdown", 50, 50);
+    pointer("pointermove", 20, 90);
+    pointer("pointermove", 30, 30, { buttons: 0 });
+    expect(boxes()).toBe(0);
+    expect(h.boxSelect).toHaveBeenCalledTimes(1);
+
+    // Losing the pointer capture cancels the band.
+    pointer("pointerdown", 50, 50);
+    pointer("pointermove", 20, 90);
+    pointer("lostpointercapture", 20, 90);
+    expect(boxes()).toBe(0);
+    expect(h.boxSelect).toHaveBeenCalledTimes(1);
+
+    // A new press drops a band whose press was never ended.
+    pointer("pointerdown", 50, 50);
+    pointer("pointermove", 20, 90);
+    pointer("pointerdown", 60, 60);
+    expect(boxes()).toBe(0);
+    pointer("pointermove", 90, 90);
+    pointer("pointerup", 90, 90);
+    expect(boxes()).toBe(0);
+    expect(h.boxSelect).toHaveBeenCalledTimes(2);
+  });
+
+  it("ends an atom drag when the left release goes unreported", () => {
+    const h = handlers({ pressAction: vi.fn(() => "move" as const) });
+    mountBuilder(h);
+    pointer("pointerdown", 10, 10);
+    pointer("pointermove", 30, 30);
+    pointer("pointermove", 40, 40, { button: 0, buttons: 2 });
+    expect(rendererMock.dragGesture).toHaveBeenLastCalledWith(5, 10, 10, 40, 40);
+    expect(h.dragEnd).toHaveBeenCalledTimes(1);
+    // A camera press keeps its pointer capture to itself.
+    const cam = handlers();
+    cleanup();
+    mountBuilder(cam);
+    pointer("pointerdown", 10, 10);
+    pointer("lostpointercapture", 10, 10);
+    pointer("pointerup", 10, 10);
+    expect(cam.pick).toHaveBeenCalledTimes(1);
   });
 
   it("leaves a press on the axes inset to the inset", () => {

@@ -65,9 +65,10 @@ export function detectTestMode(): boolean {
 export const GLOBAL_BUNDLE_ID = "global";
 
 /**
- * Registration order of scoped bundles. The primary window hooks resolve to
- * the head of this list, so they stay pinned to one viewer as further viewers
- * mount and unmount rather than flipping to whichever mounted last.
+ * Registration order of scoped bundles. Each window hook resolves to the
+ * earliest bundle carrying its store, so it stays pinned to one viewer (or
+ * Builder) as further ones mount and unmount rather than flipping to whichever
+ * mounted last.
  */
 const scopedOrder: string[] = [];
 const bundles = new Map<string, TestStoreBundle>();
@@ -78,19 +79,19 @@ function testWindow(): TestWindow | null {
 }
 
 /**
- * Resolve one store for the legacy hooks: the primary scoped bundle's, or the
- * module-global one when the primary does not carry that key.
+ * Resolve one store for the legacy hooks: the first scoped bundle that carries
+ * that key, or the module-global one when none does.
  *
  * Resolved per key rather than per bundle on purpose. A bundle that registered
  * only `pipeline` would otherwise leave `__megane_test_playback_store` pointing
- * at whatever was there before — exactly the dead-store hazard this registry
- * exists to close.
+ * at whatever was there before, and a viewer that mounted first would hide a
+ * scoped Builder's store behind the unrendered global one — exactly the
+ * dead-store hazard this registry exists to close.
  */
 function resolveStore(key: keyof TestStoreBundle): unknown {
-  const primaryId = scopedOrder[0];
-  if (primaryId !== undefined) {
-    const scoped = bundles.get(primaryId);
-    if (scoped?.[key]) return scoped[key];
+  for (const id of scopedOrder) {
+    const store = bundles.get(id)?.[key];
+    if (store) return store;
   }
   return bundles.get(GLOBAL_BUNDLE_ID)?.[key];
 }

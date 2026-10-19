@@ -345,6 +345,38 @@ test.describe("builder: webapp", () => {
     expect((await builderState(page)).edits.length).toBe(edits + 1);
   });
 
+  test("a rubber band never stays on screen when its left release goes unreported", async ({
+    page,
+  }) => {
+    await page.setInputFiles('[data-testid="builder-open-input"]', "tests/fixtures/caffeine.sdf");
+    await waitForReady(page);
+    const box = (await page.locator('[data-testid="viewer-root"]').boundingBox())!;
+    const band = page.locator('[data-testid="viewport-box-select"]');
+    // An empty corner, so the band holds no atom.
+    const x = box.x + 20;
+    const y = box.y + box.height - 60;
+
+    // Left released while the right button is still down: the browser sends
+    // the left release as a pointermove, and the final pointerup is the right.
+    await page.mouse.move(x, y);
+    await page.mouse.down();
+    await page.mouse.move(x + 50, y + 30, { steps: 5 });
+    await expect(band).toHaveCount(1);
+    await page.mouse.down({ button: "right" });
+    await page.mouse.up();
+    await page.mouse.up({ button: "right" });
+    await expect(band).toHaveCount(0);
+
+    // The next band draws and clears as usual, with no orphan left over.
+    await page.mouse.move(x, y);
+    await page.mouse.down();
+    await page.mouse.move(x + 40, y + 20, { steps: 5 });
+    await expect(band).toHaveCount(1);
+    await page.mouse.up();
+    await expect(band).toHaveCount(0);
+    expect((await builderState(page)).selected).toEqual([]);
+  });
+
   test("Place starts a document with nothing open; the periodic table and the theme", async ({
     page,
   }) => {
