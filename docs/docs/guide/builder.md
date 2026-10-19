@@ -406,30 +406,74 @@ title bar. Each opens the Builder in an editor tab (one tab per file; asking
 again brings it back). *Save* asks where to write with VS Code's save dialog,
 starting beside the file you opened.
 
-The *Tools* menu works in VS Code too, with the servers you list in the
-`megane.builder.mcpServers` setting (user or workspace `settings.json`, in the
-`mcpServers` format LLM clients use). VS Code starts a stdio server itself,
-so you don't need HTTP, a token or `--allow-origin`:
+The *Tools* menu works in VS Code too (VS Code 1.90 or later). VS Code starts
+the tool server itself, so you need no HTTP, token or `--allow-origin`. To get
+the reference tools (*Liquid box*, *Polymer chain*, *Solvate*):
+
+1. Install the reference server once (it is not on PyPI yet, so from Git):
+
+   ```bash
+   uv tool install git+https://github.com/hodakamori/megane-builder-tools
+   ```
+
+   This puts a `megane-builder-tools` command on your PATH (`uv tool upgrade
+   megane-builder-tools` updates it).
+2. Run **Preferences: Open User Settings (JSON)** from the Command Palette and
+   add:
+
+   ```json
+   "megane.builder.mcpServers": {
+     "megane-builder-tools": { "command": "megane-builder-tools" }
+   }
+   ```
+
+   If connecting later fails with `spawn megane-builder-tools ENOENT`, VS Code
+   was started without your shell's PATH (common when it is launched from the
+   Dock or Start menu). Give the full path that `which megane-builder-tools`
+   prints, e.g. `"command": "${userHome}/.local/bin/megane-builder-tools"`.
+3. Open a Builder tab (the *Megane* icon in the activity bar › **New
+   Structure**, or **Open in Megane Builder** on a file), choose **Tools ›
+   Connect to megane-builder-tools**, and press **Allow** when VS Code shows
+   the command it is about to run. It asks once per command.
+4. The tools appear in the Tools menu. *Liquid box* and *Polymer chain* make a
+   new document. *Solvate* adds solvent to the open structure and needs a
+   cell: give the structure one with **Structure › Set cell…** first (a polymer
+   chain comes without a cell).
+
+Your own server goes in the same setting: any command that runs an MCP server
+over stdio (see [Builder Tool Contract §12.4](../dev/builder-tools.md#124-server-side)),
+for example `{ "command": "uv", "args": ["run", "--directory",
+"${workspaceFolder}", "python", "my_tools.py"] }`. `${workspaceFolder}` and
+`${userHome}` are replaced, and `env` and `cwd` are optional.
+
+A server that is already running over HTTP, such as the reference server
+started with `megane-builder-tools --transport http --port 8765` on your
+machine or a lab server, is an entry with its URL and the token it printed:
 
 ```json
 "megane.builder.mcpServers": {
-  "my-tools": {
-    "command": "uv",
-    "args": ["run", "--directory", "${workspaceFolder}", "python", "my_tools.py"]
-  },
-  "lab": { "url": "https://tools.example.org/mcp", "headers": { "Authorization": "Bearer …" } }
+  "local-http": {
+    "url": "http://127.0.0.1:8765/mcp",
+    "headers": { "Authorization": "Bearer <token>" }
+  }
 }
 ```
 
-The Tools menu then offers **Connect to my-tools**. The first time, VS Code
-asks whether to run that command (or send structures to that URL) and
-remembers your answer for exactly that command or URL. Builder tabs share
-one server process, which stops when the last tab disconnects or closes.
-**Tools › Tool server…** shows what a server runs and has **Configure tool
-servers…**, which opens the setting. The server's messages are in the
-*megane Builder Tools* output panel. An HTTP server must use `https://` unless
-it runs on your machine. In an untrusted workspace, VS Code ignores the
-workspace's own setting.
+Set `MEGANE_BUILDER_TOOLS_TOKEN` before starting the server to keep the same
+token across restarts. An HTTP server must use `https://` unless it runs on
+your machine.
+
+More details:
+
+- Builder tabs share one server process, which stops when the last tab
+  disconnects or closes.
+- **Tools › Tool server…** shows what each server runs and has **Configure
+  tool servers…**, which opens the setting.
+- A server's messages (and why it failed to start) are in the *megane Builder
+  Tools* output panel.
+- In an untrusted workspace, VS Code ignores the workspace's own
+  `megane.builder.mcpServers`, so a cloned repository cannot run commands this
+  way. Your user setting still applies.
 
 **JupyterLab.** The Megane extension adds a *Megane* panel (the logo icon)
 to the left sidebar: **Open Builder**, and the structure files of the file
