@@ -45,7 +45,13 @@ vi.mock("@/renderer/RenderCapture", () => ({ downloadBlob: vi.fn() }));
 
 import { BuilderProvider, createBuilderStores, type BuilderStores } from "@/builder/BuilderStores";
 import { ModeSwitch } from "@/builder/flow/ModeSwitch";
-import { FlowRail, addMenuItems, flowFileMenuItems } from "@/builder/flow/FlowRail";
+import {
+  FlowRail,
+  addMenuItems,
+  flowFileMenuItems,
+  templateMenuItems,
+} from "@/builder/flow/FlowRail";
+import { FLOW_TEMPLATES } from "@/builder/flow/templates";
 import { FlowNodeCard } from "@/builder/flow/FlowNodeCard";
 import FlowPanel, { type FlowPanelProps } from "@/builder/flow/FlowPanel";
 import { FlowProperties, openInManual } from "@/builder/flow/FlowProperties";
@@ -126,13 +132,31 @@ describe("FlowRail menus", () => {
       addSmiles: vi.fn(),
       addLibrary: vi.fn(),
       addDocument: vi.fn(),
+      addBuiltin: vi.fn(),
       addTool: vi.fn(),
       openServer: vi.fn(),
     };
     const plain = addMenuItems(actions);
     expect(plain.filter((i) => "testId" in i).map((i) => (i as { testId: string }).testId)).toEqual(
-      ["builder-flow-add-smiles", "builder-flow-add-library", "builder-flow-add-document"],
+      [
+        "builder-flow-add-smiles",
+        "builder-flow-add-library",
+        "builder-flow-add-document",
+        "builder-flow-add-crystal",
+        "builder-flow-add-polymer",
+        "builder-flow-add-supercell",
+        "builder-flow-add-slab",
+        "builder-flow-add-adsorb",
+      ],
     );
+    for (const type of ["crystal", "polymer", "supercell", "slab", "adsorb"]) {
+      (
+        plain.find((i) => "testId" in i && i.testId === `builder-flow-add-${type}`) as {
+          onSelect: () => void;
+        }
+      ).onSelect();
+      expect(actions.addBuiltin).toHaveBeenLastCalledWith(type);
+    }
     const items = addMenuItems({
       ...actions,
       tools: { status: "connected", connection: connection() },
@@ -163,9 +187,27 @@ describe("FlowRail menus", () => {
     expect(byId("builder-flow-open").disabled).toBeFalsy();
   });
 
-  it("is the viewer's panel rail: add, layout, run, stop, file, theme", () => {
-    const props = { ...noActions(), addItems: [], onAutoLayout: vi.fn() };
+  it("lists every template, saying which need a tool server", () => {
+    const apply = vi.fn();
+    const items = templateMenuItems(apply) as { testId: string; onSelect: () => void }[];
+    expect(items.map((i) => i.testId)).toEqual(
+      FLOW_TEMPLATES.map((t) => `builder-flow-template-${t.id}`),
+    );
+    items[1].onSelect();
+    expect(apply).toHaveBeenCalledWith(FLOW_TEMPLATES[1].id);
+  });
+
+  it("is the viewer's panel rail: add, templates, layout, run, stop, file, theme", () => {
+    const props = {
+      ...noActions(),
+      addItems: [],
+      onApplyTemplate: vi.fn(),
+      onAutoLayout: vi.fn(),
+    };
     const { rerender } = render(<FlowRail {...props} />);
+    fireEvent.click(screen.getByTestId("builder-flow-templates"));
+    fireEvent.click(screen.getByTestId("builder-flow-template-slab-adsorbates"));
+    expect(props.onApplyTemplate).toHaveBeenCalledWith("slab-adsorbates");
     const rail = screen.getByTestId("builder-flow-rail");
     expect(rail.getAttribute("role")).toBe("toolbar");
     fireEvent.click(screen.getByTestId("builder-flow-layout"));
@@ -356,6 +398,47 @@ describe("FlowPanel", () => {
     expect(stores.flow.getState().nodes[0].position).toEqual({ x: 7, y: 8 });
     act(() => props().onNodesChange([{ type: "remove", id: m }]));
     expect(stores.flow.getState().nodes.map((n) => n.id)).toEqual([t]);
+  });
+
+  it("adds the built-in blocks with their default settings", () => {
+    wrap(<FlowPanel {...panelProps()} />);
+    for (const type of ["crystal", "polymer", "supercell", "slab", "adsorb"]) {
+      fireEvent.click(screen.getByTestId("builder-flow-add"));
+      fireEvent.click(screen.getByTestId(`builder-flow-add-${type}`));
+    }
+    const nodes = stores.flow.getState().nodes;
+    expect(nodes.map((n) => n.type)).toEqual(["crystal", "polymer", "supercell", "slab", "adsorb"]);
+    expect(nodes[3].data.params).toMatchObject({ type: "slab", miller: [1, 1, 1] });
+  });
+
+  it("replaces the flow with a template, fits the view, and fills its tools' defaults", () => {
+    const raf = vi.spyOn(window, "requestAnimationFrame").mockImplementation((cb) => {
+      cb(0);
+      return 0;
+    });
+    const onCloseServer = vi.fn();
+    wrap(<FlowPanel {...panelProps({ onCloseServer })} />);
+    act(() => {
+      stores.flow.getState().addNode(smiles("O"));
+    });
+    fireEvent.click(screen.getByTestId("builder-flow-templates"));
+    fireEvent.click(screen.getByTestId("builder-flow-template-liquid-mixture"));
+    const { nodes, edges } = stores.flow.getState();
+    expect(nodes.map((n) => n.type)).toEqual(["molecule", "molecule", "tool"]);
+    expect(edges).toHaveLength(2);
+    expect(fitView).toHaveBeenCalled();
+    expect(onCloseServer).toHaveBeenCalled();
+    const box = () => stores.flow.getState().nodes[2].data.params as { values: object };
+    expect(box().values).toEqual({ density: 0.95, seed: 2026 });
+    // Once a server offering the tool connects, the block takes its other defaults.
+    act(() => stores.tools.setState({ status: "connected", connection: connection() }));
+    expect(box().values).toMatchObject({
+      density: 0.95,
+      seed: 2026,
+      shape: "cubic",
+      tolerance: 2,
+    });
+    raf.mockRestore();
   });
 
   it("shows the tool server form in the pane when asked", () => {

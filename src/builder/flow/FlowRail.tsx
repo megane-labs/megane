@@ -3,13 +3,13 @@
  * built from the same pieces as the viewer's Pipeline rail
  * (`components/graph/PanelRail`). Top to bottom:
  *
- *   Add, Layout   — build the graph
+ *   Add, Templates, Layout — build the graph
  *   Run / Stop    — build every block (or stop the run)
  *   File          — open / save the flow as JSON, clear it
  *   Theme         — at the foot, as in the viewer
  *
- * The menus are pure item lists (`addMenuItems`, `flowFileMenuItems`) so the
- * rail and its tests read the same thing.
+ * The menus are pure item lists (`addMenuItems`, `templateMenuItems`,
+ * `flowFileMenuItems`) so the rail and its tests read the same thing.
  */
 
 import { useRef } from "react";
@@ -20,11 +20,22 @@ import { RailDivider, RailIcon, railButtonStyle } from "../rail";
 import type { BuilderToolInfo } from "../tools/contract";
 import { toolsMenuItems } from "../tools/ToolServer";
 import type { ToolsStore } from "../tools/store";
+import type { BuiltinType } from "./builtins";
+import { FLOW_TEMPLATES } from "./templates";
 
 const IconAdd = (
   <RailIcon>
     <rect x="3.5" y="3.5" width="17" height="17" rx="3" />
     <path d="M12 8v8M8 12h8" />
+  </RailIcon>
+);
+
+const IconTemplates = (
+  <RailIcon>
+    <rect x="3.5" y="3.5" width="7" height="7" rx="1.5" />
+    <rect x="13.5" y="3.5" width="7" height="7" rx="1.5" />
+    <rect x="3.5" y="13.5" width="7" height="7" rx="1.5" />
+    <path d="M17 13.5v7M13.5 17h7" />
   </RailIcon>
 );
 
@@ -60,6 +71,8 @@ export interface AddMenuActions {
   addSmiles: () => void;
   addLibrary: () => void;
   addDocument: () => void;
+  /** Add one of the blocks Builder runs itself (crystal, slab, polymer, …). */
+  addBuiltin: (type: BuiltinType) => void;
   addTool: (tool: BuilderToolInfo) => void;
   /** Show the tool server form. */
   openServer: () => void;
@@ -89,12 +102,70 @@ export function addMenuItems(a: AddMenuActions): MenuItem[] {
       title: "The structure open in Manual mode",
       onSelect: a.addDocument,
     },
+    {
+      label: "Bulk crystal",
+      testId: "builder-flow-add-crystal",
+      title: "A bulk crystal from a prototype (fcc, bcc, rocksalt, …) and a lattice constant",
+      onSelect: () => a.addBuiltin("crystal"),
+    },
+    {
+      label: "Polymer chain",
+      testId: "builder-flow-add-polymer",
+      title: "A linear polymer from a repeat unit (PE, PS, PMMA, … or your own SMILES)",
+      onSelect: () => a.addBuiltin("polymer"),
+    },
+    { separator: true },
+    { caption: "Crystal" },
+    {
+      label: "Supercell",
+      testId: "builder-flow-add-supercell",
+      title: "Repeat a structure with a cell along a, b and c",
+      onSelect: () => a.addBuiltin("supercell"),
+    },
+    {
+      label: "Slab",
+      testId: "builder-flow-add-slab",
+      title: "Cut a (h k l) surface slab with vacuum from a bulk crystal",
+      onSelect: () => a.addBuiltin("slab"),
+    },
+    {
+      label: "Place on surface",
+      testId: "builder-flow-add-adsorb",
+      title: "Lay copies of a molecule on a grid above a slab",
+      onSelect: () => a.addBuiltin("adsorb"),
+    },
   ];
   if (a.tools) {
     items.push({ separator: true }, { caption: "Tools" });
     items.push(...toolsMenuItems({ ...a.tools, openForm: a.addTool }, a.openServer));
   }
   return items;
+}
+
+/** The menu row of a template: its name over a one-line description. */
+function TemplateLabel({ label, description }: { label: string; description: string }) {
+  return (
+    <span style={{ display: "flex", flexDirection: "column", gap: 1, whiteSpace: "normal" }}>
+      <span style={{ fontWeight: 500 }}>{label}</span>
+      <span style={{ fontSize: 10.5, color: "var(--megane-text-muted)", maxWidth: 240 }}>
+        {description}
+      </span>
+    </span>
+  );
+}
+
+/** The Templates menu: each ready-made flow, saying when it needs a tool server. */
+export function templateMenuItems(apply: (templateId: string) => void): MenuItem[] {
+  return FLOW_TEMPLATES.map((t) => ({
+    label: (
+      <TemplateLabel
+        label={t.label}
+        description={t.tools.length > 0 ? `${t.description} Needs a tool server.` : t.description}
+      />
+    ),
+    testId: `builder-flow-template-${t.id}`,
+    onSelect: () => apply(t.id),
+  }));
 }
 
 export interface FlowFileMenuActions {
@@ -139,11 +210,14 @@ export interface FlowActions {
 
 export interface FlowRailProps extends FlowActions {
   addItems: MenuItem[];
+  /** Replace the flow with a template. */
+  onApplyTemplate: (templateId: string) => void;
   onAutoLayout: () => void;
 }
 
 export function FlowRail({
   addItems,
+  onApplyTemplate,
   onAutoLayout,
   onOpenFile,
   onSave,
@@ -180,6 +254,13 @@ export function FlowRail({
         title="Add a block"
         icon={IconAdd}
         items={addItems}
+      />
+      <RailMenu
+        testId="builder-flow-templates"
+        label="Templates"
+        title="Templates: replace the flow with a ready-made one"
+        icon={IconTemplates}
+        items={templateMenuItems(onApplyTemplate)}
       />
       <RailButton
         testId="builder-flow-layout"

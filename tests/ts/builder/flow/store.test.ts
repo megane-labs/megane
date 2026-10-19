@@ -226,6 +226,29 @@ describe("flow store", () => {
     t.getState().clear();
     expect(t.getState().nodes).toEqual([]);
   });
+
+  it("fills in a tool block's missing settings without touching its result", () => {
+    const s = createFlowStore();
+    const m = s.getState().addNode(mol());
+    const t = s.getState().addNode({
+      type: "tool",
+      tool: "liquid_box",
+      label: "Liquid box",
+      values: { density: 0.9, seed: 3 },
+      rows: {},
+    });
+    s.getState().addNode({ type: "tool", tool: "unknown", label: "", values: {}, rows: {} });
+    const before = s.getState().nodes;
+    s.getState().completeTools((name) => tools[name] ?? null);
+    const params = s.getState().nodes.find((n) => n.id === t)!.data.params;
+    expect(params).toMatchObject({ values: { density: 0.9, seed: 3, shape: "cubic" } });
+    expect(s.getState().nodes.find((n) => n.id === m)).toBe(before[0]);
+    expect(s.getState().nodes[2]).toBe(before[2]);
+    // Nothing missing: the graph is left as it is.
+    const after = s.getState().nodes;
+    s.getState().completeTools((name) => tools[name] ?? null);
+    expect(s.getState().nodes).toBe(after);
+  });
 });
 
 describe("parseSerializedFlow", () => {
@@ -243,5 +266,20 @@ describe("parseSerializedFlow", () => {
         edges: [{ source: "a", target: "b", targetHandle: "x" }],
       }),
     ).toThrow("wire");
+  });
+
+  it("knows every block type", () => {
+    const flow = parseSerializedFlow({
+      version: 1,
+      nodes: [
+        { id: "a", position: { x: 0, y: 0 }, params: { type: "crystal" } },
+        { id: "b", position: { x: 0, y: 0 }, params: { type: "slab" } },
+        { id: "c", position: { x: 0, y: 0 }, params: { type: "adsorb" } },
+        { id: "d", position: { x: 0, y: 0 }, params: { type: "polymer" } },
+        { id: "e", position: { x: 0, y: 0 }, params: { type: "supercell" } },
+      ],
+      edges: [{ source: "a", target: "b", targetHandle: "bulk" }],
+    });
+    expect(flow.nodes).toHaveLength(5);
   });
 });

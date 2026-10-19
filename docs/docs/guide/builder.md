@@ -434,9 +434,9 @@ it. Pick **Flow** in the mode switch at the top of the left rails: Manual
 mode's rails make way, and the panel on the right becomes the Flow editor,
 built like the viewer's Pipeline panel — the same resizable panel, node
 cards, wires, minimap and properties pane. Its own rail, down the panel's
-left edge, holds **Add**, **Auto Layout**, **Run** (**Stop** while a run is
-going), the **File** menu (*Open flow…*, *Save flow*, *Clear all blocks*)
-and the theme button; the graph is on top, and the selected block's settings
+left edge, holds **Add**, **Templates**, **Auto Layout**, **Run** (**Stop**
+while a run is going), the **File** menu (*Open flow…*, *Save flow*, *Clear
+all blocks*) and the theme button; the graph is on top, and the selected block's settings
 are under it, in the same rows as a pipeline node's.
 
 **Add** puts a block in the middle of the graph and selects it. It offers
@@ -448,12 +448,49 @@ these blocks:
 - **Molecule from the library**: a preset or one of your own molecules.
 - **Manual structure**: the structure open in Manual mode, as it is when the
   flow runs (so a slab you built by hand can be solvated here).
+- **Bulk crystal**: a prototype (FCC, BCC, HCP, diamond, rocksalt, perovskite,
+  …) with its species and lattice constant, or one of the reference examples
+  (*Pt (fcc)*, *NaCl (rocksalt)*, …) — Manual mode's bulk crystal as a block.
+- **Polymer chain**: a linear homopolymer from a repeat unit written as SMILES
+  with two `*` ends (`*CC(c1ccccc1)*` is polystyrene: the first `*` is the
+  head, the last the tail). Pick a common polymer (PE, PP, PS, PVC, PTFE,
+  PMMA, PEO, PVA, nylon 6, PET) or type your own, and set the number of
+  repeat units; RDKit embeds the whole chain when the flow runs, the ends
+  capped with hydrogen, and each repeat unit is its own residue.
+- **Supercell**: its input repeated along a, b and c.
+- **Slab**: a (h k l) slab cut from the bulk crystal wired into it, with
+  vacuum on both sides and repeated in plane — cut exactly as Manual mode's
+  *Cut slab…* cuts it.
+- **Place on surface**: copies of the molecule wired into *Molecule* laid on
+  an even grid over the slab wired into *Surface*, each one's lowest atom the
+  given height above the slab's top atom.
+
+  The bulk crystal, polymer, supercell, slab and placement blocks run in the
+  browser: they need no tool server.
 - **Tools**: every tool of the connected tool server (see
   [Python tools](#python-tools); *Tool server…* is in this menu too). The
   tool's form is the block's settings, except its molecule and structure
   arguments, which become **inputs** on top of the block. A liquid box's
   *Components* input takes any number of wires — one per molecule — and its
   *Count* is set per wire on the block.
+
+**Templates** replaces the flow with a ready-made one to start from, as the
+viewer's pipeline templates do:
+
+- **Liquid mixture**: water and ethanol into a *Liquid box*.
+- **Molecules on a slab**: bulk Pt → a Pt(111) slab → a 3 × 3 layer of water
+  placed on it.
+- **Polymer melt in a box**: a 20-unit polyethylene chain → ten chains in a
+  *Liquid box*.
+- **Water on a slab**: bulk Au → an Au(100) slab whose vacuum *Solvate* fills
+  with water, a solid–liquid interface.
+- **Crystal supercell**: rocksalt NaCl repeated 3 × 3 × 3.
+
+The templates that pack a box or solvate use the reference tool server's
+`liquid_box` and `solvate` (their menu line says they need a tool server);
+their tool blocks take the tool's defaults for every setting the template
+does not set once the server is connected. Each template's tool settings
+include a fixed seed, so it builds the same structure every time.
 
 Drag from a block's output (the dot at its bottom) to another block's input
 (a dot on its top) to wire them; a wire that would make a loop is refused.

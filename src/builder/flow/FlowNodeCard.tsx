@@ -20,7 +20,7 @@ import {
   runStatusDot,
 } from "./describe";
 import { blockPorts } from "./ports";
-import { IDLE_RUN, OUTPUT_HANDLE, type FlowNodeData } from "./types";
+import { FLOW_NODE_TYPES, IDLE_RUN, OUTPUT_HANDLE, type FlowNodeData } from "./types";
 
 export const FlowNodeCard = memo(function FlowNodeCard({
   id,
@@ -67,8 +67,4 @@ export const FlowNodeCard = memo(function FlowNodeCard({
 });
 
 /** xyflow node types of the Flow graph: every block uses the same card. */
-export const flowNodeTypes = {
-  molecule: FlowNodeCard,
-  document: FlowNodeCard,
-  tool: FlowNodeCard,
-};
+export const flowNodeTypes = Object.fromEntries(FLOW_NODE_TYPES.map((t) => [t, FlowNodeCard]));

@@ -111,3 +111,60 @@ describe("runStatusText / runStatusColor / runStatusDot", () => {
     });
   });
 });
+
+describe("built-in blocks", () => {
+  const crystal: FlowParams = {
+    type: "crystal",
+    structure: "rocksalt",
+    elements: ["Na", "", ""],
+    a: 5.64,
+    covera: 1.6,
+    cubic: true,
+  };
+  const polymer: FlowParams = { type: "polymer", repeatUnit: "*CC*", length: 20, name: "PE" };
+  const supercell: FlowParams = { type: "supercell", repeat: [2, 3, 4] };
+  const slab: FlowParams = {
+    type: "slab",
+    miller: [1, 1, 0],
+    layers: 1,
+    vacuum: 10,
+    repeat: [2, 2],
+  };
+  const adsorb: FlowParams = { type: "adsorb", height: 2.5, grid: [3, 3] };
+
+  it("draws the blocks that start a structure as data loads, the rest as modifiers", () => {
+    expect(blockCategory(crystal)).toBe("data_load");
+    expect(blockCategory(polymer)).toBe("data_load");
+    expect(blockCategory(supercell)).toBe("modify");
+    expect(blockCategory(slab)).toBe("modify");
+    expect(blockCategory(adsorb)).toBe("modify");
+  });
+
+  it("titles each block and sums up its settings", () => {
+    expect([crystal, polymer, supercell, slab, adsorb].map((p) => blockTitle(p, null))).toEqual([
+      "Bulk crystal",
+      "Polymer chain",
+      "Supercell",
+      "Slab",
+      "Place on surface",
+    ]);
+    expect(blockSettings(crystal, [])).toBe("Na? Rocksalt (AB), a = 5.64 Å");
+    expect(blockSettings(polymer, [])).toBe("PE × 20");
+    expect(blockSettings({ ...polymer, name: "" }, [])).toBe("*CC* × 20");
+    expect(blockSettings(supercell, [])).toBe("2 × 3 × 4");
+    expect(blockSettings(slab, [])).toBe("(1 1 0) · 1 layer · 2 × 2");
+    expect(blockSettings({ ...slab, layers: 3 }, [])).toBe("(1 1 0) · 3 layers · 2 × 2");
+    expect(blockSettings(adsorb, [])).toBe("3 × 3 at 2.5 Å");
+  });
+
+  it("names a polymer by its name, the others by their title", () => {
+    expect(blockName(polymer, null, [])).toBe("PE");
+    expect(blockName({ ...polymer, name: "" }, null, [])).toBe("Polymer chain");
+    expect(blockName(slab, null, [])).toBe("Slab");
+  });
+
+  it("says a modifier has not run yet, but not a block that starts a structure", () => {
+    expect(blockSummary(slab, IDLE_RUN, [])).toContain("Not run yet");
+    expect(blockSummary(crystal, IDLE_RUN, [])).not.toContain("Not run yet");
+  });
+});

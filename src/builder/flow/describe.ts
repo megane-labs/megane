@@ -10,6 +10,7 @@ import type { CardStatus } from "../../components/graph/NodeCardView";
 import { DATA_TYPE_COLORS, NODE_CATEGORY_COLORS, type NodeCategory } from "../../pipeline/types";
 import type { LibraryMolecule } from "../library/types";
 import type { BuilderToolInfo } from "../tools/contract";
+import { bulkStructureInfo } from "../../crystal/bulk";
 import type { FlowParams, NodeRun } from "./types";
 
 /**
@@ -18,9 +19,17 @@ import type { FlowParams, NodeRun } from "./types";
  */
 export const STRUCTURE_COLOR = DATA_TYPE_COLORS.particle;
 
-/** The viewer category a block is drawn as: inputs load data, tools change it. */
+/** The viewer category a block is drawn as: blocks that start a structure load data, the rest change it. */
 export function blockCategory(params: FlowParams): NodeCategory {
-  return params.type === "tool" ? "modify" : "data_load";
+  switch (params.type) {
+    case "molecule":
+    case "document":
+    case "crystal":
+    case "polymer":
+      return "data_load";
+    default:
+      return "modify";
+  }
 }
 
 export function blockIcon(params: FlowParams): ReactNode {
@@ -39,7 +48,24 @@ export function blockTitle(params: FlowParams, tool: BuilderToolInfo | null): st
       return "Manual structure";
     case "tool":
       return tool?.label ?? (params.label || params.tool);
+    case "crystal":
+      return "Bulk crystal";
+    case "polymer":
+      return "Polymer chain";
+    case "supercell":
+      return "Supercell";
+    case "slab":
+      return "Slab";
+    case "adsorb":
+      return "Place on surface";
   }
+}
+
+/** A crystal block's species and prototype in a few words, e.g. `NaCl rocksalt (AB)`. */
+function crystalSettings(params: Extract<FlowParams, { type: "crystal" }>): string {
+  const info = bulkStructureInfo(params.structure);
+  const species = params.elements.slice(0, info.species).map((e) => e.trim() || "?");
+  return `${species.join("")} ${info.label}, a = ${params.a} Å`;
 }
 
 /** What the block is set to, in a few words ("" for a tool: its result says it). */
@@ -55,6 +81,16 @@ export function blockSettings(params: FlowParams, library: LibraryMolecule[]): s
       return "From Manual mode";
     case "tool":
       return "";
+    case "crystal":
+      return crystalSettings(params);
+    case "polymer":
+      return `${params.name.trim() || params.repeatUnit.trim()} × ${params.length}`;
+    case "supercell":
+      return params.repeat.join(" × ");
+    case "slab":
+      return `(${params.miller.join(" ")}) · ${params.layers} layer${params.layers === 1 ? "" : "s"} · ${params.repeat.join(" × ")}`;
+    case "adsorb":
+      return `${params.grid.join(" × ")} at ${params.height} Å`;
   }
 }
 
@@ -73,6 +109,7 @@ export function blockName(
     const m = library.find((x) => x.id === params.libraryId);
     if (params.source === "library" && m) return m.name;
   }
+  if (params.type === "polymer" && params.name.trim()) return params.name.trim();
   return blockTitle(params, tool);
 }
 
@@ -102,7 +139,7 @@ export function blockSummary(params: FlowParams, run: NodeRun, library: LibraryM
   const result =
     run.status === "error"
       ? "Failed"
-      : run.status === "idle" && params.type !== "tool"
+      : run.status === "idle" && blockCategory(params) === "data_load"
         ? ""
         : runStatusText(run);
   return [settings, result].filter(Boolean).join(" · ");
