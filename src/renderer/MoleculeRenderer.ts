@@ -11,7 +11,7 @@
  */
 
 import * as THREE from "three";
-import type { CameraControls } from "./CameraControls";
+import type { CameraControls, MouseScheme } from "./CameraControls";
 import type { Snapshot, Frame, HoverInfo, SelectionState, Measurement } from "../types";
 import { ImpostorAtomMesh } from "./ImpostorAtomMesh";
 import { ImpostorBondMesh } from "./ImpostorBondMesh";
@@ -38,7 +38,11 @@ import {
   type MeganeCameraMode,
   type MeganeCameraState,
 } from "./CameraController";
-import { SelectionController, type MeganeProjectedAtom } from "./SelectionController";
+import {
+  SelectionController,
+  type MeganeProjectedAtom,
+  type ViewDragGesture,
+} from "./SelectionController";
 import type { ViewAxis } from "./cameraOrientation";
 import {
   getTestReady,
@@ -245,6 +249,8 @@ export class MoleculeRenderer {
     // Selection overlay group
     this.scene.add(this.selection.selectionGroup);
     this.scene.add(this.selection.previewSelectionGroup);
+    this.scene.add(this.selection.hoverGroup);
+    this.scene.add(this.selection.warningGroup);
 
     // Pivot marker (3D crosshair at rotation center)
     this.pivotMarker = new PivotMarker();
@@ -388,9 +394,9 @@ export class MoleculeRenderer {
       this.setRepresentationByAtom(this.representationByAtom);
     }
 
-    // The preview highlight marks atoms by index: put it where they are now
-    // (a Builder drag reloads the snapshot with the moved positions).
-    this.selection.refreshPreview();
+    // The highlights mark atoms by index: put them where they are now (a
+    // Builder drag reloads the snapshot with the moved positions).
+    this.selection.refreshHighlights();
 
     if (opts.fit !== false) {
       this.cameraController.fitToView(snapshot);
@@ -465,7 +471,7 @@ export class MoleculeRenderer {
     if (this.selection.hasSelection) {
       this.selection.refresh();
     }
-    this.selection.refreshPreview();
+    this.selection.refreshHighlights();
 
     const _ready = getTestReady();
     if (_ready) {
@@ -1324,6 +1330,16 @@ export class MoleculeRenderer {
     this.selection.setPreview(atomIndices);
   }
 
+  /** Builder: mark the atoms a click would act on (null clears). */
+  setHoverHighlight(atomIndices: number[] | null, color?: number): void {
+    this.selection.setHover(atomIndices, color);
+  }
+
+  /** Builder: mark atoms in a close contact in red (null clears). */
+  setWarningHighlight(atomIndices: number[] | null): void {
+    this.selection.setWarning(atomIndices);
+  }
+
   /** Return the indices of atoms whose centers fall inside a screen rectangle. */
   selectAtomsInRect(rect: ClientRect): number[] {
     return this.selection.atomsInRect(rect);
@@ -1341,6 +1357,22 @@ export class MoleculeRenderer {
     toY: number,
   ): [number, number, number] | null {
     return this.selection.dragDeltaForAtom(atomIndex, fromX, fromY, toX, toY);
+  }
+
+  /** A drag grabbed at atom `atomIndex`, for an editor (see `SelectionController.dragGesture`). */
+  dragGesture(
+    atomIndex: number,
+    fromX: number,
+    fromY: number,
+    toX: number,
+    toY: number,
+  ): ViewDragGesture | null {
+    return this.selection.dragGesture(atomIndex, fromX, fromY, toX, toY);
+  }
+
+  /** Which mouse buttons rotate and pan the camera (see `MouseScheme`). */
+  setMouseScheme(scheme: MouseScheme): void {
+    this.cameraController.setMouseScheme(scheme);
   }
 
   /**

@@ -183,6 +183,8 @@ test.describe("builder: webapp", () => {
       await page.mouse.move(box.x + from.x + 25 * i, box.y + from.y);
     }
     await page.mouse.up();
+    // Off the atom, so its hover mark does not tint the halo.
+    await page.mouse.move(box.x + box.width * 0.6, box.y + box.height * 0.85);
     await expect.poll(async () => (await atomAt()).x - from.x).toBeGreaterThan(200);
     const to = await atomAt();
     expect((await builderState(page)).edits.map((e) => e.op)).toEqual(["add_atom", "move_atoms"]);
@@ -207,6 +209,140 @@ test.describe("builder: webapp", () => {
     };
     await expect.poll(() => greenAround(to)).toBeGreaterThan(200);
     expect(await greenAround(from)).toBeLessThan(20);
+  });
+
+  test("selects and moves Materials Studio style: box, Ctrl-click, double-click, Ctrl-drag, axis lock, right-drag", async ({
+    page,
+  }) => {
+    await page.setInputFiles('[data-testid="builder-open-input"]', "tests/fixtures/caffeine.sdf");
+    await waitForReady(page);
+    const viewport = page.locator('[data-testid="viewer-root"]');
+    const box = (await viewport.boundingBox())!;
+    const status = page.locator('[data-testid="builder-status-drag"]');
+    const atoms = () =>
+      page.evaluate(() => {
+        const t = (
+          window as unknown as {
+            __megane_test: {
+              getProjectedAtomPositions: () => { sx: number; sy: number; depth: number }[];
+            };
+          }
+        ).__megane_test;
+        return t.getProjectedAtomPositions();
+      });
+    const camera = () =>
+      page.evaluate(() =>
+        (
+          window as unknown as {
+            __megane_test: { getCameraState: () => { position: number[] } | null };
+          }
+        ).__megane_test.getCameraState(),
+      );
+    const positions = () =>
+      page.evaluate(() =>
+        Array.from(
+          (
+            window as unknown as {
+              __megane_test_builder_store: {
+                getState: () => { result: { snapshot: { positions: Float32Array } } };
+              };
+            }
+          ).__megane_test_builder_store.getState().result.snapshot.positions,
+        ),
+      );
+    const centroid = (p: number[]) =>
+      [0, 1, 2].map(
+        (k) => p.filter((_, i) => i % 3 === k).reduce((a, b) => a + b) / (p.length / 3),
+      );
+    // The front-most atom, so the pointer lands on it and not one behind.
+    const front = async () => {
+      const all = await atoms();
+      const i = all.reduce((best, a, k) => (a.depth < all[best].depth ? k : best), 0);
+      return { i, x: box.x + all[i].sx, y: box.y + all[i].sy };
+    };
+    const selected = async () => (await builderState(page)).selected;
+
+    // A box dragged from empty space over the whole molecule selects it all,
+    // with no toggle; Esc clears it.
+    const all = await atoms();
+    const xs = all.map((a) => a.sx);
+    const ys = all.map((a) => a.sy);
+    await page.mouse.move(box.x + Math.min(...xs) - 40, box.y + Math.min(...ys) - 40);
+    await page.mouse.down();
+    await page.mouse.move(box.x + Math.max(...xs) + 40, box.y + Math.max(...ys) + 40, {
+      steps: 8,
+    });
+    await expect(page.locator('[data-testid="viewport-box-select"]')).toBeVisible();
+    await page.mouse.up();
+    await expect.poll(async () => (await selected()).length).toBe(24);
+    await page.keyboard.press("Escape");
+    await expect.poll(selected).toEqual([]);
+
+    // A click selects one atom, Ctrl-click toggles another in; a double-click
+    // selects the molecule.
+    const a = await front();
+    await page.mouse.click(a.x, a.y);
+    await expect.poll(selected).toEqual([a.i]);
+    const other = all.findIndex((_, k) => k !== a.i);
+    await page.keyboard.down("Control");
+    await page.mouse.click(box.x + all[other].sx, box.y + all[other].sy);
+    await page.keyboard.up("Control");
+    await expect.poll(async () => (await selected()).length).toBe(2);
+    await page.mouse.dblclick(a.x, a.y);
+    await expect.poll(async () => (await selected()).length).toBe(24);
+
+    // Ctrl-drag on the selection turns it about its centre: one Undo step,
+    // the centre stays put, the atoms move.
+    const before = await positions();
+    await page.keyboard.down("Control");
+    await page.mouse.move(a.x, a.y);
+    await page.mouse.down();
+    await page.mouse.move(a.x + 60, a.y, { steps: 6 });
+    await expect(status).toContainText("Rotate");
+    await page.mouse.up();
+    await page.keyboard.up("Control");
+    await expect(status).toHaveCount(0);
+    const turned = await positions();
+    const c0 = centroid(before);
+    const c1 = centroid(turned);
+    for (let k = 0; k < 3; k++) expect(c1[k]).toBeCloseTo(c0[k], 3);
+    expect(Math.abs(turned[0] - before[0]) + Math.abs(turned[2] - before[2])).toBeGreaterThan(0.1);
+    await expect(page.locator('[data-testid="builder-op-list"] li')).toHaveCount(1);
+
+    // A plain drag with X pressed mid-drag moves only along x.
+    const b = await front();
+    const edits = (await builderState(page)).edits.length;
+    await page.mouse.move(b.x, b.y);
+    await page.mouse.down();
+    await page.mouse.move(b.x + 20, b.y + 10, { steps: 3 });
+    await page.keyboard.press("x");
+    await expect(status).toHaveAttribute("data-axis", "x");
+    await page.mouse.move(b.x + 80, b.y + 40, { steps: 5 });
+    await expect(status).toContainText("along x");
+    await page.mouse.up();
+    const moved = (await builderState(page)).edits.slice(edits) as unknown as {
+      op: string;
+      delta: number[];
+    }[];
+    expect(moved).toHaveLength(1);
+    expect(moved[0].op).toBe("move_atoms");
+    expect(Math.abs(moved[0].delta[0])).toBeGreaterThan(0.1);
+    expect(moved[0].delta[1]).toBeCloseTo(0, 6);
+    expect(moved[0].delta[2]).toBeCloseTo(0, 6);
+    // The tool key X is not a tool, and the tool stayed Select.
+    expect((await builderState(page)).tool).toBe("select");
+
+    // A right drag over an atom turns the view: no edit, no atom menu.
+    const view = (await camera())!.position;
+    const c = await front();
+    await page.mouse.move(c.x, c.y);
+    await page.mouse.down({ button: "right" });
+    await page.mouse.move(c.x + 120, c.y + 30, { steps: 8 });
+    await page.mouse.up({ button: "right" });
+    const turnedView = (await camera())!.position;
+    expect(Math.hypot(...turnedView.map((v, k) => v - view[k]))).toBeGreaterThan(1);
+    await expect(page.locator('[data-testid="builder-atom-menu"]')).toHaveCount(0);
+    expect((await builderState(page)).edits.length).toBe(edits + 1);
   });
 
   test("Place starts a document with nothing open; the periodic table and the theme", async ({

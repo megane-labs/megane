@@ -2,9 +2,10 @@
  * The current tool's settings, at the top of the Details panel: pressing a
  * tool on the rail left of the view shows its options here, and only those —
  * the element for *Add atom* and *Element* (the periodic table opens beside
- * the panel for the rarer ones), the bond order for *Add atom* and *Bond*, Box / All /
- * Invert and select-by-element for *Select*, the molecule gallery and *Place
- * on atoms* for *Place*. A tool with no settings (Move, Delete) shows none.
+ * the panel for the rarer ones), the bond order for *Add atom* and *Bond*, All /
+ * Invert and select-by-element for *Select*, Snap and the drag gestures for
+ * *Select* and *Move*, the molecule gallery and *Place on atoms* for *Place*.
+ * A tool with no settings (Delete) shows none.
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -25,6 +26,7 @@ import {
 } from "./styles";
 import { TOOL_KEYS } from "./shortcuts";
 import { elementGroups } from "./elements";
+import { SNAP_ANGLE, SNAP_DISTANCE } from "./manipulate";
 
 /** Elements offered as one-click buttons; anything else via the Z field. */
 export const QUICK_ELEMENTS = [6, 1, 7, 8, 9, 15, 16, 17, 35, 14];
@@ -55,20 +57,6 @@ function choiceStyle(active: boolean): React.CSSProperties {
   };
 }
 
-function Divider() {
-  return (
-    <span
-      aria-hidden="true"
-      style={{
-        width: 1,
-        height: 22,
-        margin: "0 6px",
-        background: "var(--megane-border-solid, #e2e8f0)",
-      }}
-    />
-  );
-}
-
 /** A labelled group of settings in the card. */
 function Group({ label, children }: { label: string; children: React.ReactNode }) {
   return (
@@ -78,6 +66,26 @@ function Group({ label, children }: { label: string; children: React.ReactNode }
     </div>
   );
 }
+
+/** The drag gestures of Select and Move, as the Details panel lists them. */
+export const DRAG_LEGEND: [string, string][] = [
+  ["Drag", "move in the screen plane"],
+  ["Shift", "move in depth"],
+  ["Ctrl/⌘", "rotate about the centre"],
+  ["Ctrl/⌘ Shift", "spin about the line of sight"],
+  ["X Y Z  A B C", "while dragging: lock to an axis"],
+  ["Right drag", "rotate the view (middle or Shift + right: pan)"],
+];
+
+const legendStyle: React.CSSProperties = {
+  display: "grid",
+  gridTemplateColumns: "auto 1fr",
+  columnGap: 10,
+  rowGap: 2,
+  margin: 0,
+  fontSize: 11,
+  color: "var(--megane-text-secondary, #64748b)",
+};
 
 const wrapRow: React.CSSProperties = {
   display: "flex",
@@ -91,8 +99,8 @@ export function ContextBar() {
   const element = useBuilderStore((s) => s.element);
   const bondOrder = useBuilderStore((s) => s.bondOrder);
   const adsorbHeight = useBuilderStore((s) => s.adsorbHeight);
-  const boxSelect = useBuilderStore((s) => s.boxSelect);
-  const setBoxSelect = useBuilderStore((s) => s.setBoxSelect);
+  const snap = useBuilderStore((s) => s.snap);
+  const setSnap = useBuilderStore((s) => s.setSnap);
   const selectAll = useBuilderStore((s) => s.selectAll);
   const invertSelection = useBuilderStore((s) => s.invertSelection);
   const setSelected = useBuilderStore((s) => s.setSelected);
@@ -148,17 +156,6 @@ export function ContextBar() {
           <div style={wrapRow}>
             <button
               type="button"
-              data-testid="builder-select-box"
-              aria-pressed={boxSelect}
-              title="Drag a box on the view to select what it holds; Shift adds to the selection (the view stops rotating while on)"
-              style={{ ...choiceStyle(boxSelect), fontWeight: 500, padding: "0 10px" }}
-              onClick={() => setBoxSelect(!boxSelect)}
-            >
-              Box
-            </button>
-            <Divider />
-            <button
-              type="button"
               data-testid="builder-select-all"
               title="Select every atom (Ctrl/⌘ + A)"
               style={{ ...choiceStyle(false), fontWeight: 500, padding: "0 10px" }}
@@ -195,6 +192,31 @@ export function ContextBar() {
               ))}
             </div>
           )}
+        </Group>
+      )}
+
+      {info.needs.includes("drag") && (
+        <Group label="Drag">
+          <div style={wrapRow}>
+            <button
+              type="button"
+              data-testid="builder-snap"
+              aria-pressed={snap}
+              title={`Round drags to ${SNAP_DISTANCE} Å and ${SNAP_ANGLE}°`}
+              style={{ ...choiceStyle(snap), fontWeight: 500, padding: "0 10px" }}
+              onClick={() => setSnap(!snap)}
+            >
+              Snap {SNAP_DISTANCE} Å / {SNAP_ANGLE}°
+            </button>
+          </div>
+          <dl data-testid="builder-drag-legend" style={legendStyle}>
+            {DRAG_LEGEND.map(([keys, what]) => (
+              <div key={keys} style={{ display: "contents" }}>
+                <dt style={{ ...monoStyle, whiteSpace: "nowrap" }}>{keys}</dt>
+                <dd style={{ margin: 0 }}>{what}</dd>
+              </div>
+            ))}
+          </dl>
         </Group>
       )}
 

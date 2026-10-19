@@ -83,6 +83,18 @@ describe("MoleculeRenderer — preview selection", () => {
     expect(spheres[0].position.toArray()).toEqual([4, 4, 4]);
   });
 
+  it("forwards the Builder's hover, warning, gesture and mouse scheme", () => {
+    const { renderer, internals } = makeRenderer();
+    renderer.setHoverHighlight([0], 0x123456);
+    renderer.setWarningHighlight([1, 2]);
+    expect(internals.selection.hoverGroup.children.length).toBe(1);
+    expect(internals.selection.warningGroup.children.length).toBe(2);
+    // Not mounted: no container to measure a drag in.
+    expect(renderer.dragGesture(0, 0, 0, 1, 1)).toBeNull();
+    renderer.setMouseScheme("builder");
+    expect(internals.cameraController.mouseScheme).toBe("builder");
+  });
+
   it("selectAtomsInRect returns [] without a container", () => {
     const { renderer } = makeRenderer();
     expect(renderer.selectAtomsInRect({ x0: 0, y0: 0, x1: 10, y1: 10 })).toEqual([]);
