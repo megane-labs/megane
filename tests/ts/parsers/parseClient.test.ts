@@ -87,6 +87,12 @@ describe("parseClient falls back to the synchronous path when no Worker exists",
     expect(client.shouldUseLazyTrajectory("xtc", 1024 * 1024 * 1024)).toBe(false);
   });
 
+  it("parseStructureHead needs a worker", async () => {
+    expect(
+      await client.parseStructureHead(new Uint8Array(1), new Uint8Array(1), 2, "traj"),
+    ).toBeNull();
+  });
+
   it("prewarmParseWorker is a no-op without a worker", () => {
     expect(() => client.prewarmParseWorker()).not.toThrow();
   });

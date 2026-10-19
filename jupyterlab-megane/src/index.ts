@@ -9,6 +9,7 @@ import { exposeAppForTests } from "./testHook";
 import { MeganeDocFactory, MeganePipelineDocFactory } from "./factory";
 import { setupFrameStatusBar } from "./frameStatusBar";
 import { createJupyterFileSource } from "./remoteFiles";
+import { MeganeRawModelFactory, RAW_MODEL_NAME } from "./rawModel";
 import { builderPlugin } from "./builder/plugin";
 import type { MeganeReactView } from "./MeganeDocWidget";
 import type { MeganePipelineReactView } from "./MeganePipelineDocWidget";
@@ -46,13 +47,14 @@ const plugin: JupyterFrontEndPlugin<void> = {
     // The Load nodes' "Open from server..." dialog browses the Jupyter
     // server's files, starting in the file browser's folder.
     const { contents, serverSettings } = app.serviceManager;
+    const request = (url: string) => ServerConnection.makeRequest(url, {}, serverSettings);
     setRemoteFileSource(
-      createJupyterFileSource(
-        contents,
-        (url) => ServerConnection.makeRequest(url, {}, serverSettings),
-        () => browser?.model.path ?? "",
-      ),
+      createJupyterFileSource(contents, request, () => browser?.model.path ?? ""),
     );
+
+    // The structure viewers read their file's raw bytes themselves, so their
+    // documents load no content (see rawModel.ts).
+    app.docRegistry.addModelFactory(new MeganeRawModelFactory());
 
     for (const ft of [...STRUCTURE_FILETYPES_TEXT, ...STRUCTURE_FILETYPES_BINARY]) {
       app.docRegistry.addFileType(ft);
@@ -62,24 +64,26 @@ const plugin: JupyterFrontEndPlugin<void> = {
     const textFactory = new MeganeDocFactory(
       {
         name: FACTORY_NAME,
-        modelName: "text",
+        modelName: RAW_MODEL_NAME,
         fileTypes: STRUCTURE_FILETYPE_NAMES_TEXT,
         defaultFor: STRUCTURE_FILETYPE_NAMES_TEXT,
         readOnly: true,
       },
-      app.serviceManager.contents,
+      contents,
+      request,
     );
     app.docRegistry.addWidgetFactory(textFactory);
 
     const binaryFactory = new MeganeDocFactory(
       {
         name: FACTORY_NAME_BINARY,
-        modelName: "base64",
+        modelName: RAW_MODEL_NAME,
         fileTypes: STRUCTURE_FILETYPE_NAMES_BINARY,
         defaultFor: STRUCTURE_FILETYPE_NAMES_BINARY,
         readOnly: true,
       },
-      app.serviceManager.contents,
+      contents,
+      request,
     );
     app.docRegistry.addWidgetFactory(binaryFactory);
 
@@ -91,7 +95,8 @@ const plugin: JupyterFrontEndPlugin<void> = {
         defaultFor: [PIPELINE_FILETYPE_NAME],
         readOnly: true,
       },
-      app.serviceManager.contents,
+      contents,
+      request,
     );
     app.docRegistry.addWidgetFactory(pipelineFactory);
 

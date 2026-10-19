@@ -227,6 +227,7 @@ interface WasmModule {
   parse_netcdf_file: TrajBinaryParseFn;
   parse_lammpstrj_file: TrajTextParseFn;
   parse_structure_prefix: (text: string, kind: string, isWholeFile: boolean) => WasmParseResult;
+  parse_traj_frame0: (head: Uint8Array, tail: Uint8Array, totalLen: number) => WasmParseResult;
   decode_trajectory_frame0: (data: Uint8Array, kind: string, nAtoms: number) => Float32Array;
   XtcDecoder: new (data: Uint8Array) => WasmXtcDecoder;
   LammpstrjDecoder: new (data: Uint8Array) => WasmLammpstrjDecoder;
@@ -299,6 +300,7 @@ export async function ensureInit(wasmUrl?: string): Promise<void> {
         parse_netcdf_file: wasm.parse_netcdf_file,
         parse_lammpstrj_file: wasm.parse_lammpstrj_file,
         parse_structure_prefix: wasm.parse_structure_prefix,
+        parse_traj_frame0: wasm.parse_traj_frame0,
         decode_trajectory_frame0: wasm.decode_trajectory_frame0,
         XtcDecoder: wasm.XtcDecoder,
         LammpstrjDecoder: wasm.LammpstrjDecoder,
@@ -802,6 +804,20 @@ export function parseStructurePrefixCore(
   isWholeFile: boolean,
 ): StructureParseResult {
   return parseWithFn(() => wasmModule!.parse_structure_prefix(text, kind, isWholeFile), "");
+}
+
+/**
+ * Parse ONLY frame 0 of an ASE `.traj` from the file's first bytes and last
+ * bytes (`totalLen` long in all) — `parse_traj`'s frame-0 snapshot, before the
+ * rest of the file is available. Throws when frame 0 or its offset-table entry
+ * is not in those bytes. Requires `ensureInit` first.
+ */
+export function parseTrajFrame0Core(
+  head: Uint8Array,
+  tail: Uint8Array,
+  totalLen: number,
+): StructureParseResult {
+  return parseWithFn(() => wasmModule!.parse_traj_frame0(head, tail, totalLen), "");
 }
 
 /**

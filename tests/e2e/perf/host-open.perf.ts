@@ -47,6 +47,10 @@ const LAB_PORT = 18899;
 const LAB_TOKEN = "megane-perf";
 const CODE_SERVER_PORT = 18898;
 const WAIT_MS = 600_000;
+// MEGANE_PERF_VIEWPORT=WxH. Headless Chromium renders WebGL in software, so the
+// viewer's render loop costs CPU in proportion to the canvas size.
+const [VW, VH] = (process.env.MEGANE_PERF_VIEWPORT ?? "1280x800").split("x").map(Number);
+const VIEWPORT = { width: VW, height: VH };
 
 test.describe.configure({ timeout: 3_600_000 });
 
@@ -96,7 +100,7 @@ async function measure(browser: Browser, open: Opener): Promise<string> {
     const first: number[] = [];
     const all: number[] = [];
     for (let run = 0; run <= RUNS; run++) {
-      const ctx = await browser.newContext({ viewport: { width: 1280, height: 800 } });
+      const ctx = await browser.newContext({ viewport: VIEWPORT });
       // Every frame, so the VS Code webview gets the flags too.
       await ctx.addInitScript(() => {
         (globalThis as { __MEGANE_TEST__?: boolean }).__MEGANE_TEST__ = true;

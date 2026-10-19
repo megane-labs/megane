@@ -9,6 +9,7 @@ import {
   parseStructureFile,
   parseStructureText,
   indexStructureLazy,
+  parseStructureHead,
   parseStructurePrefix,
   shouldUseLazyStructure,
 } from "../parsers/structure";
@@ -28,6 +29,8 @@ import type { TrajectoryLazyHandle, LazyTrajectoryKind } from "../parsers/xtc";
 import { parseTrajectoryByName } from "../parsers/trajectoryDispatch";
 import { trajectoryKindFromFileName } from "../parsers/fileNames";
 import { LazyFrameProvider } from "../stream/LazyFrameProvider";
+import type { ProgressiveFile } from "../hosts/progressiveFile";
+import { beginBackgroundLoad } from "../renderer/backgroundLoad";
 import { perfMark } from "../perf";
 import { usePipelineStoreApi, usePlaybackStoreApi } from "../stores/MeganeProvider";
 import {
@@ -55,6 +58,7 @@ export interface MeganeLocalState {
   pdbFileName: string | null;
   xtcFileName: string | null;
   loadFile: (pdb: File, topFile?: File) => Promise<void>;
+  loadFileProgressive: (file: ProgressiveFile, topFile?: File) => Promise<void>;
   applyStructureResult: (
     result: StructureParseResult,
     fileName: string,
@@ -236,56 +240,82 @@ export function useMeganeLocal(): MeganeLocalState {
   // Falls back to a single full read (which also renders frame 0 before decoding
   // the rest) when the prefix can't hold frame 0; returns false only when even
   // that is unavailable (→ caller's eager parse).
+  // Show a frame 0 parsed from the file's first bytes as a static structure;
+  // the rest of the file upgrades it to a trajectory later.
+  const showFrame0 = useCallback(
+    async (frame0: StructureParseResult, fileName: string, topFile?: File) => {
+      applyResult(
+        { snapshot: frame0.snapshot, frames: [], meta: null, labels: frame0.labels },
+        fileName,
+      );
+      setPdbFileName(fileName);
+      setXtcFileName(null);
+      if (!topFile) return;
+      const store = pipelineApi.getState();
+      const loaderNode = store.nodes.find((n) => n.type === "load_structure");
+      if (loaderNode) await applyTopologyFile(store, loaderNode.id, topFile);
+    },
+    [applyResult, pipelineApi],
+  );
+
+  // Phase 2 of a lazy load (background): read the whole file, build the
+  // extra-frame index, and attach the streaming provider so the frame 0 already
+  // on screen becomes scrubbable. Guarded by `token` against a newer load.
+  const upgradeToStreaming = useCallback(
+    async (
+      file: File,
+      kind: LazyStructureKind,
+      frame0: StructureParseResult,
+      token: number,
+      topFile?: File,
+    ) => {
+      const indexed = await indexStructureLazy(file, kind);
+      perfMark("megane:lazy:indexed");
+      if (!indexed) return; // frame 0 already shown; no streaming available
+      // Heterogeneous files can't ride the positions-only lazy path — the
+      // per-frame atom count / cell would be lost. Discard the lazy handle
+      // and reparse eagerly so the full HeteroFrames side table is built.
+      if (indexed.handle.index.heterogeneous) {
+        disposeTrajectoryLazy(indexed.handle.trajectoryId);
+        if (token !== loadTokenRef.current) return;
+        const result = await parseStructureFile(file);
+        if (token !== loadTokenRef.current) return;
+        await applyStructureResult(result, file.name, topFile);
+        return;
+      }
+      if (indexed.handle.index.nFrames <= 0) {
+        disposeTrajectoryLazy(indexed.handle.trajectoryId); // single frame — nothing to stream
+        return;
+      }
+      attachStreamingProvider(indexed.handle, frame0, token);
+    },
+    [applyStructureResult, attachStreamingProvider],
+  );
+
+  // Lazy path for large multi-frame structure files (XYZ / PDB) — the target is
+  // big-atom-count, many-frame files (multi-MODEL PDB / multi-frame XYZ) whose
+  // eager whole-file decode dominates the wait.
+  //
+  // Phase 1 (critical): parse ONLY frame 0 from a bounded PREFIX of the file and
+  //   render it — first paint is O(one frame), independent of total file size.
+  // Phase 2 (background): `upgradeToStreaming`.
+  //
+  // Falls back to a single full read (which also renders frame 0 before decoding
+  // the rest) when the prefix can't hold frame 0; returns false only when even
+  // that is unavailable (→ caller's eager parse).
   const loadStructureLazy = useCallback(
     async (file: File, kind: LazyStructureKind, topFile?: File): Promise<boolean> => {
       const myToken = ++loadTokenRef.current;
-
-      const applyTop = async () => {
-        if (!topFile) return;
-        const store = pipelineApi.getState();
-        const loaderNode = store.nodes.find((n) => n.type === "load_structure");
-        if (loaderNode) await applyTopologyFile(store, loaderNode.id, topFile);
-      };
 
       // ── Phase 1: instant frame 0 from a bounded prefix ──
       const prefixFrame0 = await parseStructurePrefix(file, kind);
       perfMark("megane:lazy:prefix");
       if (prefixFrame0) {
-        applyResult(
-          {
-            snapshot: prefixFrame0.snapshot,
-            frames: [],
-            meta: null,
-            labels: prefixFrame0.labels,
-          },
-          file.name,
-        );
-        setPdbFileName(file.name);
-        setXtcFileName(null);
-        await applyTop();
-        // ── Phase 2 (background): full index → upgrade to streaming ──
-        void indexStructureLazy(file, kind)
-          .then(async (indexed) => {
-            perfMark("megane:lazy:indexed");
-            if (!indexed) return; // frame 0 already shown; no streaming available
-            // Heterogeneous files can't ride the positions-only lazy path — the
-            // per-frame atom count / cell would be lost. Discard the lazy handle
-            // and reparse eagerly so the full HeteroFrames side table is built.
-            if (indexed.handle.index.heterogeneous) {
-              disposeTrajectoryLazy(indexed.handle.trajectoryId);
-              if (myToken !== loadTokenRef.current) return;
-              const result = await parseStructureFile(file);
-              if (myToken !== loadTokenRef.current) return;
-              await applyStructureResult(result, file.name, topFile);
-              return;
-            }
-            if (indexed.handle.index.nFrames <= 0) {
-              disposeTrajectoryLazy(indexed.handle.trajectoryId); // single frame — nothing to stream
-              return;
-            }
-            attachStreamingProvider(indexed.handle, prefixFrame0, myToken);
-          })
-          .catch(() => {});
+        await showFrame0(prefixFrame0, file.name, topFile);
+        const endLoad = beginBackgroundLoad();
+        void upgradeToStreaming(file, kind, prefixFrame0, myToken, topFile)
+          .catch(() => {})
+          .finally(endLoad);
         return true;
       }
 
@@ -293,31 +323,21 @@ export function useMeganeLocal(): MeganeLocalState {
       const indexed = await indexStructureLazy(file, kind);
       if (!indexed) return false;
       const { handle, frame0 } = indexed;
-      // Heterogeneous → reparse eagerly (see Phase 2 note above).
+      // Heterogeneous → reparse eagerly (see upgradeToStreaming).
       if (handle.index.heterogeneous) {
         disposeTrajectoryLazy(handle.trajectoryId);
         return false; // caller's eager parse path handles it
       }
       if (handle.index.nFrames <= 0) {
         disposeTrajectoryLazy(handle.trajectoryId);
-        applyResult(
-          { snapshot: frame0.snapshot, frames: [], meta: null, labels: frame0.labels },
-          file.name,
-        );
-        setPdbFileName(file.name);
-        setXtcFileName(null);
+        await showFrame0(frame0, file.name, topFile);
       } else {
-        applyResult(
-          { snapshot: frame0.snapshot, frames: [], meta: null, labels: frame0.labels },
-          file.name,
-        );
-        setPdbFileName(file.name);
+        await showFrame0(frame0, file.name, topFile);
         attachStreamingProvider(handle, frame0, myToken);
       }
-      await applyTop();
       return true;
     },
-    [applyResult, attachStreamingProvider, applyStructureResult, pipelineApi],
+    [attachStreamingProvider, showFrame0, upgradeToStreaming],
   );
 
   const loadFile = useCallback(
@@ -331,6 +351,51 @@ export function useMeganeLocal(): MeganeLocalState {
       await applyStructureResult(result, pdb.name, topFile);
     },
     [applyStructureResult, loadStructureLazy],
+  );
+
+  // A file the host delivers in pieces (src/hosts/progressiveFile.ts): draw
+  // frame 0 from its head and tail as soon as they arrive, and bring in the
+  // rest of the frames when the whole file has. Formats whose frame 0 cannot be
+  // read that way simply wait for the whole file and load as usual.
+  const loadFileProgressive = useCallback(
+    async (pf: ProgressiveFile, topFile?: File) => {
+      const ext = pf.name.toLowerCase().match(/\.[^.]+$/)?.[0] ?? "";
+      const lazyKind = LAZY_STRUCTURE_KIND[ext];
+      const headKind =
+        lazyKind && shouldUseLazyStructure(lazyKind, pf.size)
+          ? lazyKind
+          : ext === ".traj"
+            ? ("traj" as const)
+            : null;
+      if (headKind) {
+        const myToken = ++loadTokenRef.current;
+        const frame0 = await parseStructureHead(pf.head, pf.tail, pf.size, headKind);
+        perfMark("megane:lazy:prefix");
+        if (frame0 && myToken === loadTokenRef.current) {
+          await showFrame0(frame0, pf.name, topFile);
+          const endLoad = beginBackgroundLoad();
+          void pf.file
+            .then(async (file) => {
+              if (myToken !== loadTokenRef.current) return;
+              if (headKind !== "traj") {
+                await upgradeToStreaming(file, headKind, frame0, myToken, topFile);
+                return;
+              }
+              // An ASE .traj has no lazy decoder: parse it whole, keeping the
+              // frame-0 snapshot already on screen (the same atoms, cell and
+              // bonds) so the camera is not re-fitted under the user.
+              const result = await parseStructureFile(file);
+              if (myToken !== loadTokenRef.current) return;
+              await applyStructureResult({ ...result, snapshot: frame0.snapshot }, file.name);
+            })
+            .catch(() => {})
+            .finally(endLoad);
+          return;
+        }
+      }
+      await loadFile(await pf.file, topFile);
+    },
+    [applyStructureResult, loadFile, showFrame0, upgradeToStreaming],
   );
 
   const loadText = useCallback(
@@ -578,6 +643,7 @@ export function useMeganeLocal(): MeganeLocalState {
     pdbFileName,
     xtcFileName,
     loadFile,
+    loadFileProgressive,
     applyStructureResult,
     loadText,
     loadXtc,

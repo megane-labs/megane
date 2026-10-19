@@ -45,6 +45,51 @@ export interface PipelineCompanionFile {
 }
 
 /**
+ * A document larger than head + tail is posted to the webview in pieces —
+ * head and tail first, the middle after — so the viewer can draw frame 0
+ * before the whole file has crossed (see `src/hosts/progressiveFile.ts`, whose
+ * `PROGRESSIVE_HEAD_BYTES` / `PROGRESSIVE_TAIL_BYTES` these mirror; a unit
+ * test pins the copies together).
+ */
+export const PROGRESSIVE_HEAD_BYTES = 8 * 1024 * 1024;
+export const PROGRESSIVE_TAIL_BYTES = 4 * 1024 * 1024;
+
+/**
+ * The messages that carry a document's bytes into the webview: one
+ * `loadFile` with all of them, or — for a large file — a `loadFile` with the
+ * head and tail followed by a `loadFileRest` with the middle.
+ */
+export function documentMessages(
+  fileData: Uint8Array,
+  filename: string,
+  topBytes: ArrayBuffer | null,
+  topFilename: string | null,
+): object[] {
+  const size = fileData.byteLength;
+  if (size <= PROGRESSIVE_HEAD_BYTES + PROGRESSIVE_TAIL_BYTES) {
+    return [
+      { type: "loadFile", contentBytes: toArrayBuffer(fileData), filename, topBytes, topFilename },
+    ];
+  }
+  const tailStart = size - PROGRESSIVE_TAIL_BYTES;
+  return [
+    {
+      type: "loadFile",
+      filename,
+      size,
+      headBytes: toArrayBuffer(fileData.subarray(0, PROGRESSIVE_HEAD_BYTES)),
+      tailBytes: toArrayBuffer(fileData.subarray(tailStart)),
+      topBytes,
+      topFilename,
+    },
+    {
+      type: "loadFileRest",
+      middleBytes: toArrayBuffer(fileData.subarray(PROGRESSIVE_HEAD_BYTES, tailStart)),
+    },
+  ];
+}
+
+/**
  * The exact bytes of `data` as a standalone ArrayBuffer. A Uint8Array handed
  * out by the filesystem may be a view into a larger (pooled) buffer, so
  * posting `data.buffer` as-is could ship unrelated bytes along with the file.
@@ -407,7 +452,7 @@ export class MeganeEditorProvider implements vscode.CustomReadonlyEditorProvider
     // Prepare the message to send, then register handler, then set HTML.
     // This avoids both: (a) race where "ready" fires before handler, and
     // (b) blank screen if file reading fails before HTML is set.
-    let payload: object;
+    let payloads: object[];
     try {
       // Read only the document file. The WASM module is fetched by the webview
       // directly via the asWebviewUri set in getHtmlForWebview
@@ -434,15 +479,9 @@ export class MeganeEditorProvider implements vscode.CustomReadonlyEditorProvider
           // .top file not found — proceed without topology bonds
         }
       }
-      payload = {
-        type: "loadFile",
-        contentBytes: toArrayBuffer(fileData),
-        filename,
-        topBytes,
-        topFilename,
-      };
+      payloads = documentMessages(fileData, filename, topBytes, topFilename);
     } catch (err) {
-      payload = { type: "error", message: err instanceof Error ? err.message : String(err) };
+      payloads = [{ type: "error", message: err instanceof Error ? err.message : String(err) }];
     }
 
     const frameStatusBar = createFrameStatusBarItem();
@@ -456,7 +495,9 @@ export class MeganeEditorProvider implements vscode.CustomReadonlyEditorProvider
 
     webview.onDidReceiveMessage((message) => {
       if (message.type === "ready") {
-        webview.postMessage(payload);
+        // Posted in order: the webview draws frame 0 from the first message
+        // while the second is still on its way.
+        for (const payload of payloads) void webview.postMessage(payload);
         return;
       }
       if (message.type === "saveFile") {

@@ -241,8 +241,12 @@ import {
   PIPELINE_COMPANION_FILE_PARAMS,
   readPipelineCompanions,
   toArrayBuffer,
+  documentMessages,
+  PROGRESSIVE_HEAD_BYTES,
+  PROGRESSIVE_TAIL_BYTES,
 } from "../../../vscode-megane/src/extension";
 import { COMPANION_FILE_PARAMS } from "../../../src/pipeline/companionFiles";
+import * as progressiveFile from "../../../src/hosts/progressiveFile";
 
 const VscodeUri = (vscode as unknown as { Uri: { file: (p: string) => FakeUri } }).Uri;
 
@@ -409,6 +413,50 @@ describe("MeganeEditorProvider — structureViewer", () => {
     expect(options.enableScripts).toBe(true);
     expect(options.localResourceRoots).toHaveLength(1);
     expect(options.localResourceRoots[0].path).toBe("/ext/media");
+  });
+
+  it("posts a large document as head + tail first, then the middle, in that order", async () => {
+    const provider = getProvider("megane.structureViewer");
+    const size = PROGRESSIVE_HEAD_BYTES + PROGRESSIVE_TAIL_BYTES + 5;
+    const data = new Uint8Array(size);
+    data[0] = 11; // head
+    data[PROGRESSIVE_HEAD_BYTES] = 22; // middle
+    data[size - 1] = 33; // tail
+    mockState.readFile.mockResolvedValueOnce(data);
+
+    const doc = { uri: VscodeUri.file("/work/big.traj"), dispose: vi.fn() };
+    const { panel, fireMessage } = makeWebviewPanel();
+    await provider.resolveCustomEditor(doc, panel, {});
+    fireMessage({ type: "ready" });
+
+    const [first, second] = panel.webview.postMessage.mock.calls.map((c) => c[0]) as [
+      { type: string; size: number; headBytes: ArrayBuffer; tailBytes: ArrayBuffer },
+      { type: string; middleBytes: ArrayBuffer },
+    ];
+    expect(first.type).toBe("loadFile");
+    expect(first).not.toHaveProperty("contentBytes");
+    expect(first.size).toBe(size);
+    expect(first.headBytes.byteLength).toBe(PROGRESSIVE_HEAD_BYTES);
+    expect(new Uint8Array(first.headBytes)[0]).toBe(11);
+    expect(first.tailBytes.byteLength).toBe(PROGRESSIVE_TAIL_BYTES);
+    expect(new Uint8Array(first.tailBytes)[PROGRESSIVE_TAIL_BYTES - 1]).toBe(33);
+    expect(second.type).toBe("loadFileRest");
+    expect(second.middleBytes.byteLength).toBe(5);
+    expect(new Uint8Array(second.middleBytes)[0]).toBe(22);
+  });
+
+  it("documentMessages splits only files larger than head + tail, with sizes pinned to the webview's", () => {
+    // The webview reassembles with src/hosts/progressiveFile.ts: same sizes.
+    expect(PROGRESSIVE_HEAD_BYTES).toBe(progressiveFile.PROGRESSIVE_HEAD_BYTES);
+    expect(PROGRESSIVE_TAIL_BYTES).toBe(progressiveFile.PROGRESSIVE_TAIL_BYTES);
+    const edge = new Uint8Array(PROGRESSIVE_HEAD_BYTES + PROGRESSIVE_TAIL_BYTES);
+    const one = documentMessages(edge, "a.xyz", null, null);
+    expect(one).toHaveLength(1);
+    expect(one[0]).toMatchObject({ type: "loadFile", filename: "a.xyz" });
+    expect(progressiveFile.shouldDeliverProgressively(edge.byteLength)).toBe(false);
+    const big = new Uint8Array(edge.byteLength + 1);
+    expect(documentMessages(big, "a.xyz", null, null)).toHaveLength(2);
+    expect(progressiveFile.shouldDeliverProgressively(big.byteLength)).toBe(true);
   });
 
   it("posts loadFile payload (file bytes as ArrayBuffer + filename, no wasm bytes) when the webview signals ready", async () => {

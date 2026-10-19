@@ -28,22 +28,36 @@ vi.mock("../../../jupyterlab-megane/src/filetypes", () => ({
 }));
 
 import { MeganeReactView } from "../../../jupyterlab-megane/src/MeganeDocWidget";
+import { readBlobText } from "@megane/parsers/fileBytes";
 
 type ViewArgs = ConstructorParameters<typeof MeganeReactView>;
 
 function mount(path: string, contentsGet = vi.fn(async () => ({ content: "" }))) {
   const context = {
     path,
-    model: { toString: () => "payload" },
+    // The raw model holds no content; reading it would be a bug.
+    model: {
+      toString: () => {
+        throw new Error("the document model must not be read");
+      },
+    },
     ready: Promise.resolve(),
     contentsModel: null,
   } as unknown as ViewArgs[0];
-  const contents = { get: contentsGet } as unknown as ViewArgs[1];
-  const view = new MeganeReactView(context, contents) as unknown as {
+  const contents = {
+    get: contentsGet,
+    getDownloadUrl: vi.fn(async (p: string) => `/files/${p}`),
+  } as unknown as ViewArgs[1];
+  // The document's own bytes come raw from the server's /files/ endpoint.
+  const request = vi.fn(async (_url: string) => ({
+    ok: true,
+    arrayBuffer: async () => new TextEncoder().encode("payload").buffer,
+  })) as unknown as ViewArgs[2];
+  const view = new MeganeReactView(context, contents, request) as unknown as {
     render: () => JSX.Element;
   };
   render(view.render());
-  return { contentsGet };
+  return { contentsGet, request };
 }
 
 async function settledState(): Promise<HTMLElement> {
@@ -131,6 +145,16 @@ describe("MeganeDocWidget standalone load path", () => {
     const root = await settledState();
     expect(root.getAttribute("data-state")).toBe("ready");
     expect(loadFile.mock.calls[0][1]).toBeUndefined();
+  });
+
+  it("reads the document's raw bytes from the server, not from the document model", async () => {
+    const { request } = mount("sims/1crn.pdb");
+    const root = await settledState();
+    expect(root.getAttribute("data-state")).toBe("ready");
+    expect(request).toHaveBeenCalledWith("/files/sims/1crn.pdb");
+    const [file] = loadFile.mock.calls[0];
+    expect(file.name).toBe("1crn.pdb");
+    expect(await readBlobText(file)).toBe("payload");
   });
 
   it("does not probe for a .top next to non-.gro structures", async () => {

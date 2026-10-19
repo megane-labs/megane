@@ -1009,6 +1009,22 @@ pub fn parse_structure_prefix(
     Ok(ParseResult::from_parsed(data))
 }
 
+/// Parse ONLY frame 0 of an ASE `.traj` from the file's first bytes (`head`)
+/// and last bytes (`tail`) of `total_len`, for a first paint while the rest of
+/// the file is still on its way (the VSCode host sends head and tail first).
+/// Errors when frame 0 or its offset-table entry is not in those bytes; the
+/// JS side then waits for the whole file.
+#[wasm_bindgen]
+pub fn parse_traj_frame0(
+    head: &[u8],
+    tail: &[u8],
+    total_len: usize,
+) -> Result<ParseResult, JsError> {
+    let data = megane_core::traj::parse_traj_frame0(head, tail, total_len)
+        .map_err(|e| JsError::new(&e))?;
+    Ok(ParseResult::from_parsed(data))
+}
+
 /// Decode ONLY frame 0 (positions, Å) from a bounded PREFIX of a large
 /// trajectory (XTC / LAMMPS dump), for size-independent first paint. Frame 0 is
 /// at the start of the file, so a bounded prefix contains it. Errors if the
