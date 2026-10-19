@@ -32,6 +32,7 @@ import type { BuildHandlers, BuildTool } from "./types";
 import { fragmentOp, newFragmentId } from "./library/fragment";
 import type { LibraryMolecule } from "./library/types";
 import { bulkName, bulkSnapshot, type BulkSpec } from "../crystal/bulk";
+import { moveOps, type AxisKey, type DragMode, type DragReadout } from "./manipulate";
 
 /** A structure with no atoms and no cell: what placing a molecule with nothing open starts from. */
 export function emptySnapshot(): Snapshot {
@@ -58,6 +59,17 @@ export function emptyCellSnapshot(edge: number): Snapshot {
 
 /** File name the Builder gives a document that started from a blank cell. */
 export const UNTITLED = "untitled";
+
+/** A drag of atoms in progress, for the status line and the view's warnings. */
+export interface DragStatus {
+  mode: DragMode;
+  /** The axis the drag is locked to (an axis key pressed mid-drag), or null. */
+  axis: AxisKey | null;
+  /** What the drag did so far; null until the pointer moves. */
+  readout: DragReadout | null;
+  /** Rendered atoms in a close contact the drag made (see `closeContacts`). */
+  contacts: number[];
+}
 
 /**
  * The one message the app shows at a time (an open error, a library import,
@@ -115,8 +127,10 @@ export interface BuilderStore {
    * cell) — an adsorbate on a surface site. Null keeps clicks on atoms inert.
    */
   adsorbHeight: number | null;
-  /** With the Select tool, a drag on the view draws a box and selects what it holds. */
-  boxSelect: boolean;
+  /** Round drags to `SNAP_DISTANCE` Å / `SNAP_ANGLE`°. */
+  snap: boolean;
+  /** The drag in progress, or null. Keyboard shortcuts pause while it is set. */
+  drag: DragStatus | null;
   /** The message on screen, if any; see `BuilderNotice`. */
   notice: BuilderNotice | null;
 
@@ -132,8 +146,14 @@ export interface BuilderStore {
   pushOp: (op: EditOp) => void;
   /** Append several ops as one user action: a single Undo / Redo step. */
   pushOps: (ops: EditOp[]) => void;
-  /** Replace the most recent op (a drag in progress). */
+  /** Replace the most recent op. */
   replaceLastOp: (op: EditOp) => void;
+  /**
+   * Replace every op after the first `base` with `ops`, as one Undo step: a
+   * drag rewriting what it has written so far. Empty `ops` leave the history
+   * at `base`.
+   */
+  setDragOps: (base: number, ops: EditOp[]) => void;
   /** Pop the most recent op onto the redo stack; returns it, or null. */
   undo: () => EditOp | null;
   /** Re-apply the most recently undone op; returns it, or null. */
@@ -158,7 +178,8 @@ export interface BuilderStore {
   /** Choose the molecule the Place tool stamps (and switch to that tool), or clear it. */
   setPlaceSource: (molecule: LibraryMolecule | null) => void;
   setAdsorbHeight: (height: number | null) => void;
-  setBoxSelect: (on: boolean) => void;
+  setSnap: (on: boolean) => void;
+  setDrag: (drag: DragStatus | null) => void;
   /** Show a message (replacing the current one), or clear it with null. */
   setNotice: (notice: BuilderNotice | null) => void;
   /** Shorthand for an error notice. */
@@ -253,7 +274,8 @@ export const builderStateCreator: StateCreator<BuilderStore> = (set, get) => ({
   handlers: null,
   placeSource: null,
   adsorbHeight: null,
-  boxSelect: false,
+  snap: false,
+  drag: null,
   notice: null,
 
   openStructure: (snapshot, labels, fileName) =>
@@ -322,6 +344,21 @@ export const builderStateCreator: StateCreator<BuilderStore> = (set, get) => ({
       const edits = [...s.edits.slice(0, -1), op];
       return { edits, result: compute(s.source, edits), preview: null, revision: s.revision + 1 };
     }),
+
+  setDragOps: (base, ops) => {
+    ops.slice(1).forEach((op) => continuations.add(op));
+    set((s) => {
+      if (base > s.edits.length) return {};
+      const edits = [...s.edits.slice(0, base), ...ops];
+      return {
+        edits,
+        ...(ops.length > 0 ? { redoStack: [] } : {}),
+        result: compute(s.source, edits),
+        preview: null,
+        revision: s.revision + 1,
+      };
+    });
+  },
 
   undo: () => {
     const s = get();
@@ -428,7 +465,8 @@ export const builderStateCreator: StateCreator<BuilderStore> = (set, get) => ({
     ),
   setAdsorbHeight: (height) =>
     set({ adsorbHeight: height !== null && Number.isFinite(height) ? height : null }),
-  setBoxSelect: (boxSelect) => set({ boxSelect }),
+  setSnap: (snap) => set({ snap }),
+  setDrag: (drag) => set({ drag }),
   setNotice: (notice) => set({ notice }),
   reportError: (text) => set({ notice: { level: "error", text } }),
   reportInfo: (text) => set({ notice: { level: "info", text } }),
@@ -449,20 +487,14 @@ export const builderStateCreator: StateCreator<BuilderStore> = (set, get) => ({
     const s = get();
     if (!canEdit(s)) return false;
     const n = s.result!.snapshot.nAtoms;
-    const groups = new Map<string, { delta: [number, number, number]; atoms: EditAtomRef[] }>();
-    for (const [i, delta] of displacements) {
-      if (i < 0 || i >= n || delta.every((v) => Math.abs(v) < 1e-9)) continue;
-      const ref = s.result!.refAt(i);
-      if (ref === null) continue;
-      const key = delta.map((v) => v.toFixed(9)).join(",");
-      const group = groups.get(key) ?? { delta, atoms: [] };
-      group.atoms.push(ref);
-      groups.set(key, group);
+    const refs = new Map<number, EditAtomRef>();
+    for (const i of displacements.keys()) {
+      const ref = i >= 0 && i < n ? s.result!.refAt(i) : null;
+      if (ref !== null) refs.set(i, ref);
     }
-    if (groups.size === 0) return false;
-    s.pushOps(
-      [...groups.values()].map((g) => ({ op: "move_atoms", atoms: g.atoms, delta: g.delta })),
-    );
+    const ops = moveOps(displacements, refs);
+    if (ops.length === 0) return false;
+    s.pushOps(ops);
     return true;
   },
   selectAll: () =>

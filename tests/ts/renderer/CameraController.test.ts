@@ -329,6 +329,58 @@ describe("CameraController custom pan (perspective)", () => {
   });
 });
 
+describe("CameraController mouse scheme", () => {
+  const press = (canvas: HTMLElement, type: string, x: number, init: MouseEventInit = {}) =>
+    canvas.dispatchEvent(
+      new MouseEvent(type, { clientX: x, clientY: 300, bubbles: true, ...init }),
+    );
+
+  it("the Builder's scheme pans with the middle button or Shift + right, not a plain right drag", () => {
+    const { ctl, canvas, internals } = setup();
+    ctl.setMouseScheme("builder");
+    expect(ctl.controls.mouseButtons.RIGHT).toBe(THREE.MOUSE.ROTATE);
+    press(canvas, "pointerdown", 400, { button: 2 });
+    press(canvas, "pointermove", 480);
+    press(canvas, "pointerup", 480);
+    expect(internals._frustumPanX).toBe(0);
+    press(canvas, "pointerdown", 400, { button: 1 });
+    press(canvas, "pointermove", 480);
+    press(canvas, "pointerup", 480);
+    const middle = internals._frustumPanX;
+    expect(middle).toBeLessThan(0);
+    press(canvas, "pointerdown", 400, { button: 2, shiftKey: true });
+    press(canvas, "pointermove", 480);
+    press(canvas, "pointerup", 480);
+    expect(internals._frustumPanX).toBeCloseTo(2 * middle, 9);
+    // Shift + left is the editor's there, not a pan.
+    press(canvas, "pointerdown", 400, { button: 0, shiftKey: true });
+    press(canvas, "pointermove", 480);
+    press(canvas, "pointerup", 480);
+    expect(internals._frustumPanX).toBeCloseTo(2 * middle, 9);
+  });
+
+  it("stops the browser's middle-button autoscroll only in the Builder's scheme", () => {
+    const { ctl, canvas } = setup();
+    const middle = () => {
+      const e = new MouseEvent("mousedown", { button: 1, bubbles: true, cancelable: true });
+      canvas.dispatchEvent(e);
+      return e.defaultPrevented;
+    };
+    expect(middle()).toBe(false);
+    ctl.setMouseScheme("builder");
+    expect(middle()).toBe(true);
+  });
+
+  it("keeps the scheme on controls rebuilt for a camera switch", () => {
+    const { ctl } = setup();
+    ctl.setMouseScheme("builder");
+    ctl.setPerspective(true);
+    expect(ctl.controls.mouseButtons.RIGHT).toBe(THREE.MOUSE.ROTATE);
+    ctl.setMouseScheme("viewer");
+    expect(ctl.controls.mouseButtons.RIGHT).toBe(THREE.MOUSE.PAN);
+  });
+});
+
 describe("CameraController.screenToWorldAtPivot", () => {
   it("unprojects onto the plane through the controls target", () => {
     const { ctl } = setup({ width: 800, height: 600 });

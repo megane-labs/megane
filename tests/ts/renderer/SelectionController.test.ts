@@ -3,6 +3,7 @@ import * as THREE from "three";
 import {
   SelectionController,
   MAX_SELECTED_ATOMS,
+  HOVER_COLOR,
   type SelectionView,
 } from "@/renderer/SelectionController";
 import type { AtomLayerState } from "@/renderer/AtomLayerGroup";
@@ -192,10 +193,82 @@ describe("SelectionController — preview highlight", () => {
     expect(sel.previewSelectionGroup.children.length).toBe(0);
   });
 
+  it("refreshPreview() redraws the kept set at the current positions", () => {
+    const { sel, state } = setup();
+    sel.setPreview([1, 2]);
+    state.positions = new Float32Array([0, 0, 0, 9, 9, 9, 1, 2, 3, 0, 0, 0]);
+    sel.refreshPreview();
+    const [a, b] = sel.previewSelectionGroup.children;
+    expect(a.position.toArray()).toEqual([9, 9, 9]);
+    expect(b.position.toArray()).toEqual([1, 2, 3]);
+    sel.setPreview([]);
+    sel.refreshPreview();
+    expect(sel.previewSelectionGroup.children.length).toBe(0);
+  });
+
+  it("skips atoms the current structure no longer has", () => {
+    const { sel, state } = setup();
+    sel.setPreview([0, 3]);
+    state.snapshot = { ...makeSnapshot(), nAtoms: 2, elements: new Uint8Array([6, 7]) };
+    state.positions = new Float32Array([0, 0, 0, 3, 0, 0]);
+    sel.refreshPreview();
+    expect(sel.previewSelectionGroup.children.length).toBe(1);
+  });
+
   it("draws nothing without a snapshot", () => {
     const { sel } = setup({ snapshot: null });
     sel.setPreview([0]);
     expect(sel.previewSelectionGroup.children.length).toBe(0);
+  });
+});
+
+describe("SelectionController — Builder highlights", () => {
+  it("draws the hover and warning layers in their own groups and follows the atoms", () => {
+    const { sel, state } = setup();
+    sel.setHover([1], 0xff0000);
+    sel.setWarning([2, 3]);
+    expect(sel.hoverGroup.children.length).toBe(1);
+    expect(sel.warningGroup.children.length).toBe(2);
+    const hover = sel.hoverGroup.children[0] as THREE.Mesh<
+      THREE.SphereGeometry,
+      THREE.MeshBasicMaterial
+    >;
+    expect(hover.material.color.getHex()).toBe(0xff0000);
+    state.positions = new Float32Array([0, 0, 0, 7, 7, 7, 0, 0, 0, 0, 0, 0]);
+    sel.refreshHighlights();
+    expect(sel.hoverGroup.children[0].position.toArray()).toEqual([7, 7, 7]);
+    // Without a colour the hover is blue; null clears.
+    sel.setHover([0]);
+    const blue = sel.hoverGroup.children[0] as THREE.Mesh<
+      THREE.SphereGeometry,
+      THREE.MeshBasicMaterial
+    >;
+    expect(blue.material.color.getHex()).toBe(HOVER_COLOR);
+    sel.setHover(null);
+    sel.setWarning(null);
+    expect(sel.hoverGroup.children.length + sel.warningGroup.children.length).toBe(0);
+  });
+});
+
+describe("SelectionController — drag gesture", () => {
+  it("gives the camera axes, the pointer in viewport pixels and the pixel size", () => {
+    const { sel } = setup();
+    const g = sel.dragGesture(0, 50, 50, 70, 40)!;
+    expect(g.from).toEqual([50, 50]);
+    expect(g.to).toEqual([70, 40]);
+    g.right.forEach((v, k) => expect(v).toBeCloseTo([1, 0, 0][k], 6));
+    g.up.forEach((v, k) => expect(v).toBeCloseTo([0, 1, 0][k], 6));
+    g.toCamera.forEach((v, k) => expect(v).toBeCloseTo([0, 0, 1][k], 6));
+    // 10 world units over 100 px.
+    expect(g.worldPerPixel).toBeCloseTo(0.1, 6);
+    const [sx, sy] = g.project([3, 3, 0]);
+    expect(sx).toBeCloseTo(80, 4);
+    expect(sy).toBeCloseTo(20, 4);
+  });
+
+  it("is null without a view or for an atom that is not there", () => {
+    expect(setup({ container: null }).sel.dragGesture(0, 0, 0, 1, 1)).toBeNull();
+    expect(setup().sel.dragGesture(9, 0, 0, 1, 1)).toBeNull();
   });
 });
 
