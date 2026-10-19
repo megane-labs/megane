@@ -70,6 +70,7 @@ const { wasmMock } = vi.hoisted(() => {
     parse_phonon: () => mockStructResult(3),
     parse_vasp: () => mockStructResult(3),
     parse_structure_prefix: () => mockStructResult(3, 0),
+    parse_traj_frame0: () => mockStructResult(4, 0),
     decode_trajectory_frame0: () => new Float32Array(4 * 3),
     parse_mol: () => mockStructResult(3),
     parse_mol2: () => mockStructResult(3),
@@ -171,6 +172,23 @@ describe("parse.worker onmessage", () => {
     await handler({ data: { id: 7, op: "init", wasm: undefined } });
     expect(posts).toHaveLength(1);
     expect(posts[0]).toMatchObject({ id: 7, ok: true, op: "init" });
+  });
+
+  it("parses a .traj's frame 0 from head and tail chunks", async () => {
+    const { handler, posts } = await loadWorker();
+    await handler({
+      data: {
+        id: 8,
+        op: "trajFrame0",
+        wasm: undefined,
+        head: new ArrayBuffer(4),
+        tail: new ArrayBuffer(2),
+        totalSize: 100,
+      },
+    });
+    expect(posts[0]).toMatchObject({ id: 8, ok: true, op: "trajFrame0" });
+    const result = posts[0].result as { snapshot: { nAtoms: number } };
+    expect(result.snapshot.nAtoms).toBe(4);
   });
 
   it("parses a structure request and posts an ok response", async () => {

@@ -13,9 +13,18 @@ function base64(bytes: Uint8Array): string {
   return btoa(String.fromCharCode(...bytes));
 }
 
-function fakeContents(files: Record<string, Uint8Array>): {
+/**
+ * A Contents manager serving `files`, plus the `/files/` request it pairs
+ * with. `raw: false` makes every download fail, so reads fall back to the
+ * Contents API's base64.
+ */
+function fakeContents(
+  files: Record<string, Uint8Array>,
+  { raw = true }: { raw?: boolean } = {},
+): {
   contents: Contents.IManager;
   get: ReturnType<typeof vi.fn>;
+  request: ReturnType<typeof vi.fn>;
 } {
   const get = vi.fn(async (path: string, opts: { format?: string }) => {
     if (opts.format !== "base64") throw new Error("expected a base64 fetch");
@@ -23,7 +32,14 @@ function fakeContents(files: Record<string, Uint8Array>): {
     if (!bytes) throw new Error(`404 ${path}`);
     return { content: base64(bytes) };
   });
-  return { contents: { get } as unknown as Contents.IManager, get };
+  const getDownloadUrl = vi.fn(async (path: string) => `/files/${path}`);
+  const request = vi.fn(async (url: string) => {
+    const bytes = raw ? files[url.replace(/^\/files\//, "")] : undefined;
+    return bytes
+      ? { ok: true, arrayBuffer: async () => bytes.slice().buffer }
+      : { ok: false, arrayBuffer: async () => new ArrayBuffer(0) };
+  });
+  return { contents: { get, getDownloadUrl } as unknown as Contents.IManager, get, request };
 }
 
 async function bytesOf(file: File): Promise<Uint8Array> {
@@ -100,37 +116,63 @@ describe("collectCompanionTargets", () => {
 });
 
 describe("fetchCompanion", () => {
-  it("returns the file's exact bytes, binary included", async () => {
+  it("downloads the file's exact bytes raw, binary included", async () => {
     const traj = new Uint8Array([0x00, 0xff, 0x80, 0xc3, 0x28]);
-    const { contents, get } = fakeContents({ "work/water.traj": traj });
-    const file = await fetchCompanion(contents, "work/water.traj");
-    expect(get).toHaveBeenCalledWith("work/water.traj", { content: true, format: "base64" });
+    const { contents, get, request } = fakeContents({ "work/water.traj": traj });
+    const file = await fetchCompanion(contents, request, "work/water.traj");
+    expect(request).toHaveBeenCalledWith("/files/work/water.traj");
+    expect(get).not.toHaveBeenCalled();
     expect(file?.name).toBe("water.traj");
     expect(await bytesOf(file!)).toEqual(traj);
   });
 
-  it("returns null when the file cannot be fetched", async () => {
-    const { contents } = fakeContents({});
-    expect(await fetchCompanion(contents, "work/missing.pdb")).toBeNull();
+  it("falls back to the Contents API's base64 when the download fails", async () => {
+    const traj = new Uint8Array([0x00, 0xff, 0x80]);
+    const { contents, get, request } = fakeContents({ "work/water.traj": traj }, { raw: false });
+    const file = await fetchCompanion(contents, request, "work/water.traj");
+    expect(get).toHaveBeenCalledWith("work/water.traj", {
+      type: "file",
+      content: true,
+      format: "base64",
+    });
+    expect(await bytesOf(file!)).toEqual(traj);
   });
 
-  it("treats a model with no content as an empty file", async () => {
+  it("falls back when the download request itself throws", async () => {
+    const { contents, get } = fakeContents({ "a.pdb": new Uint8Array([7]) });
+    const request = vi.fn(async () => {
+      throw new Error("network");
+    });
+    const file = await fetchCompanion(contents, request, "a.pdb");
+    expect(get).toHaveBeenCalled();
+    expect(await bytesOf(file!)).toEqual(new Uint8Array([7]));
+  });
+
+  it("returns null when the file cannot be fetched", async () => {
+    const { contents, request } = fakeContents({});
+    expect(await fetchCompanion(contents, request, "work/missing.pdb")).toBeNull();
+  });
+
+  it("treats a base64 model with no content as an empty file", async () => {
     const contents = {
       get: vi.fn(async () => ({ content: null })),
+      getDownloadUrl: vi.fn(async () => "/files/empty.pdb"),
     } as unknown as Contents.IManager;
-    const file = await fetchCompanion(contents, "empty.pdb");
+    const request = vi.fn(async () => ({ ok: false }));
+    const file = await fetchCompanion(contents, request as never, "empty.pdb");
     expect(file?.size).toBe(0);
   });
 });
 
 describe("fetchPipelineCompanions", () => {
   it("fetches every companion and drops the unreadable ones", async () => {
-    const { contents, get } = fakeContents({
+    const { contents, request } = fakeContents({
       "work/a.traj": new Uint8Array([1]),
       "work/f.top": new Uint8Array([2]),
     });
     const files = await fetchPipelineCompanions(
       contents,
+      request,
       {
         nodes: [
           { id: "s", type: "load_structure", fileName: "a.traj" },
@@ -140,7 +182,7 @@ describe("fetchPipelineCompanions", () => {
       },
       "work",
     );
-    expect(get).toHaveBeenCalledTimes(3);
+    expect(request).toHaveBeenCalledTimes(3);
     expect(files.map((f) => f.name)).toEqual(["a.traj", "f.top"]);
   });
 });

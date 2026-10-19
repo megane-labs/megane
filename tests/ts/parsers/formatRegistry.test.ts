@@ -31,11 +31,12 @@ interface Registry {
 
 /**
  * WASM-only exports that return a `ParseResult` but are not a format entry:
- * the bounded-prefix first-paint helper takes a `kind` and only handles the
- * lazily streamed XYZ / PDB. (Python reads whole files, so it has no prefix
- * path.) Everything else returning `ParseResult` must come from the registry.
+ * the first-paint helpers that parse frame 0 from part of a file — the
+ * bounded-prefix reader for the lazily streamed XYZ / PDB, and the head-and-tail
+ * reader for ASE `.traj`. (Python reads whole files, so it has neither.)
+ * Everything else returning `ParseResult` must come from the registry.
  */
-const WASM_ONLY_STRUCTURE_EXPORTS = ["parse_structure_prefix"];
+const WASM_ONLY_STRUCTURE_EXPORTS = ["parse_structure_prefix", "parse_traj_frame0"];
 
 let registry: Registry;
 let declarations: string;

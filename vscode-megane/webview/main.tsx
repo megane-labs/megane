@@ -32,6 +32,7 @@ import { setRemoteFileSource } from "../../src/remote/fileSource";
 import { createMessageFileSource } from "../../src/remote/messageFiles";
 import { classifyStandaloneFile } from "../../src/hosts/classifyStandaloneFile";
 import { fileFromBytes } from "../../src/parsers/fileBytes";
+import { receiveProgressiveFile } from "../../src/hosts/progressiveFile";
 import { perfMark } from "../../src/perf";
 import { prewarmParseWorker } from "../../src/parsers/structure";
 import "../../src/styles/megane.css";
@@ -88,16 +89,18 @@ function App() {
   }, []);
 
   useEffect(() => {
+    // Completes a large document whose head and tail came first (loadFile).
+    let deliverMiddle: ((middle: Uint8Array) => void) | null = null;
     const handler = (event: MessageEvent) => {
       const message = event.data;
 
       if (message.type === "loadFile") {
         perfMark("megane:open:start");
-        const { contentBytes, filename, topBytes, topFilename } = message;
-        // contentBytes / topBytes arrive as ArrayBuffers (structured clone).
+        const { filename, topBytes, topFilename } = message;
+        // Bytes arrive as ArrayBuffers (structured clone): all of them in
+        // `contentBytes`, or for a large file the head and tail here and the
+        // middle in a following `loadFileRest` (src/hosts/progressiveFile.ts).
         // The WASM URL is provided by the HTML (window.__MEGANE_WASM_URL__).
-        const bytes = new Uint8Array(contentBytes as ArrayBuffer);
-        const file = fileFromBytes(bytes, filename);
         const topFile: File | undefined =
           topBytes && topFilename
             ? fileFromBytes(new Uint8Array(topBytes as ArrayBuffer), topFilename as string)
@@ -112,10 +115,27 @@ function App() {
           setError(classification.errorMessage);
           return;
         }
-        const loadPromise =
-          classification.kind === "trajectory-only"
-            ? local.loadXtc(file)
-            : local.loadFile(file, topFile);
+        let loadPromise: Promise<void>;
+        if (message.headBytes) {
+          const received = receiveProgressiveFile(
+            filename,
+            message.size as number,
+            new Uint8Array(message.headBytes as ArrayBuffer),
+            new Uint8Array(message.tailBytes as ArrayBuffer),
+            fileFromBytes,
+          );
+          deliverMiddle = received.deliverMiddle;
+          loadPromise =
+            classification.kind === "trajectory-only"
+              ? received.file.file.then((file) => local.loadXtc(file))
+              : local.loadFileProgressive(received.file, topFile);
+        } else {
+          const file = fileFromBytes(new Uint8Array(message.contentBytes as ArrayBuffer), filename);
+          loadPromise =
+            classification.kind === "trajectory-only"
+              ? local.loadXtc(file)
+              : local.loadFile(file, topFile);
+        }
         loadPromise
           .then(() => {
             perfMark("megane:open:loaded");
@@ -127,6 +147,13 @@ function App() {
             const hint = classification.loadFailureHint ? ` ${classification.loadFailureHint}` : "";
             setError(`Failed to load file: ${base}${hint}`);
           });
+        return;
+      }
+
+      if (message.type === "loadFileRest") {
+        perfMark("megane:open:rest");
+        deliverMiddle?.(new Uint8Array(message.middleBytes as ArrayBuffer));
+        deliverMiddle = null;
         return;
       }
 

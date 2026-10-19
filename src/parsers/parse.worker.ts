@@ -12,6 +12,7 @@ import {
   ensureInit,
   parseStructureCore,
   parseStructurePrefixCore,
+  parseTrajFrame0Core,
   parseTrajectoryCore,
   collectResultBuffers,
   indexTrajectoryCore,
@@ -70,6 +71,19 @@ ctx.onmessage = async (e: MessageEvent<ParseRequest>) => {
       const transfer = collectResultBuffers(result);
       ctx.postMessage(
         { id: req.id, ok: true, op: "structurePrefix", result } satisfies ParseResponse,
+        transfer,
+      );
+    } else if (req.op === "trajFrame0") {
+      await ensureInit(req.wasm);
+      // Frame 0 of a .traj from its head + tail; throws if they don't hold it.
+      const result = parseTrajFrame0Core(
+        new Uint8Array(req.head),
+        new Uint8Array(req.tail),
+        req.totalSize,
+      );
+      const transfer = collectResultBuffers(result);
+      ctx.postMessage(
+        { id: req.id, ok: true, op: "trajFrame0", result } satisfies ParseResponse,
         transfer,
       );
     } else if (req.op === "trajectoryFrame0") {

@@ -13,7 +13,7 @@ export type BuildTool = "select" | "add" | "bond" | "delete" | "move" | "element
 
 type Vec3 = [number, number, number];
 
-/** The modifier keys held with a press, a click or a double-click. */
+/** The modifier keys held with a press or a click. */
 export interface BuildModifiers {
   shiftKey: boolean;
   /** Ctrl, or ⌘ on a Mac. */
@@ -74,6 +74,4 @@ export interface BuildHandlers {
   dragEnd: () => void;
   /** The rendered atoms inside a finished rubber band. */
   boxSelect: (indices: number[], mode: BuildBoxMode) => void;
-  /** A double-click on an atom; true when handled (the camera then keeps its pivot). */
-  doubleClick: (atomIndex: number, mods: BuildModifiers) => boolean;
 }

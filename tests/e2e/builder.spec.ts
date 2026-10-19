@@ -211,7 +211,7 @@ test.describe("builder: webapp", () => {
     expect(await greenAround(from)).toBeLessThan(20);
   });
 
-  test("selects and moves Materials Studio style: box, Ctrl-click, double-click, Ctrl-drag, axis lock, right-drag", async ({
+  test("selects and moves with the viewer's mouse: Box, Ctrl-click, double-click pivot, Ctrl-drag, axis lock, camera drags", async ({
     page,
   }) => {
     await page.setInputFiles('[data-testid="builder-open-input"]', "tests/fixtures/caffeine.sdf");
@@ -234,7 +234,9 @@ test.describe("builder: webapp", () => {
       page.evaluate(() =>
         (
           window as unknown as {
-            __megane_test: { getCameraState: () => { position: number[] } | null };
+            __megane_test: {
+              getCameraState: () => { position: number[]; target: number[] } | null;
+            };
           }
         ).__megane_test.getCameraState(),
       );
@@ -262,8 +264,11 @@ test.describe("builder: webapp", () => {
     };
     const selected = async () => (await builderState(page)).selected;
 
-    // A box dragged from empty space over the whole molecule selects it all,
-    // with no toggle; Esc clears it.
+    // With Box on, a box dragged from empty space over the whole molecule
+    // selects it all; Esc clears it.
+    const boxToggle = page.locator('[data-testid="builder-select-box"]');
+    await boxToggle.click();
+    await expect(boxToggle).toHaveAttribute("aria-pressed", "true");
     const all = await atoms();
     const xs = all.map((a) => a.sx);
     const ys = all.map((a) => a.sy);
@@ -277,9 +282,11 @@ test.describe("builder: webapp", () => {
     await expect.poll(async () => (await selected()).length).toBe(24);
     await page.keyboard.press("Escape");
     await expect.poll(selected).toEqual([]);
+    await boxToggle.click();
+    await expect(boxToggle).toHaveAttribute("aria-pressed", "false");
 
     // A click selects one atom, Ctrl-click toggles another in; a double-click
-    // selects the molecule.
+    // makes the atom the rotation center, as in the viewer.
     const a = await front();
     await page.mouse.click(a.x, a.y);
     await expect.poll(selected).toEqual([a.i]);
@@ -288,7 +295,13 @@ test.describe("builder: webapp", () => {
     await page.mouse.click(box.x + all[other].sx, box.y + all[other].sy);
     await page.keyboard.up("Control");
     await expect.poll(async () => (await selected()).length).toBe(2);
+    const pivot = (await camera())!.target;
     await page.mouse.dblclick(a.x, a.y);
+    await expect
+      .poll(async () => Math.hypot(...(await camera())!.target.map((v, k) => v - pivot[k])))
+      .toBeGreaterThan(0.1);
+    await expect.poll(selected).toEqual([a.i]);
+    await page.keyboard.press("Control+a");
     await expect.poll(async () => (await selected()).length).toBe(24);
 
     // Ctrl-drag on the selection turns it about its centre: one Undo step,
@@ -332,15 +345,28 @@ test.describe("builder: webapp", () => {
     // The tool key X is not a tool, and the tool stayed Select.
     expect((await builderState(page)).tool).toBe("select");
 
-    // A right drag over an atom turns the view: no edit, no atom menu.
+    // A left drag from empty space turns the view as in the viewer: no box,
+    // no edit, the selection kept.
     const view = (await camera())!.position;
+    const corner = { x: box.x + 20, y: box.y + box.height - 60 };
+    await page.mouse.move(corner.x, corner.y);
+    await page.mouse.down();
+    await page.mouse.move(corner.x + 120, corner.y - 30, { steps: 8 });
+    await expect(page.locator('[data-testid="viewport-box-select"]')).toHaveCount(0);
+    await page.mouse.up();
+    const turnedView = (await camera())!.position;
+    expect(Math.hypot(...turnedView.map((v, k) => v - view[k]))).toBeGreaterThan(1);
+    expect((await selected()).length).toBe(24);
+
+    // A right drag over an atom pans the view: the atom follows the pointer,
+    // with no edit and no atom menu.
     const c = await front();
     await page.mouse.move(c.x, c.y);
     await page.mouse.down({ button: "right" });
     await page.mouse.move(c.x + 120, c.y + 30, { steps: 8 });
     await page.mouse.up({ button: "right" });
-    const turnedView = (await camera())!.position;
-    expect(Math.hypot(...turnedView.map((v, k) => v - view[k]))).toBeGreaterThan(1);
+    const panned = (await atoms())[c.i];
+    expect(box.x + panned.sx - c.x).toBeGreaterThan(60);
     await expect(page.locator('[data-testid="builder-atom-menu"]')).toHaveCount(0);
     expect((await builderState(page)).edits.length).toBe(edits + 1);
   });
@@ -352,6 +378,7 @@ test.describe("builder: webapp", () => {
     await waitForReady(page);
     const box = (await page.locator('[data-testid="viewer-root"]').boundingBox())!;
     const band = page.locator('[data-testid="viewport-box-select"]');
+    await page.locator('[data-testid="builder-select-box"]').click();
     // An empty corner, so the band holds no atom.
     const x = box.x + 20;
     const y = box.y + box.height - 60;

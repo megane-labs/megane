@@ -5,7 +5,6 @@
 
 import { useEffect, useRef } from "react";
 import { MoleculeRenderer } from "../renderer/MoleculeRenderer";
-import type { MouseScheme } from "../renderer/CameraControls";
 import type { Snapshot, Frame, HoverInfo } from "../types";
 import type { BuildHandlers, BuildModifiers, BuildPressAction } from "../builder/types";
 
@@ -69,14 +68,12 @@ interface ViewportProps {
    * True while a structure editor (megane Builder) owns the view: a left
    * click reports the atom (or empty-space point) to `buildHandlers.pick`, a
    * left drag moves atoms or draws a rubber band as `buildHandlers.pressAction`
-   * says (camera rotation is suspended for that drag only), a double-click on
-   * an atom goes to `buildHandlers.doubleClick`, and a right-click opens the
-   * atom menu on release, so a right drag can turn the camera.
+   * says (camera rotation is suspended for that drag only; any other drag
+   * moves the camera as in the viewer), and a right-click opens the atom menu
+   * on release, so a right drag can pan the camera.
    */
   buildActive?: boolean;
   buildHandlers?: BuildHandlers | null;
-  /** Which mouse buttons move the camera; the viewer's when omitted. */
-  mouseScheme?: MouseScheme;
   /** Builder: atoms a click would act on, drawn in `hoverColor`. */
   hoverIndices?: number[] | null;
   hoverColor?: number;
@@ -108,7 +105,6 @@ export function Viewport({
   inspectorActive,
   buildActive,
   buildHandlers,
-  mouseScheme,
   hoverIndices,
   hoverColor,
   warningIndices,
@@ -175,7 +171,7 @@ export function Viewport({
     const handleContextMenu = (e: MouseEvent) => {
       e.preventDefault();
       // While building, the menu opens on the right button's release instead
-      // (handleBuildUp), so a right drag can rotate the camera.
+      // (handleBuildUp), so a right drag can pan the camera.
       if (buildActiveRef.current) return;
       const info = renderer.raycastAtPixel(e.clientX, e.clientY);
       if (info && info.kind === "atom") {
@@ -192,14 +188,6 @@ export function Viewport({
     // on empty space it resets to the model center.
     const handleDblClick = (e: MouseEvent) => {
       const info = renderer.raycastAtPixel(e.clientX, e.clientY);
-      // The Builder may take a double-click on an atom (select its molecule).
-      if (
-        info?.kind === "atom" &&
-        buildActiveRef.current &&
-        buildHandlersRef.current?.doubleClick(info.atomIndex, modifiersOf(e))
-      ) {
-        return;
-      }
       if (info?.kind === "atom") {
         renderer.setRotationCenter(...info.position);
       } else if (info?.kind === "bond") {
@@ -264,10 +252,11 @@ export function Viewport({
       onBoxSelectRef.current?.(indices, { additive });
     };
 
-    // ── Builder: the left button edits, the right one turns the camera ──
+    // ── Builder: a left drag edits only where the Builder takes it ──
     // A left press asks the Builder what a drag from there does
     // (`pressAction`): move atoms, draw a rubber band, or leave it to the
-    // camera (Alt always leaves it, for trackpads without a right drag). It is
+    // camera, which then rotates (or pans with Shift) as in the viewer; Alt
+    // always leaves it to the camera, so the view can turn from an atom. It is
     // decided in the capture phase, before the camera controls see the press,
     // so an editing drag never also rotates the view. A press released within
     // `CLICK_SLOP` px is a click (`pick`), whatever the press would have done.
@@ -514,11 +503,7 @@ export function Viewport({
     rendererRef.current?.setPreviewSelection(previewIndices ?? null);
   }, [previewIndices]);
 
-  // The Builder's camera buttons, hover and warning highlights; the viewer
-  // never sets them.
-  useEffect(() => {
-    if (mouseScheme) rendererRef.current?.setMouseScheme(mouseScheme);
-  }, [mouseScheme]);
+  // The Builder's hover and warning highlights; the viewer never sets them.
   useEffect(() => {
     if (buildActive) rendererRef.current?.setHoverHighlight(hoverIndices ?? null, hoverColor);
   }, [buildActive, hoverIndices, hoverColor]);

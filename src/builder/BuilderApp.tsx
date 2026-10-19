@@ -482,7 +482,6 @@ export function BuilderApp({ host = WEB_HOST }: BuilderAppProps = {}) {
           previewIndices={highlighted}
           buildActive={true}
           buildHandlers={handlers}
-          mouseScheme="builder"
           hoverIndices={hover?.atoms ?? null}
           hoverColor={hover?.color}
           warningIndices={drag && drag.contacts.length > 0 ? drag.contacts : null}

@@ -542,17 +542,72 @@ export async function parseStructurePrefix(
       readBlobText(file, 0, size),
       wantTail ? readBlobText(file, tailStart) : Promise.resolve(""),
     ]);
-    // Trim a partial trailing head line, and the partial leading tail line, so no
-    // record is cut mid-way where the two chunks are stitched together.
-    const head = isWholeFile ? rawHead : rawHead.slice(0, rawHead.lastIndexOf("\n") + 1);
-    const tail = rawTail ? rawTail.slice(rawTail.indexOf("\n") + 1) : "";
-    const text = tail ? head + tail : head;
-    const id = nextId++;
-    return send<StructureParseResult>(
-      { id, op: "structurePrefix", wasm: resolveWasmUrl(), kind, text, isWholeFile },
-      [],
-    );
+    return sendStructurePrefix(rawHead, rawTail, kind, isWholeFile);
   });
+}
+
+/**
+ * Parse frame 0 in the worker from a head chunk and (PDB) a tail chunk of text.
+ * A partial trailing head line and the partial leading tail line are trimmed so
+ * no record is cut mid-way where the two chunks are stitched together. Rejects
+ * when frame 0 is not fully in the head.
+ */
+function sendStructurePrefix(
+  rawHead: string,
+  rawTail: string,
+  kind: LazyStructureKind,
+  isWholeFile: boolean,
+): Promise<StructureParseResult> {
+  const head = isWholeFile ? rawHead : rawHead.slice(0, rawHead.lastIndexOf("\n") + 1);
+  const tail = rawTail ? rawTail.slice(rawTail.indexOf("\n") + 1) : "";
+  const text = tail ? head + tail : head;
+  const id = nextId++;
+  return send<StructureParseResult>(
+    { id, op: "structurePrefix", wasm: resolveWasmUrl(), kind, text, isWholeFile },
+    [],
+  );
+}
+
+/**
+ * Parse frame 0 of a large file from just its first bytes (`head`) and last
+ * bytes (`tail`), `totalSize` long in all — what a host that delivers a file
+ * in pieces has before the rest arrives (see `src/hosts/progressiveFile.ts`).
+ * `kind` picks the reader: the multi-frame XYZ / PDB prefix parse (PDB takes
+ * its trailing CONECT records from `tail`), or the ASE `.traj` reader, which
+ * finds frame 0 through the offset table in `tail`. The tail must start at or
+ * after the head's end. Returns `null` when the worker is unavailable or the
+ * chunks do not hold frame 0; the caller then waits for the whole file.
+ */
+export async function parseStructureHead(
+  head: Uint8Array,
+  tail: Uint8Array,
+  totalSize: number,
+  kind: LazyStructureKind | "traj",
+): Promise<StructureParseResult | null> {
+  if (workerUnavailable()) return null;
+  try {
+    if (kind === "traj") {
+      const headBuf = head.slice().buffer;
+      const tailBuf = tail.slice().buffer;
+      return await send<StructureParseResult>(
+        {
+          id: nextId++,
+          op: "trajFrame0",
+          wasm: resolveWasmUrl(),
+          head: headBuf,
+          tail: tailBuf,
+          totalSize,
+        },
+        [headBuf, tailBuf],
+      );
+    }
+    const isWholeFile = head.length >= totalSize;
+    const decoder = new TextDecoder();
+    const rawTail = kind === "pdb" && !isWholeFile ? decoder.decode(tail) : "";
+    return await sendStructurePrefix(decoder.decode(head), rawTail, kind, isWholeFile);
+  } catch {
+    return null;
+  }
 }
 
 /**

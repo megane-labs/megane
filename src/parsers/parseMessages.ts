@@ -87,6 +87,19 @@ export interface StructurePrefixRequest {
   isWholeFile: boolean;
 }
 
+/**
+ * Request: parse ONLY frame 0 of an ASE `.traj` from the file's head and tail
+ * bytes (`totalSize` long in all), before the rest of the file has arrived.
+ */
+export interface TrajFrame0Request {
+  id: number;
+  op: "trajFrame0";
+  wasm: WasmSource;
+  head: ArrayBuffer;
+  tail: ArrayBuffer;
+  totalSize: number;
+}
+
 /** Request: decode frame 0 from a bounded prefix of a large trajectory (instant first paint). */
 export interface TrajectoryFrame0Request {
   id: number;
@@ -137,7 +150,8 @@ export type ParseRequest =
   | IndexTrajectoryRequest
   | DecodeFrameRequest
   | DisposeTrajectoryRequest
-  | InitRequest;
+  | InitRequest
+  | TrajFrame0Request;
 
 /** Response payload for a `decodeFrame` request: one frame's positions (+ vectors). */
 export interface DecodeFrameResult {
@@ -161,7 +175,8 @@ export interface ParseResponse {
     | "indexTrajectory"
     | "decodeFrame"
     | "disposeTrajectory"
-    | "init";
+    | "init"
+    | "trajFrame0";
   result?:
     | StructureParseResult
     | XTCParseResult

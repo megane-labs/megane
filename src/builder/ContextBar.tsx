@@ -2,8 +2,8 @@
  * The current tool's settings, at the top of the Details panel: pressing a
  * tool on the rail left of the view shows its options here, and only those —
  * the element for *Add atom* and *Element* (the periodic table opens beside
- * the panel for the rarer ones), the bond order for *Add atom* and *Bond*, All /
- * Invert and select-by-element for *Select*, Snap and the drag gestures for
+ * the panel for the rarer ones), the bond order for *Add atom* and *Bond*, Box /
+ * All / Invert and select-by-element for *Select*, Snap and the drag gestures for
  * *Select* and *Move*, the molecule gallery and *Place on atoms* for *Place*.
  * A tool with no settings (Delete) shows none.
  */
@@ -58,6 +58,20 @@ function choiceStyle(active: boolean): React.CSSProperties {
   };
 }
 
+function Divider() {
+  return (
+    <span
+      aria-hidden="true"
+      style={{
+        width: 1,
+        height: 22,
+        margin: "0 6px",
+        background: "var(--megane-border-solid, #e2e8f0)",
+      }}
+    />
+  );
+}
+
 /** A labelled group of settings in the card. */
 function Group({ label, children }: { label: string; children: React.ReactNode }) {
   return (
@@ -75,7 +89,8 @@ export const DRAG_LEGEND: [string, string][] = [
   ["Ctrl/⌘", "rotate about the centre"],
   ["Ctrl/⌘ Shift", "spin about the line of sight"],
   ["X Y Z  A B C", "while dragging: lock to an axis"],
-  ["Right drag", "rotate the view (middle or Shift + right: pan)"],
+  ["Drag elsewhere", "turn the view, as in the viewer"],
+  ["Alt", "turn the view, even from an atom"],
 ];
 
 const legendStyle: React.CSSProperties = {
@@ -100,6 +115,8 @@ export function ContextBar() {
   const element = useScopedBuilderStore((s) => s.element);
   const bondOrder = useScopedBuilderStore((s) => s.bondOrder);
   const adsorbHeight = useScopedBuilderStore((s) => s.adsorbHeight);
+  const boxSelect = useScopedBuilderStore((s) => s.boxSelect);
+  const setBoxSelect = useScopedBuilderStore((s) => s.setBoxSelect);
   const snap = useScopedBuilderStore((s) => s.snap);
   const setSnap = useScopedBuilderStore((s) => s.setSnap);
   const selectAll = useScopedBuilderStore((s) => s.selectAll);
@@ -155,6 +172,17 @@ export function ContextBar() {
       {info.needs.includes("select") && (
         <Group label="Selection">
           <div style={wrapRow}>
+            <button
+              type="button"
+              data-testid="builder-select-box"
+              aria-pressed={boxSelect}
+              title="Drag a box on the view to select what it holds; Shift adds, Ctrl/⌘ removes (the view stops turning on a left drag while on)"
+              style={{ ...choiceStyle(boxSelect), fontWeight: 500, padding: "0 10px" }}
+              onClick={() => setBoxSelect(!boxSelect)}
+            >
+              Box
+            </button>
+            <Divider />
             <button
               type="button"
               data-testid="builder-select-all"

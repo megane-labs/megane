@@ -87,6 +87,7 @@ const { calls, wasmMock } = vi.hoisted(() => {
     parse_phonon: structFn("parse_phonon"),
     parse_vasp: structFn("parse_vasp"),
     parse_structure_prefix: structFn("parse_structure_prefix"),
+    parse_traj_frame0: structFn("parse_traj_frame0"),
     decode_trajectory_frame0: () => new Float32Array(4 * 3),
     parse_mol: structFn("parse_mol"),
     parse_mol2: structFn("parse_mol2"),
@@ -356,6 +357,9 @@ describe("parseClientSync (main-thread path with mocked wasm)", () => {
     await expect(sync.decodeTrajectoryFrame(0, 0)).rejects.toThrow(/worker-only/);
     expect(() => sync.disposeTrajectoryLazy(0)).not.toThrow();
     expect(() => sync.prewarmParseWorker()).not.toThrow();
+    expect(
+      await sync.parseStructureHead(new Uint8Array(1), new Uint8Array(1), 2, "pdb"),
+    ).toBeNull();
     // Never streams on the sync path, regardless of file size.
     expect(sync.shouldUseLazyTrajectory("xtc", 1)).toBe(false);
     expect(sync.shouldUseLazyTrajectory("lammpstrj", 1024 * 1024 * 1024)).toBe(false);

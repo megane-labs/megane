@@ -92,7 +92,7 @@ With nothing open, the view shows *Build a structure* with **Open…**,
 
 | Tool | Key | What a click in the 3D view does |
 |---|---|---|
-| **Select** | S | Selects the atom (Shift- or Ctrl/⌘-click toggles it in or out of the selection; clicking empty space clears it); a double-click selects the atom's molecule. Dragging a selected atom moves the selection, dragging anywhere else draws a box (see [Mouse](#mouse)). Its settings add **All**, **Invert**, one chip per element with its count (selects every atom of that element), and **Snap**. The selection feeds the [Inspector](#inspector) (*Delete*, *Set to*, *Save as fragment*, *Clean up*, the measurement, *Transform*). |
+| **Select** | S | Selects the atom (Shift- or Ctrl/⌘-click toggles it in or out of the selection; clicking empty space clears it); right-click an atom to select its molecule. Dragging a selected atom moves the selection; dragging anywhere else turns the view, or draws a box while **Box** is on (see [Mouse](#mouse)). Its settings add **Box**, **All**, **Invert**, one chip per element with its count (selects every atom of that element), and **Snap**. The selection feeds the [Inspector](#inspector) (*Delete*, *Set to*, *Save as fragment*, *Clean up*, the measurement, *Transform*). |
 | **Add atom** | A | On an atom: attaches a new atom of the chosen element at bond length (sum of covalent radii), pointing away from the atom's existing neighbours, and bonds it with the chosen bond order. On empty space: places a free atom at that point, at the depth of the rotation pivot. |
 | **Bond** | B | Click two atoms to bond them. Clicking an already bonded pair changes the bond order to the one chosen in its settings. |
 | **Delete** | D | Removes the atom and every bond it had. |
@@ -124,35 +124,33 @@ table of every element up to U beside the panel — cells tinted by family,
 and pointing at one shows its name, atomic number, mass, family and the
 colour the view draws it in; or any atomic number in the *Z* field) for
 *Add atom* and *Element*, the bond order (single, double, triple, aromatic)
-for *Add atom* and *Bond*, All / Invert and the element chips for *Select*,
+for *Add atom* and *Bond*, Box / All / Invert and the element chips for *Select*,
 **Snap** and a list of the drag gestures for *Select* and *Move*, and the
 molecule and *On atoms* for *Place*. *Delete* has no settings.
 
 ## Mouse
 
-The Builder takes the mouse the way Materials Studio does: the **left button
-edits, the right button turns the view**, so selecting and moving atoms never
-needs a tool switch and never fights the camera.
+The Builder takes the mouse the way the [viewer](./web.md#mouse-controls)
+does: a drag turns the view, and only a drag that starts on an atom the
+current tool can move edits the structure.
 
 | Gesture | What it does |
 |---|---|
+| Left drag | Rotate the view, as in the viewer |
+| Right drag, Shift + left drag | Pan the view |
+| Middle drag, wheel | Zoom |
+| Double-click an atom or bond | Make it the rotation center; on empty space, reset it to the model center |
 | Click | The current tool's action (*Select* / *Move*: select the atom) |
 | Shift- or Ctrl/⌘-click | Toggle the atom in or out of the selection |
-| Double-click | Select the atom's molecule (Shift adds it to the selection, Alt selects every atom of its element) |
-| Drag from empty space (*Select*, *Move*) | Draw a box and select what it holds; Shift adds to the selection, Ctrl/⌘ removes from it |
 | Drag a selected atom (*Select*), any atom (*Move*) | Move the selection in the screen plane |
 | … with Shift | Move it in depth: up pushes it away from you, down pulls it toward you |
 | … with Ctrl/⌘ | Rotate it about its centre, like a trackball |
 | … with Ctrl/⌘ + Shift | Spin it about the line of sight, following the pointer around the centre |
 | X, Y, Z (or A, B, C with a cell) during a drag | Lock the motion to that axis (moves go along it, rotations turn about it); press it again to free the drag |
 | Esc during a drag | Cancel the drag: the atoms go back where they were |
-| Right drag | Rotate the view (Alt + left drag does too, for trackpads) |
-| Middle drag, Shift + right drag | Pan the view |
-| Wheel | Zoom |
-| Right-click an atom | The [atom menu](#inspector) |
-
-With the other tools a left drag on the view still rotates it, as in the
-viewer.
+| Alt + left drag | Rotate the view, even from an atom |
+| Drag with **Box** on (*Select*) | Draw a box from anywhere but a selected atom and select what it holds; Shift adds to the selection, Ctrl/⌘ removes from it. The view stops turning on a left drag while Box is on, as with the viewer's *Box select* |
+| Right-click an atom | The [atom menu](#inspector): select its molecule or every atom of its element, and more |
 
 While a drag runs, the status line under the view says what it did so far —
 `Move 1.20 Å (1.00, 0.50, 0.00)`, `Move 0.80 Å along x`, `Rotate 30.0°` —
@@ -191,7 +189,7 @@ panel describes the selection:
   the selection's centre. Each is one Undo step.
 
 **Right-click an atom** (click and release without moving; a right *drag*
-turns the view) for a menu (it opens beside the pointer, flipped to
+pans the view) for a menu (it opens beside the pointer, flipped to
 stay on screen near an edge): *Select molecule* (every atom bonded to
 it, directly or not), *Select all* of its element, *Set to* the current
 element, *Clean up molecule* and *Delete atom*.

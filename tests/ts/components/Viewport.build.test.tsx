@@ -36,7 +36,6 @@ const rendererMock = {
   selectAtomsInRect: vi.fn(() => [1, 2]),
   dragGesture: vi.fn(() => gesture),
   screenToWorldAtPivot: vi.fn(() => [7, 8, 9] as [number, number, number]),
-  setMouseScheme: vi.fn(),
   setHoverHighlight: vi.fn(),
   setWarningHighlight: vi.fn(),
 };
@@ -66,7 +65,6 @@ function handlers(overrides: Partial<BuildHandlers> = {}): BuildHandlers {
     dragMove: vi.fn(),
     dragEnd: vi.fn(),
     boxSelect: vi.fn(),
-    doubleClick: vi.fn(() => false),
     ...overrides,
   };
 }
@@ -337,15 +335,8 @@ describe("Viewport — Builder interactions", () => {
     expect(onAtomRightClick).toHaveBeenCalledWith(5, 5, 6);
   });
 
-  it("a double-click on an atom goes to the Builder before the camera", () => {
-    const h = handlers({ doubleClick: vi.fn(() => true) });
-    mountBuilder(h);
-    canvas.dispatchEvent(new MouseEvent("dblclick", { clientX: 5, clientY: 5, altKey: true }));
-    expect(h.doubleClick).toHaveBeenCalledWith(5, { ...noMods, altKey: true });
-    expect(rendererMock.setRotationCenter).not.toHaveBeenCalled();
-    cleanup();
-    const declined = handlers();
-    mountBuilder(declined);
+  it("a double-click on an atom sets the rotation center, as in the viewer", () => {
+    mountBuilder(handlers());
     canvas.dispatchEvent(new MouseEvent("dblclick", { clientX: 5, clientY: 5 }));
     expect(rendererMock.setRotationCenter).toHaveBeenCalled();
   });
@@ -371,22 +362,19 @@ describe("Viewport — Builder interactions", () => {
     expect(h.pick).not.toHaveBeenCalled();
   });
 
-  it("passes the mouse scheme and the Builder's highlights to the renderer", () => {
+  it("passes the Builder's highlights to the renderer", () => {
     const h = handlers();
     mountBuilder(h, {
-      mouseScheme: "builder",
       hoverIndices: [3],
       hoverColor: 0xff0000,
       warningIndices: [1, 2],
     });
-    expect(rendererMock.setMouseScheme).toHaveBeenCalledWith("builder");
     expect(rendererMock.setHoverHighlight).toHaveBeenCalledWith([3], 0xff0000);
     expect(rendererMock.setWarningHighlight).toHaveBeenCalledWith([1, 2]);
     cleanup();
     vi.clearAllMocks();
     // The viewer sets none of them.
     render(<Viewport snapshot={null} frame={null} hoverIndices={[3]} />);
-    expect(rendererMock.setMouseScheme).not.toHaveBeenCalled();
     expect(rendererMock.setHoverHighlight).not.toHaveBeenCalled();
     expect(rendererMock.setWarningHighlight).not.toHaveBeenCalled();
   });
