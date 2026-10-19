@@ -4,13 +4,15 @@ import { describe, it, expect } from "vitest";
 import {
   createFlowStore,
   flowViewData,
+  outputNodeId,
   parseSerializedFlow,
   type FlowStore,
 } from "@/builder/flow/store";
+import { nodeKey } from "@/builder/flow/engine";
 import { initialToolParams } from "@/builder/flow/ports";
 import type { FlowParams } from "@/builder/flow/types";
 import type { StoreApi } from "zustand";
-import { fakeDeps, tools } from "./helpers";
+import { fakeDeps, tools, waterData } from "./helpers";
 
 const mol = (smiles = "O"): FlowParams => ({
   type: "molecule",
@@ -161,6 +163,64 @@ describe("flow store", () => {
     expect(flowViewData(s.getState())!.id).toBe(box);
     s.getState().selectNode(a);
     expect(flowViewData(s.getState())!.id).toBe(a);
+  });
+
+  it("shows the shared structure when no block is selected", async () => {
+    const { s, a, box } = chain();
+    const doc = waterData("slab");
+    expect(flowViewData(s.getState(), doc)).toEqual({ id: null, data: doc });
+    await s.getState().run(fakeDeps());
+    s.getState().selectNode(null);
+    expect(flowViewData(s.getState(), doc)!.id).toBeNull();
+    expect(flowViewData(s.getState(), null)!.id).toBe(box);
+    s.getState().selectNode(a);
+    expect(flowViewData(s.getState(), doc)!.id).toBe(a);
+  });
+
+  it("finds the block a Run builds the model in", () => {
+    expect(outputNodeId(createFlowStore().getState())).toBeNull();
+    const { s, box } = chain();
+    expect(outputNodeId(s.getState())).toBe(box);
+    s.getState().addNode(mol("N"));
+    expect(outputNodeId(s.getState())).toBe(box);
+    s.setState({
+      edges: [
+        ...s.getState().edges,
+        { id: "loop", source: box, target: "n1", targetHandle: "components" },
+      ],
+    });
+    expect(outputNodeId(s.getState())).toBeNull();
+  });
+
+  it("marks Manual structure blocks stale when the document changes", async () => {
+    const s = createFlowStore();
+    const doc = s.getState().addNode({ type: "document" });
+    const solv = s.getState().addNode(initialToolParams(tools.solvate));
+    wire(s, doc, solv, "document", false);
+    const other = s.getState().addNode(mol("O"));
+    wire(s, other, solv, "solvent", false);
+    const deps = fakeDeps({ document: () => ({ data: waterData("slab"), key: "doc-1" }) });
+    await s.getState().run(deps);
+    expect(s.getState().runs[solv].status).toBe("done");
+    expect(s.getState().runs[doc].key).toBe(nodeKey({ type: "document" }, {}, "doc-1"));
+
+    s.getState().documentChanged("doc-1");
+    expect(s.getState().runs[doc].status).toBe("done");
+    s.getState().documentChanged("doc-2");
+    expect(s.getState().runs[doc].status).toBe("stale");
+    expect(s.getState().runs[solv].status).toBe("stale");
+    expect(s.getState().runs[other].status).toBe("done");
+  });
+
+  it("remembers the adopted result until the flow is cleared or replaced", () => {
+    const { s } = chain();
+    s.getState().setAdoptedKey("k");
+    expect(s.getState().adoptedKey).toBe("k");
+    s.getState().load(s.getState().serialize());
+    expect(s.getState().adoptedKey).toBeNull();
+    s.getState().setAdoptedKey("k");
+    s.getState().clear();
+    expect(s.getState().adoptedKey).toBeNull();
   });
 
   it("runs to a target and keeps the shown block", async () => {

@@ -143,6 +143,43 @@ describe("Builder Flow mode", () => {
     expect(useBuilderStore.getState().source!.nAtoms).toBe(3);
   });
 
+  it("shares one structure with Manual mode both ways", async () => {
+    const shownPositions = () =>
+      (viewportProps.current!.snapshot as { positions: Float32Array } | null)?.positions;
+    useBuilderStore.getState().openStructure(water(), null, "slab");
+    await enterFlow();
+    // The structure open in Manual mode is what Flow mode shows with no block picked.
+    expect(shownPositions()).toEqual(useBuilderStore.getState().source!.positions);
+    expect(screen.getByTestId("builder-status-flow").textContent).toContain("showing slab");
+
+    // A Manual structure block reads it, and goes stale when it changes.
+    addBlock("builder-flow-add-document");
+    const doc = useFlowStore.getState().nodes[0].id;
+    await act(async () => {
+      fireEvent.click(screen.getByTestId("builder-flow-run"));
+    });
+    await waitFor(() => expect(useFlowStore.getState().runs[doc]?.status).toBe("done"));
+    act(() => useBuilderStore.getState().pushOp({ op: "delete_atoms", atoms: [0] }));
+    expect(useFlowStore.getState().runs[doc].status).toBe("stale");
+
+    // Run makes the flow's result the structure Manual mode edits.
+    act(() => useFlowStore.getState().clear());
+    addBlock("builder-flow-add-smiles");
+    fireEvent.change(screen.getByTestId("builder-flow-molecule-smiles"), {
+      target: { value: "O" },
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByTestId("builder-flow-run"));
+    });
+    await waitFor(() => expect(useBuilderStore.getState().fileName).toBe("O"));
+    act(() => useFlowStore.getState().selectNode(null));
+    expect(screen.getByTestId("builder-status-flow").textContent).toContain("showing O");
+    expect(shownPositions()).toEqual(useBuilderStore.getState().source!.positions);
+    fireEvent.click(screen.getByTestId("builder-mode-manual"));
+    expect(useBuilderStore.getState().source!.nAtoms).toBe(3);
+    expect(shownPositions()).toEqual(useBuilderStore.getState().source!.positions);
+  });
+
   it("adds library, Manual-structure and tool blocks from the Add menu", async () => {
     await enterFlow();
     addBlock("builder-flow-add-library");

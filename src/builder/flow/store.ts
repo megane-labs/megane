@@ -12,7 +12,12 @@
  *
  * Editing a block, or a wire into it, marks its last result and everything
  * downstream `stale`: still shown, but redone (or taken from the cache when
- * the key comes back the same) by the next Run.
+ * the key comes back the same) by the next Run. So does a change to the
+ * Manual document under a *Manual structure* block (`documentChanged`).
+ *
+ * The structure itself is shared with Manual mode: a Run makes its output
+ * the Manual document (`shared.ts`), and `adoptedKey` remembers which result
+ * that was, so running an unchanged flow again leaves Manual edits alone.
  */
 
 import type { Connection, Edge, Node } from "@xyflow/react";
@@ -20,7 +25,7 @@ import { create, type StateCreator, type StoreApi } from "zustand";
 import { createStore } from "zustand/vanilla";
 import { registerTestStores, GLOBAL_BUNDLE_ID } from "../../stores/testRegistry";
 import type { BuilderToolInfo } from "../tools/contract";
-import { downstream, runFlow, topoOrder, wouldCycle, type FlowDeps } from "./engine";
+import { downstream, nodeKey, runFlow, topoOrder, wouldCycle, type FlowDeps } from "./engine";
 import { completeToolParams } from "./ports";
 import {
   FLOW_NODE_TYPES,
@@ -51,6 +56,8 @@ export interface FlowStore {
   running: AbortController | null;
   /** The block whose result the 3D view shows when no block is selected. */
   viewNodeId: string | null;
+  /** Cache key of the result last made the Manual document, or null. */
+  adoptedKey: string | null;
 
   setMode: (mode: FlowMode) => void;
   /** Take the editor's nodes after a move, a resize or a selection. */
@@ -78,6 +85,14 @@ export interface FlowStore {
   /** Merge `patch` into a block's params. */
   updateParams: (id: string, patch: Partial<FlowParams>) => void;
   removeNode: (id: string) => void;
+  /**
+   * The Manual document changed (its key is `docKey`, null when none is
+   * open): the results of *Manual structure* blocks read from another
+   * document, and they and everything downstream go stale.
+   */
+  documentChanged: (docKey: string | null) => void;
+  /** Remember that the result with this key is now the Manual document. */
+  setAdoptedKey: (key: string | null) => void;
   /** Select one block (and nothing else). */
   selectNode: (id: string | null) => void;
   /** Run the graph (or what `targets` need) with `deps`. */
@@ -164,6 +179,7 @@ export const flowStateCreator: StateCreator<FlowStore> = (set, get) => ({
   runs: {},
   running: null,
   viewNodeId: null,
+  adoptedKey: null,
 
   setMode: (mode) => set({ mode }),
 
@@ -265,6 +281,22 @@ export const flowStateCreator: StateCreator<FlowStore> = (set, get) => ({
 
   removeNode: (id) => get().removeNodes([id]),
 
+  documentChanged: (docKey) => {
+    const s = get();
+    const stale = new Set<string>();
+    for (const n of s.nodes) {
+      const run = s.runs[n.id];
+      if (n.data.params.type !== "document" || run?.status !== "done") continue;
+      // A Manual structure block has no inputs: its key is its params and the document.
+      if (run.key !== nodeKey(n.data.params, {}, docKey)) {
+        downstream(s, n.id).forEach((id) => stale.add(id));
+      }
+    }
+    if (stale.size > 0) set({ runs: markStale(s.runs, stale) });
+  },
+
+  setAdoptedKey: (adoptedKey) => set({ adoptedKey }),
+
   selectNode: (id) =>
     set((s) => ({
       nodes: s.nodes.map((n) =>
@@ -306,7 +338,7 @@ export const flowStateCreator: StateCreator<FlowStore> = (set, get) => ({
 
   clear: () => {
     get().running?.abort();
-    set({ nodes: [], edges: [], runs: {}, running: null, viewNodeId: null });
+    set({ nodes: [], edges: [], runs: {}, running: null, viewNodeId: null, adoptedKey: null });
   },
 
   serialize: () => {
@@ -335,24 +367,48 @@ export const flowStateCreator: StateCreator<FlowStore> = (set, get) => ({
       runs: {},
       running: null,
       viewNodeId: null,
+      adoptedKey: null,
     });
   },
 });
 
+/** What the 3D view shows in Flow mode; `id` is null for the shared structure. */
+export interface FlowView {
+  id: string | null;
+  data: FlowData;
+}
+
 /**
- * The block whose result the 3D view shows: the selected block when it has a
- * result, else the block the last run ended on. Null when neither has one.
+ * What the 3D view shows in Flow mode: the selected block when it has a
+ * result, else the structure shared with Manual mode (`document`), else the
+ * block the last run ended on. Null when none of them has one.
  */
 export function flowViewData(
   state: Pick<FlowStore, "nodes" | "runs" | "viewNodeId">,
-): { id: string; data: FlowData } | null {
+  document: FlowData | null = null,
+): FlowView | null {
   const shown = (id: string | null | undefined) => {
     const run = id ? state.runs[id] : undefined;
     return run && run.data && (run.status === "done" || run.status === "stale")
       ? { id: id!, data: run.data }
       : null;
   };
-  return shown(state.nodes.find((n) => n.selected)?.id) ?? shown(state.viewNodeId);
+  return (
+    shown(state.nodes.find((n) => n.selected)?.id) ??
+    (document ? { id: null, data: document } : null) ??
+    shown(state.viewNodeId)
+  );
+}
+
+/**
+ * The block a Run builds the model in: the last block, in dependency order,
+ * that no wire leaves. Null for an empty graph or a loop.
+ */
+export function outputNodeId(state: Pick<FlowStore, "nodes" | "edges">): string | null {
+  const order = topoOrder(state);
+  if (!order) return null;
+  const feeds = new Set(state.edges.map((e) => e.source));
+  return [...order].reverse().find((id) => !feeds.has(id)) ?? null;
 }
 
 /** A private Flow store (tests, and one per scoped Builder). */

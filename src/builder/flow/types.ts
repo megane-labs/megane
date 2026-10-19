@@ -7,9 +7,10 @@
  * a polymer chain (the built-in blocks, run in the browser), a tool-server
  * call (packmol's liquid box, solvation) fed by those, and so on, as a graph whose
  * wires carry structures. Running the graph evaluates each block once its
- * inputs are ready; the 3D view shows the result of the block picked in the
- * graph, and *Open in Manual* hands any result to Manual mode as a new
- * document.
+ * inputs are ready and makes the output block's result the Manual document,
+ * so both modes work on one structure (`shared.ts`); the 3D view shows the
+ * result of the block picked in the graph (else that structure), and *Open
+ * in Manual* hands any block's result to Manual mode the same way.
  *
  * The graph is separate from the viewer's pipeline on purpose: the viewer's
  * graph describes how a loaded structure is *shown* and is re-evaluated

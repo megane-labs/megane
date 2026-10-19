@@ -18,7 +18,9 @@ the 3D view always shows the document — the structure as opened plus your
 edits — drawn as ball-and-stick with every atom, its own bonds and its cell,
 and every click in the view is an edit. In **Flow** mode you build a model by
 connecting blocks instead — a molecule from SMILES, a packmol liquid box fed
-by it — and run them (see [Flow mode](#flow-mode)). Bringing a Builder
+by it — and run them (see [Flow mode](#flow-mode)). Both modes work on the
+same structure: what a Flow run builds is what Manual mode then edits, and
+what you edit in Manual mode is what Flow mode shows and reads. Bringing a Builder
 document into the viewer is a planned follow-up; the two already share the
 same edit-history format (the `load_structure` node's `edits` list), so
 nothing has to be re-encoded when they meet.
@@ -447,7 +449,9 @@ these blocks:
   The optional name is the residue name tools give its copies.
 - **Molecule from the library**: a preset or one of your own molecules.
 - **Manual structure**: the structure open in Manual mode, as it is when the
-  flow runs (so a slab you built by hand can be solvated here).
+  flow runs (so a slab you built by hand can be solvated here). Editing that
+  structure in Manual mode marks the block, and everything after it, as
+  changed.
 - **Bulk crystal**: a prototype (FCC, BCC, HCP, diamond, rocksalt, perovskite,
   …) with its species and lattice constant, or one of the reference examples
   (*Pt (fcc)*, *NaCl (rocksalt)*, …) — Manual mode's bulk crystal as a block.
@@ -505,11 +509,20 @@ again, not the molecules before it; a block you have changed since its last
 run says so. *Run to here* in a block's settings runs just that block and the
 ones it needs, and **Stop** abandons a run.
 
-The 3D view shows the result of the block you pick in the graph (else the
-last one the run reached), with its name and counts on the info line;
-editing in the view is Manual mode's job. **Open in Manual** makes the picked
-block's result the Manual document — replacing the open one and its history —
-so you can edit it further or save it as XYZ, PDB or MOL.
+Manual and Flow mode share one structure. When **Run** finishes, the result
+of the flow's last block (the one no wire leaves) becomes the structure open
+in Manual mode — replacing the open one and its history — so switching to
+Manual shows what the flow built, ready to edit further or save as XYZ, PDB
+or MOL. A Run that gives back the very result it gave last time (nothing in
+the flow changed) leaves the structure, and your Manual edits on it, alone;
+when the last block fails, the structure is kept as it was.
+
+The 3D view shows the result of the block you pick in the graph, with its
+name and counts on the info line; with no block picked it shows the shared
+structure, Manual edits included. Editing in the view is Manual mode's job.
+**Open in Manual** makes the picked block's result the structure — an
+intermediate molecule, say — and switches to Manual mode. *Run to here* only
+builds up to the picked block to look at it; it leaves the structure alone.
 
 *Save flow* writes the blocks, their settings and their wires as
 `builder.megane-flow.json` (where *Save* writes structures on that host, see

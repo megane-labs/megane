@@ -12,6 +12,7 @@
 import { readFileSync } from "fs";
 import { join } from "path";
 import { test, expect, type Page, type Route } from "playwright/test";
+import { deleteAtom } from "./lib/builder";
 
 const SERVER = "http://127.0.0.1:18765/mcp";
 const TOKEN = "e2e-token";
@@ -242,6 +243,9 @@ test.describe("builder-tools: webapp", () => {
     // RDKit added the two hydrogens of water: three atoms in the mol block's counts line.
     expect(args.components[0].molecule.molblock.split("\n")[3].slice(0, 3).trim()).toBe("3");
     await expect(page.getByTestId("builder-status-flow")).toContainText("showing water");
+    // The Run made the box the structure Manual mode edits: both modes share it.
+    await expect(page.getByTestId("megane-builder")).toHaveAttribute("data-atom-count", "300");
+    expect(await builderState(page)).toMatchObject({ fileName: "water", nAtoms: 300 });
 
     // A second Run reuses every cached result: no new call.
     await page.getByTestId("builder-flow-run").click();
@@ -258,6 +262,29 @@ test.describe("builder-tools: webapp", () => {
       )
       .toBeNull();
     await expect(page.getByTestId("builder-flow-run")).toBeVisible();
+    expect(calls).toHaveLength(1);
+
+    // Manual mode edits that box; back in Flow, the view and an unchanged Run keep the edit.
+    await page.getByTestId("builder-mode-manual").click();
+    await expect(page.getByTestId("builder-tool-rail")).toBeVisible();
+    await deleteAtom(page, 0);
+    await expect(page.getByTestId("megane-builder")).toHaveAttribute("data-atom-count", "299");
+    await page.getByTestId("builder-mode-flow").click();
+    await expect(page.getByTestId("builder-flow-panel")).toBeVisible();
+    await page.getByTestId("builder-flow-run").click();
+    await expect
+      .poll(() =>
+        page.evaluate(
+          () =>
+            (
+              window as unknown as {
+                __megane_test_builder_flow_store: { getState: () => { running: unknown } };
+              }
+            ).__megane_test_builder_flow_store.getState().running,
+        ),
+      )
+      .toBeNull();
+    expect(await builderState(page)).toMatchObject({ nAtoms: 299, edits: ["delete_atoms"] });
     expect(calls).toHaveLength(1);
 
     // Open the box in Manual mode as the document.
