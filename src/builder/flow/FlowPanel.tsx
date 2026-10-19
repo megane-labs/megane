@@ -34,6 +34,7 @@ import { getLayoutedElements } from "../../pipeline/layout";
 import { allMolecules, useLibraryStore } from "../library/store";
 import type { BuilderToolInfo } from "../tools/contract";
 import { useFlowStoreApi, useScopedFlowStore, useScopedToolsStore } from "../BuilderStores";
+import { defaultBuiltinParams } from "./builtins";
 import { STRUCTURE_COLOR, blockColor } from "./describe";
 import { wouldCycle, type FlowDeps } from "./engine";
 import { flowNodeTypes } from "./FlowNodeCard";
@@ -41,6 +42,7 @@ import { FlowProperties } from "./FlowProperties";
 import { FlowRail, addMenuItems, type FlowActions } from "./FlowRail";
 import { blockPorts, initialToolParams } from "./ports";
 import type { FlowNode } from "./store";
+import { FLOW_TEMPLATES } from "./templates";
 import type { FlowParams } from "./types";
 
 /** Vertical step between a new block and one already where it would land. */
@@ -135,6 +137,7 @@ function FlowEditor({
         name: "",
       }),
     addDocument: () => addBlock({ type: "document" }),
+    addBuiltin: (type) => addBlock(defaultBuiltinParams(type)),
     addTool: (tool: BuilderToolInfo) => addBlock(initialToolParams(tool)),
     openServer: onOpenServer,
     tools: hasTools
@@ -158,6 +161,20 @@ function FlowEditor({
       void fitView({ ...FIT_VIEW_OPTIONS, duration: 300 });
     });
   }, [flowApi, setNodes, fitView]);
+
+  // A template replaces the flow, then the view fits the new blocks.
+  const handleApplyTemplate = useCallback(
+    (templateId: string) => {
+      const template = FLOW_TEMPLATES.find((t) => t.id === templateId);
+      if (!template) return;
+      flowApi.getState().load(template.create());
+      onCloseServer();
+      window.requestAnimationFrame(() => {
+        void fitView({ ...FIT_VIEW_OPTIONS, duration: 300 });
+      });
+    },
+    [flowApi, fitView, onCloseServer],
+  );
 
   // Deletions go through the store, which also drops the wires and marks
   // what was downstream stale; everything else is xyflow's own bookkeeping.
@@ -223,6 +240,15 @@ function FlowEditor({
     if (toolIds) updateNodeInternals(toolIds.split(","));
   }, [connection, toolIds, updateNodeInternals]);
 
+  // A tool block from a template (or an older file) takes the tool's
+  // defaults for the settings it does not set, once the tool is there.
+  useEffect(() => {
+    if (!toolIds || !connection) return;
+    flowApi
+      .getState()
+      .completeTools((name) => connection.listing.tools.find((t) => t.name === name) ?? null);
+  }, [flowApi, connection, toolIds]);
+
   // Every Flow wire carries a structure: drawn as the viewer draws particle data.
   const styledEdges = useMemo(() => styleEdges(edges, () => STRUCTURE_COLOR), [edges]);
   const edgeActions = useMemo(
@@ -242,7 +268,14 @@ function FlowEditor({
       onWidthChange={onWidthChange}
       bottom={bottom}
       testId="builder-flow-panel"
-      rail={<FlowRail addItems={addItems} onAutoLayout={handleAutoLayout} {...actions} />}
+      rail={
+        <FlowRail
+          addItems={addItems}
+          onApplyTemplate={handleApplyTemplate}
+          onAutoLayout={handleAutoLayout}
+          {...actions}
+        />
+      }
     >
       <GraphCanvas<FlowNode>
         testId="builder-flow-graph"

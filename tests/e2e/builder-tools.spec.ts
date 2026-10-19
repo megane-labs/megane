@@ -295,6 +295,85 @@ test.describe("builder-tools: webapp", () => {
     expect((await builderState(page)).fileName).toBe("water");
   });
 
+  test("Flow template: molecules on a slab builds in the browser, without a tool server", async ({
+    page,
+  }) => {
+    await page.goto("/builder.html?test=1");
+    await page.getByTestId("builder-mode-flow").click();
+    await page.getByTestId("builder-flow-templates").click();
+    await page.getByTestId("builder-flow-template-slab-adsorbates").click();
+    const node = (id: string) => page.locator(`.react-flow__node[data-id="${id}"]`);
+    await expect(page.locator(".react-flow__node")).toHaveCount(4);
+    await expect(page.locator(".react-flow__edge")).toHaveCount(3);
+    await expect(node("n2").getByTestId("builder-flow-node-slab")).toContainText("(1 1 1)");
+
+    await page.getByTestId("builder-flow-run").click();
+    await expect(node("n4").getByTestId("builder-flow-node-adsorb")).toHaveAttribute(
+      "data-status",
+      "done",
+      { timeout: 30_000 },
+    );
+    // Pt(111): 4 layers of a 2 × 2 surface cell (4 atoms each), then 3 × 3 waters.
+    await expect(node("n2").getByTestId("builder-flow-node-summary")).toContainText("64 atoms");
+    await expect(node("n4").getByTestId("builder-flow-node-summary")).toContainText("91 atoms");
+
+    // A setting changed on the slab re-runs only the slab and what follows it.
+    await node("n2").click();
+    await page.getByTestId("builder-flow-slab-layers").fill("2");
+    await expect(node("n4").getByTestId("builder-flow-node-adsorb")).toHaveAttribute(
+      "data-status",
+      "stale",
+    );
+    await page.getByTestId("builder-flow-run").click();
+    await expect(node("n4").getByTestId("builder-flow-node-summary")).toContainText("59 atoms");
+
+    await node("n4").click();
+    await page.getByTestId("builder-flow-open-manual").click();
+    await expect(page.getByTestId("megane-builder")).toHaveAttribute("data-atom-count", "59");
+  });
+
+  test("Flow template: a polymer melt embeds the chain with RDKit and packs it on the server", async ({
+    page,
+  }) => {
+    const calls: { name: string; args: Record<string, unknown> }[] = [];
+    await fakeToolServer(page, calls);
+    await page.goto(`/builder.html?test=1#tools=${encodeURIComponent(SERVER)}&token=${TOKEN}`);
+    await page.getByTestId("builder-tools").click();
+    await expect(page.getByTestId("builder-tools-server-name")).toHaveText("megane-builder-tools");
+    await page.getByTestId("builder-tools").click();
+
+    await page.getByTestId("builder-mode-flow").click();
+    await page.getByTestId("builder-flow-templates").click();
+    await page.getByTestId("builder-flow-template-polymer-melt").click();
+    const node = (id: string) => page.locator(`.react-flow__node[data-id="${id}"]`);
+    await expect(node("n1").getByTestId("builder-flow-node-polymer")).toContainText("PE × 20");
+
+    // The template's box keeps its own density and seed and takes the tool's other defaults.
+    await node("n2").click();
+    await expect(page.getByTestId("builder-flow-row-field-n1-count")).toHaveValue("10");
+    await expect(page.getByTestId("builder-flow-field-seed")).toHaveValue("2026");
+
+    await page.getByTestId("builder-flow-run").click();
+    await expect(node("n2").getByTestId("builder-flow-node-tool")).toHaveAttribute(
+      "data-status",
+      "done",
+      { timeout: 120_000 },
+    );
+    expect(calls.map((c) => c.name)).toEqual(["liquid_box"]);
+    const args = calls[0].args as {
+      seed: number;
+      density: number;
+      components: { count: number; molecule: { name: string; molblock: string } }[];
+    };
+    expect(args.seed).toBe(2026);
+    expect(args.density).toBe(0.85);
+    expect(args.components[0].count).toBe(10);
+    expect(args.components[0].molecule.name).toBe("PE");
+    // C40H82: 40 carbons and 82 hydrogens in the mol block's counts line.
+    expect(args.components[0].molecule.molblock.split("\n")[3].slice(0, 3).trim()).toBe("122");
+    await expect(node("n1").getByTestId("builder-flow-node-summary")).toContainText("122 atoms");
+  });
+
   test("a wrong token is reported and nothing connects", async ({ page }) => {
     await fakeToolServer(page, []);
     await page.goto("/builder.html?test=1");

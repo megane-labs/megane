@@ -23,6 +23,7 @@ import type { LibraryMolecule } from "../library/types";
 import { formulaOf, geometryFromSnapshot } from "../library/fragment";
 import type { BuilderToolInfo, FieldSpec } from "../tools/contract";
 import { initialValues, type FormContext, type FormValues } from "../tools/form";
+import { BUILTIN_PORTS, isBuiltin } from "./builtins";
 import type { FlowData, FlowParams, ToolParams } from "./types";
 
 export interface FlowPort {
@@ -168,14 +169,30 @@ export function initialToolParams(tool: BuilderToolInfo): ToolParams {
 }
 
 /**
- * The inputs a block shows. A tool block whose server is not connected keeps
- * the inputs its wires use, so the wires stay drawn until the server is back.
+ * A tool block's params with every form field the tool has and the block
+ * lacks set to its default (a template's block, or one saved before the tool
+ * grew a field), or the same object when nothing is missing.
+ */
+export function completeToolParams(params: ToolParams, tool: BuilderToolInfo): ToolParams {
+  const defaults = initialToolParams(tool).values;
+  const missing = Object.keys(defaults).filter((k) => !(k in params.values));
+  if (missing.length === 0) return params;
+  const values = { ...params.values };
+  for (const k of missing) values[k] = defaults[k];
+  return { ...params, values };
+}
+
+/**
+ * The inputs a block shows. A built-in block's are fixed. A tool block whose
+ * server is not connected keeps the inputs its wires use, so the wires stay
+ * drawn until the server is back.
  */
 export function blockPorts(
   params: FlowParams,
   tool: BuilderToolInfo | null,
   wiredHandles: string[],
 ): FlowPort[] {
+  if (isBuiltin(params)) return BUILTIN_PORTS[params.type];
   if (params.type !== "tool") return [];
   if (tool) return toolPorts(tool).ports;
   return [...new Set(wiredHandles)].map((key) => ({

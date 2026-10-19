@@ -3,8 +3,9 @@
  *
  * Manual mode edits one document by clicking in the 3D view. Flow mode
  * describes how a model is *made* instead: a molecule from a SMILES string
- * or the library, a tool-server call (packmol's liquid box, a polymer
- * chain, solvation) fed by those molecules, and so on, as a graph whose
+ * or the library, a bulk crystal cut into a slab with molecules laid on it,
+ * a polymer chain (the built-in blocks, run in the browser), a tool-server
+ * call (packmol's liquid box, solvation) fed by those, and so on, as a graph whose
  * wires carry structures. Running the graph evaluates each block once its
  * inputs are ready and makes the output block's result the Manual document,
  * so both modes work on one structure (`shared.ts`); the 3D view shows the
@@ -18,12 +19,25 @@
  * block's parameters and inputs (`engine.ts`).
  */
 
+import type { BulkStructure } from "../../crystal/bulk";
 import type { Snapshot } from "../../types";
 import type { FormValues } from "../tools/form";
 
 export type FlowMode = "manual" | "flow";
 
-export type FlowNodeType = "molecule" | "document" | "tool";
+/** Every block type, in the order the Add menu lists them. */
+export const FLOW_NODE_TYPES = [
+  "molecule",
+  "document",
+  "crystal",
+  "polymer",
+  "supercell",
+  "slab",
+  "adsorb",
+  "tool",
+] as const;
+
+export type FlowNodeType = (typeof FLOW_NODE_TYPES)[number];
 
 /** A molecule from a SMILES string (embedded in 3D by RDKit) or from the Builder library. */
 export interface MoleculeParams {
@@ -57,7 +71,67 @@ export interface ToolParams {
   rows: Record<string, Record<string, FormValues>>;
 }
 
-export type FlowParams = MoleculeParams | DocumentParams | ToolParams;
+/** A bulk crystal from a prototype structure (`crystal/bulk.ts`), built in the browser. */
+export interface CrystalParams {
+  type: "crystal";
+  structure: BulkStructure;
+  /** Element symbols of the A, B and X species; only the prototype's species are read. */
+  elements: string[];
+  /** Lattice constant a, Å. */
+  a: number;
+  /** c/a of a hexagonal prototype. */
+  covera: number;
+  /** Conventional cubic cell instead of the primitive one, where it exists. */
+  cubic: boolean;
+}
+
+/** A linear homopolymer: a repeat unit's SMILES with two `*` ends, repeated and embedded by RDKit. */
+export interface PolymerParams {
+  type: "polymer";
+  /** Repeat unit, e.g. `*CC(c1ccccc1)*`: the first `*` is the head, the last the tail. */
+  repeatUnit: string;
+  /** Number of repeat units. */
+  length: number;
+  /** Name of the chain (residue name of the copies a tool makes); blank uses the repeat unit. */
+  name: string;
+}
+
+/** The input structure repeated along its cell vectors. */
+export interface SupercellParams {
+  type: "supercell";
+  repeat: [number, number, number];
+}
+
+/** A Miller-index slab cut from the input bulk crystal, repeated in plane. */
+export interface SlabParams {
+  type: "slab";
+  miller: [number, number, number];
+  /** Repeats of the surface unit cell along the normal. */
+  layers: number;
+  /** Vacuum on each side along the normal, Å; 0 keeps the slab periodic. */
+  vacuum: number;
+  /** Repeats of the surface cell along a and b. */
+  repeat: [number, number];
+}
+
+/** Copies of a molecule laid on a grid above a surface. */
+export interface AdsorbParams {
+  type: "adsorb";
+  /** Gap between the surface's top atom and each molecule's lowest atom, Å. */
+  height: number;
+  /** Copies along the surface cell's a and b vectors. */
+  grid: [number, number];
+}
+
+export type FlowParams =
+  | MoleculeParams
+  | DocumentParams
+  | ToolParams
+  | CrystalParams
+  | PolymerParams
+  | SupercellParams
+  | SlabParams
+  | AdsorbParams;
 
 /** What a wire carries: one structure, with a name and optional residue labels. */
 export interface FlowData {

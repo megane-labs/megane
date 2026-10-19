@@ -24,8 +24,11 @@ import type { Connection, Edge, Node } from "@xyflow/react";
 import { create, type StateCreator, type StoreApi } from "zustand";
 import { createStore } from "zustand/vanilla";
 import { registerTestStores, GLOBAL_BUNDLE_ID } from "../../stores/testRegistry";
+import type { BuilderToolInfo } from "../tools/contract";
 import { downstream, nodeKey, runFlow, topoOrder, wouldCycle, type FlowDeps } from "./engine";
+import { completeToolParams } from "./ports";
 import {
+  FLOW_NODE_TYPES,
   IDLE_RUN,
   OUTPUT_HANDLE,
   type FlowData,
@@ -73,6 +76,12 @@ export interface FlowStore {
   connect: (connection: Connection, multiple: boolean) => boolean;
   /** Add a block; returns its id. Without a position it goes under the others. */
   addNode: (params: FlowParams, position?: { x: number; y: number }) => string;
+  /**
+   * Give every tool block the default of each form field it lacks, from the
+   * tool `toolOf` finds (a template's blocks fill in once the server is
+   * connected). Changes no result: a block missing a field never ran.
+   */
+  completeTools: (toolOf: (name: string) => BuilderToolInfo | null) => void;
   /** Merge `patch` into a block's params. */
   updateParams: (id: string, patch: Partial<FlowParams>) => void;
   removeNode: (id: string) => void;
@@ -150,10 +159,7 @@ export function parseSerializedFlow(raw: unknown): SerializedFlow {
   const ids = new Set<string>();
   for (const n of flow.nodes) {
     const type = (n?.params as { type?: unknown } | undefined)?.type;
-    if (
-      typeof n?.id !== "string" ||
-      (type !== "molecule" && type !== "document" && type !== "tool")
-    ) {
+    if (typeof n?.id !== "string" || !(FLOW_NODE_TYPES as readonly unknown[]).includes(type)) {
       throw new Error("A block in the file is not one Flow mode knows.");
     }
     ids.add(n.id);
@@ -244,6 +250,21 @@ export const flowStateCreator: StateCreator<FlowStore> = (set, get) => ({
       nodes: [...s.nodes.map((n) => (n.selected ? { ...n, selected: false } : n)), node],
     });
     return id;
+  },
+
+  completeTools: (toolOf) => {
+    const s = get();
+    let changed = false;
+    const nodes = s.nodes.map((n) => {
+      const params = n.data.params;
+      if (params.type !== "tool") return n;
+      const tool = toolOf(params.tool);
+      const complete = tool ? completeToolParams(params, tool) : params;
+      if (complete === params) return n;
+      changed = true;
+      return { ...n, data: { ...n.data, params: complete } };
+    });
+    if (changed) set({ nodes });
   },
 
   updateParams: (id, patch) => {

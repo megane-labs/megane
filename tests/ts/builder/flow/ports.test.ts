@@ -4,6 +4,7 @@ import { describe, it, expect } from "vitest";
 import {
   asLibraryMolecule,
   blockPorts,
+  completeToolParams,
   initialToolParams,
   rowFields,
   toolForm,
@@ -142,5 +143,28 @@ describe("asLibraryMolecule / initialToolParams / blockPorts", () => {
     expect(blockPorts(params, null, ["components", "components"])).toEqual([
       expect.objectContaining({ key: "components", multiple: true }),
     ]);
+  });
+});
+
+describe("built-in ports and tool defaults", () => {
+  it("gives a built-in block its fixed inputs", () => {
+    expect(
+      blockPorts({ type: "adsorb", height: 2, grid: [1, 1] }, null, ["nope"]).map((p) => p.key),
+    ).toEqual(["surface", "molecule"]);
+    expect(blockPorts({ type: "document" }, null, ["x"])).toEqual([]);
+  });
+
+  it("fills only the settings a tool block lacks", () => {
+    const sparse = {
+      type: "tool" as const,
+      tool: "liquid_box",
+      label: "",
+      values: { density: 0.8 },
+      rows: {},
+    };
+    const filled = completeToolParams(sparse, tools.liquid_box);
+    expect(filled.values).toMatchObject({ density: 0.8, shape: "cubic", tolerance: 2 });
+    expect(typeof filled.values.seed).toBe("number");
+    expect(completeToolParams(filled, tools.liquid_box)).toBe(filled);
   });
 });
