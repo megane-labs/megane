@@ -4,6 +4,7 @@
  * (`components/graph/PanelRail`). Top to bottom:
  *
  *   Add, Templates, Layout — build the graph
+ *   Undo, Redo    — step through the graph's changes
  *   Run / Stop    — build every block (or stop the run)
  *   File          — open / save the flow as JSON, clear it
  *   Theme         — at the foot, as in the viewer
@@ -58,6 +59,20 @@ const IconFile = (
 const IconRun = (
   <RailIcon>
     <path d="M7 4.5v15l12-7.5z" />
+  </RailIcon>
+);
+
+const IconUndo = (
+  <RailIcon>
+    <path d="M9 14 4 9l5-5" />
+    <path d="M4 9h10.5a5.5 5.5 0 0 1 0 11H11" />
+  </RailIcon>
+);
+
+const IconRedo = (
+  <RailIcon>
+    <path d="m15 14 5-5-5-5" />
+    <path d="M20 9H9.5a5.5 5.5 0 0 0 0 11H13" />
   </RailIcon>
 );
 
@@ -154,9 +169,16 @@ function TemplateLabel({ label, description }: { label: string; description: str
   );
 }
 
-/** The Templates menu: each ready-made flow, saying when it needs a tool server. */
-export function templateMenuItems(apply: (templateId: string) => void): MenuItem[] {
-  return FLOW_TEMPLATES.map((t) => ({
+/**
+ * The Templates menu: each ready-made flow, saying when it needs a tool
+ * server. On a host without tool servers (`hasTools` false) the ones that
+ * need one are left out: they could never run there.
+ */
+export function templateMenuItems(
+  apply: (templateId: string) => void,
+  hasTools = true,
+): MenuItem[] {
+  return FLOW_TEMPLATES.filter((t) => hasTools || t.tools.length === 0).map((t) => ({
     label: (
       <TemplateLabel
         label={t.label}
@@ -204,15 +226,34 @@ export interface FlowActions {
   onClear: () => void;
   hasBlocks: boolean;
   running: boolean;
+  /** Stop was pressed and the run is ending. */
+  stopping?: boolean;
   onRun: () => void;
   onStop: () => void;
 }
 
-export interface FlowRailProps extends FlowActions {
+/** Undo and Redo of the graph's changes. */
+export interface FlowHistoryActions {
+  canUndo: boolean;
+  canRedo: boolean;
+  onUndo: () => void;
+  onRedo: () => void;
+}
+
+export interface FlowRailProps extends FlowActions, Partial<FlowHistoryActions> {
   addItems: MenuItem[];
   /** Replace the flow with a template. */
   onApplyTemplate: (templateId: string) => void;
   onAutoLayout: () => void;
+  /** The host reaches tool servers: templates that need one are listed. Default true. */
+  hasTools?: boolean;
+}
+
+/** "⌘" on a Mac, "Ctrl" elsewhere, for the shortcuts in tooltips. */
+function modKey(): string {
+  return typeof navigator !== "undefined" && /Mac|iPhone|iPad/.test(navigator.platform)
+    ? "⌘"
+    : "Ctrl";
 }
 
 export function FlowRail({
@@ -224,9 +265,16 @@ export function FlowRail({
   onClear,
   hasBlocks,
   running,
+  stopping = false,
   onRun,
   onStop,
+  hasTools = true,
+  canUndo = false,
+  canRedo = false,
+  onUndo,
+  onRedo,
 }: FlowRailProps) {
+  const mod = modKey();
   const inputRef = useRef<HTMLInputElement>(null);
   const fileItems = flowFileMenuItems({
     open: () => inputRef.current?.click(),
@@ -260,31 +308,57 @@ export function FlowRail({
         label="Templates"
         title="Templates: replace the flow with a ready-made one"
         icon={IconTemplates}
-        items={templateMenuItems(onApplyTemplate)}
+        items={templateMenuItems(onApplyTemplate, hasTools)}
       />
       <RailButton
         testId="builder-flow-layout"
         label="Auto Layout"
-        title="Auto Layout"
+        title="Auto Layout: arrange the blocks in rows, each below the blocks it takes inputs from"
         icon={IconLayout}
         onClick={onAutoLayout}
         disabled={!hasBlocks}
       />
+      {onUndo && onRedo && (
+        <>
+          <RailDivider />
+          <RailButton
+            testId="builder-flow-undo"
+            label="Undo"
+            title={`Undo the last change to the flow (${mod}+Z)`}
+            icon={IconUndo}
+            onClick={onUndo}
+            disabled={!canUndo || running}
+          />
+          <RailButton
+            testId="builder-flow-redo"
+            label="Redo"
+            title={`Redo (${mod}+Shift+Z)`}
+            icon={IconRedo}
+            onClick={onRedo}
+            disabled={!canRedo || running}
+          />
+        </>
+      )}
       <RailDivider />
       {running ? (
         <RailButton
           testId="builder-flow-stop"
-          label="Stop"
-          title="Stop the run (a tool call in progress is abandoned)"
+          label={stopping ? "Stopping…" : "Stop"}
+          title={
+            stopping
+              ? "Stopping…: waiting for the block in progress to let go"
+              : "Stop the run (a tool call or an RDKit embedding in progress is abandoned)"
+          }
           icon={IconStop}
           onClick={onStop}
+          disabled={stopping}
           active
         />
       ) : (
         <RailButton
           testId="builder-flow-run"
           label="Run"
-          title="Run: build every block whose settings or inputs changed"
+          title="Run: build every block whose settings or inputs changed, then make the output block's result the Manual structure (it replaces the open structure and its undo history; unsaved edits are asked about first)"
           icon={IconRun}
           onClick={onRun}
           disabled={!hasBlocks}
@@ -293,7 +367,7 @@ export function FlowRail({
       <RailDivider />
       <RailMenu
         testId="builder-flow-file"
-        label="Flow"
+        label="File"
         title="File: open, save or clear the flow"
         icon={IconFile}
         items={fileItems}

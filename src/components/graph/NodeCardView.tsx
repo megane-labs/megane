@@ -47,6 +47,10 @@ export interface CardStatus {
   /** Tooltip: the messages behind the dot. */
   title: string;
   testId: string;
+  /** Drawn as a ring instead of a filled dot (e.g. an out-of-date result). */
+  hollow?: boolean;
+  /** What the dot means, for screen readers; without it the dot is decorative. */
+  ariaLabel?: string;
 }
 
 export interface NodeCardViewProps {
@@ -248,13 +252,19 @@ export function NodeCardView({
           <span
             data-testid={status.testId}
             title={status.title}
+            {...(status.ariaLabel ? { role: "img", "aria-label": status.ariaLabel } : {})}
             style={{
               width: 8,
               height: 8,
               flexShrink: 0,
+              boxSizing: "border-box",
               borderRadius: "50%",
-              background: status.color,
-              boxShadow: `0 0 0 3px color-mix(in srgb, ${status.color} 20%, transparent)`,
+              ...(status.hollow
+                ? { background: "transparent", border: `2px solid ${status.color}` }
+                : {
+                    background: status.color,
+                    boxShadow: `0 0 0 3px color-mix(in srgb, ${status.color} 20%, transparent)`,
+                  }),
             }}
           />
         )}

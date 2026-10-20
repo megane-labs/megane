@@ -15,6 +15,7 @@ import { shownSnapshot, UNTITLED, type BuilderStore } from "../store";
 import type { ToolsStore } from "../tools/store";
 import { useBuilderStoreApi, useToolsStoreApi } from "../BuilderStores";
 import type { FlowDeps } from "./engine";
+import type { FlowDocument } from "./store";
 
 export interface FlowDepsSources {
   builder: StoreApi<BuilderStore>;
@@ -44,6 +45,21 @@ function snapshotKey(snapshot: Snapshot): string {
   return `doc-${id}`;
 }
 
+/**
+ * The Manual document of `builder` as a *Manual structure* block reads it,
+ * with a key that changes whenever the shown structure does; null when none
+ * is open.
+ */
+export function documentOf(builder: StoreApi<BuilderStore>): FlowDocument | null {
+  const s = builder.getState();
+  const snapshot = shownSnapshot(s);
+  if (!snapshot) return null;
+  return {
+    data: { name: s.fileName ?? UNTITLED, snapshot, labels: s.sourceLabels },
+    key: snapshotKey(snapshot),
+  };
+}
+
 export function createFlowDeps({
   builder,
   tools,
@@ -53,15 +69,7 @@ export function createFlowDeps({
   return {
     embedSmiles,
     library: () => allMolecules(library.getState()),
-    document: () => {
-      const s = builder.getState();
-      const snapshot = shownSnapshot(s);
-      if (!snapshot) return null;
-      return {
-        data: { name: s.fileName ?? UNTITLED, snapshot, labels: s.sourceLabels },
-        key: snapshotKey(snapshot),
-      };
-    },
+    document: () => documentOf(builder),
     tool: (name) => tools.getState().connection?.listing.tools.find((t) => t.name === name) ?? null,
     call: async (tool, args, options) => {
       const connection = tools.getState().connection;

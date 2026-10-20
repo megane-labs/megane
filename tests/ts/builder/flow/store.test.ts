@@ -2,6 +2,7 @@
 
 import { describe, it, expect } from "vitest";
 import {
+  FLOW_HISTORY_LIMIT,
   createFlowStore,
   flowViewData,
   outputNodeId,
@@ -341,5 +342,156 @@ describe("parseSerializedFlow", () => {
       edges: [{ source: "a", target: "b", targetHandle: "bulk" }],
     });
     expect(flow.nodes).toHaveLength(5);
+  });
+});
+
+describe("flow history", () => {
+  const ids = (s: StoreApi<FlowStore>) => s.getState().nodes.map((n) => n.id);
+
+  it("undoes and redoes adding, wiring and removing blocks", () => {
+    const { s, a, box } = chain();
+    expect(s.getState().past).toHaveLength(3);
+    s.getState().removeNodes([a]);
+    expect(ids(s)).toEqual([box]);
+    s.getState().undo();
+    expect(ids(s)).toEqual([a, box]);
+    expect(s.getState().edges).toHaveLength(1);
+    s.getState().undo();
+    expect(s.getState().edges).toHaveLength(0);
+    s.getState().redo();
+    s.getState().redo();
+    expect(ids(s)).toEqual([box]);
+    // Nothing left to redo; a new change drops what Undo stepped back from.
+    s.getState().redo();
+    expect(ids(s)).toEqual([box]);
+    s.getState().undo();
+    s.getState().addNode(mol("C"));
+    expect(s.getState().future).toEqual([]);
+    for (let k = 0; k < 10; k++) s.getState().undo();
+    expect(ids(s)).toEqual([]);
+  });
+
+  it("undoes a wire's removal, a template or file, and Clear", () => {
+    const { s, a, box } = chain();
+    s.getState().removeEdges([s.getState().edges[0].id]);
+    s.getState().undo();
+    expect(s.getState().edges).toHaveLength(1);
+    const saved = s.getState().serialize();
+    s.getState().load({ version: 1, nodes: [], edges: [] }, { name: "t" });
+    expect(s.getState().fileName).toBe("t");
+    s.getState().undo();
+    expect(ids(s)).toEqual([a, box]);
+    s.getState().clear();
+    s.getState().undo();
+    expect(ids(s)).toEqual([a, box]);
+    // Restoring a kept flow is not an Undo step.
+    const before = s.getState().past.length;
+    s.getState().load(saved, { history: false });
+    expect(s.getState().past).toHaveLength(before);
+    // Clearing an empty flow is not one either.
+    const t = createFlowStore();
+    t.getState().clear();
+    expect(t.getState().past).toEqual([]);
+  });
+
+  it("makes typing in one field a single step, and another field a new one", () => {
+    const { s, a } = chain();
+    const steps = s.getState().past.length;
+    s.getState().updateParams(a, { smiles: "C" } as Partial<FlowParams>);
+    s.getState().updateParams(a, { smiles: "CC" } as Partial<FlowParams>);
+    s.getState().updateParams(a, { smiles: "CCO" } as Partial<FlowParams>);
+    expect(s.getState().past).toHaveLength(steps + 1);
+    s.getState().updateParams(a, { name: "x" } as Partial<FlowParams>);
+    expect(s.getState().past).toHaveLength(steps + 2);
+    s.getState().undo();
+    s.getState().undo();
+    expect((s.getState().nodes[0].data.params as { smiles: string }).smiles).toBe("O");
+    s.getState().checkpoint();
+    expect(s.getState().past).toHaveLength(steps + 1);
+  });
+
+  it("keeps results Undo does not touch and marks the rest stale", async () => {
+    const { s, a, box } = chain();
+    await s.getState().run(fakeDeps());
+    s.getState().updateParams(box, { values: { density: 0.5 } } as Partial<FlowParams>);
+    s.getState().undo();
+    expect(s.getState().runs[a].status).toBe("done");
+    expect(s.getState().runs[box].status).toBe("stale");
+    // Undoing the wire leaves the box's result stale; undoing the box drops it.
+    s.setState({ viewNodeId: box });
+    s.getState().undo();
+    expect(s.getState().edges).toEqual([]);
+    expect(s.getState().runs[box].status).toBe("stale");
+    s.getState().undo();
+    expect(ids(s)).toEqual([a]);
+    expect(s.getState().runs[box]).toBeUndefined();
+    expect(s.getState().runs[a].status).toBe("done");
+    expect(s.getState().viewNodeId).toBeNull();
+  });
+
+  it("keeps at most the history limit", () => {
+    const s = createFlowStore();
+    for (let k = 0; k < FLOW_HISTORY_LIMIT + 5; k++) s.getState().addNode(mol());
+    expect(s.getState().past).toHaveLength(FLOW_HISTORY_LIMIT);
+  });
+
+  it("leaves the graph alone while a run is in progress", () => {
+    const { s, a } = chain();
+    s.setState({ running: new AbortController() });
+    s.getState().removeNodes([a]);
+    s.getState().removeEdges([s.getState().edges[0].id]);
+    expect(s.getState().nodes).toHaveLength(2);
+    expect(s.getState().edges).toHaveLength(1);
+    const before = s.getState().nodes;
+    s.getState().undo();
+    expect(s.getState().nodes).toBe(before);
+    s.setState({ running: null });
+    s.getState().undo();
+    s.getState().redo();
+    s.setState({ running: new AbortController() });
+    s.getState().redo();
+    expect(s.getState().future).toHaveLength(0);
+  });
+});
+
+describe("the pinned document", () => {
+  it("reads the document the flow's result replaced, while that result is open", async () => {
+    const s = createFlowStore();
+    const doc = s.getState().addNode({ type: "document" });
+    const base = { data: waterData("before"), key: "doc-1" };
+    const adopted = { data: waterData("result"), key: "doc-2" };
+    expect(s.getState().readDocument(adopted)).toBe(adopted);
+    s.getState().setPinnedDocument({ adoptedDocKey: "doc-2", base });
+    expect(s.getState().readDocument(adopted)).toBe(base);
+    expect(s.getState().readDocument(null)).toBeNull();
+    const other = { data: waterData("edited"), key: "doc-3" };
+    expect(s.getState().readDocument(other)).toBe(other);
+
+    // A run reads through the pin, and so does the staleness check.
+    let current = adopted;
+    const outcome = await s.getState().run(fakeDeps({ document: () => current }));
+    expect(outcome).toBe("finished");
+    expect(s.getState().runs[doc].data!.name).toBe("before");
+    s.getState().documentChanged("doc-2");
+    expect(s.getState().runs[doc].status).toBe("done");
+    current = other;
+    s.getState().documentChanged("doc-3");
+    expect(s.getState().runs[doc].status).toBe("stale");
+
+    // A new flow forgets it.
+    s.getState().load(s.getState().serialize());
+    expect(s.getState().pinnedDocument).toBeNull();
+  });
+
+  it("says a run that could not start was busy", async () => {
+    const s = createFlowStore();
+    s.setState({ running: new AbortController() });
+    expect(await s.getState().run(fakeDeps())).toBe("busy");
+    s.getState().cancel();
+    expect(s.getState().stopping).toBe(true);
+    s.getState().clear();
+    expect(s.getState().stopping).toBe(false);
+    s.getState().cancel();
+    expect(s.getState().stopping).toBe(false);
   });
 });

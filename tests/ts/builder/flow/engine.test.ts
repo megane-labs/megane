@@ -8,6 +8,7 @@ import { describe, it, expect, vi } from "vitest";
 import {
   downstream,
   incoming,
+  inputProblem,
   libraryMoleculeSnapshot,
   nodeKey,
   runBlock,
@@ -18,7 +19,7 @@ import {
   type FlowGraph,
 } from "@/builder/flow/engine";
 import { initialToolParams } from "@/builder/flow/ports";
-import type { FlowParams, NodeRun } from "@/builder/flow/types";
+import { IDLE_RUN, type FlowParams, type NodeRun } from "@/builder/flow/types";
 import { LIB_WATER, fakeDeps, recorded, tools, water, waterData } from "./helpers";
 
 const smiles = (s: string, name = ""): FlowParams => ({
@@ -389,7 +390,11 @@ describe("runFlow", () => {
     const deps = fakeDeps({ embedSmiles: async () => Promise.reject(new Error("bad SMILES")) });
     const { runs } = await run(chain(), deps);
     expect(runs.mol).toMatchObject({ status: "error", error: "bad SMILES" });
-    expect(runs.box).toMatchObject({ status: "error", error: expect.stringContaining("input") });
+    // The error names the input block and passes on its own.
+    expect(runs.box).toMatchObject({
+      status: "error",
+      error: "Input “Molecule: water” failed: bad SMILES",
+    });
     expect(deps.call).not.toHaveBeenCalled();
   });
 
@@ -477,5 +482,52 @@ describe("runFlow", () => {
     const runs2 = await runFlow(chain(), deps2, {}, { signal: c2.signal, onUpdate: () => {} });
     expect(runs2.mol.status).toBe("idle");
     expect(runs2.box).toBeUndefined();
+  });
+});
+
+describe("Stop while RDKit embeds", () => {
+  it("ends the run at once, keeping the block's previous state", async () => {
+    const controller = new AbortController();
+    const deps = fakeDeps({ embedSmiles: () => new Promise(() => {}) });
+    const g = graph([["m", smiles("CCO")]]);
+    const pending = runFlow(g, deps, {}, { signal: controller.signal, onUpdate: () => {} });
+    await new Promise((r) => setTimeout(r, 0));
+    controller.abort();
+    const runs = await pending;
+    expect(runs.m.status).toBe("idle");
+  });
+
+  it("stamps when a block started running", async () => {
+    const seen: (number | undefined)[] = [];
+    await runFlow(
+      graph([["m", smiles("O")]]),
+      fakeDeps(),
+      {},
+      {
+        signal: new AbortController().signal,
+        onUpdate: (_id, r) => {
+          if (r.status === "running") seen.push(r.startedAt);
+        },
+      },
+    );
+    expect(typeof seen[0]).toBe("number");
+  });
+});
+
+describe("inputProblem", () => {
+  it("names the input block, its tool, and its error", () => {
+    const g = graph([
+      ["t", liquidBox({})],
+      ["gone", smiles("O")],
+    ]);
+    expect(inputProblem(g, fakeDeps(), "t", { ...IDLE_RUN, status: "error", error: "x" })).toBe(
+      "Input “Liquid box” failed: x",
+    );
+    expect(inputProblem(g, fakeDeps(), "gone", undefined)).toBe(
+      "Input “Molecule: O” did not produce a structure.",
+    );
+    expect(inputProblem(g, fakeDeps(), "missing", undefined)).toBe(
+      "Input “missing” did not produce a structure.",
+    );
   });
 });

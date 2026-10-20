@@ -8,9 +8,13 @@
  *
  * Loaded on demand (`React.lazy` in `BuilderApp`), so a Builder that never
  * leaves Manual mode does not load the graph editor.
+ *
+ * The Builder's own shortcuts are off in Flow mode, so the panel has its own
+ * Undo and Redo keys (`useFlowUndoKeys`), live while the focus — or the last
+ * click — is in the panel and not in a text field.
  */
 
-import { useCallback, useEffect, useMemo, useRef } from "react";
+import { useCallback, useEffect, useMemo, useRef, type RefObject } from "react";
 import {
   ReactFlowProvider,
   applyEdgeChanges,
@@ -33,7 +37,13 @@ import { NODE_CARD_WIDTH } from "../../components/graph/NodeCardView";
 import { getLayoutedElements } from "../../pipeline/layout";
 import { allMolecules, useLibraryStore } from "../library/store";
 import type { BuilderToolInfo } from "../tools/contract";
-import { useFlowStoreApi, useScopedFlowStore, useScopedToolsStore } from "../BuilderStores";
+import {
+  useBuilderStoreApi,
+  useFlowStoreApi,
+  useScopedFlowStore,
+  useScopedToolsStore,
+} from "../BuilderStores";
+import { isTypingTarget } from "../shortcuts";
 import { defaultBuiltinParams } from "./builtins";
 import { STRUCTURE_COLOR, blockColor } from "./describe";
 import { wouldCycle, type FlowDeps } from "./engine";
@@ -41,6 +51,7 @@ import { flowNodeTypes } from "./FlowNodeCard";
 import { FlowProperties } from "./FlowProperties";
 import { FlowRail, addMenuItems, type FlowActions } from "./FlowRail";
 import { blockPorts, initialToolParams } from "./ports";
+import { confirmReplaceFlow } from "./shared";
 import type { FlowNode } from "./store";
 import { FLOW_TEMPLATES } from "./templates";
 import type { FlowParams } from "./types";
@@ -75,6 +86,44 @@ function freePosition(pos: { x: number; y: number }, nodes: FlowNode[]) {
   return out;
 }
 
+/**
+ * Ctrl/⌘+Z undoes the last change to the graph, Ctrl/⌘+Shift+Z and Ctrl+Y
+ * redo it, while the focus is inside `rootRef` (or on the page itself after
+ * a click in it, as a click on the graph's background leaves it) and not in
+ * a text field, whose own undo the keys keep.
+ */
+export function useFlowUndoKeys(
+  rootRef: RefObject<HTMLElement | null>,
+  undo: () => void,
+  redo: () => void,
+): void {
+  useEffect(() => {
+    let clickedInside = false;
+    const onPointerDown = (e: PointerEvent) => {
+      clickedInside = !!rootRef.current?.contains(e.target as Node | null);
+    };
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (!(e.ctrlKey || e.metaKey) || e.altKey) return;
+      const root = rootRef.current;
+      const target = e.target as Node | null;
+      if (!root || isTypingTarget(target)) return;
+      const onPage = !target || target === document.body || target === document.documentElement;
+      if (!root.contains(target) && !(onPage && clickedInside)) return;
+      const key = e.key.toLowerCase();
+      const action = key === "z" ? (e.shiftKey ? redo : undo) : key === "y" ? redo : null;
+      if (!action) return;
+      e.preventDefault();
+      action();
+    };
+    window.addEventListener("pointerdown", onPointerDown, true);
+    window.addEventListener("keydown", onKeyDown);
+    return () => {
+      window.removeEventListener("pointerdown", onPointerDown, true);
+      window.removeEventListener("keydown", onKeyDown);
+    };
+  }, [rootRef, undo, redo]);
+}
+
 function FlowEditor({
   deps,
   actions,
@@ -88,6 +137,7 @@ function FlowEditor({
   bottom,
 }: FlowPanelProps) {
   const flowApi = useFlowStoreApi();
+  const builderApi = useBuilderStoreApi();
   const nodes = useScopedFlowStore((s) => s.nodes);
   const edges = useScopedFlowStore((s) => s.edges);
   const setNodes = useScopedFlowStore((s) => s.setNodes);
@@ -95,6 +145,10 @@ function FlowEditor({
   const removeNodes = useScopedFlowStore((s) => s.removeNodes);
   const removeEdges = useScopedFlowStore((s) => s.removeEdges);
   const connect = useScopedFlowStore((s) => s.connect);
+  const undo = useScopedFlowStore((s) => s.undo);
+  const redo = useScopedFlowStore((s) => s.redo);
+  const canUndo = useScopedFlowStore((s) => s.past.length > 0);
+  const canRedo = useScopedFlowStore((s) => s.future.length > 0);
   const toolsStatus = useScopedToolsStore((s) => s.status);
   const connection = useScopedToolsStore((s) => s.connection);
   const toolServers = useScopedToolsStore((s) => s.servers);
@@ -103,7 +157,9 @@ function FlowEditor({
   const user = useLibraryStore((s) => s.user);
   const { screenToFlowPosition, fitView } = useReactFlow();
   const containerRef = useRef<HTMLDivElement | null>(null);
+  const rootRef = useRef<HTMLDivElement | null>(null);
   const [paneFraction, handleSplitMouseDown] = useSplitFraction();
+  useFlowUndoKeys(rootRef, undo, redo);
 
   // A new block lands in the middle of the graph's view, selected, so its
   // settings open in the pane right away (as the viewer's Add Node does).
@@ -152,6 +208,7 @@ function FlowEditor({
   });
 
   const handleAutoLayout = useCallback(() => {
+    flowApi.getState().checkpoint();
     const { nodes: laidOut } = getLayoutedElements(
       flowApi.getState().nodes,
       flowApi.getState().edges,
@@ -162,22 +219,32 @@ function FlowEditor({
     });
   }, [flowApi, setNodes, fitView]);
 
-  // A template replaces the flow, then the view fits the new blocks.
+  // A template replaces the flow (asking first when it has blocks), then the
+  // view fits the new blocks.
   const handleApplyTemplate = useCallback(
-    (templateId: string) => {
+    async (templateId: string) => {
       const template = FLOW_TEMPLATES.find((t) => t.id === templateId);
       if (!template) return;
-      flowApi.getState().load(template.create());
+      const ok = await confirmReplaceFlow(
+        builderApi,
+        flowApi,
+        `The template “${template.label}”`,
+        "Use template",
+      );
+      if (!ok) return;
+      flowApi.getState().load(template.create(), { name: template.id });
       onCloseServer();
       window.requestAnimationFrame(() => {
         void fitView({ ...FIT_VIEW_OPTIONS, duration: 300 });
       });
     },
-    [flowApi, fitView, onCloseServer],
+    [flowApi, builderApi, fitView, onCloseServer],
   );
 
   // Deletions go through the store, which also drops the wires and marks
-  // what was downstream stale; everything else is xyflow's own bookkeeping.
+  // what was downstream stale (and refuses while a run is in progress, as
+  // the pane's remove button does); everything else is xyflow's own
+  // bookkeeping.
   const onNodesChange = useCallback(
     (changes: NodeChange<FlowNode>[]) => {
       removeNodes(changes.flatMap((c) => (c.type === "remove" ? [c.id] : [])));
@@ -260,44 +327,54 @@ function FlowEditor({
   );
 
   return (
-    <GraphEditorPanel
-      title="Flow"
-      subtitle={`${nodes.length} block${nodes.length === 1 ? "" : "s"}`}
-      collapsed={collapsed}
-      onToggleCollapse={onToggleCollapse}
-      onWidthChange={onWidthChange}
-      bottom={bottom}
-      testId="builder-flow-panel"
-      rail={
-        <FlowRail
-          addItems={addItems}
-          onApplyTemplate={handleApplyTemplate}
-          onAutoLayout={handleAutoLayout}
-          {...actions}
+    // `display: contents`: a box for the Undo keys to find the focus in, not one that lays out.
+    <div ref={rootRef} data-testid="builder-flow-root" style={{ display: "contents" }}>
+      <GraphEditorPanel
+        title="Flow"
+        subtitle={`${nodes.length} block${nodes.length === 1 ? "" : "s"}`}
+        collapsed={collapsed}
+        onToggleCollapse={onToggleCollapse}
+        onWidthChange={onWidthChange}
+        bottom={bottom}
+        testId="builder-flow-panel"
+        rail={
+          <FlowRail
+            addItems={addItems}
+            onApplyTemplate={(id) => void handleApplyTemplate(id)}
+            onAutoLayout={handleAutoLayout}
+            hasTools={hasTools}
+            canUndo={canUndo}
+            canRedo={canRedo}
+            onUndo={undo}
+            onRedo={redo}
+            {...actions}
+          />
+        }
+      >
+        <GraphCanvas<FlowNode>
+          testId="builder-flow-graph"
+          containerRef={containerRef}
+          nodes={nodes}
+          edges={styledEdges}
+          onNodesChange={onNodesChange}
+          onEdgesChange={onEdgesChange}
+          onConnect={onConnect}
+          isValidConnection={isValidConnection}
+          nodeTypes={flowNodeTypes}
+          edgeActions={edgeActions}
+          miniMapNodeColor={(n) => blockColor(n.data.params)}
         />
-      }
-    >
-      <GraphCanvas<FlowNode>
-        testId="builder-flow-graph"
-        containerRef={containerRef}
-        nodes={nodes}
-        edges={styledEdges}
-        onNodesChange={onNodesChange}
-        onEdgesChange={onEdgesChange}
-        onConnect={onConnect}
-        isValidConnection={isValidConnection}
-        nodeTypes={flowNodeTypes}
-        edgeActions={edgeActions}
-        miniMapNodeColor={(n) => blockColor(n.data.params)}
-      />
-      <SplitSeparator onMouseDown={handleSplitMouseDown} />
-      <FlowProperties
-        deps={deps}
-        height={`${Math.round(paneFraction * 100)}%`}
-        serverOpen={serverOpen}
-        onCloseServer={onCloseServer}
-      />
-    </GraphEditorPanel>
+        <SplitSeparator onMouseDown={handleSplitMouseDown} />
+        <FlowProperties
+          deps={deps}
+          height={`${Math.round(paneFraction * 100)}%`}
+          serverOpen={serverOpen}
+          onCloseServer={onCloseServer}
+          hasTools={hasTools}
+          onOpenServer={onOpenServer}
+        />
+      </GraphEditorPanel>
+    </div>
   );
 }
 

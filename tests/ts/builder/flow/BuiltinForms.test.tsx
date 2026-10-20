@@ -4,7 +4,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen, fireEvent } from "@testing-library/react";
+import { render, screen, fireEvent, act } from "@testing-library/react";
 import { BuilderProvider, createBuilderStores, type BuilderStores } from "@/builder/BuilderStores";
 import { FlowProperties } from "@/builder/flow/FlowProperties";
 import { defaultBuiltinParams, type BuiltinType } from "@/builder/flow/builtins";
@@ -55,9 +55,22 @@ describe("CrystalForm", () => {
     change("builder-flow-crystal-a", "3.52");
     fireEvent.click(screen.getByTestId("builder-flow-crystal-cubic"));
     expect(params()).toMatchObject({ elements: ["Ni", "O", ""], a: 3.52, cubic: true });
+    // A box emptied to retype keeps the setting, and says it needs a number.
     change("builder-flow-crystal-a", "");
-    expect(Number.isNaN((params() as { a: number }).a)).toBe(true);
-    expect((screen.getByTestId("builder-flow-crystal-a") as HTMLInputElement).value).toBe("");
+    expect((params() as { a: number }).a).toBe(3.52);
+    const a = screen.getByTestId("builder-flow-crystal-a") as HTMLInputElement;
+    expect(a.value).toBe("");
+    expect(a.getAttribute("aria-invalid")).toBe("true");
+    expect(screen.getByTestId("builder-flow-builtin-problem").textContent).toBe(
+      "a (Å): enter a number.",
+    );
+    change("builder-flow-crystal-a", "0");
+    expect((params() as { a: number }).a).toBe(0);
+    expect(screen.getByTestId("builder-flow-builtin-problem").textContent).toContain(
+      "must be positive",
+    );
+    change("builder-flow-crystal-a", "3.6");
+    expect(screen.queryByTestId("builder-flow-builtin-problem")).toBeNull();
   });
 
   it("keeps c/a when an example has none", () => {
@@ -114,5 +127,67 @@ describe("crystal transform forms", () => {
     change("builder-flow-adsorb-height", "3");
     change("builder-flow-adsorb-grid-1", "2");
     expect(params()).toMatchObject({ height: 3, grid: [1, 2] });
+  });
+});
+
+describe("number boxes", () => {
+  it("say the first problem as it happens, as running the block would", () => {
+    const params = edit("slab");
+    change("builder-flow-slab-miller-0", "0");
+    change("builder-flow-slab-miller-1", "0");
+    change("builder-flow-slab-miller-2", "0");
+    expect(params()).toMatchObject({ miller: [0, 0, 0] });
+    expect(screen.getByTestId("builder-flow-builtin-problem").textContent).toContain(
+      "not all zero",
+    );
+    // A box that is not a number comes first, and is not written to the block.
+    change("builder-flow-slab-layers", "");
+    expect(screen.getByTestId("builder-flow-builtin-problem").textContent).toBe(
+      "Layers: enter a number.",
+    );
+    expect(params()).toMatchObject({ layers: 4 });
+    change("builder-flow-slab-layers", "2");
+    change("builder-flow-slab-miller-2", "1");
+    expect(screen.queryByTestId("builder-flow-builtin-problem")).toBeNull();
+  });
+
+  it("show the block's value again when it changes elsewhere (an example, Undo)", () => {
+    const params = edit("supercell");
+    change("builder-flow-supercell-repeat-0", "");
+    const box = screen.getByTestId("builder-flow-supercell-repeat-0") as HTMLInputElement;
+    expect(box.value).toBe("");
+    act(() => stores.flow.getState().updateParams("n1", { repeat: [5, 2, 2] } as never));
+    expect(params()).toMatchObject({ repeat: [5, 2, 2] });
+    expect(box.value).toBe("5");
+    expect(screen.queryByTestId("builder-flow-builtin-problem")).toBeNull();
+    // A number that is not a whole one is written, and the check says so.
+    change("builder-flow-supercell-repeat-1", "2.5");
+    expect(params()).toMatchObject({ repeat: [5, 2.5, 2] });
+    expect(screen.getByTestId("builder-flow-builtin-problem").textContent).toContain(
+      "whole numbers",
+    );
+  });
+
+  it("checks a polymer's length", () => {
+    edit("polymer");
+    change("builder-flow-polymer-length", "");
+    expect(screen.getByTestId("builder-flow-builtin-problem").textContent).toBe(
+      "Repeat units: enter a number.",
+    );
+  });
+
+  it("checks how molecules sit on a surface", () => {
+    const params = edit("adsorb");
+    change("builder-flow-adsorb-grid-0", "0");
+    expect(params()).toMatchObject({ grid: [0, 1] });
+    expect(screen.getByTestId("builder-flow-builtin-problem").textContent).toContain("Copies");
+  });
+
+  it("checks a crystal's species", () => {
+    edit("crystal");
+    change("builder-flow-crystal-element-0", "Qq");
+    expect(screen.getByTestId("builder-flow-builtin-problem").textContent).toContain(
+      "not an element symbol",
+    );
   });
 });

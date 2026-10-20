@@ -9,9 +9,22 @@ import { CATEGORY_ICONS } from "../../components/nodes/categoryIcons";
 import type { CardStatus } from "../../components/graph/NodeCardView";
 import { DATA_TYPE_COLORS, NODE_CATEGORY_COLORS, type NodeCategory } from "../../pipeline/types";
 import type { LibraryMolecule } from "../library/types";
-import type { BuilderToolInfo } from "../tools/contract";
 import { bulkStructureInfo } from "../../crystal/bulk";
 import type { FlowParams, NodeRun } from "./types";
+
+export { blockName, blockTitle, moleculeName } from "./titles";
+
+/**
+ * A number as a card prints it: `?` for one that is not a number (a field
+ * left blank in an older flow file), so a card never reads "NaN".
+ */
+export function fmt(value: number): string {
+  return Number.isFinite(value) ? String(value) : "?";
+}
+
+function fmtAll(values: number[], sep: string): string {
+  return values.map(fmt).join(sep);
+}
 
 /**
  * The colour of what a Flow wire carries: a structure, drawn like the
@@ -40,32 +53,11 @@ export function blockColor(params: FlowParams): string {
   return NODE_CATEGORY_COLORS[blockCategory(params)];
 }
 
-export function blockTitle(params: FlowParams, tool: BuilderToolInfo | null): string {
-  switch (params.type) {
-    case "molecule":
-      return "Molecule";
-    case "document":
-      return "Manual structure";
-    case "tool":
-      return tool?.label ?? (params.label || params.tool);
-    case "crystal":
-      return "Bulk crystal";
-    case "polymer":
-      return "Polymer chain";
-    case "supercell":
-      return "Supercell";
-    case "slab":
-      return "Slab";
-    case "adsorb":
-      return "Place on surface";
-  }
-}
-
 /** A crystal block's species and prototype in a few words, e.g. `NaCl rocksalt (AB)`. */
 function crystalSettings(params: Extract<FlowParams, { type: "crystal" }>): string {
   const info = bulkStructureInfo(params.structure);
   const species = params.elements.slice(0, info.species).map((e) => e.trim() || "?");
-  return `${species.join("")} ${info.label}, a = ${params.a} Å`;
+  return `${species.join("")} ${info.label}, a = ${fmt(params.a)} Å`;
 }
 
 /** What the block is set to, in a few words ("" for a tool: its result says it). */
@@ -84,33 +76,14 @@ export function blockSettings(params: FlowParams, library: LibraryMolecule[]): s
     case "crystal":
       return crystalSettings(params);
     case "polymer":
-      return `${params.name.trim() || params.repeatUnit.trim()} × ${params.length}`;
+      return `${params.name.trim() || params.repeatUnit.trim()} × ${fmt(params.length)}`;
     case "supercell":
-      return params.repeat.join(" × ");
+      return fmtAll(params.repeat, " × ");
     case "slab":
-      return `(${params.miller.join(" ")}) · ${params.layers} layer${params.layers === 1 ? "" : "s"} · ${params.repeat.join(" × ")}`;
+      return `(${fmtAll(params.miller, " ")}) · ${fmt(params.layers)} layer${params.layers === 1 ? "" : "s"} · ${fmtAll(params.repeat, " × ")}`;
     case "adsorb":
-      return `${params.grid.join(" × ")} at ${params.height} Å`;
+      return `${fmtAll(params.grid, " × ")} at ${fmt(params.height)} Å`;
   }
-}
-
-/**
- * The name the block's structure goes by before it has run: the molecule's
- * name, else its SMILES or library entry; the block's title otherwise.
- */
-export function blockName(
-  params: FlowParams,
-  tool: BuilderToolInfo | null,
-  library: LibraryMolecule[],
-): string {
-  if (params.type === "molecule") {
-    if (params.name.trim()) return params.name.trim();
-    if (params.source === "smiles" && params.smiles.trim()) return params.smiles.trim();
-    const m = library.find((x) => x.id === params.libraryId);
-    if (params.source === "library" && m) return m.name;
-  }
-  if (params.type === "polymer" && params.name.trim()) return params.name.trim();
-  return blockTitle(params, tool);
 }
 
 /** What the last run says, in one line. */
@@ -145,19 +118,46 @@ export function blockSummary(params: FlowParams, run: NodeRun, library: LibraryM
   return [settings, result].filter(Boolean).join(" · ");
 }
 
+/** Colour of the result-with-warnings dot. */
+export const WARNING_COLOR = "#f59e0b";
+
+/** Colour of the stale ring: grey, drawn hollow, so it is not read as a warning. */
+export const STALE_COLOR = "#94a3b8";
+
 /** Colour of the status dot. */
 export function runStatusColor(run: NodeRun): string {
   switch (run.status) {
     case "done":
-      return run.warnings.length > 0 ? "#f59e0b" : "#10b981";
+      return run.warnings.length > 0 ? WARNING_COLOR : "#10b981";
     case "running":
       return "var(--megane-primary, #3b82f6)";
     case "error":
       return "var(--megane-danger, #ef4444)";
     case "stale":
-      return "#f59e0b";
+      return STALE_COLOR;
     default:
       return "var(--megane-border-strong, #cbd5e1)";
+  }
+}
+
+/** A stale result is drawn as a hollow ring rather than a filled dot. */
+export function runStatusHollow(run: NodeRun): boolean {
+  return run.status === "stale";
+}
+
+/** What the dot means, for screen readers and the tooltip's first line. */
+export function runStatusLabel(run: NodeRun): string {
+  switch (run.status) {
+    case "idle":
+      return "Not run yet";
+    case "stale":
+      return "Out of date: changed since the last run";
+    case "running":
+      return "Running";
+    case "done":
+      return run.warnings.length > 0 ? "Done, with warnings" : "Done";
+    case "error":
+      return "Failed";
   }
 }
 
@@ -168,5 +168,7 @@ export function runStatusDot(run: NodeRun): CardStatus | null {
     color: runStatusColor(run),
     title: [runStatusText(run), ...run.warnings].join("\n"),
     testId: "builder-flow-node-status",
+    hollow: runStatusHollow(run),
+    ariaLabel: `${runStatusLabel(run)}: ${runStatusText(run)}`,
   };
 }

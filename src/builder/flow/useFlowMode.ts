@@ -7,7 +7,8 @@
  * It also keeps the structure shared with Manual mode in step (`shared.ts`):
  * Run makes the flow's result the Manual document, the view shows that
  * document while no block is picked, and a change to the document marks the
- * *Manual structure* blocks that read it stale.
+ * *Manual structure* blocks that read it stale. The graph and the mode are
+ * kept across reloads (`persist.ts`).
  */
 
 import { useCallback, useEffect, useMemo, useState } from "react";
@@ -25,12 +26,31 @@ import { useFlowDeps } from "./deps";
 import { blockTitle } from "./describe";
 import type { FlowDeps } from "./engine";
 import type { FlowActions } from "./FlowRail";
-import { runAndShare } from "./shared";
+import { useFlowPersistence } from "./persist";
+import { confirmReplaceFlow, runAndShare } from "./shared";
 import { flowViewData, parseSerializedFlow, type FlowView } from "./store";
 import type { FlowData, FlowMode } from "./types";
 
-/** File name a saved flow gets. */
+/** File name a saved flow gets when it was not opened from a file or a template. */
 export const FLOW_FILE_NAME = "builder.megane-flow.json";
+
+const FLOW_SUFFIX = ".megane-flow.json";
+
+/**
+ * The file name Save suggests for a flow opened as `source` (a file name or
+ * a template id): its stem, made safe for a file system, with the flow
+ * suffix; {@link FLOW_FILE_NAME} without one.
+ */
+export function flowFileName(source: string | null): string {
+  if (!source) return FLOW_FILE_NAME;
+  const stem = source
+    .replace(/\.json$/i, "")
+    .replace(/\.megane-flow$/i, "")
+    .replace(/[^A-Za-z0-9._-]+/g, "_")
+    .replace(/^[._-]+|[._-]+$/g, "")
+    .slice(0, 80);
+  return stem ? `${stem}${FLOW_SUFFIX}` : FLOW_FILE_NAME;
+}
 
 export interface FlowModeState {
   mode: FlowMode;
@@ -65,6 +85,7 @@ export function useFlowMode(host: BuilderHost): FlowModeState {
   const runs = useScopedFlowStore((s) => s.runs);
   const viewNodeId = useScopedFlowStore((s) => s.viewNodeId);
   const running = useScopedFlowStore((s) => s.running);
+  const stopping = useScopedFlowStore((s) => s.stopping);
   const toolsConnection = useScopedToolsStore((s) => s.connection);
   const source = useScopedBuilderStore((s) => s.source);
   const result = useScopedBuilderStore((s) => s.result);
@@ -73,6 +94,7 @@ export function useFlowMode(host: BuilderHost): FlowModeState {
   const sourceLabels = useScopedBuilderStore((s) => s.sourceLabels);
   const deps = useFlowDeps();
   const [serverOpen, setServerOpen] = useState(false);
+  useFlowPersistence(flowApi);
 
   // The structure shared with Manual mode, as the Manual structure block reads it.
   const docSnapshot = useMemo(
@@ -98,7 +120,11 @@ export function useFlowMode(host: BuilderHost): FlowModeState {
   const onOpenFile = useCallback(
     async (file: File) => {
       try {
-        flowApi.getState().load(parseSerializedFlow(JSON.parse(await file.text())));
+        const flow = parseSerializedFlow(JSON.parse(await file.text()));
+        if (!(await confirmReplaceFlow(builderApi, flowApi, `Open ${file.name}`, "Open flow"))) {
+          return;
+        }
+        flowApi.getState().load(flow, { name: file.name });
         builderApi.getState().reportInfo(`Opened the flow ${file.name}.`);
       } catch (err) {
         builderApi
@@ -113,12 +139,14 @@ export function useFlowMode(host: BuilderHost): FlowModeState {
 
   const saveFlow = useCallback(async () => {
     const text = JSON.stringify(flowApi.getState().serialize(), null, 2);
+    const name = flowFileName(flowApi.getState().fileName);
     if (!host.save) {
-      downloadBlob(new Blob([text], { type: "application/json" }), FLOW_FILE_NAME);
+      downloadBlob(new Blob([text], { type: "application/json" }), name);
+      builderApi.getState().reportInfo(`Saved ${name}`);
       return;
     }
     try {
-      const said = await host.save({ name: FLOW_FILE_NAME, text, format: "flow" });
+      const said = await host.save({ name, text, format: "flow" });
       if (said) builderApi.getState().reportInfo(said);
     } catch (err) {
       builderApi
@@ -129,8 +157,15 @@ export function useFlowMode(host: BuilderHost): FlowModeState {
     }
   }, [flowApi, builderApi, host]);
 
+  const clearFlow = useCallback(async () => {
+    if (await confirmReplaceFlow(builderApi, flowApi, "Clear all blocks", "Clear")) {
+      flowApi.getState().clear();
+    }
+  }, [flowApi, builderApi]);
+
   const runningTitle = (() => {
     if (!running) return null;
+    if (stopping) return "Stopping…";
     const id = Object.keys(runs).find((k) => runs[k].status === "running");
     const node = id ? nodes.find((n) => n.id === id) : undefined;
     if (!node) return "Running…";
@@ -139,7 +174,7 @@ export function useFlowMode(host: BuilderHost): FlowModeState {
       params.type === "tool"
         ? (toolsConnection?.listing.tools.find((t) => t.name === params.tool) ?? null)
         : null;
-    return `Running ${blockTitle(params, tool)}…`;
+    return `Running ${blockTitle(params, tool, deps.library())}…`;
   })();
 
   const status =
@@ -163,9 +198,10 @@ export function useFlowMode(host: BuilderHost): FlowModeState {
     actions: {
       onOpenFile: (file) => void onOpenFile(file),
       onSave: () => void saveFlow(),
-      onClear: () => flowApi.getState().clear(),
+      onClear: () => void clearFlow(),
       hasBlocks: nodes.length > 0,
       running: !!running,
+      stopping,
       onRun: () => void runAndShare(builderApi, flowApi, deps),
       onStop: () => flowApi.getState().cancel(),
     },

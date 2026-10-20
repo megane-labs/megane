@@ -287,8 +287,10 @@ test.describe("builder-tools: webapp", () => {
     expect(await builderState(page)).toMatchObject({ nAtoms: 299, edits: ["delete_atoms"] });
     expect(calls).toHaveLength(1);
 
-    // Open the box in Manual mode as the document.
+    // Open the box in Manual mode as the document, which replaces the
+    // edited one after asking.
     await page.getByTestId("builder-flow-open-manual").click();
+    await page.getByTestId("builder-confirm-ok").click();
     await expect(page.getByTestId("megane-builder")).toHaveAttribute("data-mode", "manual");
     await expect(page.getByTestId("megane-builder")).toHaveAttribute("data-atom-count", "300");
     await expect(page.getByTestId("builder-tool-rail")).toBeVisible();
