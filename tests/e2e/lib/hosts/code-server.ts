@@ -347,10 +347,14 @@ async function handleKernelPickerIfPresent(page: Page): Promise<void> {
   try {
     const envList = page.locator(".quick-input-list .monaco-list-row");
     await envList.first().waitFor({ state: "visible", timeout: 30_000 });
+    // The list opens while the Python extension is still discovering
+    // interpreters, with "Create Python Environment" as its first row; wait
+    // for the venv to be listed rather than clicking that.
     const venvRow = envList.filter({ hasText: ".venv" }).first();
-    if (await venvRow.count()) {
+    try {
+      await venvRow.waitFor({ state: "visible", timeout: 60_000 });
       await venvRow.click();
-    } else {
+    } catch {
       await envList.first().click();
     }
   } catch {
