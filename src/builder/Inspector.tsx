@@ -12,10 +12,12 @@ import { getElementSymbol } from "../constants";
 import { computeMeasurement } from "../renderer/Selection";
 import { useLibraryActions } from "./library/ui";
 import { QUICK_ELEMENTS } from "./ContextBar";
-import type { EditAtomRef } from "../pipeline/types";
 import type { Measurement, Snapshot } from "../types";
-import { setAngle, setDihedral, setDistance } from "./geometry";
-import { runCleanup } from "./cleanup";
+import { ringLocked, setAngle, setDihedral, setDistance } from "./geometry";
+import { runCleanup, useCleanupRunning } from "./cleanup";
+import { bondOrderBetween } from "./hydrogens";
+import { atomName } from "./placement";
+import { deleteAtoms, removeBond, setElements } from "./editActions";
 import { useBuilderStoreApi, useScopedBuilderStore } from "./BuilderStores";
 import {
   AXIS_KEYS,
@@ -58,11 +60,14 @@ function SelectionInspector() {
   const result = useScopedBuilderStore((s) => s.result);
   const showOriginal = useScopedBuilderStore((s) => s.showOriginal);
   const selected = useScopedBuilderStore((s) => s.selected);
-  const element = useScopedBuilderStore((s) => s.element);
-  const setElement = useScopedBuilderStore((s) => s.setElement);
+  const toolElement = useScopedBuilderStore((s) => s.element);
   const clearSelected = useScopedBuilderStore((s) => s.clearSelected);
-  const pushOp = useScopedBuilderStore((s) => s.pushOp);
   const { saveSelection } = useLibraryActions();
+  const cleaning = useCleanupRunning(api);
+  // The element this panel sets: it starts at the tools' element, and picking
+  // another one here leaves the Add / Element tools' choice alone.
+  const [picked, setPicked] = useState<number | null>(null);
+  const element = picked ?? toolElement;
 
   const shown = shownSnapshot({ source, result, showOriginal });
   const editable = canEdit({ source, result, showOriginal });
@@ -75,20 +80,12 @@ function SelectionInspector() {
     ? QUICK_ELEMENTS
     : [...QUICK_ELEMENTS, element];
 
-  const refs = (): EditAtomRef[] =>
-    atoms.map((i) => result!.refAt(i)).filter((r): r is EditAtomRef => r !== null);
+  // Two selected atoms that share a bond can be unbonded.
+  const bonded = shown && atoms.length === 2 && bondOrderBetween(shown, atoms[0], atoms[1]) > 0;
 
-  const handleDelete = () => {
-    const r = refs();
-    if (r.length === 0) return;
-    clearSelected();
-    pushOp({ op: "delete_atoms", atoms: r });
-  };
-  const handleSetElement = () => {
-    const r = refs();
-    if (r.length === 0) return;
-    pushOp({ op: "set_element", atoms: r, element });
-  };
+  const handleDelete = () => deleteAtoms(api.getState(), atoms);
+  const handleSetElement = () => setElements(api.getState(), atoms, element);
+  const handleRemoveBond = () => removeBond(api.getState(), atoms[0], atoms[1]);
 
   return (
     <div
@@ -175,7 +172,7 @@ function SelectionInspector() {
           data-testid="builder-selection-element"
           aria-label="Element"
           value={element}
-          onChange={(e) => setElement(Number(e.target.value))}
+          onChange={(e) => setPicked(Number(e.target.value))}
           style={inputStyle}
         >
           {elementChoices.map((z) => (
@@ -208,13 +205,25 @@ function SelectionInspector() {
         <button
           type="button"
           data-testid="builder-selection-cleanup"
-          style={buttonStyle("default", !editable)}
-          disabled={!editable}
+          style={buttonStyle("default", !editable || cleaning)}
+          disabled={!editable || cleaning}
           onClick={() => void runCleanup(api)}
           title="Re-embed the selected molecules with RDKit (ETKDG + MMFF94s) and put them back in place"
         >
           Clean up
         </button>
+        {bonded && (
+          <button
+            type="button"
+            data-testid="builder-remove-bond"
+            style={buttonStyle("default", !editable)}
+            disabled={!editable}
+            onClick={handleRemoveBond}
+            title="Remove the bond between the two selected atoms"
+          >
+            Remove bond
+          </button>
+        )}
         <button
           type="button"
           data-testid="builder-delete-selected"
@@ -245,6 +254,7 @@ function MeasureEditor({
 }) {
   const moveAtoms = useScopedBuilderStore((s) => s.moveAtoms);
   const reportError = useScopedBuilderStore((s) => s.reportError);
+  const reportInfo = useScopedBuilderStore((s) => s.reportInfo);
   const unit = measure.type === "distance" ? "Å" : "°";
   const digits = measure.type === "distance" ? 3 : 1;
   const [draft, setDraft] = useState(measure.value.toFixed(digits));
@@ -270,7 +280,26 @@ function MeasureEditor({
       );
       return;
     }
-    moveAtoms(moved);
+    const names = measure.atoms.map((i) => atomName(shown, i)).join(" – ");
+    const value = `${target.toFixed(digits)} ${unit}`.replace(" °", "°");
+    // When the moving atom's side loops back to the fixed one (a ring), only
+    // that atom moves (`movingSide`), and it cannot turn about a ring bond.
+    const [fixed, moving] = measure.type === "distance" ? [a, b] : [b, c];
+    const ring = ringLocked(shown, fixed, moving);
+    const ringBond = `${atomName(shown, fixed)} – ${atomName(shown, moving)}`;
+    if (ring && measure.type === "dihedral") {
+      reportInfo(`${ringBond} is a ring bond: its dihedral cannot be turned on its own.`);
+      return;
+    }
+    if (!moveAtoms(moved, `Set ${measure.type} ${names} to ${value}`)) {
+      reportInfo(`The ${measure.type} is already ${value}.`);
+      return;
+    }
+    if (ring) {
+      reportInfo(
+        `${ringBond} is in a ring, so only ${atomName(shown, moving)} moved; its other ring bonds stretched.`,
+      );
+    }
   };
 
   return (
@@ -309,6 +338,11 @@ function MeasureEditor({
   );
 }
 
+/** How a step names the atoms it acted on: `El #i` for one, else a count. */
+function what(shown: Snapshot, atoms: number[]): string {
+  return atoms.length === 1 ? atomName(shown, atoms[0]) : `${atoms.length} atoms`;
+}
+
 /** A typed number, or NaN for an empty field (Number("") would read as 0). */
 function parseField(text: string): number {
   return text.trim() === "" ? NaN : Number(text);
@@ -330,6 +364,7 @@ function TransformEditor({
 }) {
   const moveAtoms = useScopedBuilderStore((s) => s.moveAtoms);
   const reportError = useScopedBuilderStore((s) => s.reportError);
+  const reportInfo = useScopedBuilderStore((s) => s.reportInfo);
   const [delta, setDelta] = useState(["0", "0", "0"]);
   const [angle, setAngleText] = useState("90");
   const [axis, setAxis] = useState<AxisKey>("z");
@@ -341,7 +376,14 @@ function TransformEditor({
       reportError("Move by needs three numbers of Å.");
       return;
     }
-    moveAtoms(translateDisplacements(atoms, d));
+    if (d.every((v) => v === 0)) {
+      reportInfo("Nothing to move: type a displacement other than 0 0 0 Å.");
+      return;
+    }
+    moveAtoms(
+      translateDisplacements(atoms, d),
+      `Move ${what(shown, atoms)} by (${d.map((v) => v.toFixed(2)).join(", ")}) Å`,
+    );
   };
   const rotate = () => {
     const deg = parseField(angle);
@@ -350,7 +392,14 @@ function TransformEditor({
       reportError("Rotate needs a number of degrees.");
       return;
     }
-    moveAtoms(rotateDisplacements(shown.positions, atoms, vector, deg));
+    if (deg % 360 === 0) {
+      reportInfo("Nothing to rotate: a turn of 0° (or a whole turn) leaves the atoms in place.");
+      return;
+    }
+    moveAtoms(
+      rotateDisplacements(shown.positions, atoms, vector, deg),
+      `Rotate ${what(shown, atoms)} by ${deg}° about ${axis}`,
+    );
   };
 
   return (

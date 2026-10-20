@@ -1,15 +1,22 @@
 /**
- * The menu a right-click on an atom opens: select its molecule or every atom
- * of its element, change it to the current element, delete it, or clean up
- * its molecule's geometry. Closes on a choice, a click elsewhere, or Escape.
+ * The menu a right-click on an atom opens (or the Menu key / Shift + F10 for
+ * the one selected atom): select its molecule or every atom of its element,
+ * change it to the current element, remove one of its bonds, delete it, or
+ * clean up its molecule's geometry. The edits go through `editActions.ts`,
+ * so hydrogens are kept as the tools keep them. Closes on a choice, a click
+ * elsewhere, or Escape; the arrow keys move between the items and Enter picks
+ * one, with the first item focused on open.
  */
 
-import { useLayoutEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent } from "react";
 import { useDismiss } from "../hooks/useDismiss";
 import { canEdit, shownSnapshot } from "./store";
 import { getElementSymbol } from "../constants";
 import { moleculeOf } from "./geometry";
-import { runCleanup } from "./cleanup";
+import { runCleanup, useCleanupRunning } from "./cleanup";
+import { neighboursOf } from "./hydrogens";
+import { atomName } from "./placement";
+import { deleteAtoms, removeBond, setElements } from "./editActions";
 import { useBuilderStoreApi, useScopedBuilderStore } from "./BuilderStores";
 
 export interface AtomMenuTarget {
@@ -50,7 +57,7 @@ export function AtomMenu({ target, onClose }: { target: AtomMenuTarget; onClose:
   const showOriginal = useScopedBuilderStore((s) => s.showOriginal);
   const element = useScopedBuilderStore((s) => s.element);
   const setSelected = useScopedBuilderStore((s) => s.setSelected);
-  const pushOp = useScopedBuilderStore((s) => s.pushOp);
+  const cleaning = useCleanupRunning(api);
   const rootRef = useRef<HTMLDivElement>(null);
   const [place, setPlace] = useState({ left: target.x, top: target.y });
 
@@ -75,10 +82,16 @@ export function AtomMenu({ target, onClose }: { target: AtomMenuTarget; onClose:
 
   useDismiss({ onDismiss: onClose, inside: [rootRef] });
 
+  // The keyboard starts on the first item that can be picked.
+  useEffect(() => {
+    enabledItems(rootRef.current)[0]?.focus();
+  }, [target.atom]);
+
   if (!shown || target.atom >= shown.nAtoms) return null;
   const z = shown.elements[target.atom];
   const sym = getElementSymbol(z);
   const ref = result?.refAt(target.atom) ?? null;
+  const neighbours = neighboursOf(shown, target.atom);
 
   const items: { label: string; testId: string; disabled?: boolean; run: () => void }[] = [
     {
@@ -96,12 +109,18 @@ export function AtomMenu({ target, onClose }: { target: AtomMenuTarget; onClose:
       label: `Set to ${getElementSymbol(element)}`,
       testId: "builder-atom-menu-set-element",
       disabled: !editable || element === z || ref === null,
-      run: () => pushOp({ op: "set_element", atoms: [ref!], element }),
+      run: () => setElements(api.getState(), [target.atom], element),
     },
+    ...neighbours.map((n) => ({
+      label: `Remove bond to ${atomName(shown, n.index)}`,
+      testId: `builder-atom-menu-unbond-${n.index}`,
+      disabled: !editable || ref === null,
+      run: () => removeBond(api.getState(), target.atom, n.index),
+    })),
     {
-      label: "Clean up molecule",
+      label: cleaning ? "Clean up molecule (running…)" : "Clean up molecule",
       testId: "builder-atom-menu-cleanup",
-      disabled: !editable,
+      disabled: !editable || cleaning,
       run: () => {
         setSelected(moleculeOf(shown, target.atom));
         void runCleanup(api);
@@ -111,19 +130,38 @@ export function AtomMenu({ target, onClose }: { target: AtomMenuTarget; onClose:
       label: "Delete atom",
       testId: "builder-atom-menu-delete",
       disabled: !editable || ref === null,
-      run: () => {
-        setSelected([]);
-        pushOp({ op: "delete_atoms", atoms: [ref!] });
-      },
+      run: () => deleteAtoms(api.getState(), [target.atom]),
     },
   ];
+
+  // Up / Down (and Home / End) move between the items, wrapping; Enter picks.
+  const onKeyDown = (e: KeyboardEvent<HTMLDivElement>) => {
+    // "Select molecule" can always be picked, so the list is never empty.
+    const list = enabledItems(rootRef.current);
+    const at = list.indexOf(document.activeElement as HTMLButtonElement);
+    let next: number | null = null;
+    if (e.key === "ArrowDown") next = at < 0 ? 0 : (at + 1) % list.length;
+    else if (e.key === "ArrowUp")
+      next = at < 0 ? list.length - 1 : (at - 1 + list.length) % list.length;
+    else if (e.key === "Home") next = 0;
+    else if (e.key === "End") next = list.length - 1;
+    else if (e.key === "Enter" && at >= 0) {
+      e.preventDefault();
+      list[at].click();
+      return;
+    }
+    if (next === null) return;
+    e.preventDefault();
+    list[next].focus();
+  };
 
   return (
     <div
       ref={rootRef}
       role="menu"
       data-testid="builder-atom-menu"
-      aria-label={`${sym} #${target.atom}`}
+      aria-label={atomName(shown, target.atom)}
+      onKeyDown={onKeyDown}
       style={{
         position: "fixed",
         left: place.left,
@@ -152,13 +190,14 @@ export function AtomMenu({ target, onClose }: { target: AtomMenuTarget; onClose:
           color: "var(--megane-text-secondary, #64748b)",
         }}
       >
-        {sym} #{target.atom}
+        {atomName(shown, target.atom)}
       </div>
       {items.map((item) => (
         <button
           key={item.testId}
           type="button"
           role="menuitem"
+          tabIndex={-1}
           data-testid={item.testId}
           disabled={item.disabled}
           onClick={() => {
@@ -181,5 +220,13 @@ export function AtomMenu({ target, onClose }: { target: AtomMenuTarget; onClose:
         </button>
       ))}
     </div>
+  );
+}
+
+/** The menu's items that can be picked, in order. */
+function enabledItems(root: HTMLElement | null): HTMLButtonElement[] {
+  if (!root) return [];
+  return [...root.querySelectorAll<HTMLButtonElement>('[role="menuitem"]')].filter(
+    (b) => !b.disabled,
   );
 }

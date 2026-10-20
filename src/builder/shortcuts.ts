@@ -9,8 +9,9 @@
 
 import { useEffect, type RefObject } from "react";
 import type { StoreApi } from "zustand";
-import type { EditAtomRef } from "../pipeline/types";
-import { canEdit, type BuilderStore } from "./store";
+import type { BuilderStore } from "./store";
+import { deleteAtoms } from "./editActions";
+import { historyLock } from "./history";
 import type { BuildTool } from "./types";
 
 export type ShortcutAction =
@@ -22,7 +23,8 @@ export type ShortcutAction =
   | { kind: "select_all" }
   | { kind: "open" }
   | { kind: "save" }
-  | { kind: "reset_view" };
+  | { kind: "reset_view" }
+  | { kind: "help" };
 
 /** The key that selects each tool, shown on the rail and in tooltips. */
 export const TOOL_KEYS: Record<BuildTool, string> = {
@@ -80,6 +82,9 @@ export function resolveShortcut(key: ShortcutKey): ShortcutAction | null {
       return key.shiftKey ? null : { kind: "delete_selected" };
     case "r":
       return key.shiftKey ? null : { kind: "reset_view" };
+    // Shift + / on most layouts; whatever produces "?" on the others.
+    case "?":
+      return { kind: "help" };
     default: {
       if (key.shiftKey) return null;
       const tool = KEY_TO_TOOL[k];
@@ -100,6 +105,46 @@ export interface ShortcutHost {
   open: () => void;
   save: () => void;
   resetView: () => void;
+  /** Show the keyboard-shortcut card. */
+  help?: () => void;
+}
+
+/** One row of the keyboard-shortcut card: the keys and what they do. */
+export interface ShortcutEntry {
+  keys: string;
+  action: string;
+}
+
+/**
+ * Every shortcut `resolveShortcut` knows besides the tool keys (`TOOL_KEYS`,
+ * which the card lists with the tools' names), with `mod` (⌘ or Ctrl) in
+ * the keys.
+ */
+export function generalShortcuts(mod: string): ShortcutEntry[] {
+  return [
+    { keys: `${mod}+O`, action: "Open a structure file" },
+    { keys: `${mod}+S`, action: "Save in the document's own format" },
+    { keys: `${mod}+Z`, action: "Undo" },
+    { keys: `${mod}+Shift+Z  /  ${mod}+Y`, action: "Redo" },
+    { keys: `${mod}+A`, action: "Select every atom" },
+    { keys: "Delete  /  Backspace", action: "Delete the selected atoms" },
+    { keys: "Esc", action: "Cancel a bond, clear the selection, drop the Place molecule" },
+    { keys: "R", action: "Reset the view" },
+    { keys: "?", action: "Show this list" },
+  ];
+}
+
+/** What the modifiers and keys do during a drag of atoms in the view (`manipulate.ts`). */
+export function dragShortcuts(mod: string): ShortcutEntry[] {
+  return [
+    { keys: "Drag", action: "Move the atom with its selection in the screen plane" },
+    { keys: "Shift+Drag", action: "Move in depth" },
+    { keys: `${mod}+Drag`, action: "Turn the selection about its centre" },
+    { keys: `${mod}+Shift+Drag`, action: "Spin it about the line of sight" },
+    { keys: "X Y Z  /  A B C", action: "During a drag: lock to an axis (again frees it)" },
+    { keys: "Esc", action: "During a drag: cancel it" },
+    { keys: `Shift / ${mod}+Click`, action: "Add to or take from the selection" },
+  ];
 }
 
 /** Run `action` against the store and the app; returns whether it did anything. */
@@ -114,19 +159,22 @@ export function runShortcut(
       s.setTool(action.tool);
       return true;
     case "undo":
-      return s.undo() !== null;
-    case "redo":
-      return s.redo() !== null;
-    case "delete_selected": {
-      if (!canEdit(s) || s.selected.length === 0) return false;
-      const refs = s.selected
-        .map((i) => (s.result && i < s.result.snapshot.nAtoms ? s.result.refAt(i) : null))
-        .filter((r): r is EditAtomRef => r !== null);
-      if (refs.length === 0) return false;
-      s.clearSelected();
-      s.pushOp({ op: "delete_atoms", atoms: refs });
-      return true;
+    case "redo": {
+      // Paused while a preview or the original is on screen: say why
+      // rather than doing nothing.
+      const can = action.kind === "undo" ? s.edits.length > 0 : s.redoStack.length > 0;
+      const lock = historyLock(s);
+      if (lock) {
+        if (!can) return false;
+        s.reportInfo(lock);
+        return true;
+      }
+      return (action.kind === "undo" ? s.undo() : s.redo()) !== null;
     }
+    // The Delete tool's edit: hydrogens go with their atoms while they are
+    // kept balanced, and the selection drops the deleted atoms.
+    case "delete_selected":
+      return deleteAtoms(s, s.selected);
     case "select_all":
       if (!s.source) return false;
       s.selectAll();
@@ -154,6 +202,10 @@ export function runShortcut(
       return true;
     case "reset_view":
       host.resetView();
+      return true;
+    case "help":
+      if (!host.help) return false;
+      host.help();
       return true;
   }
 }

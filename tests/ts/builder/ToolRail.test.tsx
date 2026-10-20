@@ -53,6 +53,9 @@ describe("toolHint", () => {
     expect(toolHint("select", null, null)).toBe(toolInfo("select").hint);
     expect(toolHint("bond", null, null)).toBe(toolInfo("bond").hint);
     expect(toolHint("bond", 3, null)).toMatch(/First atom: #3\.$/);
+    // The Bond tool says how to remove a bond and let go of the first atom.
+    expect(toolInfo("bond").hint).toContain("Shift-click the second to remove their bond");
+    expect(toolInfo("bond").hint).toContain("Click empty space to let go");
     // A pending bond atom means nothing to any other tool.
     expect(toolHint("add", 3, null)).toBe(toolInfo("add").hint);
     expect(toolHint("place", null, null)).toMatch(/Choose a molecule in the library\.$/);
@@ -61,17 +64,31 @@ describe("toolHint", () => {
 });
 
 describe("ContextBar", () => {
-  it("is absent for a tool with no settings, and Move shows only the drag settings", () => {
+  it("Move shows only the drag settings; Delete only the hydrogens", () => {
     useBuilderStore.setState({ tool: "move" });
     const move = render(<ContextBar />);
     expect(screen.getByTestId("builder-snap")).toBeTruthy();
     expect(screen.queryByTestId("builder-select-all")).toBeNull();
+    expect(screen.queryByTestId("builder-hydrogens")).toBeNull();
     move.unmount();
-    for (const tool of ["delete"] as const) {
-      useBuilderStore.setState({ tool });
-      const { unmount } = render(<ContextBar />);
+    useBuilderStore.setState({ tool: "delete" });
+    render(<ContextBar />);
+    expect(screen.getByTestId("builder-context-label").textContent).toBe("Delete");
+    expect(screen.getByTestId("builder-hydrogens")).toBeTruthy();
+    expect(screen.queryByTestId("builder-snap")).toBeNull();
+    expect(screen.queryByTestId("builder-element-z")).toBeNull();
+  });
+
+  it("is absent for a tool with no settings", () => {
+    const del = TOOLS.find((t) => t.value === "delete")!;
+    const needs = del.needs;
+    del.needs = [];
+    try {
+      useBuilderStore.setState({ tool: "delete" });
+      render(<ContextBar />);
       expect(screen.queryByTestId("builder-context-bar")).toBeNull();
-      unmount();
+    } finally {
+      del.needs = needs;
     }
   });
 

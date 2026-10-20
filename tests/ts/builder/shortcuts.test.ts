@@ -6,6 +6,8 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import {
   TOOL_KEYS,
+  dragShortcuts,
+  generalShortcuts,
   isTypingTarget,
   resolveShortcut,
   runShortcut,
@@ -56,6 +58,10 @@ describe("resolveShortcut", () => {
     expect(resolveShortcut(key("Delete"))).toEqual({ kind: "delete_selected" });
     expect(resolveShortcut(key("Backspace"))).toEqual({ kind: "delete_selected" });
     expect(resolveShortcut(key("r"))).toEqual({ kind: "reset_view" });
+    // "?" is Shift + / on most layouts; either way it opens the list.
+    expect(resolveShortcut(key("?", { shiftKey: true }))).toEqual({ kind: "help" });
+    expect(resolveShortcut(key("?"))).toEqual({ kind: "help" });
+    expect(resolveShortcut(key("?", { altKey: true }))).toBeNull();
   });
 
   it("ignores anything else, and every Alt combination", () => {
@@ -140,6 +146,28 @@ describe("runShortcut", () => {
     expect(api.getState().tool).toBe("select");
   });
 
+  it("pauses Undo and Redo while a preview or the original is shown, and says why", () => {
+    api.getState().openStructure(water(), null, "w.xyz");
+    // Nothing to undo: nothing to say either.
+    api.getState().setShowOriginal(true);
+    expect(runShortcut({ kind: "undo" }, api, host)).toBe(false);
+    expect(api.getState().notice).toBeNull();
+    api.getState().setShowOriginal(false);
+    api.getState().pushOp({ op: "delete_atoms", atoms: [2] });
+    api.getState().setPreview({ op: "wrap" });
+    expect(runShortcut({ kind: "undo" }, api, host)).toBe(true);
+    expect(api.getState().edits).toHaveLength(1);
+    expect(api.getState().notice?.text).toContain("preview");
+    expect(runShortcut({ kind: "redo" }, api, host)).toBe(false);
+  });
+
+  it("opens the shortcut list when the app has one", () => {
+    expect(runShortcut({ kind: "help" }, api, host)).toBe(false);
+    const help = vi.fn();
+    expect(runShortcut({ kind: "help" }, api, { ...host, help })).toBe(true);
+    expect(help).toHaveBeenCalledTimes(1);
+  });
+
   it("forwards open, save and reset view to the app, and never saves nothing", () => {
     expect(runShortcut({ kind: "open" }, api, host)).toBe(true);
     expect(host.open).toHaveBeenCalledTimes(1);
@@ -150,5 +178,14 @@ describe("runShortcut", () => {
     expect(host.save).toHaveBeenCalledTimes(1);
     expect(runShortcut({ kind: "reset_view" }, api, host)).toBe(true);
     expect(host.resetView).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("the shortcut lists", () => {
+  it("name every non-tool shortcut and the drag modifiers with the platform's key", () => {
+    const general = generalShortcuts("⌘").map((e) => e.keys);
+    expect(general).toEqual(expect.arrayContaining(["⌘+O", "⌘+S", "⌘+Z", "⌘+A", "R", "?", "Esc"]));
+    const drag = dragShortcuts("Ctrl").map((e) => e.keys);
+    expect(drag).toEqual(expect.arrayContaining(["Shift+Drag", "Ctrl+Drag", "Ctrl+Shift+Drag"]));
   });
 });

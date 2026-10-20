@@ -5,7 +5,7 @@
  * the VS Code extension (an editor tab opened from the megane activity-bar
  * view), the JupyterLab extension (a main-area tab opened from the megane
  * left sidebar) and the Jupyter widget (`megane.Builder()` in a notebook).
- * Each host differs in three ways the app has to know about:
+ * Each host differs in four ways the app has to know about:
  *
  * - **Save.** The web app downloads the file. A host with a file system of its
  *   own writes it there instead: VS Code through its save dialog, JupyterLab
@@ -15,6 +15,9 @@
  * - **Keyboard.** The web app owns the window, so the tool keys work wherever
  *   the focus is. Embedded, the Builder shares the page with an IDE, so with
  *   `scopeShortcuts` the keys only act while the focus is inside the Builder.
+ * - **The page.** Only the web app owns its tab, so only it warns before the
+ *   tab closes with unsaved edits and keeps an autosave to restore
+ *   (`standalone`).
  * - **Tool servers.** The web app connects to an MCP tool server itself. A
  *   host whose page cannot (the VS Code webview) passes a `toolBridge`: the
  *   host connects to the servers the user configured and relays the calls
@@ -56,12 +59,24 @@ export interface BuilderHost {
   toolBridge?: ToolBridge;
   /** Only handle keyboard shortcuts while the focus is inside the Builder. Default false. */
   scopeShortcuts?: boolean;
+  /**
+   * The page is the Builder's own (`builder.html`), not an IDE's: the browser
+   * warns before the tab closes with unsaved edits, and the document is
+   * autosaved in the browser so a closed tab can be restored (`autosave.ts`).
+   * An embedding host keeps its own documents and leaves it off. Default false.
+   */
+  standalone?: boolean;
 }
 
 /** The standalone web app: download on Save, every part on, window-wide keys. */
-export const WEB_HOST: BuilderHost = {};
+export const WEB_HOST: BuilderHost = { standalone: true };
 
 /** Whether the host shows the Tools menu. */
 export function hostHasTools(host: BuilderHost): boolean {
   return host.tools !== false;
+}
+
+/** Whether the Builder owns the page (`standalone`): unsaved-edit warning and autosave. */
+export function hostIsStandalone(host: BuilderHost): boolean {
+  return host.standalone === true;
 }

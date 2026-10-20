@@ -12,9 +12,9 @@
  * view shows details only (the current tool's settings, the selection or an
  * open form, and the history).
  *
- * The molecule library has no menu here: the Place tool is its one way in
- * (its gallery holds Sketch… and From file…, and the Inspector holds Save as
- * fragment), so the rail does not repeat what a tool already offers.
+ * The molecule library has no menu of its own: the Place tool's gallery holds
+ * it (with Sketch… and From file…; the Inspector holds Save as fragment), and
+ * File › Insert molecule from library… is the signpost to that gallery.
  */
 
 import type { ReactNode } from "react";
@@ -77,6 +77,11 @@ export interface OperationsRailProps {
   canRedo: boolean;
   onUndo: () => void;
   onRedo: () => void;
+  /**
+   * Why Undo and Redo are paused (a preview open, the original shown), or
+   * null: while set, both are disabled and their tooltips say why.
+   */
+  historyLock?: string | null;
   /** ⌘ or Ctrl, for the shortcut hints. */
   mod: string;
 }
@@ -90,8 +95,11 @@ export function OperationsRail({
   canRedo,
   onUndo,
   onRedo,
+  historyLock = null,
   mod,
 }: OperationsRailProps) {
+  const undoOff = !canUndo || !!historyLock;
+  const redoOff = !canRedo || !!historyLock;
   const menus: {
     testId: string;
     label: string;
@@ -171,9 +179,9 @@ export function OperationsRail({
         type="button"
         data-testid="builder-topbar-undo"
         aria-label="Undo"
-        title={`Undo (${mod}+Z)`}
-        disabled={!canUndo}
-        style={disabledRail(!canUndo)}
+        title={historyLock && canUndo ? `Undo: ${historyLock}` : `Undo (${mod}+Z)`}
+        disabled={undoOff}
+        style={disabledRail(undoOff)}
         onClick={onUndo}
       >
         {IconUndo}
@@ -182,9 +190,9 @@ export function OperationsRail({
         type="button"
         data-testid="builder-topbar-redo"
         aria-label="Redo"
-        title={`Redo (${mod}+Shift+Z)`}
-        disabled={!canRedo}
-        style={disabledRail(!canRedo)}
+        title={historyLock && canRedo ? `Redo: ${historyLock}` : `Redo (${mod}+Shift+Z)`}
+        disabled={redoOff}
+        style={disabledRail(redoOff)}
         onClick={onRedo}
       >
         {IconRedo}

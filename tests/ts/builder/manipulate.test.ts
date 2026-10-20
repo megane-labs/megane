@@ -303,4 +303,13 @@ describe("hoverHighlight", () => {
     // Selecting works on a paused document too.
     expect(hoverHighlight(3, { ...base, editable: false })).not.toBeNull();
   });
+
+  it("marks the whole group a drag from the atom would move", () => {
+    const sel = { ...base, selected: [1, 3, 5] };
+    expect(hoverHighlight(3, { ...sel, tool: "move" })?.atoms).toEqual([1, 3, 5]);
+    expect(hoverHighlight(3, sel)?.atoms).toEqual([1, 3, 5]);
+    // Off the selection, or paused (nothing moves), just the atom.
+    expect(hoverHighlight(4, { ...sel, tool: "move" })?.atoms).toEqual([4]);
+    expect(hoverHighlight(3, { ...sel, editable: false })?.atoms).toEqual([3]);
+  });
 });

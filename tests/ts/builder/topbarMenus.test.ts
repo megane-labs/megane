@@ -44,6 +44,53 @@ describe("fileMenuItems", () => {
     expect(byId(items, "builder-save-xyz").disabled).toBe(false);
   });
 
+  it("puts the shortcut hint on the format ⌘/Ctrl+S writes and explains an unavailable one", () => {
+    const save = vi.fn();
+    const items = fileMenuItems({
+      open: vi.fn(),
+      newCell: vi.fn(),
+      newBulk: vi.fn(),
+      save,
+      formats: [
+        { value: "xyz", label: "XYZ" },
+        { value: "pdb", label: "PDB" },
+        { value: "cif", label: "CIF", unavailable: "CIF needs a unit cell" },
+      ],
+      quickFormat: "pdb",
+      canSave: true,
+      mod: "⌘",
+    });
+    expect(byId(items, "builder-save-xyz").label).toBe("Save XYZ");
+    expect(byId(items, "builder-save-pdb").label).toBe("Save PDB  (⌘+S)");
+    expect(byId(items, "builder-save-cif").disabled).toBe(true);
+    expect(byId(items, "builder-save-cif").title).toBe("CIF needs a unit cell");
+    expect(byId(items, "builder-save-xyz").title).toBeUndefined();
+    // Neither the library nor the shortcut list is offered without its action.
+    expect(items.some((i) => "testId" in i && i.testId === "builder-file-library")).toBe(false);
+    expect(items.some((i) => "testId" in i && i.testId === "builder-shortcuts-item")).toBe(false);
+  });
+
+  it("offers the library and the keyboard shortcuts", () => {
+    const library = vi.fn();
+    const shortcuts = vi.fn();
+    const items = fileMenuItems({
+      open: vi.fn(),
+      newCell: vi.fn(),
+      newBulk: vi.fn(),
+      save: vi.fn(),
+      formats: [],
+      canSave: false,
+      library,
+      shortcuts,
+      mod: "Ctrl",
+    });
+    byId(items, "builder-file-library").onSelect();
+    expect(library).toHaveBeenCalled();
+    expect(byId(items, "builder-shortcuts-item").label).toContain("?");
+    byId(items, "builder-shortcuts-item").onSelect();
+    expect(shortcuts).toHaveBeenCalled();
+  });
+
   it("disables Save with nothing open", () => {
     const { items } = make(false);
     expect(byId(items, "builder-save-pdb").disabled).toBe(true);

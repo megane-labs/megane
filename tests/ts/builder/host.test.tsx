@@ -45,11 +45,13 @@ vi.mock("@/parsers/structure", () => ({ parseStructureFile }));
 import { BuilderApp } from "@/builder/BuilderApp";
 import { useBuilderStore } from "@/builder/store";
 import { useToolsStore } from "@/builder/tools/store";
-import { hostHasTools, WEB_HOST, type BuilderHost } from "@/builder/host";
+import { hostHasTools, hostIsStandalone, WEB_HOST, type BuilderHost } from "@/builder/host";
 import { inScope } from "@/builder/shortcuts";
 import { mountBuilder } from "@/builder/mount";
 import { createBuilderStores } from "@/builder/BuilderStores";
 import { openStructureFile } from "@/builder/open";
+import { readAutosave, writeAutosave } from "@/builder/autosave";
+import { createBuilderStore } from "@/builder/store";
 import KetcherUnavailable, { KETCHER_UNAVAILABLE } from "@/builder/library/KetcherUnavailable";
 import type { Snapshot } from "@/types";
 
@@ -99,6 +101,9 @@ describe("host", () => {
   it("the web host has every part on", () => {
     expect(hostHasTools(WEB_HOST)).toBe(true);
     expect(hostHasTools({ tools: false })).toBe(false);
+    // Only the web app owns its page: leave-page warning and autosave.
+    expect(hostIsStandalone(WEB_HOST)).toBe(true);
+    expect(hostIsStandalone({ save: async () => null })).toBe(false);
   });
 
   it("inScope: everything without a scope, only inside it with one", () => {
@@ -198,6 +203,25 @@ describe("BuilderApp in a host", () => {
     fireEvent.keyDown(root, { key: "d" });
     expect(useBuilderStore.getState().tool).toBe("delete");
     outside.remove();
+  });
+
+  it("embedded, there is no autosave and no leave-page warning: the host keeps the files", () => {
+    const old = createBuilderStore();
+    old.getState().openStructure(water(), null, "kept.pdb");
+    old.getState().pushOp({ op: "delete_atoms", atoms: [2] });
+    writeAutosave(old.getState());
+    const { unmount } = render(<BuilderApp host={{ save: async () => null }} />);
+    expect(screen.queryByTestId("builder-restore")).toBeNull();
+    localStorage.clear();
+    act(() => {
+      useBuilderStore.getState().openStructure(water(), null, "w.xyz");
+      useBuilderStore.getState().pushOp({ op: "delete_atoms", atoms: [2] });
+    });
+    const e = new Event("beforeunload", { cancelable: true });
+    window.dispatchEvent(e);
+    expect(e.defaultPrevented).toBe(false);
+    unmount();
+    expect(readAutosave()).toBeNull();
   });
 
   it("unscoped shortcuts work from anywhere, and the root is not focusable", () => {

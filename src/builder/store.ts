@@ -19,7 +19,15 @@
  *
  * Atom indices in `selected` / `pendingBondAtom` and in the Viewport's
  * callbacks address the *rendered* structure; `result.refAt` translates
- * them to op refs before an op is written.
+ * them to op refs before an op is written. Every change to the history
+ * carries the selection across by those refs (`remapSelection`): an atom
+ * keeps its place in the selection wherever it lands, and one that no longer
+ * exists drops out.
+ *
+ * A drag rewrites its own moves on every pointer move (`setDragOps`); the
+ * history before it is replayed once, at the drag's first move, and each
+ * further move only shifts the moved atoms of that cached result
+ * (`applyMoves`) instead of replaying the whole history again.
  */
 
 import { create, type StateCreator, type StoreApi } from "zustand";
@@ -33,6 +41,7 @@ import { fragmentOp, newFragmentId } from "./library/fragment";
 import type { LibraryMolecule } from "./library/types";
 import { bulkName, bulkSnapshot, type BulkSpec } from "../crystal/bulk";
 import { moveOps, type AxisKey, type DragMode, type DragReadout } from "./manipulate";
+import { labelStep } from "./placement";
 
 /** A structure with no atoms and no cell: what placing a molecule with nothing open starts from. */
 export function emptySnapshot(): Snapshot {
@@ -183,9 +192,13 @@ export interface BuilderStore {
   newCell: (edge: number) => void;
   /** Start a document from a bulk crystal (`bulkSnapshot`). Throws on a bad spec. */
   newBulk: (spec: BulkSpec) => void;
-  pushOp: (op: EditOp) => void;
-  /** Append several ops as one user action: a single Undo / Redo step. */
-  pushOps: (ops: EditOp[]) => void;
+  /** Append an op as one Undo step; `label` says what the user did, for the history list. */
+  pushOp: (op: EditOp, label?: string) => void;
+  /**
+   * Append several ops as one user action: a single Undo / Redo step, listed
+   * in the history as `label` when given ("Delete O #5 (+2 H)").
+   */
+  pushOps: (ops: EditOp[], label?: string) => void;
   /** Replace the most recent op. */
   replaceLastOp: (op: EditOp) => void;
   /**
@@ -249,7 +262,7 @@ export interface BuilderStore {
    * rotation, a cleaned-up geometry) as one Undo step: one `move_atoms` op per
    * distinct displacement. Returns whether anything was written.
    */
-  moveAtoms: (displacements: Map<number, [number, number, number]>) => boolean;
+  moveAtoms: (displacements: Map<number, [number, number, number]>, label?: string) => boolean;
   /** Select every rendered atom. */
   selectAll: () => void;
   /** Select the atoms that are not selected, and deselect the rest. */
@@ -354,309 +367,448 @@ function compute(source: Snapshot | null, edits: EditOp[]): EditResult | null {
   return source ? applyEditOps(source, edits) : null;
 }
 
-export const builderStateCreator: StateCreator<BuilderStore> = (set, get, storeApi) => ({
-  source: null,
-  sourceLabels: null,
-  fileName: null,
-  edits: [],
-  redoStack: [],
-  showOriginal: false,
-  result: null,
-  preview: null,
-  revision: 0,
-  docVersion: 0,
-  savedVersion: 0,
-
-  tool: "select",
-  element: 6,
-  bondOrder: 1,
-  selected: [],
-  pendingBondAtom: null,
-  handlers: null,
-  placeSource: null,
-  adsorbHeight: null,
-  boxSelect: false,
-  snap: false,
-  drag: null,
-  notice: null,
-  hydrogenMode: "auto",
-  confirm: null,
-
-  openStructure: (snapshot, labels, fileName) =>
-    set((s) => ({
-      source: snapshot,
-      sourceLabels: labels,
-      fileName,
-      edits: [],
-      redoStack: [],
-      showOriginal: false,
-      result: compute(snapshot, []),
-      preview: null,
-      selected: [],
-      pendingBondAtom: null,
-      notice: null,
-      docVersion: s.docVersion + 1,
-      savedVersion: s.docVersion + 1,
-    })),
-
-  closeDocument: () =>
-    set((s) => ({
-      source: null,
-      sourceLabels: null,
-      fileName: null,
-      edits: [],
-      redoStack: [],
-      showOriginal: false,
-      result: null,
-      preview: null,
-      selected: [],
-      pendingBondAtom: null,
-      notice: null,
-      docVersion: s.docVersion + 1,
-      savedVersion: s.docVersion + 1,
-    })),
-
-  newCell: (edge) => get().openStructure(emptyCellSnapshot(edge), null, UNTITLED),
-  newBulk: (spec) => get().openStructure(bulkSnapshot(spec), null, bulkName(spec)),
-
-  pushOp: (op) =>
-    set((s) => {
-      const edits = [...s.edits, op];
-      return {
-        edits,
-        redoStack: [],
-        result: compute(s.source, edits),
-        preview: null,
-        revision: s.revision + 1,
-        docVersion: s.docVersion + 1,
-        ...clearedError(s),
-      };
-    }),
-
-  pushOps: (ops) => {
-    if (ops.length === 0) return;
-    ops.slice(1).forEach((op) => continuations.add(op));
-    set((s) => {
-      const edits = [...s.edits, ...ops];
-      return {
-        edits,
-        redoStack: [],
-        result: compute(s.source, edits),
-        preview: null,
-        revision: s.revision + 1,
-        docVersion: s.docVersion + 1,
-        ...clearedError(s),
-      };
-    });
-  },
-
-  replaceLastOp: (op) =>
-    set((s) => {
-      if (s.edits.length === 0) return {};
-      const edits = [...s.edits.slice(0, -1), op];
-      return {
-        edits,
-        result: compute(s.source, edits),
-        preview: null,
-        revision: s.revision + 1,
-        docVersion: s.docVersion + 1,
-      };
-    }),
-
-  setDragOps: (base, ops) => {
-    ops.slice(1).forEach((op) => continuations.add(op));
-    set((s) => {
-      if (base > s.edits.length) return {};
-      const edits = [...s.edits.slice(0, base), ...ops];
-      return {
-        edits,
-        ...(ops.length > 0 ? { redoStack: [] } : {}),
-        result: compute(s.source, edits),
-        preview: null,
-        revision: s.revision + 1,
-        docVersion: s.docVersion + 1,
-        ...clearedError(s),
-      };
-    });
-  },
-
-  undo: () => {
-    const s = get();
-    // While the original is shown the edits are out of sight: leave them be.
-    if (s.edits.length === 0 || s.showOriginal) return null;
-    const edits = s.edits.slice();
-    const redoStack = s.redoStack.slice();
-    let op: EditOp;
-    do {
-      op = edits.pop()!;
-      redoStack.push(op);
-    } while (continuations.has(op) && edits.length > 0);
-    set({
-      edits,
-      redoStack,
-      result: compute(s.source, edits),
-      preview: null,
-      revision: s.revision + 1,
-      docVersion: s.docVersion + 1,
-      selected: [],
-      pendingBondAtom: null,
-    });
-    return op;
-  },
-
-  redo: () => {
-    const s = get();
-    if (s.redoStack.length === 0 || s.showOriginal) return null;
-    const redoStack = s.redoStack.slice();
-    const op = redoStack.pop()!;
-    const edits = [...s.edits, op];
-    while (redoStack.length > 0 && continuations.has(redoStack[redoStack.length - 1])) {
-      edits.push(redoStack.pop()!);
+/**
+ * The selection (and the Bond tool's first atom) carried from `before` to
+ * `after` by atom ref: each atom keeps its place in the selection under its
+ * new index, and an atom `after` no longer has drops out.
+ */
+export function remapSelection(
+  before: EditResult | null,
+  after: EditResult | null,
+  s: Pick<BuilderStore, "selected" | "pendingBondAtom">,
+): Pick<BuilderStore, "selected" | "pendingBondAtom"> {
+  const { selected, pendingBondAtom } = s;
+  if ((selected.length === 0 && pendingBondAtom === null) || before === after) {
+    return { selected, pendingBondAtom };
+  }
+  if (!before || !after) return { selected: [], pendingBondAtom: null };
+  const n = before.snapshot.nAtoms;
+  const refOf = (i: number) => (i >= 0 && i < n ? before.refAt(i) : null);
+  const wanted = new Map<EditAtomRef, number>();
+  for (const i of [...selected, ...(pendingBondAtom !== null ? [pendingBondAtom] : [])]) {
+    const ref = refOf(i);
+    if (ref !== null) wanted.set(ref, -1);
+  }
+  let left = wanted.size;
+  for (let i = 0; i < after.snapshot.nAtoms && left > 0; i++) {
+    const ref = after.refAt(i);
+    if (wanted.get(ref) === -1) {
+      wanted.set(ref, i);
+      left--;
     }
-    set({
-      edits,
-      redoStack,
-      result: compute(s.source, edits),
-      preview: null,
-      revision: s.revision + 1,
-      docVersion: s.docVersion + 1,
-    });
-    return op;
-  },
+  }
+  const to = (i: number) => {
+    const ref = refOf(i);
+    const j = ref === null ? undefined : wanted.get(ref);
+    return j === undefined || j < 0 ? null : j;
+  };
+  return {
+    selected: selected.map(to).filter((i): i is number => i !== null),
+    pendingBondAtom: pendingBondAtom === null ? null : to(pendingBondAtom),
+  };
+}
 
-  // Undo every step at once: the ops go onto the redo stack in the order
-  // single undos would leave them, so Redo brings them back step by step.
-  clearOps: () =>
-    set((s) =>
-      s.edits.length === 0 || s.showOriginal
-        ? {}
-        : {
-            edits: [],
-            redoStack: [...s.redoStack, ...s.edits.slice().reverse()],
-            result: compute(s.source, []),
-            preview: null,
-            revision: s.revision + 1,
-            docVersion: s.docVersion + 1,
-            selected: [],
-            pendingBondAtom: null,
-          },
-    ),
-
-  setShowOriginal: (on) =>
-    set((s) =>
-      s.showOriginal === on
-        ? {}
-        : {
-            showOriginal: on,
-            preview: null,
-            revision: s.revision + 1,
-            selected: [],
-            pendingBondAtom: null,
-          },
-    ),
-
-  setPreview: (op) =>
-    set((s) => {
-      if (!op || !s.result || s.showOriginal) {
-        return s.preview ? { preview: null, revision: s.revision + 1 } : {};
-      }
-      let preview: EditResult | null;
-      try {
-        preview = applyEditOps(s.result.snapshot, [op]);
-      } catch {
-        preview = null;
-      }
-      // The selection addresses the edited structure, not the preview.
-      return { preview, revision: s.revision + 1, selected: [], pendingBondAtom: null };
-    }),
-
-  markSaved: () => set((s) => ({ savedVersion: s.docVersion })),
-
-  requestConfirm: (request) => {
-    confirmResolvers.get(storeApi)?.(false);
-    return new Promise<boolean>((resolve) => {
-      confirmResolvers.set(storeApi, resolve);
-      set({ confirm: request });
-    });
-  },
-
-  resolveConfirm: (ok) => {
-    const resolve = confirmResolvers.get(storeApi);
-    confirmResolvers.delete(storeApi);
-    set({ confirm: null });
-    resolve?.(ok);
-  },
-
-  setTool: (tool) => set({ tool, pendingBondAtom: null }),
-  setElement: (element) => set({ element }),
-  setBondOrder: (bondOrder) => set({ bondOrder }),
-  setSelected: (indices) => set({ selected: [...new Set(indices)] }),
-  toggleSelected: (index) =>
-    set((s) => ({
-      selected: s.selected.includes(index)
-        ? s.selected.filter((i) => i !== index)
-        : [...s.selected, index],
-    })),
-  clearSelected: () => set({ selected: [], pendingBondAtom: null }),
-  setPendingBondAtom: (index) => set({ pendingBondAtom: index }),
-  setHandlers: (handlers) => set({ handlers }),
-  setPlaceSource: (molecule) =>
-    set((s) =>
-      molecule
-        ? { placeSource: molecule, tool: "place", pendingBondAtom: null }
-        : { placeSource: null, tool: s.tool === "place" ? "select" : s.tool },
-    ),
-  setAdsorbHeight: (height) =>
-    set({ adsorbHeight: height !== null && Number.isFinite(height) ? height : null }),
-  setBoxSelect: (boxSelect) => set({ boxSelect }),
-  setSnap: (snap) => set({ snap }),
-  setHydrogenMode: (hydrogenMode) => set({ hydrogenMode }),
-  setDrag: (drag) => set({ drag }),
-  setNotice: (notice) => set({ notice }),
-  reportError: (text) => set({ notice: { level: "error", text } }),
-  reportInfo: (text) => set({ notice: { level: "info", text } }),
-  addFragment: (molecule, at) => {
-    // With nothing open, the molecule starts a new, cell-less document.
-    if (!get().source) get().openStructure(emptySnapshot(), null, UNTITLED);
-    const s = get();
-    if (!canEdit(s)) return null;
-    const before = s.result!.snapshot.nAtoms;
-    const id = newFragmentId(molecule.name);
-    s.pushOp(fragmentOp(id, molecule, at));
-    const after = get().result!.snapshot.nAtoms;
-    const added = Array.from({ length: after - before }, (_, k) => before + k);
-    set({ selected: added, pendingBondAtom: null });
-    return id;
-  },
-  moveAtoms: (displacements) => {
-    const s = get();
-    if (!canEdit(s)) return false;
-    const n = s.result!.snapshot.nAtoms;
-    const refs = new Map<number, EditAtomRef>();
-    for (const i of displacements.keys()) {
-      const ref = i >= 0 && i < n ? s.result!.refAt(i) : null;
-      if (ref !== null) refs.set(i, ref);
+/**
+ * `base` with `ops` applied, when they are all `move_atoms` of atoms `base`
+ * has (`indexOf`): the moved atoms shifted, everything else shared. Null
+ * otherwise, for a full replay. What a drag's every pointer move does
+ * instead of replaying the whole history.
+ */
+export function applyMoves(
+  base: EditResult,
+  ops: EditOp[],
+  indexOf: (ref: EditAtomRef) => number | undefined,
+): EditResult | null {
+  const positions = new Float32Array(base.snapshot.positions);
+  for (const op of ops) {
+    if (op.op !== "move_atoms") return null;
+    const [dx, dy, dz] = op.delta;
+    for (const ref of op.atoms) {
+      const i = indexOf(ref);
+      if (i === undefined) return null;
+      positions[i * 3] += dx;
+      positions[i * 3 + 1] += dy;
+      positions[i * 3 + 2] += dz;
     }
-    const ops = moveOps(displacements, refs);
-    if (ops.length === 0) return false;
-    s.pushOps(ops);
-    return true;
-  },
-  selectAll: () =>
-    set((s) => {
-      const n = viewSnapshot(s)?.nAtoms ?? 0;
-      return { selected: Array.from({ length: n }, (_, i) => i), pendingBondAtom: null };
-    }),
-  invertSelection: () =>
-    set((s) => {
-      const n = viewSnapshot(s)?.nAtoms ?? 0;
-      const chosen = new Set(s.selected);
-      return {
-        selected: Array.from({ length: n }, (_, i) => i).filter((i) => !chosen.has(i)),
+  }
+  return {
+    snapshot: { ...base.snapshot, positions },
+    refAt: base.refAt,
+    get outputRefs() {
+      return base.outputRefs;
+    },
+    warnings: base.warnings,
+  };
+}
+
+/** The history a drag started from, replayed once (see `setDragOps`). */
+interface DragBase {
+  source: Snapshot;
+  /** The ops before the drag's own, as they were at its first move. */
+  prefix: EditOp[];
+  result: EditResult;
+  /** Ref → rendered index in `result`, built on first use. */
+  index: Map<EditAtomRef, number> | null;
+}
+
+export const builderStateCreator: StateCreator<BuilderStore> = (set, get, storeApi) => {
+  let dragBase: DragBase | null = null;
+
+  /** `dragBase` if it still describes the first `base` ops of `edits` on `source`. */
+  const cachedBase = (source: Snapshot | null, edits: EditOp[], base: number) => {
+    const c = dragBase;
+    if (!c || c.source !== source || c.prefix.length !== base || edits.length < base) return null;
+    for (let k = 0; k < base; k++) if (c.prefix[k] !== edits[k]) return null;
+    return c;
+  };
+
+  /** The result of `edits` after a drag rewrote the ops past `base`; see `applyMoves`. */
+  const dragResult = (
+    s: BuilderStore,
+    base: number,
+    ops: EditOp[],
+    edits: EditOp[],
+  ): { result: EditResult | null; moved: boolean } => {
+    let c = cachedBase(s.source, s.edits, base);
+    if (!c && s.source && s.result && s.edits.length === base) {
+      // The drag's first move: the history so far is what is shown.
+      c = dragBase = { source: s.source, prefix: s.edits, result: s.result, index: null };
+    }
+    if (c) {
+      if (ops.length === 0) return { result: c.result, moved: true };
+      const cache = c;
+      const indexOf = (ref: EditAtomRef) => {
+        if (!cache.index) {
+          cache.index = new Map();
+          for (let i = 0; i < cache.result.snapshot.nAtoms; i++) {
+            cache.index.set(cache.result.refAt(i), i);
+          }
+        }
+        return cache.index.get(ref);
+      };
+      const result = applyMoves(c.result, ops, indexOf);
+      if (result) return { result, moved: true };
+    }
+    return { result: compute(s.source, edits), moved: false };
+  };
+
+  return {
+    source: null,
+    sourceLabels: null,
+    fileName: null,
+    edits: [],
+    redoStack: [],
+    showOriginal: false,
+    result: null,
+    preview: null,
+    revision: 0,
+    docVersion: 0,
+    savedVersion: 0,
+
+    tool: "select",
+    element: 6,
+    bondOrder: 1,
+    selected: [],
+    pendingBondAtom: null,
+    handlers: null,
+    placeSource: null,
+    adsorbHeight: null,
+    boxSelect: false,
+    snap: false,
+    drag: null,
+    notice: null,
+    hydrogenMode: "auto",
+    confirm: null,
+
+    openStructure: (snapshot, labels, fileName) =>
+      set((s) => ({
+        source: snapshot,
+        sourceLabels: labels,
+        fileName,
+        edits: [],
+        redoStack: [],
+        showOriginal: false,
+        result: compute(snapshot, []),
+        preview: null,
+        selected: [],
         pendingBondAtom: null,
-      };
-    }),
-});
+        notice: null,
+        docVersion: s.docVersion + 1,
+        savedVersion: s.docVersion + 1,
+      })),
+
+    closeDocument: () =>
+      set((s) => ({
+        source: null,
+        sourceLabels: null,
+        fileName: null,
+        edits: [],
+        redoStack: [],
+        showOriginal: false,
+        result: null,
+        preview: null,
+        selected: [],
+        pendingBondAtom: null,
+        notice: null,
+        docVersion: s.docVersion + 1,
+        savedVersion: s.docVersion + 1,
+      })),
+
+    newCell: (edge) => get().openStructure(emptyCellSnapshot(edge), null, UNTITLED),
+    newBulk: (spec) => get().openStructure(bulkSnapshot(spec), null, bulkName(spec)),
+
+    pushOp: (op, label) => {
+      labelStep([op], label);
+      set((s) => {
+        const edits = [...s.edits, op];
+        const result = compute(s.source, edits);
+        return {
+          edits,
+          redoStack: [],
+          result,
+          ...remapSelection(s.result, result, s),
+          preview: null,
+          revision: s.revision + 1,
+          docVersion: s.docVersion + 1,
+          ...clearedError(s),
+        };
+      });
+    },
+
+    pushOps: (ops, label) => {
+      if (ops.length === 0) return;
+      ops.slice(1).forEach((op) => continuations.add(op));
+      labelStep(ops, label);
+      set((s) => {
+        const edits = [...s.edits, ...ops];
+        const result = compute(s.source, edits);
+        return {
+          edits,
+          redoStack: [],
+          result,
+          ...remapSelection(s.result, result, s),
+          preview: null,
+          revision: s.revision + 1,
+          docVersion: s.docVersion + 1,
+          ...clearedError(s),
+        };
+      });
+    },
+
+    replaceLastOp: (op) =>
+      set((s) => {
+        if (s.edits.length === 0) return {};
+        const edits = [...s.edits.slice(0, -1), op];
+        const result = compute(s.source, edits);
+        return {
+          edits,
+          result,
+          ...remapSelection(s.result, result, s),
+          preview: null,
+          revision: s.revision + 1,
+          docVersion: s.docVersion + 1,
+        };
+      }),
+
+    setDragOps: (base, ops) => {
+      ops.slice(1).forEach((op) => continuations.add(op));
+      set((s) => {
+        if (base > s.edits.length) return {};
+        const edits = [...s.edits.slice(0, base), ...ops];
+        const { result, moved } = dragResult(s, base, ops, edits);
+        return {
+          edits,
+          ...(ops.length > 0 ? { redoStack: [] } : {}),
+          result,
+          // Moves keep every atom where it is in the list.
+          ...(moved ? {} : remapSelection(s.result, result, s)),
+          preview: null,
+          revision: s.revision + 1,
+          docVersion: s.docVersion + 1,
+          ...clearedError(s),
+        };
+      });
+    },
+
+    undo: () => {
+      const s = get();
+      // While the original is shown the edits are out of sight: leave them be.
+      if (s.edits.length === 0 || s.showOriginal) return null;
+      const edits = s.edits.slice();
+      const redoStack = s.redoStack.slice();
+      let op: EditOp;
+      do {
+        op = edits.pop()!;
+        redoStack.push(op);
+      } while (continuations.has(op) && edits.length > 0);
+      const result = compute(s.source, edits);
+      set({
+        edits,
+        redoStack,
+        result,
+        ...remapSelection(s.result, result, s),
+        preview: null,
+        revision: s.revision + 1,
+        docVersion: s.docVersion + 1,
+      });
+      return op;
+    },
+
+    redo: () => {
+      const s = get();
+      if (s.redoStack.length === 0 || s.showOriginal) return null;
+      const redoStack = s.redoStack.slice();
+      const op = redoStack.pop()!;
+      const edits = [...s.edits, op];
+      while (redoStack.length > 0 && continuations.has(redoStack[redoStack.length - 1])) {
+        edits.push(redoStack.pop()!);
+      }
+      const result = compute(s.source, edits);
+      set({
+        edits,
+        redoStack,
+        result,
+        ...remapSelection(s.result, result, s),
+        preview: null,
+        revision: s.revision + 1,
+        docVersion: s.docVersion + 1,
+      });
+      return op;
+    },
+
+    // Undo every step at once: the ops go onto the redo stack in the order
+    // single undos would leave them, so Redo brings them back step by step.
+    clearOps: () =>
+      set((s) => {
+        if (s.edits.length === 0 || s.showOriginal) return {};
+        const result = compute(s.source, []);
+        return {
+          edits: [],
+          redoStack: [...s.redoStack, ...s.edits.slice().reverse()],
+          result,
+          ...remapSelection(s.result, result, s),
+          preview: null,
+          revision: s.revision + 1,
+          docVersion: s.docVersion + 1,
+        };
+      }),
+
+    setShowOriginal: (on) =>
+      set((s) =>
+        s.showOriginal === on
+          ? {}
+          : {
+              showOriginal: on,
+              preview: null,
+              revision: s.revision + 1,
+              selected: [],
+              pendingBondAtom: null,
+            },
+      ),
+
+    setPreview: (op) =>
+      set((s) => {
+        if (!op || !s.result || s.showOriginal) {
+          return s.preview ? { preview: null, revision: s.revision + 1 } : {};
+        }
+        let preview: EditResult | null;
+        try {
+          preview = applyEditOps(s.result.snapshot, [op]);
+        } catch {
+          preview = null;
+        }
+        // The selection addresses the edited structure, not the preview.
+        return { preview, revision: s.revision + 1, selected: [], pendingBondAtom: null };
+      }),
+
+    markSaved: () => set((s) => ({ savedVersion: s.docVersion })),
+
+    requestConfirm: (request) => {
+      confirmResolvers.get(storeApi)?.(false);
+      return new Promise<boolean>((resolve) => {
+        confirmResolvers.set(storeApi, resolve);
+        set({ confirm: request });
+      });
+    },
+
+    resolveConfirm: (ok) => {
+      const resolve = confirmResolvers.get(storeApi);
+      confirmResolvers.delete(storeApi);
+      set({ confirm: null });
+      resolve?.(ok);
+    },
+
+    setTool: (tool) => set({ tool, pendingBondAtom: null }),
+    setElement: (element) => set({ element }),
+    setBondOrder: (bondOrder) => set({ bondOrder }),
+    setSelected: (indices) => set({ selected: [...new Set(indices)] }),
+    toggleSelected: (index) =>
+      set((s) => ({
+        selected: s.selected.includes(index)
+          ? s.selected.filter((i) => i !== index)
+          : [...s.selected, index],
+      })),
+    clearSelected: () => set({ selected: [], pendingBondAtom: null }),
+    setPendingBondAtom: (index) => set({ pendingBondAtom: index }),
+    setHandlers: (handlers) => set({ handlers }),
+    setPlaceSource: (molecule) =>
+      set((s) =>
+        molecule
+          ? { placeSource: molecule, tool: "place", pendingBondAtom: null }
+          : { placeSource: null, tool: s.tool === "place" ? "select" : s.tool },
+      ),
+    setAdsorbHeight: (height) =>
+      set({ adsorbHeight: height !== null && Number.isFinite(height) ? height : null }),
+    setBoxSelect: (boxSelect) => set({ boxSelect }),
+    setSnap: (snap) => set({ snap }),
+    setHydrogenMode: (hydrogenMode) => set({ hydrogenMode }),
+    setDrag: (drag) => set({ drag }),
+    setNotice: (notice) => set({ notice }),
+    reportError: (text) => set({ notice: { level: "error", text } }),
+    reportInfo: (text) => set({ notice: { level: "info", text } }),
+    addFragment: (molecule, at) => {
+      // With nothing open, the molecule starts a new, cell-less document.
+      if (!get().source) get().openStructure(emptySnapshot(), null, UNTITLED);
+      const s = get();
+      if (!canEdit(s)) return null;
+      const before = s.result!.snapshot.nAtoms;
+      const id = newFragmentId(molecule.name);
+      s.pushOp(fragmentOp(id, molecule, at));
+      const after = get().result!.snapshot.nAtoms;
+      const added = Array.from({ length: after - before }, (_, k) => before + k);
+      set({ selected: added, pendingBondAtom: null });
+      return id;
+    },
+    moveAtoms: (displacements, label) => {
+      const s = get();
+      if (!canEdit(s)) return false;
+      const n = s.result!.snapshot.nAtoms;
+      const refs = new Map<number, EditAtomRef>();
+      for (const i of displacements.keys()) {
+        const ref = i >= 0 && i < n ? s.result!.refAt(i) : null;
+        if (ref !== null) refs.set(i, ref);
+      }
+      const ops = moveOps(displacements, refs);
+      if (ops.length === 0) return false;
+      s.pushOps(ops, label);
+      return true;
+    },
+    selectAll: () =>
+      set((s) => {
+        const n = viewSnapshot(s)?.nAtoms ?? 0;
+        return { selected: Array.from({ length: n }, (_, i) => i), pendingBondAtom: null };
+      }),
+    invertSelection: () =>
+      set((s) => {
+        const n = viewSnapshot(s)?.nAtoms ?? 0;
+        const chosen = new Set(s.selected);
+        return {
+          selected: Array.from({ length: n }, (_, i) => i).filter((i) => !chosen.has(i)),
+          pendingBondAtom: null,
+        };
+      }),
+  };
+};
 
 /** The page-wide store: the document of a Builder mounted without `BuilderProvider`. */
 export const useBuilderStore = create<BuilderStore>(builderStateCreator);

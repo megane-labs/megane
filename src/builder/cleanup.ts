@@ -16,14 +16,75 @@
  * allows (an ammonium N, an oxonium O, a borate B) is given the formal charge
  * that explains it (`inferredCharges`). A molecule RDKit still rejects is
  * left as it is and counted; the others are cleaned up.
+ *
+ * One clean-up runs at a time per document (`isCleanupRunning`); a second
+ * request while one runs is answered with a notice, not queued.
  */
 
+import { useSyncExternalStore } from "react";
 import type { StoreApi } from "zustand";
 import { getElementSymbol } from "../constants";
 import type { Snapshot } from "../types";
 import { embedSketch, type EmbeddedSketch, type EmbedSketchOptions } from "./library/embed";
 import { canEdit, shownSnapshot, type BuilderStore } from "./store";
-import { molecules, superpose, unwrappedPositions, type Displacements } from "./geometry";
+import {
+  adjacency,
+  molecules,
+  superpose,
+  unwrappedPositions,
+  type Displacements,
+} from "./geometry";
+import { typicalValence } from "./hydrogens";
+
+/** The stores whose clean-up is running, and who is told when that changes. */
+const running = new WeakSet<object>();
+const runningListeners = new Set<() => void>();
+
+function setRunning(api: object, on: boolean) {
+  if (on) running.add(api);
+  else running.delete(api);
+  runningListeners.forEach((l) => l());
+}
+
+/** Whether a clean-up of `api`'s document is running (menus disable Clean up meanwhile). */
+export function isCleanupRunning(api: object): boolean {
+  return running.has(api);
+}
+
+/** `isCleanupRunning` for a component: re-renders when a clean-up starts or ends. */
+export function useCleanupRunning(api: object): boolean {
+  return useSyncExternalStore(
+    (listener) => {
+      runningListeners.add(listener);
+      return () => runningListeners.delete(listener);
+    },
+    () => running.has(api),
+  );
+}
+
+/** What a clean-up without bond orders warns. */
+export const UNKNOWN_ORDERS = "Bond orders unknown — rings are treated as single bonds.";
+
+/**
+ * Whether cleaning up the molecules holding `atoms` (every molecule when
+ * empty) would guess: the structure carries no bond orders, and one of those
+ * molecules has a ring or an atom with fewer bonds than its valence, which
+ * RDKit then sees as all-single bonds.
+ */
+export function bondOrdersUnknown(snapshot: Snapshot, atoms: number[]): boolean {
+  if (snapshot.bondOrders !== null || snapshot.nBonds === 0) return false;
+  const wanted = new Set(atoms);
+  const adj = adjacency(snapshot);
+  return molecules(snapshot).some((mol) => {
+    if (mol.length < 2 || (wanted.size > 0 && !mol.some((i) => wanted.has(i)))) return false;
+    const bonds = mol.reduce((sum, i) => sum + adj[i].length, 0) / 2;
+    if (bonds >= mol.length) return true;
+    return mol.some((i) => {
+      const v = typicalValence(snapshot.elements[i]);
+      return v !== null && adj[i].length < v;
+    });
+  });
+}
 
 /** V2000 holds at most 999 atoms; larger molecules are skipped. */
 export const MAX_CLEANUP_ATOMS = 999;
@@ -215,9 +276,21 @@ export async function runCleanup(
   const s = api.getState();
   const shown = shownSnapshot(s);
   if (!canEdit(s) || !shown || shown.nAtoms === 0) return;
+  if (running.has(api)) {
+    s.reportInfo("Clean up is already running.");
+    return;
+  }
   const revision = s.revision;
-  s.reportInfo("Cleaning up the geometry with RDKit…");
-  const result = await cleanUpMolecules(shown, s.selected, embed);
+  const guess = bondOrdersUnknown(shown, s.selected);
+  const warning = guess ? ` ${UNKNOWN_ORDERS}` : "";
+  s.reportInfo(`Cleaning up with RDKit…${warning}`);
+  let result: CleanupResult;
+  setRunning(api, true);
+  try {
+    result = await cleanUpMolecules(shown, s.selected, embed);
+  } finally {
+    setRunning(api, false);
+  }
   const now = api.getState();
   // The document changed while RDKit worked: the result no longer fits it.
   if (now.revision !== revision) {
@@ -232,7 +305,10 @@ export async function runCleanup(
     );
     return;
   }
-  now.moveAtoms(result.displacements);
+  now.moveAtoms(
+    result.displacements,
+    `Clean up ${result.cleaned} molecule${result.cleaned === 1 ? "" : "s"}`,
+  );
   const mols = `${result.cleaned} molecule${result.cleaned === 1 ? "" : "s"}`;
   const skipped =
     result.skipped > 0 ? `; ${result.skipped} skipped (single atoms or too large)` : "";
@@ -240,9 +316,9 @@ export async function runCleanup(
     result.energy !== null ? ` (${result.forceField}, ${result.energy.toFixed(2)} kcal/mol)` : "";
   if (result.failed > 0) {
     now.reportError(
-      `Cleaned up ${mols}${energy}${skipped}; ${result.failed} left as they are (RDKit: ${result.error}).`,
+      `Cleaned up ${mols}${energy}${skipped}; ${result.failed} left as they are (RDKit: ${result.error}).${warning}`,
     );
   } else {
-    now.reportInfo(`Cleaned up ${mols}${energy}${skipped}.`);
+    now.reportInfo(`Cleaned up ${mols}${energy}${skipped}.${warning}`);
   }
 }

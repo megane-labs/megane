@@ -15,6 +15,10 @@ const { rendererStub, viewportProps, applyViewportState, exportSnapshot, parseSt
       resetView: vi.fn(),
       alignCameraToAxis: vi.fn(),
       setBackgroundColor: vi.fn(),
+      testGetProjectedAtomPositions: vi.fn(() => [
+        { index: 0, sx: 500, sy: 500, depth: 0, element: 8 },
+        { index: 1, sx: 40, sy: 50, depth: 0, element: 1 },
+      ]),
     },
     viewportProps: { current: null as Record<string, unknown> | null },
     applyViewportState: vi.fn(),
@@ -44,7 +48,9 @@ vi.mock("@/export/structureExport", async () => {
 });
 vi.mock("@/parsers/structure", () => ({ parseStructureFile }));
 
-import { BuilderApp } from "@/builder/BuilderApp";
+import { BuilderApp, NOTICE_TIMEOUT_MS, formatUnavailable, isFlowFile } from "@/builder/BuilderApp";
+import { AUTOSAVE_KEY, readAutosave, writeAutosave } from "@/builder/autosave";
+import { createBuilderStore } from "@/builder/store";
 import { useBuilderStore } from "@/builder/store";
 import { useLibraryUi } from "@/builder/library/ui";
 import { useToolsStore } from "@/builder/tools/store";
@@ -154,7 +160,10 @@ beforeEach(() => {
     snap: false,
     drag: null,
     notice: null,
+    hydrogenMode: "auto",
   });
+  // A question a test left open would hold the keyboard in the next one.
+  useBuilderStore.getState().resolveConfirm(false);
   applyViewportState.mockClear();
   exportSnapshot.mockClear();
   parseStructureFile.mockReset();
@@ -291,8 +300,12 @@ describe("BuilderApp — editing", () => {
     expect(screen.queryByTestId("builder-bond-order")).toBeNull();
     tool("place");
     expect(screen.getByTestId("builder-adsorb-toggle")).toBeTruthy();
+    // Delete changes atoms, so its only setting is how hydrogens are kept.
     tool("delete");
-    expect(screen.queryByTestId("builder-context-bar")).toBeNull();
+    expect(screen.getByTestId("builder-context-label").textContent).toBe("Delete");
+    expect(screen.getByTestId("builder-hydrogens")).toBeTruthy();
+    expect(screen.queryByTestId("builder-element-z")).toBeNull();
+    expect(screen.queryByTestId("builder-bond-order")).toBeNull();
     // The status bar always names the tool.
     expect(screen.getByTestId("builder-status-tool").textContent).toContain("Delete (D)");
   });
@@ -349,6 +362,8 @@ describe("BuilderApp — editing", () => {
   });
 
   it("Select and the selection actions, which appear only with a selection", () => {
+    // Plain ops, without hydrogen bookkeeping (covered in editActions.test.ts).
+    useBuilderStore.getState().setHydrogenMode("off");
     render(<BuilderApp />);
     expect(screen.queryByTestId("builder-selection")).toBeNull();
     pick(1);
@@ -635,7 +650,8 @@ describe("BuilderApp — editing", () => {
     fireEvent.click(screen.getByTestId("builder-topbar-undo"));
     fireEvent.click(screen.getByTestId("builder-redo"));
     expect(shownAtoms()).toBe(1);
-    expect(screen.getByTestId("builder-op-list").textContent).toContain("Delete 1 atom");
+    // Each step reads as what the user did, naming the atom.
+    expect(screen.getByTestId("builder-op-list").textContent).toContain("Delete H #2");
     fireEvent.click(screen.getByTestId("builder-clear-ops"));
     expect(edits()).toEqual([]);
     expect(shownAtoms()).toBe(3);
@@ -681,6 +697,19 @@ describe("BuilderApp — editing", () => {
     await waitFor(() => expect(exportSnapshot).toHaveBeenCalledTimes(2));
   });
 
+  it("a download that fails says why and leaves the edits unsaved", async () => {
+    render(<BuilderApp />);
+    tool("delete");
+    pick(2);
+    exportSnapshot.mockRejectedValueOnce(new Error("blocked"));
+    save("xyz");
+    await waitFor(() =>
+      expect(screen.getByTestId("builder-notice").textContent).toContain("Could not save: blocked"),
+    );
+    const s = useBuilderStore.getState();
+    expect(s.savedVersion).not.toBe(s.docVersion);
+  });
+
   it("saves the edited structure while the original is shown", async () => {
     render(<BuilderApp />);
     tool("delete");
@@ -691,17 +720,47 @@ describe("BuilderApp — editing", () => {
     expect((exportSnapshot.mock.calls[0][0] as Snapshot).nAtoms).toBe(2);
   });
 
-  it("New from the top bar replaces the document", () => {
+  it("New from the top bar replaces the document, once unsaved edits may go", async () => {
     render(<BuilderApp />);
     tool("delete");
     pick(2);
     fireEvent.click(screen.getByTestId("builder-file"));
     fireEvent.click(screen.getByTestId("builder-new-cell-item"));
     fireEvent.change(screen.getByTestId("builder-new-cell-edge"), { target: { value: "15" } });
+    // An unsaved edit: the app asks, and "Cancel" keeps the document and the form.
     fireEvent.click(screen.getByTestId("builder-new-cell"));
-    expect(useBuilderStore.getState().source!.box![0]).toBe(15);
+    expect(screen.getByTestId("builder-confirm").textContent).toContain(
+      "Starting a new structure replaces the open structure (water.pdb)",
+    );
+    fireEvent.click(screen.getByTestId("builder-confirm-cancel"));
+    await waitFor(() => expect(screen.queryByTestId("builder-confirm")).toBeNull());
+    expect(useBuilderStore.getState().fileName).toBe("water.pdb");
+    expect(edits()).toHaveLength(1);
+    expect(screen.getByTestId("builder-new-dialog")).toBeTruthy();
+    // "Discard edits" goes ahead.
+    fireEvent.click(screen.getByTestId("builder-new-cell"));
+    fireEvent.click(screen.getByTestId("builder-confirm-ok"));
+    await waitFor(() => expect(useBuilderStore.getState().source!.box![0]).toBe(15));
     expect(edits()).toEqual([]);
     expect(shownAtoms()).toBe(0);
+    expect(screen.queryByTestId("builder-new-dialog")).toBeNull();
+  });
+
+  it("a bulk crystal over unsaved edits asks first, and reports a refused spec after", async () => {
+    render(<BuilderApp />);
+    tool("delete");
+    pick(2);
+    fireEvent.click(screen.getByTestId("builder-file"));
+    fireEvent.click(screen.getByTestId("builder-new-bulk-item"));
+    fireEvent.change(screen.getByTestId("builder-bulk-a"), { target: { value: "-1" } });
+    fireEvent.click(screen.getByTestId("builder-bulk-create"));
+    fireEvent.click(screen.getByTestId("builder-confirm-ok"));
+    await waitFor(() => expect(screen.getByTestId("builder-new-error")).toBeTruthy());
+    expect(useBuilderStore.getState().fileName).toBe("water.pdb");
+    fireEvent.change(screen.getByTestId("builder-bulk-a"), { target: { value: "3.61" } });
+    fireEvent.click(screen.getByTestId("builder-bulk-create"));
+    fireEvent.click(screen.getByTestId("builder-confirm-ok"));
+    await waitFor(() => expect(useBuilderStore.getState().fileName).toBe("Cu-fcc"));
   });
 
   it("the view controls reset the camera and look along an axis, as in the viewer", () => {
@@ -785,11 +844,9 @@ describe("BuilderApp — editing", () => {
     fireEvent.click(screen.getByTestId("builder-tools-dialog-close"));
     // With no form open, the panel is back to the current tool's settings.
     expect(screen.getByTestId("builder-context-bar")).toBeTruthy();
-    // A tool without settings says so.
+    // Every tool has settings now (Delete keeps hydrogens balanced): no hint.
     tool("delete");
-    expect(screen.getByTestId("builder-empty-hint").textContent).toContain(
-      "Delete has no settings",
-    );
+    expect(screen.queryByTestId("builder-empty-hint")).toBeNull();
   });
 });
 
@@ -846,15 +903,24 @@ describe("BuilderApp — keyboard", () => {
     }
   });
 
-  it("Ctrl+O opens the file picker and Ctrl+S saves XYZ", async () => {
+  it("Ctrl+O opens the file picker and Ctrl+S saves in the document's own format", async () => {
     render(<BuilderApp />);
     const input = screen.getByTestId("builder-open-input") as HTMLInputElement;
     const click = vi.spyOn(input, "click");
     fireEvent.keyDown(window, { key: "o", ctrlKey: true });
     expect(click).toHaveBeenCalledTimes(1);
+    // water.pdb saves as PDB, and the File menu puts the hint on that format.
     fireEvent.keyDown(window, { key: "s", ctrlKey: true });
     await waitFor(() => expect(exportSnapshot).toHaveBeenCalledTimes(1));
-    expect(exportSnapshot.mock.calls[0][1]).toBe("xyz");
+    expect(exportSnapshot.mock.calls[0][1]).toBe("pdb");
+    fireEvent.click(screen.getByTestId("builder-file"));
+    expect(screen.getByTestId("builder-save-pdb").textContent).toContain("Ctrl+S");
+    expect(screen.getByTestId("builder-save-xyz").textContent).not.toContain("Ctrl+S");
+    // A format Megane does not write falls back to XYZ.
+    act(() => useBuilderStore.getState().openStructure(water(), null, "water.gro"));
+    fireEvent.keyDown(window, { key: "s", ctrlKey: true });
+    await waitFor(() => expect(exportSnapshot).toHaveBeenCalledTimes(2));
+    expect(exportSnapshot.mock.calls[1][1]).toBe("xyz");
   });
 });
 
@@ -1045,6 +1111,11 @@ describe("BuilderApp — Structure and Tools menus", () => {
     expect(screen.getByTestId("builder-structure-cleanup").textContent).toBe("Clean up geometry");
     fireEvent.click(screen.getByTestId("builder-structure-cleanup"));
     expect(useBuilderStore.getState().notice?.text).toContain("Cleaning up");
+    // A second clean-up cannot start while the first runs.
+    fireEvent.click(screen.getByTestId("builder-structure"));
+    const again = screen.getByTestId("builder-structure-cleanup") as HTMLButtonElement;
+    expect(again.disabled).toBe(true);
+    expect(again.title).toContain("already running");
   });
 });
 
@@ -1063,6 +1134,30 @@ describe("BuilderApp — selecting and the atom menu", () => {
     fireEvent.click(screen.getByTestId("builder-atom-menu-molecule"));
     expect(useBuilderStore.getState().selected).toEqual([0, 1, 2]);
     expect(screen.queryByTestId("builder-atom-menu")).toBeNull();
+  });
+
+  it("the Menu key opens the selected atom's menu at the atom, or mid-view when it is off screen", () => {
+    const rect = vi
+      .spyOn(HTMLElement.prototype, "getBoundingClientRect")
+      .mockReturnValue({ left: 10, top: 20, width: 200, height: 100 } as DOMRect);
+    try {
+      render(<BuilderApp />);
+      act(() => useBuilderStore.getState().setSelected([1]));
+      fireEvent.keyDown(window, { key: "F10", shiftKey: true });
+      let menu = screen.getByTestId("builder-atom-menu");
+      expect(menu.style.left).toBe("50px");
+      expect(menu.style.top).toBe("70px");
+      fireEvent.keyDown(window, { key: "Escape" });
+      expect(screen.queryByTestId("builder-atom-menu")).toBeNull();
+
+      act(() => useBuilderStore.getState().setSelected([0]));
+      fireEvent.keyDown(window, { key: "ContextMenu" });
+      menu = screen.getByTestId("builder-atom-menu");
+      expect(menu.style.left).toBe("110px");
+      expect(menu.style.top).toBe("70px");
+    } finally {
+      rect.mockRestore();
+    }
   });
 
   it("the atom menu does not open over a preview", () => {
@@ -1092,5 +1187,235 @@ describe("BuilderApp — selecting and the atom menu", () => {
     expect(screen.getByTestId("builder-op-count").textContent).toBe("1 edit");
     expect(screen.getByTestId("builder-file-name").textContent).toContain("1 edit");
     expect(screen.getByTestId("builder-op-list").textContent).toBe("Move 2 atoms");
+  });
+});
+
+describe("BuilderApp — unsaved edits", () => {
+  const parsedWater = () => ({
+    snapshot: water(),
+    labels: null,
+    frames: [],
+    meta: null,
+    vectorChannels: [],
+    scalarChannels: [],
+    warnings: [],
+  });
+
+  it("asks before File › Open replaces unsaved edits; Cancel keeps them", async () => {
+    parseStructureFile.mockResolvedValue(parsedWater());
+    useBuilderStore.getState().openStructure(water(), null, "mine.xyz");
+    render(<BuilderApp />);
+    tool("delete");
+    pick(2);
+    fireEvent.change(screen.getByTestId("builder-open-input"), {
+      target: { files: [new File(["x"], "other.pdb")] },
+    });
+    await waitFor(() =>
+      expect(screen.getByTestId("builder-confirm").textContent).toContain(
+        "Opening other.pdb replaces the open structure (mine.xyz) and its history of 1 edit",
+      ),
+    );
+    fireEvent.click(screen.getByTestId("builder-confirm-cancel"));
+    await waitFor(() => expect(screen.queryByTestId("builder-confirm")).toBeNull());
+    expect(useBuilderStore.getState().fileName).toBe("mine.xyz");
+    expect(edits()).toHaveLength(1);
+  });
+
+  it("warns before the page is left with unsaved edits, and autosaves them", () => {
+    useBuilderStore.getState().openStructure(water(), null, "mine.xyz");
+    const { unmount } = render(<BuilderApp />);
+    const leave = () => {
+      const e = new Event("beforeunload", { cancelable: true });
+      window.dispatchEvent(e);
+      return e.defaultPrevented;
+    };
+    expect(leave()).toBe(false);
+    tool("delete");
+    pick(2);
+    expect(leave()).toBe(true);
+    unmount();
+    expect(readAutosave()?.fileName).toBe("mine.xyz");
+    expect(leave()).toBe(false);
+  });
+
+  it("offers an autosave while nothing is open: Restore brings back the edits as Undo steps", () => {
+    const old = createBuilderStore();
+    old.getState().openStructure(water(), ["HOH", "HOH", "HOH"], "kept.pdb");
+    old.getState().pushOp({ op: "delete_atoms", atoms: [2] });
+    old.getState().pushOps([
+      { op: "move_atoms", atoms: [0], delta: [1, 0, 0] },
+      { op: "move_atoms", atoms: [1], delta: [1, 0, 0] },
+    ]);
+    writeAutosave(old.getState());
+    render(<BuilderApp />);
+    expect(screen.getByTestId("builder-restore-text").textContent).toContain(
+      "Unsaved edits to kept.pdb from today at",
+    );
+    fireEvent.click(screen.getByTestId("builder-restore-ok"));
+    expect(screen.queryByTestId("builder-restore")).toBeNull();
+    expect(useBuilderStore.getState().fileName).toBe("kept.pdb");
+    expect(screen.getByTestId("builder-op-count").textContent).toBe("2 edits");
+    expect(screen.getByTestId("builder-notice").textContent).toContain(
+      "Restored kept.pdb with 2 unsaved edits.",
+    );
+    fireEvent.click(screen.getByTestId("builder-topbar-undo"));
+    expect(edits()).toHaveLength(1);
+  });
+
+  it("Discard drops the autosave; opening something else hides the offer", () => {
+    const old = createBuilderStore();
+    old.getState().openStructure(water(), null, null as unknown as string);
+    old.getState().pushOp({ op: "delete_atoms", atoms: [2] });
+    writeAutosave(old.getState());
+    const { unmount } = render(<BuilderApp />);
+    expect(screen.getByTestId("builder-restore-text").textContent).toContain(
+      "an untitled structure",
+    );
+    fireEvent.click(screen.getByTestId("builder-restore-discard"));
+    expect(screen.queryByTestId("builder-restore")).toBeNull();
+    expect(localStorage.getItem(AUTOSAVE_KEY)).toBeNull();
+    unmount();
+
+    writeAutosave(old.getState());
+    render(<BuilderApp />);
+    expect(screen.getByTestId("builder-restore")).toBeTruthy();
+    act(() => useBuilderStore.getState().newCell(10));
+    expect(screen.queryByTestId("builder-restore")).toBeNull();
+  });
+
+  it("an open document is not covered by an autosave offer", () => {
+    const old = createBuilderStore();
+    old.getState().openStructure(water(), null, "kept.pdb");
+    old.getState().pushOp({ op: "delete_atoms", atoms: [2] });
+    writeAutosave(old.getState());
+    useBuilderStore.getState().openStructure(water(), null, "open.pdb");
+    render(<BuilderApp />);
+    expect(screen.queryByTestId("builder-restore")).toBeNull();
+  });
+});
+
+describe("BuilderApp — notices, drops and the File menu", () => {
+  afterEach(() => vi.useRealTimers());
+
+  it("an info notice goes after a while; an error stays", () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    render(<BuilderApp />);
+    act(() => useBuilderStore.getState().reportInfo("first"));
+    act(() => vi.advanceTimersByTime(NOTICE_TIMEOUT_MS - 1000));
+    // A new notice restarts the clock.
+    act(() => useBuilderStore.getState().reportInfo("second"));
+    act(() => vi.advanceTimersByTime(NOTICE_TIMEOUT_MS - 1000));
+    expect(screen.getByTestId("builder-notice").textContent).toContain("second");
+    act(() => vi.advanceTimersByTime(1000));
+    expect(screen.queryByTestId("builder-notice")).toBeNull();
+    act(() => useBuilderStore.getState().reportError("broken"));
+    act(() => vi.advanceTimersByTime(NOTICE_TIMEOUT_MS * 2));
+    expect(screen.getByTestId("builder-notice").textContent).toContain("broken");
+  });
+
+  it("opens the first of several dropped files; a flow file asks for Flow mode", async () => {
+    parseStructureFile.mockResolvedValue({
+      snapshot: water(),
+      labels: null,
+      frames: [],
+      meta: null,
+      vectorChannels: [],
+      scalarChannels: [],
+      warnings: [],
+    });
+    render(<BuilderApp />);
+    const zone = screen.getByTestId("builder-dropzone");
+    fireEvent.drop(zone, {
+      dataTransfer: { files: [new File(["x"], "flow.megane-flow.json")] },
+    });
+    expect(useBuilderStore.getState().notice?.text).toBe(
+      "Switch to Flow mode to open the flow file flow.megane-flow.json.",
+    );
+    expect(parseStructureFile).not.toHaveBeenCalled();
+    fireEvent.drop(zone, {
+      dataTransfer: { files: [new File(["x"], "a.xyz"), new File(["y"], "b.xyz")] },
+    });
+    await waitFor(() => expect(useBuilderStore.getState().fileName).toBe("a.xyz"));
+    expect(parseStructureFile).toHaveBeenCalledTimes(1);
+    expect(screen.getByTestId("builder-notice").textContent).toContain("1 other file was ignored");
+  });
+
+  it("File › Insert molecule from library… picks Place and opens its gallery", () => {
+    useBuilderStore.getState().openStructure(water(), null, "w.xyz");
+    render(<BuilderApp />);
+    fireEvent.click(screen.getByTestId("builder-file"));
+    fireEvent.click(screen.getByTestId("builder-new-cell-item"));
+    fireEvent.click(screen.getByTestId("builder-file"));
+    fireEvent.click(screen.getByTestId("builder-file-library"));
+    expect(useBuilderStore.getState().tool).toBe("place");
+    expect(useLibraryUi.getState().galleryOpen).toBe(true);
+    expect(screen.queryByTestId("builder-new-dialog")).toBeNull();
+    expect(screen.getByTestId("builder-library")).toBeTruthy();
+  });
+
+  it('"?" and File › Keyboard shortcuts… list the shortcuts; Escape closes the list', () => {
+    useBuilderStore.getState().openStructure(water(), null, "w.xyz");
+    render(<BuilderApp />);
+    fireEvent.keyDown(window, { key: "?", shiftKey: true });
+    const card = screen.getByTestId("builder-shortcuts");
+    expect(screen.getByTestId("builder-shortcuts-tools").textContent).toContain("Delete tool");
+    expect(screen.getByTestId("builder-shortcuts-general").textContent).toContain("+S");
+    expect(screen.getByTestId("builder-shortcuts-drag").textContent).toContain("Shift+Drag");
+    expect(card).toBeTruthy();
+    fireEvent.keyDown(window, { key: "Escape" });
+    expect(screen.queryByTestId("builder-shortcuts")).toBeNull();
+    fireEvent.click(screen.getByTestId("builder-file"));
+    fireEvent.click(screen.getByTestId("builder-shortcuts-item"));
+    expect(screen.getByTestId("builder-shortcuts")).toBeTruthy();
+    fireEvent.click(screen.getByTestId("builder-shortcuts-close"));
+    expect(screen.queryByTestId("builder-shortcuts")).toBeNull();
+    // A Python tool's form takes its place.
+    fireEvent.keyDown(window, { key: "?", shiftKey: true });
+    act(() =>
+      useToolsStore.setState({
+        openTool: { name: "t", description: "", inputSchema: {} } as unknown as BuilderToolInfo,
+      }),
+    );
+    expect(screen.queryByTestId("builder-shortcuts")).toBeNull();
+    act(() => useToolsStore.setState({ openTool: null }));
+  });
+
+  it("pauses the rail's Undo and Redo while a preview is open, saying why", () => {
+    useBuilderStore.getState().openStructure(water(), null, "w.xyz");
+    render(<BuilderApp />);
+    tool("delete");
+    pick(2);
+    const undo = screen.getByTestId("builder-topbar-undo") as HTMLButtonElement;
+    expect(undo.disabled).toBe(false);
+    act(() => useBuilderStore.getState().setPreview({ op: "wrap" }));
+    expect(undo.disabled).toBe(true);
+    expect(undo.title).toContain("preview");
+    fireEvent.keyDown(window, { key: "z", ctrlKey: true });
+    expect(edits()).toHaveLength(1);
+    expect(screen.getByTestId("builder-notice").textContent).toContain("preview");
+  });
+
+  it("shows a loading line while the Flow editor loads", () => {
+    render(<BuilderApp />);
+    fireEvent.click(screen.getByTestId("builder-mode-flow"));
+    expect(screen.getByTestId("builder-flow-loading").textContent).toBe("Loading Flow editor…");
+    fireEvent.click(screen.getByTestId("builder-mode-manual"));
+    expect(screen.queryByTestId("builder-flow-loading")).toBeNull();
+  });
+});
+
+describe("BuilderApp helpers", () => {
+  it("formatUnavailable explains a format that needs a cell", () => {
+    expect(formatUnavailable({ label: "CIF", needsCell: true }, false)).toBe(
+      "CIF needs a unit cell, and this structure has none",
+    );
+    expect(formatUnavailable({ label: "CIF", needsCell: true }, true)).toBeNull();
+    expect(formatUnavailable({ label: "XYZ" }, false)).toBeNull();
+  });
+
+  it("isFlowFile knows a flow graph by its extension", () => {
+    expect(isFlowFile({ name: "a.megane-flow.json" })).toBe(true);
+    expect(isFlowFile({ name: "A.JSON" })).toBe(true);
+    expect(isFlowFile({ name: "a.pdb" })).toBe(false);
   });
 });

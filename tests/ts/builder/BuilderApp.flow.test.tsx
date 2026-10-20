@@ -102,7 +102,8 @@ beforeEach(() => {
 async function enterFlow() {
   render(<BuilderApp />);
   fireEvent.click(screen.getByTestId("builder-mode-flow"));
-  await screen.findByTestId("builder-flow-panel");
+  // The panel is lazy: its first import can take a while on a loaded machine.
+  await screen.findByTestId("builder-flow-panel", {}, { timeout: 5000 });
 }
 
 describe("Builder Flow mode", () => {
@@ -139,7 +140,7 @@ describe("Builder Flow mode", () => {
     expect(screen.getByTestId("builder-file-name").textContent).toContain("O");
 
     fireEvent.click(screen.getByTestId("builder-flow-open-manual"));
-    expect(app().getAttribute("data-mode")).toBe("manual");
+    await waitFor(() => expect(app().getAttribute("data-mode")).toBe("manual"));
     expect(useBuilderStore.getState().source!.nAtoms).toBe(3);
   });
 
@@ -162,7 +163,8 @@ describe("Builder Flow mode", () => {
     act(() => useBuilderStore.getState().pushOp({ op: "delete_atoms", atoms: [0] }));
     expect(useFlowStore.getState().runs[doc].status).toBe("stale");
 
-    // Run makes the flow's result the structure Manual mode edits.
+    // Run makes the flow's result the structure Manual mode edits, asking
+    // first because the document has an unsaved edit.
     act(() => useFlowStore.getState().clear());
     addBlock("builder-flow-add-smiles");
     fireEvent.change(screen.getByTestId("builder-flow-molecule-smiles"), {
@@ -170,6 +172,10 @@ describe("Builder Flow mode", () => {
     });
     await act(async () => {
       fireEvent.click(screen.getByTestId("builder-flow-run"));
+    });
+    await screen.findByTestId("builder-confirm");
+    await act(async () => {
+      fireEvent.click(screen.getByTestId("builder-confirm-ok"));
     });
     await waitFor(() => expect(useBuilderStore.getState().fileName).toBe("O"));
     act(() => useFlowStore.getState().selectNode(null));
@@ -217,12 +223,18 @@ describe("Builder Flow mode", () => {
     fireEvent.click(screen.getByTestId("builder-flow-file"));
     fireEvent.click(screen.getByTestId("builder-flow-save"));
     expect(downloadBlob).toHaveBeenCalledWith(expect.any(Blob), "builder.megane-flow.json");
+    expect(useBuilderStore.getState().notice?.text).toBe("Saved builder.megane-flow.json");
     const saved = JSON.stringify(useFlowStore.getState().serialize());
     // jsdom's File has no text(); the browser's does.
     const file = (name: string, text: string) => ({ name, text: async () => text });
 
+    // Clearing a flow with blocks asks first.
     fireEvent.click(screen.getByTestId("builder-flow-file"));
     fireEvent.click(screen.getByTestId("builder-flow-clear"));
+    await screen.findByTestId("builder-confirm");
+    await act(async () => {
+      fireEvent.click(screen.getByTestId("builder-confirm-ok"));
+    });
     expect(useFlowStore.getState().nodes).toEqual([]);
 
     const input = screen.getByTestId("builder-flow-open-input");
@@ -231,6 +243,20 @@ describe("Builder Flow mode", () => {
     });
     await waitFor(() => expect(useFlowStore.getState().nodes).toHaveLength(1));
     expect(useBuilderStore.getState().notice?.text).toContain("mine.json");
+    // Save suggests the name it was opened under.
+    fireEvent.click(screen.getByTestId("builder-flow-file"));
+    fireEvent.click(screen.getByTestId("builder-flow-save"));
+    expect(downloadBlob).toHaveBeenLastCalledWith(expect.any(Blob), "mine.megane-flow.json");
+
+    // Opening another flow over this one asks first; Cancel keeps it.
+    await act(async () => {
+      fireEvent.change(input, { target: { files: [file("other.json", saved)] } });
+    });
+    await screen.findByTestId("builder-confirm");
+    await act(async () => {
+      fireEvent.click(screen.getByTestId("builder-confirm-cancel"));
+    });
+    expect(useFlowStore.getState().fileName).toBe("mine.json");
 
     await act(async () => {
       fireEvent.change(input, { target: { files: [file("bad.json", "nope")] } });
@@ -246,7 +272,8 @@ describe("Builder Flow mode", () => {
       .mockRejectedValueOnce(new Error("disk full"));
     render(<BuilderApp host={{ save, tools: false }} />);
     fireEvent.click(screen.getByTestId("builder-mode-flow"));
-    await screen.findByTestId("builder-flow-panel");
+    // The panel is lazy: its first import can take a while on a loaded machine.
+    await screen.findByTestId("builder-flow-panel", {}, { timeout: 5000 });
     fireEvent.click(screen.getByTestId("builder-flow-add"));
     expect(screen.queryByTestId("builder-tools-server")).toBeNull();
     fireEvent.click(screen.getByTestId("builder-flow-add-document"));
@@ -282,11 +309,45 @@ describe("Builder Flow mode", () => {
       ),
     );
     expect(screen.queryByTestId("builder-atom-menu")).toBeNull();
+    // A drop in Flow mode takes a flow file; a structure file is Manual mode's.
     const zone = screen.getByTestId("builder-dropzone");
     fireEvent.dragOver(zone);
-    expect(screen.queryByTestId("builder-drop-overlay")).toBeNull();
+    expect(screen.getByTestId("builder-drop-overlay").textContent).toBe(
+      "Drop a flow file (.json) to open it",
+    );
     fireEvent.drop(zone, { dataTransfer: { files: [new File(["x"], "x.xyz")] } });
+    expect(screen.queryByTestId("builder-drop-overlay")).toBeNull();
     expect(useBuilderStore.getState().source).toBeNull();
+    expect(useBuilderStore.getState().notice?.text).toBe(
+      "Switch to Manual mode to open a structure file.",
+    );
+    const flow = JSON.stringify(useFlowStore.getState().serialize());
+    // jsdom's File has no text(); the browser's does.
+    const graph = { name: "graph.megane-flow.json", text: async () => flow };
+    fireEvent.drop(zone, { dataTransfer: { files: [graph] } });
+    await waitFor(() =>
+      expect(useBuilderStore.getState().notice?.text).toBe(
+        "Opened the flow graph.megane-flow.json.",
+      ),
+    );
+  });
+
+  it("keeps the flow and the mode for the next visit", async () => {
+    await enterFlow();
+    addBlock("builder-flow-add-smiles");
+    const kept = JSON.parse(localStorage.getItem("megane.builder.flow.v1")!);
+    expect(kept.mode).toBe("flow");
+    expect(kept.flow.nodes).toHaveLength(1);
+    // Undo from the rail takes the block away again.
+    fireEvent.click(screen.getByTestId("builder-flow-undo"));
+    expect(useFlowStore.getState().nodes).toEqual([]);
+  });
+
+  it("says Stopping… while a stopped run ends", async () => {
+    await enterFlow();
+    act(() => useFlowStore.setState({ running: new AbortController(), stopping: true }));
+    expect(screen.getByTestId("builder-status-flow").textContent).toContain("Stopping…");
+    act(() => useFlowStore.setState({ running: null, stopping: false }));
   });
 
   it("names the running block, and stops", async () => {

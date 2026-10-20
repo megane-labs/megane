@@ -9,7 +9,8 @@ import { render, screen, fireEvent, cleanup, act } from "@testing-library/react"
 import { Inspector, MAX_ATOM_ROWS } from "@/builder/Inspector";
 import { elementGroups } from "@/builder/elements";
 import { InfoHud } from "@/builder/InfoHud";
-import { useBuilderStore } from "@/builder/store";
+import { useBuilderStore, editSteps } from "@/builder/store";
+import { describeStep } from "@/builder/placement";
 import { useLibraryStore } from "@/builder/library/store";
 import type { Snapshot } from "@/types";
 
@@ -144,7 +145,8 @@ describe("Inspector — selection", () => {
     render(<Inspector />);
     act(() => s().setSelected([3, 4]));
     fireEvent.change(screen.getByTestId("builder-selection-element"), { target: { value: "9" } });
-    expect(s().element).toBe(9);
+    // The panel's own choice: the Add / Element tools keep theirs.
+    expect(s().element).toBe(6);
     expect(text("builder-set-element-selected")).toBe("Set to F");
     click("builder-set-element-selected");
     expect(s().edits[0]).toEqual({ op: "set_element", atoms: [3, 4], element: 9 });
@@ -240,5 +242,97 @@ describe("Inspector — selection", () => {
     act(() => s().setSelected([0]));
     click("builder-selection-cleanup");
     expect(s().notice?.text).toContain("Cleaning up");
+  });
+});
+
+describe("Inspector — bonds, transforms and their feedback", () => {
+  const steps = () => editSteps(s().edits).map(describeStep);
+  const change = (id: string, value: string) =>
+    fireEvent.change(screen.getByTestId(id), { target: { value } });
+
+  beforeEach(() => {
+    s().openStructure(methanol(), null, "methanol.xyz");
+  });
+
+  it("offers Remove bond for two bonded atoms and rebalances them", () => {
+    render(<Inspector />);
+    act(() => s().setSelected([0, 2]));
+    expect(screen.queryByTestId("builder-remove-bond")).toBeNull();
+    act(() => s().setSelected([0, 1]));
+    click("builder-remove-bond");
+    expect(s().edits[0]).toEqual({ op: "delete_bond", a: 0, b: 1 });
+    expect(steps()).toEqual(["Remove bond C #0 – O #1"]);
+    // Both stay selected; they are no longer bonded, so the button goes.
+    expect(s().selected).toEqual([0, 1]);
+    expect(screen.queryByTestId("builder-remove-bond")).toBeNull();
+  });
+
+  it("Set to and Delete follow the hydrogen mode and label the step", () => {
+    render(<Inspector />);
+    act(() => s().setSelected([1]));
+    change("builder-selection-element", "7");
+    click("builder-set-element-selected");
+    // O–H to N: one more H, in the same step.
+    expect(s().edits.map((op) => op.op)).toEqual(["set_element", "add_atom"]);
+    expect(steps()).toEqual(["Set O #1 to N"]);
+    click("builder-delete-selected");
+    expect(steps().at(-1)).toBe("Delete N #1 (+2 H)");
+  });
+
+  it("says when a Move or Rotate would do nothing, and labels the ones that do", () => {
+    render(<Inspector />);
+    act(() => s().setSelected([0]));
+    click("builder-transform-move");
+    expect(s().notice).toEqual({
+      level: "info",
+      text: "Nothing to move: type a displacement other than 0 0 0 Å.",
+    });
+    change("builder-transform-angle", "360");
+    click("builder-transform-rotate");
+    expect(s().notice?.text).toContain("Nothing to rotate");
+    expect(s().edits).toHaveLength(0);
+    change("builder-transform-dx", "1");
+    click("builder-transform-move");
+    expect(steps()).toEqual(["Move C #0 by (1.00, 0.00, 0.00) Å"]);
+    act(() => s().setSelected([0, 1]));
+    change("builder-transform-angle", "90");
+    click("builder-transform-rotate");
+    expect(steps().at(-1)).toBe("Rotate 2 atoms by 90° about z");
+  });
+
+  it("labels a set measurement, and says when it is already there", () => {
+    render(<Inspector />);
+    act(() => s().setSelected([0, 1]));
+    change("builder-inspector-measure-input", "1.5");
+    click("builder-inspector-measure-apply");
+    expect(steps()).toEqual(["Set distance C #0 – O #1 to 1.500 Å"]);
+    change("builder-inspector-measure-input", "1.5");
+    click("builder-inspector-measure-apply");
+    expect(s().notice?.text).toBe("The distance is already 1.500 Å.");
+    act(() => s().setSelected([0, 1, 2]));
+    change("builder-inspector-measure-input", "100");
+    click("builder-inspector-measure-apply");
+    expect(steps().at(-1)).toBe("Set angle C #0 – O #1 – H #2 to 100.0°");
+  });
+
+  it("says when a ring keeps the rest of the structure from following", () => {
+    // Close methanol's C–O–H into a ring with an H–C bond.
+    s().pushOp({ op: "add_bond", a: 2, b: 0 });
+    render(<Inspector />);
+    act(() => s().setSelected([0, 1]));
+    change("builder-inspector-measure-input", "1.6");
+    click("builder-inspector-measure-apply");
+    expect(s().notice?.text).toBe(
+      "C #0 – O #1 is in a ring, so only O #1 moved; its other ring bonds stretched.",
+    );
+    // A dihedral about a ring bond cannot turn at all.
+    const before = s().edits.length;
+    act(() => s().setSelected([3, 0, 1, 2]));
+    change("builder-inspector-measure-input", "60");
+    click("builder-inspector-measure-apply");
+    expect(s().notice?.text).toBe(
+      "C #0 – O #1 is a ring bond: its dihedral cannot be turned on its own.",
+    );
+    expect(s().edits).toHaveLength(before);
   });
 });

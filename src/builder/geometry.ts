@@ -65,11 +65,29 @@ export function molecules(snapshot: Snapshot): number[][] {
  * sides are joined some other way (a ring), only `moving` itself moves.
  */
 export function movingSide(snapshot: Snapshot, fixed: number, moving: number): number[] {
+  return sideOf(snapshot, fixed, moving).atoms;
+}
+
+/** `movingSide`, and whether it was cut down to `moving` alone because of a ring. */
+function sideOf(
+  snapshot: Snapshot,
+  fixed: number,
+  moving: number,
+): { atoms: number[]; ring: boolean } {
   const adj = adjacency(snapshot);
   const side = reachable(adj, moving, fixed);
   // Another way back to `fixed` than the direct link: the sides are one ring.
-  const joined = side.some((i) => i !== moving && adj[i].includes(fixed));
-  return joined ? [moving] : side;
+  const ring = side.some((i) => i !== moving && adj[i].includes(fixed));
+  return ring ? { atoms: [moving], ring } : { atoms: side, ring };
+}
+
+/**
+ * Whether setting a measurement over `fixed`–`moving` moves `moving` alone
+ * because the two are joined some other way too (they are in one ring), so
+ * the rest of the ring stays put and its bonds stretch.
+ */
+export function ringLocked(snapshot: Snapshot, fixed: number, moving: number): boolean {
+  return sideOf(snapshot, fixed, moving).ring;
 }
 
 function pos(p: ArrayLike<number>, i: number): Vec3 {
@@ -123,6 +141,58 @@ export function unwrappedPositions(snapshot: Snapshot, atoms: number[]): Float64
     }
   }
   return out;
+}
+
+function unit(v: Vec3): Vec3 | null {
+  const len = norm(v);
+  return len < 1e-6 ? null : scale(v, 1 / len);
+}
+
+/** Some unit vector perpendicular to unit vector `u`. */
+function perpendicular(u: Vec3): Vec3 {
+  const helper: Vec3 = Math.abs(u[0]) < 0.9 ? [1, 0, 0] : [0, 1, 0];
+  return unit(cross(u, helper))!;
+}
+
+/**
+ * Directions for `count` new bonds on an atom whose existing bonds point along
+ * `existing` (unit vectors), in an ideal geometry with `domains` electron
+ * domains (4 tetrahedral, 3 trigonal, 2 linear). The ideal polyhedron is
+ * aligned to the first one or two existing bonds; the vertices the remaining
+ * existing bonds sit closest to are taken, and the free ones are returned.
+ */
+export function bondDirections(existing: Vec3[], domains: number, count: number): Vec3[] {
+  if (count <= 0) return [];
+  const d = Math.min(4, Math.max(2, domains));
+  const u: Vec3 = existing[0] ?? [1, 0, 0];
+  let p: Vec3 = perpendicular(u);
+  if (existing[1]) {
+    const e1 = existing[1];
+    p = unit(sub(e1, scale(u, dot(e1, u)))) ?? p;
+  }
+  const q = cross(u, p);
+  const cosT = d === 4 ? -1 / 3 : d === 3 ? -1 / 2 : -1;
+  const sinT = Math.sqrt(Math.max(0, 1 - cosT * cosT));
+  const vertices: Vec3[] = [u];
+  for (let k = 0; k < d - 1; k++) {
+    const phi = (2 * Math.PI * k) / (d - 1);
+    const c = Math.cos(phi) * sinT;
+    const s = Math.sin(phi) * sinT;
+    vertices.push([
+      u[0] * cosT + p[0] * c + q[0] * s,
+      u[1] * cosT + p[1] * c + q[1] * s,
+      u[2] * cosT + p[2] * c + q[2] * s,
+    ]);
+  }
+  // Each existing bond occupies the free vertex it is closest to.
+  const free = vertices.slice();
+  for (const e of existing) {
+    if (free.length === 0) break;
+    let best = 0;
+    for (let k = 1; k < free.length; k++) if (dot(free[k], e) > dot(free[best], e)) best = k;
+    free.splice(best, 1);
+  }
+  return free.slice(0, count);
 }
 
 /** Rotate `p` about the axis through `origin` along unit `axis` by `angle` (rad). */
