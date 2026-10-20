@@ -215,3 +215,125 @@ describe("menuBounds", () => {
     expect(menuBounds(el, win)).toEqual({ left: 0, top: 0, right: 1000, bottom: 800 });
   });
 });
+
+describe("Menu — keyboard", () => {
+  const list = (onSelect = vi.fn()) => [
+    { label: "First", testId: "k-first", onSelect },
+    { separator: true as const },
+    { label: "Off", testId: "k-off", onSelect, disabled: true, title: "Open a structure first" },
+    { caption: "More" },
+    { label: "Third", testId: "k-third", onSelect },
+  ];
+
+  it("is a menu button", () => {
+    render(<Menu testId="m" label="File" items={list()} />);
+    const trigger = screen.getByTestId("m");
+    expect(trigger.getAttribute("aria-haspopup")).toBe("menu");
+    expect(trigger.getAttribute("aria-expanded")).toBe("false");
+    fireEvent.keyDown(trigger, { key: "Enter" });
+    expect(trigger.getAttribute("aria-expanded")).toBe("true");
+    expect(screen.getByRole("menu").getAttribute("aria-label")).toBe("File");
+  });
+
+  it("Enter, Space or ↓ opens it on the first item, ↑ on the last", () => {
+    for (const [key, first] of [
+      ["Enter", "k-first"],
+      [" ", "k-first"],
+      ["ArrowDown", "k-first"],
+      ["ArrowUp", "k-third"],
+    ] as const) {
+      const { unmount } = render(<Menu testId="m" label="File" items={list()} />);
+      fireEvent.keyDown(screen.getByTestId("m"), { key });
+      expect(document.activeElement).toBe(screen.getByTestId(first));
+      unmount();
+    }
+  });
+
+  it("other keys on the trigger, or a disabled trigger, do nothing", () => {
+    const { rerender } = render(<Menu testId="m" label="File" items={list()} />);
+    fireEvent.keyDown(screen.getByTestId("m"), { key: "a" });
+    expect(screen.queryByRole("menu")).toBeNull();
+    rerender(<Menu testId="m" label="File" items={list()} disabled />);
+    fireEvent.keyDown(screen.getByTestId("m"), { key: "ArrowDown" });
+    expect(screen.queryByRole("menu")).toBeNull();
+  });
+
+  it("arrows, Home and End move between the items that can run", () => {
+    render(<Menu testId="m" label="File" items={list()} />);
+    fireEvent.keyDown(screen.getByTestId("m"), { key: "ArrowDown" });
+    const menu = screen.getByRole("menu");
+    fireEvent.keyDown(menu, { key: "ArrowDown" });
+    // The disabled item is skipped.
+    expect(document.activeElement).toBe(screen.getByTestId("k-third"));
+    fireEvent.keyDown(menu, { key: "ArrowDown" });
+    expect(document.activeElement).toBe(screen.getByTestId("k-first"));
+    fireEvent.keyDown(menu, { key: "ArrowUp" });
+    expect(document.activeElement).toBe(screen.getByTestId("k-third"));
+    fireEvent.keyDown(menu, { key: "Home" });
+    expect(document.activeElement).toBe(screen.getByTestId("k-first"));
+    fireEvent.keyDown(menu, { key: "End" });
+    expect(document.activeElement).toBe(screen.getByTestId("k-third"));
+    fireEvent.keyDown(menu, { key: "x" });
+    expect(document.activeElement).toBe(screen.getByTestId("k-third"));
+    // From outside the items, ↓ starts at the top and ↑ at the bottom.
+    (document.activeElement as HTMLElement).blur();
+    fireEvent.keyDown(menu, { key: "ArrowDown" });
+    expect(document.activeElement).toBe(screen.getByTestId("k-first"));
+    (document.activeElement as HTMLElement).blur();
+    fireEvent.keyDown(menu, { key: "ArrowUp" });
+    expect(document.activeElement).toBe(screen.getByTestId("k-third"));
+  });
+
+  it("a menu with nothing to run ignores the arrows", () => {
+    render(
+      <Menu testId="m" label="File" items={[{ label: "x", onSelect: vi.fn(), disabled: true }]} />,
+    );
+    fireEvent.keyDown(screen.getByTestId("m"), { key: "ArrowDown" });
+    fireEvent.keyDown(screen.getByRole("menu"), { key: "ArrowDown" });
+    expect(document.activeElement).toBe(document.body);
+  });
+
+  it("↓ on the trigger of a clicked-open menu steps into it", () => {
+    render(<Menu testId="m" label="File" items={list()} />);
+    const trigger = screen.getByTestId("m");
+    fireEvent.click(trigger);
+    expect(document.activeElement).not.toBe(screen.getByTestId("k-first"));
+    trigger.focus();
+    fireEvent.keyDown(trigger, { key: "ArrowUp" });
+    expect(document.activeElement).toBe(screen.getByTestId("k-third"));
+    trigger.focus();
+    fireEvent.keyDown(trigger, { key: "ArrowDown" });
+    expect(document.activeElement).toBe(screen.getByTestId("k-first"));
+  });
+
+  it("Escape closes it and gives focus back to the trigger; Tab just closes it", () => {
+    render(<Menu testId="m" label="File" items={list()} />);
+    const trigger = screen.getByTestId("m");
+    fireEvent.keyDown(trigger, { key: "ArrowDown" });
+    fireEvent.keyDown(window, { key: "Escape" });
+    expect(screen.queryByRole("menu")).toBeNull();
+    expect(document.activeElement).toBe(trigger);
+    fireEvent.keyDown(trigger, { key: "ArrowDown" });
+    fireEvent.keyDown(screen.getByRole("menu"), { key: "Tab" });
+    expect(screen.queryByRole("menu")).toBeNull();
+  });
+
+  it("running an item from the keyboard puts focus back on the trigger", () => {
+    const onSelect = vi.fn();
+    render(<Menu testId="m" label="File" items={list(onSelect)} />);
+    fireEvent.keyDown(screen.getByTestId("m"), { key: "ArrowDown" });
+    fireEvent.click(document.activeElement!);
+    expect(onSelect).toHaveBeenCalledTimes(1);
+    expect(document.activeElement).toBe(screen.getByTestId("m"));
+  });
+
+  it("a disabled item says why in its title", () => {
+    render(<Menu testId="m" label="File" items={list()} />);
+    fireEvent.click(screen.getByTestId("m"));
+    const off = screen.getByTestId("k-off") as HTMLButtonElement;
+    expect(off.disabled).toBe(true);
+    expect(off.getAttribute("aria-disabled")).toBe("true");
+    expect(off.title).toBe("Open a structure first");
+    expect(screen.getByTestId("k-first").getAttribute("aria-disabled")).toBeNull();
+  });
+});

@@ -47,6 +47,16 @@ export const inputStyle: React.CSSProperties = {
   padding: "3px 6px",
 };
 
+/** The red of a field holding a value it cannot use. */
+export const INVALID_BORDER = "var(--megane-danger-text, #dc2626)";
+
+/** A text or number field; marked red while `invalid` (pair it with `aria-invalid`). */
+export function fieldStyle(invalid = false): React.CSSProperties {
+  return invalid
+    ? { ...inputStyle, border: `1px solid ${INVALID_BORDER}`, outlineColor: INVALID_BORDER }
+    : inputStyle;
+}
+
 export const rowStyle: React.CSSProperties = {
   display: "flex",
   alignItems: "center",

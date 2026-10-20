@@ -3,9 +3,15 @@
  * each element sits, what it says about one, and choosing one from it.
  */
 
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { render, screen, fireEvent, cleanup, act } from "@testing-library/react";
-import { PeriodicTable, TABLE_MAX_Z, tablePosition } from "@/builder/PeriodicTable";
+import {
+  PeriodicTable,
+  TABLE_MAX_Z,
+  tableNeighbour,
+  tablePosition,
+  typeAheadMatch,
+} from "@/builder/PeriodicTable";
 import { ContextBar } from "@/builder/ContextBar";
 import { useBuilderStore } from "@/builder/store";
 
@@ -138,5 +144,158 @@ describe("PeriodicTable", () => {
       Object.defineProperty(HTMLElement.prototype, "offsetWidth", original);
       panel.remove();
     }
+  });
+});
+
+describe("tableNeighbour", () => {
+  it("moves along a row, skipping the gaps", () => {
+    expect(tableNeighbour(1, "ArrowRight")).toBe(2); // H → He across the gap
+    expect(tableNeighbour(2, "ArrowRight")).toBe(2); // nothing right of He
+    expect(tableNeighbour(4, "ArrowRight")).toBe(5); // Be → B across the d block
+    expect(tableNeighbour(5, "ArrowLeft")).toBe(4);
+    expect(tableNeighbour(3, "ArrowLeft")).toBe(3);
+    expect(tableNeighbour(56, "ArrowRight")).toBe(72); // Ba → Hf past the f block
+  });
+
+  it("moves to the nearest row with a cell in or near the column", () => {
+    expect(tableNeighbour(1, "ArrowDown")).toBe(3); // H → Li
+    expect(tableNeighbour(2, "ArrowDown")).toBe(10); // He → Ne
+    expect(tableNeighbour(26, "ArrowUp")).toBe(13); // Fe (col 8) → Al (col 13), nearest in row 3
+    expect(tableNeighbour(26, "ArrowDown")).toBe(44); // Fe → Ru
+    expect(tableNeighbour(88, "ArrowDown")).toBe(57); // Ra → La, the f rows below
+    expect(tableNeighbour(57, "ArrowDown")).toBe(89); // La → Ac
+    expect(tableNeighbour(92, "ArrowDown")).toBe(92); // nothing below the actinides
+    expect(tableNeighbour(1, "ArrowUp")).toBe(1);
+  });
+
+  it("Home and End go to the row's ends; other keys stay", () => {
+    expect(tableNeighbour(8, "Home")).toBe(3);
+    expect(tableNeighbour(8, "End")).toBe(10);
+    expect(tableNeighbour(3, "Home")).toBe(3);
+    expect(tableNeighbour(8, "Enter")).toBe(8);
+  });
+});
+
+describe("typeAheadMatch", () => {
+  it("names the element whose symbol it is, else the lightest that starts so", () => {
+    expect(typeAheadMatch("fe")).toBe(26);
+    expect(typeAheadMatch("F")).toBe(9);
+    expect(typeAheadMatch("Z")).toBe(30); // Zn before Zr
+    expect(typeAheadMatch("q")).toBeNull();
+    expect(typeAheadMatch("")).toBeNull();
+  });
+});
+
+describe("PeriodicTable — keyboard", () => {
+  function open(value = 26) {
+    const anchor = { current: document.createElement("button") };
+    document.body.append(anchor.current);
+    const onPick = vi.fn();
+    const onClose = vi.fn();
+    const view = render(
+      <PeriodicTable value={value} anchor={anchor} onPick={onPick} onClose={onClose} />,
+    );
+    return { anchor: anchor.current, onPick, onClose, view };
+  }
+  const cell = (sym: string) => screen.getByTestId(`builder-periodic-${sym}`);
+
+  it("opens on the current element, the one cell Tab reaches", () => {
+    const { anchor } = open(26);
+    expect(document.activeElement).toBe(cell("Fe"));
+    expect(cell("Fe").tabIndex).toBe(0);
+    expect(cell("Cu").tabIndex).toBe(-1);
+    anchor.remove();
+  });
+
+  it("starts from H for an element the table does not show", () => {
+    const { anchor } = open(110);
+    expect(document.activeElement).toBe(cell("H"));
+    anchor.remove();
+  });
+
+  it("moves with the arrow keys and picks with Enter or Space", () => {
+    const { anchor, onPick } = open(26);
+    fireEvent.keyDown(cell("Fe"), { key: "ArrowRight" });
+    expect(document.activeElement).toBe(cell("Co"));
+    expect(cell("Co").tabIndex).toBe(0);
+    expect(screen.getByTestId("builder-periodic-info-name").textContent).toBe("Cobalt");
+    fireEvent.keyDown(cell("Co"), { key: "ArrowDown" });
+    expect(document.activeElement).toBe(cell("Rh"));
+    fireEvent.keyDown(cell("Rh"), { key: "Enter" });
+    expect(onPick).toHaveBeenLastCalledWith(45);
+    // Focus was in the table, so it goes back to the button.
+    expect(document.activeElement).toBe(anchor);
+    fireEvent.keyDown(cell("Rh"), { key: " " });
+    expect(onPick).toHaveBeenCalledTimes(2);
+    // Keys that mean nothing here are left alone.
+    const tab = new KeyboardEvent("keydown", { key: "Tab", bubbles: true, cancelable: true });
+    cell("Rh").dispatchEvent(tab);
+    expect(tab.defaultPrevented).toBe(false);
+    anchor.remove();
+  });
+
+  it("jumps to a typed symbol, and starts over after a pause or a miss", () => {
+    const now = vi.spyOn(Date, "now");
+    const { anchor } = open(6);
+    try {
+      now.mockReturnValue(1000);
+      fireEvent.keyDown(cell("C"), { key: "f" });
+      expect(document.activeElement).toBe(cell("F"));
+      now.mockReturnValue(1200);
+      fireEvent.keyDown(cell("F"), { key: "e" });
+      expect(document.activeElement).toBe(cell("Fe"));
+      // After a pause a letter starts a new symbol.
+      now.mockReturnValue(5000);
+      fireEvent.keyDown(cell("Fe"), { key: "n" });
+      expect(document.activeElement).toBe(cell("N"));
+      // "Nq" names nothing and neither does "q": focus stays.
+      now.mockReturnValue(5100);
+      fireEvent.keyDown(cell("N"), { key: "q" });
+      expect(document.activeElement).toBe(cell("N"));
+      // "Qa" is no symbol: start over from "a".
+      now.mockReturnValue(5200);
+      fireEvent.keyDown(cell("N"), { key: "a" });
+      expect(document.activeElement).toBe(cell("Al"));
+      // A letter with Ctrl is a shortcut, not type-ahead.
+      const ctrl = new KeyboardEvent("keydown", {
+        key: "c",
+        ctrlKey: true,
+        bubbles: true,
+        cancelable: true,
+      });
+      cell("Al").dispatchEvent(ctrl);
+      expect(ctrl.defaultPrevented).toBe(false);
+      expect(document.activeElement).toBe(cell("Al"));
+    } finally {
+      now.mockRestore();
+      anchor.remove();
+    }
+  });
+
+  it("Escape and × close it and give focus back to the button", () => {
+    const first = open(6);
+    fireEvent.keyDown(window, { key: "Escape" });
+    expect(first.onClose).toHaveBeenCalledTimes(1);
+    expect(document.activeElement).toBe(first.anchor);
+    first.view.unmount();
+    first.anchor.remove();
+    const second = open(6);
+    screen.getByTestId("builder-periodic-close").focus();
+    fireEvent.click(screen.getByTestId("builder-periodic-close"));
+    expect(second.onClose).toHaveBeenCalledTimes(1);
+    expect(document.activeElement).toBe(second.anchor);
+    second.anchor.remove();
+  });
+
+  it("leaves focus alone when it was elsewhere", () => {
+    const other = document.createElement("input");
+    document.body.append(other);
+    const { anchor, onClose } = open(6);
+    other.focus();
+    fireEvent.pointerDown(other);
+    expect(onClose).toHaveBeenCalledTimes(1);
+    expect(document.activeElement).toBe(other);
+    other.remove();
+    anchor.remove();
   });
 });

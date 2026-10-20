@@ -1,6 +1,15 @@
-/** Grouping a structure's atoms by element, for the "select by element" chips. */
+/**
+ * Elements for the Builder's tool settings: grouping a structure's atoms by
+ * element (the "select by element" chips), reading what the user typed into
+ * the element field, the elements picked recently, and the names and
+ * families behind the periodic table.
+ */
 
-import { getElementSymbol } from "../constants";
+import { create } from "zustand";
+import { ELEMENT_SYMBOLS, getElementSymbol } from "../constants";
+
+/** The highest atomic number the element field accepts. */
+export const MAX_Z = 118;
 
 /** Atom indices of each element, in Hill order (C, H, then alphabetical). */
 export function elementGroups(elements: ArrayLike<number>): { z: number; atoms: number[] }[] {
@@ -79,3 +88,41 @@ export function elementFamily(z: number): ElementFamily {
   if (z >= 89 && z <= 103) return "actinide";
   return "transition";
 }
+
+const Z_OF_SYMBOL = new Map(
+  Object.entries(ELEMENT_SYMBOLS).map(([z, sym]) => [sym.toLowerCase(), Number(z)]),
+);
+
+/**
+ * The element a user typed: an atomic number (1–{@link MAX_Z}) or a symbol
+ * in any case ("Fe", "fe", "FE"); null when it is neither.
+ */
+export function parseElement(text: string): number | null {
+  const t = text.trim();
+  if (/^\d+$/.test(t)) {
+    const z = Number(t);
+    return z >= 1 && z <= MAX_Z ? z : null;
+  }
+  return Z_OF_SYMBOL.get(t.toLowerCase()) ?? null;
+}
+
+/** How many recently picked elements the tool settings remember. */
+export const RECENT_LIMIT = 6;
+
+export interface RecentElements {
+  /** Most recent first, without repeats. */
+  recent: number[];
+  /** Remember `z` as the most recent pick. */
+  remember: (z: number) => void;
+}
+
+/**
+ * The elements picked from the periodic table or typed into the element
+ * field this session, so a second Fe is one click away. Shared by every
+ * Builder on the page and kept only in memory.
+ */
+export const useRecentElements = create<RecentElements>((set) => ({
+  recent: [],
+  remember: (z) =>
+    set((s) => ({ recent: [z, ...s.recent.filter((r) => r !== z)].slice(0, RECENT_LIMIT) })),
+}));
