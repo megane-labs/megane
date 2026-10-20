@@ -9,6 +9,8 @@ Install **Megane - Molecular Viewer** from the Visual Studio Code Marketplace:
 - Marketplace page: [hodakamori.vscode-megane](https://marketplace.visualstudio.com/items?itemName=hodakamori.vscode-megane)
 - Or, in VS Code: open the Extensions view (`Ctrl+Shift+X` / `Cmd+Shift+X`), search for **Megane**, and click **Install**.
 
+The extension needs VS Code 1.90 or later.
+
 ## Opening files
 
 Once installed, the extension registers a custom editor for the supported file types. Open any of them from the VS Code explorer (or `File → Open`) and Megane renders it inline:
@@ -33,7 +35,7 @@ Trajectory-only formats (`.xtc`, `.dcd`, `.nc`) and volumetric grids (`.cube`, `
 
 The VS Code custom editor mounts the full visual pipeline editor. You can build and edit visualization workflows by wiring nodes, just like in the standalone web app.
 
-Pipelines are saved as `.megane.json` files, which open in a dedicated **Megane Pipeline Viewer** editor. Save, share, and version-control these recipes alongside your project. When a pipeline opens, the files its Load Structure and Load Trajectory nodes name are read relative to the `.megane.json` file's folder; absolute paths and paths that leave that folder are ignored. Only version 3 pipeline files are accepted.
+Pipelines are saved as `.megane.json` files, which open in a dedicated **Megane Pipeline Viewer** editor. Save, share, and version-control these recipes alongside your project. When a pipeline opens, the files its loader nodes name (Load Structure, Load Trajectory, Load Vector, Load Volumetric, Load Spectrum, and an Add Bond topology file) are read relative to the `.megane.json` file's folder; absolute paths and paths that leave that folder are ignored. Only version 3 pipeline files are accepted.
 
 Both editors are read-only views of the file on disk: editing the pipeline does not rewrite the opened file. Exports (pipeline JSON, renders, animations, measurements, structures) go through VS Code's native save dialog. The camera position is remembered per editor tab.
 
@@ -48,8 +50,15 @@ Megane viewer tab has the same button in its title bar. The Builder opens in
 an editor tab; *Save* goes through VS Code's save dialog. See
 [Megane Builder](builder.md#in-vs-code-jupyterlab-and-notebooks).
 
+The Builder's **Tools** menu connects to MCP tool servers listed in the
+`megane.builder.mcpServers` setting; with [uv](https://docs.astral.sh/uv/)
+installed, **Connect to megane-builder-tools** needs no setting at all (see
+[Python tools](builder.md#python-tools)). The Builder's *Flow* mode builds a
+model by connecting blocks, and saves flows as `.megane-flow.json` (see
+[Flow mode](builder.md#flow-mode)).
+
 ## Status bar integration
 
-The current trajectory frame index, atom selection count, and measurement label are reflected in the VS Code status bar. Other extensions can drive the viewer programmatically — e.g. `vscode.commands.executeCommand('megane.seekFrame', N)` seeks the most recently active Megane webview to frame `N`.
+The current trajectory frame index, atom selection count, and measurement label of a Megane viewer tab (a structure file or a `.megane.json` pipeline) are reflected in the VS Code status bar. Other extensions can drive the viewer programmatically — e.g. `vscode.commands.executeCommand('megane.seekFrame', N)` seeks the most recently active Megane viewer tab, of either kind, to frame `N`.
 
 For a per-platform breakdown of supported formats and UI features (including known gaps), see [Platform Support](/platform-support).

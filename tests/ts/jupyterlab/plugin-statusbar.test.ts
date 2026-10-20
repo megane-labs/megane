@@ -76,7 +76,12 @@ describe("megane JupyterLab plugin – IStatusBar optional integration", () => {
     plugin.activate(mockApp as never, mockRestorer as never, fakeStatusBar as never);
 
     expect(setupFrameStatusBar).toHaveBeenCalledTimes(1);
-    expect(setupFrameStatusBar).toHaveBeenCalledWith(expect.anything(), fakeStatusBar);
+    // Both the structure viewer and the Pipeline Viewer trackers, plus the
+    // shell whose focus decides between them.
+    const [trackers, statusBar, shell] = vi.mocked(setupFrameStatusBar).mock.calls[0];
+    expect(trackers).toHaveLength(2);
+    expect(statusBar).toBe(fakeStatusBar);
+    expect(shell).toBe((mockApp as { shell?: unknown }).shell);
   });
 
   it("skips setupFrameStatusBar when statusBar is null", () => {

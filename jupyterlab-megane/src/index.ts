@@ -152,7 +152,7 @@ const plugin: JupyterFrontEndPlugin<void> = {
     });
 
     if (statusBar) {
-      setupFrameStatusBar(tracker, statusBar);
+      setupFrameStatusBar([tracker, pipelineTracker], statusBar, app.shell);
     }
   },
 };
