@@ -180,6 +180,8 @@ describe("Tools menu and Tool server dialog", () => {
     expect(screen.getByTestId("builder-tools-connected").textContent).toContain("3 tools");
     await act(async () => click("builder-tools-disconnect"));
     expect(screen.queryByTestId("builder-tools-connected")).toBeNull();
+    // Disconnect stays disconnected: the click does not submit the form.
+    expect(mocks.connect).toHaveBeenCalledTimes(1);
     click("builder-tools");
     expect(screen.queryByTestId("builder-tools-button-liquid_box")).toBeNull();
   });

@@ -152,9 +152,13 @@ export function ToolServerDialog({ onClose }: { onClose: () => void }) {
     void refreshServers();
   }, [refreshServers]);
 
+  // Each state's button has a key of its own: reusing one element would turn
+  // Disconnect into the submit button mid-click, and the browser would then
+  // submit the form (connect again) as the click's default action.
   const connectButton =
     status === "connected" ? (
       <button
+        key="disconnect"
         type="button"
         data-testid="builder-tools-disconnect"
         style={buttonStyle()}
@@ -165,6 +169,7 @@ export function ToolServerDialog({ onClose }: { onClose: () => void }) {
     ) : status === "connecting" ? (
       <>
         <button
+          key="connecting"
           type="submit"
           data-testid="builder-tools-connect"
           style={buttonStyle("primary", true)}
@@ -183,6 +188,7 @@ export function ToolServerDialog({ onClose }: { onClose: () => void }) {
       </>
     ) : (
       <button
+        key="connect"
         type="submit"
         data-testid="builder-tools-connect"
         style={buttonStyle("primary", !url.trim())}
