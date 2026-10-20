@@ -41,7 +41,8 @@ cell). Under them the **mode switch** picks *Manual* or *Flow*; the rails
 under it follow the mode. In Manual mode the **tool rail** picks the tool, one icon per tool, each
 marked with its key, and under that the **operations rail** holds every
 action, top to bottom: **File** (*Open…*, *New empty cell…* /
-*New bulk crystal…* and *Save* in each format); **Structure**, the operations
+*New bulk crystal…*, *Insert molecule from library…*, *Save* in each format
+and *Keyboard shortcuts…*); **Structure**, the operations
 on the cell and the crystal (see [Crystal](#crystal)), and **Tools**, the
 Python tools (see [Python tools](#python-tools)); *Undo* and *Redo*; and the theme button
 (Light → Dark → Auto, as in the viewer; the 3D view's background follows it).
@@ -107,14 +108,16 @@ With nothing open, the view shows *Build a structure* with **Open…**,
 |---|---|---|
 | **Select** | S | Selects the atom (Shift- or Ctrl/⌘-click toggles it in or out of the selection; clicking empty space clears it); right-click an atom to select its molecule. Dragging a selected atom moves the selection; dragging anywhere else turns the view, or draws a box while **Box** is on (see [Mouse](#mouse)). Its settings add **Box**, **All**, **Invert**, one chip per element with its count (selects every atom of that element), and **Snap**. The selection feeds the [Inspector](#inspector) (*Delete*, *Set to*, *Save as fragment*, *Clean up*, the measurement, *Transform*). |
 | **Add atom** | A | On an atom: attaches a new atom of the chosen element at bond length (sum of covalent radii), pointing away from the atom's existing neighbours, and bonds it with the chosen bond order. On empty space: places a free atom at that point, at the depth of the rotation pivot. |
-| **Bond** | B | Click two atoms to bond them. Clicking an already bonded pair changes the bond order to the one chosen in its settings. |
-| **Delete** | D | Removes the atom and every bond it had. |
+| **Bond** | B | Click two atoms to bond them. Clicking an already bonded pair changes the bond order to the one chosen in its settings; Shift-clicking the second atom removes their bond. Clicking empty space lets go of the first atom. |
+| **Delete** | D | Removes the atom, its bonds, and (while hydrogens are kept balanced) its hydrogens. |
 | **Move** | M | Like *Select*, except that dragging *any* atom moves it at once, without selecting it first: the atom alone, or the whole selection when it is part of it. Clicks select as with *Select*. |
 | **Element** | E | Changes the clicked atom to the chosen element (and rebalances its hydrogens, see below). |
 | **Place** | P | Stamps the library molecule chosen in its settings (see [Library](#library)). |
 
-**Hydrogens are kept balanced.** When the structure already carries explicit
-hydrogens, *Add atom* and *Element* edit it the way a chemist expects:
+**Hydrogens are kept balanced.** The **Hydrogens** setting of *Add atom*,
+*Bond*, *Element* and *Delete* is *Auto* (the default), *On* or *Off*. With
+*Auto*, hydrogens are kept balanced once the structure carries explicit
+hydrogens, and *Add atom* and *Element* edit it the way a chemist expects:
 
 - *Add atom* on a **hydrogen replaces it** with the chosen element, which is
   moved out to the right bond length. Clicking an H of methane with C gives
@@ -128,8 +131,10 @@ hydrogens, *Add atom* and *Element* edit it the way a chemist expects:
   neighbour's extra hydrogen.
 - Each click, hydrogens included, is **one Undo step**.
 
-A bare skeleton (no hydrogen anywhere) is left bare, as are elements with no
-single usual valence (metals); add hydrogens yourself in that case.
+With *Auto*, a bare skeleton (no hydrogen anywhere) is left bare; *On*
+always adds and removes H to keep valences filled, even on a skeleton, and
+*Off* never adds or removes any. Elements with no single usual valence
+(metals) get no hydrogens in any mode.
 
 The Details panel shows **only the settings the current tool uses**: the
 element (one-click buttons for the common ones; **Periodic table** opens a
@@ -138,8 +143,9 @@ and pointing at one shows its name, atomic number, mass, family and the
 colour the view draws it in; or any atomic number in the *Z* field) for
 *Add atom* and *Element*, the bond order (single, double, triple, aromatic)
 for *Add atom* and *Bond*, Box / All / Invert and the element chips for *Select*,
-**Snap** and a list of the drag gestures for *Select* and *Move*, and the
-molecule and *On atoms* for *Place*. *Delete* has no settings.
+**Snap** and a list of the drag gestures for *Select* and *Move*,
+**Hydrogens** (Auto / On / Off) for *Add atom*, *Bond*, *Element* and
+*Delete*, and the molecule and *On atoms* for *Place*.
 
 ## Mouse
 
@@ -205,7 +211,8 @@ panel describes the selection:
 pans the view) for a menu (it opens beside the pointer, flipped to
 stay on screen near an edge): *Select molecule* (every atom bonded to
 it, directly or not), *Select all* of its element, *Set to* the current
-element, *Clean up molecule* and *Delete atom*.
+element, *Remove bond to …* (one item per bonded neighbour), *Clean up
+molecule* and *Delete atom*.
 
 ### Clean up geometry
 
@@ -236,15 +243,16 @@ other molecule is cleaned up. All the moved atoms are one Undo step.
 | Delete, Backspace | Delete the selected atoms |
 | Esc | Drop the pending bond, then the selection, then the *Place* molecule; during a drag, cancel it |
 | X Y Z, A B C (during a drag) | Lock the drag to that axis (see [Mouse](#mouse)) |
-| Ctrl/⌘ + O, Ctrl/⌘ + S | Open a file, save XYZ |
+| Ctrl/⌘ + O, Ctrl/⌘ + S | Open a file; save in the document's own format (PDB for `.pdb` / `.ent` / `.mmcif`, MOL for `.mol` / `.sdf`, CIF, POSCAR), else XYZ |
 | Ctrl/⌘ + A | Select every atom |
 | R | Reset the view |
+| ? | Show the keyboard shortcuts |
 
 Keys are ignored while a text field or the Ketcher sketcher has the keyboard, so typing a
 lattice constant never switches tools.
 
 Editing never moves the camera: the view keeps its zoom and orientation across
-every operation (and across Undo / Redo / Clear all). Only opening a file or
+every operation (and across Undo / Redo / Undo all). Only opening a file or
 starting a new document re-fits the view. **Reset View** (R) and the axis
 buttons in the top-left corner (±x / ±y / ±z, and ±a / ±b / ±c while there
 is a cell) work as the viewer's.
@@ -288,17 +296,20 @@ and grows with your own molecules:
   conformer for it.
 - **Save as fragment** in the Inspector keeps the selected atoms, with the bonds between them, as a
   molecule — a quick way to lift a 3D fragment out of an opened file.
-- **Edit** (on a sketched molecule) reopens the sketch in Ketcher; adding the
-  result makes a new library entry. **×** removes a molecule you added.
+- **Edit** (on a sketched molecule) reopens the sketch in Ketcher; **Save
+  changes** updates the entry and **Save as new** adds a copy. **✎** (or a
+  double-click on the name) renames a molecule you added, and **×** removes
+  it, after asking.
 
 Your molecules are stored in the browser (`localStorage`), so they are there
 after a reload; the presets are always listed first and cannot be removed.
 
 Each molecule has two ways into the document:
 
-- **Add** drops it beside the structure: past the structure's bounding box
-  along +x, level with its centre (or at the cell centre when the cell is
-  still empty). The new atoms are selected, so switching to *Move* and
+- **Add** drops it into the emptiest part of the cell when the molecule fits
+  there; otherwise beside the structure, past its bounding box along +x and
+  level with its centre. With only a cell it goes to the cell centre, and with
+  nothing open to the origin. The new atoms are selected, so switching to *Move* and
   dragging one of them carries the whole molecule to where you want it.
 - **Place** chooses it for the **Place** tool: every click on empty space in
   the 3D view stamps a copy with its centre at that point (at the depth of
@@ -415,7 +426,8 @@ molecule's atoms, and the seed is filled in for you. **Run** shows the
 server's progress and can be cancelled.
 
 - Tools that build something new (*Liquid box*, *Polymer chain*) replace the
-  open document; the form warns you when that would discard edits.
+  open document; the form warns you when that would discard edits, and
+  **Run** asks before it discards them.
 - Tools that add to the open structure (*Solvate*) add their atoms as one
   operation in the history, so a single **Undo** removes them.
 - If the tool refuses (not enough room, a head atom without a hydrogen, …),
@@ -443,7 +455,8 @@ it. Pick **Flow** in the mode switch at the top of the left rails: Manual
 mode's rails make way, and the panel on the right becomes the Flow editor,
 built like the viewer's Pipeline panel — the same resizable panel, node
 cards, wires, minimap and properties pane. Its own rail, down the panel's
-left edge, holds **Add**, **Templates**, **Auto Layout**, **Run** (**Stop**
+left edge, holds **Add**, **Templates**, **Auto Layout**, **Undo** / **Redo** (of
+changes to the graph), **Run** (**Stop**
 while a run is going), the **File** menu (*Open flow…*, *Save flow*, *Clear
 all blocks*) and the theme button; the graph is on top, and the selected block's settings
 are under it, in the same rows as a pipeline node's.
@@ -520,7 +533,8 @@ ones it needs, and **Stop** abandons a run.
 
 Manual and Flow mode share one structure. When **Run** finishes, the result
 of the flow's last block (the one no wire leaves) becomes the structure open
-in Manual mode — replacing the open one and its history — so switching to
+in Manual mode — replacing the open one and its history, after asking when
+it has unsaved edits — so switching to
 Manual shows what the flow built, ready to edit further or save as XYZ, PDB,
 MOL, CIF or POSCAR. A Run that gives back the very result it gave last time (nothing in
 the flow changed) leaves the structure, and your Manual edits on it, alone;
@@ -530,11 +544,14 @@ The 3D view shows the result of the block you pick in the graph, with its
 name and counts on the info line; with no block picked it shows the shared
 structure, Manual edits included. Editing in the view is Manual mode's job.
 **Open in Manual** makes the picked block's result the structure — an
-intermediate molecule, say — and switches to Manual mode. *Run to here* only
+intermediate molecule, say — and switches to Manual mode (asking first when
+the open structure has unsaved edits). *Run to here* only
 builds up to the picked block to look at it; it leaves the structure alone.
 
 *Save flow* writes the blocks, their settings and their wires as
-`builder.megane-flow.json` (where *Save* writes structures on that host, see
+`<name>.megane-flow.json`, named after the flow file or template it came from
+(`builder.megane-flow.json` for a flow started from scratch), where *Save*
+writes structures on that host (see
 [In VS Code, JupyterLab and notebooks](#in-vs-code-jupyterlab-and-notebooks));
 *Open flow…* reads one back. A flow keeps each tool's settings, seed included,
 so running it again with the same server builds the same structure. Library
@@ -545,9 +562,9 @@ molecules opens elsewhere only where those molecules are in the library.
 
 The **History** panel lists every step in order — one line per Undo, so an
 atom and the hydrogens that came with it, or a cleaned-up molecule, is one
-line — and offers **Undo**,
-**Redo**, **Clear all**, and **Show original** (a preview of the structure as
-opened; editing is paused while it is on, and a banner at the top of the
+line; click a row (or press Enter on it) to jump to that step — and offers
+**Undo**, **Redo**, **Undo all** (Redo brings the steps back), and **Show
+original** (a preview of the structure as opened; editing is paused while it is on, and a banner at the top of the
 panel offers the way back). The history is the document: the
 structure you opened is never changed, and what you see is always that
 structure with the operations replayed on it. An operation that no longer
@@ -716,7 +733,9 @@ second output moves it there, and the first offers *Show here* to take it
 back.
 
 What the notebook widget leaves out: the *Tools* menu (MCP tool servers,
-which the web app, VS Code and JupyterLab can reach), and the Ketcher
+which the web app, VS Code and JupyterLab can reach) — and with it, in Flow
+mode, the tool blocks in **Add** and the templates that need a tool server —
+and the Ketcher
 sketcher — *Sketch…* opens the dialog with *Paste MOL*, which takes a MOL
 block or a SMILES string and embeds it in 3D with RDKit. RDKit (*Clean up* and
 the 3D embedding) works on every host; the notebook widget fetches it from the

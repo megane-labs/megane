@@ -13,10 +13,12 @@ it here first, then change the code; cite the section in the PR.
 The client covers §3–§6 with these gaps, each still part of the contract:
 `icons` are not rendered (every tool is a text entry in the *Tools* menu);
 `expectedSeconds` only sets the timeout, and the progress bar shows for every
-call; the `element` widget is a number field that shows the symbol, and the
+call; the `element` widget is a text field that takes a symbol (`Fe`) or an
+atomic number and shows the other beside it (not the periodic-table picker), and the
 `cell` widget takes an orthorhombic `a, b, c` only (pre-filled from the open
 document's cell, else 20 Å) and sends it as a diagonal 3×3 cell;
-a `new_document` tool warns in its form instead of asking for confirmation;
+a `new_document` tool warns in its form and, when the open document has
+unsaved edits, asks before discarding them;
 the §7 record is kept for the session only; the §9 confirmation is asked
 only by the VS Code and JupyterLab bridges (the web app connects only to a URL
 the user typed or opened), and the destination notice and chat opt-in are not
@@ -118,7 +120,7 @@ them).
 | --- | --- | --- |
 | `contract` | integer | Contract version. Builder hides tools whose version it does not support and says so once per server. |
 | `category` | `"bulk"` \| `"molecule"` \| `"polymer"` \| `"surface"` \| `"solvation"` \| `"other"` | *Tools*-menu group the button is placed in. |
-| `apply` | `"new_document"` \| `"insert"` | How the result enters the document (§5). Builder hides a tool with any other value, as for an unsupported `contract`. |
+| `apply` | `"new_document"` \| `"insert"` | How the result enters the document (§5). Builder hides a tool with any other value and lists it separately (*unknown `apply` mode*) from tools of an unsupported `contract`. |
 | `document` | `"none"` \| `"optional"` \| `"required"` | Whether the tool receives the open document (§4.3). `insert` tools usually say `required`. |
 | `stochastic` | boolean | The result depends on a random seed. Such a tool **must** have a `seed` input (§4.4). |
 | `expectedSeconds` | number, optional | Typical run time; Builder shows a progress bar instead of a spinner above ~2 s and uses it to pick a timeout (§6). |
@@ -345,7 +347,7 @@ Rules:
 
 | `apply` | What Builder does | Undo |
 | --- | --- | --- |
-| `new_document` | Warns in the form (*The result replaces the open structure and its history.*) when the open document has edits, then opens the result as a new document (`openStructure`), named from `name`. Residue names become the document's labels (`RESNAME<resid>` when `residueIds` is given). | The previous document and its history are replaced, like *File › Open…* or *New …*. |
+| `new_document` | Warns in the form (*The result replaces the open structure and its history.*) when the open document has edits and, on **Run**, asks *Discard unsaved edits?* before the call; then opens the result as a new document (`openStructure`), named from `name`. Residue names become the document's labels (`RESNAME<resid>` when `residueIds` is given). | The previous document and its history are replaced, like *File › Open…* or *New …*. |
 | `insert` | Needs an open, editable document (*Run* is disabled otherwise). Converts the result into **one `add_fragment` op** (absolute positions, no translation, bonds and orders from the payload) with a fresh fragment id, and pushes it. If the result has a `cell` that differs from the document's, a `set_cell` op (without atom scaling) is pushed first, in the same step. The new atoms are selected. | One Undo removes the whole insertion. |
 
 Because `insert` goes through the existing `add_fragment` op, a tool-inserted
@@ -414,7 +416,13 @@ works in LLM clients:
 ```json
 {
   "mcpServers": {
-    "megane-builder-tools": { "command": "uvx", "args": ["megane-builder-tools"] },
+    "megane-builder-tools": {
+      "command": "uvx",
+      "args": [
+        "--from", "git+https://github.com/hodakamori/megane-builder-tools",
+        "megane-builder-tools"
+      ]
+    },
     "lab-tools": { "url": "https://tools.example.org/mcp" }
   }
 }
@@ -491,9 +499,11 @@ server bounds each call's time and the number of concurrent calls.
 | JupyterLab labextension — **implemented** | Jupyter server extension (`megane.builder_tools`) spawns servers and relays over a WebSocket | `MeganeBuilderTools.mcp_servers` in `jupyter_server_config` | yes | yes (HTTPS, or HTTP on loopback) |
 | Jupyter widget | — | — | — | — (`megane.Builder` has no *Tools* menu; `MolecularViewer` does not mount Builder) |
 
-The bridge exposes only the configured servers, `listTools(serverId)`,
-`callTool(serverId, name, arguments)` with progress events, and
-`cancel(callId)` to the page. It never
+The bridge (`src/builder/tools/bridgeProtocol.ts`) answers only these page
+messages: `tools:servers` (the configured servers), `tools:connect` (the
+server's name, version and raw `tools/list`), `tools:call` (with
+`tools:progress` notifications), `tools:cancel`, `tools:disconnect` and
+`tools:openSettings`. It never
 forwards arbitrary JSON-RPC, so a page cannot reach resources, prompts or
 sampling. Hosts that get a bridge must be listed in
 `docs/docs/platform-support.md` when this ships (rule #6).
@@ -527,7 +537,9 @@ sampling. Hosts that get a bridge must be listed in
   that has to implement it and it is versioned with Builder.
 - **The reference server lives in its own repository**,
   [`hodakamori/megane-builder-tools`](https://github.com/hodakamori/megane-builder-tools),
-  published to PyPI as `megane-builder-tools`. It is split out for the same
+  installed from Git
+  (`uvx --from git+https://github.com/hodakamori/megane-builder-tools megane-builder-tools`;
+  it is not on PyPI yet). It is split out for the same
   reasons as `megane-rdkit`: its dependencies (packmol, RadonPy, RDKit, their
   licences) and release cadence have nothing to do with Megane's wheel and CI.
   It contains:
