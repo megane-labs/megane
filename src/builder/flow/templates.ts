@@ -1,7 +1,7 @@
 /**
  * Ready-made flows for the Flow rail's Templates menu, as the viewer's
  * pipeline editor has ready-made pipelines: a liquid mixture, molecules on a
- * slab, a polymer melt, a solid–liquid interface, a crystal supercell.
+ * slab, polymer chains in a box, a solid–liquid interface, a crystal supercell.
  * Applying one replaces the flow; the user then edits the blocks and runs.
  *
  * The crystal, slab, polymer and placement blocks run in the browser. A
@@ -122,13 +122,20 @@ export const FLOW_TEMPLATES: readonly FlowTemplate[] = [
   },
   {
     id: "polymer-melt",
-    label: "Polymer melt in a box",
-    description: "Polyethylene chains built from a repeat unit, packed into a box (packmol).",
+    label: "Polymer chains in a box",
+    description:
+      "Short polyethylene chains built from a repeat unit, packed loosely into a box (packmol).",
     tools: ["liquid_box"],
+    // packmol moves each chain as one rigid conformer, so chains cannot be
+    // packed to melt density (~0.85 g/cm³): 20-unit chains at 0.85 stop at the
+    // iteration limit with atoms 0.15 Å apart after over two minutes. Short
+    // chains in a dilute box pack in well under a second, and the box edge
+    // (36 Å) is longer than a fully extended C20 chain (~25 Å), whatever
+    // conformer RDKit embeds. Compress the box with MD to reach a real melt.
     create: () =>
       flow(
         [
-          ["n1", 0, 0, { type: "polymer", repeatUnit: "*CC*", length: 20, name: "PE" }],
+          ["n1", 0, 0, { type: "polymer", repeatUnit: "*CC*", length: 10, name: "PE" }],
           [
             "n2",
             0,
@@ -136,7 +143,7 @@ export const FLOW_TEMPLATES: readonly FlowTemplate[] = [
             tool(
               "liquid_box",
               "Liquid box",
-              { density: 0.85 },
+              { density: 0.1 },
               { components: { n1: { count: 10 } } },
             ),
           ],

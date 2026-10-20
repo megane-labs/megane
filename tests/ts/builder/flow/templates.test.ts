@@ -10,6 +10,7 @@ import { blockPorts } from "@/builder/flow/ports";
 import { parseSerializedFlow } from "@/builder/flow/store";
 import { FLOW_TEMPLATES, TEMPLATE_SEED } from "@/builder/flow/templates";
 import { PRESET_MOLECULES } from "@/builder/library/presets";
+import type { PolymerParams, ToolParams } from "@/builder/flow/types";
 import { fakeDeps, tools } from "./helpers";
 
 describe("FLOW_TEMPLATES", () => {
@@ -67,5 +68,26 @@ describe("FLOW_TEMPLATES", () => {
     expect(deps.calls.map((c) => c.name).sort()).toEqual([...t.tools].sort());
     // The tool's own defaults fill the settings the template leaves out.
     for (const c of deps.calls) expect(c.args.seed).toBe(TEMPLATE_SEED);
+  });
+
+  it("polymer-melt packs into a box longer than a fully extended chain", () => {
+    // packmol moves each chain as one rigid conformer, so the box must hold
+    // the most extended one RDKit can embed. A polyethylene chain of n units
+    // is C(2n)H(4n+2); all-trans it spans (2n − 1) C–C bonds of 1.26 Å along
+    // its axis plus ~1 Å of hydrogen at each end.
+    const flow = FLOW_TEMPLATES.find((t) => t.id === "polymer-melt")!.create();
+    const chainNode = flow.nodes.find((n) => n.params.type === "polymer")!;
+    const chain = chainNode.params as PolymerParams;
+    const box = flow.nodes.find((n) => n.params.type === "tool")!.params as ToolParams;
+    expect(chain.repeatUnit).toBe("*CC*");
+    const count = box.rows.components[chainNode.id].count as number;
+    const density = box.values.density as number;
+    const n = chain.length;
+    const molarMass = 2 * n * 12.011 + (4 * n + 2) * 1.008;
+    const volume = ((count * molarMass) / 6.02214076e23 / density) * 1e24;
+    const edge = Math.cbrt(volume);
+    const extended = (2 * n - 1) * 1.26 + 2;
+    const tolerance = 2;
+    expect(edge).toBeGreaterThan(extended + 2 * tolerance);
   });
 });
