@@ -5,10 +5,27 @@
  *
  * The standalone webapp is also served by Vite and by static hosting, where no
  * such API exists, so `detectServerFileSource` probes first and registers
- * nothing unless the answer is a real listing.
+ * nothing unless the answer is a real listing. The webapp calls it only when
+ * `shouldProbeServerFiles` says the page came from a server that offers the
+ * API, so other hosts never log the probe's 404 or 403.
  */
 
 import type { BrowsableRemoteFileSource, RemoteDirListing } from "./fileSource";
+
+/** The `<meta name>` megane serve adds to the page when it serves `/api/files` to this browser. */
+export const SERVER_FILES_META = "megane-server-files";
+
+/**
+ * Whether to probe `/api/files`: when megane serve marked the page, or under
+ * the Vite dev server, which serves its own page but proxies `/api` to a
+ * megane serve on port 8765.
+ */
+export function shouldProbeServerFiles(
+  doc: Pick<Document, "querySelector"> = document,
+  dev: boolean = import.meta.env.DEV,
+): boolean {
+  return dev || doc.querySelector(`meta[name="${SERVER_FILES_META}"]`) !== null;
+}
 
 type FetchLike = (input: string, init?: RequestInit) => Promise<Response>;
 

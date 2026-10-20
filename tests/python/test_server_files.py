@@ -5,6 +5,7 @@ import os
 import pytest
 from starlette.testclient import TestClient
 
+from megane import server
 from megane.server import _files, _is_loopback, app, configure_files
 
 
@@ -171,3 +172,47 @@ def test_configure_files_resolves_root(tmp_path):
     configure_files(None)
     assert _files.root is None
     assert _files.any_host is False
+
+
+@pytest.fixture
+def static_app(tmp_path, monkeypatch):
+    app_dir = tmp_path / "app"
+    app_dir.mkdir()
+    (app_dir / "index.html").write_text("<html><head><title>Megane</title></head><body></body></html>")
+    monkeypatch.setattr(server, "_static_dir", app_dir)
+    return app_dir
+
+
+def test_index_is_marked_when_files_are_served(tree, static_app, local_client):
+    root, _ = tree
+    configure_files(root)
+    for path in ("/", "/index.html", "/?test=1"):
+        resp = local_client.get(path)
+        assert resp.status_code == 200
+        assert server.SERVER_FILES_META in resp.text
+        assert resp.text.index(server.SERVER_FILES_META) < resp.text.index("</head>")
+        assert resp.headers["cache-control"] == "no-cache"
+
+
+def test_index_is_unmarked_without_file_browsing(static_app, local_client):
+    configure_files(None)
+    resp = local_client.get("/")
+    assert resp.status_code == 200
+    assert "<title>Megane</title>" in resp.text
+    assert "megane-server-files" not in resp.text
+
+
+def test_index_is_unmarked_for_a_refused_client(tree, static_app):
+    root, _ = tree
+    remote = TestClient(app, client=("203.0.113.5", 50000))
+    configure_files(root)
+    assert "megane-server-files" not in remote.get("/").text
+    configure_files(root, any_host=True)
+    assert server.SERVER_FILES_META in remote.get("/").text
+
+
+def test_index_without_a_built_app(tmp_path, monkeypatch, local_client):
+    monkeypatch.setattr(server, "_static_dir", tmp_path / "missing")
+    resp = local_client.get("/")
+    assert resp.status_code == 200
+    assert "The web UI is not available." in resp.text

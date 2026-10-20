@@ -40,7 +40,7 @@ import { ThemeSync } from "./components/ThemeSync";
 import { ErrorBoundary } from "./components/ErrorBoundary";
 import { initAnalytics, trackEvent, trackFileOpen } from "./analytics";
 import { setRemoteFileSource } from "./remote/fileSource";
-import { detectServerFileSource } from "./remote/serverFiles";
+import { detectServerFileSource, shouldProbeServerFiles } from "./remote/serverFiles";
 
 import type { DataMode } from "./types";
 import type { StructureParseResult } from "./parsers/structure";
@@ -217,9 +217,11 @@ function App() {
 initAnalytics("viewer");
 
 // Served by `megane serve`: the Load nodes can also open files on the server
-// (e.g. a cluster reached over an SSH tunnel). Elsewhere the probe finds no
-// API and nothing changes.
-void detectServerFileSource().then((source) => source && setRemoteFileSource(source));
+// (e.g. a cluster reached over an SSH tunnel). Elsewhere nothing is requested
+// and nothing changes.
+if (shouldProbeServerFiles()) {
+  void detectServerFileSource().then((source) => source && setRemoteFileSource(source));
+}
 
 createRoot(document.getElementById("root")!).render(
   <StrictMode>

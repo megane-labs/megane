@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Optional
 
 from fastapi import FastAPI, HTTPException, Request, UploadFile, WebSocket, WebSocketDisconnect
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
 
 from megane.parsers.common import Structure, encode_trajectory_frame
@@ -241,17 +241,26 @@ def _is_loopback(host: str | None) -> bool:
         return False
 
 
-def _files_root(request: Request) -> Path:
-    """The browse root, or the HTTP error explaining why browsing is unavailable."""
+def _files_refusal(request: Request) -> HTTPException | None:
+    """Why file browsing is unavailable to this request, or ``None`` when it is served."""
     if _files.root is None:
-        raise HTTPException(status_code=404, detail="File browsing is disabled on this server")
+        return HTTPException(status_code=404, detail="File browsing is disabled on this server")
     client = request.client.host if request.client else None
     if not _files.any_host and not _is_loopback(client):
-        raise HTTPException(
+        return HTTPException(
             status_code=403,
             detail="File browsing is only served to this machine "
             "(restart megane serve with --files-any-host to allow other hosts)",
         )
+    return None
+
+
+def _files_root(request: Request) -> Path:
+    """The browse root, or the HTTP error explaining why browsing is unavailable."""
+    refusal = _files_refusal(request)
+    if refusal is not None:
+        raise refusal
+    assert _files.root is not None
     return _files.root
 
 
@@ -387,6 +396,39 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
 _default_static_dir = Path(__file__).parent / "static" / "app"
 _env_static_dir = os.environ.get("MEGANE_STATIC_DIR", "").strip()
 _static_dir = Path(_env_static_dir).resolve() if _env_static_dir else _default_static_dir
+
+# Marks the viewer page when this browser may browse the server's files, so the
+# web app requests `/api/files` only then (src/remote/serverFiles.ts). Static
+# hosts, `--no-files` and refused clients get the page unmarked and never send
+# a request the browser would log as a 404 or 403.
+SERVER_FILES_META = '<meta name="megane-server-files" content="" />'
+
+
+def _no_ui_page() -> HTMLResponse:
+    return HTMLResponse(
+        "<h1>Megane</h1>"
+        "<p>The web UI is not available.</p>"
+        "<p>Build the frontend first:</p>"
+        "<pre>npm run build</pre>"
+        "<p>Then restart <code>megane serve</code>.</p>",
+        status_code=200,
+    )
+
+
+@app.get("/", include_in_schema=False)
+@app.get("/index.html", include_in_schema=False)
+def _index(request: Request) -> HTMLResponse:
+    index = _static_dir / "index.html"
+    if not index.is_file():
+        return _no_ui_page()
+    html = index.read_text(encoding="utf-8")
+    if _files_refusal(request) is None:
+        html = html.replace("</head>", f"{SERVER_FILES_META}\n</head>", 1)
+    # The mark depends on the server's options and on the client, so a copy
+    # cached from another run or another client must not be reused.
+    return HTMLResponse(html, headers={"Cache-Control": "no-cache"})
+
+
 if _static_dir.exists():
     app.mount("/", StaticFiles(directory=str(_static_dir), html=True), name="app")
 else:
@@ -399,13 +441,4 @@ else:
 
     @app.get("/{path:path}")
     async def _fallback(path: str):
-        from fastapi.responses import HTMLResponse
-
-        return HTMLResponse(
-            "<h1>Megane</h1>"
-            "<p>The web UI is not available.</p>"
-            "<p>Build the frontend first:</p>"
-            "<pre>npm run build</pre>"
-            "<p>Then restart <code>megane serve</code>.</p>",
-            status_code=200,
-        )
+        return _no_ui_page()
