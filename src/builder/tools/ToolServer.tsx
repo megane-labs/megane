@@ -84,7 +84,20 @@ export function toolsMenuItems(
       items.push({ caption: CATEGORY_LABELS[category] });
       for (const tool of tools) {
         items.push({
-          label: `${tool.label}…`,
+          // A tool Builder cannot draw a form for says why, in the menu itself.
+          label: tool.formError ? (
+            <span style={{ display: "flex", flexDirection: "column" }}>
+              <span>{tool.label}…</span>
+              <span
+                data-testid={`builder-tools-unavailable-${tool.name}`}
+                style={{ fontSize: 11, opacity: 0.85, whiteSpace: "normal" }}
+              >
+                Unavailable: {tool.formError}
+              </span>
+            </span>
+          ) : (
+            `${tool.label}…`
+          ),
           testId: `builder-tools-button-${tool.name}`,
           disabled: !!tool.formError,
           title: tool.formError ? `Builder cannot build a form: ${tool.formError}` : tool.tooltip,
@@ -129,6 +142,7 @@ export function ToolServerDialog({ onClose }: { onClose: () => void }) {
   const setUrl = useScopedToolsStore((s) => s.setUrl);
   const setToken = useScopedToolsStore((s) => s.setToken);
   const connect = useScopedToolsStore((s) => s.connect);
+  const cancelConnect = useScopedToolsStore((s) => s.cancelConnect);
   const disconnect = useScopedToolsStore((s) => s.disconnect);
   const bridge = useScopedToolsStore((s) => s.bridge);
   const servers = useScopedToolsStore((s) => s.servers);
@@ -148,17 +162,41 @@ export function ToolServerDialog({ onClose }: { onClose: () => void }) {
       >
         Disconnect
       </button>
+    ) : status === "connecting" ? (
+      <>
+        <button
+          type="submit"
+          data-testid="builder-tools-connect"
+          style={buttonStyle("primary", true)}
+          disabled
+        >
+          Connecting…
+        </button>
+        <button
+          type="button"
+          data-testid="builder-tools-connect-cancel"
+          style={buttonStyle()}
+          onClick={cancelConnect}
+        >
+          Cancel
+        </button>
+      </>
     ) : (
       <button
-        type="button"
+        type="submit"
         data-testid="builder-tools-connect"
-        style={buttonStyle("primary", status === "connecting" || !url.trim())}
-        disabled={status === "connecting" || !url.trim()}
-        onClick={() => void connect()}
+        style={buttonStyle("primary", !url.trim())}
+        disabled={!url.trim()}
       >
         Connect
       </button>
     );
+  /** Enter in the URL or token field connects, as the button does. */
+  const onSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (status === "connecting" || status === "connected" || !url.trim()) return;
+    void connect();
+  };
   const chosen = servers?.find((server) => server.id === url);
 
   return (
@@ -176,7 +214,7 @@ export function ToolServerDialog({ onClose }: { onClose: () => void }) {
             No tool servers are configured. Add one to {bridge.configHint}.
           </div>
         ) : (
-          <>
+          <form onSubmit={onSubmit} style={{ display: "flex", flexDirection: "column", gap: 8 }}>
             <div style={rowStyle}>
               <select
                 data-testid="builder-tools-server-select"
@@ -199,10 +237,14 @@ export function ToolServerDialog({ onClose }: { onClose: () => void }) {
                 {chosen.kind === "stdio" ? "Runs" : "Connects to"} <code>{chosen.description}</code>
               </div>
             )}
-          </>
+          </form>
         )
       ) : (
-        <>
+        <form
+          data-testid="builder-tools-form"
+          onSubmit={onSubmit}
+          style={{ display: "flex", flexDirection: "column", gap: 8 }}
+        >
           <input
             data-testid="builder-tools-url"
             aria-label="Tool server URL"
@@ -223,7 +265,7 @@ export function ToolServerDialog({ onClose }: { onClose: () => void }) {
             />
             {connectButton}
           </div>
-        </>
+        </form>
       )}
       {error && (
         <div

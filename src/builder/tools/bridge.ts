@@ -19,6 +19,14 @@ import type { BridgeConnected, BridgeRequest, BridgeServer } from "./bridgeProto
 
 export type { BridgeServer } from "./bridgeProtocol";
 
+/**
+ * How long the page waits for the host to list its servers or finish a
+ * connect, ms. A host that never answers (an extension that crashed, a
+ * server process stuck starting) would otherwise leave "Connecting…" up for
+ * good. Tool calls have their own, per-tool timeout (`callTimeoutMs`).
+ */
+export const BRIDGE_REQUEST_TIMEOUT_MS = 15_000;
+
 /** The page's end of the message channel to the host. */
 export interface BridgePort {
   post: (message: BridgeRequest) => void;
@@ -54,8 +62,9 @@ type HostMessage =
 
 export function createMessageBridge(
   port: BridgePort,
-  options: { configHint: string; openSettings?: boolean },
+  options: { configHint: string; openSettings?: boolean; requestTimeoutMs?: number },
 ): ToolBridge {
+  const requestTimeoutMs = options.requestTimeoutMs ?? BRIDGE_REQUEST_TIMEOUT_MS;
   const pending = new Map<number, Pending>();
   let nextId = 1;
   let listening = false;
@@ -74,10 +83,14 @@ export function createMessageBridge(
     }
   }
 
-  /** Send a request; resolves to the host's value. */
+  /**
+   * Send a request; resolves to the host's value. With `timeout` (ms), a host
+   * that has not answered by then rejects it with `what` in the message.
+   */
   function request(
     build: (requestId: number) => BridgeRequest,
     onProgress?: Pending["onProgress"],
+    timeout?: { ms: number; what: string },
   ): { requestId: number; promise: Promise<unknown> } {
     if (!listening) {
       port.listen(onMessage);
@@ -85,15 +98,51 @@ export function createMessageBridge(
     }
     const requestId = nextId++;
     const promise = new Promise<unknown>((resolve, reject) => {
-      pending.set(requestId, { resolve, reject, onProgress });
+      let timer: ReturnType<typeof setTimeout> | null = null;
+      const settle = () => {
+        if (timer !== null) clearTimeout(timer);
+      };
+      pending.set(requestId, {
+        resolve: (v) => {
+          settle();
+          resolve(v);
+        },
+        reject: (e) => {
+          settle();
+          reject(e);
+        },
+        onProgress,
+      });
+      if (timeout) {
+        timer = setTimeout(() => {
+          // A late reply finds no entry and is ignored.
+          pending.delete(requestId);
+          reject(
+            new Error(
+              `The host did not ${timeout.what} within ${Math.round(timeout.ms / 1000)} s. Check the tool server's configuration and try again.`,
+            ),
+          );
+        }, timeout.ms);
+      }
     });
     port.post(build(requestId));
     return { requestId, promise };
   }
 
   async function connect(server: string): Promise<ToolConnection> {
-    const { promise } = request((requestId) => ({ type: "tools:connect", requestId, server }));
-    const connected = (await promise) as BridgeConnected;
+    const { promise } = request(
+      (requestId) => ({ type: "tools:connect", requestId, server }),
+      undefined,
+      { ms: requestTimeoutMs, what: `connect to ${server}` },
+    );
+    let connected: BridgeConnected;
+    try {
+      connected = (await promise) as BridgeConnected;
+    } catch (err) {
+      // The host may still finish connecting; tell it the page gave up.
+      port.post({ type: "tools:disconnect", server });
+      throw err;
+    }
     return {
       serverName: connected.serverName || server,
       serverVersion: connected.serverVersion ?? null,
@@ -132,8 +181,10 @@ export function createMessageBridge(
   return {
     configHint: options.configHint,
     listServers: async () =>
-      (await request((requestId) => ({ type: "tools:servers", requestId }))
-        .promise) as BridgeServer[],
+      (await request((requestId) => ({ type: "tools:servers", requestId }), undefined, {
+        ms: requestTimeoutMs,
+        what: "list the tool servers",
+      }).promise) as BridgeServer[],
     connect,
     openSettings: options.openSettings
       ? () => port.post({ type: "tools:openSettings" })

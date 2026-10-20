@@ -14,6 +14,8 @@ import {
   draftFromFile,
   draftFromSnapshot,
   defaultName,
+  SketchError,
+  sketchErrorMessage,
 } from "@/builder/library/sketch";
 import { getCovalentRadius } from "@/constants";
 
@@ -147,6 +149,36 @@ describe("draftFromMolfile / draftFromFile", () => {
     expect(d.formula).toBe("CO");
     await expect(draftFromMolfile(" \n ", "x", { embed: custom })).rejects.toThrow(/empty/);
     expect(custom).toHaveBeenCalledTimes(1);
+  });
+
+  it("tags each failure with its step, and words each step its own way", async () => {
+    await expect(draftFromMolfile("", "x")).rejects.toMatchObject({ stage: "empty" });
+    embedSketch.mockRejectedValueOnce(new Error("Could not sanitize molecule"));
+    const embedFail = await draftFromMolfile("mol", "").catch((e: unknown) => e);
+    expect(embedFail).toBeInstanceOf(SketchError);
+    expect(sketchErrorMessage(embedFail)).toBe(
+      "RDKit could not embed the sketch in 3D: Could not sanitize molecule",
+    );
+    embedSketch.mockRejectedValueOnce("SMILES Parse Error: syntax error");
+    const unreadable = await draftFromMolfile("C(", "").catch((e: unknown) => e);
+    expect(sketchErrorMessage(unreadable)).toBe(
+      "RDKit could not read the molecule: SMILES Parse Error: syntax error",
+    );
+    embedSketch.mockResolvedValueOnce(embedded);
+    parseStructureText.mockRejectedValueOnce(new Error("no atoms"));
+    const parseFail = await draftFromMolfile("mol", "").catch((e: unknown) => e);
+    expect(parseFail).toMatchObject({ stage: "parse" });
+    expect(sketchErrorMessage(parseFail)).toBe(
+      "Could not read the 3D structure RDKit returned: no atoms",
+    );
+    embedSketch.mockResolvedValueOnce(embedded);
+    parseStructureText.mockRejectedValueOnce("bare string");
+    expect(sketchErrorMessage(await draftFromMolfile("m", "").catch((e: unknown) => e))).toContain(
+      "bare string",
+    );
+    expect(sketchErrorMessage(new SketchError("empty", "x"))).toMatch(/^The sketch is empty/);
+    expect(sketchErrorMessage(new Error("plain"))).toBe("plain");
+    expect(sketchErrorMessage("text")).toBe("text");
   });
 
   it("names a file import after the file", async () => {

@@ -4,7 +4,9 @@
  * so a preset renamed in a later release simply shows its new geometry.
  *
  * Storage is best-effort: a private window, blocked site data, or a full
- * quota leaves the library in memory only, never throws into the UI.
+ * quota leaves the library in memory only, never throws into the UI. The
+ * first failed save is remembered (`persistFailed`) so the UI can say once
+ * that the library will not outlive the page (`takePersistNotice`).
  */
 
 import { create, type StateCreator, type StoreApi } from "zustand";
@@ -21,7 +23,19 @@ export interface LibraryStore {
   addMolecule: (draft: LibraryMoleculeDraft) => LibraryMolecule;
   removeMolecule: (id: string) => void;
   renameMolecule: (id: string, name: string) => void;
+  /** Replace a user molecule's content (an edited sketch), keeping its id; returns it, or null. */
+  replaceMolecule: (id: string, draft: LibraryMoleculeDraft) => LibraryMolecule | null;
+  /** True once a save to storage has failed: the library lasts until reload. */
+  persistFailed: boolean;
+  /** Whether the UI has said so already. */
+  persistNoticeShown: boolean;
+  /** True exactly once after the first failed save: the cue to tell the user. */
+  takePersistNotice: () => boolean;
 }
+
+/** What the UI says, once, when the library cannot be saved. */
+export const PERSIST_FAILED_NOTICE =
+  "The library can't be saved in this browser; molecules last until reload.";
 
 /** Presets followed by the user's molecules. */
 export function allMolecules(state: Pick<LibraryStore, "user">): LibraryMolecule[] {
@@ -92,12 +106,14 @@ function readStorage(storage: Storage | null): LibraryMolecule[] {
   }
 }
 
-function writeStorage(storage: Storage | null, user: LibraryMolecule[]) {
-  if (!storage) return;
+/** Save `user`; false when the storage refused it (the library stays in memory). */
+function writeStorage(storage: Storage | null, user: LibraryMolecule[]): boolean {
+  if (!storage) return false;
   try {
     storage.setItem(LIBRARY_STORAGE_KEY, JSON.stringify(user));
+    return true;
   } catch {
-    /* quota or blocked storage: the library stays in memory */
+    return false;
   }
 }
 
@@ -114,10 +130,18 @@ export function libraryStateCreator(storage: Storage | null): StateCreator<Libra
   return (set, get) => {
     const commit = (user: LibraryMolecule[]) => {
       set({ user });
-      writeStorage(storage, user);
+      if (!writeStorage(storage, user) && !get().persistFailed) set({ persistFailed: true });
     };
     return {
       user: readStorage(storage),
+      persistFailed: false,
+      persistNoticeShown: false,
+      takePersistNotice: () => {
+        const s = get();
+        if (!s.persistFailed || s.persistNoticeShown) return false;
+        set({ persistNoticeShown: true });
+        return true;
+      },
       addMolecule: (draft) => {
         const molecule: LibraryMolecule = { ...draft, id: newUserId() };
         commit([...get().user, molecule]);
@@ -134,6 +158,13 @@ export function libraryStateCreator(storage: Storage | null): StateCreator<Libra
         const user = get().user;
         if (!user.some((m) => m.id === id)) return;
         commit(user.map((m) => (m.id === id ? { ...m, name: trimmed } : m)));
+      },
+      replaceMolecule: (id, draft) => {
+        const user = get().user;
+        if (!user.some((m) => m.id === id)) return null;
+        const molecule: LibraryMolecule = { ...draft, id };
+        commit(user.map((m) => (m.id === id ? molecule : m)));
+        return molecule;
       },
     };
   };

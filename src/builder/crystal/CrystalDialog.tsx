@@ -14,13 +14,20 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { DetailForm } from "../DetailForm";
 import { canEdit, shownSnapshot } from "../store";
-import { buttonStyle, hintStyle, inputStyle, rowStyle, toggleStyle } from "../styles";
-import { boxToCellParams, cellParamsToBox, det3, type CellParams } from "../../crystal/cell";
-import { slabPreview } from "../../crystal/transform";
+import { buttonStyle, hintStyle, rowStyle, toggleStyle } from "../styles";
+import {
+  boxToCellParams,
+  cellParamsToBox,
+  det3,
+  inverse3,
+  type CellParams,
+  type Vec3,
+} from "../../crystal/cell";
+import { slabPreview, surfaceBasis } from "../../crystal/transform";
 import type { EditOp } from "../../pipeline/types";
 import type { Snapshot } from "../../types";
 import { newFragmentId } from "../library/fragment";
-import { NumberField } from "./NumberField";
+import { NumberField, numberProblem } from "./NumberField";
 import { hasCellBox } from "./structure";
 import { useScopedBuilderStore } from "../BuilderStores";
 
@@ -51,6 +58,19 @@ function overLimit(nAtoms: number): string {
   return `${nAtoms.toLocaleString("en-US")} atoms would exceed the ${MAX_ATOMS.toLocaleString(
     "en-US",
   )}-atom limit`;
+}
+
+/** The line under a form that says why Apply is off. */
+function Problem({ text, testId = "builder-crystal-problem" }: { text: string; testId?: string }) {
+  return (
+    <span
+      role="status"
+      data-testid={testId}
+      style={{ ...hintStyle, color: "var(--megane-warning-text, #b45309)" }}
+    >
+      {text}
+    </span>
+  );
 }
 
 const KINDS: Record<
@@ -214,22 +234,13 @@ function CellForm({
   // Follow the document: a new structure or an undone edit refreshes the fields.
   useEffect(() => setParams(current), [current]);
 
-  const valid =
-    params.a > 0 &&
-    params.b > 0 &&
-    params.c > 0 &&
-    params.alpha > 0 &&
-    params.alpha < 180 &&
-    params.beta > 0 &&
-    params.beta < 180 &&
-    params.gamma > 0 &&
-    params.gamma < 180;
+  const problem = cellProblem(params);
   const op = useMemo<EditOp | null>(
     () =>
-      valid
+      problem === null
         ? { op: "set_cell", box: cellParamsToBox(params), scaleAtoms: scaleAtoms && hasCell }
         : null,
-    [valid, params, scaleAtoms, hasCell],
+    [problem, params, scaleAtoms, hasCell],
   );
   useEffect(() => onDraft(op, nAtoms), [op, nAtoms, onDraft]);
   const set = (key: keyof CellParams) => (v: number) => setParams({ ...params, [key]: v });
@@ -244,6 +255,7 @@ function CellForm({
           testId="builder-cell-a"
           step={0.01}
           min={0.01}
+          unit="Å"
         />
         <NumberField
           label="b"
@@ -252,6 +264,7 @@ function CellForm({
           testId="builder-cell-b"
           step={0.01}
           min={0.01}
+          unit="Å"
         />
         <NumberField
           label="c"
@@ -260,6 +273,7 @@ function CellForm({
           testId="builder-cell-c"
           step={0.01}
           min={0.01}
+          unit="Å"
         />
       </div>
       <div style={rowStyle}>
@@ -269,6 +283,8 @@ function CellForm({
           onChange={set("alpha")}
           testId="builder-cell-alpha"
           step={0.1}
+          min={0}
+          unit="°"
         />
         <NumberField
           label="β"
@@ -276,6 +292,8 @@ function CellForm({
           onChange={set("beta")}
           testId="builder-cell-beta"
           step={0.1}
+          min={0}
+          unit="°"
         />
         <NumberField
           label="γ"
@@ -283,6 +301,8 @@ function CellForm({
           onChange={set("gamma")}
           testId="builder-cell-gamma"
           step={0.1}
+          min={0}
+          unit="°"
         />
       </div>
       <label style={{ ...hintStyle, display: "flex", alignItems: "center", gap: 4 }}>
@@ -295,8 +315,41 @@ function CellForm({
         />
         move atoms with the cell
       </label>
+      {problem && <Problem text={problem} />}
     </div>
   );
+}
+
+/** Why `p` is not a cell (the first problem), or null. */
+export function cellProblem(p: CellParams): string | null {
+  for (const key of ["a", "b", "c"] as const) {
+    const problem = numberProblem(key, p[key], { min: 0, exclusiveMin: true, unit: "Å" });
+    if (problem) return problem;
+  }
+  for (const [key, label] of [
+    ["alpha", "α"],
+    ["beta", "β"],
+    ["gamma", "γ"],
+  ] as const) {
+    const problem = numberProblem(label, p[key], {
+      min: 0,
+      exclusiveMin: true,
+      max: 180,
+      exclusiveMax: true,
+      unit: "°",
+    });
+    if (problem) return problem;
+  }
+  const { alpha, beta, gamma } = p;
+  if (
+    alpha + beta + gamma >= 360 ||
+    alpha >= beta + gamma ||
+    beta >= alpha + gamma ||
+    gamma >= alpha + beta
+  ) {
+    return "These angles do not close into a cell: each must be less than the sum of the other two, and all three less than 360°.";
+  }
+  return null;
 }
 
 // ── Center with vacuum ──
@@ -304,10 +357,16 @@ function CellForm({
 function CenterForm({ nAtoms, onDraft }: { nAtoms: number; onDraft: OnDraft }) {
   const [vacuum, setVacuum] = useState(10);
   const [axes, setAxes] = useState<boolean[]>([false, false, true]);
-  const op = useMemo<EditOp | null>(() => {
-    const chosen = axes.map((on, i) => (on ? i : -1)).filter((i) => i >= 0);
-    return chosen.length > 0 && vacuum >= 0 ? { op: "center", axes: chosen, vacuum } : null;
-  }, [axes, vacuum]);
+  const chosen = axes.map((on, i) => (on ? i : -1)).filter((i) => i >= 0);
+  const problem =
+    numberProblem("Vacuum", vacuum, { min: 0, unit: "Å" }) ??
+    (chosen.length === 0 ? "Choose at least one axis (a, b or c) to centre along." : null);
+  const axesKey = chosen.join(",");
+  const op = useMemo<EditOp | null>(
+    () =>
+      problem === null ? { op: "center", axes: axesKey.split(",").map(Number), vacuum } : null,
+    [problem, axesKey, vacuum],
+  );
   useEffect(() => onDraft(op, nAtoms), [op, nAtoms, onDraft]);
 
   return (
@@ -323,6 +382,7 @@ function CenterForm({ nAtoms, onDraft }: { nAtoms: number; onDraft: OnDraft }) {
           testId="builder-cell-vacuum"
           step={0.5}
           min={0}
+          unit="Å"
           title="Vacuum on each side, Å"
         />
         <span style={hintStyle}>Å along</span>
@@ -339,13 +399,12 @@ function CenterForm({ nAtoms, onDraft }: { nAtoms: number; onDraft: OnDraft }) {
           </button>
         ))}
       </div>
+      {problem && <Problem text={problem} />}
     </div>
   );
 }
 
 // ── Supercell ──
-
-const numStyle: React.CSSProperties = { ...inputStyle, width: 50 };
 
 function SupercellForm({ nAtoms, onDraft }: { nAtoms: number; onDraft: OnDraft }) {
   const [n, setN] = useState([2, 2, 2]);
@@ -359,6 +418,23 @@ function SupercellForm({ nAtoms, onDraft }: { nAtoms: number; onDraft: OnDraft }
   const total = nAtoms * images;
   const tooMany = total > MAX_ATOMS;
   const valid = images >= 1 && !tooMany;
+  const problem = !advanced
+    ? n.every((v) => Number.isInteger(v) && v >= 1)
+      ? null
+      : "Repeats must be whole numbers ≥ 1"
+    : !matrix.every(Number.isInteger)
+      ? "Matrix entries must be whole numbers"
+      : images < 1
+        ? "The matrix is singular (determinant 0): its rows must span a volume"
+        : null;
+  /** Matrix mode starts from the repeats set so far: diag(na, nb, nc). */
+  const toggleAdvanced = () => {
+    if (!advanced) {
+      const d = n.map((v) => (Number.isInteger(v) && v >= 1 ? v : 1));
+      setMatrix([d[0], 0, 0, 0, d[1], 0, 0, 0, d[2]]);
+    }
+    setAdvanced(!advanced);
+  };
   const op = useMemo<EditOp | null>(
     () => (valid ? { op: "supercell", id: PREVIEW_ID, matrix: effective } : null),
     [valid, effective],
@@ -377,25 +453,25 @@ function SupercellForm({ nAtoms, onDraft }: { nAtoms: number; onDraft: OnDraft }
               key={name}
               label={`n${name}`}
               value={n[i]}
-              onChange={(v) => setN(n.map((x, k) => (k === i ? v : x)))}
+              onChange={(v) => setN((cur) => cur.map((x, k) => (k === i ? v : x)))}
               testId={`builder-supercell-n${name}`}
               min={1}
+              integer
               width={50}
             />
           ))
         ) : (
           <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 50px)", gap: 4 }}>
             {matrix.map((v, k) => (
-              <input
+              <NumberField
                 key={k}
-                type="number"
-                data-testid={`builder-supercell-m${k}`}
-                aria-label={`Matrix row ${Math.floor(k / 3) + 1}, column ${(k % 3) + 1}`}
+                label=""
+                testId={`builder-supercell-m${k}`}
+                ariaLabel={`Matrix row ${Math.floor(k / 3) + 1}, column ${(k % 3) + 1}`}
                 value={v}
-                onChange={(e) =>
-                  setMatrix(matrix.map((x, i) => (i === k ? Number(e.target.value) : x)))
-                }
-                style={numStyle}
+                integer
+                width={50}
+                onChange={(x) => setMatrix((m) => m.map((y, i) => (i === k ? x : y)))}
               />
             ))}
           </div>
@@ -405,19 +481,22 @@ function SupercellForm({ nAtoms, onDraft }: { nAtoms: number; onDraft: OnDraft }
           data-testid="builder-supercell-advanced"
           aria-pressed={advanced}
           style={toggleStyle(advanced)}
-          onClick={() => setAdvanced(!advanced)}
+          onClick={toggleAdvanced}
           title="Integer transformation matrix: rows are the new lattice vectors in units of the old ones"
         >
           Matrix
         </button>
       </div>
-      <span style={hintStyle} data-testid="builder-supercell-preview">
-        {valid
-          ? `${images} image${images === 1 ? "" : "s"} → ${total} atoms`
-          : tooMany
-            ? overLimit(total)
-            : "Invalid matrix"}
-      </span>
+      {valid ? (
+        <span style={hintStyle} data-testid="builder-supercell-preview">
+          {`${images} image${images === 1 ? "" : "s"} → ${total} atoms`}
+        </span>
+      ) : (
+        <Problem
+          testId="builder-supercell-preview"
+          text={problem ?? (tooMany ? overLimit(total) : "Invalid matrix")}
+        />
+      )}
     </div>
   );
 }
@@ -430,7 +509,11 @@ function SlabForm({ snapshot, onDraft }: { snapshot: Snapshot; onDraft: OnDraft 
   const [vacuum, setVacuum] = useState(10);
   const [shift, setShift] = useState(0);
   const millerValid = miller.every(Number.isInteger) && miller.some((v) => v !== 0);
-  const valid = millerValid && layers >= 1 && vacuum >= 0;
+  const fieldProblem = !millerValid
+    ? "Miller indices must be integers, not all zero"
+    : (numberProblem("Layers", layers, { min: 1, integer: true }) ??
+      numberProblem("Vacuum", vacuum, { min: 0, unit: "Å" }));
+  const valid = fieldProblem === null;
 
   // What the cut would produce, for the summary line: the count and the
   // thickness alone, without building the slab (and its bonds) — the result
@@ -469,8 +552,9 @@ function SlabForm({ snapshot, onDraft }: { snapshot: Snapshot; onDraft: OnDraft 
             key={name}
             label={name}
             value={miller[i]}
-            onChange={(v) => setMiller(miller.map((x, k) => (k === i ? v : x)))}
+            onChange={(v) => setMiller((cur) => cur.map((x, k) => (k === i ? v : x)))}
             testId={`builder-slab-${name}`}
+            integer
             width={46}
           />
         ))}
@@ -482,6 +566,7 @@ function SlabForm({ snapshot, onDraft }: { snapshot: Snapshot; onDraft: OnDraft 
           onChange={setLayers}
           testId="builder-slab-layers"
           min={1}
+          integer
           width={50}
         />
         <NumberField
@@ -491,11 +576,19 @@ function SlabForm({ snapshot, onDraft }: { snapshot: Snapshot; onDraft: OnDraft 
           testId="builder-slab-vacuum"
           step={0.5}
           min={0}
+          unit="Å"
           title="Vacuum on each side along the normal, Å; 0 keeps the slab periodic"
         />
       </div>
-      <label style={{ ...rowStyle, ...hintStyle, flexWrap: "nowrap" }}>
-        termination
+      <label
+        style={{ ...rowStyle, ...hintStyle, flexWrap: "nowrap" }}
+        title="Where the cut falls, as a fraction of the interlayer spacing along the normal"
+      >
+        <span>
+          termination
+          <br />
+          <span style={{ fontSize: 10 }}>(fraction of the interlayer spacing)</span>
+        </span>
         <input
           type="range"
           data-testid="builder-slab-shift"
@@ -505,21 +598,43 @@ function SlabForm({ snapshot, onDraft }: { snapshot: Snapshot; onDraft: OnDraft 
           value={shift}
           onChange={(e) => setShift(Number(e.target.value))}
           style={{ flex: 1 }}
-          title="Slide the cut along the surface normal to choose the termination"
+          aria-label="Termination: fraction of the interlayer spacing"
+          title="Slide the cut along the surface normal, as a fraction of the interlayer spacing, to choose the termination"
         />
         {shift.toFixed(2)}
       </label>
-      <span style={hintStyle} data-testid="builder-slab-preview">
-        {summary
-          ? tooMany
-            ? overLimit(summary.nAtoms)
-            : `${summary.nAtoms} atoms, ${summary.thickness.toFixed(1)} Å thick`
-          : !millerValid
-            ? "Miller indices must be integers, not all zero"
-            : valid
-              ? "Could not build a slab from this cell."
-              : ""}
-      </span>
+      {summary && !tooMany ? (
+        <span style={hintStyle} data-testid="builder-slab-preview">
+          {`${summary.nAtoms} atoms, ${summary.thickness.toFixed(1)} Å thick`}
+        </span>
+      ) : (
+        <Problem
+          testId="builder-slab-preview"
+          text={
+            summary
+              ? overLimit(summary.nAtoms)
+              : (fieldProblem ??
+                `Could not build a slab from this cell: ${slabProblem(snapshot, miller as Vec3)}.`)
+          }
+        />
+      )}
     </div>
   );
+}
+
+/**
+ * Why `slabPreview` gives no slab for this cell and (h k l): the reason the
+ * summary line names after "Could not build a slab from this cell".
+ */
+export function slabProblem(snapshot: Snapshot, miller: Vec3): string {
+  const box = snapshot.box ? Array.from(snapshot.box) : null;
+  if (!box) return "the structure has no cell";
+  if (!inverse3(box) || Math.abs(det3(box)) < 1e-9) {
+    return "its vectors are coplanar (the cell has no volume)";
+  }
+  const basis = surfaceBasis(box, miller);
+  if (!basis || !inverse3(basis)) {
+    return `no surface cell spans the (${miller.join(" ")}) plane`;
+  }
+  return `the (${miller.join(" ")}) cut is degenerate in this cell`;
 }

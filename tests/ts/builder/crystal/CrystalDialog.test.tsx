@@ -12,6 +12,8 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, fireEvent, cleanup, act } from "@testing-library/react";
 import {
   CrystalDialog,
+  cellProblem,
+  slabProblem,
   MAX_ATOMS,
   PREVIEW_DELAY_MS,
   PREVIEW_MAX_ATOMS,
@@ -175,16 +177,45 @@ describe("CrystalDialog — cell", () => {
     expect(shown().positions[6]).toBeCloseTo(4, 4);
   });
 
-  it("an invalid cell disables Apply and shows no preview", () => {
+  it("an invalid cell disables Apply, says why, and shows no preview", () => {
     cu();
     render(<Dialog kind="cell" />);
+    expect(screen.getByTestId("builder-cell").textContent).toContain("Å");
+    expect(screen.getByTestId("builder-cell").textContent).toContain("°");
+    expect(screen.queryByTestId("builder-crystal-problem")).toBeNull();
+    type("builder-cell-a", "");
+    // The emptied field stays empty instead of snapping to 0.
+    expect((screen.getByTestId("builder-cell-a") as HTMLInputElement).value).toBe("");
+    expect(text("builder-crystal-problem")).toBe("a needs a number.");
+    type("builder-cell-a", "-");
+    expect((screen.getByTestId("builder-cell-a") as HTMLInputElement).value).toBe("-");
+    expect(screen.getByTestId("builder-cell-a").getAttribute("aria-invalid")).toBe("true");
+    type("builder-cell-a", "4");
+    expect(screen.queryByTestId("builder-crystal-problem")).toBeNull();
     type("builder-cell-gamma", "0");
+    expect(text("builder-crystal-problem")).toBe("γ must be greater than 0°.");
     settle();
     expect(s().preview).toBeNull();
     expect(screen.queryByTestId("builder-crystal-preview-status")).toBeNull();
     expect((screen.getByTestId("builder-cell-apply") as HTMLButtonElement).disabled).toBe(true);
     click("builder-cell-apply");
     expect(edits()).toHaveLength(0);
+  });
+
+  it("cellProblem names the first thing wrong", () => {
+    const ok = { a: 3, b: 3, c: 3, alpha: 90, beta: 90, gamma: 90 };
+    expect(cellProblem(ok)).toBeNull();
+    expect(cellProblem({ ...ok, b: 0 })).toBe("b must be greater than 0 Å.");
+    expect(cellProblem({ ...ok, beta: 180 })).toBe("β must be less than 180°.");
+    expect(cellProblem({ ...ok, alpha: 170, beta: 170, gamma: 30 })).toContain(
+      "do not close into a cell",
+    );
+    expect(cellProblem({ ...ok, alpha: 100, beta: 20, gamma: 20 })).toContain(
+      "do not close into a cell",
+    );
+    expect(cellProblem({ ...ok, alpha: 60, beta: 60, gamma: 120 })).toContain(
+      "do not close into a cell",
+    );
   });
 
   it("sets a first cell on a structure without one (the atoms stay)", () => {
@@ -249,6 +280,15 @@ describe("CrystalDialog — center with vacuum", () => {
     expect(screen.getByTestId("builder-cell-axis-c").getAttribute("aria-pressed")).toBe("false");
     click("builder-cell-center");
     expect(edits()).toHaveLength(1);
+    expect(text("builder-crystal-problem")).toBe(
+      "Choose at least one axis (a, b or c) to centre along.",
+    );
+    click("builder-cell-axis-b");
+    type("builder-cell-vacuum", "-2");
+    expect(text("builder-crystal-problem")).toBe("Vacuum must be at least 0 Å.");
+    type("builder-cell-vacuum", "3");
+    click("builder-cell-center");
+    expect(edits()[1]).toEqual({ op: "center", axes: [1], vacuum: 3 });
   });
 
   it("needs a cell", () => {
@@ -276,7 +316,17 @@ describe("CrystalDialog — supercell", () => {
     expect((edits()[0] as { id: string }).id).not.toBe("preview");
     expect(shown().nAtoms).toBe(16);
     click("reopen");
+    // Matrix mode starts from the repeats: diag(na, nb, nc).
+    type("builder-supercell-nc", "3");
     click("builder-supercell-advanced");
+    expect(
+      [0, 4, 8].map(
+        (k) => (screen.getByTestId(`builder-supercell-m${k}`) as HTMLInputElement).value,
+      ),
+    ).toEqual(["2", "2", "3"]);
+    type("builder-supercell-m0", "1");
+    type("builder-supercell-m4", "1");
+    type("builder-supercell-m8", "1");
     type("builder-supercell-m1", "1");
     type("builder-supercell-m3", "-1");
     expect(text("builder-supercell-preview")).toBe("2 images → 32 atoms");
@@ -290,9 +340,45 @@ describe("CrystalDialog — supercell", () => {
     type("builder-supercell-m4", "0");
     type("builder-supercell-m3", "0");
     type("builder-supercell-m0", "0");
-    expect(text("builder-supercell-preview")).toBe("Invalid matrix");
+    expect(text("builder-supercell-preview")).toContain("singular");
     click("builder-supercell-apply");
     expect(edits()).toHaveLength(2);
+    type("builder-supercell-m0", "1.5");
+    expect(text("builder-supercell-preview")).toBe("Matrix entries must be whole numbers");
+    expect(screen.getByTestId("builder-supercell-m0").getAttribute("aria-invalid")).toBe("true");
+  });
+
+  it("says what is wrong with the repeats, keeps a blank field blank, and seeds a bad one as 1", () => {
+    cu();
+    render(<Dialog kind="supercell" />);
+    type("builder-supercell-na", "");
+    // The field stays as typed (no snap to 0) and the line says why Apply is off.
+    expect((screen.getByTestId("builder-supercell-na") as HTMLInputElement).value).toBe("");
+    expect(text("builder-supercell-preview")).toBe("Repeats must be whole numbers ≥ 1");
+    expect((screen.getByTestId("builder-supercell-apply") as HTMLButtonElement).disabled).toBe(
+      true,
+    );
+    type("builder-supercell-nb", "0");
+    expect(text("builder-supercell-preview")).toBe("Repeats must be whole numbers ≥ 1");
+    click("builder-supercell-advanced");
+    expect(
+      [0, 4, 8].map(
+        (k) => (screen.getByTestId(`builder-supercell-m${k}`) as HTMLInputElement).value,
+      ),
+    ).toEqual(["1", "1", "2"]);
+    // Back to repeats: the arrow keys step a repeat and stop at its minimum.
+    click("builder-supercell-advanced");
+    const nc = screen.getByTestId("builder-supercell-nc");
+    fireEvent.keyDown(nc, { key: "ArrowUp" });
+    expect((nc as HTMLInputElement).value).toBe("3");
+    fireEvent.keyDown(nc, { key: "ArrowDown" });
+    fireEvent.keyDown(nc, { key: "ArrowDown" });
+    fireEvent.keyDown(nc, { key: "ArrowDown" });
+    expect((nc as HTMLInputElement).value).toBe("1");
+    fireEvent.keyDown(screen.getByTestId("builder-supercell-na"), { key: "ArrowUp" });
+    expect((screen.getByTestId("builder-supercell-na") as HTMLInputElement).value).toBe("2");
+    fireEvent.keyDown(nc, { key: "Enter" });
+    expect((nc as HTMLInputElement).value).toBe("1");
   });
 
   it("puts the preview back on the new structure after an Undo", () => {
@@ -396,12 +482,38 @@ describe("CrystalDialog — slab", () => {
     expect(shown().nAtoms).toBe(24);
   });
 
-  it("says so when the cell yields no slab", () => {
+  it("says what is wrong with the fields", () => {
     cu(3.61);
     render(<Dialog kind="slab" />);
     type("builder-slab-layers", "0");
-    expect(text("builder-slab-preview")).toBe("");
+    expect(text("builder-slab-preview")).toBe("Layers must be at least 1.");
     expect((screen.getByTestId("builder-slab-apply") as HTMLButtonElement).disabled).toBe(true);
+    type("builder-slab-layers", "2.5");
+    expect(text("builder-slab-preview")).toBe("Layers must be a whole number.");
+    type("builder-slab-layers", "2");
+    type("builder-slab-vacuum", "-1");
+    expect(text("builder-slab-preview")).toBe("Vacuum must be at least 0 Å.");
+    type("builder-slab-vacuum", "");
+    expect(text("builder-slab-preview")).toBe("Vacuum needs a number.");
+    // The termination slider says what its number is.
+    expect(screen.getByTestId("builder-slab-shift").getAttribute("aria-label")).toBe(
+      "Termination: fraction of the interlayer spacing",
+    );
+    expect(screen.getByTestId("builder-slab").textContent).toContain(
+      "fraction of the interlayer spacing",
+    );
+  });
+
+  it("slabProblem says why a cell yields no slab", () => {
+    const flat: Snapshot = {
+      ...bulkSnapshot({ structure: "sc", elements: [11], a: 5 }),
+      box: new Float32Array([5, 0, 0, 0, 5, 0, 5, 5, 0]),
+    };
+    expect(slabProblem(flat, [1, 1, 1])).toBe("its vectors are coplanar (the cell has no volume)");
+    const cube = bulkSnapshot({ structure: "sc", elements: [11], a: 5 });
+    expect(slabProblem({ ...cube, box: null }, [1, 1, 1])).toBe("the structure has no cell");
+    expect(slabProblem(cube, [0, 0, 0])).toContain("no surface cell spans the (0 0 0) plane");
+    expect(slabProblem(cube, [1, 1, 1])).toBe("the (1 1 1) cut is degenerate in this cell");
   });
 });
 

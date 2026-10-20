@@ -12,6 +12,8 @@ import { createStore } from "zustand/vanilla";
 export interface SketchRequest {
   molfile?: string;
   name?: string;
+  /** The user molecule being edited: the dialog can then save over it. */
+  id?: string;
 }
 
 export interface LibraryUi {

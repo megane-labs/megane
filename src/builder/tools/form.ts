@@ -110,8 +110,11 @@ export function validate(fields: FieldSpec[], values: FormValues, ctx: FormConte
             return `${label} must be an atom of the chosen molecule.`;
           }
         }
-        if ((field.widget === "seed" || field.widget === "element") && !Number.isInteger(v)) {
+        if (field.widget === "seed" && !Number.isInteger(v)) {
           return `${label} must be a whole number.`;
+        }
+        if (field.widget === "element" && !Number.isInteger(v)) {
+          return `${label} must be an element symbol (e.g. Fe) or an atomic number.`;
         }
         if (
           field.widget === "cell" &&
