@@ -1,12 +1,20 @@
 import { describe, it, expect } from "vitest";
 import {
+  addFreeAtomOps,
   addOnAtomOps,
   balanceHydrogens,
+  bondOps,
+  bondOrderBetween,
+  deleteAtomsEdit,
+  deleteAtomsOps,
+  removeBondOps,
+  setElementsOps,
   bondDirections,
   hasHydrogens,
   neighboursOf,
   setElementOps,
   typicalValence,
+  balancesHydrogens,
 } from "@/builder/hydrogens";
 import { createBuilderStore } from "@/builder/store";
 import { applyEditOps, type EditResult } from "@/pipeline/executors/edit";
@@ -300,5 +308,231 @@ describe("store.pushOps", () => {
     s().redo();
     expect(s().edits).toHaveLength(n);
     expect(s().redo()).toBeNull();
+  });
+});
+
+describe("balancesHydrogens", () => {
+  const bare: Snapshot = {
+    nAtoms: 1,
+    nBonds: 0,
+    nFileBonds: 0,
+    positions: new Float32Array(3),
+    elements: new Uint8Array([6]),
+    bonds: new Uint32Array(0),
+    bondOrders: null,
+    box: null,
+    boxOrigin: null,
+    atomChainIds: null,
+    atomBFactors: null,
+  };
+  const withH: Snapshot = { ...bare, elements: new Uint8Array([1]) };
+  it("follows the document in auto, and the user otherwise", () => {
+    expect(balancesHydrogens("auto", bare)).toBe(false);
+    expect(balancesHydrogens("auto", withH)).toBe(true);
+    expect(balancesHydrogens("on", bare)).toBe(true);
+    expect(balancesHydrogens("off", withH)).toBe(false);
+  });
+});
+
+/** Ethane with explicit hydrogens, built from methane by an Add on an H. */
+function ethane(): Doc {
+  const doc = new Doc(methane());
+  doc.add(1, 6);
+  return doc;
+}
+
+/** For each heavy atom (by index): its H count. */
+function hCounts(doc: Doc): Map<number, number> {
+  const out = new Map<number, number>();
+  for (let i = 0; i < doc.snap.nAtoms; i++) {
+    if (doc.snap.elements[i] === 1) continue;
+    out.set(i, neighboursOf(doc.snap, i).filter((n) => doc.snap.elements[n.index] === 1).length);
+  }
+  return out;
+}
+
+describe("aromatic bonds count 1.5", () => {
+  /** A benzene-like C with two aromatic ring neighbours and nothing else. */
+  function ringCarbon(): Snapshot {
+    const s = snapshot(
+      [6, 6, 6, 1],
+      [0, 0, 0, 1.4, 0, 0, -0.7, 1.21, 0, 9, 9, 9],
+      [
+        [0, 1],
+        [0, 2],
+      ],
+    );
+    s.bondOrders = new Uint8Array([4, 4]);
+    return s;
+  }
+
+  it("a ring C gets one H, in the ring plane", () => {
+    const doc = new Doc(ringCarbon());
+    const ops = balanceHydrogens(
+      0,
+      6,
+      [0, 0, 0],
+      neighboursOf(doc.snap, 0).map((n) => ({
+        ref: n.index,
+        position: [doc.snap.positions[n.index * 3], doc.snap.positions[n.index * 3 + 1], 0],
+        order: n.order,
+        hydrogen: false,
+      })),
+    );
+    expect(ops).toHaveLength(1);
+    const h = (ops[0] as { position: number[] }).position;
+    expect(Math.abs(h[2])).toBeLessThan(1e-6);
+  });
+
+  it("Add on a saturated aromatic C replaces its H; Element sets N with no H", () => {
+    const doc = new Doc(ringCarbon());
+    doc.push(addOnAtomOps(doc.snap, doc.result.refAt, 0, 1, 1, true));
+    expect(hCounts(doc).get(0)).toBe(1);
+    // C(ar)(ar)H is full: a methyl replaces the H rather than over-filling the C.
+    doc.add(0, 6);
+    expect(hCounts(doc).get(0)).toBe(0);
+    const n = new Doc(ringCarbon());
+    n.push(setElementsOps(n.snap, n.result.refAt, [0], 7, true));
+    expect(hCounts(n).get(0)).toBe(0);
+  });
+});
+
+describe("setElementsOps", () => {
+  it("sets several atoms in one op and rebalances each that changes", () => {
+    const doc = ethane();
+    const carbons = [doc.find(6), doc.find(6, 1)];
+    doc.push(setElementsOps(doc.snap, doc.result.refAt, carbons, 7));
+    // Hydrazine: H2N–NH2.
+    expect(doc.formula()).toEqual({ 7: 2, 1: 4 });
+  });
+
+  it("plans a changing neighbour with its new element, and skips bad indices", () => {
+    const doc = new Doc(methane());
+    // C and one of its H both become O: the O–O bond is heavy, so the old C keeps one H.
+    doc.push(setElementsOps(doc.snap, doc.result.refAt, [0, 1, 99], 8));
+    expect(doc.formula()).toEqual({ 8: 2, 1: 2 });
+    expect(setElementsOps(doc.snap, doc.result.refAt, [99], 8)).toEqual([]);
+    // Without balancing it is just the element.
+    expect(setElementsOps(doc.snap, doc.result.refAt, [0], 6, false)).toHaveLength(1);
+  });
+});
+
+describe("addFreeAtomOps", () => {
+  it("adds a free atom, with its hydrogens when balanced", () => {
+    expect(addFreeAtomOps(6, [0, 0, 0], false)).toHaveLength(1);
+    expect(addFreeAtomOps(6, [0, 0, 0], true)).toHaveLength(5);
+    expect(addFreeAtomOps(1, [0, 0, 0], true)).toHaveLength(1);
+  });
+});
+
+describe("bondOps", () => {
+  it("a new bond trims a hydrogen from each heavy end", () => {
+    const doc = new Doc(methane());
+    doc.push(addFreeAtomOps(6, [5, 0, 0], true)); // a second methane
+    const c2 = doc.find(6, 1);
+    doc.push(bondOps(doc.snap, doc.result.refAt, 0, c2, 1, true));
+    expect(doc.heavyAtoms()).toEqual([
+      [6, 3, 1],
+      [6, 3, 1],
+    ]);
+    // Raising it to a double bond trims one more from each; lowering adds them back.
+    doc.push(bondOps(doc.snap, doc.result.refAt, 0, doc.find(6, 1), 2, true));
+    expect(doc.heavyAtoms()).toEqual([
+      [6, 2, 1],
+      [6, 2, 1],
+    ]);
+    doc.push(bondOps(doc.snap, doc.result.refAt, 0, doc.find(6, 1), 1, true));
+    expect(doc.heavyAtoms()).toEqual([
+      [6, 3, 1],
+      [6, 3, 1],
+    ]);
+    expect(bondOrderBetween(doc.snap, 0, doc.find(6, 1))).toBe(1);
+  });
+
+  it("writes only the bond without balancing, for the same order, or onto an H", () => {
+    const doc = ethane();
+    const c2 = doc.find(6, 1);
+    expect(bondOps(doc.snap, doc.result.refAt, 0, c2, 2, false)).toHaveLength(1);
+    expect(bondOps(doc.snap, doc.result.refAt, 0, c2, 1, true)).toHaveLength(1);
+    // Bonding a stray H to a full C: the C sheds one of its own H, the new one stays.
+    const stray = new Doc(methane());
+    stray.push([{ op: "add_atom", id: "h", element: 1, position: [3, 0, 0] }]);
+    const h = stray.snap.nAtoms - 1;
+    stray.push(bondOps(stray.snap, stray.result.refAt, 0, h, 1, true));
+    expect(stray.formula()).toEqual({ 6: 1, 1: 4 });
+    expect(neighboursOf(stray.snap, 0).map((n) => stray.result.refAt(n.index))).toContain("h");
+  });
+});
+
+describe("removeBondOps", () => {
+  it("gives each heavy end a hydrogen in place of the bond", () => {
+    const doc = ethane();
+    const c2 = doc.find(6, 1);
+    doc.push(removeBondOps(doc.snap, doc.result.refAt, 0, c2, true));
+    // Two methanes.
+    expect(doc.heavyAtoms()).toEqual([
+      [6, 4, 0],
+      [6, 4, 0],
+    ]);
+  });
+
+  it("removes only the bond for an H end or without balancing", () => {
+    const doc = new Doc(methane());
+    expect(removeBondOps(doc.snap, doc.result.refAt, 0, 1, true)).toEqual([
+      { op: "delete_bond", a: 0, b: 1 },
+    ]);
+    const e = ethane();
+    expect(removeBondOps(e.snap, e.result.refAt, 0, e.find(6, 1), false)).toHaveLength(1);
+  });
+});
+
+describe("deleteAtomsEdit", () => {
+  it("takes the deleted atom's hydrogens along and refills its neighbour", () => {
+    const doc = ethane();
+    const c2 = doc.find(6, 1);
+    const edit = deleteAtomsEdit(doc.snap, doc.result.refAt, [c2], "auto");
+    expect(edit.extraHydrogens).toBe(3);
+    expect(edit.label).toBe(`Delete C #${c2} (+3 H)`);
+    doc.push(edit.ops);
+    // Back to methane.
+    expect(doc.formula()).toEqual({ 6: 1, 1: 4 });
+    expect(doc.heavyAtoms()).toEqual([[6, 4, 0]]);
+  });
+
+  it("deleting an H leaves the parent alone, and Off deletes only what was asked", () => {
+    const doc = new Doc(methane());
+    const h = deleteAtomsEdit(doc.snap, doc.result.refAt, [1], "auto");
+    expect(h.ops).toEqual([{ op: "delete_atoms", atoms: [1] }]);
+    expect(h.label).toBe("Delete H #1");
+    const e = ethane();
+    const off = deleteAtomsEdit(e.snap, e.result.refAt, [0], "off");
+    expect(off.ops).toEqual([{ op: "delete_atoms", atoms: [0] }]);
+  });
+
+  it("deletes several atoms in one op, ignoring repeats and bad indices", () => {
+    const doc = ethane();
+    const both = [doc.find(6), doc.find(6, 1)];
+    const edit = deleteAtomsEdit(doc.snap, doc.result.refAt, [...both, both[0], -1, 99], "on");
+    expect(edit.label).toBe("Delete 2 atoms (+6 H)");
+    expect(edit.ops).toHaveLength(1);
+    doc.push(edit.ops);
+    expect(doc.snap.nAtoms).toBe(0);
+    expect(deleteAtomsOps(doc.snap, doc.result.refAt, [0], "on")).toEqual([]);
+    expect(deleteAtomsEdit(doc.snap, doc.result.refAt, [], "on").label).toBe("Delete nothing");
+  });
+
+  it("keeps an H that is bonded to a surviving atom too", () => {
+    // H bridging C0 and C2; deleting C0 keeps it (C2 still holds it).
+    const s = snapshot(
+      [6, 1, 6],
+      [0, 0, 0, 1, 0, 0, 2, 0, 0],
+      [
+        [0, 1],
+        [1, 2],
+      ],
+    );
+    const doc = new Doc(s);
+    const edit = deleteAtomsEdit(doc.snap, doc.result.refAt, [0], "on");
+    expect(edit.extraHydrogens).toBe(0);
   });
 });

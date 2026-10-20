@@ -27,8 +27,14 @@
  * and **History**, under it, the edit list. The **info line** beside Reset
  * View says what the document and the structure are, as the viewer's HUD
  * does; the **bottom-left** status line says what the current tool does,
- * under the single **notice** line that carries every message. Keyboard
- * shortcuts are in `shortcuts.ts`.
+ * under the single **notice** line that carries every message (an info
+ * notice goes after `NOTICE_TIMEOUT_MS`; an error stays until dismissed or
+ * the next edit). Keyboard shortcuts are in `shortcuts.ts`; "?" lists them.
+ *
+ * Whatever replaces a document with unsaved edits (Open, a drop, a host's
+ * open, New) asks first (`confirmDiscard`). As its own page, the Builder also
+ * warns before the tab closes with unsaved edits and keeps an autosave that
+ * the next visit offers to restore (`autosave.ts`).
  *
  * Reuses the viewer's renderer (`Viewport` + `MoleculeRenderer`, driven through
  * `applyViewportState`), parsers, writers and the edit engine; nothing in the
@@ -63,14 +69,24 @@ import { applyViewportState } from "../pipeline/apply";
 import type { ViewportState } from "../pipeline/types";
 import {
   STRUCTURE_EXPORT_FORMATS,
+  defaultExportFormat,
   exportFileName,
   exportSnapshot,
   snapshotToText,
+  hasExportCell,
 } from "../export/structureExport";
 import type { StructureWriteFormat } from "../parsers/parseCore";
 import { applyThemeBackground, useRendererThemeBackground } from "../stores/useThemeStore";
 import type { HoverInfo } from "../types";
-import { canEdit, editSteps, shownSnapshot, viewSnapshot } from "./store";
+import {
+  canEdit,
+  confirmDiscard,
+  editedLabels,
+  editSteps,
+  isDirty,
+  shownSnapshot,
+  viewSnapshot,
+} from "./store";
 import { builderViewportState, BUILDER_SOURCE_ID } from "./view";
 import { useBuilderHandlers } from "./useBuilderHandlers";
 import { useBuilderShortcuts, TOOL_KEYS } from "./shortcuts";
@@ -80,7 +96,7 @@ import { InfoHud } from "./InfoHud";
 import { useSectionOpen } from "./panelState";
 import { SymmetryOffer } from "./crystal/SymmetryOffer";
 import { ToolRail, toolHint, toolInfo } from "./ToolRail";
-import { TOOL_RAIL_WIDTH } from "./rail";
+import { RailLabels, TOOL_RAIL_WIDTH } from "./rail";
 import { ContextBar } from "./ContextBar";
 import { OperationsRail } from "./OperationsRail";
 import { NewStructureDialog, type NewStructureKind } from "./NewStructureDialog";
@@ -93,13 +109,26 @@ import { ToolDialog } from "./tools/ToolDialog";
 
 import { LibraryHost } from "./library/LibraryPanel";
 import { AtomMenu, type AtomMenuTarget } from "./AtomMenu";
-import { runCleanup } from "./cleanup";
+import { ConfirmHost } from "./ConfirmDialog";
+import { runCleanup, useCleanupRunning } from "./cleanup";
 import { buttonStyle, hintStyle } from "./styles";
 import { trackEvent } from "../analytics";
-import { WEB_HOST, hostHasTools, type BuilderHost } from "./host";
-import { openStructureFile } from "./open";
+import { WEB_HOST, hostHasTools, hostIsStandalone, type BuilderHost } from "./host";
+import { openStructureFile, openStructureFiles } from "./open";
+import { historyLock } from "./history";
+import {
+  autosaveTime,
+  clearAutosave,
+  readAutosave,
+  restoreAutosave,
+  useAutosave,
+  useUnsavedGuard,
+  type AutosaveData,
+} from "./autosave";
+import { ShortcutHelp } from "./ShortcutHelp";
 import {
   useBuilderStoreApi,
+  useLibraryUiApi,
   useScopedBuilderStore,
   useScopedToolsStore,
   useToolsStoreApi,
@@ -128,6 +157,24 @@ const INFO_LEFT = PERF_HUD_LEFT_DEFAULT;
  * so the rails can run down the whole left edge without being covered.
  */
 const STATUS_LEFT = OVERLAY_INSET + TOOL_RAIL_WIDTH + OVERLAY_INSET;
+
+/** How long an info notice stays on screen, ms (an error stays until dismissed). */
+export const NOTICE_TIMEOUT_MS = 8000;
+
+/** Whether `file` is a Flow graph file (`.megane-flow.json`, or any `.json`). */
+export function isFlowFile(file: { name: string }): boolean {
+  return /\.json$/i.test(file.name);
+}
+
+/** Why a Save format cannot be written for a structure without a cell, or null. */
+export function formatUnavailable(
+  format: { label: string; needsCell?: boolean },
+  hasCell: boolean,
+): string | null {
+  return format.needsCell && !hasCell
+    ? `${format.label} needs a unit cell, and this structure has none`
+    : null;
+}
 
 /** The status line's hint while a drag runs. */
 export const DRAG_KEYS_HINT = "X Y Z (A B C) lock an axis · Esc cancels";
@@ -182,6 +229,7 @@ export function BuilderApp({ host = WEB_HOST }: BuilderAppProps = {}) {
   const newBulk = useScopedBuilderStore((s) => s.newBulk);
   const setNotice = useScopedBuilderStore((s) => s.setNotice);
   const reportError = useScopedBuilderStore((s) => s.reportError);
+  const reportInfo = useScopedBuilderStore((s) => s.reportInfo);
   const pushOp = useScopedBuilderStore((s) => s.pushOp);
   const preview = useScopedBuilderStore((s) => s.preview);
   const drag = useScopedBuilderStore((s) => s.drag);
@@ -218,14 +266,30 @@ export function BuilderApp({ host = WEB_HOST }: BuilderAppProps = {}) {
   const displayedLabels = inFlow ? (flow.view?.data.labels ?? null) : sourceLabels;
   const viewportState = useMemo(() => builderViewportState(displayed), [displayed]);
 
-  const handlers = useBuilderHandlers(api);
-
   // ── Renderer ──
   const rendererRef = useRef<MoleculeRenderer | null>(null);
   const prevViewportStateRef = useRef<ViewportState | null>(null);
   const [hoverInfo, setHoverInfo] = useState<HoverInfo>(null);
   const [atomMenu, setAtomMenu] = useState<AtomMenuTarget | null>(null);
   const closeAtomMenu = useCallback(() => setAtomMenu(null), []);
+  // The atom menu from the keyboard (Menu key, Shift + F10): it opens at the
+  // atom as drawn, or the middle of the Builder when the atom is off screen.
+  const openAtomMenuAt = useCallback((atom: number) => {
+    const rect = rootRef.current?.getBoundingClientRect();
+    if (!rect) return;
+    const at = rendererRef.current?.testGetProjectedAtomPositions()[atom];
+    const inside = at && at.sx >= 0 && at.sy >= 0 && at.sx <= rect.width && at.sy <= rect.height;
+    setAtomMenu({
+      atom,
+      x: rect.left + (inside ? at.sx : rect.width / 2),
+      y: rect.top + (inside ? at.sy : rect.height / 2),
+    });
+  }, []);
+  const handlers = useBuilderHandlers(api, {
+    openAtomMenu: inFlow ? undefined : openAtomMenuAt,
+    scope: host.scopeShortcuts ? rootRef : undefined,
+  });
+  const cleaningUp = useCleanupRunning(api);
   useToolServerLaunch(hasTools && !host.toolBridge);
   // A host that reaches tool servers for the page lists the configured ones.
   const toolsApi = useToolsStoreApi();
@@ -244,12 +308,19 @@ export function BuilderApp({ host = WEB_HOST }: BuilderAppProps = {}) {
   const [newDialog, setNewDialog] = useState<NewStructureKind | null>(null);
   const [crystalDialog, setCrystalDialog] = useState<CrystalDialogKind | null>(null);
   const [toolServerOpen, setToolServerOpen] = useState(false);
+  const [helpOpen, setHelpOpen] = useState(false);
   const closeForm = useScopedToolsStore((s) => s.closeForm);
   const showForm = useCallback(
-    (form: { crystal?: CrystalDialogKind; create?: NewStructureKind; server?: boolean }) => {
+    (form: {
+      crystal?: CrystalDialogKind;
+      create?: NewStructureKind;
+      server?: boolean;
+      help?: boolean;
+    }) => {
       setCrystalDialog(form.crystal ?? null);
       setNewDialog(form.create ?? null);
       setToolServerOpen(!!form.server);
+      setHelpOpen(!!form.help);
       closeForm();
       revealDetails();
     },
@@ -261,8 +332,23 @@ export function BuilderApp({ host = WEB_HOST }: BuilderAppProps = {}) {
     setCrystalDialog(null);
     setNewDialog(null);
     setToolServerOpen(false);
+    setHelpOpen(false);
     revealDetails();
   }, [openTool, revealDetails]);
+  const closeHelp = useCallback(() => setHelpOpen(false), []);
+  const showHelp = useCallback(() => showForm({ help: true }), [showForm]);
+  // File › Insert molecule from library…: the Place tool with its gallery open.
+  const libraryUi = useLibraryUiApi();
+  const openLibrary = useCallback(() => {
+    showForm({});
+    api.getState().setTool("place");
+    libraryUi.getState().setGalleryOpen(true);
+  }, [showForm, api, libraryUi]);
+  // New replaces the document: ask first when it has unsaved edits.
+  const confirmReplace = useCallback(
+    () => (isDirty(api.getState()) ? confirmDiscard(api, "Starting a new structure") : true),
+    [api],
+  );
   const closeCrystalDialog = useCallback(() => setCrystalDialog(null), []);
   const closeToolServer = useCallback(() => setToolServerOpen(false), []);
   // A new document ends whatever a Structure dialog was about to do to the old one.
@@ -314,24 +400,65 @@ export function BuilderApp({ host = WEB_HOST }: BuilderAppProps = {}) {
     },
     [openFile],
   );
+  // A drop opens the first file in the mode's own kind: a structure in
+  // Manual mode, a flow graph (.json) in Flow mode; the other kind says
+  // which mode takes it.
+  const openFlowFile = flow.actions.onOpenFile;
   const handleDrop = useCallback(
     (e: DragEvent) => {
       e.preventDefault();
       setDropActive(false);
-      const file = e.dataTransfer?.files?.[0];
-      if (file && !inFlow) void openFile(file);
+      const files = e.dataTransfer?.files;
+      if (!files || files.length === 0) return;
+      const first = files[0];
+      if (inFlow) {
+        if (isFlowFile(first)) openFlowFile(first);
+        else reportInfo("Switch to Manual mode to open a structure file.");
+      } else if (isFlowFile(first)) {
+        reportInfo(`Switch to Flow mode to open the flow file ${first.name}.`);
+      } else {
+        void openStructureFiles(files, api);
+      }
     },
-    [openFile, inFlow],
+    [api, inFlow, openFlowFile, reportInfo],
   );
+
+  // ── Unsaved edits: the browser's leave-page warning and the autosave ──
+  const standalone = hostIsStandalone(host);
+  useUnsavedGuard(api, standalone);
+  useAutosave(api, standalone);
+  // An autosave from an earlier visit, offered while nothing is open.
+  const [restorable, setRestorable] = useState<AutosaveData | null>(() =>
+    standalone && !api.getState().source ? readAutosave() : null,
+  );
+  useEffect(() => {
+    if (source && restorable) setRestorable(null);
+  }, [source, restorable]);
+
+  // An info notice goes by itself; an error stays until dismissed or the
+  // next edit. A new notice restarts the clock.
+  useEffect(() => {
+    if (!notice || notice.level !== "info") return;
+    const timer = setTimeout(() => {
+      if (api.getState().notice === notice) setNotice(null);
+    }, NOTICE_TIMEOUT_MS);
+    return () => clearTimeout(timer);
+  }, [notice, api, setNotice]);
 
   const handleExport = useCallback(
     async (format: StructureWriteFormat) => {
-      if (!shown) return;
+      // Save writes the edited structure, also while the original is shown
+      // for comparison, with each atom's residue label followed through the
+      // edits.
+      const state = api.getState();
+      const doc = state.result?.snapshot ?? state.source;
+      if (!doc) return;
+      const labels = editedLabels(state);
       if (host.save) {
         // The host writes the file itself (a save dialog, the Jupyter
         // server's contents, the kernel's working directory).
         try {
-          const text = await snapshotToText(shown, format, sourceLabels);
+          const text = await snapshotToText(doc, format, labels);
           const said = await host.save({ name: exportFileName(fileName, format), text, format });
           if (said) setNotice({ level: "info", text: said });
         } catch (err) {
@@ -339,11 +466,17 @@ export function BuilderApp({ host = WEB_HOST }: BuilderAppProps = {}) {
           return;
         }
       } else {
-        await exportSnapshot(shown, format, fileName, sourceLabels);
+        try {
+          await exportSnapshot(doc, format, fileName, labels);
+        } catch (err) {
+          reportError(`Could not save: ${err instanceof Error ? err.message : String(err)}`);
+          return;
+        }
       }
+      state.markSaved();
       trackEvent("export_structure", { file_format: format });
     },
-    [host, shown, fileName, sourceLabels, setNotice, reportError],
+    [api, host, fileName, setNotice, reportError],
   );
 
   // ── View controls ──
@@ -361,6 +494,7 @@ export function BuilderApp({ host = WEB_HOST }: BuilderAppProps = {}) {
       nAtoms: shown?.nAtoms ?? 0,
       symmetryOps: symmetryOpsAvailable(source, edits),
       nSelected: selected.length,
+      cleaningUp,
     },
     (kind) => showForm({ crystal: kind }),
     pushOp,
@@ -380,14 +514,32 @@ export function BuilderApp({ host = WEB_HOST }: BuilderAppProps = {}) {
       )
     : undefined;
 
+  // ── Save formats ──
+  // A format that needs a cell (a CIF, a POSCAR) is offered only when what
+  // Save writes — the edited structure — has one. ⌘/Ctrl+S writes the
+  // document's own format when it can, else XYZ.
+  const savedHasCell = hasExportCell((result?.snapshot ?? source)?.box);
+  const saveFormats = STRUCTURE_EXPORT_FORMATS.map((f) => ({
+    value: f.value,
+    label: f.label,
+    unavailable: formatUnavailable(f, savedHasCell),
+  }));
+  const preferredFormat = defaultExportFormat(fileName);
+  const quickFormat: StructureWriteFormat = saveFormats.some(
+    (f) => f.value === preferredFormat && !f.unavailable,
+  )
+    ? preferredFormat
+    : "xyz";
+
   // ── Keyboard ──
   const shortcutHost = useMemo(
     () => ({
       open: () => inputRef.current?.click(),
-      save: () => void handleExport(STRUCTURE_EXPORT_FORMATS[0].value),
+      save: () => void handleExport(quickFormat),
       resetView: () => rendererRef.current?.resetCamera(),
+      help: showHelp,
     }),
-    [handleExport],
+    [handleExport, quickFormat, showHelp],
   );
   useBuilderShortcuts(api, shortcutHost, host.scopeShortcuts ? rootRef : undefined, !inFlow);
   const mod = modKeyLabel();
@@ -426,12 +578,24 @@ export function BuilderApp({ host = WEB_HOST }: BuilderAppProps = {}) {
             pendingBondAtom,
             adsorbOnAtoms: adsorbHeight !== null && !!placeSource,
             dragging: drag !== null,
+            selected,
           })
         : null,
-    [source, hoveredAtom, tool, editable, pendingBondAtom, adsorbHeight, placeSource, drag],
+    [
+      source,
+      hoveredAtom,
+      tool,
+      editable,
+      pendingBondAtom,
+      adsorbHeight,
+      placeSource,
+      drag,
+      selected,
+    ],
   );
 
   const activeTool = toolInfo(tool);
+  const lock = historyLock({ preview, showOriginal });
 
   // What the panels cover on the right. The renderer centres the structure in
   // the part of the view left of them, as the viewer does beside its Pipeline
@@ -507,7 +671,7 @@ export function BuilderApp({ host = WEB_HOST }: BuilderAppProps = {}) {
         style={{ position: "absolute", inset: 0 }}
         onDragOver={(e) => {
           e.preventDefault();
-          if (!inFlow) setDropActive(true);
+          setDropActive(true);
         }}
         onDragLeave={(e) => {
           if (e.currentTarget === e.target) setDropActive(false);
@@ -603,9 +767,12 @@ export function BuilderApp({ host = WEB_HOST }: BuilderAppProps = {}) {
                   open: () => inputRef.current?.click(),
                   newCell: () => showForm({ create: "cell" }),
                   newBulk: () => showForm({ create: "bulk" }),
-                  formats: STRUCTURE_EXPORT_FORMATS,
+                  library: openLibrary,
+                  formats: saveFormats,
+                  quickFormat,
                   save: (f) => void handleExport(f as StructureWriteFormat),
                   canSave: !!shown,
+                  shortcuts: showHelp,
                   mod,
                 })}
                 structureItems={structureItems}
@@ -615,6 +782,7 @@ export function BuilderApp({ host = WEB_HOST }: BuilderAppProps = {}) {
                 canRedo={redoStack.length > 0}
                 onUndo={() => undo()}
                 onRedo={() => redo()}
+                historyLock={lock}
                 mod={mod}
               />
             </>
@@ -712,14 +880,31 @@ export function BuilderApp({ host = WEB_HOST }: BuilderAppProps = {}) {
             pointerEvents: "none",
           }}
         >
-          Drop a structure file to open it
+          {inFlow ? "Drop a flow file (.json) to open it" : "Drop a structure file to open it"}
         </div>
       )}
 
       {inFlow ? (
         // The Flow panel (the viewer's graph-editor panel: its own rail,
         // the graph, the selected block) loads the first time Flow opens.
-        <Suspense fallback={null}>
+        <Suspense
+          fallback={
+            <div
+              data-testid="builder-flow-loading"
+              role="status"
+              style={{
+                ...overlayButtonStyle,
+                cursor: "default",
+                position: "absolute",
+                top: OVERLAY_INSET,
+                right: OVERLAY_INSET,
+                zIndex: 10,
+              }}
+            >
+              Loading Flow editor…
+            </div>
+          }
+        >
           <FlowPanel
             deps={flow.deps}
             actions={flow.actions}
@@ -770,25 +955,26 @@ export function BuilderApp({ host = WEB_HOST }: BuilderAppProps = {}) {
                   onNewCell={newCell}
                   onNewBulk={newBulk}
                   onClose={() => setNewDialog(null)}
+                  confirmReplace={confirmReplace}
                 />
               ) : openTool ? (
                 <ToolDialog key={openTool.name} tool={openTool} />
               ) : toolServerOpen ? (
                 <ToolServerDialog onClose={closeToolServer} />
+              ) : helpOpen ? (
+                <ShortcutHelp mod={mod} onClose={closeHelp} />
               ) : (
                 <>
                   {/* Place works with nothing open, so its settings (and gallery) do too. */}
                   {(source || tool === "place") && <ContextBar />}
                   <Inspector />
                   <SymmetryOffer />
-                  {(!(source || tool === "place") || activeTool.needs.length === 0) &&
-                    selected.length === 0 && (
-                      <div style={hintStyle} data-testid="builder-empty-hint">
-                        {source
-                          ? `${activeTool.label} has no settings. Pick a tool or an operation on the left; its options appear here.`
-                          : "Open a structure or start a new one from the File menu on the left; the options of what you pick there appear here."}
-                      </div>
-                    )}
+                  {!(source || tool === "place") && selected.length === 0 && (
+                    <div style={hintStyle} data-testid="builder-empty-hint">
+                      Open a structure or start a new one from the File menu on the left; the
+                      options of what you pick there appear here.
+                    </div>
+                  )}
                 </>
               )}
             </div>
@@ -828,6 +1014,52 @@ export function BuilderApp({ host = WEB_HOST }: BuilderAppProps = {}) {
           pointerEvents: "none",
         }}
       >
+        {restorable && !source && (
+          <div
+            data-testid="builder-restore"
+            role="status"
+            style={{
+              ...floatingSurfaceStyle,
+              pointerEvents: "auto",
+              maxWidth: "100%",
+              boxSizing: "border-box",
+              display: "flex",
+              flexWrap: "wrap",
+              alignItems: "center",
+              gap: 8,
+              padding: "6px 8px 6px 12px",
+              fontSize: 12,
+              borderLeft: "3px solid var(--megane-warning-text, #b45309)",
+            }}
+          >
+            <span data-testid="builder-restore-text" style={{ flex: 1 }}>
+              Unsaved edits to {restorable.fileName ?? "an untitled structure"} from{" "}
+              {autosaveTime(restorable.savedAt)} were kept in this browser.
+            </span>
+            <button
+              type="button"
+              data-testid="builder-restore-ok"
+              style={buttonStyle("primary")}
+              onClick={() => {
+                setRestorable(null);
+                restoreAutosave(api, restorable);
+              }}
+            >
+              Restore
+            </button>
+            <button
+              type="button"
+              data-testid="builder-restore-discard"
+              style={buttonStyle()}
+              onClick={() => {
+                setRestorable(null);
+                clearAutosave();
+              }}
+            >
+              Discard
+            </button>
+          </div>
+        )}
         {notice && (
           <div
             data-testid="builder-notice"
@@ -920,6 +1152,8 @@ export function BuilderApp({ host = WEB_HOST }: BuilderAppProps = {}) {
       </div>
 
       <LibraryHost />
+      <ConfirmHost />
+      <RailLabels scope={rootRef} />
       {atomMenu && <AtomMenu target={atomMenu} onClose={closeAtomMenu} />}
     </div>
   );

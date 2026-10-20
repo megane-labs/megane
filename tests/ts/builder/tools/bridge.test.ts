@@ -1,5 +1,9 @@
-import { describe, it, expect, vi } from "vitest";
-import { createMessageBridge, type BridgePort } from "@/builder/tools/bridge";
+import { describe, it, expect, vi, afterEach } from "vitest";
+import {
+  BRIDGE_REQUEST_TIMEOUT_MS,
+  createMessageBridge,
+  type BridgePort,
+} from "@/builder/tools/bridge";
 import { isBridgeRequest, type BridgeRequest } from "@/builder/tools/bridgeProtocol";
 import { CALLS, TOOLS } from "./fixtures";
 
@@ -151,6 +155,45 @@ describe("createMessageBridge", () => {
     const bridge = createMessageBridge(host.port, { configHint: "x", openSettings: true });
     bridge.openSettings!();
     expect(host.sent).toEqual([{ type: "tools:openSettings" }]);
+  });
+});
+
+describe("createMessageBridge timeouts", () => {
+  afterEach(() => vi.useRealTimers());
+
+  it("gives up on a host that never lists its servers or connects", async () => {
+    vi.useFakeTimers();
+    const host = fakeHost();
+    const bridge = createMessageBridge(host.port, { configHint: "x" });
+    const listing = bridge.listServers();
+    const listed = expect(listing).rejects.toThrow(
+      "The host did not list the tool servers within 15 s.",
+    );
+    await vi.advanceTimersByTimeAsync(BRIDGE_REQUEST_TIMEOUT_MS);
+    await listed;
+    // A late reply is ignored.
+    host.reply([]);
+
+    const connecting = bridge.connect("tools");
+    const refused = expect(connecting).rejects.toThrow("did not connect to tools within 15 s");
+    await vi.advanceTimersByTimeAsync(BRIDGE_REQUEST_TIMEOUT_MS);
+    await refused;
+    // The host is told the page gave up, in case it still connects.
+    expect(host.last()).toEqual({ type: "tools:disconnect", server: "tools" });
+  });
+
+  it("takes its own timeout, and an answer in time clears the timer", async () => {
+    vi.useFakeTimers();
+    const host = fakeHost();
+    const bridge = createMessageBridge(host.port, { configHint: "x", requestTimeoutMs: 2000 });
+    const listing = bridge.listServers();
+    host.reply([{ id: "a", kind: "http", description: "u" }]);
+    await expect(listing).resolves.toHaveLength(1);
+    expect(vi.getTimerCount()).toBe(0);
+    const slow = bridge.listServers();
+    const failed = expect(slow).rejects.toThrow("within 2 s");
+    await vi.advanceTimersByTimeAsync(2000);
+    await failed;
   });
 });
 

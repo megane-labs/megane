@@ -78,7 +78,19 @@ def test_save_structure_infers_format(tmp_path):
 def test_format_from_path_rejects_unknown_extension():
     assert format_from_path("a.XYZ") == "xyz"
     with pytest.raises(ValueError, match="cannot infer"):
-        format_from_path("a.cif")
+        format_from_path("a.gro")
+    with pytest.raises(ValueError, match="cannot infer"):
+        format_from_path("XDATCAR")
+
+
+def test_format_from_path_knows_crystal_formats():
+    assert format_from_path("quartz.cif") == "cif"
+    assert format_from_path("si.vasp") == "poscar"
+    assert format_from_path("si.POSCAR") == "poscar"
+    assert format_from_path("runs/POSCAR") == "poscar"
+    assert format_from_path("CONTCAR_relaxed") == "poscar"
+    # A real extension wins over the VASP-looking stem.
+    assert format_from_path("POSCAR.xyz") == "xyz"
 
 
 def test_write_structure_rejects_bad_shapes():
@@ -90,7 +102,61 @@ def test_write_structure_rejects_bad_shapes():
             np.zeros((0, 2), dtype=np.uint32),
         )
     with pytest.raises(ValueError, match="unsupported"):
-        write_structure(_water(), "cif")  # type: ignore[arg-type]
+        write_structure(_water(), "gro")  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="box_origin must have 3 values"):
+        megane_parser.write_structure(
+            "cif",
+            np.zeros((1, 3), dtype=np.float32),
+            np.array([6], dtype=np.uint8),
+            np.zeros((0, 2), dtype=np.uint32),
+            box_matrix=np.eye(3, dtype=np.float32),
+            box_origin=[0.0, 0.0],
+        )
+
+
+def _salt(origin=(0.0, 0.0, 0.0)) -> Structure:
+    """Four atoms of rock salt in a 5.6 Å cube, species interleaved."""
+    frac = np.array([[0, 0, 0], [0.5, 0, 0], [0.5, 0.5, 0], [0, 0.5, 0]], dtype=np.float32)
+    return Structure(
+        n_atoms=4,
+        positions=(frac * 5.6 + np.asarray(origin, dtype=np.float32)).astype(np.float32),
+        elements=np.array([11, 17, 11, 17], dtype=np.uint8),
+        bonds=np.zeros((0, 2), dtype=np.uint32),
+        bond_orders=None,
+        box=np.diag([5.6, 5.6, 5.6]).astype(np.float32),
+        box_origin=np.asarray(origin, dtype=np.float32),
+    )
+
+
+@pytest.mark.parametrize("fmt, label", [("cif", "CIF"), ("poscar", "POSCAR")])
+def test_cell_formats_need_a_cell(fmt, label):
+    with pytest.raises(ValueError, match=f"{label} needs a unit cell"):
+        write_structure(_water(), fmt)
+
+
+def test_write_cif_round_trips_through_reader(tmp_path):
+    text = write_structure(_salt(origin=(1.0, 2.0, 3.0)), "cif")
+    assert "_symmetry_space_group_name_H-M   'P 1'" in text
+    assert "_cell_length_a    5.600000" in text
+    # Fractional coordinates are measured from the cell origin.
+    assert "Cl1    Cl   0.500000   0.000000   0.000000 1.0" in text
+    result = megane_parser.parse_cif(text)
+    assert np.asarray(result.elements).tolist() == [11, 17, 11, 17]
+    np.testing.assert_allclose(np.asarray(result.positions), _salt().positions, atol=1e-4)
+    np.testing.assert_allclose(np.asarray(result.box_matrix).reshape(3, 3), _salt().box, atol=1e-4)
+
+
+def test_save_poscar_groups_species(tmp_path):
+    out = tmp_path / "POSCAR"
+    save_structure(_salt(), out)
+    lines = out.read_text().splitlines()
+    assert lines[5].split() == ["Na", "Cl"]
+    assert lines[6].split() == ["2", "2"]
+    assert lines[7] == "Cartesian"
+    result = megane_parser.parse_vasp(out.read_text())
+    assert np.asarray(result.elements).tolist() == [11, 11, 17, 17]
+    want = _salt().positions[[0, 2, 1, 3]]
+    np.testing.assert_allclose(np.asarray(result.positions), want, atol=1e-5)
 
 
 def test_real_structure_round_trip():

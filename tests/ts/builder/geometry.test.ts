@@ -10,6 +10,7 @@ import {
   moleculeOf,
   movingSide,
   reachable,
+  ringLocked,
   setAngle,
   setDihedral,
   setDistance,
@@ -170,5 +171,25 @@ describe("unwrappedPositions", () => {
     expect(Array.from(unwrappedPositions(s, [0, 1]))).toEqual([9, 0, 0, 0.5, 0, 0]);
     const flat = { ...s, box: new Float32Array(9) };
     expect(Array.from(unwrappedPositions(flat, [0, 1]))).toEqual([9, 0, 0, 0.5, 0, 0]);
+  });
+});
+
+describe("ringLocked", () => {
+  it("is true across a ring bond and false across a chain bond", () => {
+    // A square ring 0–1–2–3 with a tail 3–4.
+    const ring = snap(
+      [0, 0, 0, 1.5, 0, 0, 1.5, 1.5, 0, 0, 1.5, 0, -1.5, 1.5, 0],
+      [
+        [0, 1],
+        [1, 2],
+        [2, 3],
+        [3, 0],
+        [3, 4],
+      ],
+    );
+    expect(ringLocked(ring, 0, 1)).toBe(true);
+    expect(movingSide(ring, 0, 1)).toEqual([1]);
+    expect(ringLocked(ring, 3, 4)).toBe(false);
+    expect(ringLocked(ring, 4, 3)).toBe(false);
   });
 });

@@ -9,8 +9,10 @@ import {
   blockSettings,
   blockSummary,
   blockTitle,
+  fmt,
   runStatusColor,
   runStatusDot,
+  runStatusLabel,
   runStatusText,
 } from "@/builder/flow/describe";
 import { initialToolParams } from "@/builder/flow/ports";
@@ -42,7 +44,11 @@ describe("block categories", () => {
 
 describe("blockTitle / blockSettings / blockName / blockSummary", () => {
   it("names each kind of block", () => {
-    expect(blockTitle(smiles, null)).toBe("Molecule");
+    expect(blockTitle(smiles, null)).toBe("Molecule: CCO");
+    expect(blockTitle({ ...smiles, smiles: "" }, null)).toBe("Molecule");
+    expect(blockTitle({ ...smiles, name: "EtOH" }, null)).toBe("Molecule: EtOH");
+    expect(blockTitle(lib, null, [LIB_WATER])).toBe("Molecule: water");
+    expect(blockTitle(lib, null, [])).toBe("Molecule");
     expect(blockTitle({ type: "document" }, null)).toBe("Manual structure");
     expect(blockTitle(tool, tools.liquid_box)).toBe("Liquid box");
     expect(blockTitle({ ...tool, label: "Old" }, null)).toBe("Old");
@@ -108,7 +114,14 @@ describe("runStatusText / runStatusColor / runStatusDot", () => {
       color: "#f59e0b",
       title: "3 atoms · warnings\ntolerance",
       testId: "builder-flow-node-status",
+      hollow: false,
+      ariaLabel: "Done, with warnings: 3 atoms · warnings",
     });
+    // Stale is not a warning: a hollow grey ring, labelled as out of date.
+    const stale = runStatusDot({ ...done, status: "stale" })!;
+    expect(stale.color).not.toBe("#f59e0b");
+    expect(stale.hollow).toBe(true);
+    expect(stale.ariaLabel).toContain("Out of date");
   });
 });
 
@@ -155,6 +168,37 @@ describe("built-in blocks", () => {
     expect(blockSettings(slab, [])).toBe("(1 1 0) · 1 layer · 2 × 2");
     expect(blockSettings({ ...slab, layers: 3 }, [])).toBe("(1 1 0) · 3 layers · 2 × 2");
     expect(blockSettings(adsorb, [])).toBe("3 × 3 at 2.5 Å");
+  });
+
+  it("never prints NaN for a setting left blank in an older file", () => {
+    expect(fmt(NaN)).toBe("?");
+    expect(fmt(Infinity)).toBe("?");
+    expect(fmt(2.5)).toBe("2.5");
+    const blanks = [
+      { ...crystal, a: NaN },
+      { ...polymer, length: NaN },
+      { ...supercell, repeat: [NaN, 1, 1] },
+      { ...slab, miller: [NaN, 0, 1], layers: NaN, repeat: [1, NaN] },
+      { ...adsorb, height: NaN, grid: [NaN, 1] },
+    ] as FlowParams[];
+    for (const p of blanks) {
+      expect(blockSettings(p, [])).not.toContain("NaN");
+      expect(blockSettings(p, [])).toContain("?");
+    }
+  });
+
+  it("labels every run state for screen readers", () => {
+    expect(
+      (["idle", "stale", "running", "done", "error"] as const).map((status) =>
+        runStatusLabel({ ...IDLE_RUN, status }),
+      ),
+    ).toEqual([
+      "Not run yet",
+      "Out of date: changed since the last run",
+      "Running",
+      "Done",
+      "Failed",
+    ]);
   });
 
   it("names a polymer by its name, the others by their title", () => {

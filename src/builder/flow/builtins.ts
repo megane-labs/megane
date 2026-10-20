@@ -127,6 +127,90 @@ function positiveInts(values: number[], what: string, max: number): void {
   }
 }
 
+function checkSupercell(params: SupercellParams): void {
+  positiveInts(params.repeat, "Repeats", 20);
+}
+
+function checkSlab(params: SlabParams): void {
+  const [h, k, l] = params.miller;
+  if (![h, k, l].every(Number.isInteger) || (h === 0 && k === 0 && l === 0)) {
+    throw new Error("Miller indices must be whole numbers, not all zero.");
+  }
+  positiveInts([params.layers], "Layers", 50);
+  positiveInts(params.repeat, "Repeats", 20);
+  if (!(params.vacuum >= 0)) throw new Error("Vacuum must be zero or more.");
+}
+
+function checkAdsorb(params: Pick<AdsorbParams, "height" | "grid">): void {
+  if (!Number.isFinite(params.height)) throw new Error("Height must be a number.");
+  positiveInts(params.grid, "Copies", 20);
+}
+
+function checkCrystal(params: CrystalParams): void {
+  crystalElements(params);
+  if (!(params.a > 0)) throw new Error("Lattice constant a must be positive.");
+  if (bulkStructureInfo(params.structure).hexagonal && !(params.covera > 0)) {
+    throw new Error("c/a must be positive.");
+  }
+}
+
+/**
+ * What is wrong with a built-in block's settings, as running it would say
+ * (the same checks `runBuiltin` throws), or null. Inputs are not checked:
+ * the form shows the settings, the graph shows the wires.
+ */
+export function builtinProblem(params: BuiltinParams): string | null {
+  try {
+    switch (params.type) {
+      case "crystal":
+        checkCrystal(params);
+        break;
+      case "polymer":
+        chainSmiles(params.repeatUnit, params.length);
+        break;
+      case "supercell":
+        checkSupercell(params);
+        break;
+      case "slab":
+        checkSlab(params);
+        break;
+      case "adsorb":
+        checkAdsorb(params);
+        break;
+    }
+    return null;
+  } catch (err) {
+    return err instanceof Error ? err.message : String(err);
+  }
+}
+
+/** The error a run stopped with Stop rejects with. */
+export const CANCELLED = "Cancelled.";
+
+/**
+ * `promise`, or a rejection as soon as `signal` aborts: a step that cannot
+ * itself be stopped (RDKit embedding in its worker) no longer holds a run
+ * after Stop. Its result, when it comes, is dropped.
+ */
+export function abortable<T>(promise: Promise<T>, signal?: AbortSignal): Promise<T> {
+  if (!signal) return promise;
+  if (signal.aborted) return Promise.reject(new Error(CANCELLED));
+  return new Promise<T>((resolve, reject) => {
+    const onAbort = () => reject(new Error(CANCELLED));
+    signal.addEventListener("abort", onAbort, { once: true });
+    promise.then(
+      (value) => {
+        signal.removeEventListener("abort", onAbort);
+        resolve(value);
+      },
+      (err: unknown) => {
+        signal.removeEventListener("abort", onAbort);
+        reject(err);
+      },
+    );
+  });
+}
+
 /** Labels `labels` repeated `times` times (a supercell's images keep their atom order). */
 function repeatLabels(labels: string[] | null, times: number): string[] | null {
   if (!labels) return null;
@@ -163,8 +247,7 @@ export function placeOnSurface(
 ): { snapshot: Snapshot; warnings: string[] } {
   if (surface.nAtoms === 0) throw new Error("The surface has no atoms.");
   if (molecule.nAtoms === 0) throw new Error("The molecule has no atoms.");
-  if (!Number.isFinite(height)) throw new Error("Height must be a number.");
-  positiveInts(grid, "Copies", 20);
+  checkAdsorb({ height, grid });
   const box = surface.box;
   const normal = surfaceNormal(box);
 
@@ -266,17 +349,22 @@ function input(port: FlowPort, sources: PortSources, inputs: Record<string, Flow
   return data;
 }
 
-/** Run one built-in block. Rejects with the message to show on it. */
+/**
+ * Run one built-in block. Rejects with the message to show on it, and with
+ * {@link CANCELLED} as soon as `signal` aborts a polymer's embedding.
+ */
 export async function runBuiltin(
   params: BuiltinParams,
   sources: PortSources,
   inputs: Record<string, FlowData>,
   deps: BuiltinDeps,
+  signal?: AbortSignal,
 ): Promise<BuiltinResult> {
   const ports = BUILTIN_PORTS[params.type];
   const inputOf = (key: string) => input(ports.find((p) => p.key === key)!, sources, inputs);
   switch (params.type) {
     case "crystal": {
+      checkCrystal(params);
       const spec = crystalSpec(params);
       return {
         data: { name: bulkName(spec), snapshot: bulkSnapshot(spec), labels: null },
@@ -285,7 +373,7 @@ export async function runBuiltin(
     }
     case "polymer": {
       const { smiles, unit } = chainSmiles(params.repeatUnit, params.length);
-      const snapshot = await deps.embedSmiles(smiles);
+      const snapshot = await abortable(deps.embedSmiles(smiles), signal);
       const name = params.name.trim() || params.repeatUnit.trim();
       const labels = polymerLabels(
         snapshot.elements,
@@ -298,7 +386,7 @@ export async function runBuiltin(
     }
     case "supercell": {
       const src = inputOf("structure");
-      positiveInts(params.repeat, "Repeats", 20);
+      checkSupercell(params);
       const [na, nb, nc] = params.repeat;
       const snapshot = makeSupercell(src.snapshot, [na, 0, 0, 0, nb, 0, 0, 0, nc]);
       if (!snapshot) throw new Error("A supercell needs a structure with a unit cell.");
@@ -310,12 +398,7 @@ export async function runBuiltin(
     case "slab": {
       const src = inputOf("bulk");
       const [h, k, l] = params.miller;
-      if (![h, k, l].every(Number.isInteger) || (h === 0 && k === 0 && l === 0)) {
-        throw new Error("Miller indices must be whole numbers, not all zero.");
-      }
-      positiveInts([params.layers], "Layers", 50);
-      positiveInts(params.repeat, "Repeats", 20);
-      if (!(params.vacuum >= 0)) throw new Error("Vacuum must be zero or more.");
+      checkSlab(params);
       const slab = buildSlab(src.snapshot, {
         miller: [h, k, l],
         layers: params.layers,

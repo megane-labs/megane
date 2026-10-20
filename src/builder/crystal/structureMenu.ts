@@ -20,6 +20,8 @@ export interface StructureMenuState {
   symmetryOps: number;
   /** Atoms selected; Clean up then works on their molecules only. */
   nSelected?: number;
+  /** A clean-up is already running (`useCleanupRunning`). */
+  cleaningUp?: boolean;
 }
 
 export function structureMenuItems(
@@ -28,7 +30,7 @@ export function structureMenuItems(
   apply: (op: EditOp) => void,
   cleanUp: () => void = () => {},
 ): MenuItem[] {
-  const { editable, hasCell, nAtoms, symmetryOps, nSelected = 0 } = state;
+  const { editable, hasCell, nAtoms, symmetryOps, nSelected = 0, cleaningUp = false } = state;
   const withCell = editable && hasCell;
   return [
     { caption: "Cell" },
@@ -89,9 +91,10 @@ export function structureMenuItems(
     {
       label: nSelected > 0 ? "Clean up selected molecules" : "Clean up geometry",
       testId: "builder-structure-cleanup",
-      disabled: !editable || nAtoms === 0,
-      title:
-        "Re-embed each molecule with RDKit (ETKDG + MMFF94s, UFF as a fallback) and put it back in place",
+      disabled: !editable || nAtoms === 0 || cleaningUp,
+      title: cleaningUp
+        ? "Clean up is already running"
+        : "Re-embed each molecule with RDKit (ETKDG + MMFF94s, UFF as a fallback) and put it back in place",
       onSelect: cleanUp,
     },
   ];

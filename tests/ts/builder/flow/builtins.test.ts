@@ -7,6 +7,9 @@
 import { describe, it, expect, vi } from "vitest";
 import {
   BUILTIN_PORTS,
+  CANCELLED,
+  abortable,
+  builtinProblem,
   crystalSpec,
   defaultBuiltinParams,
   isBuiltin,
@@ -325,5 +328,60 @@ describe("adsorb block", () => {
     await expect(
       runBuiltin(params, { surface: ["s"] }, { s: waterData() }, deps()),
     ).rejects.toThrow("Connect a block to Molecule.");
+  });
+});
+
+describe("builtinProblem", () => {
+  it("says what running the block would refuse, before it runs", () => {
+    for (const type of TYPES) expect(builtinProblem(defaultBuiltinParams(type))).toBeNull();
+    expect(builtinProblem({ ...cu(), elements: ["Xx", "", ""] })).toContain("not an element");
+    expect(builtinProblem({ ...cu(), a: 0 })).toBe("Lattice constant a must be positive.");
+    expect(builtinProblem({ ...cu(), a: NaN })).toContain("positive");
+    expect(builtinProblem({ ...cu(), structure: "hcp", elements: ["Mg", "", ""], covera: 0 })).toBe(
+      "c/a must be positive.",
+    );
+    expect(builtinProblem({ type: "polymer", repeatUnit: "*CC*", length: 0, name: "" })).toContain(
+      "whole number",
+    );
+    expect(builtinProblem({ type: "supercell", repeat: [1, 0, 1] })).toContain("Repeats");
+    const slab = defaultBuiltinParams("slab") as Extract<BuiltinParams, { type: "slab" }>;
+    expect(builtinProblem({ ...slab, miller: [0, 0, 0] })).toContain("not all zero");
+    expect(builtinProblem({ ...slab, layers: 0 })).toContain("Layers");
+    expect(builtinProblem({ ...slab, vacuum: -1 })).toContain("Vacuum");
+    expect(builtinProblem({ type: "adsorb", height: NaN, grid: [1, 1] })).toContain("Height");
+    expect(builtinProblem({ type: "adsorb", height: 2, grid: [1, 21] })).toContain("Copies");
+  });
+
+  it("is what a crystal block throws when run", async () => {
+    await expect(crystalData({ ...cu(), a: -1 })).rejects.toThrow(
+      "Lattice constant a must be positive.",
+    );
+  });
+});
+
+describe("abortable", () => {
+  it("passes a result or an error through, and rejects as soon as the run stops", async () => {
+    await expect(abortable(Promise.resolve(1))).resolves.toBe(1);
+    const c = new AbortController();
+    await expect(abortable(Promise.resolve(2), c.signal)).resolves.toBe(2);
+    await expect(abortable(Promise.reject(new Error("x")), c.signal)).rejects.toThrow("x");
+    const pending = abortable(new Promise(() => {}), c.signal);
+    c.abort();
+    await expect(pending).rejects.toThrow(CANCELLED);
+    await expect(abortable(Promise.resolve(3), c.signal)).rejects.toThrow(CANCELLED);
+  });
+
+  it("stops a polymer chain's embedding", async () => {
+    const c = new AbortController();
+    const embedSmiles = vi.fn(() => new Promise<Snapshot>(() => {}));
+    const pending = runBuiltin(
+      { type: "polymer", repeatUnit: "*CC*", length: 2, name: "" },
+      {},
+      {},
+      { embedSmiles },
+      c.signal,
+    );
+    c.abort();
+    await expect(pending).rejects.toThrow(CANCELLED);
   });
 });

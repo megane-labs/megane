@@ -21,7 +21,7 @@ export interface ToolInfo {
   label: string;
   hint: string;
   /** Which settings the Details panel shows for it. */
-  needs: ("select" | "drag" | "element" | "bondOrder" | "place")[];
+  needs: ("select" | "drag" | "element" | "bondOrder" | "hydrogens" | "place")[];
 }
 
 export const TOOLS: ToolInfo[] = [
@@ -41,25 +41,25 @@ export const TOOLS: ToolInfo[] = [
     value: "add",
     label: "Add atom",
     hint: "Click an atom to attach a new one at bond length; click empty space to place it free.",
-    needs: ["element", "bondOrder"],
+    needs: ["element", "bondOrder", "hydrogens"],
   },
   {
     value: "bond",
     label: "Bond",
-    hint: "Click two atoms to bond them (or change the bond order).",
-    needs: ["bondOrder"],
+    hint: "Click two atoms to bond them (or change the bond order); Shift-click the second to remove their bond. Click empty space to let go.",
+    needs: ["bondOrder", "hydrogens"],
   },
   {
     value: "element",
     label: "Element",
     hint: "Click an atom to change it to the chosen element.",
-    needs: ["element"],
+    needs: ["element", "hydrogens"],
   },
   {
     value: "delete",
     label: "Delete",
-    hint: "Click an atom to remove it with its bonds.",
-    needs: [],
+    hint: "Click an atom to remove it with its bonds (and its hydrogens, while they are kept balanced).",
+    needs: ["hydrogens"],
   },
   {
     value: "place",

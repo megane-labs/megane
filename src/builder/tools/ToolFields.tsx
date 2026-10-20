@@ -10,7 +10,8 @@
  */
 
 import { createContext, useContext, useEffect, useState, type CSSProperties } from "react";
-import { getElementSymbol } from "../../constants";
+import { ELEMENT_SYMBOLS, getElementSymbol } from "../../constants";
+import { elementFromSymbol } from "../../crystal/bulk";
 import { Field } from "../../components/nodes/form";
 import {
   LABEL_WIDTH,
@@ -198,6 +199,67 @@ function NumberInput({
         onChange(e.target.value.trim() === "" ? Number.NaN : Number(e.target.value));
       }}
     />
+  );
+}
+
+/**
+ * The atomic number `text` names: a symbol in any case ("fe", "Fe") or the
+ * number itself ("26"); NaN for anything else.
+ */
+export function parseElement(text: string): number {
+  const t = text.trim();
+  if (/^\d+$/.test(t)) {
+    const z = Number(t);
+    return ELEMENT_SYMBOLS[z] !== undefined ? z : Number.NaN;
+  }
+  return elementFromSymbol(t) ?? Number.NaN;
+}
+
+/** An element field: type a symbol or an atomic number; the other is shown beside it. */
+function ElementInput({
+  value,
+  onChange,
+  testId,
+}: {
+  value: unknown;
+  onChange: (v: number) => void;
+  testId: string;
+}) {
+  const look = useContext(FieldsLookContext);
+  const symbolOf = (v: unknown) =>
+    typeof v === "number" && Number.isInteger(v) && ELEMENT_SYMBOLS[v] !== undefined
+      ? getElementSymbol(v)
+      : "";
+  const [text, setText] = useState(() => symbolOf(value) || String(value ?? ""));
+  useEffect(() => {
+    if (parseElement(text) !== value && Number.isInteger(value)) setText(symbolOf(value));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [value]);
+  const z = parseElement(text);
+  return (
+    <span style={look.row}>
+      <input
+        type="text"
+        data-testid={testId}
+        aria-invalid={!Number.isInteger(z) || undefined}
+        placeholder="C or 6"
+        style={{ ...look.input, width: 56 }}
+        value={text}
+        onChange={(e) => {
+          setText(e.target.value);
+          onChange(parseElement(e.target.value));
+        }}
+      />
+      <span style={look.hint} data-testid={`${testId}-resolved`}>
+        {Number.isInteger(z)
+          ? /^\d+$/.test(text.trim())
+            ? getElementSymbol(z)
+            : `Z = ${z}`
+          : text.trim()
+            ? "not an element"
+            : ""}
+      </span>
+    </span>
   );
 }
 
@@ -422,14 +484,7 @@ function WidgetControl({
         </span>
       );
     case "element":
-      return (
-        <span style={look.row}>
-          <NumberInput value={value} onChange={onChange} testId={testId} width={56} narrow />
-          <span style={look.hint}>
-            {Number.isInteger(value) ? getElementSymbol(value as number) : ""}
-          </span>
-        </span>
-      );
+      return <ElementInput value={value} onChange={onChange} testId={testId} />;
     case "cell": {
       const arr = (value as number[]) ?? [0, 0, 0];
       return (

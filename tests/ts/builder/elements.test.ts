@@ -1,7 +1,15 @@
 /** Element names and families behind the periodic table. */
 
 import { describe, it, expect } from "vitest";
-import { ELEMENT_NAMES, FAMILIES, elementFamily } from "@/builder/elements";
+import {
+  ELEMENT_NAMES,
+  FAMILIES,
+  MAX_Z,
+  RECENT_LIMIT,
+  elementFamily,
+  parseElement,
+  useRecentElements,
+} from "@/builder/elements";
 import { TABLE_MAX_Z } from "@/builder/PeriodicTable";
 
 describe("element names and families", () => {
@@ -25,5 +33,38 @@ describe("element names and families", () => {
     expect([f(57), f(71)]).toEqual(["lanthanide", "lanthanide"]);
     expect([f(89), f(103)]).toEqual(["actinide", "actinide"]);
     for (let z = 1; z <= TABLE_MAX_Z; z++) expect(FAMILIES[f(z)].label).toBeTruthy();
+  });
+});
+
+describe("parseElement", () => {
+  it("reads an atomic number or a symbol in any case", () => {
+    expect(parseElement("26")).toBe(26);
+    expect(parseElement(" 8 ")).toBe(8);
+    expect(parseElement(String(MAX_Z))).toBe(118);
+    expect(parseElement("Fe")).toBe(26);
+    expect(parseElement("fe")).toBe(26);
+    expect(parseElement("FE")).toBe(26);
+    expect(parseElement("c")).toBe(6);
+  });
+
+  it("rejects anything else", () => {
+    for (const bad of ["", " ", "0", "119", "-1", "2.5", "Xx", "Iron", "6a"]) {
+      expect(parseElement(bad)).toBeNull();
+    }
+  });
+});
+
+describe("useRecentElements", () => {
+  it("keeps the latest picks first, without repeats, up to the limit", () => {
+    useRecentElements.setState({ recent: [] });
+    const { remember } = useRecentElements.getState();
+    remember(26);
+    remember(29);
+    remember(26);
+    expect(useRecentElements.getState().recent).toEqual([26, 29]);
+    for (let z = 40; z < 40 + RECENT_LIMIT; z++) remember(z);
+    expect(useRecentElements.getState().recent).toHaveLength(RECENT_LIMIT);
+    expect(useRecentElements.getState().recent[0]).toBe(40 + RECENT_LIMIT - 1);
+    useRecentElements.setState({ recent: [] });
   });
 });

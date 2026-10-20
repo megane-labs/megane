@@ -40,7 +40,7 @@ __all__ = ["Builder"]
 
 _STATIC_DIR = pathlib.Path(__file__).parent / "static"
 _RDKIT_WASM = _STATIC_DIR / "megane-rdkit.wasm"
-_FORMATS: tuple[StructureFormat, ...] = ("xyz", "pdb", "mol")
+_FORMATS: tuple[StructureFormat, ...] = ("xyz", "pdb", "mol", "cif", "poscar")
 
 
 def _free_path(directory: pathlib.Path, name: str) -> pathlib.Path:
@@ -92,7 +92,8 @@ class Builder(anywidget.AnyWidget):
     _source_seq = traitlets.Int(0).tag(sync=True)
 
     # JS → Python: the document on screen ({name, n_atoms, n_bonds, n_edits,
-    # has_cell, xyz, pdb, mol}); see src/builderWidget.ts `documentState`.
+    # has_cell, xyz, pdb, mol, cif, poscar}); see src/builderWidget.ts
+    # `documentState`.
     _document = traitlets.Dict({}).tag(sync=True)
 
     height = traitlets.Unicode("600px").tag(sync=True)
@@ -148,11 +149,13 @@ class Builder(anywidget.AnyWidget):
         return int(self._document.get("n_bonds") or 0)
 
     def text(self, fmt: StructureFormat = "xyz") -> str:
-        """The structure on screen as ``"xyz"`` (extended XYZ with a cell), ``"pdb"`` or ``"mol"`` text.
+        """The structure on screen as ``"xyz"`` (extended XYZ with a cell), ``"pdb"``,
+        ``"mol"``, ``"cif"`` or ``"poscar"`` text.
 
         Raises:
             ValueError: For an unknown format, or one the writer refused for this
-                structure (MOL holds at most 999 atoms).
+                structure (MOL holds at most 999 atoms; CIF and POSCAR need a
+                unit cell).
             RuntimeError: When the Builder has no atoms (nothing open yet, an
                 empty cell, or the widget has not been displayed).
         """

@@ -10,9 +10,22 @@
  * or the current one — as printed tables do: name, Z, mass, family and the
  * colour the view draws it in. The Z field beside the button still reaches any
  * Z up to 118. Escape, a click outside or a pick closes it.
+ *
+ * It works from the keyboard too: it opens with the current element focused,
+ * the arrow keys move across the grid (Home / End to the ends of a row),
+ * Enter or Space picks, typing a symbol ("F", "Fe") jumps to it, and Escape
+ * closes it and gives focus back to the button that opened it.
  */
 
-import { useLayoutEffect, useRef, useState, type RefObject } from "react";
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type KeyboardEvent,
+  type RefObject,
+} from "react";
 import { useDismiss } from "../hooks/useDismiss";
 import { createPortal } from "react-dom";
 import { ELEMENT_SYMBOLS, getAtomicMass, getColor, getElementSymbol } from "../constants";
@@ -45,6 +58,64 @@ export function tablePosition(z: number): { row: number; col: number } {
   if (k < 17) return { row: row + 3, col: k + 1 };
   return { row, col: k - 13 };
 }
+
+/** Keys that move between cells (see {@link tableNeighbour}). */
+const MOVE_KEYS = new Set(["ArrowRight", "ArrowLeft", "ArrowUp", "ArrowDown", "Home", "End"]);
+
+/**
+ * The element a move key goes to from `z` in the table's grid: Left / Right
+ * to the nearest cell in the same row, Up / Down to the nearest row that
+ * has a cell there (or the closest column in it), Home / End to the row's
+ * first and last cells. `z` itself when there is nowhere to go.
+ */
+export function tableNeighbour(z: number, key: string, maxZ = TABLE_MAX_Z): number {
+  if (!MOVE_KEYS.has(key)) return z;
+  const here = tablePosition(z);
+  const rowEnd = key === "Home" || key === "End";
+  let best = z;
+  let bestScore = Infinity;
+  for (let c = 1; c <= maxZ; c++) {
+    if (c === z && !rowEnd) continue;
+    const p = tablePosition(c);
+    const dr = p.row - here.row;
+    const dc = p.col - here.col;
+    let score: number;
+    if (key === "ArrowRight" || key === "ArrowLeft") {
+      if (dr !== 0 || (key === "ArrowRight" ? dc <= 0 : dc >= 0)) continue;
+      score = Math.abs(dc);
+    } else if (key === "ArrowDown" || key === "ArrowUp") {
+      if (key === "ArrowDown" ? dr <= 0 : dr >= 0) continue;
+      score = Math.abs(dr) * 100 + Math.abs(dc);
+    } else {
+      if (dr !== 0) continue;
+      score = key === "Home" ? p.col : -p.col;
+    }
+    if (score < bestScore) {
+      best = c;
+      bestScore = score;
+    }
+  }
+  return best;
+}
+
+/**
+ * The element a typed symbol names: the one whose symbol it is (any case),
+ * else the lightest whose symbol starts with it; null for neither.
+ */
+export function typeAheadMatch(text: string, maxZ = TABLE_MAX_Z): number | null {
+  const t = text.toLowerCase();
+  if (!t) return null;
+  let prefix: number | null = null;
+  for (let z = 1; z <= maxZ; z++) {
+    const sym = getElementSymbol(z).toLowerCase();
+    if (sym === t) return z;
+    if (prefix === null && sym.startsWith(t)) prefix = z;
+  }
+  return prefix;
+}
+
+/** How long a pause starts a new type-ahead symbol, ms. */
+const TYPE_AHEAD_MS = 800;
 
 const CELL = 30;
 const GAP = 3;
@@ -163,8 +234,61 @@ export function PeriodicTable({
   const rootRef = useRef<HTMLDivElement>(null);
   const [hovered, setHovered] = useState<number | null>(null);
   const [pos, setPos] = useState<{ left: number; top: number } | null>(null);
+  // The cell the keyboard is on (the one Tab reaches): the current element.
+  const [focusZ, setFocusZ] = useState(value >= 1 && value <= TABLE_MAX_Z ? value : 1);
+  const typed = useRef({ text: "", at: 0 });
 
-  useDismiss({ onDismiss: onClose, inside: anchor ? [rootRef, anchor] : [rootRef] });
+  /** Give focus back to the opening button, if it was inside the table. */
+  const returnFocus = useCallback(() => {
+    if (rootRef.current?.contains(document.activeElement)) anchor?.current?.focus();
+  }, [anchor]);
+  const close = useCallback(() => {
+    returnFocus();
+    onClose();
+  }, [returnFocus, onClose]);
+  const pick = (z: number) => {
+    returnFocus();
+    onPick(z);
+  };
+
+  useDismiss({ onDismiss: close, inside: anchor ? [rootRef, anchor] : [rootRef] });
+
+  const focusCell = (z: number) => {
+    setFocusZ(z);
+    rootRef.current?.querySelector<HTMLElement>(`[data-z="${z}"]`)?.focus();
+  };
+
+  // Once placed (and so visible, which focus needs), the current element
+  // takes focus, so the keyboard can start from it.
+  const focusedOnce = useRef(false);
+  useEffect(() => {
+    if (!pos || focusedOnce.current) return;
+    focusedOnce.current = true;
+    focusCell(focusZ);
+  }, [pos]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const onGridKeyDown = (e: KeyboardEvent<HTMLDivElement>) => {
+    const at = Number((e.target as HTMLElement).dataset?.z);
+    if (!at) return;
+    if (MOVE_KEYS.has(e.key)) {
+      e.preventDefault();
+      focusCell(tableNeighbour(at, e.key));
+    } else if (e.key === "Enter" || e.key === " ") {
+      e.preventDefault();
+      pick(at);
+    } else if (/^[a-z]$/i.test(e.key) && !e.ctrlKey && !e.metaKey && !e.altKey) {
+      // A letter is never a tool shortcut while the table has focus.
+      e.preventDefault();
+      const now = Date.now();
+      const t = typed.current;
+      let text = now - t.at > TYPE_AHEAD_MS ? e.key : t.text + e.key;
+      let z = typeAheadMatch(text);
+      // "Fx" names nothing: start over from the "x".
+      if (z === null && text !== e.key) z = typeAheadMatch((text = e.key));
+      typed.current = { text, at: now };
+      if (z !== null) focusCell(z);
+    }
+  };
 
   // Left of the panel the button is in, level with the button, inside the window.
   useLayoutEffect(() => {
@@ -208,13 +332,15 @@ export function PeriodicTable({
     >
       <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
         <span style={{ fontSize: 13, fontWeight: 600 }}>Periodic table</span>
-        <span style={{ ...hintStyle, fontSize: 11 }}>Click an element to use it</span>
+        <span style={{ ...hintStyle, fontSize: 11 }}>
+          Click an element, or move with the arrow keys and press Enter; type a symbol to jump
+        </span>
         <span style={{ flex: 1 }} />
         <button
           type="button"
           data-testid="builder-periodic-close"
           aria-label="Close the periodic table"
-          onClick={onClose}
+          onClick={close}
           style={{
             border: "none",
             background: "none",
@@ -229,7 +355,10 @@ export function PeriodicTable({
         </button>
       </div>
       <div
+        role="group"
+        aria-label="Elements"
         onMouseLeave={() => setHovered(null)}
+        onKeyDown={onGridKeyDown}
         style={{
           display: "grid",
           gridTemplateColumns: `repeat(18, ${CELL}px)`,
@@ -249,12 +378,17 @@ export function PeriodicTable({
               key={z}
               type="button"
               data-testid={`builder-periodic-${sym}`}
+              data-z={z}
+              tabIndex={z === focusZ ? 0 : -1}
               aria-pressed={active}
               aria-label={`${ELEMENT_NAMES[z] ?? sym} (Z = ${z})`}
               title={`${ELEMENT_NAMES[z] ?? sym} (Z = ${z})`}
-              onClick={() => onPick(z)}
+              onClick={() => pick(z)}
               onMouseEnter={() => setHovered(z)}
-              onFocus={() => setHovered(z)}
+              onFocus={() => {
+                setHovered(z);
+                setFocusZ(z);
+              }}
               style={{
                 gridRow: row,
                 gridColumn: col,

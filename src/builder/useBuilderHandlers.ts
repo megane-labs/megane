@@ -11,14 +11,26 @@
  * (Shift / Ctrl / ⌘ toggles) and drag the selection to move it (modifiers turn
  * or spin it, see `manipulate.ts`); Move drags any atom at once, and Select's
  * Box draws a rubber band instead of turning the view.
+ *
+ * The atom and bond edits go through `editActions.ts`, so a click here
+ * handles hydrogens exactly as the atom menu, the Inspector and the keys do.
  */
 
-import { useCallback, useEffect, useMemo, useRef } from "react";
+import { useCallback, useEffect, useMemo, useRef, type RefObject } from "react";
 import type { StoreApi } from "zustand";
 import type { EditAtomRef, EditOp } from "../pipeline/types";
 import { canEdit, shownSnapshot, type BuilderStore } from "./store";
-import { adsorptionSite, newAtomId } from "./placement";
-import { addOnAtomOps, setElementOps } from "./hydrogens";
+import { adsorptionSite, atomName } from "./placement";
+import { bondOrderBetween } from "./hydrogens";
+import {
+  addFreeAtom,
+  addOnAtom,
+  bondAtoms,
+  deleteAtoms,
+  removeBond,
+  setElements,
+} from "./editActions";
+import { inScope, isTypingTarget } from "./shortcuts";
 import {
   AXIS_KEYS,
   axisVector,
@@ -57,8 +69,32 @@ interface ActiveDrag {
   gesture: BuildDragGesture | null;
 }
 
+/** Whether `e` asks for the context menu from the keyboard: the Menu key, or Shift + F10. */
+export function isMenuKey(
+  e: Pick<KeyboardEvent, "key" | "shiftKey" | "ctrlKey" | "metaKey" | "altKey">,
+) {
+  if (e.ctrlKey || e.metaKey || e.altKey) return false;
+  return e.key === "ContextMenu" || (e.key === "F10" && e.shiftKey);
+}
+
+/** What the app hooks in besides the store. */
+export interface BuilderHandlerOptions {
+  /**
+   * Open the atom menu for rendered atom `atom` from the keyboard (the Menu
+   * key or Shift + F10 with exactly one atom selected). Without it the keys
+   * do nothing.
+   */
+  openAtomMenu?: (atom: number) => void;
+  /** Only keys pressed with the focus inside this element count (an IDE host). */
+  scope?: RefObject<HTMLElement | null>;
+}
+
 /** Build the handlers for `api` and install them in the store while mounted. */
-export function useBuilderHandlers(api: StoreApi<BuilderStore>): BuildHandlers {
+export function useBuilderHandlers(
+  api: StoreApi<BuilderStore>,
+  options: BuilderHandlerOptions = {},
+): BuildHandlers {
+  const { openAtomMenu, scope } = options;
   const refFor = useCallback(
     (renderedIndex: number): EditAtomRef | null => {
       const result = api.getState().result;
@@ -95,52 +131,50 @@ export function useBuilderHandlers(api: StoreApi<BuilderStore>): BuildHandlers {
           return;
         }
         case "add": {
+          // Hydrogens follow the hydrogen mode: a click on an H replaces it.
           if (atomIndex !== null) {
-            // Explicit hydrogens are kept balanced: a click on an H replaces it.
             if (refFor(atomIndex) === null) return;
-            state.pushOps(
-              addOnAtomOps(
-                snapshot,
-                state.result!.refAt,
-                atomIndex,
-                state.element,
-                state.bondOrder,
-              ),
-            );
+            addOnAtom(state, atomIndex, state.element, state.bondOrder);
           } else if (info.world) {
-            state.pushOp({
-              op: "add_atom",
-              id: newAtomId(),
-              element: state.element,
-              position: info.world,
-            });
+            addFreeAtom(state, info.world, state.element);
           }
           return;
         }
         case "bond": {
-          if (atomIndex === null) return;
+          // A click on empty space lets go of the first atom.
+          if (atomIndex === null) {
+            if (state.pendingBondAtom !== null) state.setPendingBondAtom(null);
+            return;
+          }
           if (state.pendingBondAtom === null || state.pendingBondAtom === atomIndex) {
             state.setPendingBondAtom(atomIndex);
             return;
           }
-          const a = refFor(state.pendingBondAtom);
-          const b = refFor(atomIndex);
+          const first = state.pendingBondAtom;
           state.setPendingBondAtom(null);
-          if (a === null || b === null) return;
-          state.pushOp({ op: "add_bond", a, b, order: state.bondOrder });
+          if (refFor(first) === null || refFor(atomIndex) === null) return;
+          // Shift on the second atom of a bond removes the bond instead.
+          if (info.shiftKey) {
+            if (bondOrderBetween(snapshot, first, atomIndex) === 0) {
+              state.reportInfo(
+                `${atomName(snapshot, first)} and ${atomName(snapshot, atomIndex)} are not bonded: nothing to remove.`,
+              );
+              return;
+            }
+            removeBond(state, first, atomIndex);
+            return;
+          }
+          bondAtoms(state, first, atomIndex, state.bondOrder);
           return;
         }
         case "delete": {
-          if (atomIndex === null) return;
-          const ref = refFor(atomIndex);
-          if (ref === null) return;
-          state.clearSelected();
-          state.pushOp({ op: "delete_atoms", atoms: [ref] });
+          if (atomIndex === null || refFor(atomIndex) === null) return;
+          deleteAtoms(state, [atomIndex]);
           return;
         }
         case "element": {
           if (atomIndex === null || refFor(atomIndex) === null) return;
-          state.pushOps(setElementOps(snapshot, state.result!.refAt, atomIndex, state.element));
+          setElements(state, [atomIndex], state.element);
           return;
         }
         case "place": {
@@ -276,6 +310,12 @@ export function useBuilderHandlers(api: StoreApi<BuilderStore>): BuildHandlers {
       const key = e.key.toLowerCase() as AxisKey;
       if (!AXIS_KEYS.includes(key)) return;
       e.preventDefault();
+      if (d.axis !== key && !axisVector(key, api.getState().result?.snapshot.box ?? null)) {
+        api
+          .getState()
+          .reportInfo("No cell: A B C need a unit cell. X Y Z lock to the view's axes.");
+        return;
+      }
       d.axis = d.axis === key ? null : key;
       if (d.gesture) applyDrag();
       else api.getState().setDrag({ ...api.getState().drag!, axis: d.axis });
@@ -283,6 +323,23 @@ export function useBuilderHandlers(api: StoreApi<BuilderStore>): BuildHandlers {
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [api, applyDrag, finishDrag]);
+
+  // The Menu key (or Shift + F10) opens the atom menu for the one selected atom.
+  useEffect(() => {
+    if (!openAtomMenu) return;
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.defaultPrevented || !isMenuKey(e) || drag.current) return;
+      if (scope && !inScope(e.target, scope.current)) return;
+      if (isTypingTarget(e.target)) return;
+      const s = api.getState();
+      const n = shownSnapshot(s)?.nAtoms ?? 0;
+      if (s.preview || s.selected.length !== 1 || s.selected[0] >= n) return;
+      e.preventDefault();
+      openAtomMenu(s.selected[0]);
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [api, openAtomMenu, scope]);
 
   const boxSelect = useCallback(
     (indices: number[], mode: BuildBoxMode) => {

@@ -7,7 +7,7 @@ import { useThemeStore } from "@/stores/useThemeStore";
 
 afterEach(cleanup);
 
-function renderRail(hasDocument = true) {
+function renderRail(hasDocument = true, historyLock: string | null = null) {
   const run = vi.fn();
   const menu = (id: string) => [{ label: id, testId: `${id}-item`, onSelect: () => run(id) }];
   const undo = vi.fn();
@@ -19,7 +19,8 @@ function renderRail(hasDocument = true) {
       toolsItems={menu("tools")}
       hasDocument={hasDocument}
       canUndo={hasDocument}
-      canRedo={false}
+      canRedo={hasDocument && !!historyLock}
+      historyLock={historyLock}
       onUndo={undo}
       onRedo={redo}
       mod="Ctrl"
@@ -88,6 +89,16 @@ describe("OperationsRail", () => {
     expect(run.undo).toHaveBeenCalledTimes(1);
     expect(redo.disabled).toBe(true);
     expect(redo.style.opacity).toBe("0.45");
+  });
+
+  it("pauses Undo and Redo with a tooltip saying why", () => {
+    renderRail(true, "Paused while a preview is open");
+    const undo = screen.getByTestId("builder-topbar-undo") as HTMLButtonElement;
+    const redo = screen.getByTestId("builder-topbar-redo") as HTMLButtonElement;
+    expect(undo.disabled).toBe(true);
+    expect(redo.disabled).toBe(true);
+    expect(undo.title).toBe("Undo: Paused while a preview is open");
+    expect(redo.title).toBe("Redo: Paused while a preview is open");
   });
 
   it("cycles the theme from its icon", () => {

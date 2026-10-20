@@ -141,6 +141,58 @@ describe("connect / disconnect", () => {
   });
 });
 
+describe("cancelling a connect", () => {
+  it("drops a connection that arrives after Cancel, and an error too", async () => {
+    const { store, connection } = setup();
+    let answer!: (c: ToolConnection) => void;
+    let refuse!: (e: Error) => void;
+    const connector = vi.fn(
+      () =>
+        new Promise<ToolConnection>((resolve, reject) => {
+          answer = resolve;
+          refuse = reject;
+        }),
+    );
+    const builder = createBuilderStore();
+    const s2 = createToolsStore({ connector, builder, storage: null });
+    // Not connecting: Cancel does nothing.
+    s2.getState().cancelConnect();
+    expect(s2.getState().status).toBe("idle");
+    const pending = s2.getState().connect();
+    expect(s2.getState().status).toBe("connecting");
+    s2.getState().cancelConnect();
+    expect(s2.getState()).toMatchObject({ status: "idle", error: null });
+    answer(connection);
+    await pending;
+    expect(connection.close).toHaveBeenCalled();
+    expect(s2.getState()).toMatchObject({ status: "idle", connection: null });
+    // A failure after Cancel is not reported either.
+    const failing = s2.getState().connect();
+    s2.getState().cancelConnect();
+    refuse(new Error("late"));
+    await failing;
+    expect(s2.getState()).toMatchObject({ status: "idle", error: null });
+    // Disconnect while connecting abandons the connect as well.
+    const third = s2.getState().connect();
+    await s2.getState().disconnect();
+    answer(connection);
+    await third;
+    expect(s2.getState().status).toBe("idle");
+    expect(store.getState().status).toBe("idle");
+  });
+
+  it("remembers each tool's form values", () => {
+    const { store } = setup();
+    expect(store.getState().formValues).toEqual({});
+    store.getState().rememberValues("liquid_box", { seed: 7 });
+    store.getState().rememberValues("solvate", { margin: 2 });
+    expect(store.getState().formValues).toEqual({
+      liquid_box: { seed: 7 },
+      solvate: { margin: 2 },
+    });
+  });
+});
+
 describe("run", () => {
   it("opens a new document for new_document tools and records provenance", async () => {
     const { store, builder } = setup();

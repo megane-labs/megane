@@ -6,8 +6,16 @@ import {
   shownSnapshot,
   viewSnapshot,
   canEdit,
+  confirmDiscard,
+  editedLabels,
+  isDirty,
   UNTITLED,
+  editSteps,
+  remapSelection,
+  applyMoves,
 } from "@/builder/store";
+import { describeStep } from "@/builder/placement";
+import { applyEditOps } from "@/pipeline/executors/edit";
 import type { Snapshot } from "@/types";
 
 function water(): Snapshot {
@@ -95,7 +103,8 @@ describe("useBuilderStore — document", () => {
     s().pushOp({ op: "set_element", atoms: [0], element: 7 });
     s().setSelected([0]);
     expect(s().undo()).toEqual({ op: "set_element", atoms: [0], element: 7 });
-    expect(s().selected).toEqual([]);
+    // The selection follows its atoms through the history.
+    expect(s().selected).toEqual([0]);
     expect(s().edits).toHaveLength(1);
     expect(shownSnapshot(s())!.elements[0]).toBe(8);
     expect(s().redo()).toEqual({ op: "set_element", atoms: [0], element: 7 });
@@ -116,18 +125,39 @@ describe("useBuilderStore — document", () => {
     expect(shownSnapshot(s())!.positions[0]).toBeCloseTo(1);
   });
 
-  it("clearOps drops the whole history and the redo stack", () => {
+  it("clearOps undoes every step, and Redo brings them back one by one", () => {
     s().openStructure(water(), null, "w.xyz");
     s().pushOp({ op: "delete_atoms", atoms: [1] });
-    s().undo();
-    s().pushOp({ op: "delete_atoms", atoms: [2] });
+    s().pushOps([
+      { op: "set_element", atoms: [0], element: 16 },
+      { op: "set_element", atoms: [2], element: 9 },
+    ]);
     s().clearOps();
     expect(s().edits).toEqual([]);
-    expect(s().redoStack).toEqual([]);
+    expect(s().redoStack).toHaveLength(3);
     expect(shownSnapshot(s())!.nAtoms).toBe(3);
     const rev = s().revision;
     s().clearOps();
     expect(s().revision).toBe(rev);
+    // The first step comes back first, the two-op group as one step.
+    s().redo();
+    expect(s().edits).toEqual([{ op: "delete_atoms", atoms: [1] }]);
+    s().redo();
+    expect(s().edits).toHaveLength(3);
+    expect(s().redoStack).toEqual([]);
+  });
+
+  it("undo, redo and clear leave the edits alone while the original is shown", () => {
+    s().openStructure(water(), null, "w.xyz");
+    s().pushOp({ op: "delete_atoms", atoms: [1] });
+    s().pushOp({ op: "delete_atoms", atoms: [0] });
+    s().undo();
+    s().setShowOriginal(true);
+    expect(s().undo()).toBeNull();
+    expect(s().redo()).toBeNull();
+    s().clearOps();
+    expect(s().edits).toHaveLength(1);
+    expect(s().redoStack).toHaveLength(1);
   });
 
   it("Show original previews the source and pauses editing", () => {
@@ -378,5 +408,252 @@ describe("useBuilderStore — library placement", () => {
     expect(s().source!.box).toBeNull();
     expect(shownSnapshot(s())!.nAtoms).toBe(2);
     expect(s().edits).toHaveLength(1);
+  });
+});
+
+describe("useBuilderStore — unsaved edits and confirmation", () => {
+  it("is dirty from the first edit until saved or replaced", () => {
+    const api = createBuilderStore();
+    const g = () => api.getState();
+    expect(isDirty(g())).toBe(false);
+    g().openStructure(water(), null, "w.xyz");
+    expect(isDirty(g())).toBe(false);
+    g().pushOp({ op: "delete_atoms", atoms: [1] });
+    expect(isDirty(g())).toBe(true);
+    g().markSaved();
+    expect(isDirty(g())).toBe(false);
+    g().undo();
+    expect(isDirty(g())).toBe(true);
+    g().redo();
+    g().replaceLastOp({ op: "delete_atoms", atoms: [2] });
+    g().setDragOps(1, []);
+    g().clearOps();
+    expect(isDirty(g())).toBe(true);
+    g().openStructure(water(), null, "x.xyz");
+    expect(isDirty(g())).toBe(false);
+    g().pushOp({ op: "delete_atoms", atoms: [1] });
+    g().closeDocument();
+    expect(isDirty(g())).toBe(false);
+  });
+
+  it("confirmDiscard goes ahead at once with nothing unsaved", async () => {
+    const api = createBuilderStore();
+    api.getState().openStructure(water(), null, "w.xyz");
+    await expect(confirmDiscard(api, "Open b.pdb")).resolves.toBe(true);
+    expect(api.getState().confirm).toBeNull();
+  });
+
+  it("confirmDiscard asks, naming the action, the file and the edits", async () => {
+    const api = createBuilderStore();
+    api.getState().openStructure(water(), null, "w.xyz");
+    api.getState().pushOp({ op: "delete_atoms", atoms: [1] });
+    const answer = confirmDiscard(api, "Open b.pdb");
+    const asked = api.getState().confirm!;
+    expect(asked.message).toContain("Open b.pdb");
+    expect(asked.message).toContain("w.xyz");
+    expect(asked.message).toContain("1 edit");
+    expect(asked.danger).toBe(true);
+    api.getState().resolveConfirm(false);
+    await expect(answer).resolves.toBe(false);
+    expect(api.getState().confirm).toBeNull();
+
+    api.getState().pushOp({ op: "delete_atoms", atoms: [1] });
+    const again = confirmDiscard(api, "New empty cell");
+    expect(api.getState().confirm!.message).toContain("2 edits");
+    api.getState().resolveConfirm(true);
+    await expect(again).resolves.toBe(true);
+  });
+
+  it("a second question answers the first one no", async () => {
+    const api = createBuilderStore();
+    const first = api.getState().requestConfirm({ title: "A", message: "a", confirmLabel: "Go" });
+    const second = api.getState().requestConfirm({ title: "B", message: "b", confirmLabel: "Go" });
+    await expect(first).resolves.toBe(false);
+    expect(api.getState().confirm!.title).toBe("B");
+    api.getState().resolveConfirm(true);
+    await expect(second).resolves.toBe(true);
+    // Answering with nothing open is harmless.
+    api.getState().resolveConfirm(true);
+  });
+
+  it("a new edit clears an error notice but keeps an info one", () => {
+    const api = createBuilderStore();
+    const g = () => api.getState();
+    g().openStructure(water(), null, "w.xyz");
+    g().reportError("A distance must be a positive number of Å.");
+    g().pushOp({ op: "delete_atoms", atoms: [1] });
+    expect(g().notice).toBeNull();
+    g().reportInfo("Saved w.xyz");
+    g().pushOps([{ op: "delete_atoms", atoms: [0] }]);
+    expect(g().notice?.level).toBe("info");
+    g().reportError("bad");
+    g().setDragOps(g().edits.length, [{ op: "delete_atoms", atoms: [0] }]);
+    expect(g().notice).toBeNull();
+  });
+
+  it("keeps the hydrogen mode the user picks", () => {
+    const api = createBuilderStore();
+    expect(api.getState().hydrogenMode).toBe("auto");
+    api.getState().setHydrogenMode("off");
+    expect(api.getState().hydrogenMode).toBe("off");
+  });
+});
+
+describe("editedLabels", () => {
+  it("follows each atom's label through deletions and leaves added atoms unlabelled", () => {
+    const api = createBuilderStore();
+    const g = () => api.getState();
+    expect(editedLabels(g())).toBeNull();
+    g().openStructure(water(), ["HOH1", "HOH2", "HOH3"], "w.pdb");
+    expect(editedLabels(g())).toEqual(["HOH1", "HOH2", "HOH3"]);
+    g().pushOp({ op: "delete_atoms", atoms: [1] });
+    g().pushOp({ op: "add_atom", id: "n1", element: 6, position: [1, 1, 1] });
+    expect(editedLabels(g())).toEqual(["HOH1", "HOH3", ""]);
+  });
+
+  it("is null without source labels", () => {
+    const api = createBuilderStore();
+    api.getState().openStructure(water(), null, "w.xyz");
+    expect(editedLabels(api.getState())).toBeNull();
+  });
+});
+
+describe("useBuilderStore — the selection follows its atoms", () => {
+  const api = () => {
+    const store = createBuilderStore();
+    store.getState().openStructure(water(), null, "w.xyz");
+    return store;
+  };
+
+  it("shifts past a deletion, drops deleted atoms, and keeps the picking order", () => {
+    const store = api();
+    const g = () => store.getState();
+    g().setSelected([2, 0, 1]);
+    g().setPendingBondAtom(2);
+    g().pushOp({ op: "delete_atoms", atoms: [1] });
+    expect(g().selected).toEqual([1, 0]);
+    expect(g().pendingBondAtom).toBe(1);
+    // Undo brings the atom back; it was dropped from the selection, the rest move back.
+    g().undo();
+    expect(g().selected).toEqual([2, 0]);
+    g().redo();
+    expect(g().selected).toEqual([1, 0]);
+    g().pushOps([{ op: "delete_atoms", atoms: [2] }]);
+    expect(g().selected).toEqual([0]);
+    expect(g().pendingBondAtom).toBeNull();
+  });
+
+  it("an added atom stays selected through redo, and leaves with clear all", () => {
+    const store = api();
+    const g = () => store.getState();
+    g().pushOp({ op: "add_atom", id: "n", element: 6, position: [3, 0, 0] });
+    g().setSelected([3, 0]);
+    g().undo();
+    expect(g().selected).toEqual([0]);
+    g().redo();
+    g().setSelected([3, 0]);
+    g().replaceLastOp({ op: "add_atom", id: "m", element: 6, position: [3, 0, 0] });
+    // A different atom now: "n" is gone.
+    expect(g().selected).toEqual([0]);
+    g().setSelected([3]);
+    g().clearOps();
+    expect(g().selected).toEqual([]);
+  });
+
+  it("remapSelection handles no change, no document and stale indices", () => {
+    const r = applyEditOps(water(), []);
+    const sel = { selected: [0], pendingBondAtom: null };
+    expect(remapSelection(r, r, sel)).toEqual(sel);
+    expect(remapSelection(r, null, sel)).toEqual({ selected: [], pendingBondAtom: null });
+    const after = applyEditOps(water(), [{ op: "delete_atoms", atoms: [0] }]);
+    expect(remapSelection(r, after, { selected: [9, 1], pendingBondAtom: 9 })).toEqual({
+      selected: [0],
+      pendingBondAtom: null,
+    });
+    expect(remapSelection(r, after, { selected: [], pendingBondAtom: null })).toEqual({
+      selected: [],
+      pendingBondAtom: null,
+    });
+  });
+});
+
+describe("useBuilderStore — history labels", () => {
+  it("lists a labelled step by its label, through undo and redo", () => {
+    const store = createBuilderStore();
+    const g = () => store.getState();
+    g().openStructure(water(), null, "w.xyz");
+    g().pushOps(
+      [
+        { op: "set_element", atoms: [0], element: 7 },
+        { op: "add_atom", id: "h", element: 1, position: [0, 0, 1], bondTo: 0 },
+      ],
+      "Set O #0 to N",
+    );
+    g().pushOp({ op: "delete_atoms", atoms: [1] }, "Delete H #1");
+    g().pushOp({ op: "wrap" });
+    const labels = () => editSteps(g().edits).map(describeStep);
+    expect(labels()).toEqual(["Set O #0 to N", "Delete H #1", "Wrap atoms into cell"]);
+    g().undo();
+    g().undo();
+    g().redo();
+    expect(labels()).toEqual(["Set O #0 to N", "Delete H #1"]);
+    g().moveAtoms(new Map([[0, [1, 0, 0]]]), "Move N #0 by (1.00, 0.00, 0.00) Å");
+    expect(labels().at(-1)).toBe("Move N #0 by (1.00, 0.00, 0.00) Å");
+  });
+});
+
+describe("useBuilderStore — a drag replays the history once", () => {
+  function setup() {
+    const store = createBuilderStore();
+    const g = () => store.getState();
+    g().openStructure(water(), null, "w.xyz");
+    g().pushOp({ op: "add_atom", id: "n", element: 6, position: [3, 0, 0], bondTo: 0 });
+    return { store, g };
+  }
+
+  it("shifts only the moved atoms of the cached base, matching a full replay", () => {
+    const { g } = setup();
+    const base = g().edits.length;
+    const atStart = g().result!;
+    g().setSelected([3, 1]);
+    g().setDragOps(base, [{ op: "move_atoms", atoms: ["n", 1], delta: [1, 0, 0] }]);
+    g().setDragOps(base, [{ op: "move_atoms", atoms: ["n", 1], delta: [2, 0.5, 0] }]);
+    const fast = g().result!;
+    const full = applyEditOps(g().source!, g().edits);
+    expect(Array.from(fast.snapshot.positions)).toEqual(
+      Array.from(full.snapshot.positions).map((v) => expect.closeTo(v, 5)),
+    );
+    expect(fast.snapshot.bonds).toBe(atStart.snapshot.bonds);
+    expect(fast.refAt(3)).toBe("n");
+    expect(fast.outputRefs).toEqual(full.outputRefs);
+    expect(fast.warnings).toEqual([]);
+    expect(g().selected).toEqual([3, 1]);
+    // Letting go writes nothing and shows the base again, without a replay.
+    g().setDragOps(base, []);
+    expect(g().result).toBe(atStart);
+  });
+
+  it("replays in full for any other op, a changed history, or an unknown atom", () => {
+    const { g } = setup();
+    const base = g().edits.length;
+    g().setDragOps(base, [{ op: "move_atoms", atoms: [0], delta: [1, 0, 0] }]);
+    g().setDragOps(base, [{ op: "set_element", atoms: [0], element: 7 }]);
+    expect(g().result!.snapshot.elements[0]).toBe(7);
+    g().setDragOps(base, [{ op: "move_atoms", atoms: ["nope"], delta: [1, 0, 0] }]);
+    expect(g().result!.warnings).toHaveLength(1);
+    // A drag from an earlier point of the history.
+    g().setDragOps(0, [{ op: "move_atoms", atoms: [0], delta: [1, 0, 0] }]);
+    expect(g().result!.snapshot.nAtoms).toBe(3);
+    expect(g().result!.snapshot.positions[0]).toBeCloseTo(1);
+  });
+
+  it("applyMoves refuses ops other than moves of known atoms", () => {
+    const r = applyEditOps(water(), []);
+    const index = (ref: string | number) => (ref === 0 ? 0 : undefined);
+    expect(applyMoves(r, [{ op: "wrap" }], index)).toBeNull();
+    expect(applyMoves(r, [{ op: "move_atoms", atoms: [5], delta: [1, 0, 0] }], index)).toBeNull();
+    const moved = applyMoves(r, [{ op: "move_atoms", atoms: [0], delta: [1, 0, 0] }], index)!;
+    expect(moved.snapshot.positions[0]).toBe(1);
+    expect(r.snapshot.positions[0]).toBe(0);
   });
 });

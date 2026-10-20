@@ -96,6 +96,11 @@ def test_text_reads_the_document():
     assert b.text("pdb").startswith("PDB TEXT")
     with pytest.raises(ValueError, match="cannot be written as MOL"):
         b.text("mol")
+    with pytest.raises(ValueError, match="cannot be written as CIF"):
+        b.text("cif")
+    b._document = _document(has_cell=True, cif="data_megane\n", poscar="POSCAR TEXT\n")
+    assert b.text("cif") == "data_megane\n"
+    assert b.text("poscar") == "POSCAR TEXT\n"
     with pytest.raises(ValueError, match="unknown format"):
         b.text("gro")  # type: ignore[arg-type]
 

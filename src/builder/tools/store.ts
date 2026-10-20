@@ -19,6 +19,7 @@ import { callTimeoutMs, sanitizeName, type BuilderResult, type BuilderToolInfo }
 import { connectToolServer, errorMessage, type CallOutcome, type ToolConnection } from "./client";
 import type { BridgeServer, ToolBridge } from "./bridge";
 import { insertOps, residueLabels, structureToSnapshot } from "./payload";
+import type { FormValues } from "./form";
 
 export const TOOLS_STORAGE_KEY = "megane.builder.tools.v1";
 export const DEFAULT_TOOL_SERVER_URL = "http://127.0.0.1:8765/mcp";
@@ -70,16 +71,25 @@ export interface ToolsStore {
   bridge: ToolBridge | null;
   /** The servers the bridge offers; null until listed. */
   servers: BridgeServer[] | null;
+  /**
+   * The last values of each tool's form, by tool name, for this session: a
+   * form reopened shows what the user left in it (its seed included).
+   */
+  formValues: Record<string, FormValues>;
 
   setUrl: (url: string) => void;
   setToken: (token: string) => void;
   connect: () => Promise<void>;
+  /** Give up on the connect in flight; a connection that arrives later is closed. */
+  cancelConnect: () => void;
   disconnect: () => Promise<void>;
   openForm: (tool: BuilderToolInfo) => void;
   closeForm: () => void;
   /** Call `tool` and apply its result; resolves to the outcome (errors stay in the form). */
   run: (tool: BuilderToolInfo, args: Record<string, unknown>) => Promise<CallOutcome>;
   cancel: () => void;
+  /** Remember a tool form's values (see `formValues`). */
+  rememberValues: (toolName: string, values: FormValues) => void;
   /** Reach servers through `bridge` from now on, and list them. */
   attachBridge: (bridge: ToolBridge) => Promise<void>;
   /** List the bridge's servers again (the user may have changed the configuration). */
@@ -173,6 +183,8 @@ export function applyResult(
 }
 
 export function toolsStateCreator(deps: ToolsStoreDeps): StateCreator<ToolsStore> {
+  /** Bumped by every connect and by Cancel: a connect that finds it changed was abandoned. */
+  let attempt = 0;
   return (set, get) => ({
     url: readStoredUrl(deps.storage),
     token: "",
@@ -184,27 +196,42 @@ export function toolsStateCreator(deps: ToolsStoreDeps): StateCreator<ToolsStore
     applied: [],
     bridge: null,
     servers: null,
+    formValues: {},
 
     setUrl: (url) => set({ url }),
     setToken: (token) => set({ token }),
 
     connect: async () => {
       const { url, token, connection, bridge } = get();
+      const mine = ++attempt;
       if (connection) await connection.close().catch(() => undefined);
       set({ status: "connecting", error: null, connection: null, openTool: null });
       try {
         const next = bridge
           ? await bridge.connect(url.trim())
           : await deps.connector(url.trim(), token.trim());
+        if (mine !== attempt) {
+          // Cancelled (or superseded) while connecting: drop what arrived.
+          await next.close().catch(() => undefined);
+          return;
+        }
         if (!bridge) writeStoredUrl(deps.storage, url.trim());
         set({ status: "connected", connection: next });
       } catch (err) {
+        if (mine !== attempt) return;
         set({ status: "error", error: `Could not connect to ${url}: ${errorMessage(err)}` });
       }
     },
 
+    cancelConnect: () => {
+      if (get().status !== "connecting") return;
+      attempt++;
+      set({ status: "idle", error: null });
+    },
+
     disconnect: async () => {
       const { connection, running } = get();
+      attempt++;
       running?.controller.abort();
       set({ status: "idle", error: null, connection: null, openTool: null, running: null });
       await connection?.close().catch(() => undefined);
@@ -265,6 +292,9 @@ export function toolsStateCreator(deps: ToolsStoreDeps): StateCreator<ToolsStore
     },
 
     cancel: () => get().running?.controller.abort(),
+
+    rememberValues: (toolName, values) =>
+      set((s) => ({ formValues: { ...s.formValues, [toolName]: values } })),
 
     attachBridge: async (bridge) => {
       if (get().bridge === bridge) return;

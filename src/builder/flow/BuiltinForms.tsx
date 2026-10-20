@@ -3,9 +3,15 @@
  * node-form rows: a bulk crystal (with Manual mode's reference examples), a
  * polymer's repeat unit (with common polymers ready to pick), a supercell's
  * repeats, a slab's Miller indices, and how molecules sit on a surface.
+ *
+ * A number box keeps what is typed as text until it reads as a number, so a
+ * box can be emptied and retyped without the block's settings (or its card)
+ * ever holding a blank; the form says what is wrong the moment it is — a box
+ * that is not a number, then the first setting the block would refuse to run
+ * with (`builtinProblem`, the checks `runBuiltin` throws).
  */
 
-import type { ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import { Field, FormStack } from "../../components/nodes/form";
 import {
   checkboxStyle,
@@ -22,6 +28,7 @@ import {
   type BulkStructure,
 } from "../../crystal/bulk";
 import { useScopedFlowStore } from "../BuilderStores";
+import { builtinProblem, type BuiltinParams } from "./builtins";
 import { chainSmiles, POLYMER_PRESETS } from "./polymer";
 import type {
   AdsorbParams,
@@ -34,6 +41,39 @@ import type {
 
 const numberStyle: React.CSSProperties = { ...inputStyle, minWidth: 0 };
 
+const invalidStyle: React.CSSProperties = {
+  ...numberStyle,
+  borderColor: "var(--megane-danger, #ef4444)",
+};
+
+/** Report a box's problem (null when it has none) under its id. */
+type ReportProblem = (id: string, problem: string | null) => void;
+
+/** The number `text` reads as, or null for a blank or anything else. */
+export function parseNumber(text: string): number | null {
+  if (text.trim() === "") return null;
+  const n = Number(text);
+  return Number.isFinite(n) ? n : null;
+}
+
+/**
+ * The problems of a form's number boxes, by box, and the first one; boxes
+ * report theirs as they change.
+ */
+function useBoxProblems(): [string | null, ReportProblem] {
+  const [problems, setProblems] = useState<Record<string, string>>({});
+  const report = useCallback<ReportProblem>((id, problem) => {
+    setProblems((cur) => {
+      if ((cur[id] ?? null) === problem) return cur;
+      const next = { ...cur };
+      if (problem === null) delete next[id];
+      else next[id] = problem;
+      return next;
+    });
+  }, []);
+  return [Object.values(problems)[0] ?? null, report];
+}
+
 function NumberInput({
   value,
   onChange,
@@ -41,25 +81,75 @@ function NumberInput({
   step = 1,
   min,
   label,
+  onProblem,
 }: {
   value: number;
   onChange: (v: number) => void;
   testId: string;
   step?: number;
   min?: number;
-  label?: string;
+  /** What the box is, for screen readers and the problem it reports. */
+  label: string;
+  onProblem?: ReportProblem;
 }) {
+  // What is typed, until it reads as the value (or the value changes elsewhere: an example, Undo).
+  const [draft, setDraft] = useState<string | null>(null);
+  useEffect(() => {
+    setDraft((d) => (d !== null && parseNumber(d) === value ? d : null));
+  }, [value]);
+  const text = draft ?? (Number.isFinite(value) ? String(value) : "");
+  const invalid = parseNumber(text) === null;
+  const problem = invalid ? `${label}: enter a number.` : null;
+  useEffect(() => {
+    onProblem?.(testId, problem);
+  }, [onProblem, testId, problem]);
+  useEffect(() => () => onProblem?.(testId, null), [onProblem, testId]);
   return (
     <input
       type="number"
       aria-label={label}
+      aria-invalid={invalid || undefined}
       data-testid={testId}
-      style={numberStyle}
-      value={Number.isFinite(value) ? value : ""}
+      style={invalid ? invalidStyle : numberStyle}
+      value={text}
       step={step}
       min={min}
-      onChange={(e) => onChange(e.target.value === "" ? NaN : Number(e.target.value))}
+      onChange={(e) => {
+        setDraft(e.target.value);
+        const n = parseNumber(e.target.value);
+        if (n !== null) onChange(n);
+      }}
     />
+  );
+}
+
+/**
+ * The form's first problem: a box that is not a number, else what the block
+ * would refuse to run with (`skipSettings`: the form shows that itself).
+ */
+function Problem({
+  boxes,
+  params,
+  skipSettings = false,
+}: {
+  boxes: string | null;
+  params: BuiltinParams;
+  skipSettings?: boolean;
+}) {
+  const settings = useMemo(
+    () => (skipSettings ? null : builtinProblem(params)),
+    [params, skipSettings],
+  );
+  const text = boxes ?? settings;
+  if (!text) return null;
+  return (
+    <span
+      role="alert"
+      data-testid="builder-flow-builtin-problem"
+      style={{ ...hintStyle, color: "var(--megane-danger-text, #b91c1c)" }}
+    >
+      {text}
+    </span>
   );
 }
 
@@ -70,12 +160,14 @@ function NumberRow<T extends number[]>({
   testId,
   labels,
   min,
+  onProblem,
 }: {
   values: T;
   onChange: (v: T) => void;
   testId: string;
   labels: string[];
   min?: number;
+  onProblem?: ReportProblem;
 }) {
   return (
     <span style={{ display: "flex", gap: 4 }}>
@@ -86,6 +178,7 @@ function NumberRow<T extends number[]>({
           min={min}
           label={labels[k]}
           testId={`${testId}-${k}`}
+          onProblem={onProblem}
           onChange={(next) => onChange(values.map((x, i) => (i === k ? next : x)) as T)}
         />
       ))}
@@ -108,6 +201,7 @@ function useUpdate<P extends FlowParams>(id: string) {
 
 export function CrystalForm({ id, params }: { id: string; params: CrystalParams }) {
   const update = useUpdate<CrystalParams>(id);
+  const [boxes, report] = useBoxProblems();
   const info = bulkStructureInfo(params.structure);
   const loadExample = (name: string) => {
     const ex = BULK_EXAMPLES.find((e) => e.name === name);
@@ -178,6 +272,8 @@ export function CrystalForm({ id, params }: { id: string; params: CrystalParams 
       <Field label="a (Å)">
         <NumberInput
           testId="builder-flow-crystal-a"
+          label="a (Å)"
+          onProblem={report}
           value={params.a}
           step={0.01}
           min={0.1}
@@ -188,6 +284,8 @@ export function CrystalForm({ id, params }: { id: string; params: CrystalParams 
         <Field label="c/a">
           <NumberInput
             testId="builder-flow-crystal-covera"
+            label="c/a"
+            onProblem={report}
             value={params.covera}
             step={0.001}
             min={0.1}
@@ -206,6 +304,7 @@ export function CrystalForm({ id, params }: { id: string; params: CrystalParams 
           />
         </Field>
       )}
+      <Problem boxes={boxes} params={params} />
       <Hint>
         Built in the browser, as Manual mode&apos;s bulk crystal is. Wire it into a Slab or a
         Supercell.
@@ -229,6 +328,7 @@ function polymerCheck(params: PolymerParams): { ok: boolean; text: string } {
 
 export function PolymerForm({ id, params }: { id: string; params: PolymerParams }) {
   const update = useUpdate<PolymerParams>(id);
+  const [boxes, report] = useBoxProblems();
   const preset = POLYMER_PRESETS.find((p) => p.repeatUnit === params.repeatUnit);
   const check = polymerCheck(params);
   return (
@@ -264,6 +364,8 @@ export function PolymerForm({ id, params }: { id: string; params: PolymerParams 
       <Field label="Repeat units">
         <NumberInput
           testId="builder-flow-polymer-length"
+          label="Repeat units"
+          onProblem={report}
           value={params.length}
           min={1}
           onChange={(length) => update({ length })}
@@ -285,6 +387,8 @@ export function PolymerForm({ id, params }: { id: string; params: PolymerParams 
       >
         {check.text}
       </span>
+      {/* The check above already says what the chain's settings get wrong. */}
+      <Problem boxes={boxes} params={params} skipSettings />
       <Hint>
         The first * is the head and the last * the tail of a unit; the chain ends are capped with
         hydrogen. The name is the residue name a liquid box gives each chain.
@@ -295,6 +399,7 @@ export function PolymerForm({ id, params }: { id: string; params: PolymerParams 
 
 export function SupercellForm({ id, params }: { id: string; params: SupercellParams }) {
   const update = useUpdate<SupercellParams>(id);
+  const [boxes, report] = useBoxProblems();
   return (
     <FormStack>
       <Field label="Repeats a b c">
@@ -303,9 +408,11 @@ export function SupercellForm({ id, params }: { id: string; params: SupercellPar
           labels={["Repeats along a", "Repeats along b", "Repeats along c"]}
           min={1}
           values={params.repeat}
+          onProblem={report}
           onChange={(repeat) => update({ repeat })}
         />
       </Field>
+      <Problem boxes={boxes} params={params} />
       <Hint>Repeats the input along its cell vectors (it needs a unit cell).</Hint>
     </FormStack>
   );
@@ -313,19 +420,23 @@ export function SupercellForm({ id, params }: { id: string; params: SupercellPar
 
 export function SlabForm({ id, params }: { id: string; params: SlabParams }) {
   const update = useUpdate<SlabParams>(id);
+  const [boxes, report] = useBoxProblems();
   return (
     <FormStack>
       <Field label="Miller h k l">
         <NumberRow
           testId="builder-flow-slab-miller"
-          labels={["h", "k", "l"]}
+          labels={["Miller h", "Miller k", "Miller l"]}
           values={params.miller}
+          onProblem={report}
           onChange={(miller) => update({ miller })}
         />
       </Field>
       <Field label="Layers">
         <NumberInput
           testId="builder-flow-slab-layers"
+          label="Layers"
+          onProblem={report}
           value={params.layers}
           min={1}
           onChange={(layers) => update({ layers })}
@@ -334,6 +445,8 @@ export function SlabForm({ id, params }: { id: string; params: SlabParams }) {
       <Field label="Vacuum (Å)">
         <NumberInput
           testId="builder-flow-slab-vacuum"
+          label="Vacuum (Å)"
+          onProblem={report}
           value={params.vacuum}
           min={0}
           step={0.5}
@@ -346,9 +459,11 @@ export function SlabForm({ id, params }: { id: string; params: SlabParams }) {
           labels={["Repeats along a", "Repeats along b"]}
           min={1}
           values={params.repeat}
+          onProblem={report}
           onChange={(repeat) => update({ repeat })}
         />
       </Field>
+      <Problem boxes={boxes} params={params} />
       <Hint>
         Cut as Manual mode&apos;s Cut slab… cuts it (ASE&apos;s surface): a layer is one surface
         cell of the input along the normal, and the vacuum is added on each side.
@@ -359,11 +474,14 @@ export function SlabForm({ id, params }: { id: string; params: SlabParams }) {
 
 export function AdsorbForm({ id, params }: { id: string; params: AdsorbParams }) {
   const update = useUpdate<AdsorbParams>(id);
+  const [boxes, report] = useBoxProblems();
   return (
     <FormStack>
       <Field label="Height (Å)">
         <NumberInput
           testId="builder-flow-adsorb-height"
+          label="Height (Å)"
+          onProblem={report}
           value={params.height}
           step={0.1}
           onChange={(height) => update({ height })}
@@ -375,9 +493,11 @@ export function AdsorbForm({ id, params }: { id: string; params: AdsorbParams })
           labels={["Copies along a", "Copies along b"]}
           min={1}
           values={params.grid}
+          onProblem={report}
           onChange={(grid) => update({ grid })}
         />
       </Field>
+      <Problem boxes={boxes} params={params} />
       <Hint>
         Lays copies of the molecule on an even grid over the surface cell, each one&apos;s lowest
         atom this far above the surface&apos;s top atom, as the molecule is oriented.

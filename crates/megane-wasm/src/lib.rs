@@ -1146,9 +1146,11 @@ pub fn infer_bonds_vdw(positions: &[f32], elements: &[u8], n_atoms: u32) -> Uint
 }
 
 /// Serialize a structure as `xyz` (extended XYZ when a cell is given), `pdb`,
-/// or `mol` text — the inverse of the parsers, used by the Build panel's
-/// export. Empty `bond_orders` / `box_matrix` / `atom_labels` / `chain_ids`
-/// mean "absent"; `atom_labels` is newline-delimited like `ParseResult`.
+/// `mol`, `cif` or `poscar` text — the inverse of the parsers, used by the
+/// Builder's export. `cif` and `poscar` need a cell and fail without one.
+/// Empty `bond_orders` / `box_matrix` / `box_origin` / `atom_labels` /
+/// `chain_ids` mean "absent"; `atom_labels` is newline-delimited like
+/// `ParseResult`.
 #[wasm_bindgen]
 #[allow(clippy::too_many_arguments)]
 pub fn write_structure(
@@ -1158,6 +1160,7 @@ pub fn write_structure(
     bonds: &[u32],
     bond_orders: &[u8],
     box_matrix: &[f32],
+    box_origin: &[f32],
     atom_labels: &str,
     chain_ids: &[u8],
 ) -> Result<String, JsError> {
@@ -1168,6 +1171,7 @@ pub fn write_structure(
     } else {
         None
     };
+    let origin = (box_origin.len() == 3).then(|| [box_origin[0], box_origin[1], box_origin[2]]);
     let labels: Option<Vec<String>> = if atom_labels.is_empty() {
         None
     } else {
@@ -1179,6 +1183,7 @@ pub fn write_structure(
         bonds,
         bond_orders: (!bond_orders.is_empty()).then_some(bond_orders),
         box_matrix: cell,
+        box_origin: origin,
         atom_labels: labels.as_deref(),
         chain_ids: (!chain_ids.is_empty()).then_some(chain_ids),
     };

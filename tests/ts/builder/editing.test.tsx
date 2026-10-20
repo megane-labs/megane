@@ -11,6 +11,7 @@ import { ContextBar } from "@/builder/ContextBar";
 import { useBuilderStore, editSteps } from "@/builder/store";
 import { describeStep } from "@/builder/placement";
 import { resolveShortcut, runShortcut } from "@/builder/shortcuts";
+import { runCleanup } from "@/builder/cleanup";
 import type { Snapshot } from "@/types";
 
 const s = () => useBuilderStore.getState();
@@ -199,6 +200,81 @@ describe("AtomMenu", () => {
         true,
       );
     }
+  });
+
+  it("removes a bond to each neighbour, rebalancing the hydrogens", () => {
+    open(1);
+    expect(screen.getByTestId("builder-atom-menu-unbond-0").textContent).toBe(
+      "Remove bond to C #0",
+    );
+    expect(screen.getByTestId("builder-atom-menu-unbond-2").textContent).toBe(
+      "Remove bond to H #2",
+    );
+    click("builder-atom-menu-unbond-0");
+    expect(s().edits[0]).toEqual({ op: "delete_bond", a: 1, b: 0 });
+    // Methanol split: the O and the C each get an H for the bond.
+    expect(s().edits.filter((op) => op.op === "add_atom")).toHaveLength(2);
+    expect(describeStep(editSteps(s().edits)[0])).toBe("Remove bond O #1 – C #0");
+  });
+
+  it("deletes an atom with the hydrogens on it, as one step", () => {
+    open(1);
+    click("builder-atom-menu-delete");
+    expect(s().edits[0]).toEqual({ op: "delete_atoms", atoms: [1, 2] });
+    expect(describeStep(editSteps(s().edits)[0])).toBe("Delete O #1 (+1 H)");
+  });
+
+  it("is driven by the keyboard: first item focused, arrows move, Enter picks", () => {
+    let closed = 0;
+    open(1, () => closed++);
+    const menu = screen.getByTestId("builder-atom-menu");
+    const molecule = screen.getByTestId("builder-atom-menu-molecule");
+    expect(document.activeElement).toBe(molecule);
+    fireEvent.keyDown(menu, { key: "ArrowUp" });
+    expect(document.activeElement).toBe(screen.getByTestId("builder-atom-menu-delete"));
+    fireEvent.keyDown(menu, { key: "ArrowDown" });
+    expect(document.activeElement).toBe(molecule);
+    fireEvent.keyDown(menu, { key: "End" });
+    expect(document.activeElement).toBe(screen.getByTestId("builder-atom-menu-delete"));
+    fireEvent.keyDown(menu, { key: "Home" });
+    expect(document.activeElement).toBe(molecule);
+    fireEvent.keyDown(menu, { key: "ArrowDown" });
+    expect(document.activeElement).toBe(screen.getByTestId("builder-atom-menu-element"));
+    fireEvent.keyDown(menu, { key: "x" });
+    fireEvent.keyDown(menu, { key: "Enter" });
+    expect(closed).toBe(1);
+    expect(s().selected).toEqual([1, 6]);
+  });
+
+  it("arrows start from either end when nothing in the menu has the focus", () => {
+    open(0);
+    const menu = screen.getByTestId("builder-atom-menu");
+    act(() => (document.activeElement as HTMLElement).blur());
+    fireEvent.keyDown(menu, { key: "Enter" }); // nothing focused: nothing picked
+    fireEvent.keyDown(menu, { key: "ArrowDown" });
+    expect(document.activeElement).toBe(screen.getByTestId("builder-atom-menu-molecule"));
+    act(() => (document.activeElement as HTMLElement).blur());
+    fireEvent.keyDown(menu, { key: "ArrowUp" });
+    expect(document.activeElement).toBe(screen.getByTestId("builder-atom-menu-delete"));
+  });
+
+  it("keeps Clean up disabled while a clean-up runs", async () => {
+    let release = () => {};
+    const gate = new Promise<void>((r) => (release = r));
+    let running!: Promise<void>;
+    act(() => {
+      running = runCleanup(useBuilderStore, async () => {
+        await gate;
+        throw new Error("stopped");
+      });
+    });
+    open(1);
+    const item = screen.getByTestId("builder-atom-menu-cleanup") as HTMLButtonElement;
+    expect(item.disabled).toBe(true);
+    expect(item.textContent).toBe("Clean up molecule (running…)");
+    release();
+    await act(() => running);
+    expect(item.disabled).toBe(false);
   });
 
   it("closes on a click elsewhere and on Escape, and shows nothing for a stale atom", () => {

@@ -20,13 +20,38 @@ function chain(): Snapshot {
   };
 }
 
+const angleAt = (p: number[], center: number[], q: number[]) => {
+  const u = [0, 1, 2].map((k) => p[k] - center[k]);
+  const v = [0, 1, 2].map((k) => q[k] - center[k]);
+  const dot = u[0] * v[0] + u[1] * v[1] + u[2] * v[2];
+  return (Math.acos(dot / (Math.hypot(...u) * Math.hypot(...v))) * 180) / Math.PI;
+};
+
 describe("placeBondedAtom", () => {
-  it("points away from the anchor's neighbours at covalent bond length", () => {
+  it("takes a free tetrahedral direction at covalent bond length", () => {
     const p = placeBondedAtom(chain(), 0, 1);
     const len = getCovalentRadius(6) + getCovalentRadius(1);
-    expect(p[0]).toBeCloseTo(-len);
-    expect(p[1]).toBeCloseTo(0);
-    expect(p[2]).toBeCloseTo(0);
+    expect(Math.hypot(...p)).toBeCloseTo(len, 4);
+    // 109.5° from the C0–C1 bond, not straight across it.
+    expect(angleAt(p, [0, 0, 0], [1.5, 0, 0])).toBeCloseTo(109.47, 1);
+  });
+
+  it("goes trigonal for a double bond and linear for a triple", () => {
+    const double = placeBondedAtom(chain(), 0, 6, 2);
+    expect(angleAt(double, [0, 0, 0], [1.5, 0, 0])).toBeCloseTo(120, 1);
+    const triple = placeBondedAtom(chain(), 0, 6, 3);
+    expect(angleAt(triple, [0, 0, 0], [1.5, 0, 0])).toBeCloseTo(180, 1);
+    // An aromatic neighbour counts half a multiple bond: benzene's C is trigonal.
+    const s = chain();
+    s.nAtoms = 4;
+    s.nBonds = 2;
+    s.positions = new Float32Array([0, 0, 0, 1.4, 0, 0, -0.7, 1.21, 0, 9, 9, 9]);
+    s.elements = new Uint8Array([6, 6, 6, 6]);
+    s.bonds = new Uint32Array([0, 1, 0, 2]);
+    s.bondOrders = new Uint8Array([4, 4]);
+    const ring = placeBondedAtom(s, 0, 1);
+    expect(angleAt(ring, [0, 0, 0], [1.4, 0, 0])).toBeCloseTo(120, 0);
+    expect(angleAt(ring, [0, 0, 0], [-0.7, 1.21, 0])).toBeCloseTo(120, 0);
   });
 
   it("goes along +x for an atom with no neighbours", () => {
@@ -35,17 +60,48 @@ describe("placeBondedAtom", () => {
     expect(p[1]).toBeCloseTo(5);
   });
 
-  it("goes along +y when the neighbours cancel out", () => {
+  it("keeps clear of both neighbours when they sit on opposite sides", () => {
     const s = chain();
-    // Two neighbours on opposite sides of atom 0.
     s.nAtoms = 4;
     s.nBonds = 2;
     s.positions = new Float32Array([0, 0, 0, 1.5, 0, 0, -1.5, 0, 0, 5, 5, 5]);
     s.elements = new Uint8Array([6, 6, 6, 6]);
     s.bonds = new Uint32Array([0, 1, 0, 2]);
     const p = placeBondedAtom(s, 0, 6);
-    expect(p[0]).toBeCloseTo(0);
-    expect(p[1]).toBeGreaterThan(0);
+    expect(angleAt(p, [0, 0, 0], [1.5, 0, 0])).toBeGreaterThan(60);
+    expect(angleAt(p, [0, 0, 0], [-1.5, 0, 0])).toBeGreaterThan(60);
+  });
+
+  it("falls back to pointing away from a full shell", () => {
+    const d = 1.09 / Math.sqrt(3);
+    const s = chain();
+    s.nAtoms = 5;
+    s.nBonds = 4;
+    s.positions = new Float32Array([0, 0, 0, d, d, d, -d, -d, d, -d, d, -d, d, -d, -d]);
+    s.elements = new Uint8Array([6, 1, 1, 1, 1]);
+    s.bonds = new Uint32Array([0, 1, 0, 2, 0, 3, 0, 4]);
+    const p = placeBondedAtom(s, 0, 6);
+    expect(Math.hypot(...p)).toBeGreaterThan(1);
+    // Four neighbours in a plane that cancel out: the free axis out of it.
+    const flat = chain();
+    flat.nAtoms = 5;
+    flat.nBonds = 4;
+    flat.positions = new Float32Array([0, 0, 0, 1, 0, 0, -1, 0, 0, 0, 1, 0, 0, -1, 0]);
+    flat.elements = new Uint8Array([6, 6, 6, 6, 6]);
+    flat.bonds = new Uint32Array([0, 1, 0, 2, 0, 3, 0, 4]);
+    const q = placeBondedAtom(flat, 0, 6);
+    expect(Math.abs(q[2])).toBeCloseTo(2 * getCovalentRadius(6));
+  });
+
+  it("picks the free direction with room, away from a non-bonded atom", () => {
+    // C0–C1 along +x; the first free direction is crowded by a stray atom.
+    const s = chain();
+    const free = placeBondedAtom(s, 0, 6);
+    s.positions = new Float32Array([0, 0, 0, 1.5, 0, 0, free[0], free[1], free[2]]);
+    const p = placeBondedAtom(s, 0, 6);
+    const gap = Math.hypot(p[0] - free[0], p[1] - free[1], p[2] - free[2]);
+    expect(gap).toBeGreaterThan(2);
+    expect(angleAt(p, [0, 0, 0], [1.5, 0, 0])).toBeCloseTo(109.47, 1);
   });
 });
 
@@ -116,7 +172,8 @@ describe("describeOp", () => {
       "Move 1 atom by (1.00, 0.50, 0.00) Å",
     );
     expect(describeOp({ op: "set_element", atoms: [1, 2], element: 7 })).toBe("Set 2 atoms to N");
-    expect(describeOp({ op: "add_bond", a: 0, b: "x" })).toBe("Bond #0 – x");
+    // An added atom's internal id is never shown.
+    expect(describeOp({ op: "add_bond", a: 0, b: "x" })).toBe("Bond #0 – an added atom");
     expect(describeOp({ op: "add_bond", a: 0, b: 1, order: 2 })).toBe("Bond #0 – #1 (order 2)");
     expect(describeOp({ op: "delete_bond", a: 0, b: 1 })).toBe("Remove bond #0 – #1");
     expect(

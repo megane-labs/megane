@@ -4,6 +4,12 @@
  * optionally split by separators and headed by captions. Closes on an item,
  * a click outside, or Escape.
  *
+ * From the keyboard, as a menu button: Enter, Space or ↓ on the trigger
+ * opens it on the first item (↑ on the last), ↑ ↓ Home End move between the
+ * items that can run (disabled ones are skipped), Enter runs one, and Escape
+ * or Tab closes it — Escape giving focus back to the trigger. A disabled
+ * item keeps its `title`, which can say why it cannot run.
+ *
  * The list is portalled to `<body>` and placed under (or beside) the trigger
  * with fixed coordinates, kept inside the window: the rail it sits in scrolls
  * and clips its overflow, and a backdrop blur would capture fixed positioning.
@@ -126,7 +132,23 @@ export function Menu({
   const triggerRef = useRef<HTMLButtonElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
 
-  useDismiss({ onDismiss: () => setOpen(false), enabled: open, inside: [triggerRef, menuRef] });
+  // Which item takes focus once the list is placed: from the keyboard the
+  // first (or last); a click leaves focus on the trigger.
+  const focusOnOpen = useRef<"first" | "last" | null>(null);
+
+  /** The items that can run, in order. */
+  const enabledItems = () =>
+    [...(menuRef.current?.querySelectorAll<HTMLElement>('[role="menuitem"]') ?? [])].filter(
+      (el) => !(el as HTMLButtonElement).disabled,
+    );
+
+  /** Close; focus goes back to the trigger if it was in the list. */
+  const close = useCallback(() => {
+    if (menuRef.current?.contains(document.activeElement)) triggerRef.current?.focus();
+    setOpen(false);
+  }, []);
+
+  useDismiss({ onDismiss: close, enabled: open, inside: [triggerRef, menuRef] });
 
   // Under the trigger (or beside it), pulled back when it would run off the
   // window or out of the Builder (see `menuBounds`).
@@ -150,11 +172,70 @@ export function Menu({
     });
   }, [open, placement]);
 
-  const select = useCallback((item: MenuAction) => {
-    if (item.disabled) return;
-    setOpen(false);
-    item.onSelect();
-  }, []);
+  // Once placed (a hidden list cannot take focus), move into it if asked.
+  useLayoutEffect(() => {
+    if (!pos || !focusOnOpen.current) return;
+    const list = enabledItems();
+    (focusOnOpen.current === "first" ? list[0] : list[list.length - 1])?.focus();
+    focusOnOpen.current = null;
+  }, [pos]);
+
+  const select = useCallback(
+    (item: MenuAction) => {
+      if (item.disabled) return;
+      close();
+      item.onSelect();
+    },
+    [close],
+  );
+
+  const onTriggerKeyDown = (e: React.KeyboardEvent<HTMLButtonElement>) => {
+    const where =
+      e.key === "ArrowDown" || e.key === "Enter" || e.key === " "
+        ? "first"
+        : e.key === "ArrowUp"
+          ? "last"
+          : null;
+    if (!where || disabled) return;
+    e.preventDefault();
+    if (open) {
+      // Already open (from a click): step into it.
+      const list = enabledItems();
+      (where === "first" ? list[0] : list[list.length - 1])?.focus();
+      return;
+    }
+    focusOnOpen.current = where;
+    setOpen(true);
+  };
+
+  const onMenuKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
+    if (e.key === "Tab") {
+      setOpen(false);
+      return;
+    }
+    const list = enabledItems();
+    if (list.length === 0) return;
+    const i = list.indexOf(document.activeElement as HTMLElement);
+    let j: number;
+    switch (e.key) {
+      case "ArrowDown":
+        j = i < 0 ? 0 : (i + 1) % list.length;
+        break;
+      case "ArrowUp":
+        j = i < 0 ? list.length - 1 : (i - 1 + list.length) % list.length;
+        break;
+      case "Home":
+        j = 0;
+        break;
+      case "End":
+        j = list.length - 1;
+        break;
+      default:
+        return;
+    }
+    e.preventDefault();
+    list[j].focus();
+  };
 
   return (
     <>
@@ -174,6 +255,7 @@ export function Menu({
           opacity: disabled ? 0.45 : 1,
         }}
         onClick={() => setOpen((o) => !o)}
+        onKeyDown={onTriggerKeyDown}
       >
         {label}
         {caret && (
@@ -187,7 +269,9 @@ export function Menu({
           <div
             ref={menuRef}
             role="menu"
+            aria-label={ariaLabel ?? (typeof label === "string" ? label : undefined)}
             data-testid={testId ? `${testId}-menu` : undefined}
+            onKeyDown={onMenuKeyDown}
             style={{
               ...dropdownStyle,
               position: "fixed",
@@ -253,6 +337,8 @@ export function Menu({
                   role="menuitem"
                   data-testid={item.testId}
                   disabled={item.disabled}
+                  aria-disabled={item.disabled || undefined}
+                  tabIndex={-1}
                   title={item.title}
                   onClick={() => select(item)}
                   style={{

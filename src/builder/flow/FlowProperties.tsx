@@ -7,7 +7,7 @@
  * that come in on wires); the block's run; and what to do with its result.
  */
 
-import { useMemo, type ReactNode } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import type { StoreApi } from "zustand";
 import {
   NodeMessages,
@@ -38,7 +38,7 @@ import {
   useScopedToolsStore,
 } from "../BuilderStores";
 import type { BuilderStore } from "../store";
-import { shownSnapshot } from "../store";
+import { confirmDiscard, shownSnapshot } from "../store";
 import {
   blockColor,
   blockIcon,
@@ -46,13 +46,15 @@ import {
   blockSummary,
   blockTitle,
   runStatusColor,
+  runStatusHollow,
+  runStatusLabel,
   runStatusText,
 } from "./describe";
 import { BuiltinForm } from "./BuiltinForms";
 import { incoming, type FlowDeps } from "./engine";
 import { asLibraryMolecule, rowFields, toolPorts } from "./ports";
-import { adoptResult } from "./shared";
-import type { FlowStore, FlowNode } from "./store";
+import { adoptResult, runTo } from "./shared";
+import { outputNodeId, type FlowStore, type FlowNode } from "./store";
 import {
   IDLE_RUN,
   type DocumentParams,
@@ -87,17 +89,20 @@ const warningTextStyle: React.CSSProperties = {
 
 /**
  * Make a block's result the structure shared with Manual mode (a new
- * document), and switch to Manual mode.
+ * document), and switch to Manual mode, after asking when the open document
+ * has unsaved edits. Resolves to whether it did.
  */
-export function openInManual(
+export async function openInManual(
   builder: StoreApi<BuilderStore>,
   flow: StoreApi<FlowStore>,
   data: FlowData,
   key: string | null = null,
-): void {
+): Promise<boolean> {
+  if (!(await confirmDiscard(builder, `Opening ${data.name} in Manual`))) return false;
   adoptResult(builder, flow, data, key);
   builder.getState().reportInfo(`Opened ${data.name} from Flow (${data.snapshot.nAtoms} atoms).`);
   flow.getState().setMode("manual");
+  return true;
 }
 
 function MoleculeForm({
@@ -149,6 +154,11 @@ function MoleculeForm({
             value={params.libraryId}
             onChange={(e) => updateParams(id, { libraryId: e.target.value })}
           >
+            {!library.some((m) => m.id === params.libraryId) && (
+              <option value={params.libraryId} disabled>
+                Missing molecule — choose one
+              </option>
+            )}
             {library.map((m) => (
               <option key={m.id} value={m.id}>
                 {m.name} ({m.formula})
@@ -176,17 +186,23 @@ function MoleculeForm({
   );
 }
 
-function DocumentForm(_: { params: DocumentParams }) {
+function DocumentForm({ deps }: { params: DocumentParams; deps: FlowDeps }) {
   const source = useScopedBuilderStore((s) => s.source);
   const result = useScopedBuilderStore((s) => s.result);
   const showOriginal = useScopedBuilderStore((s) => s.showOriginal);
   const fileName = useScopedBuilderStore((s) => s.fileName);
+  const pinned = useScopedFlowStore((s) => s.pinnedDocument);
   const shown = shownSnapshot({ source, result, showOriginal });
+  // While the document is still the flow's own result, the block reads the one before it.
+  const doc = shown ? deps.document() : null;
+  const base = doc && pinned && doc.key === pinned.adoptedDocKey ? pinned.base : null;
   return (
     <div style={hintStyle} data-testid="builder-flow-document-info">
-      {shown
-        ? `Uses ${fileName ?? "the structure"} as it is in Manual mode (${shown.nAtoms} atoms) when the flow runs.`
-        : "Manual mode has no structure open. Open or build one there first."}
+      {base
+        ? `Uses ${base.data.name} as it was before Run replaced it with this flow's result (${base.data.snapshot.nAtoms} atoms), so running again builds the same model. Edit the structure in Manual mode to use it instead.`
+        : shown
+          ? `Uses ${fileName ?? "the structure"} as it is in Manual mode (${shown.nAtoms} atoms) when the flow runs.`
+          : "Manual mode has no structure open. Open or build one there first."}
     </div>
   );
 }
@@ -196,11 +212,15 @@ function ToolForm({
   params,
   tool,
   library,
+  hasTools,
+  onOpenServer,
 }: {
   node: FlowNode;
   params: ToolParams;
   tool: BuilderToolInfo | null;
   library: LibraryMolecule[];
+  hasTools: boolean;
+  onOpenServer?: () => void;
 }) {
   const updateParams = useScopedFlowStore((s) => s.updateParams);
   const nodes = useScopedFlowStore((s) => s.nodes);
@@ -210,9 +230,32 @@ function ToolForm({
   const sources = useMemo(() => incoming({ nodes, edges }, node.id), [nodes, edges, node.id]);
 
   if (!tool) {
+    const name = params.label || params.tool;
+    if (!hasTools) {
+      return (
+        <div style={warningTextStyle} data-testid="builder-flow-tool-missing">
+          {`${name} runs on a tool server, which this Builder cannot reach. Open the flow in the megane web app or VS Code with a tool server to run it, or remove the block.`}
+        </div>
+      );
+    }
     return (
-      <div style={warningTextStyle}>
-        {`Connect to a tool server that offers ${params.label || params.tool} (Add › Tool server…) to edit or run this block.`}
+      <div
+        data-testid="builder-flow-tool-missing"
+        style={{ display: "flex", flexDirection: "column", gap: 8 }}
+      >
+        <span style={warningTextStyle}>
+          {`Connect to a tool server that offers ${name} (Add › Tool server…) to edit or run this block.`}
+        </span>
+        {onOpenServer && (
+          <button
+            type="button"
+            data-testid="builder-flow-tool-connect"
+            style={actionStyle(false, false)}
+            onClick={onOpenServer}
+          >
+            Tool server…
+          </button>
+        )}
       </div>
     );
   }
@@ -372,9 +415,30 @@ function ToolForm({
   );
 }
 
+/** Seconds since `since` (ms), ticking once a second; null without a start. */
+function useElapsed(since: number | undefined): number | null {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    if (since === undefined) return;
+    setNow(Date.now());
+    const timer = window.setInterval(() => setNow(Date.now()), 1000);
+    return () => window.clearInterval(timer);
+  }, [since]);
+  return since === undefined ? null : Math.max(0, Math.floor((now - since) / 1000));
+}
+
+/** The sliding bar of a run whose progress is not known. */
+const INDETERMINATE_CSS = `@keyframes megane-flow-indeterminate {
+  0% { transform: translateX(-100%); }
+  100% { transform: translateX(250%); }
+}`;
+
 /** The block's run: its status, a progress bar while it runs, the tool's own summary. */
 function RunSummary({ run }: { run: NodeRun }) {
+  const elapsed = useElapsed(run.status === "running" ? run.startedAt : undefined);
   if (run.status === "idle") return null;
+  const color = runStatusColor(run);
+  const known = run.fraction !== null;
   return (
     <div
       data-testid="builder-flow-run-summary"
@@ -383,13 +447,34 @@ function RunSummary({ run }: { run: NodeRun }) {
     >
       <span style={{ ...hintStyle, display: "flex", alignItems: "center", gap: 6 }}>
         <span
-          aria-hidden="true"
-          style={{ width: 8, height: 8, borderRadius: "50%", background: runStatusColor(run) }}
+          role="img"
+          aria-label={runStatusLabel(run)}
+          title={runStatusLabel(run)}
+          style={{
+            width: 8,
+            height: 8,
+            boxSizing: "border-box",
+            borderRadius: "50%",
+            flexShrink: 0,
+            ...(runStatusHollow(run) ? { border: `2px solid ${color}` } : { background: color }),
+          }}
         />
         {runStatusText(run)}
+        {elapsed !== null && (
+          <span data-testid="builder-flow-run-elapsed" style={{ marginLeft: "auto" }}>
+            {`${elapsed} s`}
+          </span>
+        )}
       </span>
       {run.status === "running" && (
         <div
+          role="progressbar"
+          aria-label="Block progress"
+          aria-valuemin={0}
+          aria-valuemax={100}
+          {...(known ? { "aria-valuenow": Math.round(run.fraction! * 100) } : {})}
+          data-testid="builder-flow-progress"
+          data-indeterminate={known ? "false" : "true"}
           style={{
             height: 6,
             borderRadius: 3,
@@ -397,18 +482,68 @@ function RunSummary({ run }: { run: NodeRun }) {
             overflow: "hidden",
           }}
         >
+          {!known && <style>{INDETERMINATE_CSS}</style>}
           <div
             style={{
               height: "100%",
-              width: `${Math.round((run.fraction ?? 0.05) * 100)}%`,
               background: "var(--megane-primary)",
-              transition: "width 200ms",
+              ...(known
+                ? { width: `${Math.round(run.fraction! * 100)}%`, transition: "width 200ms" }
+                : {
+                    width: "40%",
+                    animation: "megane-flow-indeterminate 1.2s ease-in-out infinite",
+                  }),
             }}
           />
         </div>
       )}
       {run.summary && run.status !== "error" && <span style={hintStyle}>{run.summary}</span>}
     </div>
+  );
+}
+
+/** The note that this block is the one Run makes the Manual structure. */
+function OutputNote() {
+  return (
+    <div
+      data-testid="builder-flow-output-note"
+      style={{
+        ...hintStyle,
+        display: "flex",
+        alignItems: "center",
+        gap: 6,
+        padding: "8px 14px",
+        borderBottom: "1px solid var(--megane-border)",
+      }}
+    >
+      <OutputBadge />
+      <span>Run makes this block&apos;s result the structure Manual mode edits.</span>
+    </div>
+  );
+}
+
+/** The "Output" tag of the block a Run adopts (on its card and in the pane). */
+export function OutputBadge({ style }: { style?: React.CSSProperties }) {
+  return (
+    <span
+      data-testid="builder-flow-output-badge"
+      title="Output: Run makes this block's result the structure Manual mode edits"
+      style={{
+        fontSize: 9,
+        fontWeight: 700,
+        letterSpacing: "0.04em",
+        textTransform: "uppercase",
+        color: "#fff",
+        background: "var(--megane-primary, #3b82f6)",
+        borderRadius: 4,
+        padding: "1px 5px",
+        lineHeight: "14px",
+        whiteSpace: "nowrap",
+        ...style,
+      }}
+    >
+      Output
+    </span>
   );
 }
 
@@ -427,13 +562,24 @@ export interface FlowPropertiesProps {
   /** Show the tool server form instead of the selected block. */
   serverOpen: boolean;
   onCloseServer: () => void;
+  /** The host reaches tool servers (else a tool block says it cannot run here). Default true. */
+  hasTools?: boolean;
+  /** Show the tool server form (from a tool block whose server is not connected). */
+  onOpenServer?: () => void;
 }
 
-export function FlowProperties({ deps, height, serverOpen, onCloseServer }: FlowPropertiesProps) {
+export function FlowProperties({
+  deps,
+  height,
+  serverOpen,
+  onCloseServer,
+  hasTools = true,
+  onOpenServer,
+}: FlowPropertiesProps) {
   const nodes = useScopedFlowStore((s) => s.nodes);
   const runs = useScopedFlowStore((s) => s.runs);
   const running = useScopedFlowStore((s) => s.running);
-  const run = useScopedFlowStore((s) => s.run);
+  const outputId = useScopedFlowStore(outputNodeId);
   const removeNode = useScopedFlowStore((s) => s.removeNode);
   const connection = useScopedToolsStore((s) => s.connection);
   const edits = useScopedBuilderStore((s) => s.edits);
@@ -462,12 +608,13 @@ export function FlowProperties({ deps, height, serverOpen, onCloseServer }: Flow
           testId="builder-flow-properties-header"
           icon={blockIcon(params)}
           color={blockColor(params)}
-          title={blockTitle(params, tool)}
+          title={blockTitle(params, tool, library)}
           summary={blockSummary(params, nodeRun, library)}
           onRemove={() => removeNode(node.id)}
           removeDisabled={!!running}
           removeTestId="builder-flow-delete-node"
         />
+        {node.id === outputId && <OutputNote />}
         {messages.length > 0 && <NodeMessages messages={messages} testId="builder-flow-messages" />}
       </>
     );
@@ -480,9 +627,16 @@ export function FlowProperties({ deps, height, serverOpen, onCloseServer }: Flow
         {params.type === "molecule" && (
           <MoleculeForm id={node.id} params={params} library={library} />
         )}
-        {params.type === "document" && <DocumentForm params={params} />}
+        {params.type === "document" && <DocumentForm params={params} deps={deps} />}
         {params.type === "tool" && (
-          <ToolForm node={node} params={params} tool={tool} library={library} />
+          <ToolForm
+            node={node}
+            params={params}
+            tool={tool}
+            library={library}
+            hasTools={hasTools}
+            onOpenServer={onOpenServer}
+          />
         )}
         <BuiltinForm id={node.id} params={params} />
         <RunSummary run={nodeRun} />
@@ -493,7 +647,7 @@ export function FlowProperties({ deps, height, serverOpen, onCloseServer }: Flow
             style={actionStyle(false, !!running)}
             disabled={!!running}
             title="Run this block and the blocks it needs"
-            onClick={() => void run(deps, [node.id])}
+            onClick={() => void runTo(builderApi, flowApi, deps, node.id)}
           >
             Run to here
           </button>
@@ -507,7 +661,7 @@ export function FlowProperties({ deps, height, serverOpen, onCloseServer }: Flow
                 ? "Open this result in Manual mode; it replaces the open structure and its history"
                 : "Open this result in Manual mode to edit or save it"
             }
-            onClick={() => data && openInManual(builderApi, flowApi, data, nodeRun.key)}
+            onClick={() => data && void openInManual(builderApi, flowApi, data, nodeRun.key)}
           >
             Open in Manual
           </button>
@@ -529,8 +683,8 @@ export function FlowProperties({ deps, height, serverOpen, onCloseServer }: Flow
           testId="builder-flow-empty-hint"
           text={
             nodes.length === 0
-              ? "Add blocks with + on the rail, wire each block's output (bottom) to an input (top) of the next, then press Run."
-              : "Select a block to edit it and see its result. Run builds every block and makes the last one's result the structure Manual mode edits; with no block selected, the 3D view shows that structure."
+              ? "Add blocks with + on the rail, wire each block's output (bottom) to an input (top) of the next, then press Run. The last block no wire leaves is the output (tagged Output): Run makes its result the structure Manual mode edits."
+              : "Select a block to edit it and see its result. Run builds every block and makes the output block's result (the one tagged Output: the last block no wire leaves) the structure Manual mode edits; with no block selected, the 3D view shows that structure."
           }
         />
       }

@@ -5,7 +5,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { render, screen, fireEvent, cleanup } from "@testing-library/react";
+import { render, screen, fireEvent, cleanup, waitFor } from "@testing-library/react";
 import { NewStructureDialog, DEFAULT_NEW_CELL_EDGE } from "@/builder/NewStructureDialog";
 
 const click = (id: string) => fireEvent.click(screen.getByTestId(id));
@@ -134,5 +134,89 @@ describe("NewStructureDialog — bulk crystal", () => {
     // Switching tabs clears the message.
     click("builder-new-kind-cell");
     expect(screen.queryByTestId("builder-new-error")).toBeNull();
+  });
+});
+
+describe("NewStructureDialog — tabs", () => {
+  it("are buttons in a tab list, moved between with the arrow keys, Home and End", () => {
+    open();
+    const cell = screen.getByTestId("builder-new-kind-cell");
+    const bulk = screen.getByTestId("builder-new-kind-bulk");
+    expect(cell.tagName).toBe("BUTTON");
+    expect(cell.getAttribute("role")).toBe("tab");
+    expect(cell.getAttribute("aria-selected")).toBe("true");
+    // Only the selected tab is in the Tab order.
+    expect(cell.tabIndex).toBe(0);
+    expect(bulk.tabIndex).toBe(-1);
+    fireEvent.keyDown(cell, { key: "ArrowRight" });
+    expect(bulk.getAttribute("aria-selected")).toBe("true");
+    expect(document.activeElement).toBe(bulk);
+    expect(screen.getByTestId("builder-bulk-create")).toBeTruthy();
+    fireEvent.keyDown(bulk, { key: "ArrowRight" });
+    expect(cell.getAttribute("aria-selected")).toBe("true");
+    fireEvent.keyDown(cell, { key: "ArrowLeft" });
+    expect(bulk.getAttribute("aria-selected")).toBe("true");
+    fireEvent.keyDown(bulk, { key: "ArrowUp" });
+    expect(cell.getAttribute("aria-selected")).toBe("true");
+    fireEvent.keyDown(cell, { key: "End" });
+    expect(bulk.getAttribute("aria-selected")).toBe("true");
+    fireEvent.keyDown(bulk, { key: "Home" });
+    expect(cell.getAttribute("aria-selected")).toBe("true");
+    fireEvent.keyDown(cell, { key: "ArrowDown" });
+    expect(bulk.getAttribute("aria-selected")).toBe("true");
+    // Other keys leave the tabs alone.
+    fireEvent.keyDown(bulk, { key: "x" });
+    expect(bulk.getAttribute("aria-selected")).toBe("true");
+    fireEvent.click(cell);
+    expect(cell.getAttribute("aria-selected")).toBe("true");
+  });
+});
+
+describe("NewStructureDialog — replacing the open structure", () => {
+  it("goes ahead at once on a synchronous yes and stays open on a no", () => {
+    const confirmReplace = vi.fn(() => false);
+    open({ hasDocument: true, confirmReplace });
+    click("builder-new-cell");
+    expect(confirmReplace).toHaveBeenCalledTimes(1);
+    expect(onNewCell).not.toHaveBeenCalled();
+    expect(onClose).not.toHaveBeenCalled();
+    confirmReplace.mockReturnValue(true);
+    click("builder-new-cell");
+    expect(onNewCell).toHaveBeenCalledWith(DEFAULT_NEW_CELL_EDGE);
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it("waits for an asked question, and reports a refused spec after it", async () => {
+    let answer: (ok: boolean) => void = () => {};
+    const confirmReplace = vi.fn(() => new Promise<boolean>((r) => (answer = r)));
+    open({ hasDocument: true, initialKind: "bulk", confirmReplace });
+    click("builder-bulk-create");
+    expect(onNewBulk).not.toHaveBeenCalled();
+    answer(false);
+    await Promise.resolve();
+    expect(onNewBulk).not.toHaveBeenCalled();
+
+    click("builder-bulk-create");
+    answer(true);
+    await waitFor(() => expect(onNewBulk).toHaveBeenCalledTimes(1));
+    expect(onClose).toHaveBeenCalledTimes(1);
+
+    onNewBulk.mockImplementation(() => {
+      throw new Error("lattice constant must be positive");
+    });
+    click("builder-bulk-create");
+    answer(true);
+    await waitFor(() =>
+      expect(screen.getByTestId("builder-new-error").textContent).toContain("positive"),
+    );
+    onNewBulk.mockImplementation(() => {
+      throw "plain refusal";
+    });
+    click("builder-bulk-create");
+    answer(true);
+    await waitFor(() =>
+      expect(screen.getByTestId("builder-new-error").textContent).toBe("plain refusal"),
+    );
+    expect(onClose).toHaveBeenCalledTimes(1);
   });
 });

@@ -267,8 +267,9 @@ test.describe("builder-tools: webapp", () => {
     // Manual mode edits that box; back in Flow, the view and an unchanged Run keep the edit.
     await page.getByTestId("builder-mode-manual").click();
     await expect(page.getByTestId("builder-tool-rail")).toBeVisible();
+    // The box has explicit hydrogens, so the water's O goes with its two H.
     await deleteAtom(page, 0);
-    await expect(page.getByTestId("megane-builder")).toHaveAttribute("data-atom-count", "299");
+    await expect(page.getByTestId("megane-builder")).toHaveAttribute("data-atom-count", "297");
     await page.getByTestId("builder-mode-flow").click();
     await expect(page.getByTestId("builder-flow-panel")).toBeVisible();
     await page.getByTestId("builder-flow-run").click();
@@ -284,11 +285,13 @@ test.describe("builder-tools: webapp", () => {
         ),
       )
       .toBeNull();
-    expect(await builderState(page)).toMatchObject({ nAtoms: 299, edits: ["delete_atoms"] });
+    expect(await builderState(page)).toMatchObject({ nAtoms: 297, edits: ["delete_atoms"] });
     expect(calls).toHaveLength(1);
 
-    // Open the box in Manual mode as the document.
+    // Open the box in Manual mode as the document, which replaces the
+    // edited one after asking.
     await page.getByTestId("builder-flow-open-manual").click();
+    await page.getByTestId("builder-confirm-ok").click();
     await expect(page.getByTestId("megane-builder")).toHaveAttribute("data-mode", "manual");
     await expect(page.getByTestId("megane-builder")).toHaveAttribute("data-atom-count", "300");
     await expect(page.getByTestId("builder-tool-rail")).toBeVisible();

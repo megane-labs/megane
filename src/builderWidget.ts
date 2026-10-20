@@ -7,8 +7,8 @@
  *   bytes and name) and bumps `_source_seq`; the view opens it as the document.
  * - **Builder → Python.** Every change to the document is written back,
  *   debounced, into `_document`: its name, counts, and the structure as XYZ,
- *   PDB and MOL text (null for a format the writer refuses, e.g. MOL past 999
- *   atoms). `Builder.save()` / `to_ase()` read it, so the kernel always has the
+ *   PDB, MOL, CIF and POSCAR text (null for a format the writer refuses, e.g.
+ *   MOL past 999 atoms, or CIF / POSCAR without a unit cell). `Builder.save()` / `to_ase()` read it, so the kernel always has the
  *   structure on screen without asking the front end.
  * - **Save.** File › Save sends the file to the kernel (`{type: "save"}`),
  *   which writes it into its working directory — the notebook's folder — and
@@ -56,6 +56,8 @@ export interface DocumentState {
   xyz: string | null;
   pdb: string | null;
   mol: string | null;
+  cif: string | null;
+  poscar: string | null;
 }
 
 /** How long Save (and the RDKit download) waits for the kernel to answer. */
@@ -63,7 +65,7 @@ export const SAVE_TIMEOUT_MS = 15_000;
 /** Quiet time after an edit before `_document` is rewritten. */
 export const SYNC_DEBOUNCE_MS = 250;
 
-const FORMATS: StructureWriteFormat[] = ["xyz", "pdb", "mol"];
+const FORMATS: StructureWriteFormat[] = ["xyz", "pdb", "mol", "cif", "poscar"];
 
 /** The document as `_document` carries it; null texts for formats the writer refuses. */
 export async function documentState(
@@ -74,7 +76,13 @@ export async function documentState(
   write: typeof snapshotToText = snapshotToText,
 ): Promise<DocumentState> {
   const shown: Snapshot | null = shownSnapshot(state);
-  const texts: Record<StructureWriteFormat, string | null> = { xyz: null, pdb: null, mol: null };
+  const texts: Record<StructureWriteFormat, string | null> = {
+    xyz: null,
+    pdb: null,
+    mol: null,
+    cif: null,
+    poscar: null,
+  };
   if (shown) {
     for (const format of FORMATS) {
       try {

@@ -161,6 +161,8 @@ export interface NodeRun {
   /** Progress of a running tool call, 0..1, or null when unknown. */
   fraction: number | null;
   message: string | null;
+  /** When a running block started (`Date.now()`), for the elapsed time it shows. */
+  startedAt?: number;
 }
 
 /** `data` of an xyflow node in the Flow graph. */

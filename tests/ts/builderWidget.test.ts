@@ -144,6 +144,8 @@ describe("documentState", () => {
       xyz: null,
       pdb: null,
       mol: null,
+      cif: null,
+      poscar: null,
     });
   });
 
@@ -162,6 +164,8 @@ describe("documentState", () => {
       xyz: "T-xyz",
       pdb: "T-pdb",
       mol: null,
+      cif: "T-cif",
+      poscar: "T-poscar",
     });
   });
 });

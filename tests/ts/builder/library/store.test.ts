@@ -88,8 +88,31 @@ describe("library store", () => {
       },
     } as unknown as Storage;
     const b = createLibraryStore(throwing);
+    expect(b.getState().persistFailed).toBe(false);
+    expect(b.getState().takePersistNotice()).toBe(false);
     b.getState().addMolecule(draft());
     expect(b.getState().user).toHaveLength(1);
+    // The failure is remembered and announced exactly once.
+    expect(b.getState().persistFailed).toBe(true);
+    expect(b.getState().takePersistNotice()).toBe(true);
+    expect(b.getState().takePersistNotice()).toBe(false);
+    b.getState().addMolecule(draft("again"));
+    expect(b.getState().takePersistNotice()).toBe(false);
+  });
+
+  it("replaces a user molecule's content and keeps its id", () => {
+    const storage = new MemoryStorage();
+    const store = createLibraryStore(storage);
+    const added = store.getState().addMolecule(draft("Before"));
+    const replaced = store.getState().replaceMolecule(added.id, {
+      ...draft("After"),
+      elements: [8],
+    });
+    expect(replaced).toMatchObject({ id: added.id, name: "After", elements: [8] });
+    expect(store.getState().user).toEqual([replaced]);
+    expect(JSON.parse(storage.getItem(LIBRARY_STORAGE_KEY)!)[0].name).toBe("After");
+    expect(store.getState().replaceMolecule("user:missing", draft())).toBeNull();
+    expect(store.getState().persistFailed).toBe(false);
   });
 
   it("the app store uses localStorage", () => {

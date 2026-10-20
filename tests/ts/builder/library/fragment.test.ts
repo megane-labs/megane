@@ -1,6 +1,10 @@
 import { describe, it, expect } from "vitest";
 import {
   autoPlacement,
+  autoPlacementInfo,
+  describePlacement,
+  emptySpotInCell,
+  moleculeRadius,
   bounds,
   centered,
   centroid,
@@ -109,6 +113,54 @@ describe("fragment geometry helpers", () => {
     };
     expect(autoPlacement(empty, geometry)).toEqual([6, 5, 4]);
     expect(autoPlacement({ ...empty, box: null, boxOrigin: null }, geometry)).toEqual([0, 0, 0]);
+  });
+
+  it("in a cell with atoms, prefers the emptiest spot inside the cell when the molecule fits", () => {
+    const geometry = { elements: [6, 6], positions: [-1, 0, 0, 1, 0, 0], bonds: [] };
+    expect(moleculeRadius(geometry)).toBeCloseTo(1);
+    expect(moleculeRadius({ elements: [], positions: [], bonds: [] })).toBe(0);
+    const big = water(new Float32Array([12, 0, 0, 0, 12, 0, 0, 0, 12]));
+    const info = autoPlacementInfo(big, geometry);
+    expect(info.kind).toBe("in-cell");
+    // Inside the cell and well clear of the water (minimum image).
+    for (const v of info.at) {
+      expect(v).toBeGreaterThan(0);
+      expect(v).toBeLessThan(12);
+    }
+    const nearest = Math.min(
+      ...[0, 1, 2].map((a) => {
+        const d = [0, 1, 2].map((k) => {
+          let x = (info.at[k] - big.positions[a * 3 + k]) / 12;
+          x -= Math.round(x);
+          return x * 12;
+        });
+        return Math.hypot(...d);
+      }),
+    );
+    expect(nearest).toBeGreaterThan(1 + 2);
+    expect(autoPlacement(big, geometry)).toEqual(info.at);
+    // A cell too small to hold it: beside the structure instead.
+    const tiny = water(new Float32Array([3, 0, 0, 0, 3, 0, 0, 0, 3]));
+    expect(autoPlacementInfo(tiny, geometry).kind).toBe("beside");
+    expect(emptySpotInCell(tiny, 1)).toBeNull();
+    // A degenerate cell or no cell has no inside.
+    expect(emptySpotInCell(water(new Float32Array(9)), 0)).toBeNull();
+    expect(emptySpotInCell(water(), 0)).toBeNull();
+    // The origin shifts the grid with the cell.
+    const shifted = { ...big, boxOrigin: new Float32Array([100, 0, 0]) };
+    expect(emptySpotInCell(shifted, 0)![0]).toBeGreaterThan(100);
+  });
+
+  it("describes where a molecule went", () => {
+    expect(describePlacement({ at: [1, 2.25, 3], kind: "in-cell" })).toBe(
+      "in the emptiest part of the cell, at (1.0, 2.3, 3.0) Å",
+    );
+    expect(describePlacement({ at: [5, 0, 0], kind: "beside" })).toContain("beside the structure");
+    expect(describePlacement({ at: [5, 5, 5], kind: "cell-centre" })).toBe(
+      "at the cell centre, (5.0, 5.0, 5.0) Å",
+    );
+    expect(describePlacement({ at: [0, 0, 0], kind: "origin" })).toBe("at the origin");
+    expect(autoPlacementInfo(null, { elements: [], positions: [], bonds: [] }).kind).toBe("origin");
   });
 
   it("fragment ids carry the name; the op translates the centred geometry", () => {

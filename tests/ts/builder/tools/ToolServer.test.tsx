@@ -8,6 +8,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, fireEvent, cleanup, act, waitFor } from "@testing-library/react";
 import { ToolServerDialog, toolsMenuItems, useToolServerLaunch } from "@/builder/tools/ToolServer";
 import { ToolDialog } from "@/builder/tools/ToolDialog";
+import { parseElement } from "@/builder/tools/ToolFields";
 import { Menu } from "@/builder/Menu";
 import { useToolsStore } from "@/builder/tools/store";
 import { useBuilderStore } from "@/builder/store";
@@ -132,6 +133,40 @@ describe("Tools menu and Tool server dialog", () => {
     expect(screen.getByTestId("builder-tools-connected")).toBeTruthy();
   });
 
+  it("Cancel gives up on a connect that does not answer", async () => {
+    let answer!: (c: ToolConnection) => void;
+    mocks.connect.mockImplementationOnce(() => new Promise((r) => (answer = r)));
+    render(<Tools />);
+    act(() => click("builder-tools-connect"));
+    expect(screen.getByTestId("builder-tools-connect").textContent).toBe("Connecting…");
+    expect((screen.getByTestId("builder-tools-connect") as HTMLButtonElement).disabled).toBe(true);
+    click("builder-tools-connect-cancel");
+    expect(useToolsStore.getState().status).toBe("idle");
+    expect(screen.queryByTestId("builder-tools-connect-cancel")).toBeNull();
+    // The late connection is dropped.
+    const late = connection();
+    const close = vi.spyOn(late, "close");
+    await act(async () => answer(late));
+    expect(close).toHaveBeenCalled();
+    expect(useToolsStore.getState().status).toBe("idle");
+    expect(screen.queryByTestId("builder-tools-connected")).toBeNull();
+  });
+
+  it("Enter in the URL or token field connects", async () => {
+    render(<Tools />);
+    change("builder-tools-token", "tok");
+    await act(async () => fireEvent.submit(screen.getByTestId("builder-tools-form")));
+    expect(mocks.connect).toHaveBeenCalledWith("http://127.0.0.1:8765/mcp", "tok");
+    await screen.findByTestId("builder-tools-connected");
+    // Connected, Enter does not reconnect; nor without a URL.
+    await act(async () => fireEvent.submit(screen.getByTestId("builder-tools-form")));
+    expect(mocks.connect).toHaveBeenCalledTimes(1);
+    await act(async () => click("builder-tools-disconnect"));
+    change("builder-tools-url", "  ");
+    await act(async () => fireEvent.submit(screen.getByTestId("builder-tools-form")));
+    expect(mocks.connect).toHaveBeenCalledTimes(1);
+  });
+
   it("connects and lists the tools by category", async () => {
     await connect();
     expect(mocks.connect).toHaveBeenCalledWith("http://127.0.0.1:8765/mcp", "tok");
@@ -145,6 +180,8 @@ describe("Tools menu and Tool server dialog", () => {
     expect(screen.getByTestId("builder-tools-connected").textContent).toContain("3 tools");
     await act(async () => click("builder-tools-disconnect"));
     expect(screen.queryByTestId("builder-tools-connected")).toBeNull();
+    // Disconnect stays disconnected: the click does not submit the form.
+    expect(mocks.connect).toHaveBeenCalledTimes(1);
     click("builder-tools");
     expect(screen.queryByTestId("builder-tools-button-liquid_box")).toBeNull();
   });
@@ -174,6 +211,10 @@ describe("Tools menu and Tool server dialog", () => {
     const button = screen.getByTestId("builder-tools-button-oneof") as HTMLButtonElement;
     expect(button.disabled).toBe(true);
     expect(button.title).toContain("cannot build a form");
+    // The reason is in the menu itself, not only in the tooltip.
+    expect(screen.getByTestId("builder-tools-unavailable-oneof").textContent).toMatch(
+      /^Unavailable: /,
+    );
     click("builder-tools"); // closes the menu again
 
     mocks.connect.mockImplementationOnce(async () => connection([]));
@@ -285,6 +326,52 @@ describe("ToolDialog", () => {
 
     pick("liquid_box");
     expect(screen.getByTestId("builder-tool-replaces")).toBeTruthy();
+    // Running it asks first; No leaves the document alone.
+    await act(async () => click("builder-tool-run"));
+    expect(useBuilderStore.getState().confirm?.confirmLabel).toBe("Discard edits");
+    expect(useBuilderStore.getState().confirm?.message).toMatch(/^Running Liquid box replaces/);
+    await act(async () => useBuilderStore.getState().resolveConfirm(false));
+    expect(useBuilderStore.getState().edits).toHaveLength(1);
+    expect(screen.getByTestId("builder-tool-dialog")).toBeTruthy();
+    await act(async () => click("builder-tool-run"));
+    await act(async () => useBuilderStore.getState().resolveConfirm(true));
+    expect(screen.queryByTestId("builder-tool-dialog")).toBeNull();
+    expect(useBuilderStore.getState().edits).toHaveLength(0);
+  });
+
+  it("remembers a form's values for the session, and Enter runs it", async () => {
+    await connect();
+    pick("liquid_box");
+    change("builder-tool-field-density", "0.7");
+    const seed = (screen.getByTestId("builder-tool-field-seed") as HTMLInputElement).value;
+    click("builder-tool-close");
+    pick("liquid_box");
+    expect((screen.getByTestId("builder-tool-field-density") as HTMLInputElement).value).toBe(
+      "0.7",
+    );
+    expect((screen.getByTestId("builder-tool-field-seed") as HTMLInputElement).value).toBe(seed);
+    let sent: Record<string, unknown> = {};
+    mocks.call = async (name, args) => {
+      sent = args;
+      return recorded(name);
+    };
+    await act(async () => fireEvent.submit(screen.getByTestId("builder-tool-form")));
+    expect(sent).toMatchObject({ density: 0.7 });
+    expect(screen.queryByTestId("builder-tool-dialog")).toBeNull();
+  });
+
+  it("Enter does nothing while the form has a problem", async () => {
+    await connect();
+    pick("polymer_chain");
+    change("builder-tool-field-length", "0");
+    const calls = vi.fn();
+    mocks.call = async (name) => {
+      calls();
+      return recorded(name);
+    };
+    await act(async () => fireEvent.submit(screen.getByTestId("builder-tool-form")));
+    expect(calls).not.toHaveBeenCalled();
+    expect(screen.getByTestId("builder-tool-run").getAttribute("title")).toContain("at least 1");
   });
 
   it("shows progress and cancels", async () => {
@@ -337,6 +424,16 @@ describe("ToolDialog", () => {
     change("builder-tool-field-label", "abc");
     fireEvent.click(screen.getByTestId("builder-tool-field-flag"));
     change("builder-tool-field-group-x", "3");
+    // An element by symbol (any case) or by number.
+    change("builder-tool-field-el", "fe");
+    expect(screen.getByTestId("builder-tool-field-el-resolved").textContent).toBe("Z = 26");
+    change("builder-tool-field-el", "Qq");
+    expect(screen.getByTestId("builder-tool-field-el-resolved").textContent).toBe("not an element");
+    expect(screen.getByTestId("builder-tool-error").textContent).toContain(
+      "element symbol (e.g. Fe) or an atomic number",
+    );
+    change("builder-tool-field-el", "");
+    expect(screen.getByTestId("builder-tool-field-el-resolved").textContent).toBe("");
     change("builder-tool-field-el", "8");
     change("builder-tool-field-cell-b", "15");
     change("builder-tool-field-loose", "2");
@@ -459,5 +556,16 @@ describe("Tools through a host bridge", () => {
     expect(screen.getByText("Listing the tool servers…")).toBeTruthy();
     await act(async () => answer(SERVERS));
     expect(screen.getByTestId("builder-tools-server-select")).toBeTruthy();
+  });
+});
+
+describe("parseElement", () => {
+  it("reads a symbol in any case or an atomic number", () => {
+    expect(parseElement("Fe")).toBe(26);
+    expect(parseElement(" cl ")).toBe(17);
+    expect(parseElement("6")).toBe(6);
+    expect(parseElement("999")).toBeNaN();
+    expect(parseElement("Xx")).toBeNaN();
+    expect(parseElement("")).toBeNaN();
   });
 });

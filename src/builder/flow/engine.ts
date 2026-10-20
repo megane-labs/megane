@@ -22,8 +22,9 @@ import { callTimeoutMs, sanitizeName, type BuilderToolInfo } from "../tools/cont
 import type { CallOptions, CallOutcome } from "../tools/client";
 import { buildArguments, validate } from "../tools/form";
 import { insertOps, residueLabels, structureToSnapshot } from "../tools/payload";
-import { isBuiltin, runBuiltin } from "./builtins";
+import { abortable, isBuiltin, runBuiltin } from "./builtins";
 import { completeToolParams, toolForm, toolPorts, type PortSources } from "./ports";
+import { blockTitle } from "./titles";
 import {
   IDLE_RUN,
   type FlowData,
@@ -161,7 +162,11 @@ export interface BlockContext {
   onProgress: (fraction: number | null, message: string | null) => void;
 }
 
-async function runMolecule(params: MoleculeParams, deps: FlowDeps): Promise<BlockResult> {
+async function runMolecule(
+  params: MoleculeParams,
+  deps: FlowDeps,
+  signal?: AbortSignal,
+): Promise<BlockResult> {
   if (params.source === "library") {
     const molecule = deps.library().find((m) => m.id === params.libraryId);
     if (!molecule) throw new Error("Choose a molecule from the library.");
@@ -177,7 +182,8 @@ async function runMolecule(params: MoleculeParams, deps: FlowDeps): Promise<Bloc
   }
   const smiles = params.smiles.trim();
   if (!smiles) throw new Error("Enter a SMILES string.");
-  const snapshot = await deps.embedSmiles(smiles);
+  // RDKit's worker cannot be interrupted: Stop drops its answer instead of waiting.
+  const snapshot = await abortable(deps.embedSmiles(smiles), signal);
   return {
     data: { name: params.name.trim() || smiles, snapshot, labels: null },
     warnings: [],
@@ -250,7 +256,7 @@ async function runTool(params: ToolParams, ctx: BlockContext): Promise<BlockResu
 export async function runBlock(params: FlowParams, ctx: BlockContext): Promise<BlockResult> {
   switch (params.type) {
     case "molecule":
-      return runMolecule(params, ctx.deps);
+      return runMolecule(params, ctx.deps, ctx.signal);
     case "document": {
       const doc = ctx.deps.document();
       if (!doc) throw new Error("Manual mode has no structure open.");
@@ -260,7 +266,13 @@ export async function runBlock(params: FlowParams, ctx: BlockContext): Promise<B
       return runTool(params, ctx);
     default: {
       if (!isBuiltin(params)) throw new Error("Unknown block.");
-      const { data, warnings } = await runBuiltin(params, ctx.sources, ctx.inputs, ctx.deps);
+      const { data, warnings } = await runBuiltin(
+        params,
+        ctx.sources,
+        ctx.inputs,
+        ctx.deps,
+        ctx.signal,
+      );
       return { data, warnings, summary: null };
     }
   }
@@ -274,7 +286,8 @@ export interface RunOptions {
   targets?: string[];
 }
 
-function upstreamOf(graph: FlowGraph, targets: string[]): Set<string> {
+/** `targets` and every block upstream of them. */
+export function upstreamOf(graph: FlowGraph, targets: string[]): Set<string> {
   const out = new Set<string>();
   const stack = [...targets];
   while (stack.length > 0) {
@@ -288,6 +301,24 @@ function upstreamOf(graph: FlowGraph, targets: string[]): Set<string> {
 
 function message(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
+}
+
+/**
+ * Why a block cannot run because of its input `src`: the input block's title
+ * and its own error, so the message leads to the block to fix.
+ */
+export function inputProblem(
+  graph: FlowGraph,
+  deps: Pick<FlowDeps, "tool" | "library">,
+  src: string,
+  run: NodeRun | undefined,
+): string {
+  const params = graph.nodes.find((n) => n.id === src)?.data.params;
+  const title = params
+    ? blockTitle(params, params.type === "tool" ? deps.tool(params.tool) : null, deps.library())
+    : src;
+  if (run?.status === "error" && run.error) return `Input “${title}” failed: ${run.error}`;
+  return `Input “${title}” did not produce a structure.`;
 }
 
 /**
@@ -332,7 +363,7 @@ export async function runFlow(
       set(id, {
         ...IDLE_RUN,
         status: "error",
-        error: "An input block did not produce a structure.",
+        error: inputProblem(graph, deps, failed, runs[failed]),
       });
       continue;
     }
@@ -349,7 +380,7 @@ export async function runFlow(
       set(id, { ...prev, status: "done" });
       continue;
     }
-    set(id, { ...IDLE_RUN, status: "running", key });
+    set(id, { ...IDLE_RUN, status: "running", key, startedAt: Date.now() });
     try {
       const result = await runBlock(params, {
         sources,

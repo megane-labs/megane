@@ -6,21 +6,39 @@
  * *Add hydrogens* turns those off for a bare skeleton. RDKit is the only
  * way a sketch becomes 3D, so when it cannot run (no Web Workers, the WASM
  * blocked, a drawing it cannot sanitise) the dialog reports the error and
- * nothing is added.
+ * nothing is added. Editing a library molecule (`onSave`) offers *Save
+ * changes* beside *Save as new*.
  *
  * Ketcher is loaded on demand. While it loads, and if it cannot load at all
  * (offline bundle, blocked WASM), the dialog falls back to a plain molfile
  * text field so the library is never unreachable; the same field is offered
- * behind *Paste MOL* for users who bring a molfile from elsewhere.
+ * behind *Paste MOL* for users who bring a molfile from elsewhere. Switching
+ * between the two carries the drawing across.
+ *
+ * The dialog is drawn over the Builder (not the page), under the Builder's
+ * confirm dialog, which asks before a drawing is thrown away (Cancel, a
+ * click on the backdrop, Escape). Tab stays inside it; Escape is the only key
+ * it takes from Ketcher.
  */
 
-import { Component, lazy, Suspense, useCallback, useRef, useState, type ReactNode } from "react";
-import { createPortal } from "react-dom";
+import {
+  Component,
+  lazy,
+  Suspense,
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  type KeyboardEvent as ReactKeyboardEvent,
+  type ReactNode,
+} from "react";
 import type { Ketcher } from "ketcher-core";
+import { useDismiss } from "../../hooks/useDismiss";
 import { isE2ETestMode } from "../../testMode";
+import { useBuilderStoreApi } from "../BuilderStores";
 import { chipStyle, hintStyle, inputStyle } from "../styles";
 import { canEmbed } from "./embed";
-import { draftFromMolfile } from "./sketch";
+import { draftFromMolfile, sketchErrorMessage } from "./sketch";
 import type { LibraryMoleculeDraft } from "./types";
 
 const KetcherEditor = lazy(() => import("./KetcherEditor"));
@@ -30,6 +48,8 @@ export interface SketchModalProps {
   initialMolfile?: string;
   initialName?: string;
   onAdd: (draft: LibraryMoleculeDraft) => void;
+  /** Editing a library molecule: save the result over it (*Save changes*). */
+  onSave?: (draft: LibraryMoleculeDraft) => void;
   onClose: () => void;
 }
 
@@ -47,55 +67,219 @@ class LoadBoundary extends Component<
   }
 }
 
-export function SketchModal({ initialMolfile, initialName, onAdd, onClose }: SketchModalProps) {
+/** Whether Ketcher's canvas is empty; null when this Ketcher cannot say. */
+export function ketcherIsBlank(ketcher: Ketcher | null): boolean | null {
+  try {
+    const struct = ketcher?.editor?.struct?.();
+    return struct ? struct.isBlank() : null;
+  } catch {
+    return null;
+  }
+}
+
+const FOCUSABLE =
+  'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
+
+/** Keep Tab inside `container`: past the last control it wraps to the first, and back. */
+export function trapTab(e: ReactKeyboardEvent, container: HTMLElement | null) {
+  if (e.key !== "Tab" || !container) return;
+  const items = [...container.querySelectorAll<HTMLElement>(FOCUSABLE)].filter(
+    (el) => el.getAttribute("aria-hidden") !== "true",
+  );
+  if (items.length === 0) return;
+  const first = items[0];
+  const last = items[items.length - 1];
+  const active = document.activeElement;
+  if (e.shiftKey && (active === first || !container.contains(active))) {
+    e.preventDefault();
+    last.focus();
+  } else if (!e.shiftKey && (active === last || !container.contains(active))) {
+    e.preventDefault();
+    first.focus();
+  }
+}
+
+type BusyAction = "add" | "save";
+
+export function SketchModal({
+  initialMolfile,
+  initialName,
+  onAdd,
+  onSave,
+  onClose,
+}: SketchModalProps) {
+  const builder = useBuilderStoreApi();
   const [name, setName] = useState(initialName ?? "");
   const [pasteMode, setPasteMode] = useState(false);
   const [molText, setMolText] = useState(initialMolfile ?? "");
   const [withHydrogens, setWithHydrogens] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [busy, setBusy] = useState(false);
+  const [busy, setBusy] = useState<BusyAction | null>(null);
   const [ready, setReady] = useState(false);
+  /** Ketcher's canvas is empty (null: unknown, this Ketcher cannot say). */
+  const [blank, setBlank] = useState<boolean | null>(initialMolfile ? false : null);
   const ketcherRef = useRef<Ketcher | null>(null);
+  /** What a (re)mounted Ketcher loads: the molecule being edited, or the pasted text. */
+  const seedRef = useRef<string | null>(initialMolfile ?? null);
+  /** The embedding in flight; Stop marks it cancelled so its result is dropped. */
+  const runRef = useRef<{ cancelled: boolean } | null>(null);
+  const downOnBackdrop = useRef(false);
+  const asking = useRef(false);
+  const panelRef = useRef<HTMLDivElement>(null);
+  const nameRef = useRef<HTMLInputElement>(null);
 
-  const handleInit = useCallback(
-    (ketcher: Ketcher) => {
-      ketcherRef.current = ketcher;
-      setReady(true);
-      if (isE2ETestMode()) {
-        (window as unknown as { __megane_test_ketcher?: Ketcher }).__megane_test_ketcher = ketcher;
+  useEffect(() => {
+    nameRef.current?.focus();
+    return () => {
+      // Closed mid-embedding: the result must not land after the dialog is gone.
+      if (runRef.current) runRef.current.cancelled = true;
+    };
+  }, []);
+
+  const handleInit = useCallback((ketcher: Ketcher) => {
+    ketcherRef.current = ketcher;
+    setReady(true);
+    if (isE2ETestMode()) {
+      (window as unknown as { __megane_test_ketcher?: Ketcher }).__megane_test_ketcher = ketcher;
+    }
+    const refresh = () => {
+      if (ketcherRef.current !== ketcher) return;
+      setBlank(ketcherIsBlank(ketcher));
+      setError(null);
+    };
+    try {
+      ketcher.editor?.subscribe?.("change", refresh);
+    } catch {
+      /* an editor without change events: Add stays enabled */
+    }
+    const seed = seedRef.current;
+    if (seed && seed.trim()) {
+      void ketcher
+        .setMolecule(seed)
+        .catch(() => undefined)
+        .then(() => {
+          if (ketcherRef.current === ketcher) setBlank(ketcherIsBlank(ketcher) ?? false);
+        });
+    } else {
+      setBlank(ketcherIsBlank(ketcher));
+    }
+  }, []);
+
+  /** Whether closing now would throw a drawing away. */
+  const hasWork = useCallback(() => {
+    if (pasteMode) return molText.trim().length > 0;
+    if (!ready) return !!seedRef.current?.trim();
+    return ketcherIsBlank(ketcherRef.current) !== true;
+  }, [pasteMode, molText, ready]);
+
+  const stop = useCallback(() => {
+    if (runRef.current) runRef.current.cancelled = true;
+    runRef.current = null;
+    setBusy(null);
+  }, []);
+
+  /** Close, asking first when there is a drawing to lose; a running embedding is stopped instead. */
+  const requestClose = useCallback(async () => {
+    if (busy) {
+      stop();
+      return;
+    }
+    if (asking.current) return;
+    if (hasWork()) {
+      asking.current = true;
+      const ok = await builder.getState().requestConfirm({
+        title: "Discard the sketch?",
+        message: "The drawing has not been added to the library and will be lost.",
+        confirmLabel: "Discard sketch",
+        danger: true,
+      });
+      asking.current = false;
+      if (!ok) return;
+    }
+    onClose();
+  }, [busy, stop, hasWork, builder, onClose]);
+
+  useDismiss({ onDismiss: () => void requestClose() });
+
+  const handleAdd = useCallback(
+    async (action: BusyAction) => {
+      const run = { cancelled: false };
+      runRef.current = run;
+      setBusy(action);
+      setError(null);
+      try {
+        let molfile = molText;
+        if (!pasteMode) {
+          const ketcher = ketcherRef.current;
+          if (!ketcher) throw new Error("The sketcher is still loading; try again in a moment.");
+          try {
+            molfile = await ketcher.getMolfile("v2000");
+          } catch (err) {
+            throw new Error(
+              `Could not read the sketch from Ketcher: ${err instanceof Error ? err.message : String(err)}`,
+            );
+          }
+        }
+        const draft = await draftFromMolfile(molfile, name, { addHydrogens: withHydrogens });
+        if (run.cancelled) return;
+        (action === "save" && onSave ? onSave : onAdd)(draft);
+      } catch (err) {
+        if (!run.cancelled) setError(sketchErrorMessage(err));
+      } finally {
+        if (runRef.current === run) {
+          runRef.current = null;
+          setBusy(null);
+        }
       }
-      if (initialMolfile) void ketcher.setMolecule(initialMolfile).catch(() => undefined);
     },
-    [initialMolfile],
+    [molText, pasteMode, name, withHydrogens, onAdd, onSave],
   );
 
-  const handleAdd = useCallback(async () => {
-    setBusy(true);
-    setError(null);
-    try {
-      let molfile = molText;
-      if (!pasteMode) {
-        const ketcher = ketcherRef.current;
-        if (!ketcher) throw new Error("The sketcher is still loading.");
-        molfile = await ketcher.getMolfile("v2000");
-      }
-      const draft = await draftFromMolfile(molfile, name, { addHydrogens: withHydrogens });
-      onAdd(draft);
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      setError(`RDKit could not embed the sketch in 3D: ${message}`);
-    } finally {
-      setBusy(false);
+  /** Switch between Ketcher and the text field, carrying the drawing across. */
+  const togglePaste = useCallback(async () => {
+    if (pasteMode) {
+      seedRef.current = molText.trim() ? molText : null;
+      setBlank(molText.trim() ? false : null);
+      setPasteMode(false);
+      return;
     }
-  }, [molText, pasteMode, name, withHydrogens, onAdd]);
+    const ketcher = ketcherRef.current;
+    if (ketcher && ketcherIsBlank(ketcher) !== true) {
+      try {
+        setMolText(await ketcher.getMolfile("v2000"));
+      } catch {
+        /* keep whatever the field held */
+      }
+    }
+    ketcherRef.current = null;
+    setReady(false);
+    setError(null);
+    setPasteMode(true);
+  }, [pasteMode, molText]);
 
-  const canAdd = !busy && canEmbed() && (pasteMode ? molText.trim().length > 0 : ready);
+  const empty = pasteMode ? molText.trim().length === 0 : blank === true;
+  const blockedReason = !canEmbed()
+    ? "3D embedding needs Web Workers, which this host lacks."
+    : busy
+      ? "Embedding…"
+      : !pasteMode && !ready
+        ? "The sketcher is still loading."
+        : empty
+          ? pasteMode
+            ? "Paste a MOL file first."
+            : "Draw a molecule first."
+          : null;
+  const canAdd = blockedReason === null;
 
   const pasteField = (
     <textarea
       data-testid="sketch-molfile"
+      aria-label="MOL / SDF text"
       value={molText}
-      onChange={(e) => setMolText(e.target.value)}
+      onChange={(e) => {
+        setMolText(e.target.value);
+        setError(null);
+      }}
       placeholder="Paste a MOL / SDF file here"
       spellCheck={false}
       style={{
@@ -108,14 +292,27 @@ export function SketchModal({ initialMolfile, initialName, onAdd, onClose }: Ske
     />
   );
 
-  return createPortal(
+  const actionButton = (action: BusyAction, label: string, testId: string, primary: boolean) => (
+    <button
+      type="button"
+      data-testid={testId}
+      aria-disabled={!canAdd}
+      title={blockedReason && busy !== action ? blockedReason : undefined}
+      style={{ ...chipStyle(canAdd && primary, !canAdd), fontFamily: "inherit" }}
+      onClick={canAdd ? () => void handleAdd(action) : undefined}
+    >
+      {busy === action ? "Embedding…" : label}
+    </button>
+  );
+
+  return (
     <div
       data-testid="sketch-modal"
       role="dialog"
       aria-modal="true"
       aria-label="Sketch a molecule"
       style={{
-        position: "fixed",
+        position: "absolute",
         inset: 0,
         zIndex: 1000,
         background: "rgba(15, 23, 42, 0.45)",
@@ -123,14 +320,24 @@ export function SketchModal({ initialMolfile, initialName, onAdd, onClose }: Ske
         alignItems: "center",
         justifyContent: "center",
       }}
+      onPointerDown={(e) => {
+        downOnBackdrop.current = e.target === e.currentTarget;
+      }}
       onClick={(e) => {
-        if (e.target === e.currentTarget) onClose();
+        // Only a click that both starts and ends on the backdrop: a drag out
+        // of Ketcher that is released over the backdrop keeps the dialog.
+        const start = downOnBackdrop.current;
+        downOnBackdrop.current = false;
+        if (start && e.target === e.currentTarget) void requestClose();
       }}
     >
       <div
+        ref={panelRef}
+        data-testid="sketch-panel"
+        onKeyDown={(e) => trapTab(e, panelRef.current)}
         style={{
-          width: "min(960px, 94vw)",
-          height: "min(720px, 92vh)",
+          width: "min(960px, 94%)",
+          height: "min(720px, 92%)",
           display: "flex",
           flexDirection: "column",
           gap: 8,
@@ -144,26 +351,38 @@ export function SketchModal({ initialMolfile, initialName, onAdd, onClose }: Ske
         }}
       >
         <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-          <span style={{ fontWeight: 700 }}>Sketch a molecule</span>
+          <span style={{ fontWeight: 700 }}>{onSave ? "Edit molecule" : "Sketch a molecule"}</span>
           <label style={{ display: "flex", alignItems: "center", gap: 4, ...hintStyle }}>
             Name
             <input
+              ref={nameRef}
               data-testid="sketch-name"
               value={name}
               onChange={(e) => setName(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && canAdd) {
+                  e.preventDefault();
+                  void handleAdd(onSave ? "save" : "add");
+                }
+              }}
               placeholder="(formula)"
               style={{ ...inputStyle, width: 160 }}
             />
           </label>
-          <span
-            role="button"
+          <button
+            type="button"
             data-testid="sketch-paste-toggle"
             aria-pressed={pasteMode}
-            style={chipStyle(pasteMode)}
-            onClick={() => setPasteMode((v) => !v)}
+            style={{ ...chipStyle(pasteMode), fontFamily: "inherit" }}
+            onClick={() => void togglePaste()}
+            title={
+              pasteMode
+                ? "Back to the sketcher, with the pasted molecule"
+                : "Edit the drawing as MOL text, or paste one"
+            }
           >
             Paste MOL
-          </span>
+          </button>
           <label style={{ display: "flex", alignItems: "center", gap: 4, ...hintStyle }}>
             <input
               type="checkbox"
@@ -175,9 +394,11 @@ export function SketchModal({ initialMolfile, initialName, onAdd, onClose }: Ske
           </label>
           <span style={{ flex: 1 }} />
           <span data-testid="sketch-mode-hint" style={hintStyle}>
-            {canEmbed()
-              ? "RDKit embeds the sketch in 3D (ETKDG, then MMFF94s / UFF) with its missing hydrogens."
-              : "3D embedding needs Web Workers, which this host lacks."}
+            {!canEmbed()
+              ? "3D embedding needs Web Workers, which this host lacks."
+              : withHydrogens
+                ? "RDKit embeds the sketch in 3D (ETKDG, then MMFF94s / UFF), adding its missing hydrogens."
+                : "RDKit embeds the sketch in 3D (ETKDG, then MMFF94s / UFF) as drawn, without adding hydrogens."}
           </span>
         </div>
         <div
@@ -206,14 +427,14 @@ export function SketchModal({ initialMolfile, initialName, onAdd, onClose }: Ske
                   <div style={{ ...hintStyle, color: "var(--megane-warning-text, #b45309)" }}>
                     Ketcher could not be loaded ({err.message}). Paste a MOL file instead.
                   </div>
-                  <span
-                    role="button"
+                  <button
+                    type="button"
                     data-testid="sketch-fallback-paste"
-                    style={{ ...chipStyle(false), alignSelf: "flex-start" }}
+                    style={{ ...chipStyle(false), alignSelf: "flex-start", fontFamily: "inherit" }}
                     onClick={() => setPasteMode(true)}
                   >
                     Paste MOL
-                  </span>
+                  </button>
                 </div>
               )}
             >
@@ -240,27 +461,31 @@ export function SketchModal({ initialMolfile, initialName, onAdd, onClose }: Ske
             {error}
           </div>
         )}
-        <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
-          <span
-            role="button"
+        <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", alignItems: "center" }}>
+          {blockedReason && !busy && canEmbed() && (
+            <span data-testid="sketch-blocked" style={hintStyle}>
+              {blockedReason}
+            </span>
+          )}
+          <button
+            type="button"
             data-testid="sketch-cancel"
-            style={chipStyle(false)}
-            onClick={onClose}
+            style={{ ...chipStyle(false), fontFamily: "inherit" }}
+            onClick={() => void requestClose()}
+            title={busy ? "Stop embedding and keep the drawing" : undefined}
           >
-            Cancel
-          </span>
-          <span
-            role="button"
-            data-testid="sketch-add"
-            aria-disabled={!canAdd}
-            style={chipStyle(canAdd, !canAdd)}
-            onClick={canAdd ? () => void handleAdd() : undefined}
-          >
-            {busy ? "Embedding…" : "Add to library"}
-          </span>
+            {busy ? "Stop" : "Cancel"}
+          </button>
+          {onSave ? (
+            <>
+              {actionButton("add", "Save as new", "sketch-add", false)}
+              {actionButton("save", "Save changes", "sketch-save", true)}
+            </>
+          ) : (
+            actionButton("add", "Add to library", "sketch-add", true)
+          )}
         </div>
       </div>
-    </div>,
-    document.body,
+    </div>
   );
 }

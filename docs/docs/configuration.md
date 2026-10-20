@@ -65,7 +65,7 @@ megane/
 ├── python/megane/             # Python package
 │   ├── widget.py              # Jupyter widget (anywidget)
 │   ├── builder.py             # Megane Builder Jupyter widget
-│   ├── writers.py             # Structure writers (XYZ / PDB / MOL)
+│   ├── writers.py             # Structure writers (XYZ / PDB / MOL / CIF / POSCAR)
 │   ├── pipeline.py            # Pipeline builder (NetworkX-style DAG)
 │   ├── server.py              # FastAPI WebSocket server
 │   ├── cli.py                 # CLI entry point

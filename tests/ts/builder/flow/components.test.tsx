@@ -5,7 +5,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen, fireEvent, act, within } from "@testing-library/react";
+import { render, screen, fireEvent, act, within, waitFor } from "@testing-library/react";
 import type { ReactNode } from "react";
 
 const { reactFlowProps, updateNodeInternals, fitView } = vi.hoisted(() => ({
@@ -411,7 +411,7 @@ describe("FlowPanel", () => {
     expect(nodes[3].data.params).toMatchObject({ type: "slab", miller: [1, 1, 1] });
   });
 
-  it("replaces the flow with a template, fits the view, and fills its tools' defaults", () => {
+  it("replaces the flow with a template, fits the view, and fills its tools' defaults", async () => {
     const raf = vi.spyOn(window, "requestAnimationFrame").mockImplementation((cb) => {
       cb(0);
       return 0;
@@ -421,8 +421,16 @@ describe("FlowPanel", () => {
     act(() => {
       stores.flow.getState().addNode(smiles("O"));
     });
+    // The flow has a block: the template asks before replacing it.
     fireEvent.click(screen.getByTestId("builder-flow-templates"));
     fireEvent.click(screen.getByTestId("builder-flow-template-liquid-mixture"));
+    expect(stores.builder.getState().confirm?.confirmLabel).toBe("Use template");
+    await act(async () => stores.builder.getState().resolveConfirm(false));
+    expect(stores.flow.getState().nodes).toHaveLength(1);
+    fireEvent.click(screen.getByTestId("builder-flow-templates"));
+    fireEvent.click(screen.getByTestId("builder-flow-template-liquid-mixture"));
+    await act(async () => stores.builder.getState().resolveConfirm(true));
+    expect(stores.flow.getState().fileName).toBe("liquid-mixture");
     const { nodes, edges } = stores.flow.getState();
     expect(nodes.map((n) => n.type)).toEqual(["molecule", "molecule", "tool"]);
     expect(edges).toHaveLength(2);
@@ -578,7 +586,7 @@ describe("FlowProperties", () => {
 
     stores.flow.getState().setMode("flow");
     fireEvent.click(screen.getByTestId("builder-flow-open-manual"));
-    expect(stores.flow.getState().mode).toBe("manual");
+    await waitFor(() => expect(stores.flow.getState().mode).toBe("manual"));
     expect(stores.builder.getState().source!.nAtoms).toBe(300);
     expect(stores.builder.getState().notice?.text).toContain("from Flow");
   });
@@ -626,12 +634,325 @@ describe("FlowProperties", () => {
 });
 
 describe("openInManual", () => {
-  it("replaces the document and switches modes", () => {
+  it("replaces the document and switches modes", async () => {
     stores.flow.getState().setMode("flow");
-    openInManual(stores.builder, stores.flow, waterData("box"), "k1");
+    await expect(openInManual(stores.builder, stores.flow, waterData("box"), "k1")).resolves.toBe(
+      true,
+    );
     expect(stores.builder.getState().fileName).toBe("box");
     expect(stores.flow.getState().mode).toBe("manual");
     expect(stores.flow.getState().adoptedKey).toBe("k1");
     expect(downloadBlob).not.toHaveBeenCalled();
+  });
+
+  it("asks before replacing unsaved edits, and leaves them on Cancel", async () => {
+    stores.builder.getState().openStructure(waterData("doc").snapshot, null, "doc.xyz");
+    stores.builder.getState().pushOp({ op: "delete_atoms", atoms: [0] });
+    stores.flow.getState().setMode("flow");
+    const answer = openInManual(stores.builder, stores.flow, waterData("box"), "k1");
+    expect(stores.builder.getState().confirm?.message).toContain("Opening box in Manual");
+    stores.builder.getState().resolveConfirm(false);
+    await expect(answer).resolves.toBe(false);
+    expect(stores.builder.getState().fileName).toBe("doc.xyz");
+    expect(stores.flow.getState().mode).toBe("flow");
+  });
+});
+
+describe("ModeSwitch keyboard", () => {
+  it("is one tab stop, and the arrow keys, Home and End pick a mode", () => {
+    const onChange = vi.fn();
+    const { rerender } = render(<ModeSwitch mode="manual" onChange={onChange} />);
+    const manual = screen.getByTestId("builder-mode-manual");
+    const flow = screen.getByTestId("builder-mode-flow");
+    expect(manual.tabIndex).toBe(0);
+    expect(flow.tabIndex).toBe(-1);
+    fireEvent.keyDown(manual, { key: "ArrowDown" });
+    expect(onChange).toHaveBeenLastCalledWith("flow");
+    expect(document.activeElement).toBe(flow);
+    fireEvent.keyDown(manual, { key: "ArrowUp" });
+    expect(onChange).toHaveBeenLastCalledWith("flow");
+    fireEvent.keyDown(manual, { key: "End" });
+    expect(onChange).toHaveBeenCalledTimes(3);
+
+    rerender(<ModeSwitch mode="flow" onChange={onChange} />);
+    expect(flow.tabIndex).toBe(0);
+    fireEvent.keyDown(flow, { key: "ArrowRight" });
+    expect(onChange).toHaveBeenLastCalledWith("manual");
+    fireEvent.keyDown(flow, { key: "ArrowLeft" });
+    fireEvent.keyDown(flow, { key: "Home" });
+    expect(onChange).toHaveBeenLastCalledWith("manual");
+    onChange.mockClear();
+    // The mode already picked, or another key, changes nothing.
+    fireEvent.keyDown(flow, { key: "End" });
+    fireEvent.keyDown(flow, { key: "a" });
+    expect(onChange).not.toHaveBeenCalled();
+  });
+});
+
+describe("FlowRail extras", () => {
+  const rail = (overrides: Record<string, unknown> = {}) => {
+    const props = {
+      ...noActions(),
+      addItems: [],
+      onApplyTemplate: vi.fn(),
+      onAutoLayout: vi.fn(),
+      ...overrides,
+    };
+    return { props, ...render(<FlowRail {...props} />) };
+  };
+
+  it("leaves out the templates that need a tool server on a host without one", () => {
+    const items = templateMenuItems(vi.fn(), false) as { testId: string }[];
+    const ids = FLOW_TEMPLATES.filter((t) => t.tools.length === 0).map(
+      (t) => `builder-flow-template-${t.id}`,
+    );
+    expect(items.map((i) => i.testId)).toEqual(ids);
+    rail({ hasTools: false });
+    fireEvent.click(screen.getByTestId("builder-flow-templates"));
+    expect(screen.queryByTestId("builder-flow-template-liquid-mixture")).toBeNull();
+    expect(screen.getByTestId("builder-flow-template-slab-adsorbates")).toBeTruthy();
+  });
+
+  it("names the file menu File and explains Auto Layout and Run", () => {
+    rail();
+    expect(screen.getByTestId("builder-flow-file").getAttribute("aria-label")).toBe("File");
+    expect(screen.getByTestId("builder-flow-layout").getAttribute("title")).toContain("arrange");
+    expect(screen.getByTestId("builder-flow-run").getAttribute("title")).toContain(
+      "replaces the open structure",
+    );
+    // No undo buttons without the actions.
+    expect(screen.queryByTestId("builder-flow-undo")).toBeNull();
+  });
+
+  it("has Undo and Redo, off while a run is in progress", () => {
+    const onUndo = vi.fn();
+    const onRedo = vi.fn();
+    const { rerender, props } = rail({ onUndo, onRedo, canUndo: true, canRedo: false });
+    const undo = screen.getByTestId("builder-flow-undo") as HTMLButtonElement;
+    const redo = screen.getByTestId("builder-flow-redo") as HTMLButtonElement;
+    expect(redo.disabled).toBe(true);
+    fireEvent.click(undo);
+    expect(onUndo).toHaveBeenCalled();
+    rerender(<FlowRail {...props} canRedo running />);
+    expect((screen.getByTestId("builder-flow-undo") as HTMLButtonElement).disabled).toBe(true);
+    rerender(<FlowRail {...props} canRedo />);
+    fireEvent.click(screen.getByTestId("builder-flow-redo"));
+    expect(onRedo).toHaveBeenCalled();
+  });
+
+  it("says Stopping… until the run has ended", () => {
+    rail({ running: true, stopping: true });
+    const stop = screen.getByTestId("builder-flow-stop") as HTMLButtonElement;
+    expect(stop.getAttribute("aria-label")).toBe("Stopping…");
+    expect(stop.disabled).toBe(true);
+  });
+});
+
+describe("FlowPanel undo", () => {
+  const twoBlocks = () => {
+    act(() => {
+      stores.flow.getState().addNode(smiles("O"));
+      stores.flow.getState().addNode(smiles("C"));
+    });
+  };
+  const count = () => stores.flow.getState().nodes.length;
+
+  it("undoes with the rail buttons and with Ctrl/⌘+Z, Ctrl+Shift+Z and Ctrl+Y in the panel", () => {
+    wrap(<FlowPanel {...panelProps()} />);
+    twoBlocks();
+    fireEvent.click(screen.getByTestId("builder-flow-undo"));
+    expect(count()).toBe(1);
+    fireEvent.click(screen.getByTestId("builder-flow-redo"));
+    expect(count()).toBe(2);
+
+    const panel = screen.getByTestId("builder-flow-panel");
+    fireEvent.keyDown(panel, { key: "z", ctrlKey: true });
+    expect(count()).toBe(1);
+    fireEvent.keyDown(panel, { key: "Z", ctrlKey: true, shiftKey: true });
+    expect(count()).toBe(2);
+    fireEvent.keyDown(panel, { key: "z", metaKey: true });
+    fireEvent.keyDown(panel, { key: "y", ctrlKey: true });
+    expect(count()).toBe(2);
+    // Other keys, and Alt, are left alone.
+    fireEvent.keyDown(panel, { key: "x", ctrlKey: true });
+    fireEvent.keyDown(panel, { key: "z", ctrlKey: true, altKey: true });
+    fireEvent.keyDown(panel, { key: "z" });
+    expect(count()).toBe(2);
+  });
+
+  it("leaves the keys to text fields and to the rest of the page", () => {
+    wrap(<FlowPanel {...panelProps()} />);
+    twoBlocks();
+    fireEvent.keyDown(screen.getByTestId("builder-flow-molecule-smiles"), {
+      key: "z",
+      ctrlKey: true,
+    });
+    expect(count()).toBe(2);
+    fireEvent.keyDown(document.body, { key: "z", ctrlKey: true });
+    expect(count()).toBe(2);
+    // After a click on the graph (focus stays on the page), the keys are the panel's.
+    fireEvent.pointerDown(screen.getByTestId("react-flow"));
+    fireEvent.keyDown(document.body, { key: "z", ctrlKey: true });
+    expect(count()).toBe(1);
+    fireEvent.pointerDown(document.body);
+    fireEvent.keyDown(document.body, { key: "z", ctrlKey: true });
+    expect(count()).toBe(1);
+  });
+
+  it("records Auto Layout as a step, and deletes nothing while a run is in progress", () => {
+    const raf = vi.spyOn(window, "requestAnimationFrame").mockImplementation(() => 0);
+    wrap(<FlowPanel {...panelProps()} />);
+    twoBlocks();
+    const steps = stores.flow.getState().past.length;
+    fireEvent.click(screen.getByTestId("builder-flow-layout"));
+    expect(stores.flow.getState().past).toHaveLength(steps + 1);
+    act(() => stores.flow.setState({ running: new AbortController() }));
+    const props = reactFlowProps.current as { onNodesChange: (c: object[]) => void };
+    act(() => props.onNodesChange([{ type: "remove", id: "n1" }]));
+    expect(count()).toBe(2);
+    act(() => stores.flow.setState({ running: null }));
+    raf.mockRestore();
+  });
+});
+
+describe("Flow output and progress", () => {
+  const pane = (props: Record<string, unknown> = {}) =>
+    wrap(
+      <FlowProperties
+        deps={fakeDeps()}
+        height="40%"
+        serverOpen={false}
+        onCloseServer={vi.fn()}
+        {...props}
+      />,
+    );
+  const card = (id: string, params: FlowParams) =>
+    wrap(
+      <FlowNodeCard
+        {...({ id, data: { params }, selected: false, type: params.type } as unknown as Parameters<
+          typeof FlowNodeCard
+        >[0])}
+      />,
+    );
+
+  it("tags the output block on its card and in the pane, and explains it when empty", () => {
+    let a = "";
+    let b = "";
+    act(() => {
+      a = stores.flow.getState().addNode(smiles("O"));
+      b = stores.flow.getState().addNode(smiles("C"));
+    });
+    card(b, smiles("C"));
+    expect(screen.getByTestId("builder-flow-output-badge")).toBeTruthy();
+    expect(screen.getByTestId("builder-flow-node-molecule").dataset.output).toBe("true");
+    expect(screen.getByTestId("builder-flow-node-molecule").textContent).toContain("Molecule: C");
+    pane();
+    expect(screen.getByTestId("builder-flow-output-note").textContent).toContain(
+      "Manual mode edits",
+    );
+    act(() => stores.flow.getState().selectNode(a));
+    expect(screen.queryByTestId("builder-flow-output-note")).toBeNull();
+    act(() => stores.flow.getState().selectNode(null));
+    expect(screen.getByTestId("builder-flow-empty-hint").textContent).toContain("Output");
+  });
+
+  it("shows a running block with unknown progress as a moving bar and the seconds it took", () => {
+    vi.useFakeTimers();
+    try {
+      let t = "";
+      act(() => {
+        t = stores.flow.getState().addNode(smiles("O"));
+        stores.flow.setState({
+          runs: { [t]: { ...IDLE_RUN, status: "running", startedAt: Date.now() } },
+        });
+      });
+      pane();
+      const bar = screen.getByTestId("builder-flow-progress");
+      expect(bar.dataset.indeterminate).toBe("true");
+      expect(bar.getAttribute("aria-valuenow")).toBeNull();
+      expect(screen.getByTestId("builder-flow-run-elapsed").textContent).toBe("0 s");
+      act(() => {
+        vi.advanceTimersByTime(3000);
+      });
+      expect(screen.getByTestId("builder-flow-run-elapsed").textContent).toBe("3 s");
+      act(() =>
+        stores.flow.setState({
+          runs: { [t]: { ...IDLE_RUN, status: "running", fraction: 0.25, startedAt: 1 } },
+        }),
+      );
+      expect(screen.getByTestId("builder-flow-progress").dataset.indeterminate).toBe("false");
+      expect(screen.getByTestId("builder-flow-progress").getAttribute("aria-valuenow")).toBe("25");
+      // A stale result is a ring, labelled.
+      act(() =>
+        stores.flow.setState({
+          runs: { [t]: { ...IDLE_RUN, status: "stale", data: waterData(), key: "k" } },
+        }),
+      );
+      expect(screen.getByRole("img", { name: /Out of date/ })).toBeTruthy();
+      expect(screen.queryByTestId("builder-flow-run-elapsed")).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("offers a placeholder for a library molecule that is gone", () => {
+    act(() => {
+      stores.flow.getState().addNode({
+        type: "molecule",
+        source: "library",
+        smiles: "",
+        libraryId: "user:deleted",
+        name: "",
+      });
+    });
+    pane();
+    const select = screen.getByTestId("builder-flow-molecule-library") as HTMLSelectElement;
+    expect(select.value).toBe("user:deleted");
+    expect(select.options[0].textContent).toBe("Missing molecule — choose one");
+    expect(select.options[0].disabled).toBe(true);
+  });
+
+  it("says a tool block cannot run on a host without tool servers, and opens the server form", () => {
+    act(() => {
+      stores.flow.getState().addNode(initialToolParams(tools.liquid_box));
+    });
+    const onOpenServer = vi.fn();
+    const { unmount } = pane({ onOpenServer });
+    fireEvent.click(screen.getByTestId("builder-flow-tool-connect"));
+    expect(onOpenServer).toHaveBeenCalled();
+    unmount();
+    pane({ hasTools: false });
+    expect(screen.getByTestId("builder-flow-tool-missing").textContent).toContain("cannot reach");
+    expect(screen.queryByTestId("builder-flow-tool-connect")).toBeNull();
+  });
+
+  it("says a Manual structure block reads the structure from before the flow's result", () => {
+    act(() => {
+      stores.flow.getState().addNode({ type: "document" });
+    });
+    const deps = fakeDeps({ document: () => ({ data: waterData("box"), key: "doc-2" }) });
+    stores.builder.getState().openStructure(water(), null, "box");
+    stores.flow.getState().setPinnedDocument({
+      adoptedDocKey: "doc-2",
+      base: { data: waterData("cu.cif"), key: "doc-1" },
+    });
+    pane({ deps });
+    expect(screen.getByTestId("builder-flow-document-info").textContent).toContain(
+      "Uses cu.cif as it was before Run replaced it",
+    );
+  });
+
+  it("runs to a block and reports a failure in the notice line", async () => {
+    act(() => {
+      stores.flow.getState().addNode(smiles(""));
+    });
+    pane();
+    await act(async () => {
+      fireEvent.click(screen.getByTestId("builder-flow-run-node"));
+    });
+    expect(stores.builder.getState().notice).toEqual({
+      level: "error",
+      text: "Run failed at “Molecule”: Enter a SMILES string.",
+    });
   });
 });

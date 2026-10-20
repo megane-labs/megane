@@ -1,20 +1,24 @@
 /**
  * The molecule library as the Place tool's gallery: the presets and the
  * user's molecules, each with *Place* (stamp it where the next click lands)
- * and *Add* (drop it beside the structure now), *Edit* / *×* for the user's
- * own; *Sketch…* opens Ketcher and *From file…* imports a structure file.
- * It opens in the Place tool's settings (the Details panel).
+ * and *Add* (drop it into the document now), *Rename* / *Edit* / *×* for the
+ * user's own (× asks first); *Sketch…* opens Ketcher and *From file…*
+ * imports a structure file. It opens in the Place tool's settings (the
+ * Details panel).
  *
  * `LibraryHost` mounts the one sketch dialog and the one file input the
  * gallery and the Inspector share.
  */
 
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
+import { useDismiss } from "../../hooks/useDismiss";
+import { STRUCTURE_ACCEPT } from "../../parsers/fileNames";
 import { canEdit } from "../store";
-import { buttonStyle, chipStyle, hintStyle } from "../styles";
+import { buttonStyle, chipStyle, hintStyle, inputStyle } from "../styles";
 import { SketchModal } from "./SketchModal";
 import { allMolecules, isUserMolecule, useLibraryStore } from "./store";
 import { useLibraryActions } from "./ui";
+import type { LibraryMolecule } from "./types";
 import { useScopedBuilderStore, useScopedLibraryUi } from "../BuilderStores";
 
 const smallChip = (active: boolean, disabled = false): React.CSSProperties => ({
@@ -28,7 +32,7 @@ export function LibraryHost() {
   const sketch = useScopedLibraryUi((s) => s.sketch);
   const closeSketch = useScopedLibraryUi((s) => s.closeSketch);
   const setImporter = useScopedLibraryUi((s) => s.setImporter);
-  const { keep, importFile } = useLibraryActions();
+  const { keep, update, importFile } = useLibraryActions();
   const fileRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -42,6 +46,7 @@ export function LibraryHost() {
         ref={fileRef}
         data-testid="builder-library-import-input"
         type="file"
+        accept={STRUCTURE_ACCEPT}
         style={{ display: "none" }}
         onChange={(e) => {
           const file = e.target.files?.[0];
@@ -57,10 +62,59 @@ export function LibraryHost() {
             keep(draft);
             closeSketch();
           }}
+          onSave={
+            sketch.id
+              ? (draft) => {
+                  update(sketch.id!, draft);
+                  closeSketch();
+                }
+              : undefined
+          }
           onClose={closeSketch}
         />
       )}
     </>
+  );
+}
+
+/** A user molecule's name, renamed in place: Enter or leaving the field keeps it, Escape does not. */
+function RenameField({
+  molecule,
+  onDone,
+}: {
+  molecule: LibraryMolecule;
+  onDone: (name: string | null) => void;
+}) {
+  const [text, setText] = useState(molecule.name);
+  const ref = useRef<HTMLInputElement>(null);
+  const done = useRef(false);
+  const finish = (name: string | null) => {
+    if (done.current) return;
+    done.current = true;
+    onDone(name);
+  };
+  // Escape cancels the rename, not the gallery behind it.
+  useDismiss({ onDismiss: () => finish(null) });
+  useEffect(() => {
+    ref.current?.focus();
+    ref.current?.select();
+  }, []);
+  return (
+    <input
+      ref={ref}
+      data-testid="builder-library-rename-input"
+      aria-label={`New name for ${molecule.name}`}
+      value={text}
+      onChange={(e) => setText(e.target.value)}
+      onKeyDown={(e) => {
+        if (e.key === "Enter") {
+          e.preventDefault();
+          finish(text);
+        }
+      }}
+      onBlur={() => finish(text)}
+      style={{ ...inputStyle, width: "100%", boxSizing: "border-box", fontSize: 12 }}
+    />
   );
 }
 
@@ -73,10 +127,16 @@ export function LibraryPanel({ onClose }: { onClose: () => void }) {
   const user = useLibraryStore((s) => s.user);
   const openSketch = useScopedLibraryUi((s) => s.openSketch);
   const importer = useScopedLibraryUi((s) => s.importer);
-  const { add, place, remove } = useLibraryActions();
+  const { add, place, remove, rename } = useLibraryActions();
+  const [renaming, setRenaming] = useState<string | null>(null);
 
   // With nothing open, Add starts a new document with the molecule.
   const editable = !source || canEdit({ source, result, showOriginal });
+  const addTitle = editable
+    ? "Add to the document now (inside the cell when there is room)"
+    : showOriginal
+      ? "Editing is paused while the original structure is shown"
+      : "The open structure cannot be edited right now";
   const molecules = allMolecules({ user });
 
   return (
@@ -112,7 +172,8 @@ export function LibraryPanel({ onClose }: { onClose: () => void }) {
         </button>
       </div>
       <div style={{ ...hintStyle, padding: "0 12px 6px" }}>
-        <b>Place</b> stamps it where you click; <b>Add</b> drops it beside the structure now.
+        <b>Place</b> stamps it where you click; <b>Add</b> drops it in now, in the emptiest part of
+        the cell when there is room, otherwise beside the structure.
       </div>
       <ul
         data-testid="builder-library-list"
@@ -140,13 +201,28 @@ export function LibraryPanel({ onClose }: { onClose: () => void }) {
                 background: placing ? "rgba(59, 130, 246, 0.08)" : undefined,
               }}
             >
-              <span style={{ flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis" }}>
-                <span data-testid="builder-library-item-name">{m.name}</span>{" "}
-                <span style={hintStyle}>
-                  {m.formula}
-                  {m.planar ? " · flat" : ""}
+              {renaming === m.id ? (
+                <span style={{ flex: 1, minWidth: 0 }}>
+                  <RenameField
+                    molecule={m}
+                    onDone={(name) => {
+                      setRenaming(null);
+                      if (name !== null) rename(m, name);
+                    }}
+                  />
                 </span>
-              </span>
+              ) : (
+                <span
+                  style={{ flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis" }}
+                  onDoubleClick={isUserMolecule(m.id) ? () => setRenaming(m.id) : undefined}
+                >
+                  <span data-testid="builder-library-item-name">{m.name}</span>{" "}
+                  <span style={hintStyle}>
+                    {m.formula}
+                    {m.planar ? " · flat" : ""}
+                  </span>
+                </span>
+              )}
               <button
                 type="button"
                 data-testid="builder-library-place"
@@ -163,19 +239,29 @@ export function LibraryPanel({ onClose }: { onClose: () => void }) {
                 style={smallChip(false, !editable)}
                 disabled={!editable}
                 onClick={() => add(m)}
-                title="Add beside the structure"
+                title={addTitle}
               >
                 Add
               </button>
               {isUserMolecule(m.id) && (
                 <>
+                  <button
+                    type="button"
+                    data-testid="builder-library-rename"
+                    aria-label={`Rename ${m.name}`}
+                    style={smallChip(renaming === m.id)}
+                    onClick={() => setRenaming(renaming === m.id ? null : m.id)}
+                    title="Rename (or double-click the name)"
+                  >
+                    ✎
+                  </button>
                   {m.molfile && (
                     <button
                       type="button"
                       data-testid="builder-library-edit"
                       style={smallChip(false)}
-                      onClick={() => openSketch({ molfile: m.molfile, name: m.name })}
-                      title="Open the sketch in Ketcher (adds the result as a new molecule)"
+                      onClick={() => openSketch({ molfile: m.molfile, name: m.name, id: m.id })}
+                      title="Open the sketch in Ketcher to change it or save a variant"
                     >
                       Edit
                     </button>
@@ -185,8 +271,8 @@ export function LibraryPanel({ onClose }: { onClose: () => void }) {
                     data-testid="builder-library-remove"
                     aria-label={`Remove ${m.name} from the library`}
                     style={smallChip(false)}
-                    onClick={() => remove(m)}
-                    title="Remove from the library"
+                    onClick={() => void remove(m)}
+                    title="Remove from the library (asks first)"
                   >
                     ×
                   </button>

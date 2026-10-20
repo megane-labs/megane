@@ -3,7 +3,8 @@
 **Megane Builder** is a separate app for *making* structures: open a PDB (or
 any format Megane reads) or start from an empty cell, add and delete atoms,
 drag them around, change elements, draw or remove bonds, and save the result
-as XYZ, PDB, or MOL. It lives beside the viewer at `/builder.html` — on the
+as XYZ, PDB, MOL, or — for a crystal, slab or anything else with a unit cell —
+CIF or VASP POSCAR. It lives beside the viewer at `/builder.html` — on the
 hosted demo ([megane-labs.github.io/megane/app/builder.html](https://megane-labs.github.io/megane/app/builder.html)), in the
 web app that `megane serve` hosts, and in the Vite dev server (`npm run dev`,
 then open `http://localhost:5173/builder.html`) — and inside VS Code,
@@ -84,10 +85,16 @@ With nothing open, the view shows *Build a structure* with **Open…**,
   document is called `untitled` until you save it — and *Bulk crystal*, a
   prototype structure (see [Crystal](#crystal)). Either replaces whatever is
   open, which the form says when there is something to replace.
-- **File › Save XYZ / PDB / MOL** bakes the edited structure into a file named after
+- **File › Save XYZ / PDB / MOL / CIF / POSCAR** bakes the edited structure into a file named after
   the document (`caffeine.sdf` → `caffeine.xyz`). XYZ becomes extended XYZ
   with a `Lattice="…"` header when there is a cell; PDB carries `CRYST1`,
   residue labels and `CONECT` records; MOL is V2000 with bond orders.
+  CIF and POSCAR need a unit cell and are unavailable without one. CIF is
+  written in space group P 1 with fractional coordinates (`quartz.cif`);
+  POSCAR is VASP 5 with Cartesian coordinates (`quartz.vasp`, or the
+  document's own name for `POSCAR` / `CONTCAR`), and lists the atoms element
+  by element in order of first appearance, so its atom order can differ from
+  the Builder's. Neither format stores bonds: readers infer them again.
 - **Undo / Redo** on the operations rail, in the *History* panel, or with
   the keys below.
 - Or skip all of that: pick **Place** (P) and place a library molecule with
@@ -512,8 +519,8 @@ ones it needs, and **Stop** abandons a run.
 Manual and Flow mode share one structure. When **Run** finishes, the result
 of the flow's last block (the one no wire leaves) becomes the structure open
 in Manual mode — replacing the open one and its history — so switching to
-Manual shows what the flow built, ready to edit further or save as XYZ, PDB
-or MOL. A Run that gives back the very result it gave last time (nothing in
+Manual shows what the flow built, ready to edit further or save as XYZ, PDB,
+MOL, CIF or POSCAR. A Run that gives back the very result it gave last time (nothing in
 the flow changed) leaves the structure, and your Manual edits on it, alone;
 when the last block fails, the structure is kept as it was.
 
@@ -693,7 +700,8 @@ b                                    # edit in the cell
 
 b.n_atoms                            # the structure on screen, kept in sync
 b.save("caffeine_edited.pdb")        # format from the extension
-pdb_text = b.text("pdb")             # "xyz", "pdb" or "mol"
+pdb_text = b.text("pdb")             # "xyz", "pdb", "mol", "cif" or "poscar"
+b.save("POSCAR")                     # VASP names and .cif / .vasp need a cell
 atoms = b.to_ase()                   # needs ASE
 b.load("other.xyz")                  # open another file in the same widget
 ```

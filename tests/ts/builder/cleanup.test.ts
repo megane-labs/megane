@@ -5,9 +5,14 @@
  */
 
 import { describe, it, expect, beforeEach } from "vitest";
+import { act, renderHook } from "@testing-library/react";
 import {
   MAX_CLEANUP_ATOMS,
+  UNKNOWN_ORDERS,
+  bondOrdersUnknown,
   cleanUpMolecules,
+  isCleanupRunning,
+  useCleanupRunning,
   inferredCharges,
   moleculeMolblock,
   molblockPositions,
@@ -275,5 +280,78 @@ describe("runCleanup", () => {
     s().openStructure(water(), null, "w.xyz");
     await runCleanup(useBuilderStore);
     expect(s().notice?.text).toContain("Web Workers");
+  });
+});
+
+describe("runCleanup — one at a time, and the bond-order warning", () => {
+  /** An embed that waits until `release` is called. */
+  function gatedEmbed() {
+    let release = () => {};
+    const gate = new Promise<void>((r) => (release = r));
+    return {
+      release: () => release(),
+      embed: async (molfile: string) => {
+        await gate;
+        return rotatingEmbed()(molfile);
+      },
+    };
+  }
+
+  it("refuses a second clean-up while one runs, and says so", async () => {
+    s().openStructure(water(), null, "w.xyz");
+    const { result } = renderHook(() => useCleanupRunning(useBuilderStore));
+    expect(result.current).toBe(false);
+    const gated = gatedEmbed();
+    let first!: Promise<void>;
+    act(() => {
+      first = runCleanup(useBuilderStore, gated.embed);
+    });
+    expect(s().notice?.text).toBe("Cleaning up with RDKit…");
+    expect(isCleanupRunning(useBuilderStore)).toBe(true);
+    expect(result.current).toBe(true);
+    await runCleanup(useBuilderStore, rotatingEmbed());
+    expect(s().notice?.text).toBe("Clean up is already running.");
+    gated.release();
+    await act(() => first);
+    expect(isCleanupRunning(useBuilderStore)).toBe(false);
+    expect(result.current).toBe(false);
+    expect(s().notice?.text).toContain("Cleaned up 1 molecule");
+  });
+
+  it("is not stuck after RDKit throws", async () => {
+    s().openStructure(water(), null, "w.xyz");
+    await runCleanup(useBuilderStore, async () => {
+      throw new Error("boom");
+    });
+    expect(isCleanupRunning(useBuilderStore)).toBe(false);
+  });
+
+  it("warns when the structure has no bond orders and a ring or a short valence", async () => {
+    // Cyclopropane skeleton without orders: a ring.
+    const ring: Snapshot = {
+      ...water(),
+      nAtoms: 3,
+      nBonds: 3,
+      positions: new Float32Array([0, 0, 0, 1.5, 0, 0, 0.75, 1.3, 0]),
+      elements: new Uint8Array([6, 6, 6]),
+      bonds: new Uint32Array([0, 1, 1, 2, 2, 0]),
+      bondOrders: null,
+    };
+    expect(bondOrdersUnknown(ring, [])).toBe(true);
+    expect(bondOrdersUnknown(ring, [5])).toBe(false);
+    expect(bondOrdersUnknown({ ...ring, bondOrders: new Uint8Array([1, 1, 1]) }, [])).toBe(false);
+    expect(bondOrdersUnknown({ ...ring, nBonds: 0 }, [])).toBe(false);
+    // Formaldehyde-like C–O with no H and no orders: under-valent atoms.
+    const co: Snapshot = { ...ring, nAtoms: 2, nBonds: 1, bonds: new Uint32Array([0, 1]) };
+    co.elements = new Uint8Array([6, 8]);
+    expect(bondOrdersUnknown(co, [])).toBe(true);
+    // Water: every valence filled, nothing to guess.
+    expect(bondOrdersUnknown({ ...water(), bondOrders: null }, [])).toBe(false);
+
+    s().openStructure(ring, null, "ring.xyz");
+    await runCleanup(useBuilderStore, rotatingEmbed());
+    expect(s().notice?.text).toBe(
+      `Cleaned up 1 molecule (MMFF94s, 1.50 kcal/mol). ${UNKNOWN_ORDERS}`,
+    );
   });
 });

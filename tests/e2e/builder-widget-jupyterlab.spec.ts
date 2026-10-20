@@ -122,6 +122,10 @@ const outputs = (page: Page) => page.locator(".jp-Notebook .jp-CodeCell .jp-Cell
 
 /** Select the oxygens with the Select tool's element chip and delete them with the Delete key. */
 async function deleteOxygens(scope: ReturnType<Page["locator"]>) {
+  // Plain deletes, without hydrogen bookkeeping: caffeine loses exactly its
+  // two oxygens (with Hydrogens on Auto their carbons would gain two H each).
+  await scope.locator('[data-testid="builder-tool-delete"]').click();
+  await scope.locator('[data-testid="builder-hydrogens-off"]').click();
   await scope.locator('[data-testid="builder-tool-select"]').click();
   await scope.locator('[data-testid="builder-inspector-element-O"]').click();
   await scope.locator('[data-testid="builder-inspector-element-O"]').press("Delete");
