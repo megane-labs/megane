@@ -554,13 +554,17 @@ test("camera: left drags never roll the model off its c axis", async () => {
   await scope.waitForTimeout(200);
   const { page, box, onCanvas } = await canvasGeometry(scope);
   const home = eyeOf((await getCameraState(scope))!);
-  const visH = Math.min(box.height, 400);
+  // In a VS Code notebook the output cell starts low in the window, so only
+  // the canvas's top band is on screen; keep the path inside what is visible.
+  const viewportH = page.viewportSize()?.height ?? box.y + box.height;
+  const visTop = Math.max(box.y, 0);
+  const visH = Math.min(box.y + Math.min(box.height, 400), viewportH) - visTop;
   const path = [
     [0.3, 0.8],
     [0.6, 0.2],
     [0.2, 0.5],
     [0.5, 0.7],
-  ].map(([fx, fy]) => ({ x: box.x + box.width * fx * 0.5, y: box.y + visH * fy }));
+  ].map(([fx, fy]) => ({ x: box.x + box.width * fx * 0.5, y: visTop + visH * fy }));
   expect((await onCanvas(path)).every(Boolean)).toBe(true);
 
   await page.mouse.move(path[0].x, path[0].y);
