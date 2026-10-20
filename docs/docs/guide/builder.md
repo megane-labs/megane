@@ -491,8 +491,10 @@ viewer's pipeline templates do:
 - **Liquid mixture**: water and ethanol into a *Liquid box*.
 - **Molecules on a slab**: bulk Pt → a Pt(111) slab → a 3 × 3 layer of water
   placed on it.
-- **Polymer melt in a box**: a 20-unit polyethylene chain → ten chains in a
-  *Liquid box*.
+- **Polymer chains in a box**: a 10-unit polyethylene chain → ten chains in a
+  *Liquid box* at 0.1 g/cm³. packmol places each chain as one rigid
+  conformer, so it cannot pack chains to melt density; this dilute box is a
+  starting point to compress with MD.
 - **Water on a slab**: bulk Au → an Au(100) slab whose vacuum *Solvate* fills
   with water, a solid–liquid interface.
 - **Crystal supercell**: rocksalt NaCl repeated 3 × 3 × 3.

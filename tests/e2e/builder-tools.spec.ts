@@ -335,7 +335,7 @@ test.describe("builder-tools: webapp", () => {
     await expect(page.getByTestId("megane-builder")).toHaveAttribute("data-atom-count", "59");
   });
 
-  test("Flow template: a polymer melt embeds the chain with RDKit and packs it on the server", async ({
+  test("Flow template: polymer chains in a box embeds the chain with RDKit and packs it on the server", async ({
     page,
   }) => {
     const calls: { name: string; args: Record<string, unknown> }[] = [];
@@ -349,7 +349,7 @@ test.describe("builder-tools: webapp", () => {
     await page.getByTestId("builder-flow-templates").click();
     await page.getByTestId("builder-flow-template-polymer-melt").click();
     const node = (id: string) => page.locator(`.react-flow__node[data-id="${id}"]`);
-    await expect(node("n1").getByTestId("builder-flow-node-polymer")).toContainText("PE × 20");
+    await expect(node("n1").getByTestId("builder-flow-node-polymer")).toContainText("PE × 10");
 
     // The template's box keeps its own density and seed and takes the tool's other defaults.
     await node("n2").click();
@@ -369,12 +369,12 @@ test.describe("builder-tools: webapp", () => {
       components: { count: number; molecule: { name: string; molblock: string } }[];
     };
     expect(args.seed).toBe(2026);
-    expect(args.density).toBe(0.85);
+    expect(args.density).toBe(0.1);
     expect(args.components[0].count).toBe(10);
     expect(args.components[0].molecule.name).toBe("PE");
-    // C40H82: 40 carbons and 82 hydrogens in the mol block's counts line.
-    expect(args.components[0].molecule.molblock.split("\n")[3].slice(0, 3).trim()).toBe("122");
-    await expect(node("n1").getByTestId("builder-flow-node-summary")).toContainText("122 atoms");
+    // C20H42: 20 carbons and 42 hydrogens in the mol block's counts line.
+    expect(args.components[0].molecule.molblock.split("\n")[3].slice(0, 3).trim()).toBe("62");
+    await expect(node("n1").getByTestId("builder-flow-node-summary")).toContainText("62 atoms");
   });
 
   test("a wrong token is reported and nothing connects", async ({ page }) => {
