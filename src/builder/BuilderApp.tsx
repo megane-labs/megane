@@ -1029,7 +1029,7 @@ export function BuilderApp({ host = WEB_HOST }: BuilderAppProps = {}) {
               gap: 8,
               padding: "6px 8px 6px 12px",
               fontSize: 12,
-              borderLeft: "3px solid var(--megane-warning, #f59e0b)",
+              borderLeft: "3px solid var(--megane-warning-text, #b45309)",
             }}
           >
             <span data-testid="builder-restore-text" style={{ flex: 1 }}>

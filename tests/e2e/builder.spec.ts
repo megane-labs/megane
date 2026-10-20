@@ -466,16 +466,17 @@ test.describe("builder: webapp", () => {
     const opened = await builderState(page);
     expect(opened.nBonds).toBe(25);
 
-    // Delete, then Element, then Bond.
+    // Delete, then Element, then Bond. Caffeine carries explicit hydrogens,
+    // so they are kept balanced: deleting the C=O oxygen leaves its carbon
+    // two hydrogens in the same step.
     await page.locator('[data-testid="builder-tool-delete"]').click();
     await pickAtom(page, 0);
-    await expect(root).toHaveAttribute("data-atom-count", "23");
+    await expect(root).toHaveAttribute("data-atom-count", "25");
     await page.locator('[data-testid="builder-tool-element"]').click();
     await page.locator('[data-testid="builder-element-N"]').click();
     await pickAtom(page, 0);
-    // Caffeine carries explicit hydrogens, so the C=O oxygen turned N gains
-    // the H its valence leaves room for, in the same step.
-    await expect(root).toHaveAttribute("data-atom-count", "24");
+    // The atom turned N gains the H its valence leaves room for.
+    await expect(root).toHaveAttribute("data-atom-count", "26");
     await page.locator('[data-testid="builder-tool-bond"]').click();
     await pickAtom(page, 0);
     await expect(page.locator('[data-testid="builder-tool-hint"]')).toContainText("First atom: #0");
@@ -483,11 +484,15 @@ test.describe("builder: webapp", () => {
     const edited = await builderState(page);
     expect(edited.edits.map((e) => e.op)).toEqual([
       "delete_atoms",
+      "add_atom",
+      "add_atom",
       "set_element",
       "add_atom",
       "add_bond",
+      "delete_atoms",
     ]);
-    // The history lists Undo steps: Element and the hydrogen it added are one.
+    // The history lists Undo steps: each edit and the hydrogens it balanced
+    // are one.
     await expect(page.locator('[data-testid="builder-op-list"] li')).toHaveCount(3);
 
     // Show original previews the file as opened and pauses editing.
@@ -495,7 +500,8 @@ test.describe("builder: webapp", () => {
     await expect(root).toHaveAttribute("data-atom-count", "24");
     await expect(page.locator('[data-testid="builder-paused"]')).toBeVisible();
     await page.locator('[data-testid="builder-show-original"]').click();
-    await expect(root).toHaveAttribute("data-atom-count", "24");
+    // The new N–C bond took one of the N's hydrogens.
+    await expect(root).toHaveAttribute("data-atom-count", "25");
 
     // Save bakes the edited structure; the file takes the document's name.
     const download = page.waitForEvent("download");
@@ -505,7 +511,7 @@ test.describe("builder: webapp", () => {
     const text = await (await file.createReadStream())
       .toArray()
       .then((chunks) => Buffer.concat(chunks as Buffer[]).toString("utf8"));
-    expect(text.split("\n")[0].trim()).toBe("24");
+    expect(text.split("\n")[0].trim()).toBe("25");
   });
 
   test("right-click menu, a bond length set by number, and an RDKit clean-up", async ({ page }) => {
@@ -624,7 +630,7 @@ test.describe("builder: webapp", () => {
       /Add water-\d+ \(3 atoms\)/,
     );
 
-    // A second Add goes beside the first molecule, past its bounding box.
+    // A second Add goes into the emptiest part of the cell, away from the first.
     await page
       .locator(
         '[data-testid="builder-library-item-preset:benzene"] [data-testid="builder-library-add"]',
@@ -633,7 +639,11 @@ test.describe("builder: webapp", () => {
     await expect(root).toHaveAttribute("data-atom-count", "15");
     state = await builderState(page);
     const second = state.edits[1] as { translate: [number, number, number] };
-    expect(second.translate[0]).toBeGreaterThan(5 + 0.75 + 2);
+    for (const v of second.translate) {
+      expect(v).toBeGreaterThanOrEqual(0);
+      expect(v).toBeLessThanOrEqual(10);
+    }
+    expect(Math.hypot(...second.translate.map((v) => v - 5))).toBeGreaterThan(3);
 
     // Place: choose methane, then a real click on empty space stamps it there.
     const methane = page.locator('[data-testid="builder-library-item-preset:methane"]');
@@ -784,9 +794,12 @@ test.describe("builder: webapp", () => {
     await openLibrary();
     await expect(page.locator('[data-testid="builder-library-count"]')).toHaveText("12 molecules");
     await expect(sketched).toHaveCount(1);
+    // Removing a molecule asks first.
     await row.locator('[data-testid="builder-library-remove"]').click();
+    await page.locator('[data-testid="builder-confirm-ok"]').click();
     await expect(page.locator('[data-testid="builder-library-count"]')).toHaveText("11 molecules");
     await againRow.locator('[data-testid="builder-library-remove"]').click();
+    await page.locator('[data-testid="builder-confirm-ok"]').click();
     await expect(page.locator('[data-testid="builder-library-count"]')).toHaveText("10 molecules");
   });
   test("builds a bulk crystal, a supercell and a slab, then adsorbs a molecule on it", async ({
@@ -930,6 +943,8 @@ test.describe("builder: webapp", () => {
       "true",
     );
     await expect(page.locator('[data-testid="builder-status-tool"]')).toContainText("Delete (D)");
+    // Plain edits, without hydrogen bookkeeping, so each delete is one atom.
+    await page.locator('[data-testid="builder-hydrogens-off"]').click();
     await pickAtom(page, 0);
     await expect(root).toHaveAttribute("data-atom-count", "23");
 
