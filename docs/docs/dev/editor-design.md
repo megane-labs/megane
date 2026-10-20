@@ -198,16 +198,38 @@ and the anywidget bundle behind `megane.Builder` (`src/builderWidget.ts`,
 (`src/builder/host.ts`) that says how *Save* delivers a file (`save`: VS
 Code's save dialog, the Jupyter server's contents, the kernel's working
 directory; the web app downloads), whether the *Tools* menu is shown
-(`tools`, off in every embedded host, which cannot count on reaching an MCP
-server) and whether the keyboard shortcuts stay inside the Builder
-(`scopeShortcuts`). A Builder's document lives in a bundle of stores
-(`src/builder/BuilderStores.tsx`: the document, the library's dialogs, the
-Python tools). Without a `BuilderProvider` it is the module-level bundle,
+(`tools`) and, for a page that cannot reach an MCP server itself, a
+`toolBridge` through which the host makes the connections (VS Code's
+extension host, JupyterLab's `megane.builder_tools` server extension; only
+the notebook widget leaves the menu out with `tools: false`), whether the
+keyboard shortcuts stay inside the Builder (`scopeShortcuts`), and whether
+the page is the Builder's own (`standalone`: the web app alone warns before
+the tab closes with unsaved edits and keeps an autosave). A Builder's
+document lives in a bundle of stores (`src/builder/BuilderStores.tsx`: the
+document, the library's dialogs, the Python tools, the Flow graph). Without a `BuilderProvider` it is the module-level bundle,
 one Builder document per page, which is how `builder.html`, VS Code (which
 gives each tab a webview of its own) and the widget bundle (loaded once per
 `Builder` object, whose newest output takes the document) mount it.
 JupyterLab's tabs share one page, so each mounts with `createBuilderStores()`
 and edits a document of its own; the molecule library stays page-wide.
+
+**Flow mode.** A mode switch at the top of the left rails
+(`src/builder/flow/ModeSwitch.tsx`) picks *Manual* — everything above — or
+*Flow*, where a model is a graph of blocks (`src/builder/flow/`): a molecule
+from SMILES or the library, the Manual structure, the built-in crystal and
+polymer blocks, and every tool of a connected tool server. In Flow mode the
+tool and operations rails are hidden and `FlowPanel`, with its own rail
+(`FlowRail.tsx`, as the viewer's Pipeline panel has), replaces Details and
+History; the panel is built from the
+viewer's shared graph kit (`src/components/graph/`), the same canvas, node
+cards, wires and properties pane the Pipeline panel uses. `FlowPanel` is
+loaded with `React.lazy` the first time Flow mode opens, so the Builder page
+does not load React Flow until then. *Run* builds the blocks in order
+(`engine.ts`) and caches each result under its settings and inputs; *Open in
+Manual* makes the picked block's result the Manual document. Flows are saved
+and opened as `.megane-flow.json` (serialized by the flow store,
+`flow/store.ts`), delivered through the host's `save` like a structure;
+`persist.ts` also keeps the last flow in `localStorage` for the next visit.
 
 **Document.** `useBuilderStore` (`src/builder/store.ts`) holds a source
 `Snapshot` (the opened file, or `emptyCellSnapshot(edge)` for *New*), its
@@ -221,7 +243,8 @@ has written since `base` (as one Undo step). A
 `revision` counter bumps on every change that reshapes the rendered
 structure without replacing the document, and the app hands it to
 `Viewport.preserveCameraKey` so edits never move the camera while a new file
-or cell still re-fits. There is no pipeline graph anywhere in the app.
+or cell still re-fits. Manual mode has no pipeline graph; Flow mode (below)
+is a separate block graph whose output becomes the Manual document.
 
 **View.** `builderViewportState(shown)` (`src/builder/view.ts`) turns the
 shown snapshot into a `ViewportState`: one particle stream with every atom,
@@ -352,7 +375,8 @@ together.
 generators that already exist in Python reach Builder as buttons backed by
 MCP servers rather than as TypeScript ports: `src/builder/tools/` is the
 client of the [Builder Tool Contract (MCP)](/dev/builder-tools) behind the
-*Tools* menu (web app only; see *Hosts*). A tool that adds to the open
+*Tools* menu (web app, VS Code and JupyterLab; not the notebook widget —
+see *Hosts*). A tool that adds to the open
 structure writes its atoms as one `add_fragment` op (after a `set_cell` when
 the result's cell differs from the document's), pushed as one Undo step; a
 tool that builds a new document replaces the open one.

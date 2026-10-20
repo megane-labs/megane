@@ -324,7 +324,7 @@ the same PR. The full per-host registration checklist lives in the
 | **Serialization** | `src/pipeline/serialize.ts` (`SerializedPipeline` v3), `src/pipeline/builder.ts` / `python/megane/pipeline.py` (programmatic builders) |
 | **Pipeline → Renderer** | `src/pipeline/apply.ts` |
 | **Node executors** | `src/pipeline/executors/` (one file per node type, plus parsing/geometry helpers) |
-| **Node UI** | `src/components/nodes/`, `src/components/PipelineEditor.tsx`, `src/components/PipelineRail.tsx` |
+| **Node UI** | `src/components/nodes/`, `src/components/PipelineEditor.tsx`, `src/components/PipelineRail.tsx`, `src/components/graph/` (graph kit shared with the Builder's Flow mode: `GraphCanvas`, `GraphEditorPanel`, `GraphProperties`, `NodeCardView`, `PanelRail`) |
 | **Selection DSL** | `src/pipeline/selection.ts` (recursive-descent parser/evaluator) |
 | **Main renderer** | `src/renderer/MoleculeRenderer.ts` |
 | **Atom impostor** | `src/renderer/ImpostorAtomMesh.ts` |

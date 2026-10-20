@@ -19,10 +19,10 @@
  *   tab closes with unsaved edits and keeps an autosave to restore
  *   (`standalone`).
  * - **Tool servers.** The web app connects to an MCP tool server itself. A
- *   host whose page cannot (the VS Code webview) passes a `toolBridge`: the
- *   host connects to the servers the user configured and relays the calls
- *   (Builder Tool Contract §8). A host with neither leaves the *Tools* menu
- *   out (`tools: false`).
+ *   host whose page cannot (the VS Code webview, the JupyterLab tab) passes a
+ *   `toolBridge`: the host connects to the servers the user configured and
+ *   relays the calls (Builder Tool Contract §8). A host with neither (the
+ *   notebook widget) leaves the *Tools* menu out (`tools: false`).
  *
  * `BuilderApp` takes the host as a prop; `mountBuilder` (`mount.tsx`) is how a
  * host puts the app on a page.

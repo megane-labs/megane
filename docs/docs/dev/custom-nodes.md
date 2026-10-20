@@ -405,7 +405,7 @@ export class Fade extends PipelineNode {
 
   public opacity: number;
 
-  constructor({ opacity = 0.3 }: { opacity?: number } = {}) {
+  constructor({ opacity = defaultsOf("fade").opacity }: { opacity?: number } = {}) {
     super();
     this.opacity = opacity;
   }
@@ -422,8 +422,11 @@ an `isinstance(node, Fade)` branch to `Pipeline._serialize_node()` that copies
 those attributes into the node dict. Export the class from `python/megane/__init__.py`
 (import + `__all__`) so `megane.Fade` resolves; likewise add the TypeScript class
 to the builder exports in `src/lib.ts` and register it in `BUILDER_NODE_CLASSES`
-(`fade: Fade`). Read defaults from `defaultParams("fade")` rather than repeating
-them in the constructor, so the builder cannot drift from the editor.
+(`fade: Fade`). In TypeScript, read defaults with `defaultsOf("fade")` (a helper
+local to `src/pipeline/builder.ts` that returns `defaultParams("fade")`) rather
+than repeating them in the constructor, so the builder cannot drift from the
+editor. Python has no such helper: keep its keyword defaults equal to
+`defaultParams` by hand.
 
 ```python
 class Fade(PipelineNode):
