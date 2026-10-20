@@ -16,7 +16,7 @@ const REPRESENTATION_OPTIONS: { value: RepresentationMode; label: string }[] = [
   { value: "atoms", label: "Atoms" },
   { value: "licorice", label: "Licorice" },
   { value: "cartoon", label: "Cartoon" },
-  { value: "both", label: "Both" },
+  { value: "both", label: "Cartoon + Atoms" },
   { value: "surface", label: "Surface" },
   { value: "line", label: "Line" },
   { value: "illustrative", label: "Illustrative" },

@@ -67,6 +67,15 @@ describe("PipelineRail", () => {
     expect(screen.queryByTestId("pipeline-editor-add-menu")).toBeNull();
   });
 
+  it("offers every node type except the viewport in the Add Node menu", () => {
+    const listed = new Set(ADD_NODE_GROUPS.flatMap((g) => g.types));
+    const missing = Object.keys(NODE_TYPE_LABELS).filter(
+      (type) => type !== "viewport" && !listed.has(type as keyof typeof NODE_TYPE_LABELS),
+    );
+    expect(missing).toEqual([]);
+    expect(listed.has("surface_mesh")).toBe(true);
+  });
+
   it("offers every template with its description", () => {
     const props = renderRail();
     fireEvent.click(screen.getByTestId("pipeline-editor-templates"));

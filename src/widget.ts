@@ -131,7 +131,15 @@ function render({ model, el }: { model: AnyWidgetModel; el: HTMLElement }) {
     saveChanges();
   }
 
+  // The last camera state this widget wrote (or was given), as JSON: a
+  // `change:camera_state` carrying it is our own write echoing back, not a
+  // request from Python to move the camera.
+  let syncedCameraJson = JSON.stringify(model.get("camera_state") ?? null);
+  // A camera state Python set after mount, for WidgetViewer to apply.
+  let pythonCameraState: MeganeCameraState | null = null;
+
   function handleCameraStateChange(state: MeganeCameraState) {
+    syncedCameraJson = JSON.stringify(state);
     model.set("camera_state", state);
     saveChanges();
   }
@@ -175,6 +183,7 @@ function render({ model, el }: { model: AnyWidgetModel; el: HTMLElement }) {
           onPipelineChange: handlePipelineChange,
           initialCameraState: getInitialCameraState(),
           onCameraStateChange: handleCameraStateChange,
+          cameraState: pythonCameraState,
           quickStyle: model.get("quick_style") === true,
         }),
       ),
@@ -243,6 +252,16 @@ function render({ model, el }: { model: AnyWidgetModel; el: HTMLElement }) {
   });
 
   model.on("change:quick_style", () => {
+    renderApp();
+  });
+
+  model.on("change:camera_state", () => {
+    const state = getInitialCameraState();
+    if (!state) return;
+    const json = JSON.stringify(state);
+    if (json === syncedCameraJson) return;
+    syncedCameraJson = json;
+    pythonCameraState = state;
     renderApp();
   });
 

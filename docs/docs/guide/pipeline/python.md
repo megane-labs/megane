@@ -13,7 +13,7 @@ viewer = megane.view("protein.pdb")                                     # struct
 viewer = megane.view_traj("protein.pdb", xtc="trajectory.xtc")         # with trajectory
 ```
 
-Both pick the bond source per format by default (`bonds="auto"`). `megane.build_pipeline(path, ...)` builds the same minimal pipeline but returns the `Pipeline` itself instead of a widget, for saving to JSON or further editing.
+Both pick the bond source per format by default (`bonds="auto"`), and both insert a `Symmetry` node so a CIF asymmetric unit is expanded to the full cell (with a trajectory connected, the structure passes through unexpanded so the frames still match). `megane.build_pipeline(path, ...)` builds the same minimal pipeline but returns the `Pipeline` itself instead of a widget, for saving to JSON or further editing.
 
 When you need more control — filtering atoms, multi-layer rendering, labels, polyhedra, or custom styling — build a pipeline manually with the `Pipeline` class.
 
@@ -85,20 +85,25 @@ from megane import (
 
 Every node type of the visual pipeline editor has a Python class, so
 `Pipeline.from_dict()` / `Pipeline.load()` can read any pipeline the editor
-saves.
+saves, and `to_dict()` / `save()` write it back with every node's parameters,
+its `position` in the editor, and its `enabled` flag. Each node object carries
+those two as attributes too — `node.enabled = False` disables a node (it passes
+its input through) and `node.position = {"x": 0, "y": 200}` places it in the
+editor; set them before `add_node()`, which records the node's settings.
 
 ### LoadStructure
 
 Load a molecular structure file.
 
 ```python
-LoadStructure(path: str, *, edits: list[dict] | None = None)
+LoadStructure(path: str, *, edits: list[dict] | None = None, file_url: str | None = None)
 ```
 
 | Parameter | Type                 | Default | Description                                                                                                                                                                                                                                                                                                                                                                                                                                              |
 | --------- | -------------------- | ------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `path`    | `str`                | —       | File path, read when the node is added. Auto-detected by extension: `.pdb`, `.gro`, `.xyz` / `.extxyz` / `.jxyz`, `.mol`, `.sdf`, `.mol2`, `.cif`, `.mmcif`, `.data` / `.lammps` (LAMMPS data), `.lammpstrj` / `.dump` / `.trj` (LAMMPS dump, frame 0), `.prmtop`, `.vasp` and bare `POSCAR` / `CONTCAR` / `XDATCAR` names, `.cml`, `.molden`, `.xsf` / `.axsf`, `.c3xml`, `.odydata` / `.xodydata`, `.magres`, `.gamess`, `.phonon`, and `.traj` (ASE binary). |
 | `edits`   | `list[dict] \| None` | `None`  | Structure edits replayed on the file as loaded — the same edit history the [Megane Builder](../builder.md#history) writes (`add_atom`, `delete_atoms`, `move_atoms`, `set_element`, `add_bond`, `delete_bond`, `add_fragment`, `set_cell`, `supercell`, `slab`, `expand_symmetry`, `wrap`, `center`). Atom references are file atom indices (`int`) or the `id` of an atom an earlier op created (`str`).                                                                                         |
+| `file_url` | `str \| None`       | `None`  | URL the React [`PipelineViewer`](./typescript.md) fetches the file from (written as `fileUrl`). The widget ignores it. |
 
 ```python
 LoadStructure("water.pdb", edits=[
@@ -122,6 +127,7 @@ LoadTrajectory(
     traj: str | None = None,
     xyz: str | None = None,
     lammpstrj: str | None = None,
+    source: Literal["file", "structure"] = "file",
 )
 ```
 
@@ -133,8 +139,9 @@ LoadTrajectory(
 | `traj`      | `str \| None` | `None`  | Path to ASE `.traj` trajectory file                     |
 | `xyz`       | `str \| None` | `None`  | Path to a multi-frame XYZ (or extended XYZ) trajectory file      |
 | `lammpstrj` | `str \| None` | `None`  | Path to LAMMPS dump trajectory (`.lammpstrj` / `.dump` / `.trj`) |
+| `source`    | `str`         | `"file"` | `"file"` plays the file given above; `"structure"` forwards the frames embedded in the structure file itself (multi-frame XYZ / PDB / `.traj`), as the editor sets it when such a file is opened |
 
-Pass exactly one. **Ports:** `inp.particle`, `out.traj`
+Pass exactly one file (or none with `source="structure"`). **Ports:** `inp.particle`, `out.traj`
 
 ### Streaming
 
@@ -243,7 +250,7 @@ Modify(*, scale: float = 1.0, opacity: float = 1.0)
 
 | Parameter | Type    | Default | Description                              |
 | --------- | ------- | ------- | ---------------------------------------- |
-| `scale`   | `float` | `1.0`   | Atom sphere radius multiplier (0.1–2.0)  |
+| `scale`   | `float` | `1.0`   | Atom sphere radius multiplier (0.1–2.0); on a bond stream, the bond width multiplier for the whole stream |
 | `opacity` | `float` | `1.0`   | Transparency (0 = invisible, 1 = opaque) |
 
 **Ports:** `inp.particle`, `out.particle`
@@ -252,8 +259,10 @@ Modify(*, scale: float = 1.0, opacity: float = 1.0)
 
 Expand a crystallographic asymmetric unit into the full unit cell using the
 space-group operations the parser captured (a CIF `_symmetry_equiv_pos_as_xyz`
-loop), replicating bonds per image and dropping coincident images. `megane.view()`
-inserts this node automatically.
+loop), replicating bonds per image and dropping coincident images.
+`megane.view()`, `megane.view_traj()` and `megane.build_pipeline()` insert this
+node automatically. While a trajectory is connected to `inp.traj` the structure
+passes through unexpanded, so the frames keep matching its atoms.
 
 ```python
 Symmetry(*, mode: Literal["expand", "none"] = "expand")
@@ -322,10 +331,13 @@ Color(
 ### Representation
 
 Tag the particle stream with the visual representation the Viewport should
-display. Stacks Ovito-style: the Viewport reads the override from the first
-particle stream that carries one, so a downstream `Representation` node
-wins over an upstream one on the same chain. When no chain has an override,
-the Viewport falls back to `"atoms"`.
+display. Stacks Ovito-style: a downstream `Representation` node wins over an
+upstream one on the same chain. The Viewport resolves the mode per atom: each
+atom takes the mode of the first stream that covers it and carries an override,
+with selection (filtered) streams taking precedence over whole-structure
+streams. Atoms no override covers use the first non-`"line"` override, or
+`"atoms"` when no stream carries one, so branches that disagree are drawn per
+atom.
 
 ```python
 Representation(
@@ -336,7 +348,7 @@ Representation(
 
 | Parameter | Type  | Default   | Description                                                                                                                                                                                                                                                                                        |
 | --------- | ----- | --------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `mode`    | `str` | `"atoms"` | Visual representation: `"atoms"` (ball-and-stick), `"licorice"` (equal-radius continuous sticks), `"cartoon"`, `"both"`, `"surface"`, `"line"` (thin wireframe), or `"illustrative"` (Mol\*-style spacefill spheres shaded toward each sphere's rim, with a dark silhouette outline, bonds hidden) |
+| `mode`    | `str` | `"atoms"` | Visual representation: `"atoms"` (ball-and-stick), `"licorice"` (equal-radius continuous sticks), `"cartoon"`, `"both"` (cartoon drawn over atoms and bonds), `"surface"`, `"line"` (thin wireframe), or `"illustrative"` (Mol\*-style spacefill spheres shaded toward each sphere's rim, with a dark silhouette outline, bonds hidden) |
 
 **Ports:** `inp.particle`, `out.particle`
 
@@ -345,13 +357,19 @@ Representation(
 Compute and display bonds.
 
 ```python
-AddBonds(*, source: Literal["distance", "structure", "file"] = "distance", top: str | None = None)
+AddBonds(
+    *,
+    source: Literal["distance", "structure", "file"] = "distance",
+    top: str | None = None,
+    vdw_scale: float | None = None,
+)
 ```
 
 | Parameter | Type          | Default      | Description                                                                                                                                   |
 | --------- | ------------- | ------------ | --------------------------------------------------------------------------------------------------------------------------------------------- |
 | `source`  | `str`         | `"distance"` | `"distance"` for VDW-based inference; `"structure"` (alias `"file"`) to read bonds from the structure file (e.g. CONECT records in PDB)       |
-| `top`     | `str \| None` | `None`       | Path to a topology file (GROMACS `.top` or CHARMM/NAMD `.psf`). When provided, `source` is ignored and bonds are read from the topology file. |
+| `top`     | `str \| None` | `None`       | Path to a topology file (GROMACS `.top` or CHARMM/NAMD `.psf`). When provided, `source` is ignored and bonds are read from the topology file; their parsed pairs are written into the JSON as `bondFileData`. |
+| `vdw_scale` | `float \| None` | `None` | Threshold scale for distance inference (written as `vdwScale`): atoms bond when their separation is `≤ (vdw_i + vdw_j) * vdw_scale`. `None` uses the viewer's default, `0.6`. |
 
 **Ports:** `inp.particle`, `out.bond`
 

@@ -233,6 +233,8 @@ import {
   handlePickFileMessage,
   workspaceIsRemote,
   MeganeEditorProvider,
+  ActiveViewerPanel,
+  attachViewerPanel,
   builderSaveBase,
   getBuilderHtml,
   MeganeBuilderPanels,
@@ -1396,6 +1398,124 @@ describe("MeganeEditorProvider.seekFrame", () => {
     expect(cmd).toBeDefined();
     // Command handler should not throw when no panel is open
     expect(() => cmd!.handler(0)).not.toThrow();
+  });
+});
+
+describe("Pipeline Viewer status bar and seek target", () => {
+  const pipeline = { version: 3, nodes: [], edges: [] };
+
+  async function openPipelineTab() {
+    const provider = getProvider("megane.pipelineViewer");
+    mockState.readFile.mockResolvedValueOnce(new TextEncoder().encode(JSON.stringify(pipeline)));
+    const doc = { uri: VscodeUri.file("/work/pipe.megane.json"), dispose: vi.fn() };
+    const tab = makeWebviewPanel();
+    await provider.resolveCustomEditor(doc, tab.panel, {});
+    return tab;
+  }
+
+  function seekCommand() {
+    const cmd = mockState.registeredCommands.find((c) => c.command === "megane.seekFrame");
+    if (!cmd) throw new Error("megane.seekFrame not registered");
+    return cmd.handler;
+  }
+
+  beforeEach(() => {
+    activate(makeContext("/ext") as unknown as Parameters<typeof activate>[0]);
+  });
+
+  it("gives a .megane.json tab frame and selection status bar items", async () => {
+    const { fireMessage } = await openPipelineTab();
+    expect(mockState.statusBarItems).toHaveLength(2);
+    const [frameItem, selItem] = mockState.statusBarItems;
+
+    fireMessage({ type: "frameChange", frame: 12 });
+    expect(frameItem.text).toBe("$(megane-frame) Frame 12");
+    expect(frameItem.show).toHaveBeenCalledTimes(1);
+
+    fireMessage({ type: "selectionChange", selection: { atoms: [3, 4] } });
+    expect(selItem.text).toBe("$(megane-atom) 2 atoms selected");
+
+    fireMessage({
+      type: "measurementChange",
+      measurement: { type: "distance", value: 1.5, label: "1.500 Å", atoms: [3, 4] },
+    });
+    expect(selItem.text).toBe("$(megane-atom) 1.500 Å");
+  });
+
+  it("disposes the pipeline tab's status bar items with the tab", async () => {
+    const { fireDispose } = await openPipelineTab();
+    fireDispose();
+    for (const item of mockState.statusBarItems) {
+      expect(item.dispose).toHaveBeenCalledTimes(1);
+    }
+  });
+
+  it("does not post anything back for status messages", async () => {
+    const { panel, fireMessage } = await openPipelineTab();
+    fireMessage({ type: "frameChange", frame: 1 });
+    fireMessage({ type: "selectionChange", selection: { atoms: [] } });
+    expect(panel.webview.postMessage).not.toHaveBeenCalled();
+  });
+
+  it("megane.seekFrame seeks a .megane.json tab when it is the active viewer", async () => {
+    const { panel } = await openPipelineTab();
+    seekCommand()(9);
+    expect(panel.webview.postMessage).toHaveBeenCalledWith({ type: "seekFrame", frame: 9 });
+  });
+
+  it("megane.seekFrame follows the most recently active tab across both viewer kinds", async () => {
+    mockState.readFile.mockResolvedValueOnce(new Uint8Array([1]));
+    const structure = makeWebviewPanel();
+    await getProvider("megane.structureViewer").resolveCustomEditor(
+      { uri: VscodeUri.file("/work/a.pdb"), dispose: vi.fn() },
+      structure.panel,
+      {},
+    );
+    const pipelineTab = await openPipelineTab();
+    structure.panel.webview.postMessage.mockClear();
+
+    seekCommand()(3);
+    expect(pipelineTab.panel.webview.postMessage).toHaveBeenCalledWith({
+      type: "seekFrame",
+      frame: 3,
+    });
+    expect(structure.panel.webview.postMessage).not.toHaveBeenCalled();
+
+    structure.fireViewStateChange(true);
+    seekCommand()(4);
+    expect(structure.panel.webview.postMessage).toHaveBeenCalledWith({
+      type: "seekFrame",
+      frame: 4,
+    });
+
+    // Closing the active structure tab leaves no seek target until another
+    // tab becomes active.
+    structure.fireDispose();
+    pipelineTab.panel.webview.postMessage.mockClear();
+    seekCommand()(5);
+    expect(pipelineTab.panel.webview.postMessage).not.toHaveBeenCalled();
+  });
+
+  it("ignores a view-state change that leaves the tab inactive", () => {
+    const viewers = new ActiveViewerPanel();
+    const a = makeWebviewPanel();
+    const b = makeWebviewPanel();
+    attachViewerPanel(a.panel as unknown as Parameters<typeof attachViewerPanel>[0], viewers);
+    attachViewerPanel(b.panel as unknown as Parameters<typeof attachViewerPanel>[0], viewers);
+    a.fireViewStateChange(false);
+    expect(viewers.panel).toBe(b.panel);
+    // Disposing a tab that is not the target keeps the target.
+    a.fireDispose();
+    expect(viewers.panel).toBe(b.panel);
+  });
+
+  it("the status handler leaves other messages to the caller", () => {
+    const handle = attachViewerPanel(
+      makeWebviewPanel().panel as unknown as Parameters<typeof attachViewerPanel>[0],
+      new ActiveViewerPanel(),
+    );
+    expect(handle({ type: "saveFile" })).toBe(false);
+    expect(handle({ type: "frameChange", frame: 0 })).toBe(true);
   });
 });
 

@@ -9,8 +9,11 @@ import { capturePipelineStore, type PipelineStoreSnapshot } from "@megane/pipeli
 import { useTour } from "@megane/tour/useTour";
 import "@megane/styles/megane.css";
 import { prewarmParseWorker } from "@megane/parsers/structure";
+import { usePlaybackStore } from "@megane/stores/usePlaybackStore";
+import type { SelectionState, Measurement } from "@megane/types";
 import { ensureWasmUrl } from "./wasmLoader";
 import type { ServerRequest } from "./serverFileBytes";
+import { createSubscription, createFrameSubscription } from "./frameSubscription";
 import {
   basename,
   dirname,
@@ -25,11 +28,22 @@ interface DocBodyProps {
   contents: Contents.IManager;
   request: ServerRequest;
   subscribeActivation: ActivationSubscribe;
+  onFrameChange?: (frame: number) => void;
+  onSelectionChange?: (selection: SelectionState) => void;
+  onMeasurementChange?: (measurement: Measurement | null) => void;
 }
 
 type LoadState = "loading" | "ready" | { error: string };
 
-function DocBody({ context, contents, request, subscribeActivation }: DocBodyProps): JSX.Element {
+function DocBody({
+  context,
+  contents,
+  request,
+  subscribeActivation,
+  onFrameChange,
+  onSelectionChange,
+  onMeasurementChange,
+}: DocBodyProps): JSX.Element {
   const [state, setState] = useState<LoadState>("loading");
   useTour({ host: "jupyterlab" });
 
@@ -139,13 +153,48 @@ function DocBody({ context, contents, request, subscribeActivation }: DocBodyPro
       data-state="ready"
       style={{ width: "100%", height: "100%" }}
     >
-      <MeganeViewer testContext="jupyterlab-pipeline" onUploadStructure={handleUploadStructure} />
+      <MeganeViewer
+        testContext="jupyterlab-pipeline"
+        onUploadStructure={handleUploadStructure}
+        onFrameChange={onFrameChange}
+        onSelectionChange={onSelectionChange}
+        onMeasurementChange={onMeasurementChange}
+      />
     </div>
   );
 }
 
 export class MeganePipelineReactView extends ReactWidget {
   private readonly listeners = new Set<() => void>();
+  private readonly _frameSub = createFrameSubscription();
+  private readonly _selectionSub = createSubscription<SelectionState>();
+  private readonly _measurementSub = createSubscription<Measurement | null>();
+
+  // The same event API as the structure viewer's `MeganeReactView`, so the
+  // frame status bar and other extensions treat both tabs alike.
+  /** Subscribe to trajectory frame-change events emitted by the viewer. */
+  readonly subscribeFrameChange = this._frameSub.subscribe.bind(this._frameSub);
+  /** Subscribe to atom selection-change events emitted by the viewer. */
+  readonly subscribeSelectionChange = this._selectionSub.subscribe.bind(this._selectionSub);
+  /** Subscribe to measurement-change events emitted by the viewer. */
+  readonly subscribeMeasurementChange = this._measurementSub.subscribe.bind(this._measurementSub);
+
+  /** Programmatically seek the viewer to a specific trajectory frame. */
+  seekFrame(index: number): void {
+    usePlaybackStore.getState().seekFrame(index);
+  }
+
+  private readonly _handleFrameChange = (frame: number): void => {
+    this._frameSub.emit(frame);
+  };
+
+  private readonly _handleSelectionChange = (selection: SelectionState): void => {
+    this._selectionSub.emit(selection);
+  };
+
+  private readonly _handleMeasurementChange = (measurement: Measurement | null): void => {
+    this._measurementSub.emit(measurement);
+  };
 
   constructor(
     private readonly context: DocumentRegistry.Context,
@@ -182,6 +231,9 @@ export class MeganePipelineReactView extends ReactWidget {
           contents={this.contents}
           request={this.request}
           subscribeActivation={this.subscribeActivation}
+          onFrameChange={this._handleFrameChange}
+          onSelectionChange={this._handleSelectionChange}
+          onMeasurementChange={this._handleMeasurementChange}
         />
       </ErrorBoundary>
     );

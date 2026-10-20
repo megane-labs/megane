@@ -34,6 +34,24 @@ function groupByCategory(tools: BuilderToolInfo[]): [ToolCategory, BuilderToolIn
   return [...groups.entries()];
 }
 
+/** The page's origin, or null where there is none (a `file:` or opaque origin). */
+export function pageOrigin(): string | null {
+  const origin = typeof window === "undefined" ? undefined : window.location?.origin;
+  return origin && origin !== "null" ? origin : null;
+}
+
+/**
+ * The command that starts the reference tool server over HTTP for this page.
+ * It is installed from Git (it is not on PyPI), and a browser page can only
+ * call it when the server allows the page's origin.
+ */
+export function referenceServerCommand(origin: string | null): string {
+  return (
+    "uvx --from git+https://github.com/hodakamori/megane-builder-tools megane-builder-tools" +
+    ` --transport http --port 8765 --allow-origin ${origin ?? "<this page's origin>"}`
+  );
+}
+
 /**
  * Connect from a launch link, or to the site's tool server, once on mount.
  * A host without the Tools menu (`enabled` false) leaves the page URL alone.
@@ -294,8 +312,9 @@ export function ToolServerDialog({ onClose }: { onClose: () => void }) {
       )}
       {!bridge && status === "idle" && !error && (
         <div style={hintStyle}>
-          Run a tool server, e.g. <code>uvx megane-builder-tools --transport http</code>, and paste
-          its URL and token.
+          Run a tool server, e.g.{" "}
+          <code data-testid="builder-tools-run-hint">{referenceServerCommand(pageOrigin())}</code>,
+          and paste its URL and token.
         </div>
       )}
       {status === "connected" && connection && (
@@ -311,6 +330,11 @@ export function ToolServerDialog({ onClose }: { onClose: () => void }) {
         <div style={hintStyle} data-testid="builder-tools-unsupported">
           Hidden (newer contract than this Builder supports):{" "}
           {connection.listing.unsupported.join(", ")}
+        </div>
+      )}
+      {connection && connection.listing.invalid.length > 0 && (
+        <div style={hintStyle} data-testid="builder-tools-invalid">
+          Hidden (unknown <code>apply</code> mode): {connection.listing.invalid.join(", ")}
         </div>
       )}
     </DetailForm>

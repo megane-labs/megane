@@ -34,7 +34,7 @@ Trajectory-only formats (`.xtc`, `.dcd`, `.nc`) and volumetric grids (`.cube`, `
 
 ## Visual pipeline editor
 
-The JupyterLab DocWidget mounts the full visual pipeline editor, so you can build and edit visualization workflows by wiring nodes, just as in the standalone web app. Pipelines saved as `.megane.json` reopen in the same editor (the **Megane Pipeline Viewer**); the files their Load Structure and Load Trajectory nodes name are fetched relative to the `.megane.json` file's folder, and absolute paths or paths that leave that folder are ignored. The viewer tabs are read-only: editing the pipeline does not rewrite the opened file, and exports download through the browser.
+The JupyterLab DocWidget mounts the full visual pipeline editor, so you can build and edit visualization workflows by wiring nodes, just as in the standalone web app. Pipelines saved as `.megane.json` reopen in the same editor (the **Megane Pipeline Viewer**); the files their loader nodes name (Load Structure, Load Trajectory, Load Vector, Load Volumetric, Load Spectrum, and an Add Bond topology file) are fetched relative to the `.megane.json` file's folder, and absolute paths or paths that leave that folder are ignored. The viewer tabs are read-only: editing the pipeline does not rewrite the opened file, and exports download through the browser.
 
 The **Load Structure** and **Load Trajectory** nodes have two buttons: *Load structure…* (or *Load trajectory…*) opens the browser's file dialog (files on your computer), and **Open from server…** browses the Jupyter server's files — what the file browser shows — starting in the file browser's current folder. Use the second one when JupyterLab runs on a remote machine.
 
@@ -48,8 +48,17 @@ commands are also in the command palette under *Megane*).
 *Save* writes into the server's file tree. See
 [Megane Builder](builder.md#in-vs-code-jupyterlab-and-notebooks).
 
+The Builder's **Tools** menu connects to MCP tool servers listed under
+`MeganeBuilderTools.mcp_servers` in the Jupyter server's configuration; it
+needs the optional MCP client, `pip install "megane[tools]"`. With
+[uv](https://docs.astral.sh/uv/) installed, **Connect to
+megane-builder-tools** needs no configuration (see
+[Python tools](builder.md#python-tools)). The Builder's *Flow* mode builds a
+model by connecting blocks, and saves flows as `.megane-flow.json` (see
+[Flow mode](builder.md#flow-mode)).
+
 ## Events for other extensions
 
-The JupyterLab DocWidget has no Python kernel connection, so events are surfaced as a subscription API rather than a Python callback. Other JupyterLab extensions can react to viewer state via `MeganeReactView.subscribeFrameChange`, `subscribeSelectionChange`, and `subscribeMeasurementChange`. When `IStatusBar` is available, the current frame index is also shown in the JupyterLab status bar.
+The JupyterLab DocWidget has no Python kernel connection, so events are surfaced as a subscription API rather than a Python callback. Other JupyterLab extensions can react to viewer state via `subscribeFrameChange`, `subscribeSelectionChange`, and `subscribeMeasurementChange`, and seek with `seekFrame(index)`, on both the structure viewer (`MeganeReactView`) and the Megane Pipeline Viewer (`MeganePipelineReactView`). When `IStatusBar` is available, the frame index of the current Megane tab, of either kind, is also shown in the JupyterLab status bar.
 
 For a per-platform breakdown of supported formats and UI features (including known gaps), see [Platform Support](/platform-support).

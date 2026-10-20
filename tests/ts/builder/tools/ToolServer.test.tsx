@@ -6,7 +6,13 @@
 import { useState } from "react";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, fireEvent, cleanup, act, waitFor } from "@testing-library/react";
-import { ToolServerDialog, toolsMenuItems, useToolServerLaunch } from "@/builder/tools/ToolServer";
+import {
+  ToolServerDialog,
+  pageOrigin,
+  referenceServerCommand,
+  toolsMenuItems,
+  useToolServerLaunch,
+} from "@/builder/tools/ToolServer";
 import { ToolDialog } from "@/builder/tools/ToolDialog";
 import { parseElement } from "@/builder/tools/ToolFields";
 import { Menu } from "@/builder/Menu";
@@ -109,6 +115,10 @@ describe("Tools menu and Tool server dialog", () => {
     expect(status.disabled).toBe(true);
     click("builder-tools-server");
     expect(screen.getByTestId("builder-tools-dialog")).toBeTruthy();
+    // The hint names a command that installs the server and allows this page.
+    expect(screen.getByTestId("builder-tools-run-hint").textContent).toBe(
+      referenceServerCommand(window.location.origin),
+    );
     change("builder-tools-url", "http://h:2/mcp");
     expect(useToolsStore.getState().url).toBe("http://h:2/mcp");
     // A click inside the form keeps it; Escape and Close both close it.
@@ -197,6 +207,11 @@ describe("Tools menu and Tool server dialog", () => {
     const odd = [
       { name: "future", inputSchema: { type: "object" }, _meta: { [META_KEY]: { contract: 5 } } },
       {
+        name: "badapply",
+        inputSchema: { type: "object" },
+        _meta: { [META_KEY]: { contract: 1, apply: "replace" } },
+      },
+      {
         name: "oneof",
         title: "One of",
         inputSchema: { type: "object", properties: { x: { oneOf: [] } } },
@@ -206,6 +221,10 @@ describe("Tools menu and Tool server dialog", () => {
     mocks.connect.mockImplementationOnce(async () => connection(odd));
     await act(async () => click("builder-tools-connect"));
     expect(screen.getByTestId("builder-tools-unsupported").textContent).toContain("future");
+    expect(screen.getByTestId("builder-tools-unsupported").textContent).not.toContain("badapply");
+    expect(screen.getByTestId("builder-tools-invalid").textContent).toMatch(
+      /unknown apply mode.*badapply/,
+    );
     expect(screen.getByTestId("builder-tools-connected").textContent).toContain("1 tool ");
     click("builder-tools");
     const button = screen.getByTestId("builder-tools-button-oneof") as HTMLButtonElement;
@@ -567,5 +586,23 @@ describe("parseElement", () => {
     expect(parseElement("999")).toBeNaN();
     expect(parseElement("Xx")).toBeNaN();
     expect(parseElement("")).toBeNaN();
+  });
+});
+
+describe("reference server hint", () => {
+  it("names the Git install and allows this page's origin", () => {
+    const cmd = referenceServerCommand("http://localhost:8080");
+    expect(cmd).toContain("uvx --from git+https://github.com/hodakamori/megane-builder-tools");
+    expect(cmd).toContain("--transport http --port 8765 --allow-origin http://localhost:8080");
+    expect(referenceServerCommand(null)).toContain("--allow-origin <this page's origin>");
+  });
+
+  it("reads the page origin, treating an opaque origin as none", () => {
+    expect(pageOrigin()).toBe(window.location.origin);
+    const spy = vi.spyOn(window, "location", "get").mockReturnValue({
+      origin: "null",
+    } as Location);
+    expect(pageOrigin()).toBeNull();
+    spy.mockRestore();
   });
 });

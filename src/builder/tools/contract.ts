@@ -79,6 +79,8 @@ export interface ToolListing {
   tools: BuilderToolInfo[];
   /** Tools marked for a contract version Builder does not support. */
   unsupported: string[];
+  /** Tools marked for a supported contract but with an `apply` value it does not define. */
+  invalid: string[];
 }
 
 const isObject = (v: unknown): v is Json =>
@@ -92,8 +94,12 @@ export function firstSentence(text: string): string {
   return sentence.replace(/\s+/g, " ");
 }
 
-/** Read one tool: a BuilderToolInfo, "unsupported", or null when it is not a Builder tool. */
-export function parseTool(tool: McpTool): BuilderToolInfo | "unsupported" | null {
+/**
+ * Read one tool: a BuilderToolInfo, "unsupported" (a contract version Builder
+ * does not support), "invalid" (a supported contract with an unknown `apply`),
+ * or null when it is not a Builder tool.
+ */
+export function parseTool(tool: McpTool): BuilderToolInfo | "unsupported" | "invalid" | null {
   const marker = tool._meta?.[META_KEY];
   if (!isObject(marker)) return null;
   if (typeof marker.contract !== "number" || !SUPPORTED_CONTRACTS.includes(marker.contract)) {
@@ -104,7 +110,7 @@ export function parseTool(tool: McpTool): BuilderToolInfo | "unsupported" | null
     : "other";
   const apply =
     marker.apply === "insert" ? "insert" : marker.apply === "new_document" ? "new_document" : null;
-  if (!apply) return "unsupported";
+  if (!apply) return "invalid";
   const document: DocumentUse =
     marker.document === "required" || marker.document === "optional" ? marker.document : "none";
   const expected = marker.expectedSeconds;
@@ -128,10 +134,11 @@ export function parseTool(tool: McpTool): BuilderToolInfo | "unsupported" | null
 
 /** Sort a `tools/list` result into Builder buttons (in server order) and skipped tools. */
 export function parseTools(tools: McpTool[]): ToolListing {
-  const out: ToolListing = { tools: [], unsupported: [] };
+  const out: ToolListing = { tools: [], unsupported: [], invalid: [] };
   for (const tool of tools) {
     const parsed = parseTool(tool);
     if (parsed === "unsupported") out.unsupported.push(tool.name);
+    else if (parsed === "invalid") out.invalid.push(tool.name);
     else if (parsed) out.tools.push(parsed);
   }
   return out;

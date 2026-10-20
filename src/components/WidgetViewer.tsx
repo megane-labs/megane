@@ -53,6 +53,11 @@ interface WidgetViewerProps {
   initialCameraState?: MeganeCameraState | null;
   /** Called when camera state changes (after user interaction ends). */
   onCameraStateChange?: (state: MeganeCameraState) => void;
+  /**
+   * A camera state set from Python after mount (`viewer.camera_state = …`).
+   * Applied to the live view whenever a new object arrives.
+   */
+  cameraState?: MeganeCameraState | null;
   /** Show the Quick Style panel (the `quick_style` traitlet). */
   quickStyle?: boolean;
   // Optional pipeline store override. Each Jupyter widget mount creates its
@@ -89,6 +94,7 @@ export function WidgetViewer({
   onPipelineChange,
   initialCameraState,
   onCameraStateChange,
+  cameraState,
   quickStyle = false,
   pipelineStore: pipelineStoreProp,
 }: WidgetViewerProps) {
@@ -106,6 +112,14 @@ export function WidgetViewer({
   const onCameraStateChangeRef = useRef(onCameraStateChange);
   onCameraStateChangeRef.current = onCameraStateChange;
   const initialCameraStateRef = useRef(initialCameraState);
+
+  // A camera state Python sets on a displayed widget moves the view now; one
+  // that arrives before the renderer exists is restored when it attaches.
+  useEffect(() => {
+    if (!cameraState) return;
+    initialCameraStateRef.current = cameraState;
+    rendererRef.current?.applyCameraState(cameraState);
+  }, [cameraState]);
 
   const {
     selection,

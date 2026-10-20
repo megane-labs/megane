@@ -125,6 +125,27 @@ describe("WidgetViewer", () => {
     expect(alignCameraToAxis).toHaveBeenCalledWith("+y");
   });
 
+  it("applies a cameraState set after mount to the live renderer", () => {
+    const cam = {
+      mode: "orthographic" as const,
+      position: [1, 2, 3] as [number, number, number],
+      target: [0, 0, 0] as [number, number, number],
+      zoom: 2,
+    };
+    const { rerender } = render(<WidgetViewer {...defaultProps} />);
+    const applyCameraState = vi.fn();
+    const renderer = new Proxy(
+      {},
+      { get: (_t, prop) => (prop === "applyCameraState" ? applyCameraState : vi.fn()) },
+    );
+    act(() => {
+      mockViewport.mock.calls[0][0].onRendererReady?.(renderer as never);
+    });
+    applyCameraState.mockClear();
+    rerender(<WidgetViewer {...defaultProps} cameraState={cam} />);
+    expect(applyCameraState).toHaveBeenCalledWith(cam);
+  });
+
   it("shows the crystal-axis row once a snapshot with a cell is loaded", () => {
     const snapshot: Snapshot = {
       nAtoms: 1,

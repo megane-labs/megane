@@ -36,7 +36,7 @@ export const REP_LABELS: Record<RepresentationMode, string> = {
   atoms: "Ball",
   licorice: "Licorice",
   cartoon: "Cartoon",
-  both: "Ball + Stick",
+  both: "Cartoon + Atoms",
   surface: "Surface",
   line: "Line",
   illustrative: "Illustrative",

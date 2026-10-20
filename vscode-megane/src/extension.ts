@@ -317,10 +317,13 @@ export async function handlePickFileMessage(
 class MeganePipelineEditorProvider implements vscode.CustomReadonlyEditorProvider {
   private static readonly viewType = "megane.pipelineViewer";
 
-  constructor(private readonly context: vscode.ExtensionContext) {}
+  constructor(
+    private readonly context: vscode.ExtensionContext,
+    private readonly viewers: ActiveViewerPanel,
+  ) {}
 
-  static register(context: vscode.ExtensionContext): vscode.Disposable {
-    const provider = new MeganePipelineEditorProvider(context);
+  static register(context: vscode.ExtensionContext, viewers: ActiveViewerPanel): vscode.Disposable {
+    const provider = new MeganePipelineEditorProvider(context, viewers);
     return vscode.window.registerCustomEditorProvider(
       MeganePipelineEditorProvider.viewType,
       provider,
@@ -382,11 +385,14 @@ class MeganePipelineEditorProvider implements vscode.CustomReadonlyEditorProvide
       payload = { type: "error", message: err instanceof Error ? err.message : String(err) };
     }
 
+    const handleStatusMessage = attachViewerPanel(webviewPanel, this.viewers);
+
     webview.onDidReceiveMessage((message) => {
       if (message.type === "ready") {
         webview.postMessage(payload);
         return;
       }
+      if (handleStatusMessage(message)) return;
       if (message.type === "saveFile") {
         void handleSaveFileMessage(message as SaveFileMessage, document.uri);
         return;
@@ -412,20 +418,97 @@ export function createSelectionStatusBarItem(): vscode.StatusBarItem {
   return item;
 }
 
+/**
+ * The most recently active Megane viewer tab, a structure viewer or a
+ * `.megane.json` Pipeline Viewer alike, which `megane.seekFrame` addresses.
+ */
+export class ActiveViewerPanel {
+  panel: vscode.WebviewPanel | null = null;
+
+  /**
+   * Seek the active viewer to a trajectory frame. Returns `true` if a panel
+   * was active and the message was posted, `false` otherwise.
+   */
+  seekFrame(frame: number): boolean {
+    if (!this.panel) return false;
+    this.panel.webview.postMessage({ type: "seekFrame", frame });
+    return true;
+  }
+}
+
+/**
+ * Give a viewer tab its frame and selection status bar items and make it the
+ * `megane.seekFrame` target while it is the active one. Both viewer webviews
+ * post `frameChange` / `selectionChange` / `measurementChange`; the returned
+ * handler consumes those and returns `true`, leaving other messages to the
+ * caller.
+ */
+export function attachViewerPanel(
+  webviewPanel: vscode.WebviewPanel,
+  viewers: ActiveViewerPanel,
+): (message: { type?: unknown; [key: string]: unknown }) => boolean {
+  const frameStatusBar = createFrameStatusBarItem();
+  const selectionStatusBar = createSelectionStatusBarItem();
+
+  viewers.panel = webviewPanel;
+  webviewPanel.onDidChangeViewState(({ webviewPanel: panel }) => {
+    if (panel.active) viewers.panel = panel;
+  });
+  webviewPanel.onDidDispose(() => {
+    if (viewers.panel === webviewPanel) viewers.panel = null;
+    frameStatusBar.dispose();
+    selectionStatusBar.dispose();
+  });
+
+  return (message) => {
+    if (message.type === "frameChange") {
+      const frame = message.frame as number;
+      frameStatusBar.text = `$(megane-frame) Frame ${frame}`;
+      frameStatusBar.show();
+      return true;
+    }
+    if (message.type === "selectionChange") {
+      const atoms = (message.selection as { atoms: number[] }).atoms;
+      if (atoms.length === 0) {
+        selectionStatusBar.hide();
+      } else {
+        selectionStatusBar.text = `$(megane-atom) ${atoms.length} atom${atoms.length === 1 ? "" : "s"} selected`;
+        selectionStatusBar.show();
+      }
+      return true;
+    }
+    if (message.type === "measurementChange") {
+      const measurement = message.measurement as {
+        type: string;
+        value: number;
+        label: string;
+      } | null;
+      if (!measurement) {
+        selectionStatusBar.hide();
+      } else {
+        selectionStatusBar.text = `$(megane-atom) ${measurement.label}`;
+        selectionStatusBar.show();
+      }
+      return true;
+    }
+    return false;
+  };
+}
+
 export class MeganeEditorProvider implements vscode.CustomReadonlyEditorProvider {
   static readonly viewType = "megane.structureViewer";
-  private activePanel: vscode.WebviewPanel | null = null;
 
-  constructor(private readonly context: vscode.ExtensionContext) {}
+  constructor(
+    private readonly context: vscode.ExtensionContext,
+    private readonly viewers: ActiveViewerPanel = new ActiveViewerPanel(),
+  ) {}
 
   /**
    * Programmatically seek the active megane viewer to a trajectory frame.
    * Returns `true` if a panel was active and the message was posted, `false` otherwise.
    */
   seekFrame(frame: number): boolean {
-    if (!this.activePanel) return false;
-    this.activePanel.webview.postMessage({ type: "seekFrame", frame });
-    return true;
+    return this.viewers.seekFrame(frame);
   }
 
   openCustomDocument(
@@ -484,14 +567,7 @@ export class MeganeEditorProvider implements vscode.CustomReadonlyEditorProvider
       payloads = [{ type: "error", message: err instanceof Error ? err.message : String(err) }];
     }
 
-    const frameStatusBar = createFrameStatusBarItem();
-
-    const selectionStatusBar = createSelectionStatusBarItem();
-
-    this.activePanel = webviewPanel;
-    webviewPanel.onDidChangeViewState(({ webviewPanel: panel }) => {
-      if (panel.active) this.activePanel = panel;
-    });
+    const handleStatusMessage = attachViewerPanel(webviewPanel, this.viewers);
 
     webview.onDidReceiveMessage((message) => {
       if (message.type === "ready") {
@@ -508,41 +584,7 @@ export class MeganeEditorProvider implements vscode.CustomReadonlyEditorProvider
         void handlePickFileMessage(message as PickFileMessage, document.uri, webview);
         return;
       }
-      if (message.type === "frameChange") {
-        const frame = message.frame as number;
-        frameStatusBar.text = `$(megane-frame) Frame ${frame}`;
-        frameStatusBar.show();
-        return;
-      }
-      if (message.type === "selectionChange") {
-        const atoms = (message.selection as { atoms: number[] }).atoms;
-        if (atoms.length === 0) {
-          selectionStatusBar.hide();
-        } else {
-          selectionStatusBar.text = `$(megane-atom) ${atoms.length} atom${atoms.length === 1 ? "" : "s"} selected`;
-          selectionStatusBar.show();
-        }
-        return;
-      }
-      if (message.type === "measurementChange") {
-        const measurement = message.measurement as {
-          type: string;
-          value: number;
-          label: string;
-        } | null;
-        if (!measurement) {
-          selectionStatusBar.hide();
-        } else {
-          selectionStatusBar.text = `$(megane-atom) ${measurement.label}`;
-          selectionStatusBar.show();
-        }
-      }
-    });
-
-    webviewPanel.onDidDispose(() => {
-      if (this.activePanel === webviewPanel) this.activePanel = null;
-      frameStatusBar.dispose();
-      selectionStatusBar.dispose();
+      handleStatusMessage(message);
     });
 
     webview.html = getHtmlForWebview(webview, mediaDir);
@@ -794,17 +836,19 @@ function getNonce(): string {
 }
 
 export function activate(context: vscode.ExtensionContext) {
-  const editorProvider = new MeganeEditorProvider(context);
+  // One seek target shared by both viewers: the most recently active tab.
+  const viewers = new ActiveViewerPanel();
+  const editorProvider = new MeganeEditorProvider(context, viewers);
   context.subscriptions.push(
     vscode.window.registerCustomEditorProvider(MeganeEditorProvider.viewType, editorProvider, {
       webviewOptions: { retainContextWhenHidden: true },
       supportsMultipleEditorsPerDocument: false,
     }),
   );
-  context.subscriptions.push(MeganePipelineEditorProvider.register(context));
+  context.subscriptions.push(MeganePipelineEditorProvider.register(context, viewers));
   context.subscriptions.push(
     vscode.commands.registerCommand("megane.seekFrame", (frame: number) => {
-      editorProvider.seekFrame(frame);
+      viewers.seekFrame(frame);
     }),
   );
 

@@ -98,14 +98,17 @@ describe("parseTool", () => {
     expect(parseTool(tool({ _meta: undefined }))).toBeNull();
     expect(parseTool(tool({ _meta: { [META_KEY]: "x" } }))).toBeNull();
     expect(parseTool(tool({ _meta: marker({ contract: 2 }) }))).toBe("unsupported");
-    expect(parseTool(tool({ _meta: marker({ apply: "replace" }) }))).toBe("unsupported");
+    // A supported contract with an unknown apply mode is invalid, not "newer".
+    expect(parseTool(tool({ _meta: marker({ apply: "replace" }) }))).toBe("invalid");
     const listing = parseTools([
       tool({ name: "a" }),
       tool({ name: "b", _meta: marker({ contract: 9 }) }),
       tool({ name: "c", _meta: {} }),
+      tool({ name: "d", _meta: marker({ apply: "replace" }) }),
     ]);
     expect(listing.tools.map((t) => t.name)).toEqual(["a"]);
     expect(listing.unsupported).toEqual(["b"]);
+    expect(listing.invalid).toEqual(["d"]);
   });
 
   it("falls back for labels, categories and document use", () => {

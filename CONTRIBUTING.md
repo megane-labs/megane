@@ -39,7 +39,7 @@ npm run package     # produces vscode-megane-<version>.vsix
 code --install-extension ./vscode-megane-<version>.vsix
 ```
 
-Open any supported molecular file (`.pdb`, `.gro`, `.xyz`, `.mol`, `.sdf`, `.mol2`, `.cif`, `.mmcif`, `.data`, `.lammps`, `.prmtop`, `.traj`, `.xtc`, `.dcd`, `.nc`, `.lammpstrj`, `.dump`) or a `.megane.json` pipeline file in VSCode to launch the Megane viewer.
+Open any supported file (the full list per host is in [`docs/docs/platform-support.md`](docs/docs/platform-support.md)) or a `.megane.json` pipeline file in VSCode to launch the Megane viewer.
 
 To iterate on the extension code without repackaging, open `vscode-megane/` in VSCode and press `F5` to launch the Extension Development Host (after `npm run build`).
 

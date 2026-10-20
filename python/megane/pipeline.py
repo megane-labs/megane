@@ -80,7 +80,16 @@ class PortNamespace:
 
 
 class PipelineNode:
-    """Base class for all pipeline node types."""
+    """Base class for all pipeline node types.
+
+    Attributes:
+        enabled: ``False`` disables the node (the editor's on/off toggle; a
+            disabled node passes its input through). Set it before
+            ``add_node()``.
+        position: The node's ``{"x": ..., "y": ...}`` position in the
+            editor's graph, kept so a pipeline saved by the editor reopens
+            with the same layout.
+    """
 
     _node_type: str = ""
     _out_ports: dict[str, str] = {}
@@ -88,6 +97,8 @@ class PipelineNode:
 
     def __init__(self) -> None:
         self._id: str | None = None
+        self.enabled: bool = True
+        self.position: dict[str, float] = {"x": 0, "y": 0}
         self.out = PortNamespace(self, self.__class__._out_ports)
         self.inp = PortNamespace(self, self.__class__._inp_ports)
 
@@ -131,6 +142,8 @@ class LoadStructure(PipelineNode):
             and ``set_cell`` with ``"scaleAtoms": True``. They reproduce
             ASE's ``make_supercell``, ``ase.build.surface`` and
             ``Atoms.center``.
+        file_url: URL the npm ``PipelineViewer`` fetches the file from
+            (serialized as ``fileUrl``). Not used by the widget.
 
     Ports:
         out.particle — atom data (edited when ``edits`` is set)
@@ -142,10 +155,17 @@ class LoadStructure(PipelineNode):
     _out_ports = {"particle": "particle", "traj": "trajectory", "cell": "cell"}
     _inp_ports: dict[str, str] = {}
 
-    def __init__(self, path: str, *, edits: list[dict] | None = None) -> None:
+    def __init__(
+        self,
+        path: str,
+        *,
+        edits: list[dict] | None = None,
+        file_url: str | None = None,
+    ) -> None:
         super().__init__()
         self.path = path
         self.edits = list(edits) if edits else []
+        self.file_url = file_url
 
 
 class LoadTrajectory(PipelineNode):
@@ -165,6 +185,10 @@ class LoadTrajectory(PipelineNode):
         traj: Path to ASE .traj file.
         xyz: Path to multi-frame XYZ file.
         lammpstrj: Path to LAMMPS dump trajectory (.lammpstrj / .dump / .trj).
+        source: ``"file"`` (the default) plays the trajectory file given
+            above; ``"structure"`` forwards the frames embedded in the
+            structure file itself (multi-frame XYZ / PDB / .traj), as the
+            editor sets it when such a file is opened.
 
     Ports:
         inp.particle — atom topology source
@@ -184,6 +208,7 @@ class LoadTrajectory(PipelineNode):
         traj: str | None = None,
         xyz: str | None = None,
         lammpstrj: str | None = None,
+        source: Literal["file", "structure"] = "file",
     ) -> None:
         super().__init__()
         self.xtc = xtc
@@ -192,6 +217,7 @@ class LoadTrajectory(PipelineNode):
         self.traj = traj
         self.xyz = xyz
         self.lammpstrj = lammpstrj
+        self.source = source
 
 
 class Streaming(PipelineNode):
@@ -526,6 +552,9 @@ class AddBonds(PipelineNode):
         top: Path to a topology file (GROMACS ``.top`` or CHARMM/NAMD ``.psf``).
              When provided, *source* is ignored and bonds are read from the
              topology.
+        vdw_scale: Threshold scale for distance inference: two atoms bond
+             when their distance is at most ``(vdw_i + vdw_j) * vdw_scale``.
+             ``None`` (the default) uses the viewer's default (0.6).
 
     Ports:
         inp.particle — atom data
@@ -541,10 +570,12 @@ class AddBonds(PipelineNode):
         *,
         source: Literal["distance", "structure", "file"] = "distance",
         top: str | None = None,
+        vdw_scale: float | None = None,
     ) -> None:
         super().__init__()
         self.source = "structure" if source == "file" else source
         self.top = top
+        self.vdw_scale = vdw_scale
 
 
 class AddLabels(PipelineNode):
@@ -946,7 +977,11 @@ class Pipeline:
         """Instantiate the correct PipelineNode subclass from a v3 node dict."""
         ntype = nd.get("type")
         if ntype == "load_structure":
-            return LoadStructure(nd.get("fileName") or "", edits=nd.get("edits"))
+            return LoadStructure(
+                nd.get("fileName") or "",
+                edits=nd.get("edits"),
+                file_url=nd.get("fileUrl"),
+            )
         elif ntype == "load_trajectory":
             import pathlib
 
@@ -959,6 +994,7 @@ class Pipeline:
                 traj=fname if ext == ".traj" else None,
                 xyz=fname if ext in (".xyz", ".extxyz") else None,
                 lammpstrj=fname if ext in (".lammpstrj", ".dump", ".trj") else None,
+                source=nd.get("source", "file"),
             )
         elif ntype == "filter":
             # A missing key falls back to the TS ``defaultParams("filter")``
@@ -995,9 +1031,10 @@ class Pipeline:
             return BoundaryCompletion(mode=nd.get("mode", "neighbors"))
         elif ntype == "add_bond":
             bond_source = nd.get("bondSource", "distance")
+            vdw_scale = nd.get("vdwScale")
             if bond_source == "file":
-                return AddBonds(top=nd.get("bondFileName", ""))
-            return AddBonds(source=bond_source)
+                return AddBonds(top=nd.get("bondFileName", ""), vdw_scale=vdw_scale)
+            return AddBonds(source=bond_source, vdw_scale=vdw_scale)
         elif ntype == "label_generator":
             return AddLabels(source=nd.get("source", "element"))
         elif ntype == "coordination_generator":
@@ -1087,6 +1124,10 @@ class Pipeline:
                 raise ValueError(f"Node at index {i} is missing required field 'id'.")
             node = cls._build_node_from_dict(nd)
             node._id = nd["id"]
+            node.enabled = nd.get("enabled", True) is not False
+            position = nd.get("position")
+            if isinstance(position, dict):
+                node.position = {"x": position.get("x", 0), "y": position.get("y", 0)}
             pipe._nodes[node._id] = (node, pipe._serialize_node(node))
             node_by_id[node._id] = node
 
@@ -1154,8 +1195,10 @@ class Pipeline:
         base: dict = {
             "id": node._id,
             "type": node._node_type,
-            "position": {"x": 0, "y": 0},
+            "position": dict(node.position),
         }
+        if not node.enabled:
+            base["enabled"] = False
 
         if isinstance(node, LoadStructure):
             structure = self._structures.get(node._id)
@@ -1167,10 +1210,13 @@ class Pipeline:
             base["fileName"] = node.path
             base["hasTrajectory"] = False
             base["hasCell"] = has_cell
+            if node.file_url is not None:
+                base["fileUrl"] = node.file_url
             if node.edits:
                 base["edits"] = [dict(op) for op in node.edits]
         elif isinstance(node, LoadTrajectory):
             base["fileName"] = node.xtc or node.dcd or node.nc or node.traj or node.xyz or node.lammpstrj
+            base["source"] = node.source
         elif isinstance(node, Streaming):
             base["connected"] = False
         elif isinstance(node, Filter):
@@ -1210,6 +1256,8 @@ class Pipeline:
                 base["bondFileData"] = self._parse_top_bonds(node)
             else:
                 base["bondSource"] = node.source
+            if node.vdw_scale is not None:
+                base["vdwScale"] = node.vdw_scale
         elif isinstance(node, AddLabels):
             base["source"] = node.source
         elif isinstance(node, AddCoordination):
@@ -1361,8 +1409,8 @@ def view(
 ) -> "MolecularViewer":
     """Open a molecular viewer for a structure file.
 
-    Builds a minimal pipeline with :class:`LoadStructure` and
-    :class:`Viewport` nodes and, when *bonds* is not ``None``
+    Builds a minimal pipeline with :class:`LoadStructure`, :class:`Symmetry`
+    and :class:`Viewport` nodes and, when *bonds* is not ``None``
     (the default), an additional :class:`AddBonds` node, then
     returns a :class:`~megane.widget.MolecularViewer` widget.
 
@@ -1424,8 +1472,8 @@ def view_traj(
 ) -> "MolecularViewer":
     """Open a molecular viewer with a trajectory.
 
-    Builds a pipeline (LoadStructure → LoadTrajectory → Viewport, with an
-    optional AddBonds node when *bonds* is not None) and returns a
+    Builds a pipeline (LoadStructure → LoadTrajectory → Symmetry → Viewport,
+    with an optional AddBonds node when *bonds* is not None) and returns a
     :class:`~megane.widget.MolecularViewer` widget.
 
     When *path* points to a self-contained trajectory file (``.traj`` or
@@ -1496,16 +1544,22 @@ def view_traj(
     pipe = Pipeline()
     s = pipe.add_node(LoadStructure(path))
     t = pipe.add_node(LoadTrajectory(xtc=xtc, traj=traj, xyz=xyz, lammpstrj=lammpstrj))
+    # The Symmetry node view() inserts, wired like the hosts' default
+    # pipeline. With a trajectory connected it passes the structure through
+    # unexpanded, so the frames keep matching the atoms.
+    sym = pipe.add_node(Symmetry())
     v = pipe.add_node(Viewport(perspective=perspective, cell_axes_visible=cell_axes_visible))
 
     pipe.add_edge(s.out.particle, t.inp.particle)
-    pipe.add_edge(s.out.particle, v.inp.particle)
+    pipe.add_edge(s.out.particle, sym.inp.particle)
+    pipe.add_edge(t.out.traj, sym.inp.traj)
+    pipe.add_edge(sym.out.particle, v.inp.particle)
     pipe.add_edge(s.out.cell, v.inp.cell)
-    pipe.add_edge(t.out.traj, v.inp.traj)
+    pipe.add_edge(sym.out.traj, v.inp.traj)
 
     if bonds is not None:
         b = pipe.add_node(AddBonds(source=bonds))
-        pipe.add_edge(s.out.particle, b.inp.particle)
+        pipe.add_edge(sym.out.particle, b.inp.particle)
         pipe.add_edge(b.out.bond, v.inp.bond)
 
     viewer = MolecularViewer()
@@ -1527,8 +1581,9 @@ def build_pipeline(
 ) -> Pipeline:
     """Build a pipeline for a molecular structure, optionally with a trajectory.
 
-    Constructs a :class:`Pipeline` with :class:`LoadStructure` and
-    :class:`Viewport` nodes.  When *xtc*, *traj*, or *xyz* is provided, a
+    Constructs a :class:`Pipeline` with :class:`LoadStructure`,
+    :class:`Symmetry` and :class:`Viewport` nodes, the pipeline :func:`view`
+    displays.  When *xtc*, *traj*, or *xyz* is provided, a
     :class:`LoadTrajectory` node is added.  When *bonds* is not ``None``
     (the default), an :class:`AddBonds` node is included.
 
@@ -1585,6 +1640,9 @@ def build_pipeline(
 
     pipe = Pipeline()
     s = pipe.add_node(LoadStructure(path))
+    # Space-group expansion for CIF asymmetric units, as in view(). A no-op
+    # for structures without ops, and skipped while a trajectory is connected.
+    sym = pipe.add_node(Symmetry())
     v = pipe.add_node(
         Viewport(
             perspective=perspective,
@@ -1593,21 +1651,23 @@ def build_pipeline(
         )
     )
 
-    pipe.add_edge(s.out.particle, v.inp.particle)
+    pipe.add_edge(s.out.particle, sym.inp.particle)
+    pipe.add_edge(sym.out.particle, v.inp.particle)
     pipe.add_edge(s.out.cell, v.inp.cell)
 
     if xtc is not None or traj is not None or xyz is not None:
         t = pipe.add_node(LoadTrajectory(xtc=xtc, traj=traj, xyz=xyz))
         pipe.add_edge(s.out.particle, t.inp.particle)
-        pipe.add_edge(t.out.traj, v.inp.traj)
+        pipe.add_edge(t.out.traj, sym.inp.traj)
+        pipe.add_edge(sym.out.traj, v.inp.traj)
 
     if top is not None:
         b = pipe.add_node(AddBonds(top=top))
-        pipe.add_edge(s.out.particle, b.inp.particle)
+        pipe.add_edge(sym.out.particle, b.inp.particle)
         pipe.add_edge(b.out.bond, v.inp.bond)
     elif bonds is not None:
         b = pipe.add_node(AddBonds(source=bonds))
-        pipe.add_edge(s.out.particle, b.inp.particle)
+        pipe.add_edge(sym.out.particle, b.inp.particle)
         pipe.add_edge(b.out.bond, v.inp.bond)
 
     return pipe

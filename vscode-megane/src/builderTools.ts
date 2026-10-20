@@ -10,7 +10,10 @@
  *
  * ```json
  * "megane.builder.mcpServers": {
- *   "builder-tools": { "command": "uvx", "args": ["megane-builder-tools"] },
+ *   "builder-tools": {
+ *     "command": "uvx",
+ *     "args": ["--from", "git+https://github.com/hodakamori/megane-builder-tools", "megane-builder-tools"]
+ *   },
  *   "lab": { "url": "https://tools.example.org/mcp", "headers": { "Authorization": "Bearer …" } }
  * }
  * ```
