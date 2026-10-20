@@ -401,7 +401,13 @@ rescaled to Å.
 
 Megane had no structure writer before this feature. `crates/megane-core/src/writer.rs`
 adds XYZ (extended XYZ when a cell is present), PDB (`CRYST1`, `ATOM`,
-`CONECT`) and MOL V2000, exposed as `write_structure` through both WASM
+`CONECT`), MOL V2000, and two cell-only formats: CIF (P 1, `_atom_site`
+fractional coordinates measured from the cell origin) and VASP 5 POSCAR
+(Cartesian, atoms grouped by element in first-appearance order). Both refuse
+a structure without a cell (`"CIF needs a unit cell; this structure has
+none"`); `STRUCTURE_EXPORT_FORMATS` marks them `needsCell` and
+`hasExportCell(box)` tells a UI when to disable them. The writers are exposed
+as `write_structure` through both WASM
 (`src/parsers/parseCore.ts` → `src/export/structureExport.ts`) and PyO3
 (`megane.write_structure` / `megane.save_structure`). In the web app the
 Builder delivers the file through the host-neutral `downloadBlob`; an

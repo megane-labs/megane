@@ -116,7 +116,12 @@ const { calls, wasmMock } = vi.hoisted(() => {
       calls.push(`extract_labels:${format}`);
       return "A\nB\nC";
     },
-    write_structure: () => "1\n\nC 0 0 0\n",
+    write_structure: (format: string, ...rest: unknown[]) => {
+      calls.push(
+        `write_structure:${format}:${JSON.stringify(rest.map((r) => (ArrayBuffer.isView(r) ? Array.from(r as Float32Array) : r)))}`,
+      );
+      return "1\n\nC 0 0 0\n";
+    },
     XtcDecoder: class {
       n_atoms = 4;
       n_frames = 2;
@@ -345,6 +350,27 @@ describe("parseClientSync (main-thread path with mocked wasm)", () => {
     expect(txt).toEqual(["a", "b", ""]); // padded to nAtoms
     await core.extractLabelsFromFile(fakeFile("md.extxyz"), 3);
     expect(calls).toContain("extract_labels:xyz"); // extended XYZ reads as XYZ
+  });
+
+  it("writeStructure forwards every channel, empty when absent", async () => {
+    const core = await import("@/parsers/parseCore");
+    const pos = new Float32Array([1, 2, 3]);
+    const elems = new Uint8Array([6]);
+    const bonds = new Uint32Array(0);
+    expect(await core.writeStructure("xyz", pos, elems, bonds)).toBe("1\n\nC 0 0 0\n");
+    expect(calls.at(-1)).toBe(
+      `write_structure:xyz:${JSON.stringify([[1, 2, 3], [6], [], [], [], [], "", []])}`,
+    );
+    await core.writeStructure("cif", pos, elems, bonds, {
+      bondOrders: new Uint8Array(0),
+      box: new Float32Array([5, 0, 0, 0, 5, 0, 0, 0, 5]),
+      boxOrigin: new Float32Array([1, 1, 1]),
+      atomLabels: ["ALA1"],
+      chainIds: new Uint8Array([65]),
+    });
+    expect(calls.at(-1)).toBe(
+      `write_structure:cif:${JSON.stringify([[1, 2, 3], [6], [], [], [5, 0, 0, 0, 5, 0, 0, 0, 5], [1, 1, 1], "ALA1", [65]])}`,
+    );
   });
 
   it("degrades the lazy XTC exports to eager (worker-only feature)", async () => {

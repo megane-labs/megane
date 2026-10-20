@@ -249,6 +249,7 @@ interface WasmModule {
     bonds: Uint32Array,
     bond_orders: Uint8Array,
     box_matrix: Float32Array,
+    box_origin: Float32Array,
     atom_labels: string,
     chain_ids: Uint8Array,
   ) => string;
@@ -960,14 +961,19 @@ export async function extractLabelsFromFile(file: File, nAtoms: number): Promise
   return labels;
 }
 
-/** Output formats the Rust structure writer supports. */
-export type StructureWriteFormat = "xyz" | "pdb" | "mol";
+/**
+ * Output formats the Rust structure writer supports. `cif` (P 1, fractional
+ * coordinates) and `poscar` (VASP 5, Cartesian, atoms grouped by element)
+ * need a unit cell: the writer rejects a structure without one.
+ */
+export type StructureWriteFormat = "xyz" | "pdb" | "mol" | "cif" | "poscar";
 
 /**
- * Serialize a structure as XYZ / PDB / MOL text through the Rust writer
- * (`megane_core::writer`, the same code the Python `write_structure` uses).
- * Optional channels are passed as empty arrays / strings when absent.
- * Main-thread.
+ * Serialize a structure as XYZ / PDB / MOL / CIF / POSCAR text through the
+ * Rust writer (`megane_core::writer`, the same code the Python
+ * `write_structure` uses). Optional channels are passed as empty arrays /
+ * strings when absent; `boxOrigin` is the cell corner CIF / POSCAR positions
+ * are measured from. Main-thread.
  */
 export async function writeStructure(
   format: StructureWriteFormat,
@@ -977,6 +983,7 @@ export async function writeStructure(
   opts: {
     bondOrders?: Uint8Array | null;
     box?: Float32Array | null;
+    boxOrigin?: Float32Array | null;
     atomLabels?: string[] | null;
     chainIds?: Uint8Array | null;
   } = {},
@@ -989,6 +996,7 @@ export async function writeStructure(
     bonds,
     opts.bondOrders ?? new Uint8Array(0),
     opts.box ?? new Float32Array(0),
+    opts.boxOrigin ?? new Float32Array(0),
     opts.atomLabels && opts.atomLabels.length > 0 ? opts.atomLabels.join("\n") : "",
     opts.chainIds ?? new Uint8Array(0),
   );

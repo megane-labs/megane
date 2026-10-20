@@ -609,10 +609,12 @@ fn infer_bonds_vdw(
 }
 
 /// Serialize a structure as `xyz` (extended XYZ when a cell is given), `pdb`,
-/// or `mol` text. Arrays follow the `PyStructure` layout: positions `(N, 3)`,
-/// elements `(N,)`, bonds `(M, 2)`. An all-zero `box_matrix` means "no cell".
+/// `mol`, `cif` or `poscar` text (`cif` / `poscar` need a cell). Arrays follow
+/// the `PyStructure` layout: positions `(N, 3)`, elements `(N,)`, bonds
+/// `(M, 2)`. An all-zero `box_matrix` means "no cell"; `box_origin` is the
+/// cell corner the cell-based writers measure positions from.
 #[pyfunction]
-#[pyo3(signature = (format, positions, elements, bonds, bond_orders=None, box_matrix=None, atom_labels=None, chain_ids=None))]
+#[pyo3(signature = (format, positions, elements, bonds, bond_orders=None, box_matrix=None, atom_labels=None, chain_ids=None, box_origin=None))]
 #[allow(clippy::too_many_arguments)]
 fn write_structure(
     format: &str,
@@ -623,6 +625,7 @@ fn write_structure(
     box_matrix: Option<PyReadonlyArray2<f32>>,
     atom_labels: Option<Vec<String>>,
     chain_ids: Option<Vec<u8>>,
+    box_origin: Option<Vec<f32>>,
 ) -> PyResult<String> {
     let positions_view = positions.as_array();
     let shape = positions_view.shape();
@@ -660,12 +663,18 @@ fn write_structure(
         }
         None => None,
     };
+    let origin: Option<[f32; 3]> = match box_origin {
+        Some(o) if o.len() == 3 => Some([o[0], o[1], o[2]]),
+        Some(_) => return Err(PyValueError::new_err("box_origin must have 3 values")),
+        None => None,
+    };
     let view = megane_core::writer::StructureView {
         positions: &positions_vec,
         elements: &elements_vec,
         bonds: &bonds_vec,
         bond_orders: orders_vec.as_deref(),
         box_matrix: cell,
+        box_origin: origin,
         atom_labels: atom_labels.as_deref(),
         chain_ids: chain_ids.as_deref(),
     };
