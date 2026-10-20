@@ -9,6 +9,7 @@
 - Rust (for building the parser)
 - [wasm-pack](https://rustwasm.github.io/wasm-pack/installer/) (`cargo install wasm-pack`)
 - [uv](https://docs.astral.sh/uv/) (Python package manager)
+- [maturin](https://www.maturin.rs/) (`uv tool install maturin` or `pip install maturin`; `uv sync` does not install it)
 
 ### Clone and Install
 
@@ -35,7 +36,7 @@ Run the frontend dev server and Python backend simultaneously:
 
 ```bash
 # Terminal 1: Start the `megane serve` backend (FastAPI + WebSocket)
-megane serve protein.pdb --dev --port 8765
+uv run megane serve protein.pdb --dev --port 8765
 
 # Terminal 2: Start the Vite dev server
 npm run dev

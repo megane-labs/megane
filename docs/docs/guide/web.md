@@ -30,11 +30,12 @@ The easiest way to get started is the `MeganeViewer` component. It includes the 
 import { useCallback } from "react";
 import "megane-viewer/styles.css";
 import { MeganeViewer } from "megane-viewer/lib";
-import { usePipelineStore } from "megane-viewer/lib";
 
 function App() {
+  // The viewer has already loaded the file into its Load Structure node when
+  // this fires — it is a notification, not a request to load the file.
   const handleUpload = useCallback((file: File) => {
-    usePipelineStore.getState().openFile(file);
+    console.log("opened", file.name);
   }, []);
 
   return (
@@ -49,11 +50,11 @@ function App() {
 
 ### `MeganeViewer` Props
 
-`MeganeViewer` is pipeline-store-driven: it manages its own rendering state internally. Host apps supply only the file-ingestion callbacks; viewer state (snapshot, bonds, labels, vectors, etc.) is derived from the internal pipeline graph.
+`MeganeViewer` is pipeline-store-driven: it manages its own rendering state internally. Host apps supply only callbacks that are told about opened files; viewer state (snapshot, bonds, labels, vectors, etc.) is derived from the internal pipeline graph.
 
 | Prop | Type | Required | Description |
 |------|------|:--------:|-------------|
-| `onUploadStructure` | `(file: File, preParsed?: StructureParseResult) => void` | ✓ | Called when a file is opened in the primary Load Structure node. `preParsed` carries the viewer's own parse result when it already has one (large multi-frame XYZ / PDB files are handed over unparsed so the host can stream them) |
+| `onUploadStructure` | `(file: File, preParsed?: StructureParseResult) => void` | ✓ | Called after a file opened in the primary Load Structure node has been parsed and applied to the pipeline — do not call `openFile` from it, which would parse and apply the file a second time. `preParsed` carries the viewer's own parse result (the npm build always parses eagerly, so it is always set; the bundled web app may hand a large multi-frame XYZ / PDB file over unparsed for streaming). Pass `() => {}` when you have nothing to do |
 | `onUploadTrajectory` | `(file: File) => void` | | Called when the user opens a file in a Load Trajectory node |
 | `onFrameChange` | `(frame: number) => void` | | Fires whenever the active trajectory frame changes (scrub, playback tick, seek) — mirrors the Jupyter widget's `frame_change` event |
 | `onSelectionChange` | `(selection: SelectionState) => void` | | Fires whenever the atom selection changes; data `{ atoms: number[] }` (0-based, max 4) — mirrors `selection_change` |
@@ -85,8 +86,12 @@ import { MeganeViewer, usePipelineStore } from "megane-viewer/lib";
 // Read-only embed: 3D view and playback only.
 <MeganeViewer
   ui={{ pipelineEditor: false, resetView: false, perfHud: false }}
-  onUploadStructure={(file) => usePipelineStore.getState().openFile(file)}
+  onUploadStructure={() => {}}
 />;
+
+// With no editor there is no Load Structure node to open a file in,
+// so load files yourself:
+await usePipelineStore.getState().openFile(file);
 ```
 
 | Key | Default | Hides |
@@ -297,7 +302,7 @@ keep working as before.
 
 ## PipelineViewer (Docs / MDX Embed)
 
-`PipelineViewer` is a self-contained React component designed for embedding molecular visualizations in documentation, blog posts, and MDX pages. It uses **no stores at all** — it holds its state in local React state, so multiple instances on the same page are independent with no extra wiring. `MeganeViewer` can also be mounted more than once per page, by giving each one its own store bundle — see [Multiple viewers on one page](#multiple-viewers-on-one-page).
+`PipelineViewer` is a self-contained React component designed for embedding molecular visualizations in documentation, blog posts, and MDX pages. It uses **no shared stores** — each instance creates its own private viewport and playback stores, so multiple instances on the same page are independent with no extra wiring. `MeganeViewer` can also be mounted more than once per page, by giving each one its own store bundle — see [Multiple viewers on one page](#multiple-viewers-on-one-page).
 
 ### Key differences from `MeganeViewer`
 
@@ -399,7 +404,7 @@ interface SerializedPipeline {
 {
   id: "s1",
   type: "load_structure",
-  fileName: "protein.pdb",        // displayed name (optional, inferred from URL)
+  fileName: "protein.pdb",        // picks the parser by extension; null → the URL's last segment
   fileUrl: "/structures/protein.pdb",  // fetched at render time
   hasTrajectory: false,
   hasCell: false,
@@ -407,7 +412,7 @@ interface SerializedPipeline {
 }
 ```
 
-The component fetches all `fileUrl` values in parallel at mount time using the browser's `fetch()` API, then parses them with the WASM parser.
+The component fetches all `fileUrl` values in parallel using the browser's `fetch()` API, then parses them with the WASM parser. It does this whenever the `pipeline` prop changes identity, resetting the view, so memoize the pipeline (or define it outside the component) rather than passing a new object literal on every render.
 
 ### Trajectory playback
 
@@ -507,17 +512,17 @@ function MinimalViewer({ snapshot }: { snapshot: Snapshot }) {
 }
 ```
 
-### `Sidebar`, `Timeline`
+### `Sidebar`
 
 Combine individual panels for a custom layout:
 
 ```tsx
 import { useState } from "react";
-import { Viewport, Sidebar, Timeline } from "megane-viewer/lib";
+import { Viewport, Sidebar, MoleculeRenderer } from "megane-viewer/lib";
 import type { BondConfig, TrajectoryConfig } from "megane-viewer/lib";
 
 function CustomLayout({ bondConfig, trajectoryConfig, handleUpload }) {
-  const [renderer, setRenderer] = useState(null);
+  const [renderer, setRenderer] = useState<MoleculeRenderer | null>(null);
   const [collapsed, setCollapsed] = useState(false);
 
   return (
@@ -547,6 +552,8 @@ function CustomLayout({ bondConfig, trajectoryConfig, handleUpload }) {
   );
 }
 ```
+
+`Timeline` is exported too. It is fully controlled: pass the current frame, frame count, playback, speed and loop state, and a handler for each control.
 
 ---
 

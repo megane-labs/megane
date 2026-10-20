@@ -7,7 +7,7 @@ COPY crates/ crates/
 RUN cd crates/megane-wasm && wasm-pack build --target web --release
 
 # Stage 1: Build frontend
-FROM node:20-slim AS frontend
+FROM node:22-slim AS frontend
 WORKDIR /app
 COPY package.json package-lock.json ./
 RUN npm ci

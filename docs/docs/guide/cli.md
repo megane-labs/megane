@@ -15,12 +15,14 @@ docker run --rm -p 8080:8080 megane
 
 Open http://localhost:8080 in your browser. The image's default command serves the bundled `caffeine_water.pdb` + `caffeine_water_vibration.xtc` demo.
 
-To view your own files, mount them into the container:
+To view your own files, mount them into the container and let the Load nodes browse them:
 
 ```bash
-docker run --rm -p 8080:8080 -v ./mydata:/data megane \
-  megane serve /data/protein.pdb --port 8080 --no-browser
+docker run --rm -p 127.0.0.1:8080:8080 -v ./mydata:/data megane \
+  megane serve --files-root /data --files-any-host --port 8080 --no-browser
 ```
+
+Then open a file from the Load Structure node's *Open from server…*. The page does not load a file named on the `megane serve` command line, so browse to it instead. Docker's port mapping makes your browser a non-local client of the container, which is why `--files-any-host` is needed; publishing the port on `127.0.0.1` keeps it reachable from your machine only.
 
 ## Running from Source
 
@@ -31,6 +33,7 @@ docker run --rm -p 8080:8080 -v ./mydata:/data megane \
 - Rust
 - [wasm-pack](https://rustwasm.github.io/wasm-pack/installer/)
 - [uv](https://docs.astral.sh/uv/)
+- [maturin](https://www.maturin.rs/) (`uv tool install maturin` or `pip install maturin`; `uv sync` does not install it)
 
 ### Build and Run
 
@@ -47,7 +50,7 @@ npm run build
 maturin develop --release
 
 # Start the server
-megane serve protein.pdb
+uv run megane serve protein.pdb
 ```
 
 ## Usage
@@ -156,6 +159,7 @@ In development mode, `megane serve` does not open a browser; start the Vite dev 
 - **Static file serving** — The built frontend from `megane/static/app/` (the viewer at `/`, Megane Builder at `/builder.html`). Set the `MEGANE_STATIC_DIR` environment variable to serve a different build directory.
 - **WebSocket endpoint** (`/ws`) — Binary protocol streaming for molecular data. On connect it sends the loaded snapshot and metadata; clients can then send `request_frame`, `stream` (`start`, `end`, `stride`, `fps`), and `stop` JSON commands.
 - **Upload endpoint** (`POST /api/upload`) — Accepts a structure file in the `pdb` form field (any structure format; the uploaded file name's extension picks the parser, and an unsupported one is a `400`) plus an optional `xtc`, as multipart form data, loads it, and broadcasts it to every connected WebSocket client.
+- **File browsing** (`GET /api/files?path=…`, `GET /api/files/content?path=…`) — Lists the folders and files under `--files-root` and sends one file, for the Load nodes' *Open from server…* dialog. Hidden entries and paths that leave the root are refused. Both answer `404` under `--no-files` and `403` to clients other than the server's own machine unless `--files-any-host` is given.
 - **Health check** (`GET /health`) — Returns `{"status": "ok"}`, for load balancers and container orchestrators.
 
 Data is encoded using Megane's binary protocol for efficient transfer:

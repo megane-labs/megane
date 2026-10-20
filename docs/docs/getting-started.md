@@ -52,29 +52,33 @@ docker run --rm -p 8080:8080 megane
 
 Open http://localhost:8080 in your browser. Megane Builder, the structure editor, is at http://localhost:8080/builder.html.
 
-To view your own files, mount them into the container:
+To view your own files, mount them into the container and let the Load nodes browse them:
 
 ```bash
-docker run --rm -p 8080:8080 -v ./mydata:/data megane \
-  megane serve /data/protein.pdb --port 8080 --no-browser
+docker run --rm -p 127.0.0.1:8080:8080 -v ./mydata:/data megane \
+  megane serve --files-root /data --files-any-host --port 8080 --no-browser
 ```
+
+Then open a file from the Load Structure node's *Open from server…*. The page does not load a file named on the `megane serve` command line, so browse to it instead. Docker's port mapping makes your browser a non-local client of the container, which is why `--files-any-host` is needed; publishing the port on `127.0.0.1` keeps it reachable from your machine only.
 
 For running from source, see the [Standalone web app guide](/guide/cli).
 
 ### React component (npm)
 
 The `MeganeViewer` React component is pipeline-store-driven — it manages its own snapshot, bonds,
-trajectory, etc. internally. Host apps just supply the file-ingestion callback
-that pushes the chosen file into the global pipeline store:
+trajectory, etc. internally, and opens files through the Load Structure node in its
+pipeline editor. Host apps supply a callback that is told about each opened file
+(to load one from code instead, call `usePipelineStore.getState().openFile(file)`):
 
 ```tsx
 import { useCallback } from "react";
 import "megane-viewer/styles.css";
-import { MeganeViewer, usePipelineStore } from "megane-viewer/lib";
+import { MeganeViewer } from "megane-viewer/lib";
 
 function App() {
+  // Called after the viewer has loaded a file opened in its editor.
   const handleUpload = useCallback((file: File) => {
-    usePipelineStore.getState().openFile(file);
+    console.log("opened", file.name);
   }, []);
 
   return (
@@ -88,7 +92,7 @@ function App() {
 ```
 
 For multiple independent viewers per page, wrap each `MeganeViewer` in its own
-`MeganeProvider`, or use the store-less `PipelineViewer` (e.g. for embedding in
+`MeganeProvider`, or use the self-contained `PipelineViewer` (e.g. for embedding in
 MDX docs) — see the [React component (npm) guide](/guide/web).
 
 ## Supported File Formats

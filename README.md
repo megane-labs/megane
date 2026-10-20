@@ -33,7 +33,7 @@
 
 ## Features
 
-- **1M+ Atoms at 60fps** — GPU billboard impostor rendering (ray-cast spheres and cylinders) scales from small molecules to massive complexes in real time. Stream XTC trajectories over WebSocket from `megane serve`.
+- **1M+ Atoms at 60fps** — GPU billboard impostor rendering (ray-cast spheres and cylinders) scales from small molecules to massive complexes in real time. Large XTC and LAMMPS dump trajectories are decoded frame by frame on demand.
 - **Runs Everywhere** — Jupyter widget, JupyterLab extension, standalone web app (`megane serve`), React component (npm), and VS Code extension. Rust-based parsers for 26 formats (PDB, GRO, XYZ, MOL/SDF, MOL2, CIF, mmCIF, CML, LAMMPS data, AMBER topology, GROMACS topology, CHARMM/NAMD PSF, XTC, DCD, ASE .traj, LAMMPS dump, AMBER NetCDF, VASP, Molden, XCrySDen XSF, JCAMP-DX, Chem3D XML, Odyssey, CASTEP magres, GAMESS output, CASTEP phonon) shared between Python (PyO3) and browser (WASM) — parse once, run anywhere.
 - **Visual Pipeline Editor** — Build visualization workflows by wiring nodes or let the AI generator build them from natural language. 24 node types with 10 typed data channels flowing through color-coded edges. Load multiple structures with layer-based rendering to compare systems side by side. Draw atoms, licorice, lines, cartoon, molecular surfaces, or an illustrative style, and restyle a layer from the Quick Style panel without editing the graph.
 - **Megane Builder** — A structure editor next to the viewer (`/builder.html` in `megane serve`, the Megane panel in VS Code's activity bar and JupyterLab's left sidebar, and `megane.Builder()` in notebooks): add, delete, move and re-element atoms, draw bonds, sketch molecules in Ketcher (embedded in 3D by RDKit), and build bulk crystals, supercells and slabs. Save as XYZ / PDB / MOL / CIF / POSCAR — also available from Python as `megane.save_structure()`. Python structure generators (packmol liquid boxes, polymer chains, solvation) plug into its *Tools* menu as MCP tool servers, and its *Flow* mode wires molecules and those tools into a model as blocks, like the viewer's pipeline editor.
@@ -43,7 +43,7 @@
 
 Megane renders over **1 million atoms at 60fps** in the browser. Atoms and bonds are GPU-accelerated billboard impostors at every atom count — screen-aligned quads ray-cast into spheres and cylinders in the fragment shader. No desktop app, no plugin — just a browser tab.
 
-Trajectory streaming works over WebSocket via a binary protocol from the `megane serve` backend. Load an XTC file and scrub through thousands of frames in real time, without reading everything into memory. Without a backend, the web app parses in a Web Worker and decodes trajectories and multi-frame XYZ / PDB files of 8 MB or more frame by frame on demand.
+In the web app, JupyterLab, and VS Code, files are parsed in a Web Worker, and XTC and LAMMPS dump trajectories and multi-frame XYZ / PDB files of 8 MB or more are decoded frame by frame on demand, so you can scrub through thousands of frames without reading everything into memory (DCD and AMBER NetCDF are decoded in full). The `megane serve` backend also exposes a binary WebSocket protocol (`/ws`) for trajectory streaming, consumed by the Streaming pipeline node; the bundled page parses in the browser instead.
 
 ### Anywhere
 
@@ -99,7 +99,7 @@ pip install megane
 npm install megane-viewer
 ```
 
-Works with React 18 and React 19 (peer dependency: `react@^18.2.0 || ^19.0.0`).
+Works with React 18 and React 19 (peer dependencies: `react` and `react-dom` `^18.2.0 || ^19.0.0`).
 
 ## Quick Start
 
@@ -130,12 +130,14 @@ docker run --rm -p 8080:8080 megane
 
 Open http://localhost:8080 in your browser. Megane Builder, the structure editor, is at http://localhost:8080/builder.html.
 
-To view your own files, mount them into the container:
+To view your own files, mount them into the container and let the Load nodes browse them:
 
 ```bash
-docker run --rm -p 8080:8080 -v ./mydata:/data megane \
-  megane serve /data/protein.pdb --port 8080 --no-browser
+docker run --rm -p 127.0.0.1:8080:8080 -v ./mydata:/data megane \
+  megane serve --files-root /data --files-any-host --port 8080 --no-browser
 ```
+
+Then open a file from the Load Structure node's *Open from server…*. The page does not load a file named on the `megane serve` command line, so browse to it instead. Docker's port mapping makes your browser a non-local client of the container, which is why `--files-any-host` is needed; publishing the port on `127.0.0.1` keeps it reachable from your machine only.
 
 Without Docker, `megane serve` also lets the Load nodes browse files on the machine it runs on (*Open from server…*), which is handy over an SSH tunnel to a workstation or cluster node. `--files-root DIR` sets the folder it browses, `--no-files` turns it off, and `--files-any-host` serves it to other machines on the network (by default only clients on the server's own machine). See the [CLI guide](https://megane-labs.github.io/megane/guide/cli).
 
@@ -147,7 +149,7 @@ The Builder's *Tools* menu runs Python structure generators — *Liquid box*, *P
 pip install "megane[tools]"
 ```
 
-In the browser (`megane serve`), start the reference server yourself and connect to it from **Tools › Tool server…**:
+In the browser (`megane serve --port 8080`, or the Docker image above), start the reference server yourself and connect to it from **Tools › Tool server…** (URL `http://127.0.0.1:8765/mcp`). `megane serve` defaults to port 8765, which the tool server below takes, so run it on another port:
 
 ```bash
 uvx --from git+https://github.com/hodakamori/megane-builder-tools \
@@ -162,11 +164,12 @@ See the [Builder guide](https://megane-labs.github.io/megane/guide/builder#pytho
 ```tsx
 import { useCallback } from "react";
 import "megane-viewer/styles.css";
-import { MeganeViewer, usePipelineStore } from "megane-viewer/lib";
+import { MeganeViewer } from "megane-viewer/lib";
 
 function App() {
+  // Called after the viewer has loaded a file opened in its editor.
   const handleUpload = useCallback((file: File) => {
-    usePipelineStore.getState().openFile(file);
+    console.log("opened", file.name);
   }, []);
 
   return (
@@ -253,6 +256,7 @@ the terminal `SpectrumPlot` node instead of reaching the 3D renderer.
 - Rust (for building the parser)
 - [wasm-pack](https://rustwasm.github.io/wasm-pack/installer/) (for building WASM bindings)
 - [uv](https://docs.astral.sh/uv/)
+- [maturin](https://www.maturin.rs/) (`uv tool install maturin` or `pip install maturin`; `uv sync` does not install it)
 
 ### Setup
 
@@ -277,7 +281,7 @@ After setup, build and install the package, then start the server:
 
 ```bash
 maturin develop --release
-megane serve protein.pdb
+uv run megane serve protein.pdb
 ```
 
 ### Development Mode
