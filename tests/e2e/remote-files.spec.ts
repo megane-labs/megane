@@ -1,12 +1,13 @@
 /**
  * "Open from server..." on the Load nodes (webapp host).
  *
- * Under `megane serve` the webapp probes `/api/files` at startup and, when it
- * answers with a listing, the Load Structure / Load Trajectory nodes get a
- * second button that browses the server's files in megane's own dialog. The
- * E2E static server has no such API, so the spec answers `/api/files` itself
- * (`page.route`) from `tests/fixtures/` with the response shapes
- * `python/megane/server.py` produces — the server side is covered by
+ * Under `megane serve` the page carries a `<meta name="megane-server-files">`
+ * mark, the webapp then probes `/api/files` at startup and, when it answers
+ * with a listing, the Load Structure / Load Trajectory nodes get a second
+ * button that browses the server's files in megane's own dialog. The E2E
+ * static server has neither, so the spec adds the mark and answers
+ * `/api/files` itself (`page.route`) from `tests/fixtures/` with the response
+ * shapes `python/megane/server.py` produces — the server side is covered by
  * `tests/python/test_server_files.py`. Assertions are DOM-contract only.
  */
 
@@ -19,8 +20,24 @@ import { getReadyState, waitForReady } from "./lib/setup";
 const REPO = join(fileURLToPath(import.meta.url), "..", "..", "..");
 const FIXTURES = join(REPO, "tests", "fixtures");
 
+/** Mark the page the way megane serve does when it serves file browsing to this browser. */
+async function markServedFiles(page: Page): Promise<void> {
+  await page.route(
+    (url) => url.pathname === "/" || url.pathname === "/index.html",
+    async (route) => {
+      const response = await route.fetch();
+      const html = (await response.text()).replace(
+        "</head>",
+        '<meta name="megane-server-files" content="" />\n</head>',
+      );
+      await route.fulfill({ response, body: html });
+    },
+  );
+}
+
 /** Serve `tests/fixtures/` (top level only) as megane serve's `/api/files`. */
 async function routeServerFiles(page: Page, requests: string[] = []): Promise<void> {
+  await markServedFiles(page);
   await page.route("**/api/files**", async (route) => {
     const url = new URL(route.request().url());
     const path = url.searchParams.get("path") ?? "";
@@ -149,12 +166,19 @@ test.describe("remote files: webapp under megane serve", () => {
 });
 
 test.describe("remote files: webapp without a file API", () => {
-  test("shows no Open from server button", async ({ page }) => {
+  test("shows no Open from server button and never requests the API", async ({ page }) => {
+    // An unmarked page (static hosting, `--no-files`, a refused client) must not
+    // probe: the browser would log the 404 / 403 as a console error.
+    const probes: string[] = [];
+    page.on("request", (request) => {
+      if (new URL(request.url()).pathname.startsWith("/api/files")) probes.push(request.url());
+    });
     await page.goto("/?test=1", { waitUntil: "domcontentloaded" });
     await waitForReady(page);
     await openNodeForm(page, "load_structure");
     await expect(page.locator('[data-testid="load-structure-input"]').first()).toBeAttached();
     await expect(page.locator('[data-testid="load-structure-remote"]')).toHaveCount(0);
     await expect(page.locator('[data-testid="load-trajectory-remote"]')).toHaveCount(0);
+    expect(probes).toEqual([]);
   });
 });

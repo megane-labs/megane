@@ -103,19 +103,23 @@ $VENV/bin/pip install "megane==X.Y.Z" jupyterlab
 npm ci
 npx playwright install chromium   # skip in the remote sandbox: Chromium is preinstalled
 
-# The spec refuses to start without python/megane/static/widget.js (a guard for
-# dev runs), but the kernel imports megane from the venv, so a local
-# `npm run build:widget` would never be exercised. Point the guard at the
-# widget bundle shipped in the PyPI wheel instead, and remove it afterwards.
+# The specs refuse to start without python/megane/static/widget.js and
+# builder_widget.js (guards for dev runs), but the kernel imports megane from
+# the venv, so a local `npm run build:widget` would never be exercised. Point
+# the guards at the bundles shipped in the PyPI wheel instead, and remove them
+# afterwards.
 SITE=$($VENV/bin/python -c "import megane, pathlib; print(pathlib.Path(megane.__file__).parent)")
 ln -sf "$SITE/static/widget.js" python/megane/static/widget.js
+ln -sf "$SITE/static/builder_widget.js" python/megane/static/builder_widget.js
 
 # Run the widget E2E project against the PyPI-installed megane.
 # PATH override ensures the venv `python`/`jupyter` are used, not the local dev install.
 PATH=$VENV/bin:$PATH MEGANE_E2E_MODE=1 npm run test:e2e:widget-jupyterlab
 
-rm python/megane/static/widget.js
+rm python/megane/static/widget.js python/megane/static/builder_widget.js
 ```
+
+The project's `testMatch` (`/widget-jupyterlab\.spec\.ts$/`) also picks up `builder-widget-jupyterlab.spec.ts`, so the run covers the `megane.Builder` widget as well (9 tests as of 0.18.0). Without the `builder_widget.js` link its first test fails in 0 ms with "builder_widget.js missing" and the other two do not run.
 
 Confirm the kernel really uses the wheel: `cd /tmp && $VENV/bin/python -c "import megane; print(megane.__version__, megane.__file__)"` must print `X.Y.Z` and a path under `$VENV`, and `$VENV/bin/jupyter labextension list` must show `megane-jupyterlab vX.Y.Z enabled OK`.
 
@@ -125,6 +129,7 @@ This test verifies:
 - PyPI install succeeds and the PyO3 native extension loads
 - `megane-viewer` (npm) WASM is bundled correctly and loads in the browser
 - The anywidget rendering pipeline works end-to-end inside JupyterLab
+- The `megane.Builder` widget opens a file from Python, syncs edits back, and runs RDKit and Flow mode from the wheel's bundle
 
 ### 3.2 VS Code extension: rendering via code-server
 

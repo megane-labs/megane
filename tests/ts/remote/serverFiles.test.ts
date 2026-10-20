@@ -1,5 +1,10 @@
 import { describe, it, expect, vi } from "vitest";
-import { createServerFileSource, detectServerFileSource } from "@/remote/serverFiles";
+import {
+  SERVER_FILES_META,
+  createServerFileSource,
+  detectServerFileSource,
+  shouldProbeServerFiles,
+} from "@/remote/serverFiles";
 
 function json(body: unknown, init: ResponseInit = {}): Response {
   return new Response(JSON.stringify(body), {
@@ -113,5 +118,43 @@ describe("detectServerFileSource", () => {
     await expect(detectServerFileSource()).resolves.toBeNull();
     expect(spy).toHaveBeenCalled();
     spy.mockRestore();
+  });
+});
+
+describe("shouldProbeServerFiles", () => {
+  function page(head: string): Document {
+    return new DOMParser().parseFromString(
+      `<html><head>${head}</head><body></body></html>`,
+      "text/html",
+    );
+  }
+
+  it("probes a page megane serve marked", () => {
+    const marked = page(`<meta name="${SERVER_FILES_META}" content="" />`);
+    expect(shouldProbeServerFiles(marked, false)).toBe(true);
+  });
+
+  it("does not probe an unmarked page (static hosting, --no-files, a refused client)", () => {
+    expect(shouldProbeServerFiles(page('<meta name="viewport" content="x" />'), false)).toBe(false);
+  });
+
+  it("probes under the Vite dev server, which proxies /api to megane serve", () => {
+    expect(shouldProbeServerFiles(page(""), true)).toBe(true);
+  });
+
+  it("follows the build's dev flag by default", () => {
+    expect(shouldProbeServerFiles(page(""))).toBe(import.meta.env.DEV);
+  });
+
+  it("reads the current document by default", () => {
+    const meta = document.createElement("meta");
+    meta.name = SERVER_FILES_META;
+    document.head.appendChild(meta);
+    try {
+      expect(shouldProbeServerFiles(undefined, false)).toBe(true);
+    } finally {
+      meta.remove();
+    }
+    expect(shouldProbeServerFiles(undefined, false)).toBe(false);
   });
 });

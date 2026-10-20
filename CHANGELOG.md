@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+### Fixed
+
+- **The web app no longer requests `/api/files` where the server offers no file browsing.** It asked at every start, so the docs site's app, a static deployment, the Docker image (`--no-files`) and a `megane serve` opened from another machine each logged a 404 or 403 in the browser console. `megane serve` now marks the page it serves (`<meta name="megane-server-files">`) when file browsing is on for that browser, and the app asks only then (or under the Vite dev server, which proxies `/api` to `megane serve`).
+
 ## [0.18.0] - 2026-10-20
 
 ### Added
