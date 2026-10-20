@@ -1292,6 +1292,124 @@ class TestPipelineJsonImport:
         assert node2.lammpstrj == "output.dump"
 
 
+class TestPipelineEditorFieldRoundTrip:
+    """Fields the editor writes survive from_dict → to_dict unchanged."""
+
+    def _editor_pipeline(self) -> dict:
+        pdb = str(FIXTURES / "1crn.pdb")
+        return {
+            "version": 3,
+            "nodes": [
+                {
+                    "id": "loader-1",
+                    "type": "load_structure",
+                    "fileName": pdb,
+                    "fileUrl": "https://example.org/1crn.pdb",
+                    "hasTrajectory": False,
+                    "hasCell": False,
+                    "position": {"x": 40, "y": 120},
+                    "enabled": True,
+                },
+                {
+                    "id": "traj-1",
+                    "type": "load_trajectory",
+                    "fileName": None,
+                    "source": "structure",
+                    "position": {"x": 40, "y": 300},
+                },
+                {
+                    "id": "addbond-1",
+                    "type": "add_bond",
+                    "bondSource": "distance",
+                    "vdwScale": 0.75,
+                    "position": {"x": 300, "y": 120},
+                },
+                {
+                    "id": "modify-1",
+                    "type": "modify",
+                    "scale": 1.5,
+                    "opacity": 1.0,
+                    "position": {"x": 300, "y": 300},
+                    "enabled": False,
+                },
+            ],
+            "edges": [],
+        }
+
+    def _round_trip(self) -> dict[str, dict]:
+        out = Pipeline.from_dict(self._editor_pipeline()).to_dict()
+        return {n["id"]: n for n in out["nodes"]}
+
+    def test_position_preserved(self):
+        nodes = self._round_trip()
+        assert nodes["loader-1"]["position"] == {"x": 40, "y": 120}
+        assert nodes["modify-1"]["position"] == {"x": 300, "y": 300}
+
+    def test_disabled_node_stays_disabled(self):
+        nodes = self._round_trip()
+        assert nodes["modify-1"]["enabled"] is False
+        # Enabled is the default and is not written.
+        assert "enabled" not in nodes["loader-1"]
+
+    def test_vdw_scale_preserved(self):
+        assert self._round_trip()["addbond-1"]["vdwScale"] == 0.75
+
+    def test_file_url_preserved(self):
+        assert self._round_trip()["loader-1"]["fileUrl"] == "https://example.org/1crn.pdb"
+
+    def test_trajectory_source_preserved(self):
+        traj = self._round_trip()["traj-1"]
+        assert traj["source"] == "structure"
+        assert traj["fileName"] is None
+
+    def test_missing_position_defaults_to_origin(self):
+        d = {"version": 3, "nodes": [{"id": "m-1", "type": "modify"}], "edges": []}
+        node = Pipeline.from_dict(d).to_dict()["nodes"][0]
+        assert node["position"] == {"x": 0, "y": 0}
+        assert "enabled" not in node
+
+    def test_builder_node_options_serialize(self):
+        pipe = Pipeline()
+        s = pipe.add_node(LoadStructure(str(FIXTURES / "1crn.pdb"), file_url="1crn.pdb"))
+        t = LoadTrajectory(source="structure")
+        t.enabled = False
+        t.position = {"x": 5, "y": 6}
+        pipe.add_node(t)
+        b = pipe.add_node(AddBonds(vdw_scale=0.5))
+        by_id = {n["id"]: n for n in pipe.to_dict()["nodes"]}
+        assert by_id[s._id]["fileUrl"] == "1crn.pdb"
+        assert by_id[t._id]["source"] == "structure"
+        assert by_id[t._id]["enabled"] is False
+        assert by_id[t._id]["position"] == {"x": 5, "y": 6}
+        assert by_id[b._id]["vdwScale"] == 0.5
+
+    def test_default_options_are_not_written(self):
+        pipe = Pipeline()
+        s = pipe.add_node(LoadStructure(str(FIXTURES / "1crn.pdb")))
+        b = pipe.add_node(AddBonds())
+        by_id = {n["id"]: n for n in pipe.to_dict()["nodes"]}
+        assert "fileUrl" not in by_id[s._id]
+        assert "vdwScale" not in by_id[b._id]
+
+    def test_topology_add_bond_keeps_vdw_scale(self):
+        d = {
+            "version": 3,
+            "nodes": [
+                {
+                    "id": "addbond-1",
+                    "type": "add_bond",
+                    "bondSource": "file",
+                    "bondFileName": str(FIXTURES / "test_topology.top"),
+                    "vdwScale": 0.7,
+                }
+            ],
+            "edges": [],
+        }
+        node = Pipeline.from_dict(d).to_dict()["nodes"][0]
+        assert node["bondSource"] == "file"
+        assert node["vdwScale"] == 0.7
+
+
 class TestPipelineJsonImportErrors:
     """from_dict raises clear errors on malformed input."""
 
@@ -1412,6 +1530,21 @@ class TestViewTrajWrapper:
         assert "load_trajectory" in node_types
         assert "load_structure" in node_types
         assert "viewport" in node_types
+
+    def test_pipeline_has_symmetry_node(self):
+        viewer = view_traj(
+            str(FIXTURES / "caffeine_water.pdb"),
+            xtc=str(FIXTURES / "caffeine_water_vibration.xtc"),
+        )
+        pipe = viewer._pipeline_ref
+        ids = {cfg["type"]: nid for nid, (_, cfg) in pipe._nodes.items()}
+        edges = {(e["source"], e["target"], e["targetHandle"]) for e in pipe._edges}
+        sym = ids["symmetry"]
+        assert (ids["load_structure"], sym, "particle") in edges
+        assert (ids["load_trajectory"], sym, "trajectory") in edges
+        assert (sym, ids["viewport"], "particle") in edges
+        assert (sym, ids["viewport"], "trajectory") in edges
+        assert (sym, ids["add_bond"], "particle") in edges
 
     def test_total_frames_set(self):
         viewer = view_traj(
@@ -1544,9 +1677,46 @@ class TestBuildPipeline:
         pipe = build_pipeline(str(FIXTURES / "1crn.pdb"))
         node_types = [cfg["type"] for _, cfg in pipe._nodes.values()]
         assert "load_structure" in node_types
+        assert "symmetry" in node_types
         assert "add_bond" in node_types
         assert "viewport" in node_types
         assert "load_trajectory" not in node_types
+
+    def test_matches_view_pipeline(self):
+        """build_pipeline() builds the same graph view() displays."""
+        path = str(FIXTURES / "1crn.pdb")
+        built = build_pipeline(path).to_dict()
+        shown = view(path)._pipeline_ref.to_dict()
+        assert [n["type"] for n in built["nodes"]] == [n["type"] for n in shown["nodes"]]
+        assert built["edges"] == shown["edges"]
+
+    def test_symmetry_feeds_viewport_and_bonds(self):
+        pipe = build_pipeline(str(FIXTURES / "1crn.pdb"))
+        ids = {cfg["type"]: nid for nid, (_, cfg) in pipe._nodes.items()}
+        sym = ids["symmetry"]
+        edges = {(e["source"], e["target"], e["targetHandle"]) for e in pipe._edges}
+        assert (ids["load_structure"], sym, "particle") in edges
+        assert (sym, ids["viewport"], "particle") in edges
+        assert (sym, ids["add_bond"], "particle") in edges
+
+    def test_trajectory_runs_through_symmetry(self):
+        pipe = build_pipeline(
+            str(FIXTURES / "caffeine_water.pdb"),
+            xtc=str(FIXTURES / "caffeine_water_vibration.xtc"),
+        )
+        ids = {cfg["type"]: nid for nid, (_, cfg) in pipe._nodes.items()}
+        edges = {(e["source"], e["target"], e["targetHandle"]) for e in pipe._edges}
+        assert (ids["load_trajectory"], ids["symmetry"], "trajectory") in edges
+        assert (ids["symmetry"], ids["viewport"], "trajectory") in edges
+
+    def test_topology_bonds_read_symmetry_output(self):
+        pipe = build_pipeline(
+            str(FIXTURES / "1crn.pdb"),
+            top=str(FIXTURES / "test_topology.top"),
+        )
+        ids = {cfg["type"]: nid for nid, (_, cfg) in pipe._nodes.items()}
+        edges = {(e["source"], e["target"], e["targetHandle"]) for e in pipe._edges}
+        assert (ids["symmetry"], ids["add_bond"], "particle") in edges
 
     def test_bonds_none_omits_add_bond(self):
         pipe = build_pipeline(str(FIXTURES / "1crn.pdb"), bonds=None)

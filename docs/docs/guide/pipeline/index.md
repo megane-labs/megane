@@ -250,9 +250,10 @@ other molecule's atoms and bonds fade together — both Filter nodes derive
 A CIF lists only the crystallographic asymmetric unit plus the space-group
 operations, and Megane's parser returns exactly that. The **Symmetry** node
 applies those operations to fill one unit cell with the symmetry-equivalent
-molecules, VESTA-style. Every default pipeline and structure template already
-carries one directly after `LoadStructure` in its `expand` mode, so a loaded
-CIF shows the full unit cell out of the box:
+molecules, VESTA-style. The default pipeline and the structure templates
+already carry one directly after `LoadStructure` in its `expand` mode (the
+Coarse-Grained template's second, CG-bead loader has none), so a loaded CIF
+shows the full unit cell out of the box:
 
 1. Load a CIF (other formats carry no space-group operations, so the node is
    a transparent pass-through for them)
@@ -270,9 +271,11 @@ loaded through them shows the asymmetric unit; add the node after
 ### Wrap / Unwrap a Periodic Structure
 
 The **Wrap / Unwrap** node toggles periodic-image coordinate mapping without
-changing the file. Every default pipeline and structure template already
-carries one between `LoadStructure` and the rest of the graph in its
-pass-through mode (`none`), so the toggle is a single dropdown click:
+changing the file. The default pipeline and the structure templates already
+carry one between `LoadStructure` and the rest of the graph, in its
+pass-through mode (`none`) except in the Molecular Crystal template, which
+wraps (`wrap`); the Coarse-Grained template's CG-bead loader has none. The
+toggle is a single dropdown click:
 
 1. Load a periodic structure (a unit cell is required)
 2. Select the `Wrap / Unwrap` node in the graph

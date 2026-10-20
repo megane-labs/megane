@@ -78,7 +78,7 @@ The selection language supports the fields `element`, `index`, `x`/`y`/`z`,
 
 For the active layer you can set the **color** (uniform or by
 element/residue/chain/B-factor/property/illustrative), the **style**
-(representation: ball, licorice, cartoon, ball + stick, surface, line,
+(representation: ball, licorice, cartoon, cartoon + atoms, surface, line,
 illustrative), the atom **size** and **opacity**, and toggle **visibility**
 (a hidden layer drives its atoms to opacity 0). Color and style each have a
 checkbox; only the enabled ones add a `color` / `representation` node to the

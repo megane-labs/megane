@@ -36,15 +36,7 @@ PYTHON_EXCLUDED_NODE_TYPES: dict[str, str] = {}
 
 # TS params a Python node does not carry, so ``from_dict`` → ``to_dict`` drops
 # them (the TS deserializer then refills the default). Each entry needs a reason.
-PYTHON_OMITTED_PARAMS: dict[str, dict[str, str]] = {
-    "load_trajectory": {
-        "source": (
-            "'structure' forwards frames embedded in a multi-frame structure "
-            "file; the Python LoadTrajectory only models a separate trajectory "
-            "file, which is the TS default ('file')."
-        ),
-    },
-}
+PYTHON_OMITTED_PARAMS: dict[str, dict[str, str]] = {}
 
 # Params whose "no file" value is ``null`` in TS but ``""`` in the Python
 # path-taking constructors. The TS loaders treat both as "no file opened".

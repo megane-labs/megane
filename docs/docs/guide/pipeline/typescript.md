@@ -118,7 +118,7 @@ The Viewport class is exported as `ViewportNode` so it does not clash with the `
 
 ### Differences from Python
 
-- **Node coverage:** every pipeline node type has a TypeScript builder class (a compile-time check keeps it that way). The Python builder covers the same node types (a drift test checks it against the TypeScript node contract). Parameter defaults come from the editor's `defaultParams`, so a builder node starts with the same values as a node added in the editor.
+- **Node coverage:** every pipeline node type has a TypeScript builder class (a compile-time check keeps it that way). The Python builder covers the same node types (a drift test checks it against the TypeScript node contract). A builder node starts with the same parameter values as a node added in the editor (`defaultParams`), except `Filter`, whose `query` defaults to `"all"` — it selects the same atoms as the editor's empty query.
 - **`LoadTrajectory`** takes the file path directly — `new LoadTrajectory("run.dcd")` or `{ path }` — in any format the Load Trajectory node opens (XTC, DCD, AMBER NetCDF `.nc`, LAMMPS dump `.lammpstrj` / `.dump` / `.trj`). The Python-style per-format keys (`{ xtc }`, `{ dcd }`, `{ nc }`, `{ traj }`, `{ xyz }`, `{ lammpstrj }`) also work, and `{ source: "structure" }` forwards the frames embedded in the structure file.
 - **`AddBonds`** takes only `{ source }`; there is no `top` option for topology files.
 - **`Pipeline`** has `addNode`, `addEdge`, `toObject`, and `toJSON` only — there is no `fromDict` / `load` / `save`. Use `deserializePipeline()` to turn a `SerializedPipeline` back into editor nodes and edges.
@@ -130,7 +130,7 @@ After `addNode()`, each node exposes two port accessors:
 - `node.out.<name>` — output port (first arg to `addEdge`)
 - `node.inp.<name>` — input port (second arg to `addEdge`)
 
-Port names are identical to Python. The `.traj` port maps to the `"trajectory"` wire handle internally. Accessing an undefined port throws an `Error` with a message listing available ports.
+Port names are identical to Python, except the Isosurface coloring input: `iso.inp.colorVolumetric` in TypeScript, `iso.inp.color_volumetric` in Python (both map to the `"colorVolumetric"` wire handle). The `.traj` port maps to the `"trajectory"` wire handle internally. Accessing an undefined port throws an `Error` with a message listing available ports.
 
 ## React Components
 

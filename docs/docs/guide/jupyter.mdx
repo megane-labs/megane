@@ -90,7 +90,7 @@ Both `view()` and `view_traj()` accept these keyword arguments:
 | `perspective` | `bool` | `False` | Perspective projection instead of orthographic |
 | `cell_axes_visible` | `bool` | `True` | Show unit cell axes |
 
-`view()` also adds a `Symmetry` node, so a CIF asymmetric unit is expanded to the full cell as on the other hosts.
+Both also add a `Symmetry` node (as does `megane.build_pipeline()`), so a CIF asymmetric unit is expanded to the full cell as on the other hosts. Structures without symmetry operations pass through unchanged.
 
 `view_traj()` additionally accepts `embed_trajectory` (see [Share a notebook with a playable trajectory](#share-a-notebook-with-a-playable-trajectory)).
 
@@ -106,7 +106,8 @@ After displaying the widget, control it programmatically:
 | `viewer.total_frames` | `int` (read) | Total number of frames |
 | `viewer.selected_atoms` | `list[int]` (read/write) | Indices of currently selected atoms |
 | `viewer.measurement` | `dict \| None` (read) | Current measurement result |
-| `viewer.camera_state` | `dict` (read/write) | Camera mode, position, target, zoom and up vector; kept in the widget state, so a re-displayed or reopened widget restores its view |
+| `viewer.camera_state` | `dict` (read/write) | Camera mode, position, target, zoom and up vector; setting it moves the displayed view, and it is kept in the widget state, so a re-displayed or reopened widget restores its view |
+| `viewer.quick_style` | `bool` (read/write) | Show the Quick Style panel (see [Properties](#properties)) |
 | `viewer.set_pipeline(pipe)` | method | Apply a pipeline to the viewer |
 | `viewer.on_event(name, fn)` | method | Register an event callback |
 | `viewer.off_event(name, fn)` | method | Remove an event callback |
@@ -264,11 +265,11 @@ fig
 
 ## Interactive Demos
 
-The following are actual executed notebooks you can browse inline.
+The following example notebooks (outputs pre-rendered for the docs) can be browsed inline.
 
 ### Demo Notebook
 
-Basic usage — loading structures, navigating trajectories, atom selection, measurement, and side-by-side viewers.
+Basic usage — loading structures, navigating trajectories, and side-by-side viewers.
 
 <NotebookRenderer src="/megane/notebooks/demo.html" />
 
@@ -342,7 +343,8 @@ cell).
 | `total_frames` | `int` | R | Total number of frames in the loaded trajectory |
 | `selected_atoms` | `list[int]` | R/W | Indices of selected atoms (the first 4 are used for measurement). Setting this fires `selection_change` |
 | `measurement` | `dict \| None` | R | Current measurement result, or `None` if fewer than 2 atoms selected |
-| `camera_state` | `dict` | R/W | Camera `mode` (`"orthographic"` / `"perspective"`), `position`, `target`, `zoom` and `up`, updated as the camera moves and restored when the widget is shown again |
+| `camera_state` | `dict` | R/W | Camera `mode` (`"orthographic"` / `"perspective"`), `position`, `target`, `zoom` and `up`, updated as the camera moves and restored when the widget is shown again. Setting it from Python moves the displayed view (`up` is optional) |
+| `quick_style` | `bool` | R/W | Show the Quick Style panel (style, color, atom size / opacity, bond width / opacity, labels, perspective) in the top-right corner. It edits the pipeline loaded with `set_pipeline()` (`view()` / `view_traj()` do this) and writes the result back; calling `set_pipeline()` again replaces its edits. `view()` / `view_traj()` take no `quick_style` argument — set `viewer.quick_style = True` after creating the viewer |
 
 The `measurement` dict contains: `type` (`"distance"`, `"angle"`, or `"dihedral"`), `value` (float), `label` (formatted string like `"120.5°"`), and `atoms` (list of indices).
 
@@ -350,8 +352,8 @@ The `measurement` dict contains: `type` (`"distance"`, `"angle"`, or `"dihedral"
 
 - **Re-running cells** — calling `viewer.set_pipeline(pipe)` again updates the displayed pipeline in-place without re-creating the widget.
 - **JupyterLab vs. classic Notebook** — Megane is tested on JupyterLab 4+. In classic Notebook, enable the `anywidget` extension if the viewer appears blank.
-- **Large trajectories** — the kernel loads the full trajectory into Python memory, and by default sends the widget one frame at a time. Keep large trajectories out of `embed_trajectory=True` (every frame would be written into the notebook), or use `"auto"`, which leaves anything over 20 MB in the kernel. For a trajectory too large for the kernel, open it in the standalone web app, which parses in a Web Worker and streams trajectories of 8 MB or more from the file on demand. See [Platform Support — UI features](../platform-support#ui-features).
-- **Sharing notebooks** — to hand over a notebook whose trajectory still plays, embed it (see [Share a notebook with a playable trajectory](#share-a-notebook-with-a-playable-trajectory)). Exported HTML (`File → Export → HTML`) captures the last-rendered frame as a static image.
+- **Large trajectories** — the kernel loads the full trajectory into Python memory, and by default sends the widget one frame at a time. Keep large trajectories out of `embed_trajectory=True` (every frame would be written into the notebook), or use `"auto"`, which leaves anything over 20 MB in the kernel. For a trajectory too large for the kernel, open it in the standalone web app, which parses in a Web Worker and streams XTC and LAMMPS dump trajectories of 8 MB or more from the file on demand. See [Platform Support — UI features](../platform-support#ui-features).
+- **Sharing notebooks** — to hand over a notebook whose trajectory still plays, embed it (see [Share a notebook with a playable trajectory](#share-a-notebook-with-a-playable-trajectory)). Exported HTML (`File → Export → HTML`) contains the viewer only if the widget state was saved with the notebook; Megane does not add a static image of the view.
 
 ## Troubleshooting
 

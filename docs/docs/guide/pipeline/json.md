@@ -75,7 +75,9 @@ Every node has the following common fields:
 Any parameter a node leaves out takes its default (the defaults are listed in
 the [Node Reference](/reference/node-reference)). Ephemeral data — parsed
 topology bonds, volumetric grids, decoded spectra, trajectory frames — is never
-serialized; only file names are.
+serialized by the editor; only file names are. (Python's `AddBonds(top=…)` is
+the one exception: it embeds the topology's parsed bond pairs as
+`bondFileData`, so the JSON draws those bonds without the topology file.)
 
 ### Node Types and Parameters
 
@@ -121,9 +123,9 @@ The full op schema is in the [Node Reference](/reference/node-reference#load_str
 
 #### `load_vector`
 
-| Field      | Type     | Description              |
-| ---------- | -------- | ------------------------ |
-| `fileName` | `string` | Path to vector data file |
+| Field      | Type             | Description                                 |
+| ---------- | ---------------- | ------------------------------------------- |
+| `fileName` | `string \| null` | Path to vector data file (`null`: none yet) |
 
 #### `filter`
 
@@ -136,7 +138,7 @@ The full op schema is in the [Node Reference](/reference/node-reference#load_str
 
 | Field     | Type     | Description                             |
 | --------- | -------- | --------------------------------------- |
-| `scale`   | `number` | Atom sphere radius multiplier (the editor slider spans 0.1–2.0) |
+| `scale`   | `number` | Atom sphere radius multiplier; on a bond stream, the bond width multiplier for the whole stream (the editor slider spans 0.1–2.0) |
 | `opacity` | `number` | Transparency (0–1)                      |
 
 #### `symmetry`
@@ -180,10 +182,13 @@ handle and emits the recolored particle stream on `out`.
 
 #### `representation`
 
-Per-stream representation override (Ovito-style). The Viewport reads the
-mode from the first connected particle stream that carries an override and
-falls back to `"atoms"` otherwise. Accepts a `particle` input on the `in`
-handle and emits the tagged particle stream on `out`.
+Per-stream representation override (Ovito-style). The Viewport resolves the
+mode per atom: each atom takes the mode of the first stream that covers it and
+carries an override, with selection (filtered) streams taking precedence over
+whole-structure streams. Atoms no override covers use the first non-`"line"`
+override, or `"atoms"` when no stream carries one. Branches that disagree are
+drawn per atom, so one viewport can mix representations. Accepts a `particle`
+input on the `in` handle and emits the tagged particle stream on `out`.
 
 | Field  | Type     | Description                                                                        |
 | ------ | -------- | ---------------------------------------------------------------------------------- |
@@ -194,7 +199,7 @@ handle and emits the tagged particle stream on `out`.
 | Field        | Type     | Description                                                                                                                                                                          |
 | ------------ | -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `bondSource` | `string` | `"structure"` (bonds from the structure file), `"distance"` (VDW inference, the default), `"file"` (a separate topology file), or `"none"`                                        |
-| `bondFileName` | `string?` | Optional. Name of the topology file used when `bondSource` is `"file"` (the parsed bonds themselves are not serialized)                                                    |
+| `bondFileName` | `string?` | Optional. Name of the topology file used when `bondSource` is `"file"` (the editor does not serialize the parsed bonds; Python's `AddBonds(top=…)` writes them as `bondFileData`) |
 | `vdwScale`   | `number` | Optional. Threshold scale for `"distance"` mode: atoms bond when their separation is `≤ (vdw_i + vdw_j) * vdwScale`. Higher loosens (more bonds), lower tightens. Defaults to `0.6`. |
 
 #### `label_generator`
@@ -334,15 +339,24 @@ Code, `PipelineViewer`), Megane:
   on `modify`);
 - migrates the older `particle → polyhedron_generator` shape by inserting
   `drawing_boundary` and `coordination_generator` nodes;
-- completes the canonical `load_structure → add_bond → viewport` wiring: for
-  each structure loader that feeds a viewport, an `add_bond` node is injected
-  when no bond stream reaches the viewport, and the loader's `cell` (and, when
-  `hasTrajectory` is `true`, its `trajectory`) output is connected to the
-  viewport. Existing nodes and edges are never removed.
+- completes the canonical `load_structure → add_bond → viewport` wiring for
+  each structure loader, against the viewport its particle stream reaches
+  (through filter / modify / symmetry / wrap / replicate / drawing-boundary /
+  boundary-completion nodes), or the first viewport when it reaches none:
+  - an `add_bond` node is injected unless the loader's `particle` output
+    already feeds an `add_bond` or a bond stream derived from the loader
+    already reaches the viewport's `bond` input;
+  - the loader's `particle` is connected to the viewport only when no particle
+    path exists, its `cell` only when the viewport has no `cell` input yet, and
+    its `trajectory` when `hasTrajectory` is `true`.
 
-File names are resolved per host. VS Code reads `load_structure` and
-`load_trajectory` files relative to the `.megane.json` file's directory
-(absolute paths and paths that leave that directory are ignored). The React
+  Existing nodes and edges are never removed.
+
+File names are resolved per host. VS Code and JupyterLab read every loader's
+`fileName` (`load_structure`, `load_trajectory`, `load_vector`,
+`load_volumetric`, `load_spectrum`) and `add_bond`'s `bondFileName` relative to
+the `.megane.json` file's directory (absolute paths and paths that leave that
+directory are ignored). The React
 `PipelineViewer` fetches each `load_structure` node's `fileUrl`. Python's
 `Pipeline.from_dict()` resolves relative paths from the current working
 directory.
