@@ -6,20 +6,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
-### Fixed
-
-- **Pipeline editor: Surface Mesh is in the Add Node menu.** It was only reachable through the Surface Mesh template or a pipeline file; it is now under *Overlay*.
-- **The `both` representation is labelled "Cartoon + Atoms".** Quick Style and the Inspector called it "Ball + Stick" and the Representation node "Both", but it draws a cartoon over atoms and bonds; ball-and-stick is *Ball* (`atoms`).
-- **Jupyter widget: setting `viewer.camera_state` moves a widget that is already displayed.** It used to apply only the next time the widget was shown.
-- **VS Code and JupyterLab: `.megane.json` Pipeline Viewer tabs show the frame, selection and measurement in the status bar,** and `megane.seekFrame` / `seekFrame()` reach them, like structure-viewer tabs.
-- **Python: `megane.build_pipeline()` and `megane.view_traj()` add the Symmetry node** like `view()` and the other hosts' default pipeline, so a CIF opens as the full cell.
-- **Python: a pipeline read with `Pipeline.load()` / `from_dict()` saves back without losing** disabled nodes, node positions, Add Bond `vdwScale`, Load Structure `fileUrl` or Load Trajectory `source` (new `vdw_scale`, `file_url` and `source` options).
-- **Megane Builder: the Tool server dialog suggests a command that works** (`uvx --from git+https://github.com/hodakamori/megane-builder-tools …` with `--allow-origin` set to the page), and a tool with an unknown `apply` mode is reported as such instead of as needing a newer contract.
-
-### Documentation
-
-- Checked the README, the guides, the developer pages and `platform-support.md` against the code and fixed what had drifted. This covers the Docker *your own files* example, the extent of in-browser streaming, the Builder's shortcuts, history, hydrogens and library, the tool server's install source, the `onUploadStructure` examples, the pipeline JSON auto-wiring and representation rules, the Builder's Tools menu in VS Code and JupyterLab, and Flow mode.
-
 ## [0.18.0] - 2026-10-20
 
 ### Added
@@ -94,9 +80,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 - **A selection's style beats a whole-structure style.** Per-atom size and opacity were merged as "any value other than 1.0 wins", so a selection could not restore 1.0 under a global 0.5; and the representation of a whole-structure stream ahead of a selection hid the selection's. Whole-structure streams now lay down the base and selection streams override the atoms they cover.
 - **Re-opened default pipelines no longer draw the structure twice.** Loading a `.megane.json` did not see the loader reach the viewport through Symmetry → Wrap → Replicate, and wired a second, untransformed `load_structure → viewport` particle stream (and cell) beside the replicated one.
 
+- **Pipeline editor: Surface Mesh is in the Add Node menu.** It was only reachable through the Surface Mesh template or a pipeline file; it is now under *Overlay*.
+- **The `both` representation is labelled "Cartoon + Atoms".** Quick Style and the Inspector called it "Ball + Stick" and the Representation node "Both", but it draws a cartoon over atoms and bonds; ball-and-stick is *Ball* (`atoms`).
+- **Jupyter widget: setting `viewer.camera_state` moves a widget that is already displayed.** It used to apply only the next time the widget was shown.
+- **VS Code and JupyterLab: `.megane.json` Pipeline Viewer tabs show the frame, selection and measurement in the status bar,** and `megane.seekFrame` / `seekFrame()` reach them, like structure-viewer tabs.
+- **Python: `megane.build_pipeline()` and `megane.view_traj()` add the Symmetry node** like `view()` and the other hosts' default pipeline, so a CIF opens as the full cell.
+- **Python: a pipeline read with `Pipeline.load()` / `from_dict()` saves back without losing** disabled nodes, node positions, Add Bond `vdwScale`, Load Structure `fileUrl` or Load Trajectory `source` (new `vdw_scale`, `file_url` and `source` options).
+- **Megane Builder: the Tool server dialog suggests a command that works** (`uvx --from git+https://github.com/hodakamori/megane-builder-tools …` with `--allow-origin` set to the page), and a tool with an unknown `apply` mode is reported as such instead of as needing a newer contract.
+
 ### Documentation
 
 - **Writing a Builder Tool Server.** A new developer page (`docs/docs/dev/builder-tool-server.md`) walks from an empty folder to your own buttons in Megane Builder's *Tools* menu: installing the `megane-builder-tools` SDK, writing a `new_document` and an `insert` tool, checking them with `megane-builder-conformance`, serving them over Streamable HTTP with a token and the page's origin allowed, connecting from *Tools › Tool server…* or a `#tools=` link, and registering the same server with an LLM client. The Builder guide's command for the reference server now installs it from Git (`uvx --from git+https://github.com/hodakamori/megane-builder-tools megane-builder-tools`), since the package is not on PyPI yet and `uvx megane-builder-tools` failed.
+- Checked the README, the guides, the developer pages and `platform-support.md` against the code and fixed what had drifted. This covers the Docker *your own files* example, the extent of in-browser streaming, the Builder's shortcuts, history, hydrogens and library, the tool server's install source, the `onUploadStructure` examples, the pipeline JSON auto-wiring and representation rules, the Builder's Tools menu in VS Code and JupyterLab, and Flow mode.
 
 ## [0.17.0] - 2026-09-29
 
