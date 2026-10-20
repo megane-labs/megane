@@ -55,7 +55,13 @@ export const ADD_NODE_GROUPS: {
   {
     category: "overlay",
     label: "Overlay",
-    types: ["label_generator", "polyhedron_generator", "vector_overlay", "isosurface"],
+    types: [
+      "label_generator",
+      "polyhedron_generator",
+      "vector_overlay",
+      "isosurface",
+      "surface_mesh",
+    ],
   },
 ];
 

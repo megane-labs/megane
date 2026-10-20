@@ -240,6 +240,37 @@ describe("widget.ts — render", () => {
     expect(last.props.initialCameraState).toEqual(cam);
   });
 
+  it("passes a camera_state set from Python after mount as the cameraState prop", () => {
+    const model = makeMockModel();
+    const el = makeContainer();
+    widgetEntry.render({ model: model as never, el });
+    expect(model.listeners.has("change:camera_state")).toBe(true);
+    expect(renderedElements[renderedElements.length - 1].props.cameraState).toBeNull();
+
+    const cam = { mode: "orthographic", position: [7, 8, 9], target: [0, 0, 0], zoom: 3 };
+    model.state.camera_state = cam;
+    model.listeners.get("change:camera_state")?.();
+    expect(renderedElements[renderedElements.length - 1].props.cameraState).toEqual(cam);
+  });
+
+  it("ignores camera_state changes that echo the widget's own writes or are malformed", () => {
+    const model = makeMockModel();
+    const el = makeContainer();
+    widgetEntry.render({ model: model as never, el });
+    const onCameraStateChange = renderedElements[renderedElements.length - 1].props
+      .onCameraStateChange as (s: Record<string, unknown>) => void;
+
+    const own = { mode: "orthographic", position: [1, 2, 3], target: [0, 0, 0], zoom: 2 };
+    onCameraStateChange(own);
+    const renders = renderedElements.length;
+    // The echo arrives as an equal (round-tripped) object.
+    model.state.camera_state = JSON.parse(JSON.stringify(own));
+    model.listeners.get("change:camera_state")?.();
+    model.state.camera_state = { mode: "orthographic" };
+    model.listeners.get("change:camera_state")?.();
+    expect(renderedElements.length).toBe(renders);
+  });
+
   it("handlePipelineChange writes _pipeline_json", () => {
     const model = makeMockModel();
     const el = makeContainer();
