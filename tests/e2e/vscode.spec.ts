@@ -235,7 +235,11 @@ test("Load Structure opens a workspace file through VS Code's open dialog", asyn
 
   const input = page.locator(".quick-input-widget input").first();
   await expect(input).toBeVisible({ timeout: 30_000 });
+  // The simple file dialog writes its starting folder into the input after
+  // it opens; a path filled in before that is overwritten with "/workspace/".
+  await expect(input).toHaveValue(/\/$/, { timeout: 30_000 });
   await input.fill(join(WORKSPACE, "water.gro"));
+  await expect(input).toHaveValue(join(WORKSPACE, "water.gro"));
   await input.press("Enter");
 
   await expect(wv.locator('[data-testid="load-structure-filename"]').first()).toHaveText(

@@ -278,6 +278,10 @@ export async function openVscodeNotebook(page: Page, opts: OpenVscodeNotebookOpt
   await page.waitForSelector(".notebook-editor", { timeout: 60_000 });
   await page.waitForTimeout(2_000);
 
+  // Armed before Run All: the CDN prompt can open before or after the
+  // widget's frame appears, and while it is up it swallows clicks.
+  const cdnPrompt = dismissWidgetCdnPrompt(page);
+
   // Trigger Run All via the palette. ms-toolsai.jupyter then prompts for
   // a kernel if none is selected; the helper below handles that pop-up
   // and waits for kernel-ready before returning.
@@ -291,7 +295,35 @@ export async function openVscodeNotebook(page: Page, opts: OpenVscodeNotebookOpt
 
   const wv = await getWebviewFrame(page, { timeoutMs: opts.waitTimeoutMs ?? 120_000 });
   await waitForReady(wv, { needsData: true, timeout: opts.waitTimeoutMs ?? 120_000 });
+  // Give a prompt that has not opened yet a moment to, so it is not
+  // painted into the caller's first screenshot.
+  await Promise.race([cdnPrompt, page.waitForTimeout(CDN_PROMPT_SETTLE_MS)]);
   return wv;
+}
+
+const CDN_PROMPT_SETTLE_MS = 5_000;
+
+/**
+ * ms-toolsai.jupyter resolves anywidget's front end from a CDN when it is not
+ * found locally, and the first time it does so it asks, in a modal, whether it
+ * may ("Widgets require us to download supporting files from a 3rd party
+ * website"). The modal greys out the whole workbench and covers the cell
+ * output, so it fails every full-page capture and every click on the viewer.
+ * "Do not show again" is stored in the extension's global state inside the
+ * user-data dir, so it is answered once and stays answered; nothing about
+ * the widget changes, it renders from the local copy either way.
+ */
+async function dismissWidgetCdnPrompt(page: Page): Promise<void> {
+  const dialog = page.locator(".monaco-dialog-box", {
+    hasText: "Widgets require us to download supporting files",
+  });
+  try {
+    await dialog.waitFor({ state: "visible", timeout: 120_000 });
+    await dialog.getByRole("button", { name: "Do not show again" }).click();
+    await dialog.waitFor({ state: "hidden", timeout: 10_000 });
+  } catch {
+    // Never shown (already answered), or the page closed first.
+  }
 }
 
 async function handleKernelPickerIfPresent(page: Page): Promise<void> {

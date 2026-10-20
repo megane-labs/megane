@@ -239,12 +239,16 @@ export async function captureFullPage(
   // iframe contents.
   const ownerPage =
     "screenshot" in scope && "mouse" in scope ? (scope as Page) : (scope as Frame).page();
+  // code-server's Explorer lists whatever the shared /workspace accumulated
+  // from earlier specs, so it changes with how much of the suite ran first
+  // (the counterpart of the .jp-DirListing-content rule in stabilizeUi).
+  // Masked rather than hidden, because specs still click its tree items.
   const buf = await ownerPage.screenshot({
     path: outPath,
     fullPage: true,
     animations: "disabled",
     caret: "hide",
-    mask: opts.mask,
+    mask: [ownerPage.locator(".explorer-folders-view"), ...(opts.mask ?? [])],
   });
   return buf;
 }

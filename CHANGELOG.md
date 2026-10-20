@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+## [0.18.0] - 2026-10-20
+
 ### Added
 
 - **megane Builder's *Flow* mode: build a model by connecting blocks.** A mode switch at the top of the Builder's left rails picks *Manual* (editing by clicking in the view, as before) or *Flow*, where a model is a graph of blocks like the viewer's pipeline editor: a molecule from SMILES (embedded in 3D by RDKit) or the library, the structure open in Manual mode, and every tool of the connected tool server (a packmol liquid box, a polymer chain, solvation). A tool's molecule and structure arguments become inputs on the block; a liquid box's components take one wire per molecule, each with its own count.
@@ -73,8 +75,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 - **Builder: the selection highlight follows dragged atoms.** The green halo on the selected atoms was drawn once, where the atoms were when they were selected, so dragging them with the Move tool left it behind. The highlight is now redrawn wherever the atoms are after every structure update (a drag, a set distance, undo) and every trajectory frame, which also keeps the viewer's Inspector preview on its atoms during playback.
 - **The Surface Mesh envelope no longer has holes where the structure reaches its bounding box.** The alpha-shape grid stopped exactly at the probe-expanded bounding box, so the outermost probe spheres touched its faces and marching cubes left the envelope open there — a hole on every flat facet facing an axis. The grid now keeps two empty cells beyond that box.
 - **`resname == "MK1"` selects residues whose name contains a digit.** Atom labels glue the residue name to its number (`MK1902`), and the selection DSL read the name as the leading letters only (`MK`), so ligands such as indinavir (`MK1`) or `1PE` could not be selected by name. `==` and `!=` now also match a label that starts with the queried name followed by the residue number; this applies only to names containing a digit, so alphabetic queries (`resname == "NA"` against sodium `NA12`) are unchanged.
-
-### Fixed
 
 - **Inspector layers survive saving and re-opening a pipeline.** The Inspector identified its nodes by a `data.inspectorLayerId` tag that `.megane.json` does not keep, so re-opened layers vanished from the panel and the next Inspector edit deleted their nodes. Layers are now read from the `insp-<layer>-<role>` node ids, and from the graph on every change — so templates, chat results and Editor edits also show up, instead of the panel holding a stale copy from when it was mounted.
 - **A selection's style beats a whole-structure style.** Per-atom size and opacity were merged as "any value other than 1.0 wins", so a selection could not restore 1.0 under a global 0.5; and the representation of a whole-structure stream ahead of a selection hid the selection's. Whole-structure streams now lay down the base and selection streams override the atoms they cover.
