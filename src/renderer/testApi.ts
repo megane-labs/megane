@@ -103,9 +103,9 @@ export interface MeganeTestApi {
   resetCamera: () => void;
   /**
    * Have the renderer draw a frame on its next tick (it draws on demand).
-   * Capture helpers call it after bringing the viewer into view: a host that
-   * scrolls it inside an out-of-process iframe (the VS Code notebook
-   * webview) only presents the moved content with that frame's next draw.
+   * The viewer-region capture calls it every animation frame while it takes
+   * the screenshot, so the viewer keeps presenting frames as it did before it
+   * drew on demand (see `captureViewerRegion` in tests/e2e/lib/setup.ts).
    */
   requestRender: () => void;
   alignCamera: (axis: ViewAxis) => void;

@@ -263,21 +263,40 @@ export async function captureViewerRegion(scope: Page | Frame, outPath: string):
     await stabilizeUi(scope as Page);
   }
   const target = scope.locator('[data-testid="viewer-root"]').first();
-  // The viewer draws on demand. A host that scrolls it into view inside an
-  // out-of-process iframe (the VS Code notebook webview) presents the moved
-  // content only with that frame's next draw, so bring the element into view
-  // first and have the renderer draw once before the capture.
-  await target.scrollIntoViewIfNeeded();
-  const { renderEpoch } = await getReadyState(scope);
+  // The viewer draws on demand, but a capture of an element that runs past
+  // the viewport needs the viewer's frame to keep presenting while Chromium
+  // grows the viewport for it: in the VS Code notebook (an out-of-process
+  // webview whose layout catches up asynchronously) an idle viewer is
+  // captured from a stale frame, 125 px off. Keep it drawing every
+  // animation frame for the duration of the capture, as it always did before
+  // it drew on demand.
   await scope.evaluate(() => {
-    (window as { __megane_test?: { requestRender?: () => void } }).__megane_test?.requestRender?.();
+    const w = window as {
+      __megane_test?: { requestRender?: () => void };
+      __meganeCaptureDraw?: number | null;
+    };
+    const tick = () => {
+      w.__megane_test?.requestRender?.();
+      w.__meganeCaptureDraw = requestAnimationFrame(tick);
+    };
+    tick();
   });
-  await waitForReady(scope, { needsData: false, untilEpoch: renderEpoch + 1, timeout: 10_000 });
-  const buf = await target.screenshot({
-    path: outPath,
-    animations: "disabled",
-    caret: "hide",
-  });
+  let buf: Buffer;
+  try {
+    buf = await target.screenshot({
+      path: outPath,
+      animations: "disabled",
+      caret: "hide",
+    });
+  } finally {
+    await scope
+      .evaluate(() => {
+        const w = window as { __meganeCaptureDraw?: number | null };
+        if (w.__meganeCaptureDraw != null) cancelAnimationFrame(w.__meganeCaptureDraw);
+        w.__meganeCaptureDraw = null;
+      })
+      .catch(() => {});
+  }
   return buf;
 }
 
