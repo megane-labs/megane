@@ -17,6 +17,8 @@ export const atomVertexShader = /* glsl */ `precision highp float;
   uniform mat4 projectionMatrix;
   uniform float uScaleMultiplier;
   uniform int uUsePerAtomOverrides;
+  // 1 in an immersive (WebXR) view: perspective-exact billboard + ray-cast.
+  uniform highp int uExactImpostor;
 
   // Per-vertex (quad corners)
   in vec3 position;
@@ -33,6 +35,7 @@ export const atomVertexShader = /* glsl */ `precision highp float;
   out float vRadius;
   out vec3 vViewCenter;
   out float vOpacityOverride;
+  out vec3 vViewPos;
 
   void main() {
     vColor = instanceColor;
@@ -42,14 +45,38 @@ export const atomVertexShader = /* glsl */ `precision highp float;
     if (uUsePerAtomOverrides == 1) {
       effectiveScale *= instanceScaleOverride;
     }
-    float scaledRadius = instanceRadius * effectiveScale;
+    // Radii are in model units but added in view space, so they take the
+    // model-view scale along: an immersive view scales the scene (Å to
+    // metres). The desktop view never scales it, so the factor is 1 there.
+    float scaledRadius = instanceRadius * effectiveScale * length(modelViewMatrix[0].xyz);
     vRadius = scaledRadius;
 
     vec4 viewCenter = modelViewMatrix * vec4(instanceCenter, 1.0);
     vViewCenter = viewCenter.xyz;
 
     vec3 viewPos = viewCenter.xyz;
-    viewPos.xy += position.xy * scaledRadius;
+    if (uExactImpostor == 1) {
+      // A square facing the eye (the view-space origin), sized to the sphere's
+      // tangent cone: it covers the whole perspective silhouette however close
+      // the sphere is and however far off the view axis it sits, both of which
+      // a wide-field headset view reaches.
+      float d = length(viewPos);
+      if (d <= scaledRadius * 1.001) {
+        // The eye is inside the sphere: drop it.
+        vViewPos = viewPos;
+        gl_Position = vec4(0.0, 0.0, 2.0, 1.0);
+        return;
+      }
+      vec3 axis = viewPos / d;
+      vec3 ref = abs(axis.y) < 0.99 ? vec3(0.0, 1.0, 0.0) : vec3(1.0, 0.0, 0.0);
+      vec3 right = normalize(cross(axis, ref));
+      vec3 up = cross(right, axis);
+      float extent = scaledRadius * d / sqrt(d * d - scaledRadius * scaledRadius);
+      viewPos += (right * position.x + up * position.y) * extent;
+    } else {
+      viewPos.xy += position.xy * scaledRadius;
+    }
+    vViewPos = viewPos;
 
     gl_Position = projectionMatrix * vec4(viewPos, 1.0);
   }
@@ -63,10 +90,12 @@ export const atomFragmentShader = /* glsl */ `precision highp float;
   in float vRadius;
   in vec3 vViewCenter;
   in float vOpacityOverride;
+  in vec3 vViewPos;
 
   uniform mat4 projectionMatrix;
   uniform float uOpacity;
   uniform int uUsePerAtomOverrides;
+  uniform highp int uExactImpostor;
   // Illustrative (Mol*-style) mode: flat unlit color plus a constant-width
   // silhouette outline. 0 = off (lit ball-and-stick shading).
   uniform int uIllustrative;
@@ -77,7 +106,18 @@ export const atomFragmentShader = /* glsl */ `precision highp float;
   out vec4 fragColor;
 
   void main() {
-    float dist2 = dot(vUv, vUv);
+    // Desktop: the billboard's |uv|^2 (an orthographic view along -z). An
+    // immersive view casts the real ray from the eye through this fragment
+    // instead; dist2 is then its closest approach to the centre, in radii^2.
+    vec3 rd = vec3(0.0, 0.0, -1.0);
+    float dist2;
+    if (uExactImpostor == 1) {
+      rd = normalize(vViewPos);
+      float b = dot(rd, vViewCenter);
+      dist2 = (dot(vViewCenter, vViewCenter) - b * b) / (vRadius * vRadius);
+    } else {
+      dist2 = dot(vUv, vUv);
+    }
     // Screen-space derivative of the normalized silhouette distance, taken
     // BEFORE the discard below: derivatives are undefined once a fragment in
     // the 2x2 quad has terminated, which would make the outline flicker along
@@ -86,11 +126,22 @@ export const atomFragmentShader = /* glsl */ `precision highp float;
     float rimWidth = fwidth(rim) * uOutlineWidth;
     if (dist2 > 1.0) discard;
 
-    float z = sqrt(1.0 - dist2);
-    vec3 normal = vec3(vUv, z);
+    // z: how squarely the surface faces the viewer (1 at the centre, 0 at
+    // the silhouette).
+    float z;
+    vec3 normal;
+    vec3 fragViewPos;
+    if (uExactImpostor == 1) {
+      fragViewPos = rd * (dot(rd, vViewCenter) - vRadius * sqrt(1.0 - dist2));
+      normal = (fragViewPos - vViewCenter) / vRadius;
+      z = dot(normal, -rd);
+    } else {
+      z = sqrt(1.0 - dist2);
+      normal = vec3(vUv, z);
+      fragViewPos = vViewCenter + normal * vRadius;
+    }
 
     // Correct depth
-    vec3 fragViewPos = vViewCenter + normal * vRadius;
     vec4 clipPos = projectionMatrix * vec4(fragViewPos, 1.0);
     float ndcDepth = clipPos.z / clipPos.w;
     gl_FragDepth = ndcDepth * 0.5 + 0.5;
@@ -131,7 +182,7 @@ export const atomFragmentShader = /* glsl */ `precision highp float;
     float diffuse = diffuse1 * 0.55 + diffuse2 * 0.2;
 
     // Specular (Blinn-Phong)
-    vec3 viewDir = vec3(0.0, 0.0, 1.0);
+    vec3 viewDir = -rd;
     vec3 halfDir = normalize(lightDir1 + viewDir);
     float spec = pow(max(dot(normal, halfDir), 0.0), 64.0);
 
@@ -156,6 +207,8 @@ export const bondVertexShader = /* glsl */ `precision highp float;
   uniform float uAtomRadiusScale;
   uniform sampler2D uPositionTex;
   uniform int uPositionTexWidth;
+  // 1 in an immersive (WebXR) view: perspective-exact billboard.
+  uniform highp int uExactImpostor;
 
   in vec3 position;
   in vec2 uv;
@@ -211,13 +264,17 @@ export const bondVertexShader = /* glsl */ `precision highp float;
     vec3 posA = texelA.rgb;
     vec3 posB = texelB.rgb;
 
+    // Radii are in model units; carry the model-view scale over to them (an
+    // immersive view scales the scene, the desktop view never does).
+    float viewScale = length(modelViewMatrix[0].xyz);
+
     // Sphere centres stay on the atoms even when the cylinder is pushed aside
     // for a double / triple / aromatic bond, so the trim below cuts against
     // the ball that is actually drawn.
     vViewCenterA = (modelViewMatrix * vec4(posA, 1.0)).xyz;
     vViewCenterB = (modelViewMatrix * vec4(posB, 1.0)).xyz;
-    vAtomRadiusA = texelA.a * uAtomRadiusScale;
-    vAtomRadiusB = texelB.a * uAtomRadiusScale;
+    vAtomRadiusA = texelA.a * uAtomRadiusScale * viewScale;
+    vAtomRadiusB = texelB.a * uAtomRadiusScale * viewScale;
 
     vec3 start = posA;
     vec3 end = posB;
@@ -246,7 +303,7 @@ export const bondVertexShader = /* glsl */ `precision highp float;
 
     vec3 side = normalize(cross(dir, vec3(0.0, 0.0, 1.0)));
 
-    float radius = instanceRadius * uBondScaleMultiplier;
+    float radius = instanceRadius * uBondScaleMultiplier * viewScale;
 
     // Expose the view-space cylinder to the fragment shader.
     vViewMid = viewMid;
@@ -260,6 +317,29 @@ export const bondVertexShader = /* glsl */ `precision highp float;
     vec3 viewPos = viewMid
       + dir * (position.y * (len * 0.5 + radius))
       + side * (position.x * radius);
+
+    if (uExactImpostor == 1) {
+      // Perspective-exact billboard: the plane through the axis that faces the
+      // eye's foot point F on it (at distance D). Seen from the eye, the
+      // cylinder's silhouette in that plane is r*D/sqrt(D^2 - r^2) wide along
+      // the whole stick, and a cut end at axial distance e from F projects at
+      // most e*r/(D - r) past it — so this covers the stick at any angle.
+      vec3 foot = viewStart.xyz - dir * dot(viewStart.xyz, dir);
+      float footDist = length(foot);
+      if (footDist <= radius * 1.001) {
+        // The eye is inside the cylinder: drop it.
+        vViewRayPos = viewMid;
+        gl_Position = vec4(0.0, 0.0, 2.0, 1.0);
+        return;
+      }
+      vec3 facingSide = normalize(cross(dir, -foot / footDist));
+      float sideExtent = radius * footDist / sqrt(footDist * footDist - radius * radius);
+      float reach = max(abs(dot(viewStart.xyz, dir)), abs(dot(viewEnd.xyz, dir)));
+      float axialExtent = len * 0.5 + reach * radius / (footDist - radius);
+      viewPos = viewMid
+        + dir * (position.y * axialExtent)
+        + facingSide * (position.x * sideExtent);
+    }
 
     vViewRayPos = viewPos;
     gl_Position = projectionMatrix * vec4(viewPos, 1.0);
@@ -285,6 +365,7 @@ export const bondFragmentShader = /* glsl */ `precision highp float;
   uniform mat4 projectionMatrix;
   uniform float uOpacity;
   uniform int uUsePerBondOverrides;
+  uniform highp int uExactImpostor;
 
   out vec4 fragColor;
 
@@ -360,13 +441,15 @@ export const bondFragmentShader = /* glsl */ `precision highp float;
     float diffuse = diffuse1 * 0.55 + diffuse2 * 0.2;
 
     // Specular (Blinn-Phong)
-    vec3 viewDir = vec3(0.0, 0.0, 1.0);
+    // The immersive view shades against the real view ray, like the atom
+    // shader's exact path, so the joint stays seamless there too.
+    vec3 viewDir = uExactImpostor == 1 ? -rd : vec3(0.0, 0.0, 1.0);
     vec3 halfDir = normalize(lightDir1 + viewDir);
     float spec = pow(max(dot(normal, halfDir), 0.0), 64.0);
 
     // Fresnel rim + edge darkening, unified with the atom shader so the
     // sphere/cylinder joint has no shading discontinuity.
-    float facing = max(normal.z, 0.0);
+    float facing = max(uExactImpostor == 1 ? dot(normal, -rd) : normal.z, 0.0);
     float fresnel = pow(1.0 - facing, 3.0) * 0.15;
     float edgeFactor = mix(0.7, 1.0, facing);
 

@@ -231,3 +231,15 @@ describe("ImpostorBondMesh.setUniformRadius", () => {
     expect(bondRadii(mesh)[1]).toBeCloseTo(DOUBLE_BOND_RADIUS, 6);
   });
 });
+
+describe("immersive (WebXR) shading uniform", () => {
+  it("starts both impostor materials on the desktop path", () => {
+    const atoms = new ImpostorAtomMesh(8);
+    const bonds = new ImpostorBondMesh(8);
+    const uniformOf = (m: { mesh: { material: unknown } }) =>
+      (m.mesh.material as { uniforms: Record<string, { value: number }> }).uniforms.uExactImpostor
+        .value;
+    expect(uniformOf(atoms)).toBe(0);
+    expect(uniformOf(bonds)).toBe(0);
+  });
+});

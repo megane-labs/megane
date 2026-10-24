@@ -182,3 +182,39 @@ describe("bond shaders", () => {
     expect(bondFragmentShader).not.toMatch(/vSideDir/);
   });
 });
+
+describe("immersive (WebXR) impostor path", () => {
+  it("declares uExactImpostor highp in every stage so the programs link", () => {
+    // A bare `uniform int` defaults to highp in a vertex shader but mediump in
+    // a fragment shader; the mismatch fails to link the bond program.
+    for (const [name, src] of Object.entries(ALL_SHADERS)) {
+      expect(src, name).toMatch(/uniform\s+highp\s+int\s+uExactImpostor\s*;/);
+    }
+  });
+
+  it("scales model-unit radii by the model-view scale", () => {
+    // The immersive view scales the scene (Å to metres); radii added in view
+    // space must follow or the atoms stay Å-sized.
+    expect(atomVertexShader).toMatch(/instanceRadius[^;]*length\(modelViewMatrix\[0\]\.xyz\)/);
+    expect(bondVertexShader).toMatch(/viewScale\s*=\s*length\(modelViewMatrix\[0\]\.xyz\)/);
+    expect(bondVertexShader).toMatch(/radius\s*=\s*instanceRadius[^;]*\*\s*viewScale/);
+    expect(bondVertexShader).toMatch(/vAtomRadiusA\s*=[^;]*\*\s*viewScale/);
+    expect(bondVertexShader).toMatch(/vAtomRadiusB\s*=[^;]*\*\s*viewScale/);
+  });
+
+  it("casts the real eye ray for spheres in exact mode", () => {
+    expect(atomVertexShader).toMatch(/\bout\b[^;]*\bvViewPos\b/);
+    expect(atomFragmentShader).toMatch(/\bin\b[^;]*\bvViewPos\b/);
+    expect(atomFragmentShader).toMatch(/rd\s*=\s*normalize\(vViewPos\)/);
+    // Shading looks back along the ray rather than down a fixed +z.
+    expect(atomFragmentShader).toMatch(/viewDir\s*=\s*-rd/);
+  });
+
+  it("sizes the exact billboards to the perspective silhouette", () => {
+    // Sphere: tangent-cone radius r·d/√(d²−r²); cylinder: r·D/√(D²−r²).
+    expect(atomVertexShader).toMatch(/scaledRadius\s*\*\s*d\s*\/\s*sqrt\(d\s*\*\s*d\s*-/);
+    expect(bondVertexShader).toMatch(
+      /radius\s*\*\s*footDist\s*\/\s*sqrt\(footDist\s*\*\s*footDist\s*-/,
+    );
+  });
+});

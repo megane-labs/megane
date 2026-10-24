@@ -18,6 +18,7 @@ import type * as THREE from "three";
 import type { MeganeCameraMode, MeganeCameraState } from "./CameraController";
 import type { MeganeProjectedAtom } from "./SelectionController";
 import type { ViewAxis } from "./cameraOrientation";
+import type { MeganeXRState } from "./xr/XRSessionController";
 
 const _testMode = (() => {
   try {
@@ -95,6 +96,8 @@ export interface MeganeTestApi {
   resetCamera: () => void;
   alignCamera: (axis: ViewAxis) => void;
   getRendererMemory: () => MeganeRendererMemory | null;
+  /** Immersive (WebXR) session state; null before a renderer mounts. */
+  getXRState: () => MeganeXRState | null;
 }
 
 /** The renderer methods `window.__megane_test` forwards to. */
@@ -106,6 +109,7 @@ export interface TestApiRenderer {
   resetCamera(): void;
   alignCameraToAxis(axis: ViewAxis): void;
   getRenderer(): THREE.WebGLRenderer;
+  getXRState(): MeganeXRState;
 }
 
 let _activeRenderer: TestApiRenderer | null = null;
@@ -150,6 +154,7 @@ export function setActiveRenderer(r: TestApiRenderer | null): void {
         const info = _activeRenderer?.getRenderer().info.memory;
         return info ? { geometries: info.geometries, textures: info.textures } : null;
       },
+      getXRState: () => _activeRenderer?.getXRState() ?? null,
     };
   }
 }

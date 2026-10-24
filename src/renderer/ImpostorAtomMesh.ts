@@ -124,6 +124,8 @@ export class ImpostorAtomMesh {
         uOutlineWidth: { value: ILLUSTRATIVE_OUTLINE_WIDTH },
         uOutlineColor: { value: new THREE.Vector3(...ILLUSTRATIVE_OUTLINE_COLOR) },
         uAmbientDarkening: { value: ILLUSTRATIVE_AMBIENT_DARKENING },
+        // Set by the WebXR session (see xr/XRSessionController.ts).
+        uExactImpostor: { value: 0 },
       },
       depthWrite: true,
       depthTest: true,

@@ -47,6 +47,13 @@ function fakeRenderer(): TestApiRenderer {
           TestApiRenderer["getRenderer"]
         >,
     ),
+    getXRState: vi.fn(() => ({
+      presenting: true,
+      mode: "immersive-vr" as const,
+      frames: 3,
+      scale: 0.01,
+      position: [0, 1.5, -0.7] as [number, number, number],
+    })),
   };
 }
 
@@ -67,6 +74,7 @@ describe("testApi", () => {
     expect(api.getCameraState()?.mode).toBe("orthographic");
     expect(api.getVisibleSubsystems().atoms).toBe(true);
     expect(api.getRendererMemory()).toEqual({ geometries: 7, textures: 2 });
+    expect(api.getXRState()).toMatchObject({ presenting: true, mode: "immersive-vr", frames: 3 });
     api.setCameraMode("perspective");
     api.resetCamera();
     api.alignCamera("+a");
@@ -98,6 +106,7 @@ describe("testApi", () => {
     expect(api.getCameraState()).toBeNull();
     expect(Object.values(api.getVisibleSubsystems()).every((v) => v === false)).toBe(true);
     expect(api.getRendererMemory()).toBeNull();
+    expect(api.getXRState()).toBeNull();
     expect(() => api.setCameraMode("orthographic")).not.toThrow();
     expect(() => api.resetCamera()).not.toThrow();
     expect(() => api.alignCamera("+x")).not.toThrow();

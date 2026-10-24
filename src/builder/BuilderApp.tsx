@@ -61,6 +61,7 @@ import { Viewport } from "../components/Viewport";
 import { Tooltip } from "../components/Tooltip";
 import { CollapsiblePanel } from "../components/CollapsiblePanel";
 import { ViewAxisControls } from "../components/ViewAxisControls";
+import { XRControls } from "../components/XRControls";
 import { OVERLAY_INSET, PERF_HUD_LEFT_DEFAULT } from "../components/overlayLayout";
 import { floatingSurfaceStyle, overlayButtonStyle } from "../components/toolbarStyles";
 import type { MoleculeRenderer } from "../renderer/MoleculeRenderer";
@@ -740,6 +741,7 @@ export function BuilderApp({ host = WEB_HOST }: BuilderAppProps = {}) {
             Reset View
           </button>
           <ViewAxisControls hasCell={hasCell} onAlign={handleAlignView} />
+          <XRControls getTarget={() => rendererRef.current} />
         </div>
         <div
           style={{

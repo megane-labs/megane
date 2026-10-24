@@ -20,6 +20,7 @@ import { Timeline } from "./Timeline";
 import { Tooltip } from "./Tooltip";
 import { MeasurementPanel } from "./MeasurementPanel";
 import { ViewAxisControls } from "./ViewAxisControls";
+import { XRControls } from "./XRControls";
 import { CollapsiblePanel } from "./CollapsiblePanel";
 import { QuickStylePanel } from "./QuickStylePanel";
 import { OVERLAY_INSET } from "./overlayLayout";
@@ -331,6 +332,7 @@ export function WidgetViewer({
         style={{ position: "absolute", top: OVERLAY_INSET, left: OVERLAY_INSET, zIndex: 10 }}
       >
         <ViewAxisControls hasCell={hasCell} onAlign={handleAlignView} />
+        <XRControls getTarget={() => rendererRef.current} style={{ marginTop: 4 }} />
       </div>
       {quickStyle && (
         <CollapsiblePanel

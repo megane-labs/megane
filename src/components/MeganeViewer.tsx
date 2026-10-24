@@ -20,6 +20,7 @@ import { MeasurementPanel } from "./MeasurementPanel";
 import { MeasurementListPanel } from "./MeasurementListPanel";
 import { PerfHud } from "./PerfHud";
 import { ViewAxisControls } from "./ViewAxisControls";
+import { XRControls } from "./XRControls";
 import { overlayButtonStyle } from "./toolbarStyles";
 import { OVERLAY_INSET, PERF_HUD_LEFT_DEFAULT, MEASUREMENT_BOTTOM_DEFAULT } from "./overlayLayout";
 import { MoleculeRenderer, isMeganeTestMode } from "../renderer/MoleculeRenderer";
@@ -535,6 +536,7 @@ export function MeganeViewer({
   const measurementBottom = timelineVisible ? MEASUREMENT_BOTTOM_DEFAULT : OVERLAY_INSET;
 
   const getRenderStats = useCallback(() => rendererRef.current?.getStats() ?? null, []);
+  const getXRTarget = useCallback(() => rendererRef.current, []);
   // Freeze the live FPS digits under E2E so screenshot baselines stay
   // deterministic; the feature is fully live in production.
   const hudStable = isMeganeTestMode();
@@ -622,6 +624,7 @@ export function MeganeViewer({
             </button>
           )}
           {showViewAxes && <ViewAxisControls hasCell={hasCell} onAlign={handleAlignView} />}
+          <XRControls getTarget={getXRTarget} />
         </div>
       )}
       {showPerfHud && (

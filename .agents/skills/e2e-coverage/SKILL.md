@@ -135,6 +135,7 @@ npm run test:e2e:builder             # Megane Builder (/builder.html): the stand
 npm run test:e2e:render-modal        # snapshot mode (GIF/MP4 gated by MEGANE_E2E_FFMPEG=1)
 npm run test:e2e:atom-bond-junction  # transparent ball-and-stick junction (stick trimmed at the ball surface)
 npm run test:e2e:templates           # the Templates dropdown entries that load more than one file (ESP cube + molecule; all-atom + coarse-grained overlay)
+npm run test:e2e:xr                  # VR / AR (WebXR) buttons, session, grab and two-hand scale under the IWER Quest 3 emulator (no baselines)
 ```
 
 The 5-host feature matrices (`modify-node`, `camera`, `measurement`,
