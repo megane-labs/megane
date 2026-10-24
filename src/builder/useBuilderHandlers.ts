@@ -12,6 +12,10 @@
  * or spin it, see `manipulate.ts`); Move drags any atom at once, and Select's
  * Box draws a rubber band instead of turning the view.
  *
+ * In a headset (WebXR) the same handlers serve the hands: a pinch let go is
+ * a `pick`, and a drag reports the hand's rigid motion (`dragRigid`) instead
+ * of a pointer gesture, so it writes its moves the same way.
+ *
  * The atom and bond edits go through `editActions.ts`, so a click here
  * handles hydrogens exactly as the atom menu, the Inspector and the keys do.
  */
@@ -38,6 +42,7 @@ import {
   dragDisplacements,
   dragModeFor,
   moveOps,
+  rigidDisplacements,
   type AxisKey,
   type DragMode,
 } from "./manipulate";
@@ -48,6 +53,7 @@ import type {
   BuildModifiers,
   BuildPickInfo,
   BuildPressAction,
+  BuildRigidMotion,
 } from "./types";
 
 /** Undo's shortcut, for the close-contact notice. */
@@ -67,6 +73,8 @@ interface ActiveDrag {
   axis: AxisKey | null;
   /** The pointer's gesture so far; null until it moves. */
   gesture: BuildDragGesture | null;
+  /** A headset hand's motion so far, which replaces the gesture; null for the mouse. */
+  rigid: BuildRigidMotion | null;
 }
 
 /** Whether `e` asks for the context menu from the keyboard: the Menu key, or Shift + F10. */
@@ -221,13 +229,15 @@ export function useBuilderHandlers(
 
   const applyDrag = useCallback(() => {
     const d = drag.current;
-    if (!d || !d.gesture) return;
+    if (!d || (!d.gesture && !d.rigid)) return;
     const state = api.getState();
     const vector = d.axis ? axisVector(d.axis, state.result?.snapshot.box ?? null) : null;
-    const { displacements, readout } = dragDisplacements(d.start, d.atoms, d.mode, d.gesture, {
-      axis: d.axis && vector ? { key: d.axis, vector } : null,
-      snap: state.snap,
-    });
+    const { displacements, readout } = d.rigid
+      ? rigidDisplacements(d.start, d.atoms, d.rigid, { snap: state.snap })
+      : dragDisplacements(d.start, d.atoms, d.mode, d.gesture!, {
+          axis: d.axis && vector ? { key: d.axis, vector } : null,
+          snap: state.snap,
+        });
     state.setDragOps(d.base, moveOps(displacements, d.refs));
     const moved = api.getState().result?.snapshot;
     state.setDrag({
@@ -261,6 +271,7 @@ export function useBuilderHandlers(
         mode,
         axis: null,
         gesture: null,
+        rigid: null,
       };
       state.setDrag({ mode, axis: null, readout: null, contacts: [] });
       return true;
@@ -271,6 +282,16 @@ export function useBuilderHandlers(
     (gesture: BuildDragGesture) => {
       if (!drag.current) return;
       drag.current.gesture = gesture;
+      applyDrag();
+    },
+    [applyDrag],
+  );
+  const dragRigid = useCallback(
+    (motion: BuildRigidMotion) => {
+      if (!drag.current) return;
+      // A hand needs no axis lock (one pressed before it moved is dropped).
+      drag.current.axis = null;
+      drag.current.rigid = motion;
       applyDrag();
     },
     [applyDrag],
@@ -308,7 +329,8 @@ export function useBuilderHandlers(
         return;
       }
       const key = e.key.toLowerCase() as AxisKey;
-      if (!AXIS_KEYS.includes(key)) return;
+      // A hand has its six degrees of freedom; there is nothing to lock.
+      if (!AXIS_KEYS.includes(key) || d.rigid) return;
       e.preventDefault();
       if (d.axis !== key && !axisVector(key, api.getState().result?.snapshot.box ?? null)) {
         api
@@ -355,8 +377,8 @@ export function useBuilderHandlers(
   );
 
   const installed = useMemo<BuildHandlers>(
-    () => ({ pick, pressAction, dragStart, dragMove, dragEnd, boxSelect }),
-    [pick, pressAction, dragStart, dragMove, dragEnd, boxSelect],
+    () => ({ pick, pressAction, dragStart, dragMove, dragRigid, dragEnd, boxSelect }),
+    [pick, pressAction, dragStart, dragMove, dragRigid, dragEnd, boxSelect],
   );
   useEffect(() => {
     api.getState().setHandlers(installed);

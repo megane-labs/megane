@@ -174,7 +174,7 @@ export class MoleculeRenderer {
     getFocus: () => this.xrFocus(),
     onPresentingChange: (presenting) => this.onXRPresentingChange(presenting),
     pickAtom: (ray, minRadius) => this.selection.pickOnRay(ray, minRadius),
-    setHoverAtoms: (atoms) => this.selection.setHover(atoms),
+    setHoverAtoms: (atoms, color) => this.selection.setHover(atoms, color),
     getSelectedAtoms: () => this.selection.selected,
     getMeasurement: () => this.selection.getMeasurement(),
     getAtomPosition: (index, out) => this.xrAtomPosition(index, out),
@@ -1272,6 +1272,20 @@ export class MoleculeRenderer {
     return this.xr.panelControlPose(id);
   }
 
+  /**
+   * Where an emulated controller must be to point at atom `target` as drawn
+   * now, or at a point (Å) of the structure (E2E probe).
+   */
+  testGetXRAimPose(target: number | [number, number, number]) {
+    const at = new THREE.Vector3();
+    if (typeof target === "number") {
+      if (!this.xrAtomPosition(target, at)) return null;
+    } else {
+      at.fromArray(target);
+    }
+    return this.xr.aimPose(at);
+  }
+
   /** Subscribe to immersive session start / end. Returns the unsubscribe function. */
   onXRStateChange(listener: (state: MeganeXRState) => void): () => void {
     return this.xr.subscribe(listener);
@@ -1285,10 +1299,25 @@ export class MoleculeRenderer {
     return true;
   }
 
-  /** Bounding sphere of the structure on screen, for the XR placement. */
+  /**
+   * Bounding sphere of the structure on screen, for the XR placement; of its
+   * cell while it has no atoms (an empty cell to build in).
+   */
   private xrFocus(): XRFocus {
     if (!this.snapshot) return boundingFocus([], 0);
-    return boundingFocus(this.getCurrentPositions(), this.snapshot.nAtoms);
+    const { nAtoms, box, boxOrigin } = this.snapshot;
+    if (nAtoms === 0 && box && box.length >= 9) {
+      const corners: number[] = [];
+      for (let k = 0; k < 8; k++) {
+        for (let c = 0; c < 3; c++) {
+          let v = boxOrigin?.[c] ?? 0;
+          for (let r = 0; r < 3; r++) if (k & (1 << r)) v += box[r * 3 + c];
+          corners.push(v);
+        }
+      }
+      return boundingFocus(corners, 8);
+    }
+    return boundingFocus(this.getCurrentPositions(), nAtoms);
   }
 
   /**

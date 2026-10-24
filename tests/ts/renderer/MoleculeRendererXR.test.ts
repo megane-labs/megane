@@ -124,6 +124,23 @@ describe("MoleculeRenderer immersive view", () => {
     expect(focus.radius).toBeCloseTo(2 + 2, 9);
   });
 
+  it("places an empty cell by its corners, so building starts in its middle", () => {
+    const { internals } = renderer();
+    internals.snapshot = {
+      nAtoms: 0,
+      positions: new Float32Array(0),
+      box: new Float32Array([10, 0, 0, 0, 8, 0, 0, 0, 6]),
+      boxOrigin: new Float32Array([1, 1, 1]),
+    };
+    internals.currentPositions = new Float32Array(0);
+    const focus = internals.xrFocus();
+    expect(focus.center.toArray()).toEqual([6, 5, 4]);
+    expect(focus.radius).toBeCloseTo(Math.hypot(10, 8, 6) / 2 + 2, 6);
+    // Without an origin the cell starts at 0.
+    internals.snapshot.boxOrigin = null;
+    expect(internals.xrFocus().center.toArray()).toEqual([5, 4, 3]);
+  });
+
   it("wires a real session controller to its own scene and camera", () => {
     const r = new MoleculeRenderer();
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -164,7 +181,10 @@ describe("MoleculeRenderer immersive view", () => {
     expect(host.pickAtom(ray, 0.5).atomIndex).toBe(1);
     expect(selection.pickOnRay).toHaveBeenCalledWith(ray, 0.5);
     host.setHoverAtoms([3]);
-    expect(selection.setHover).toHaveBeenCalledWith([3]);
+    expect(selection.setHover).toHaveBeenCalledWith([3], undefined);
+    // An editing page lights atoms in its own colours.
+    host.setHoverAtoms([2], 0xef4444);
+    expect(selection.setHover).toHaveBeenLastCalledWith([2], 0xef4444);
     expect(host.getSelectedAtoms()).toEqual([1, 0]);
     expect(host.getMeasurement().label).toBe("4 Å");
     expect(host.getLabels()).toBe(data);
@@ -189,6 +209,25 @@ describe("MoleculeRenderer immersive view", () => {
     expect(setBridge).toHaveBeenCalledWith(bridge);
     // Outside a session the panel has nothing to point at.
     expect(r.testGetXRPanelControlPose("exit")).toBeNull();
+  });
+
+  it("aims the E2E probe at a drawn atom or at a point of the structure", () => {
+    const r = new MoleculeRenderer();
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const internals = r as any;
+    const aim = vi
+      .spyOn(internals.xr, "aimPose")
+      .mockImplementation((p) => ({
+        position: (p as THREE.Vector3).toArray(),
+        quaternion: [0, 0, 0, 1],
+      }));
+    internals.snapshot = { nAtoms: 2, positions: new Float32Array(6) };
+    internals.currentPositions = new Float32Array([0, 0, 0, 4, 5, 6]);
+    expect(r.testGetXRAimPose(1)?.position).toEqual([4, 5, 6]);
+    expect(r.testGetXRAimPose([1, 2, 3])?.position).toEqual([1, 2, 3]);
+    // No such atom: nothing to aim at.
+    expect(r.testGetXRAimPose(5)).toBeNull();
+    expect(aim).toHaveBeenCalledTimes(2);
   });
 
   it("ends the session on dispose", () => {

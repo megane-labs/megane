@@ -7,24 +7,31 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, fireEvent, cleanup, act, waitFor } from "@testing-library/react";
 
-const { rendererStub, viewportProps, applyViewportState, exportSnapshot, parseStructureFile } =
-  vi.hoisted(() => ({
-    rendererStub: {
-      setViewInsets: vi.fn(),
-      resetCamera: vi.fn(),
-      resetView: vi.fn(),
-      alignCameraToAxis: vi.fn(),
-      setBackgroundColor: vi.fn(),
-      testGetProjectedAtomPositions: vi.fn(() => [
-        { index: 0, sx: 500, sy: 500, depth: 0, element: 8 },
-        { index: 1, sx: 40, sy: 50, depth: 0, element: 1 },
-      ]),
-    },
-    viewportProps: { current: null as Record<string, unknown> | null },
-    applyViewportState: vi.fn(),
-    exportSnapshot: vi.fn(async () => "x.xyz"),
-    parseStructureFile: vi.fn(),
-  }));
+const {
+  rendererStub,
+  viewportProps,
+  xrProps,
+  applyViewportState,
+  exportSnapshot,
+  parseStructureFile,
+} = vi.hoisted(() => ({
+  rendererStub: {
+    setViewInsets: vi.fn(),
+    resetCamera: vi.fn(),
+    resetView: vi.fn(),
+    alignCameraToAxis: vi.fn(),
+    setBackgroundColor: vi.fn(),
+    testGetProjectedAtomPositions: vi.fn(() => [
+      { index: 0, sx: 500, sy: 500, depth: 0, element: 8 },
+      { index: 1, sx: 40, sy: 50, depth: 0, element: 1 },
+    ]),
+  },
+  viewportProps: { current: null as Record<string, unknown> | null },
+  xrProps: { current: null as Record<string, unknown> | null },
+  applyViewportState: vi.fn(),
+  exportSnapshot: vi.fn(async () => "x.xyz"),
+  parseStructureFile: vi.fn(),
+}));
 
 vi.mock("@/components/Viewport", async () => {
   const React = await import("react");
@@ -39,6 +46,13 @@ vi.mock("@/components/Viewport", async () => {
   };
 });
 vi.mock("@/components/Tooltip", () => ({ Tooltip: () => null }));
+// The VR / AR buttons render nothing without WebXR; keep what they are handed.
+vi.mock("@/components/XRControls", () => ({
+  XRControls: (props: Record<string, unknown>) => {
+    xrProps.current = props;
+    return null;
+  },
+}));
 vi.mock("@/pipeline/apply", () => ({ applyViewportState }));
 vi.mock("@/export/structureExport", async () => {
   const actual = await vi.importActual<typeof import("@/export/structureExport")>(
@@ -1401,6 +1415,27 @@ describe("BuilderApp — notices, drops and the File menu", () => {
     expect(screen.getByTestId("builder-flow-loading").textContent).toBe("Loading Flow editor…");
     fireEvent.click(screen.getByTestId("builder-mode-manual"));
     expect(screen.queryByTestId("builder-flow-loading")).toBeNull();
+  });
+});
+
+describe("BuilderApp — headset", () => {
+  type Edit = {
+    panel: () => { rows: { id: string }[][] };
+    press: (id: string) => void;
+  };
+  const edit = () => xrProps.current?.edit as Edit | undefined;
+
+  it("hands the headset its editing, with the library and ⌘/Ctrl + S's Save", async () => {
+    render(<BuilderApp />);
+    expect((xrProps.current?.getTarget as () => unknown)()).toBe(rendererStub);
+    act(() => useBuilderStore.getState().openStructure(water(), null, "water.pdb"));
+    const bridge = edit()!;
+    act(() => bridge.press("tool:place"));
+    const ids = bridge.panel().rows[1].map((b) => b.id);
+    expect(ids).toContain("place:preset:water");
+    act(() => bridge.press("save"));
+    await waitFor(() => expect(exportSnapshot).toHaveBeenCalledTimes(1));
+    expect(exportSnapshot.mock.calls[0][1]).toBe("pdb");
   });
 });
 

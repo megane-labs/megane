@@ -104,6 +104,11 @@ export interface MeganeTestApi {
    * headset panel's control `id`; null outside a session or without it.
    */
   getXRPanelControlPose: (id: XRPanelControl) => XRControlPose | null;
+  /**
+   * Where an emulated controller must be to point at atom `target` (a drawn
+   * atom's index) or at a point of the structure (Å); null outside a session.
+   */
+  getXRAimPose: (target: number | [number, number, number]) => XRControlPose | null;
 }
 
 /** A controller pose aimed at a headset panel control. */
@@ -123,6 +128,7 @@ export interface TestApiRenderer {
   getRenderer(): THREE.WebGLRenderer;
   getXRState(): MeganeXRState;
   testGetXRPanelControlPose(id: XRPanelControl): XRControlPose | null;
+  testGetXRAimPose(target: number | [number, number, number]): XRControlPose | null;
 }
 
 let _activeRenderer: TestApiRenderer | null = null;
@@ -169,6 +175,7 @@ export function setActiveRenderer(r: TestApiRenderer | null): void {
       },
       getXRState: () => _activeRenderer?.getXRState() ?? null,
       getXRPanelControlPose: (id) => _activeRenderer?.testGetXRPanelControlPose(id) ?? null,
+      getXRAimPose: (target) => _activeRenderer?.testGetXRAimPose(target) ?? null,
     };
   }
 }

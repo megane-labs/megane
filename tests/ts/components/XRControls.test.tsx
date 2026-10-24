@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
 import { render, screen, cleanup, fireEvent, waitFor, act } from "@testing-library/react";
 import { makeXRBridge, XRControls, type XRControlsTarget } from "@/components/XRControls";
+import type { XREditBridge } from "@/renderer/xr/XRSessionController";
 import type { MeganeXRState, XRBridge } from "@/renderer/MoleculeRenderer";
 
 type Listener = (state: MeganeXRState) => void;
@@ -199,6 +200,21 @@ describe("XRControls bridge", () => {
     expect(bridge.playback!.getState()).toEqual({ frame: 6, total: 8, playing: true });
     rerender(<XRControls getTarget={() => target} playback={{ ...pb, currentFrame: 7 }} />);
     expect(bridge.playback!.getState().frame).toBe(7);
+  });
+});
+
+describe("XRControls editing", () => {
+  it("hands over the page's editing, and withdraws it while a session runs", async () => {
+    fakeXR(["immersive-vr"]);
+    const { target, emit } = fakeTarget();
+    const edit = { panel: vi.fn() } as unknown as XREditBridge;
+    const { rerender } = render(<XRControls getTarget={() => target} edit={edit} />);
+    fireEvent.click(await screen.findByTestId("xr-enter-vr"));
+    expect(target.setXRBridge.mock.calls[0][0]!.edit).toBe(edit);
+    emit("immersive-vr");
+    // Builder's Flow mode: the headset only shows the result.
+    rerender(<XRControls getTarget={() => target} />);
+    expect(target.setXRBridge.mock.lastCall![0]!.edit).toBeUndefined();
   });
 });
 

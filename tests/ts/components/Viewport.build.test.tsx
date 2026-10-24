@@ -63,6 +63,7 @@ function handlers(overrides: Partial<BuildHandlers> = {}): BuildHandlers {
     pressAction: vi.fn(() => "camera" as const),
     dragStart: vi.fn(() => true),
     dragMove: vi.fn(),
+    dragRigid: vi.fn(),
     dragEnd: vi.fn(),
     boxSelect: vi.fn(),
     ...overrides,

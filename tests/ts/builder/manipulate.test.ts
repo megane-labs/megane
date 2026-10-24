@@ -9,6 +9,7 @@ import {
   dragModeFor,
   moveOps,
   readoutLabel,
+  rigidDisplacements,
   rotateDisplacements,
   translateDisplacements,
   type DragOptions,
@@ -311,5 +312,78 @@ describe("hoverHighlight", () => {
     // Off the selection, or paused (nothing moves), just the atom.
     expect(hoverHighlight(4, { ...sel, tool: "move" })?.atoms).toEqual([4]);
     expect(hoverHighlight(3, { ...sel, editable: false })?.atoms).toEqual([3]);
+  });
+});
+
+describe("rigidDisplacements — a headset hand", () => {
+  // Two atoms 1 Å either side of the pivot on x.
+  const start = [1, 0, 0, -1, 0, 0];
+  const pivot: Vec3 = [0, 0, 0];
+  const turn = (deg: number): [number, number, number, number] => {
+    const h = (deg * Math.PI) / 360;
+    return [0, 0, Math.sin(h), Math.cos(h)];
+  };
+  const close = (a: Vec3 | undefined, b: Vec3) =>
+    b.forEach((x, k) => expect(a![k]).toBeCloseTo(x, 9));
+
+  it("moves the atoms with the pivot", () => {
+    const out = rigidDisplacements(
+      start,
+      [0, 1],
+      { pivot, rotation: [0, 0, 0, 1], translation: [0.5, 0, 0.25] },
+      { snap: false },
+    );
+    close(out.displacements.get(0), [0.5, 0, 0.25]);
+    close(out.displacements.get(1), [0.5, 0, 0.25]);
+    expect(out.readout).toMatchObject({ kind: "move", axis: null, turn: 0 });
+    expect(out.readout.value).toBeCloseTo(Math.hypot(0.5, 0.25), 9);
+  });
+
+  it("turns them about the pivot, and reads the turn", () => {
+    const out = rigidDisplacements(
+      start,
+      [0, 1],
+      { pivot, rotation: turn(90), translation: [0, 0, 0] },
+      { snap: false },
+    );
+    // (1, 0, 0) → (0, 1, 0) and (−1, 0, 0) → (0, −1, 0).
+    close(out.displacements.get(0), [-1, 1, 0]);
+    close(out.displacements.get(1), [1, -1, 0]);
+    expect(out.readout.turn).toBeCloseTo(90, 9);
+    expect(readoutLabel(out.readout)).toBe("Move 0.00 Å (0.00, 0.00, 0.00) · turn 90.0°");
+  });
+
+  it("takes the short way round for a quaternion with negative w", () => {
+    const [x, y, z, w] = turn(90);
+    const out = rigidDisplacements(
+      start,
+      [0],
+      { pivot, rotation: [-x, -y, -z, -w], translation: [0, 0, 0] },
+      { snap: false },
+    );
+    close(out.displacements.get(0), [-1, 1, 0]);
+    expect(out.readout.turn).toBeCloseTo(90, 9);
+  });
+
+  it("snaps the move per axis and the turn about its axis", () => {
+    const out = rigidDisplacements(
+      start,
+      [0],
+      { pivot, rotation: turn(40), translation: [0.26, -0.04, 0] },
+      { snap: true },
+    );
+    expect(out.readout.turn).toBeCloseTo(45, 9);
+    const d = out.displacements.get(0)!;
+    const a = (45 * Math.PI) / 180;
+    close(d, [Math.cos(a) - 1 + 0.3, Math.sin(a), 0]);
+    // A turn that snaps to nothing leaves the atoms unturned.
+    const still = rigidDisplacements(
+      start,
+      [0],
+      { pivot, rotation: turn(5), translation: [0, 0, 0] },
+      { snap: true },
+    );
+    close(still.displacements.get(0), [0, 0, 0]);
+    expect(readoutLabel(still.readout)).toBe("Move 0.00 Å (0.00, 0.00, 0.00)");
   });
 });
