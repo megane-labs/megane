@@ -2,10 +2,16 @@ import { describe, it, expect, vi, afterEach, beforeEach } from "vitest";
 import * as THREE from "three";
 import {
   drawPanel,
+  fitText,
   hitControl,
   layoutPanel,
+  panelSize,
   scrubFrame,
   XRPanel,
+  XR_EDIT_PANEL_PX_WIDTH,
+  XR_PANEL_COMPACT,
+  XR_PANEL_PX_PER_M,
+  type XREditPanel,
   XR_PANEL_HEIGHT,
   XR_PANEL_PX_HEIGHT,
   XR_PANEL_PX_WIDTH,
@@ -13,7 +19,7 @@ import {
   type XRPanelRect,
   type XRPanelState,
 } from "@/renderer/xr/XRPanel";
-import { XR_PANEL_DISTANCE, XR_PANEL_DROP } from "@/renderer/xr/xrMath";
+import { XR_EDIT_PANEL_PLACEMENT, XR_PANEL_DISTANCE, XR_PANEL_DROP } from "@/renderer/xr/xrMath";
 import { fakeContext2D, stubCanvas2D, type FakeContext2D } from "./fakeCanvas";
 
 const full: XRPanelState = {
@@ -274,5 +280,223 @@ describe("XRPanel", () => {
     vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue(null);
     const panel = new XRPanel();
     expect(() => panel.update(full, [], [])).not.toThrow();
+  });
+});
+
+/** An editing page's panel: a tool row, a gapped row, and actions. */
+const editing: XREditPanel = {
+  title: "Add atom · C · single",
+  summary: "24 atoms · 2 selected",
+  detail: "Pinch an atom to attach a new one",
+  detailLevel: "hint",
+  rows: [
+    [
+      { id: "tool:select", label: "Select" },
+      { id: "tool:add", label: "Add atom", active: true },
+    ],
+    [
+      { id: "element:6", label: "C", swatch: "rgb(128, 128, 128)" },
+      { id: "", label: "", spacer: true, span: 2 },
+      { id: "element:8", label: "O", enabled: false },
+    ],
+  ],
+  actions: [{ id: "undo", label: "Undo" }],
+};
+const editState: XRPanelState = { playback: null, measure: null, edit: editing };
+
+describe("the editing panel", () => {
+  it("lays out the page's rows, then its actions before Reset and Exit", () => {
+    const rects = layoutPanel(editState);
+    expect(rects.map((r) => r.id)).toEqual([
+      "edit:tool:select",
+      "edit:tool:add",
+      "edit:element:6",
+      "edit:element:8",
+      "edit:undo",
+      "reset",
+      "exit",
+    ]);
+    const size = panelSize(editState);
+    expect(size.pxWidth).toBe(XR_EDIT_PANEL_PX_WIDTH);
+    expect(size.width).toBeCloseTo(XR_EDIT_PANEL_PX_WIDTH / XR_PANEL_PX_PER_M, 9);
+    expect(size.height).toBeCloseTo(size.pxHeight / XR_PANEL_PX_PER_M, 9);
+    for (const r of rects) {
+      expect(r.x).toBeGreaterThanOrEqual(0);
+      expect(r.x + r.w).toBeLessThanOrEqual(size.pxWidth + 1e-9);
+      expect(r.y + r.h).toBeLessThanOrEqual(size.pxHeight);
+    }
+    // A spacer leaves its spans of room: O sits three cells along from C.
+    const c = byId(rects, "edit:element:6");
+    const o = byId(rects, "edit:element:8");
+    expect(o.w).toBeCloseTo(c.w, 9);
+    expect(o.x + o.w).toBeCloseTo(XR_EDIT_PANEL_PX_WIDTH - 24, 6);
+    expect((o.x - c.x) / 3).toBeGreaterThan(c.w);
+    expect(o.enabled).toBe(false);
+    // The actions share the bottom row.
+    expect(byId(rects, "exit").y).toBe(byId(rects, "edit:undo").y);
+    expect(byId(rects, "edit:undo").y).toBeGreaterThan(o.y + o.h);
+  });
+
+  it("grows with its rows and packs a grid (the periodic table) tighter", () => {
+    const one = panelSize({ ...editState, edit: { ...editing, rows: [editing.rows[0]] } });
+    const two = panelSize(editState);
+    expect(two.pxHeight).toBeGreaterThan(one.pxHeight);
+    const grid = Array.from({ length: 9 }, (_, i) => [{ id: `z${i}`, label: "H" }]);
+    const table = { ...editState, edit: { ...editing, rows: grid } };
+    const rects = layoutPanel(table);
+    const first = byId(rects, "edit:z0");
+    const second = byId(rects, "edit:z1");
+    const cell = byId(rects, "edit:tool:add");
+    expect(first.h).toBeLessThan(byId(layoutPanel(editState), "edit:tool:add").h);
+    expect(second.y - first.y - first.h).toBeLessThan(10);
+    expect(cell).toBeUndefined();
+    expect(panelSize(table).pxHeight).toBeGreaterThan(two.pxHeight);
+    // Without rows the panel is just the status block and the actions.
+    const empty = { ...editState, edit: { ...editing, rows: [] } };
+    expect(panelSize(empty).pxHeight).toBeLessThan(one.pxHeight);
+    expect(layoutPanel(empty).map((r) => r.id)).toEqual(["edit:undo", "reset", "exit"]);
+  });
+
+  it("finds its buttons in its own pixel space", () => {
+    const rects = layoutPanel(editState);
+    const size = panelSize(editState);
+    const r = byId(rects, "edit:tool:add");
+    const u = (r.x + r.w / 2) / size.pxWidth;
+    const v = (r.y + r.h / 2) / size.pxHeight;
+    expect(hitControl(rects, u, v, null, size)?.id).toBe("edit:tool:add");
+    // A disabled button does not answer.
+    const o = byId(rects, "edit:element:8");
+    expect(
+      hitControl(rects, (o.x + 1) / size.pxWidth, (o.y + 1) / size.pxHeight, null, size),
+    ).toBeNull();
+    expect(XR_PANEL_COMPACT.pxWidth).toBe(XR_PANEL_PX_WIDTH);
+  });
+
+  it("draws the status block, the labels and the swatches", () => {
+    const ctx = fakeContext2D();
+    drawPanel(ctx, editState, layoutPanel(editState), new Set(["edit:tool:select"]), new Set());
+    expect(ctx.texts).toEqual(
+      expect.arrayContaining([
+        "Add atom · C · single",
+        "24 atoms · 2 selected",
+        "Pinch an atom to attach a new one",
+        "Select",
+        "C",
+        "Undo",
+        "Reset",
+        "Exit",
+      ]),
+    );
+    // Playback has no place on an editing panel.
+    expect(ctx.texts).not.toContain("No trajectory to play");
+  });
+
+  it("paints a button's swatch in its colour", () => {
+    const ctx = fakeContext2D();
+    const fills: string[] = [];
+    Object.defineProperty(ctx, "fillStyle", {
+      set: (f: string) => fills.push(f),
+      get: () => fills[fills.length - 1],
+    });
+    drawPanel(ctx, editState, layoutPanel(editState), new Set(), new Set());
+    expect(fills).toContain("rgb(128, 128, 128)");
+  });
+
+  it("shows notices plainly and errors in red, without a summary or detail too", () => {
+    for (const level of ["info", "error"] as const) {
+      const ctx = fakeContext2D();
+      const edit = { ...editing, summary: undefined, detail: `a ${level}`, detailLevel: level };
+      const state = { ...editState, edit };
+      drawPanel(ctx, state, layoutPanel(state), new Set(), new Set(["edit:undo"]));
+      expect(ctx.texts).toContain(`a ${level}`);
+    }
+    const ctx = fakeContext2D();
+    const bare = { ...editState, edit: { ...editing, summary: undefined, detail: undefined } };
+    drawPanel(ctx, bare, layoutPanel(bare), new Set(), new Set());
+    expect(ctx.texts[0]).toBe("Add atom · C · single");
+  });
+
+  it("shrinks a long label to fit its button, then cuts it short", () => {
+    const ctx = fakeContext2D();
+    const long = "x".repeat(40);
+    const state = {
+      ...editState,
+      edit: { ...editing, rows: [], actions: [{ id: "a", label: long }] },
+    };
+    const fonts: string[] = [];
+    Object.defineProperty(ctx, "font", {
+      set: (f: string) => fonts.push(f),
+      get: () => fonts[fonts.length - 1],
+    });
+    drawPanel(ctx, state, layoutPanel(state), new Set(), new Set());
+    expect(fonts.some((f) => f.includes(" 16px "))).toBe(true);
+    expect(ctx.texts.some((t) => t.endsWith("…"))).toBe(true);
+  });
+});
+
+describe("fitText", () => {
+  it("keeps text that fits and cuts the rest short with an ellipsis", () => {
+    const ctx = fakeContext2D();
+    expect(fitText(ctx, "short", 100)).toBe("short");
+    // 10 px a character: 9 of them and the ellipsis fit 100 px.
+    expect(fitText(ctx, "a long line of text", 100)).toBe("a long li…");
+    expect(fitText(ctx, "abc", 5)).toBe("…");
+  });
+});
+
+describe("XRPanel editing", () => {
+  beforeEach(() => {
+    stubCanvas2D();
+  });
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  const head = new THREE.Vector3(0, 1.6, 0);
+  const ahead = new THREE.Quaternion();
+
+  it("resizes to the editing panel, floats lower, and hit-tests its buttons", () => {
+    const panel = new XRPanel();
+    panel.update(full, [], []);
+    panel.follow(head, ahead, 0.016);
+    expect(panel.editing).toBe(false);
+    const dispose = vi.spyOn(panel.mesh.geometry, "dispose");
+    panel.update(editState, [], []);
+    expect(panel.editing).toBe(true);
+    expect(dispose).toHaveBeenCalled();
+    const size = panelSize(editState);
+    panel.mesh.geometry.computeBoundingBox();
+    const box = panel.mesh.geometry.boundingBox!;
+    expect(box.max.x - box.min.x).toBeCloseTo(size.width, 6);
+    expect(box.max.y - box.min.y).toBeCloseTo(size.height, 6);
+    // Switching panels puts it in front again, where the editing panel goes.
+    panel.follow(head, ahead, 0.016);
+    expect(panel.mesh.position.y).toBeCloseTo(1.6 - XR_EDIT_PANEL_PLACEMENT.drop, 9);
+    expect(panel.mesh.position.z).toBeCloseTo(-XR_EDIT_PANEL_PLACEMENT.distance, 9);
+    expect(panel.controls).toEqual([
+      "edit:tool:select",
+      "edit:tool:add",
+      "edit:element:6",
+      "edit:undo",
+      "reset",
+      "exit",
+    ]);
+    for (const id of ["edit:tool:add", "edit:undo", "exit"] as const) {
+      const pose = panel.controlPose(id)!;
+      const ray = new THREE.Ray(
+        pose.position,
+        new THREE.Vector3(0, 0, -1).applyQuaternion(pose.quaternion),
+      );
+      expect(panel.hit(ray)?.id).toBe(id);
+      expect(panel.covers(ray)).toBeCloseTo(0.15, 6);
+    }
+    // The same size again keeps the canvas and the plane.
+    const geometry = panel.mesh.geometry;
+    panel.update({ ...editState, edit: { ...editing, title: "Bond" } }, [], []);
+    expect(panel.mesh.geometry).toBe(geometry);
+    // In the glide back, the editing panel follows its own placement.
+    const turned = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), Math.PI / 2);
+    for (let i = 0; i < 100; i++) panel.follow(head, turned, 0.1);
+    expect(Math.abs(panel.mesh.position.x + XR_EDIT_PANEL_PLACEMENT.distance)).toBeLessThan(0.011);
   });
 });

@@ -11,12 +11,15 @@
  *
  * The page's trajectory playback and measurement selection are handed to the
  * renderer as an `XRBridge`, so the headset's control panel can drive them
- * and the timeline / Measurement panel follow. A host that passes neither
- * (megane Builder) gets a panel with just Reset and Exit.
+ * and the timeline / Measurement panel follow. megane Builder hands over its
+ * editing instead (`edit`): the panel then carries its tools and the hands
+ * edit the structure. A host that passes none of them gets a panel with just
+ * Reset and Exit.
  */
 
 import { useEffect, useRef, useState, type CSSProperties } from "react";
 import type { MeganeXRMode, MeganeXRState, XRBridge } from "../renderer/MoleculeRenderer";
+import type { XREditBridge } from "../renderer/xr/XRSessionController";
 import { getXRSystem, supportedXRModes } from "../renderer/xr/xrSupport";
 import { overlayButtonStyle } from "./toolbarStyles";
 
@@ -48,15 +51,21 @@ export interface XRControlsProps {
   onToggleMeasureAtom?: (atomIndex: number) => void;
   /** Clear the page's measurement selection. */
   onClearMeasurement?: () => void;
+  /** Editing from the headset (megane Builder): the panel shows the page's controls. */
+  edit?: XREditBridge;
 }
 
 /** The latest props, read by the bridge whenever the headset asks. */
-type BridgeProps = Pick<XRControlsProps, "playback" | "onToggleMeasureAtom" | "onClearMeasurement">;
+type BridgeProps = Pick<
+  XRControlsProps,
+  "playback" | "onToggleMeasureAtom" | "onClearMeasurement" | "edit"
+>;
 
 /** A bridge that always reads `props.current`, offering what the props offer now. */
 export function makeXRBridge(props: { current: BridgeProps }): XRBridge {
-  const { playback, onToggleMeasureAtom } = props.current;
+  const { playback, onToggleMeasureAtom, edit } = props.current;
   return {
+    edit,
     playback: playback && {
       getState: () => {
         const p = props.current.playback ?? playback;
@@ -97,21 +106,23 @@ export function XRControls({
   playback,
   onToggleMeasureAtom,
   onClearMeasurement,
+  edit,
 }: XRControlsProps) {
   const [modes, setModes] = useState<MeganeXRMode[]>([]);
   const [active, setActive] = useState<MeganeXRMode | null>(null);
   const [error, setError] = useState<string | null>(null);
   const unsubscribeRef = useRef<(() => void) | null>(null);
   const bridgeProps = useRef<BridgeProps>({});
-  bridgeProps.current = { playback, onToggleMeasureAtom, onClearMeasurement };
+  bridgeProps.current = { playback, onToggleMeasureAtom, onClearMeasurement, edit };
   const hasPlayback = playback !== undefined;
   const hasMeasure = onToggleMeasureAtom !== undefined;
 
   // Offer the headset what the page offers now: playback can appear (a
-  // trajectory loads) while a session runs.
+  // trajectory loads), and editing goes away (Builder's Flow mode), while a
+  // session runs.
   useEffect(() => {
     if (active) getTarget()?.setXRBridge?.(makeXRBridge(bridgeProps));
-  }, [active, hasPlayback, hasMeasure, getTarget]);
+  }, [active, hasPlayback, hasMeasure, edit, getTarget]);
 
   useEffect(() => {
     let cancelled = false;

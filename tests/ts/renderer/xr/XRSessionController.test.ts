@@ -12,8 +12,11 @@ import {
   applyXRShading,
   EXACT_IMPOSTOR_UNIFORM,
   XRSessionController,
+  type XRHighlight,
   type XRHost,
+  type XRPressAction,
 } from "@/renderer/xr/XRSessionController";
+import type { XREditPanel } from "@/renderer/xr/XRPanel";
 import {
   XR_DEPTH_CUE_STRENGTH,
   XR_NEAR_CLIP,
@@ -881,5 +884,301 @@ describe("XRSessionController scene", () => {
     const dispose = vi.spyOn(panel.geometry, "dispose");
     t.controller.dispose();
     expect(dispose).toHaveBeenCalled();
+  });
+});
+
+describe("XRSessionController editing", () => {
+  /** An editing page: one tool, one action; presses carry the structure unless told otherwise. */
+  function editBridge(over: Record<string, unknown> = {}) {
+    const panel: XREditPanel = {
+      title: "Add atom",
+      rows: [[{ id: "tool:add", label: "Add atom", active: true }]],
+      actions: [{ id: "undo", label: "Undo" }],
+    };
+    return {
+      panel: vi.fn(() => panel),
+      press: vi.fn(),
+      pressAction: vi.fn((): XRPressAction => "grab"),
+      hover: vi.fn((): XRHighlight | null => null),
+      spaceCursor: vi.fn((): number | null => null),
+      click: vi.fn(),
+      dragStart: vi.fn(() => true),
+      dragMove: vi.fn(),
+      dragEnd: vi.fn(),
+      ...over,
+    };
+  }
+
+  /** A session with an editing page; the structure's centre lands at (0, 1.5, −1.1). */
+  async function editing(over: Record<string, unknown> = {}) {
+    const t = setup();
+    const edit = editBridge(over);
+    t.controller.setBridge({ edit });
+    await t.controller.enter("immersive-vr");
+    t.frame(0);
+    return { t, edit };
+  }
+
+  const atom = (index: number) => ({ atomIndex: index, distance: 30, position: [1, 2, 3] });
+  const parts = (space: THREE.Object3D) => ({
+    line: space.children[1] as THREE.Line<THREE.BufferGeometry, THREE.LineBasicMaterial>,
+    tip: space.children[2] as THREE.Mesh<THREE.BufferGeometry, THREE.MeshBasicMaterial>,
+  });
+
+  it("shows the page's controls on the panel and hands their presses back", async () => {
+    const { t, edit } = await editing();
+    expect(t.controller.getState()).toMatchObject({ editing: true, dragging: false });
+    expect(t.controller.getState().panel).toEqual(["edit:tool:add", "edit:undo", "reset", "exit"]);
+    const right = aim(t, 0, "edit:undo");
+    right.dispatchEvent({ type: "selectstart" });
+    right.dispatchEvent({ type: "selectend" });
+    expect(edit.press).toHaveBeenCalledWith("undo");
+    // A press on the panel is not a click on the structure.
+    expect(edit.click).not.toHaveBeenCalled();
+  });
+
+  it("clicks the atom a pinch let go where it began, putting the structure back", async () => {
+    const { t, edit } = await editing();
+    t.host.pickAtom.mockReturnValue(atom(4));
+    const placed = t.controller.getState().position;
+    const right = track(t.xr, 0, v(0, 1.5, -0.5));
+    right.dispatchEvent({ type: "selectstart" });
+    // A few millimetres of jitter carry the structure while the pinch is held…
+    right.matrix.makeTranslation(0.004, 1.5, -0.5);
+    t.frame(16);
+    expect(t.controller.getState().position[0]).toBeCloseTo(placed[0] + 0.004, 9);
+    right.dispatchEvent({ type: "selectend" });
+    expect(edit.click).toHaveBeenCalledWith(4, null);
+    // …and the click puts it back exactly.
+    t.frame(32);
+    expect(t.controller.getState().position).toEqual(placed);
+  });
+
+  it("clicks empty space at the ray's point nearest the structure's centre", async () => {
+    const { t, edit } = await editing();
+    const right = track(t.xr, 0, v(0.05, 1.5, -0.5));
+    t.scene.updateMatrix();
+    const toStructure = t.scene.matrix.clone().invert();
+    right.dispatchEvent({ type: "selectstart" });
+    right.dispatchEvent({ type: "selectend" });
+    expect(edit.click).toHaveBeenCalledTimes(1);
+    const [index, point] = edit.click.mock.calls[0];
+    expect(index).toBeNull();
+    const expected = v(0.05, 1.5, -1.1).applyMatrix4(toStructure);
+    for (let i = 0; i < 3; i++) expect(point[i]).toBeCloseTo(expected.getComponent(i), 6);
+  });
+
+  it("carries the structure with a press that moves, clicking nothing", async () => {
+    const { t, edit } = await editing();
+    const right = track(t.xr, 0, v(0, 1.5, -0.5));
+    const placed = t.controller.getState().position;
+    right.dispatchEvent({ type: "selectstart" });
+    right.matrix.makeTranslation(0.1, 1.5, -0.5);
+    t.frame(16);
+    right.dispatchEvent({ type: "selectend" });
+    expect(edit.click).not.toHaveBeenCalled();
+    expect(t.controller.getState().position[0] - placed[0]).toBeCloseTo(0.1, 9);
+  });
+
+  it("scales with two hands, neither press a click", async () => {
+    const { t, edit } = await editing();
+    const right = track(t.xr, 0, v(0.1, 1.5, -0.5));
+    const left = track(t.xr, 1, v(-0.1, 1.5, -0.5));
+    right.dispatchEvent({ type: "selectstart" });
+    left.dispatchEvent({ type: "selectstart" });
+    left.dispatchEvent({ type: "selectend" });
+    right.dispatchEvent({ type: "selectend" });
+    expect(edit.click).not.toHaveBeenCalled();
+  });
+
+  it("drags the atoms the page lets it, rigidly with the hand", async () => {
+    const { t, edit } = await editing({ pressAction: vi.fn((): XRPressAction => "drag") });
+    t.host.pickAtom.mockReturnValue(atom(4));
+    t.host.getAtomPosition.mockImplementation((i: number, out: THREE.Vector3) => {
+      out.set(2, 0, 0);
+      return i === 4;
+    });
+    const placed = t.controller.getState().position;
+    const scale = t.controller.getState().scale;
+    const right = track(t.xr, 0, v(0, 1.5, -0.5));
+    right.dispatchEvent({ type: "selectstart" });
+    // Still inside the click slop: nothing is dragged yet.
+    t.frame(16);
+    expect(edit.dragStart).not.toHaveBeenCalled();
+    right.matrix.makeTranslation(0.05, 1.5, -0.5);
+    t.frame(32);
+    expect(edit.dragStart).toHaveBeenCalledWith(4);
+    expect(t.controller.getState().dragging).toBe(true);
+    const motion = edit.dragMove.mock.calls[0][0];
+    expect(motion.pivot.toArray()).toEqual([2, 0, 0]);
+    expect(motion.translation.x).toBeCloseTo(0.05 / scale, 6);
+    expect(motion.translation.y).toBeCloseTo(0, 6);
+    // The structure stays where it was; a still hand sends nothing new.
+    expect(t.controller.getState().position).toEqual(placed);
+    t.frame(48);
+    expect(edit.dragMove).toHaveBeenCalledTimes(1);
+    // The ray stays on the dragged atom, drawn where it is now.
+    const { line } = parts(right);
+    expect(line.visible).toBe(true);
+    t.scene.updateMatrix();
+    const at = v(2, 0, 0).applyMatrix4(t.scene.matrix);
+    expect(line.scale.z).toBeCloseTo(-(at.z + 0.5), 6);
+    right.dispatchEvent({ type: "selectend" });
+    expect(edit.dragEnd).toHaveBeenCalledTimes(1);
+    expect(edit.click).not.toHaveBeenCalled();
+    expect(t.controller.getState().dragging).toBe(false);
+  });
+
+  it("clicks an atom a drag press let go of where it began", async () => {
+    const { t, edit } = await editing({ pressAction: vi.fn((): XRPressAction => "drag") });
+    t.host.pickAtom.mockReturnValue(atom(4));
+    const right = track(t.xr, 0, v(0, 1.5, -0.5));
+    right.dispatchEvent({ type: "selectstart" });
+    t.frame(16);
+    right.dispatchEvent({ type: "selectend" });
+    expect(edit.click).toHaveBeenCalledWith(4, null);
+    expect(edit.dragStart).not.toHaveBeenCalled();
+    expect(edit.dragEnd).not.toHaveBeenCalled();
+  });
+
+  it("does nothing more with a drag the page refuses, and pivots on the hit without the atom", async () => {
+    const { t, edit } = await editing({
+      pressAction: vi.fn((): XRPressAction => "drag"),
+      dragStart: vi.fn(() => false),
+    });
+    t.host.pickAtom.mockReturnValue(atom(4));
+    const right = track(t.xr, 0, v(0, 1.5, -0.5));
+    right.dispatchEvent({ type: "selectstart" });
+    right.matrix.makeTranslation(0.05, 1.5, -0.5);
+    t.frame(16);
+    expect(edit.dragStart).toHaveBeenCalledTimes(1);
+    t.frame(32);
+    right.dispatchEvent({ type: "selectend" });
+    expect(edit.dragMove).not.toHaveBeenCalled();
+    expect(edit.dragEnd).not.toHaveBeenCalled();
+    expect(edit.click).not.toHaveBeenCalled();
+  });
+
+  it("lets a second hand only carry while the first drags", async () => {
+    const pressAction = vi.fn((): XRPressAction => "drag");
+    const { t, edit } = await editing({ pressAction });
+    t.host.pickAtom.mockReturnValue(atom(4));
+    t.host.getAtomPosition.mockImplementation((_i: number, out: THREE.Vector3) => {
+      out.set(0, 0, 0);
+      return true;
+    });
+    const right = track(t.xr, 0, v(0, 1.5, -0.5));
+    right.dispatchEvent({ type: "selectstart" });
+    right.matrix.makeTranslation(0.05, 1.5, -0.5);
+    t.frame(16);
+    expect(t.controller.getState().dragging).toBe(true);
+    const left = track(t.xr, 1, v(-0.2, 1.5, -0.5));
+    const placed = t.controller.getState().position;
+    left.dispatchEvent({ type: "selectstart" });
+    left.dispatchEvent({ type: "selectend" });
+    // On an atom too, the second press neither drags nor clicks.
+    expect(pressAction).toHaveBeenCalledTimes(1);
+    expect(edit.click).not.toHaveBeenCalled();
+    // It carries the structure; the dragged atoms follow the hand all the same.
+    left.dispatchEvent({ type: "selectstart" });
+    left.matrix.makeTranslation(-0.1, 1.5, -0.5);
+    t.frame(32);
+    expect(t.controller.getState().position[0] - placed[0]).toBeCloseTo(0.1, 9);
+    expect(edit.dragMove).toHaveBeenCalledTimes(2);
+    const motion = edit.dragMove.mock.calls[1][0];
+    // Held still in the room while the structure moved 10 cm under it.
+    t.scene.updateMatrix();
+    const now = motion.pivot.clone().add(motion.translation).applyMatrix4(t.scene.matrix);
+    expect(now.x).toBeCloseTo(0.05, 6);
+  });
+
+  it("ends a drag when the hand is lost, the page stops editing, or the session ends", async () => {
+    const drag = async (t: ReturnType<typeof setup>) => {
+      const right = track(t.xr, 0, v(0, 1.5, -0.5));
+      right.dispatchEvent({ type: "selectstart" });
+      right.matrix.makeTranslation(0.05, 1.5, -0.5);
+      t.frame(16);
+      expect(t.controller.getState().dragging).toBe(true);
+      return right;
+    };
+    const over = { pressAction: vi.fn((): XRPressAction => "drag") };
+
+    const a = await editing(over);
+    a.t.host.pickAtom.mockReturnValue(atom(4));
+    const right = await drag(a.t);
+    right.dispatchEvent({ type: "disconnected" });
+    expect(a.edit.dragEnd).toHaveBeenCalledTimes(1);
+    expect(a.t.controller.getState().dragging).toBe(false);
+
+    const b = await editing(over);
+    b.t.host.pickAtom.mockReturnValue(atom(4));
+    await drag(b.t);
+    b.t.controller.setBridge({});
+    expect(b.edit.dragEnd).toHaveBeenCalledTimes(1);
+    expect(b.t.controller.getState().dragging).toBe(false);
+
+    const c = await editing(over);
+    c.t.host.pickAtom.mockReturnValue(atom(4));
+    await drag(c.t);
+    // The same page again keeps the drag going.
+    c.t.controller.setBridge({ edit: c.edit });
+    expect(c.edit.dragEnd).not.toHaveBeenCalled();
+    await c.t.controller.exit();
+    expect(c.edit.dragEnd).toHaveBeenCalledTimes(1);
+  });
+
+  it("lights what a click would act on in the page's colours", async () => {
+    const hover = vi.fn((): XRHighlight | null => ({ atoms: [4, 5], color: 0xef4444 }));
+    const { t } = await editing({ hover });
+    t.host.pickAtom.mockReturnValue(atom(4));
+    const right = track(t.xr, 0, v(0, 1.5, -0.5));
+    t.frame(16);
+    expect(hover).toHaveBeenCalledWith(4);
+    expect(t.host.setHoverAtoms).toHaveBeenLastCalledWith([4, 5], 0xef4444);
+    const { line, tip } = parts(right);
+    expect(line.visible).toBe(true);
+    expect(line.material.color.getHex()).toBe(0xef4444);
+    expect(tip.material.color.getHex()).toBe(0xef4444);
+    // An atom a click would do nothing to: the ray reaches it, nothing is lit.
+    hover.mockReturnValue(null);
+    t.frame(32);
+    expect(t.host.setHoverAtoms).toHaveBeenLastCalledWith(null);
+    expect(line.visible).toBe(true);
+    expect(line.material.color.getHex()).not.toBe(0xef4444);
+  });
+
+  it("shows where a click on empty space puts something, and no ray where it puts nothing", async () => {
+    const spaceCursor = vi.fn((): number | null => 0x8b5cf6);
+    const { t } = await editing({ spaceCursor });
+    const right = track(t.xr, 0, v(0, 1.5, -0.5));
+    t.frame(16);
+    const { line, tip } = parts(right);
+    expect(line.visible).toBe(true);
+    // From the hand to the structure's centre plane, 60 cm ahead.
+    expect(line.scale.z).toBeCloseTo(0.6, 6);
+    expect(tip.material.color.getHex()).toBe(0x8b5cf6);
+    spaceCursor.mockReturnValue(null);
+    t.frame(32);
+    expect(line.visible).toBe(false);
+  });
+
+  it("aims the E2E probe at a point of the structure from the head's side", async () => {
+    const t = setup();
+    expect(t.controller.aimPose(v(0, 0, 0))).toBeNull();
+    await t.controller.enter("immersive-vr");
+    expect(t.controller.aimPose(v(0, 0, 0))).toBeNull();
+    t.frame(0);
+    const pose = t.controller.aimPose(v(0, 0, 0))!;
+    t.scene.updateMatrix();
+    const target = v(0, 0, 0).applyMatrix4(t.scene.matrix);
+    const from = v(...pose.position);
+    expect(from.distanceTo(target)).toBeCloseTo(0.3, 6);
+    const ray = new THREE.Ray(
+      from,
+      v(0, 0, -1).applyQuaternion(new THREE.Quaternion(...pose.quaternion)),
+    );
+    expect(ray.distanceToPoint(target)).toBeCloseTo(0, 6);
+    // Toward the head.
+    expect(from.distanceTo(v(0, 1.6, 0))).toBeLessThan(target.distanceTo(v(0, 1.6, 0)));
   });
 });

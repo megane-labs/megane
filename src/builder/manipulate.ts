@@ -10,6 +10,10 @@
  * a / b / c (`axisVector`), and *Snap* rounds it to `SNAP_DISTANCE` /
  * `SNAP_ANGLE`.
  *
+ * In a headset there are no modifiers: the hand carries the atoms rigidly,
+ * turning and moving them at once (`rigidDisplacements`), Snap rounding the
+ * move and the turn alike.
+ *
  * Everything here is a pure function of the positions at the press and the
  * gesture so far (`BuildDragGesture`), so a drag can be recomputed from
  * scratch on every pointer move, or when an axis key changes mid-drag,
@@ -21,7 +25,7 @@ import { getRadius } from "../constants";
 import type { EditAtomRef, EditOp } from "../pipeline/types";
 import type { Snapshot } from "../types";
 import { rotateAbout, type Displacements } from "./geometry";
-import type { BuildDragGesture, BuildModifiers } from "./types";
+import type { BuildDragGesture, BuildModifiers, BuildRigidMotion } from "./types";
 
 export type Vec3 = [number, number, number];
 
@@ -85,6 +89,8 @@ export interface DragReadout {
   /** The move, for an unlocked translation. */
   delta: Vec3 | null;
   axis: AxisKey | null;
+  /** Degrees the move also turned the atoms (a headset drag). */
+  turn?: number;
 }
 
 export interface DragOutcome {
@@ -231,12 +237,63 @@ export function dragDisplacements(
   };
 }
 
-/** The status-line text of a readout, e.g. `Move 1.20 Å along x` or `Rotate 30.0°`. */
+/**
+ * Where a headset drag puts `atoms`: their displacements from `start` (the
+ * positions at the press) for the hand's `motion` so far, and the readout.
+ * With `snap` the move is rounded to `SNAP_DISTANCE` per axis and the turn to
+ * `SNAP_ANGLE` about its own axis.
+ */
+export function rigidDisplacements(
+  start: ArrayLike<number>,
+  atoms: number[],
+  motion: BuildRigidMotion,
+  opts: Pick<DragOptions, "snap">,
+): DragOutcome {
+  const [qx, qy, qz, qw] = motion.rotation;
+  const sin = Math.hypot(qx, qy, qz);
+  // The shorter way round: q and −q are the same turn.
+  let angle = 2 * Math.atan2(sin, Math.abs(qw));
+  const sign = qw < 0 ? -1 : 1;
+  const axis: Vec3 =
+    sin > 1e-12 ? [(sign * qx) / sin, (sign * qy) / sin, (sign * qz) / sin] : [0, 0, 1];
+  let t = motion.translation;
+  if (opts.snap) {
+    angle = rad(snapTo((angle * 180) / Math.PI, SNAP_ANGLE));
+    t = t.map((v) => snapTo(v, SNAP_DISTANCE)) as Vec3;
+  }
+  const pivot = motion.pivot;
+  const out: Displacements = new Map();
+  for (const i of atoms) {
+    const from: Vec3 = [start[i * 3], start[i * 3 + 1], start[i * 3 + 2]];
+    const turned = angle === 0 ? from : rotateAbout(from, pivot, axis, angle);
+    out.set(i, [
+      turned[0] + t[0] - from[0],
+      turned[1] + t[1] - from[1],
+      turned[2] + t[2] - from[2],
+    ]);
+  }
+  return {
+    displacements: out,
+    readout: {
+      kind: "move",
+      value: Math.hypot(...t),
+      delta: t,
+      axis: null,
+      turn: (angle * 180) / Math.PI,
+    },
+  };
+}
+
+/**
+ * The status-line text of a readout, e.g. `Move 1.20 Å along x`, `Rotate
+ * 30.0°` or, for a headset drag, `Move 1.20 Å (…) · turn 30.0°`.
+ */
 export function readoutLabel(r: DragReadout): string {
   const along = r.axis ? ` along ${r.axis}` : "";
   if (r.kind === "move") {
     const delta = r.delta ? ` (${r.delta.map((v) => v.toFixed(2)).join(", ")})` : "";
-    return `Move ${r.value.toFixed(2)} Å${along}${delta}`;
+    const turn = r.turn !== undefined && r.turn >= 0.05 ? ` · turn ${r.turn.toFixed(1)}°` : "";
+    return `Move ${r.value.toFixed(2)} Å${along}${delta}${turn}`;
   }
   return `Rotate ${r.value.toFixed(1)}°${r.axis ? ` about ${r.axis}` : ""}`;
 }

@@ -217,6 +217,24 @@ export const XR_PANEL_DISTANCE = 0.5;
  * About 35° down, clear of a freshly placed structure's lower edge (~25°).
  */
 export const XR_PANEL_DROP = 0.35;
+
+/** Where the control panel floats: how far ahead of the head, how far below the eyes (m). */
+export interface XRPanelPlacement {
+  distance: number;
+  drop: number;
+}
+
+/** The viewer's panel. */
+export const XR_PANEL_PLACEMENT: XRPanelPlacement = {
+  distance: XR_PANEL_DISTANCE,
+  drop: XR_PANEL_DROP,
+};
+/**
+ * The editing panel (megane Builder), taller and wider than the viewer's: a
+ * little further away so it spans about the same angle, and lower (~37°) so
+ * its top edge stays clear of the structure.
+ */
+export const XR_EDIT_PANEL_PLACEMENT: XRPanelPlacement = { distance: 0.55, drop: 0.42 };
 /** The panel starts following the head once it is this far (rad) off to the side. */
 export const XR_PANEL_FOLLOW_ANGLE = (40 * Math.PI) / 180;
 /** …or this far (m) from where it would be placed now (the user walked). */
@@ -239,18 +257,20 @@ function levelForward(headQuaternion: THREE.Quaternion, out: THREE.Vector3): THR
 
 /**
  * Where the control panel belongs for a head at `head` / `headQuaternion`:
- * {@link XR_PANEL_DISTANCE} ahead (level with the floor, ignoring head pitch)
- * and {@link XR_PANEL_DROP} below the eyes, its face (+z) turned to the eyes.
+ * `placement.distance` ahead (level with the floor, ignoring head pitch) and
+ * `placement.drop` below the eyes ({@link XR_PANEL_DISTANCE} and
+ * {@link XR_PANEL_DROP} by default), its face (+z) turned to the eyes.
  */
 export function panelPose(
   head: THREE.Vector3,
   headQuaternion: THREE.Quaternion,
+  placement: XRPanelPlacement = XR_PANEL_PLACEMENT,
 ): { position: THREE.Vector3; quaternion: THREE.Quaternion } {
   const forward = levelForward(headQuaternion, _v1);
   const position = head
     .clone()
-    .addScaledVector(forward, XR_PANEL_DISTANCE)
-    .add(_v2.set(0, -XR_PANEL_DROP, 0));
+    .addScaledVector(forward, placement.distance)
+    .add(_v2.set(0, -placement.drop, 0));
   // Object-style lookAt: +z points from the panel to the eyes.
   _m.lookAt(head, position, Y_AXIS);
   return { position, quaternion: new THREE.Quaternion().setFromRotationMatrix(_m) };
@@ -267,8 +287,9 @@ export function panelOutOfReach(
   position: THREE.Vector3,
   head: THREE.Vector3,
   headQuaternion: THREE.Quaternion,
+  placement: XRPanelPlacement = XR_PANEL_PLACEMENT,
 ): boolean {
-  const target = panelPose(head, headQuaternion).position;
+  const target = panelPose(head, headQuaternion, placement).position;
   if (position.distanceTo(target) > XR_PANEL_FOLLOW_DISTANCE) return true;
   const toPanel = _v2.subVectors(position, head);
   toPanel.y = 0;
@@ -311,4 +332,81 @@ export function rayHitsPanel(
   if (bounded && (u < 0 || u > 1 || v < 0 || v > 1)) return null;
   // The panel's scale is 1, so distances in its space are metres.
   return { u, v, distance: t };
+}
+
+/**
+ * A press that moves the hand less than this (m) and turns its ray less than
+ * {@link XR_CLICK_SLOP_ANGLE} before it is let go is a click — pinch and
+ * release — not a grab: the headset's counterpart of a mouse click's few
+ * pixels of slop. Hand tracking jitters by a few millimetres and the ray
+ * twitches as the fingers part, hence the margin.
+ */
+export const XR_CLICK_SLOP_DISTANCE = 0.02;
+/** How far (rad) the ray may turn during a click (see {@link XR_CLICK_SLOP_DISTANCE}). */
+export const XR_CLICK_SLOP_ANGLE = (6 * Math.PI) / 180;
+/** Nearest (m) ahead of the hand a press on empty space puts something. */
+export const XR_PLACE_MIN_DISTANCE = 0.15;
+
+/**
+ * Whether a hand whose target-ray pose went from `start` to `now` moved past
+ * the click slop ({@link XR_CLICK_SLOP_DISTANCE}, {@link XR_CLICK_SLOP_ANGLE}).
+ */
+export function movedPastSlop(start: THREE.Matrix4, now: THREE.Matrix4): boolean {
+  _v1.setFromMatrixPosition(start);
+  _v2.setFromMatrixPosition(now);
+  if (_v1.distanceTo(_v2) > XR_CLICK_SLOP_DISTANCE) return true;
+  const a = rayFromPose(start).direction;
+  const b = rayFromPose(now).direction;
+  return a.angleTo(b) > XR_CLICK_SLOP_ANGLE;
+}
+
+/**
+ * Where a press on empty space along `ray` puts a new atom: the point of the
+ * ray nearest `target` (the structure's centre) — the headset's counterpart
+ * of the desktop view's "under the pointer, at the pivot's depth" — but never
+ * nearer the hand than `min` (m).
+ */
+export function rayPointNear(
+  ray: THREE.Ray,
+  target: THREE.Vector3,
+  min = XR_PLACE_MIN_DISTANCE,
+): THREE.Vector3 {
+  const along = Math.max(min, _v1.subVectors(target, ray.origin).dot(ray.direction));
+  return ray.at(along, new THREE.Vector3());
+}
+
+/** A rigid motion of atoms in structure space: turn by `rotation` about `pivot`, then move it by `translation` (Å). */
+export interface XRRigidMotion {
+  pivot: THREE.Vector3;
+  rotation: THREE.Quaternion;
+  translation: THREE.Vector3;
+}
+
+/**
+ * The motion of atoms a hand drags: they follow the hand rigidly, as the
+ * whole structure does in a one-handed grab. The hand went from `startHand`
+ * to `hand` (target-ray poses, reference space) while the model went from
+ * `startModel` to `model` (the other hand may carry the structure meanwhile),
+ * so a point `p` of the structure goes to `model⁻¹ · hand · startHand⁻¹ ·
+ * startModel · p`. Returned as a turn about `pivot` (the grabbed atom, Å) and
+ * the pivot's move; a zoom of the model in between changes nothing about the
+ * atoms' shape.
+ */
+export function handMotion(
+  startHand: THREE.Matrix4,
+  hand: THREE.Matrix4,
+  startModel: THREE.Matrix4,
+  model: THREE.Matrix4,
+  pivot: THREE.Vector3,
+): XRRigidMotion {
+  const m = new THREE.Matrix4()
+    .copy(model)
+    .invert()
+    .multiply(hand)
+    .multiply(_m.copy(startHand).invert())
+    .multiply(startModel);
+  const rotation = new THREE.Quaternion();
+  m.decompose(_v1, rotation, _s);
+  const translation = pivot.clone().applyMatrix4(m).sub(pivot);
+  return { pivot: pivot.clone(), rotation, translation };
 }

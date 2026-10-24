@@ -62,6 +62,18 @@ export interface BuildDragGesture {
   project: (p: Vec3) => [number, number];
 }
 
+/**
+ * A headset drag (WebXR): the grabbed atoms follow the hand rigidly — turned
+ * by `rotation` (a unit quaternion, x y z w) about `pivot`, the grabbed atom,
+ * then moved by `translation` (Å), since the press. The six degrees of
+ * freedom of a hand need neither modifiers nor axis locks.
+ */
+export interface BuildRigidMotion {
+  pivot: Vec3;
+  rotation: [number, number, number, number];
+  translation: Vec3;
+}
+
 /** Callbacks the Builder installs for the 3D view. */
 export interface BuildHandlers {
   pick: (info: BuildPickInfo) => void;
@@ -71,6 +83,8 @@ export interface BuildHandlers {
   dragStart: (atomIndex: number, mods: BuildModifiers) => boolean;
   /** The pointer moved: the whole gesture since the press. */
   dragMove: (gesture: BuildDragGesture) => void;
+  /** The hand moved (a headset): its whole motion since the press, instead of `dragMove`. */
+  dragRigid: (motion: BuildRigidMotion) => void;
   dragEnd: () => void;
   /** The rendered atoms inside a finished rubber band. */
   boxSelect: (indices: number[], mode: BuildBoxMode) => void;

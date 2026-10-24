@@ -5,8 +5,10 @@ the structure floats at arm's length in front of you, and you grab it with
 your hands or controllers to turn it, carry it and scale it. A panel below
 it plays the trajectory, measures distances and angles, and takes you back
 out, so the page is not needed while you are inside. It works in the viewer
-and in Megane Builder, on any page that shows the **VR** / **AR** buttons
-under the view-axis buttons in the top-left corner.
+and in Megane Builder — where the hands also edit the structure (see
+[Building in the headset](#building-in-the-headset-megane-builder)) — on any
+page that shows the **VR** / **AR** buttons under the view-axis buttons in
+the top-left corner.
 
 The buttons appear only where the browser can actually start an immersive
 session — for example Meta Quest Browser on a Quest headset, or Chrome / Edge
@@ -91,7 +93,47 @@ front of you once you turn or walk away from it.
 - **Exit** leaves the headset view.
 
 The top line shows the frame and, while measuring, the measurement. Megane
-Builder's panel has only Reset and Exit.
+Builder's panel carries its tools instead; see the next section.
+
+## Building in the headset (Megane Builder)
+
+In Manual mode the Builder's panel is wider and carries what the desktop
+keeps on its left rails and in its Details panel:
+
+- **the tools** — Select, Move, Add atom, Bond, Element, Delete, Place;
+- **the current tool's settings** in the two rows under them — the element
+  (C H N O F P S Cl Br Si a press away, **More…** for the whole periodic
+  table), the bond order, how hydrogens are kept (**H auto / on / off**),
+  **Snap** and the selection commands (**All**, **Invert**, **Clear**,
+  **Molecule**, **Same element**), and for Place the library molecules
+  (**‹ ›** page through them) and **On atoms**;
+- **Undo**, **Redo**, **Delete sel.**, **Clean up**, **Original** (show the
+  structure without its edits) and **Save** (in the document's own format, as
+  ⌘ / Ctrl + S) before Reset and Exit.
+
+The top lines say what the next pinch does, or show the Builder's notice or a
+drag's readout.
+
+The hands work like the mouse:
+
+| Desktop | Headset |
+|---|---|
+| Click an atom with the current tool | Point at it, pinch and let go |
+| Click empty space (Add atom, Place) | Point past the structure, pinch and let go: the atom or molecule goes where the ray passes the structure's middle, which the ray shows while it points at nothing |
+| Drag the selection (Select) / any atom (Move) | Pinch the atom and move your hand: the atoms follow it, turning with your wrist, as one Undo step |
+| Ctrl / Shift-click to add to or take from the selection | A pinch with Select or Move adds the atom or takes it out; one on empty space clears the selection |
+| Shift-click the second atom to remove a bond | Bond tool with **Remove** on |
+| Drag empty space to turn the view | Pinch empty space and move your hand (or hold the grip), as in the viewer |
+
+While the ray rests on an atom, what a pinch would act on lights up in the
+desktop's colours — blue to select, red to delete, amber to change the
+element, violet to attach, bond or adsorb onto. Atoms a drag brings too close
+turn red, as on the desktop, and **Snap** rounds a drag to 0.1 Å and 15°.
+
+The File menu (opening a file, a new cell or crystal), the Structure and
+Tools menus, the Inspector's fields, the History list and Flow mode stay on
+the page. In Flow mode the headset shows the picked block's result, with
+just Reset and Exit.
 
 ### Measuring
 
@@ -134,11 +176,14 @@ change them on the page before entering.
 
 ## What stays on the desktop
 
-The immersive view is for looking and measuring. These still need the page:
+The immersive view is for looking, measuring and (in the Builder) editing
+atoms and bonds. These still need the page:
 
 - the pipeline editor, Inspector and every other panel;
 - the cell-axes inset, the pivot crosshair and the hover tooltip;
-- the Builder's editing tools.
+- the Builder's File, Structure and Tools menus, its Inspector fields,
+  History list and Flow mode (its tools, settings and Undo / Redo / Save are
+  on the headset panel).
 
 For contributors, the implementation is in `src/renderer/xr/`: placement,
 gestures and the panel's geometry in `xrMath.ts`, the session and its input
@@ -146,11 +191,18 @@ in `XRSessionController.ts`, the panel in `XRPanel.ts`, labels in
 `xrLabels.ts` (drawn with `xrText.ts`), and the head-relative lights in
 `xrLights.ts`. The page hands the session its playback and measurement
 through an `XRBridge` (`XRControls.tsx`); atoms are picked along the ray by
-`pickAtomOnRay` (`Picking.ts`). In a session the impostor shaders switch to
+`pickAtomOnRay` (`Picking.ts`). An editing page adds an `XREditBridge`: it
+describes the panel's buttons (`XREditPanel`, laid out and drawn by
+`XRPanel.ts`) and answers presses, clicks and drags, which the session tells
+apart with a click slop (`movedPastSlop`) and turns into a rigid motion of the
+grabbed atoms (`handMotion`). The Builder's bridge is `src/builder/xr.ts`,
+which goes through the same `BuildHandlers` as the mouse (`dragRigid` for a
+hand's drag). In a session the impostor shaders switch to
 an exact perspective ray-cast (`uExactImpostor`) and finish every fragment
 with `xrFinish` (`shaders.ts`): the near fade, the depth cue, and a one-pixel
 edge ramp that alpha-to-coverage turns into anti-aliased silhouettes. The `xr`
 Playwright project (`npm run test:e2e:xr`) runs the whole flow — entering,
-grabbing, and pressing the panel — in headless Chromium under Meta's
+grabbing, pressing the panel, and deleting, adding and dragging atoms in the
+Builder — in headless Chromium under Meta's
 [IWER](https://github.com/meta-quest/immersive-web-emulation-runtime) Quest 3
 emulator.

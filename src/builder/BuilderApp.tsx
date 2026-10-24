@@ -36,6 +36,11 @@
  * warns before the tab closes with unsaved edits and keeps an autosave that
  * the next visit offers to restore (`autosave.ts`).
  *
+ * In a headset (the VR / AR buttons under the axis buttons) the immersive
+ * panel carries the tools, their settings and Undo / Redo / Save, and the
+ * hands edit the document as the mouse does (`xr.ts`); in Flow mode the
+ * headset only shows the result.
+ *
  * Reuses the viewer's renderer (`Viewport` + `MoleculeRenderer`, driven through
  * `applyViewportState`), parsers, writers and the edit engine; nothing in the
  * viewer imports this app.
@@ -135,6 +140,8 @@ import {
   useToolsStoreApi,
 } from "./BuilderStores";
 import { hoverHighlight } from "./hover";
+import { createBuilderXREdit } from "./xr";
+import { allMolecules, useLibraryStore } from "./library/store";
 import { ModeSwitch } from "./flow/ModeSwitch";
 import { useFlowMode } from "./flow/useFlowMode";
 import { GRAPH_PANEL_DEFAULT_WIDTH } from "../components/graph/GraphEditorPanel";
@@ -545,6 +552,18 @@ export function BuilderApp({ host = WEB_HOST }: BuilderAppProps = {}) {
   useBuilderShortcuts(api, shortcutHost, host.scopeShortcuts ? rootRef : undefined, !inFlow);
   const mod = modKeyLabel();
 
+  // The headset's panel and hands edit this document; Save is ⌘/Ctrl + S's.
+  const shortcutHostRef = useRef(shortcutHost);
+  shortcutHostRef.current = shortcutHost;
+  const xrEdit = useMemo(
+    () =>
+      createBuilderXREdit(api, {
+        molecules: () => allMolecules(useLibraryStore.getState()),
+        save: () => shortcutHostRef.current.save(),
+      }),
+    [api],
+  );
+
   // The view's background follows the theme, as in the viewer.
   useRendererThemeBackground(rendererRef);
 
@@ -741,7 +760,7 @@ export function BuilderApp({ host = WEB_HOST }: BuilderAppProps = {}) {
             Reset View
           </button>
           <ViewAxisControls hasCell={hasCell} onAlign={handleAlignView} />
-          <XRControls getTarget={() => rendererRef.current} />
+          <XRControls getTarget={() => rendererRef.current} edit={inFlow ? undefined : xrEdit} />
         </div>
         <div
           style={{

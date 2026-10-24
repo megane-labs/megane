@@ -162,6 +162,36 @@ describe("drag keys", () => {
   });
 });
 
+describe("headset drags", () => {
+  it("move the atom rigidly with the hand, as one step, and ignore axis keys", () => {
+    const h = mount();
+    s().setTool("move");
+    act(() => {
+      h.dragStart(1, NO_MODS);
+    });
+    // The hand has six degrees of freedom: an axis key locks nothing.
+    act(() => {
+      window.dispatchEvent(new KeyboardEvent("keydown", { key: "x" }));
+    });
+    act(() =>
+      h.dragRigid({ pivot: [1.54, 0, 0], rotation: [0, 0, 0, 1], translation: [0, 0.5, 0] }),
+    );
+    act(() => {
+      window.dispatchEvent(new KeyboardEvent("keydown", { key: "y" }));
+    });
+    expect(s().drag?.axis).toBeNull();
+    act(() => h.dragRigid({ pivot: [1.54, 0, 0], rotation: [0, 0, 0, 1], translation: [0, 1, 0] }));
+    expect(s().drag?.readout).toMatchObject({ kind: "move", value: 1 });
+    act(() => h.dragEnd());
+    expect(s().result!.snapshot.positions[4]).toBeCloseTo(1, 6);
+    expect(s().result!.snapshot.positions[3]).toBeCloseTo(1.54, 6);
+    expect(editSteps(s().edits)).toHaveLength(1);
+    // Without a drag, a hand's motion does nothing.
+    act(() => h.dragRigid({ pivot: [0, 0, 0], rotation: [0, 0, 0, 1], translation: [1, 0, 0] }));
+    expect(editSteps(s().edits)).toHaveLength(1);
+  });
+});
+
 describe("atom menu from the keyboard", () => {
   it("is a Menu key or Shift + F10, without other modifiers", () => {
     const k = {

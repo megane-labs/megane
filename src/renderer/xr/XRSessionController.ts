@@ -29,6 +29,18 @@
  * control, then (in measure mode) an atom — and grabs the structure only
  * when it points at neither; the grip always grabs.
  *
+ * A page that edits the structure (megane Builder) hands over an
+ * `XREditBridge`: the panel then carries the page's own controls (tools,
+ * elements, options, Undo …), and presses work like the desktop mouse. A
+ * press let go where it began is a click on what the ray pointed at — an
+ * atom, or empty space at the point the ray passes nearest the structure's
+ * centre (where the Add tool puts an atom; the ray shows that point) — and
+ * the page applies its current tool. A press that moves carries the
+ * structure, unless the page says the atom under it moves (`pressAction`):
+ * then the atoms follow the hand rigidly (`handMotion`), the page writing the
+ * moves as it does a mouse drag. Rays on atoms light what a click would act
+ * on in the page's colours.
+ *
  * Nothing here runs outside a session, so the desktop view is untouched.
  */
 
@@ -37,13 +49,22 @@ import type { Measurement } from "../../types";
 import type { RayAtomHit } from "../Picking";
 import { XRMeasureLabel, XRAtomLabels, type XRLabelSource } from "./xrLabels";
 import { XRHeadLights } from "./xrLights";
-import { XRPanel, scrubFrame, type XRPanelControl, type XRPanelState } from "./XRPanel";
+import {
+  XRPanel,
+  scrubFrame,
+  type XREditPanel,
+  type XRPanelControl,
+  type XRPanelState,
+} from "./XRPanel";
 import {
   computeXRPlacement,
   depthCueRange,
+  handMotion,
   modelScale,
+  movedPastSlop,
   oneHandGrab,
   rayFromPose,
+  rayPointNear,
   stickSteer,
   twoHandGrab,
   XR_DEPTH_CUE_STRENGTH,
@@ -51,6 +72,7 @@ import {
   XR_NEAR_FADE,
   XR_PICK_MIN_RADIUS,
   type XRFocus,
+  type XRRigidMotion,
 } from "./xrMath";
 import { getXRSystem, type MeganeXRMode } from "./xrSupport";
 
@@ -66,8 +88,8 @@ export interface XRHost {
   onPresentingChange(presenting: boolean): void;
   /** The drawn atom `ray` (structure space, Å) points at, each picked at ≥ `minRadius` Å. */
   pickAtom(ray: THREE.Ray, minRadius: number): RayAtomHit | null;
-  /** Mark atoms with the hover highlight; null clears it. */
-  setHoverAtoms(atoms: number[] | null): void;
+  /** Mark atoms with the hover highlight (in `color`, else the default); null clears it. */
+  setHoverAtoms(atoms: number[] | null, color?: number): void;
   /** The atoms selected for measuring, in order. */
   getSelectedAtoms(): readonly number[];
   /** The measurement of those atoms, once there are two or more. */
@@ -86,10 +108,49 @@ export interface XRPlaybackState {
   playing: boolean;
 }
 
+/** What a press on an atom or on empty space becomes once the hand moves. */
+export type XRPressAction = "drag" | "grab";
+
+/** Atoms to light, and the colour that says what a click on them does. */
+export interface XRHighlight {
+  atoms: number[];
+  color: number;
+}
+
+/**
+ * A page that edits the structure from the headset (megane Builder): it
+ * describes the panel's controls and decides what presses do, the way its
+ * mouse handlers do on the desktop. Atom indices are the drawn structure's;
+ * points and motions are in structure space (Å).
+ */
+export interface XREditBridge {
+  /** The panel's status line and buttons, read every frame. */
+  panel(): XREditPanel;
+  /** Panel button `id` was pressed. */
+  press(id: string): void;
+  /** Whether a press on `atom` drags atoms once the hand moves, or carries the structure. */
+  pressAction(atom: number): XRPressAction;
+  /** What a click on `atom` would act on, for a ray resting on it; null lights nothing. */
+  hover(atom: number): XRHighlight | null;
+  /**
+   * The colour of the cursor a ray on empty space shows where a click puts
+   * something (an atom, a molecule); null when a click there places nothing.
+   */
+  spaceCursor(): number | null;
+  /** A press let go where it began: on `atom`, or on empty space at `point`. */
+  click(atom: number | null, point: [number, number, number] | null): void;
+  /** Start dragging `atom` (and whatever moves with it); false refuses. */
+  dragStart(atom: number): boolean;
+  /** The dragged atoms' motion since the press. */
+  dragMove(motion: XRRigidMotion): void;
+  /** The drag is over: keep where the atoms are. */
+  dragEnd(): void;
+}
+
 /**
  * What the page lets the headset drive, so its own state (timeline,
- * Measurement panel) follows. Without it the panel offers neither playback
- * nor the measure mode (megane Builder).
+ * Measurement panel, Builder document) follows. Without it the panel offers
+ * neither playback nor the measure mode.
  */
 export interface XRBridge {
   playback?: {
@@ -102,6 +163,8 @@ export interface XRBridge {
     toggleAtom(index: number): void;
     clear(): void;
   };
+  /** Edit the structure from the headset; the panel then shows the page's controls. */
+  edit?: XREditBridge;
 }
 
 /** Session state for the UI and the E2E probe. */
@@ -120,6 +183,10 @@ export interface MeganeXRState {
   measuring: boolean;
   /** Atom labels on display. */
   labels: number;
+  /** Whether the panel shows a page's editing controls. */
+  editing: boolean;
+  /** Whether a hand is dragging atoms. */
+  dragging: boolean;
 }
 
 /** Uniform the impostor shaders read to ray-cast exactly (see `shaders.ts`). */
@@ -184,6 +251,29 @@ export function applyXRShading(root: THREE.Object3D, shading: XRShading | null):
   });
 }
 
+/** A press that carries the structure but is a click if let go where it began. */
+interface ClickCandidate {
+  /** The atom the ray pointed at, or null for empty space. */
+  atom: number | null;
+  /** The empty-space point (structure space) a click there means. */
+  point: THREE.Vector3 | null;
+  startHand: THREE.Matrix4;
+  startModel: THREE.Matrix4;
+}
+
+/** Atoms a press drags once the hand moves (an editing page). */
+interface AtomDrag {
+  atom: number;
+  /** The grabbed atom where the press found it (structure space): the turns' centre. */
+  pivot: THREE.Vector3;
+  startHand: THREE.Matrix4;
+  startModel: THREE.Matrix4;
+  /** The page took the drag (the hand moved past the click slop). */
+  started: boolean;
+  /** The hand and model last sent, so a still hand sends nothing. */
+  sent: string;
+}
+
 interface Hand {
   space: THREE.XRTargetRaySpace;
   source: XRInputSource | null;
@@ -193,9 +283,13 @@ interface Hand {
   squeezing: boolean;
   /**
    * What the held select press acts on instead of grabbing: a panel control,
-   * the panel's background, or an atom (already toggled).
+   * the panel's background, an atom (already toggled), or atoms to drag.
    */
-  press: XRPanelControl | "panel" | "atom" | null;
+  press: XRPanelControl | "panel" | "atom" | "drag" | null;
+  /** The grabbing select press may still be a click (an editing page). */
+  click: ClickCandidate | null;
+  /** The atoms the `drag` press carries. */
+  drag: AtomDrag | null;
   /** The panel control the ray points at, or holds pressed. */
   hoverControl: XRPanelControl | null;
   marker: THREE.Mesh<THREE.SphereGeometry, THREE.MeshBasicMaterial>;
@@ -207,7 +301,12 @@ interface Hand {
 }
 
 function isControl(press: Hand["press"]): press is XRPanelControl {
-  return press !== null && press !== "panel" && press !== "atom";
+  return press !== null && press !== "panel" && press !== "atom" && press !== "drag";
+}
+
+/** A matrix's elements as a key, to tell whether a pose changed. */
+function matrixKey(m: THREE.Matrix4): string {
+  return m.elements.join(",");
 }
 
 type Grab =
@@ -261,6 +360,7 @@ export class XRSessionController {
   private measuring = false;
   /** The hover highlight last sent to the host, as a key. */
   private hoverKey = "";
+  private readonly scratch = new THREE.Vector3();
   /** The frame a scrub drag last asked for. */
   private lastScrub = -1;
   private readonly modelInverse = new THREE.Matrix4();
@@ -285,13 +385,38 @@ export class XRSessionController {
       panel: this.presenting ? (this.panel?.controls ?? []) : [],
       measuring: this.measuring,
       labels: this.presenting ? (this.labels?.count ?? 0) : 0,
+      editing: this.presenting && !!this.panel?.editing,
+      dragging: this.hands.some((h) => h.drag?.started),
     };
   }
 
-  /** Let the headset drive the page's playback and measurement (null: neither). */
+  /** Let the headset drive the page's playback, measurement and editing (null: none). */
   setBridge(bridge: XRBridge | null): void {
+    // A drag the old page was writing ends with it.
+    if (this.bridge?.edit && this.bridge.edit !== bridge?.edit) this.dropEditPresses();
     this.bridge = bridge;
     if (!bridge?.measure) this.setMeasuring(false);
+  }
+
+  /**
+   * Where an emulated controller has to be (reference space) to point at
+   * `target` (structure space, Å): 30 cm from it toward the head, aimed at it.
+   * The E2E probe's way to press an atom or empty space. Null outside a
+   * session or before the structure is placed.
+   */
+  aimPose(
+    target: THREE.Vector3,
+  ): { position: [number, number, number]; quaternion: [number, number, number, number] } | null {
+    if (!this.presenting || !this.placed) return null;
+    const at = target.clone().applyMatrix4(this.model);
+    const back = this.head.clone().sub(at);
+    if (back.lengthSq() < 1e-8) back.set(0, 0, 1);
+    const from = at.clone().addScaledVector(back.normalize(), 0.3);
+    // Object-style lookAt: −z points from the controller to the target.
+    const q = new THREE.Quaternion().setFromRotationMatrix(
+      new THREE.Matrix4().lookAt(from, at, new THREE.Vector3(0, 1, 0)),
+    );
+    return { position: [from.x, from.y, from.z], quaternion: [q.x, q.y, q.z, q.w] };
   }
 
   /**
@@ -456,6 +581,8 @@ export class XRSessionController {
         tip,
         recenterDown: false,
         playDown: false,
+        click: null,
+        drag: null,
       };
       space.addEventListener("connected", (e) => {
         hand.source = e.data;
@@ -465,6 +592,7 @@ export class XRSessionController {
         hand.selecting = false;
         hand.squeezing = false;
         hand.press = null;
+        this.dropEditPress(hand);
         this.regrab();
       });
       space.addEventListener("selectstart", () => this.onSelectStart(hand));
@@ -485,6 +613,15 @@ export class XRSessionController {
   /** The hand's pointing ray in rig (reference) space; null while untracked. */
   private handRay(hand: Hand): THREE.Ray | null {
     return hand.space.visible ? rayFromPose(hand.space.matrix) : null;
+  }
+
+  /**
+   * Where a click on empty space along `ray` (rig space) puts something, in
+   * rig space: the ray's point nearest the structure's centre.
+   */
+  private spacePoint(ray: THREE.Ray): THREE.Vector3 {
+    const center = this.scratch.copy(this.focus?.center ?? this.scratch.set(0, 0, 0));
+    return rayPointNear(ray, center.applyMatrix4(this.model));
   }
 
   /** The atom `ray` (rig space) points at, with the distance in metres. */
@@ -518,6 +655,11 @@ export class XRSessionController {
         return;
       }
     }
+    const edit = this.bridge?.edit;
+    if (edit) {
+      this.editPress(hand, ray, edit);
+      return;
+    }
     if (ray && this.measuring && this.bridge?.measure) {
       const atom = this.pickAtom(ray);
       if (atom) {
@@ -530,15 +672,91 @@ export class XRSessionController {
     this.regrab();
   }
 
+  /**
+   * A press on the structure of an editing page: on an atom the page drags,
+   * a drag waiting for the hand to move; anything else carries the structure,
+   * and is a click if the hand lets go where it pressed. While another hand
+   * drags atoms a press only carries.
+   */
+  private editPress(hand: Hand, ray: THREE.Ray | null, edit: XREditBridge): void {
+    const hit = ray ? this.pickAtom(ray) : null;
+    const atom = hit?.atomIndex ?? null;
+    const busy = this.hands.some((h) => h !== hand && h.drag !== null);
+    const startHand = hand.space.matrix.clone();
+    if (atom !== null && !busy && edit.pressAction(atom) === "drag") {
+      const pivot = new THREE.Vector3();
+      if (!this.host.getAtomPosition(atom, pivot)) pivot.fromArray(hit!.position);
+      hand.press = "drag";
+      hand.drag = {
+        atom,
+        pivot,
+        startHand,
+        startModel: this.model.clone(),
+        started: false,
+        sent: "",
+      };
+      return;
+    }
+    hand.click = busy
+      ? null
+      : {
+          atom,
+          point: atom === null && ray ? this.spacePoint(ray).applyMatrix4(this.modelInverse) : null,
+          startHand,
+          startModel: this.model.clone(),
+        };
+    hand.selecting = true;
+    this.regrab();
+  }
+
+  /**
+   * A grabbing press of an editing page ends: a click if the hand let go
+   * where it pressed, the structure then put back exactly where it was.
+   */
+  private endCarry(hand: Hand): void {
+    const click = hand.click;
+    hand.click = null;
+    const edit = this.bridge?.edit;
+    if (!click || !edit || movedPastSlop(click.startHand, hand.space.matrix)) return;
+    if (this.grab?.kind === "one" && this.grab.hand === hand && !hand.squeezing) {
+      this.model.copy(click.startModel);
+    }
+    const p = click.point;
+    edit.click(click.atom, p ? [p.x, p.y, p.z] : null);
+  }
+
+  /** Let go of what `hand`'s press was doing to the page: a drag ends where the atoms are. */
+  private dropEditPress(hand: Hand): void {
+    const drag = hand.drag;
+    hand.drag = null;
+    hand.click = null;
+    if (drag?.started) this.bridge?.edit?.dragEnd();
+  }
+
+  private dropEditPresses(): void {
+    for (const hand of this.hands) {
+      this.dropEditPress(hand);
+      if (hand.press === "drag") hand.press = null;
+    }
+  }
+
   /** The press ends: a panel control fires if the ray is still on it. */
   private onSelectEnd(hand: Hand): void {
     const press = hand.press;
     if (press === null) {
       hand.selecting = false;
+      this.endCarry(hand);
       this.regrab();
       return;
     }
     hand.press = null;
+    if (press === "drag") {
+      const drag = hand.drag;
+      hand.drag = null;
+      if (drag?.started) this.bridge?.edit?.dragEnd();
+      else if (drag) this.bridge?.edit?.click(drag.atom, null);
+      return;
+    }
     if (!isControl(press) || press === "scrub") return;
     const ray = this.handRay(hand);
     if (ray && this.panel?.hit(ray)?.id === press) this.activate(press);
@@ -570,6 +788,8 @@ export class XRSessionController {
       case "exit":
         void this.exit();
         break;
+      default:
+        this.bridge?.edit?.press(control.slice("edit:".length));
     }
   }
 
@@ -588,12 +808,14 @@ export class XRSessionController {
     if (!on) this.sendHover([]);
   }
 
-  /** Pass the hovered atoms to the host's highlight when they change. */
-  private sendHover(atoms: number[]): void {
-    const key = atoms.join(",");
+  /** Pass the hovered atoms (in `color`, else the default) to the host's highlight when they change. */
+  private sendHover(atoms: number[], color?: number): void {
+    const key = atoms.length > 0 ? `${atoms.join(",")}|${color ?? ""}` : "";
     if (key === this.hoverKey) return;
     this.hoverKey = key;
-    this.host.setHoverAtoms(atoms.length > 0 ? atoms : null);
+    if (atoms.length === 0) this.host.setHoverAtoms(null);
+    else if (color === undefined) this.host.setHoverAtoms(atoms);
+    else this.host.setHoverAtoms(atoms, color);
   }
 
   /** Re-anchor the gesture whenever the set of grabbing hands changes. */
@@ -602,6 +824,8 @@ export class XRSessionController {
     for (const hand of this.hands) {
       hand.marker.material.color.setHex(grabbing.includes(hand) ? MARKER_GRAB : MARKER_IDLE);
     }
+    // Two hands scale: neither press is a click any more.
+    if (grabbing.length >= 2) for (const hand of grabbing) hand.click = null;
     if (grabbing.length === 1) {
       const [hand] = grabbing;
       this.grab = {
@@ -632,19 +856,61 @@ export class XRSessionController {
   }
 
   /**
+   * How far along `ray` (rig space) atom `index` lies as drawn now, for the
+   * ray of a hand that drags it; null when the atom is gone.
+   */
+  private reachAtom(ray: THREE.Ray, index: number): number | null {
+    const p = this.scratch;
+    if (!this.host.getAtomPosition(index, p)) return null;
+    return Math.max(0, p.applyMatrix4(this.model).sub(ray.origin).dot(ray.direction));
+  }
+
+  /**
+   * What an editing page's ray rests on when it is on no panel control: an
+   * atom (lit as the page says a click would act on it), or the point a click
+   * on empty space puts something at. Returns how far the ray reaches and its
+   * colour, or null to hide it.
+   */
+  private pointEdit(
+    ray: THREE.Ray,
+    edit: XREditBridge,
+    lit: { atoms: number[]; color?: number },
+  ): { reach: number; color: number } | null {
+    const atom = this.pickAtom(ray);
+    if (atom) {
+      const highlight = edit.hover(atom.atomIndex);
+      if (!highlight) return { reach: atom.distance, color: RAY_COLOR };
+      lit.atoms.push(...highlight.atoms);
+      lit.color ??= highlight.color;
+      return { reach: atom.distance, color: highlight.color };
+    }
+    const cursor = edit.spaceCursor();
+    if (cursor === null) return null;
+    return { reach: this.spacePoint(ray).distanceTo(ray.origin), color: cursor };
+  }
+
+  /**
    * What each ray points at this frame: a panel control, the panel, or (in
-   * measure mode) an atom. Draws the rays up to what they reach, drives a
-   * scrub drag, and updates the hover highlight and the panel.
+   * measure mode) an atom — on an editing page, an atom or where a click on
+   * empty space puts something. Draws the rays up to what they reach, drives
+   * a scrub drag, and updates the hover highlight and the panel.
    */
   private point(): void {
     const panel = this.panel!;
     const hovered: number[] = [];
+    const edit = this.bridge?.edit;
+    const lit: { atoms: number[]; color?: number } = { atoms: [] };
     for (const hand of this.hands) {
       hand.hoverControl = null;
       const ray = this.isGrabbing(hand) ? null : this.handRay(hand);
       let reach: number | null = null;
       let onAtom = false;
-      if (ray && hand.press === "scrub") {
+      let color: number | null = null;
+      if (ray && hand.drag) {
+        // Dragging atoms: the ray stays on the grabbed one.
+        reach = this.reachAtom(ray, hand.drag.atom);
+        color = RAY_ATOM_COLOR;
+      } else if (ray && hand.press === "scrub") {
         const hit = panel.hit(ray, "scrub");
         if (hit) {
           this.scrubTo(hit.fraction);
@@ -654,7 +920,18 @@ export class XRSessionController {
         const hit = panel.hit(ray);
         reach = hit?.distance ?? panel.covers(ray);
         if (hit && (hand.press === null || hand.press === hit.id)) hand.hoverControl = hit.id;
-        if (reach === null && this.measuring && this.bridge?.measure && hand.press === null) {
+        if (reach === null && edit && hand.press === null) {
+          const on = this.pointEdit(ray, edit, lit);
+          if (on) {
+            reach = on.reach;
+            color = on.color;
+          }
+        } else if (
+          reach === null &&
+          this.measuring &&
+          this.bridge?.measure &&
+          hand.press === null
+        ) {
           const atom = this.pickAtom(ray);
           if (atom) {
             hovered.push(atom.atomIndex);
@@ -669,12 +946,13 @@ export class XRSessionController {
       if (reach !== null) {
         hand.ray.scale.set(1, 1, reach);
         hand.tip.position.set(0, 0, -reach);
-        const color = onAtom ? RAY_ATOM_COLOR : RAY_COLOR;
-        hand.ray.material.color.setHex(color);
-        hand.tip.material.color.setHex(color);
+        const hex = color ?? (onAtom ? RAY_ATOM_COLOR : RAY_COLOR);
+        hand.ray.material.color.setHex(hex);
+        hand.tip.material.color.setHex(hex);
       }
     }
-    this.sendHover([...new Set(hovered)]);
+    if (edit) this.sendHover([...new Set(lit.atoms)], lit.color);
+    else this.sendHover([...new Set(hovered)]);
     panel.update(
       this.panelState(),
       this.hands.flatMap((h) => (h.hoverControl ? [h.hoverControl] : [])),
@@ -683,6 +961,8 @@ export class XRSessionController {
   }
 
   private panelState(): XRPanelState {
+    const edit = this.bridge?.edit;
+    if (edit) return { playback: null, measure: null, edit: edit.panel() };
     const playback = this.bridge?.playback?.getState() ?? null;
     const measure = this.bridge?.measure
       ? {
@@ -717,6 +997,35 @@ export class XRSessionController {
       .applyQuaternion(this.headQuaternion)
       .transformDirection(this.modelInverse);
     this.labels!.update(this.headTracked ? this.host.getLabels() : null, head, forward, scale, dt);
+  }
+
+  /**
+   * Move the atoms each dragging hand carries: once the hand leaves the
+   * click slop the page takes the drag, then gets the hand's motion whenever
+   * the hand or the model moved.
+   */
+  private dragAtoms(): void {
+    const edit = this.bridge?.edit;
+    if (!edit) return;
+    for (const hand of this.hands) {
+      const drag = hand.drag;
+      if (!drag || !hand.space.visible) continue;
+      if (!drag.started) {
+        if (!movedPastSlop(drag.startHand, hand.space.matrix)) continue;
+        drag.started = edit.dragStart(drag.atom);
+        // Refused: the press does nothing more.
+        if (!drag.started) {
+          hand.drag = null;
+          continue;
+        }
+      }
+      const sent = matrixKey(hand.space.matrix) + matrixKey(this.model);
+      if (sent === drag.sent) continue;
+      drag.sent = sent;
+      edit.dragMove(
+        handMotion(drag.startHand, hand.space.matrix, drag.startModel, this.model, drag.pivot),
+      );
+    }
   }
 
   /** Apply this frame's gestures to `model`. */
@@ -834,6 +1143,7 @@ export class XRSessionController {
     this.modelInverse.copy(this.model).invert();
     this.point();
     this.steer(dt);
+    this.dragAtoms();
     this.model.decompose(scene.position, scene.quaternion, scene.scale);
     this.modelInverse.copy(this.model).invert();
     this.rig.matrix.copy(this.modelInverse);
@@ -866,6 +1176,7 @@ export class XRSessionController {
     this.sendHover([]);
     this.measuring = false;
     applyXRShading(scene, null);
+    this.dropEditPresses();
     for (const hand of this.hands) {
       hand.selecting = false;
       hand.squeezing = false;

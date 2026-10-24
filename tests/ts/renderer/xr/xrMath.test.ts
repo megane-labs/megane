@@ -5,7 +5,14 @@ import {
   clampXRScale,
   computeXRPlacement,
   depthCueRange,
+  handMotion,
+  movedPastSlop,
+  rayPointNear,
+  XR_CLICK_SLOP_ANGLE,
+  XR_CLICK_SLOP_DISTANCE,
   XR_DEPTH_CUE_MAX_SPAN,
+  XR_EDIT_PANEL_PLACEMENT,
+  XR_PLACE_MIN_DISTANCE,
   XR_NEAR_FADE,
   modelScale,
   oneHandGrab,
@@ -336,5 +343,92 @@ describe("rayHitsPanel", () => {
   it("keeps answering past the edges when unbounded", () => {
     const hit = rayHitsPanel(ray(v(0.3, 1, 0), v(0, 0, -1)), panel, 0.4, 0.2, false)!;
     expect(hit.u).toBeCloseTo(1.25, 9);
+  });
+});
+
+describe("panel placement", () => {
+  it("puts the editing panel further and lower than the viewer's", () => {
+    const head = v(0, 1.6, 0);
+    const q = new THREE.Quaternion();
+    const { position } = panelPose(head, q, XR_EDIT_PANEL_PLACEMENT);
+    expectVec(
+      position,
+      v(0, 1.6 - XR_EDIT_PANEL_PLACEMENT.drop, -XR_EDIT_PANEL_PLACEMENT.distance),
+    );
+    // In reach where it belongs, out of reach where the viewer's would be.
+    expect(panelOutOfReach(position, head, q, XR_EDIT_PANEL_PLACEMENT)).toBe(false);
+    expect(panelOutOfReach(v(0, 1.6, -2), head, q, XR_EDIT_PANEL_PLACEMENT)).toBe(true);
+  });
+});
+
+describe("movedPastSlop", () => {
+  const start = new THREE.Matrix4().makeTranslation(0, 1.2, -0.3);
+
+  it("lets a hand that barely moved count as a click", () => {
+    const now = start.clone().setPosition(0.005, 1.2, -0.3);
+    expect(movedPastSlop(start, now)).toBe(false);
+    const turned = new THREE.Matrix4()
+      .makeRotationY(XR_CLICK_SLOP_ANGLE * 0.5)
+      .setPosition(0, 1.2, -0.3);
+    expect(movedPastSlop(start, turned)).toBe(false);
+  });
+
+  it("calls it a drag once the hand moves or turns past the slop", () => {
+    const now = start.clone().setPosition(XR_CLICK_SLOP_DISTANCE * 1.5, 1.2, -0.3);
+    expect(movedPastSlop(start, now)).toBe(true);
+    const turned = new THREE.Matrix4()
+      .makeRotationX(XR_CLICK_SLOP_ANGLE * 2)
+      .setPosition(0, 1.2, -0.3);
+    expect(movedPastSlop(start, turned)).toBe(true);
+  });
+});
+
+describe("rayPointNear", () => {
+  it("is the ray's point nearest the target", () => {
+    const ray = new THREE.Ray(v(0, 0, 0), v(0, 0, -1));
+    expectVec(rayPointNear(ray, v(0.3, 0.1, -1)), v(0, 0, -1));
+  });
+
+  it("never comes nearer the hand than the minimum", () => {
+    const ray = new THREE.Ray(v(0, 0, 0), v(0, 0, -1));
+    expectVec(rayPointNear(ray, v(0, 0, 0.5)), v(0, 0, -XR_PLACE_MIN_DISTANCE));
+    expectVec(rayPointNear(ray, v(0, 0, -0.05), 0.2), v(0, 0, -0.2));
+  });
+});
+
+describe("handMotion", () => {
+  const model = similarity(v(0, 1, -1), new THREE.Quaternion(), 0.01);
+  const pivot = v(10, 0, 0);
+
+  it("carries the atoms with the hand, metres to Å", () => {
+    const start = new THREE.Matrix4().makeTranslation(0.1, 1.2, -0.4);
+    const hand = new THREE.Matrix4().makeTranslation(0.15, 1.2, -0.4);
+    const m = handMotion(start, hand, model, model, pivot);
+    expectVec(m.translation, v(5, 0, 0));
+    expect(m.rotation.angleTo(new THREE.Quaternion())).toBeCloseTo(0, 9);
+    expectVec(m.pivot, pivot);
+    // The pivot is copied: the caller's vector stays its own.
+    expect(m.pivot).not.toBe(pivot);
+  });
+
+  it("turns them about the pivot as the wrist turns, swinging the pivot on the ray", () => {
+    // The hand sits right at the pivot (0.1, 1, -1 in the room) and turns 90° about +y.
+    const at = v(10, 0, 0).applyMatrix4(model);
+    const start = new THREE.Matrix4().makeTranslation(at.x, at.y, at.z);
+    const hand = new THREE.Matrix4().makeRotationY(Math.PI / 2).setPosition(at);
+    const m = handMotion(start, hand, model, model, pivot);
+    expectVec(m.translation, v(0, 0, 0));
+    const angle = 2 * Math.acos(Math.min(1, Math.abs(m.rotation.w)));
+    expect(angle).toBeCloseTo(Math.PI / 2, 6);
+  });
+
+  it("follows the structure when the other hand carries or zooms it meanwhile", () => {
+    const start = new THREE.Matrix4().makeTranslation(0.1, 1.2, -0.4);
+    // The hand stays still; the structure moves 10 cm left and doubles in size.
+    const moved = similarity(v(-0.1, 1, -1), new THREE.Quaternion(), 0.02);
+    const m = handMotion(start, start, model, moved, pivot);
+    // The atom stays where the hand holds it in the room.
+    const room = pivot.clone().add(m.translation).applyMatrix4(moved);
+    expectVec(room, pivot.clone().applyMatrix4(model));
   });
 });
