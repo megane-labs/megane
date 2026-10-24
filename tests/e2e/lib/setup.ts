@@ -263,6 +263,16 @@ export async function captureViewerRegion(scope: Page | Frame, outPath: string):
     await stabilizeUi(scope as Page);
   }
   const target = scope.locator('[data-testid="viewer-root"]').first();
+  // The viewer draws on demand. A host that scrolls it into view inside an
+  // out-of-process iframe (the VS Code notebook webview) presents the moved
+  // content only with that frame's next draw, so bring the element into view
+  // first and have the renderer draw once before the capture.
+  await target.scrollIntoViewIfNeeded();
+  const { renderEpoch } = await getReadyState(scope);
+  await scope.evaluate(() => {
+    (window as { __megane_test?: { requestRender?: () => void } }).__megane_test?.requestRender?.();
+  });
+  await waitForReady(scope, { needsData: false, untilEpoch: renderEpoch + 1, timeout: 10_000 });
   const buf = await target.screenshot({
     path: outPath,
     animations: "disabled",

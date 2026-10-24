@@ -40,6 +40,7 @@ function fakeRenderer(): TestApiRenderer {
     })),
     setCameraMode: vi.fn(),
     resetCamera: vi.fn(),
+    requestRender: vi.fn(),
     alignCameraToAxis: vi.fn(),
     getRenderer: vi.fn(
       () =>
@@ -95,8 +96,10 @@ describe("testApi", () => {
     api.setCameraMode("perspective");
     api.resetCamera();
     api.alignCamera("+a");
+    api.requestRender();
     expect(r.setCameraMode).toHaveBeenCalledWith("perspective");
     expect(r.resetCamera).toHaveBeenCalledTimes(1);
+    expect(r.requestRender).toHaveBeenCalledTimes(1);
     expect(r.alignCameraToAxis).toHaveBeenCalledWith("+a");
   });
 
@@ -128,6 +131,7 @@ describe("testApi", () => {
     expect(api.getXRAimPose([0, 0, 0])).toBeNull();
     expect(() => api.setCameraMode("orthographic")).not.toThrow();
     expect(() => api.resetCamera()).not.toThrow();
+    expect(() => api.requestRender()).not.toThrow();
     expect(() => api.alignCamera("+x")).not.toThrow();
   });
 

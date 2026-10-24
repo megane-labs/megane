@@ -101,6 +101,13 @@ export interface MeganeTestApi {
   getVisibleSubsystems: () => MeganeSubsystemVisibility;
   setCameraMode: (mode: MeganeCameraMode) => void;
   resetCamera: () => void;
+  /**
+   * Have the renderer draw a frame on its next tick (it draws on demand).
+   * Capture helpers call it after bringing the viewer into view: a host that
+   * scrolls it inside an out-of-process iframe (the VS Code notebook
+   * webview) only presents the moved content with that frame's next draw.
+   */
+  requestRender: () => void;
   alignCamera: (axis: ViewAxis) => void;
   getRendererMemory: () => MeganeRendererMemory | null;
   /** Immersive (WebXR) session state; null before a renderer mounts. */
@@ -130,6 +137,7 @@ export interface TestApiRenderer {
   testGetVisibleSubsystems(): MeganeSubsystemVisibility;
   setCameraMode(mode: MeganeCameraMode): void;
   resetCamera(): void;
+  requestRender(): void;
   alignCameraToAxis(axis: ViewAxis): void;
   getRenderer(): THREE.WebGLRenderer;
   getXRState(): MeganeXRState;
@@ -174,6 +182,7 @@ export function setActiveRenderer(r: TestApiRenderer | null): void {
             },
       setCameraMode: (mode) => _activeRenderer?.setCameraMode(mode),
       resetCamera: () => _activeRenderer?.resetCamera(),
+      requestRender: () => _activeRenderer?.requestRender(),
       alignCamera: (axis) => _activeRenderer?.alignCameraToAxis(axis),
       getRendererMemory: () => {
         const info = _activeRenderer?.getRenderer().info.memory;
