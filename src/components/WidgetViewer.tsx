@@ -295,6 +295,8 @@ export function WidgetViewer({
 
   // Axis alignment moves the camera like a drag does; the renderer's
   // camera-change callback then syncs `camera_state` back to Python.
+  const getXRTarget = useCallback(() => rendererRef.current, []);
+
   const handleAlignView = useCallback((axis: ViewAxis) => {
     rendererRef.current?.alignCameraToAxis(axis);
   }, []);
@@ -332,7 +334,19 @@ export function WidgetViewer({
         style={{ position: "absolute", top: OVERLAY_INSET, left: OVERLAY_INSET, zIndex: 10 }}
       >
         <ViewAxisControls hasCell={hasCell} onAlign={handleAlignView} />
-        <XRControls getTarget={() => rendererRef.current} style={{ marginTop: 4 }} />
+        <XRControls
+          getTarget={getXRTarget}
+          style={{ marginTop: 4 }}
+          playback={{
+            currentFrame,
+            totalFrames,
+            playing: playback.playing,
+            onSeek: playback.onSeek,
+            onPlayPause: playback.onPlayPause,
+          }}
+          onToggleMeasureAtom={handleAtomRightClick}
+          onClearMeasurement={handleClearSelection}
+        />
       </div>
       {quickStyle && (
         <CollapsiblePanel

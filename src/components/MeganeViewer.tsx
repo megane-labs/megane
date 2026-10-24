@@ -624,7 +624,18 @@ export function MeganeViewer({
             </button>
           )}
           {showViewAxes && <ViewAxisControls hasCell={hasCell} onAlign={handleAlignView} />}
-          <XRControls getTarget={getXRTarget} />
+          <XRControls
+            getTarget={getXRTarget}
+            playback={{
+              currentFrame,
+              totalFrames,
+              playing: effectivePlaying,
+              onSeek: effectiveOnSeek,
+              onPlayPause: effectiveOnPlayPause,
+            }}
+            onToggleMeasureAtom={handleAtomRightClick}
+            onClearMeasurement={handleClearSelection}
+          />
         </div>
       )}
       {showPerfHud && (

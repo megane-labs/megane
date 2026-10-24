@@ -53,6 +53,13 @@ function fakeRenderer(): TestApiRenderer {
       frames: 3,
       scale: 0.01,
       position: [0, 1.5, -0.7] as [number, number, number],
+      panel: ["reset" as const, "exit" as const],
+      measuring: false,
+      labels: 0,
+    })),
+    testGetXRPanelControlPose: vi.fn(() => ({
+      position: [0, 1.3, -0.35] as [number, number, number],
+      quaternion: [0, 0, 0, 1] as [number, number, number, number],
     })),
   };
 }
@@ -75,6 +82,8 @@ describe("testApi", () => {
     expect(api.getVisibleSubsystems().atoms).toBe(true);
     expect(api.getRendererMemory()).toEqual({ geometries: 7, textures: 2 });
     expect(api.getXRState()).toMatchObject({ presenting: true, mode: "immersive-vr", frames: 3 });
+    expect(api.getXRPanelControlPose("exit")?.position).toEqual([0, 1.3, -0.35]);
+    expect(r.testGetXRPanelControlPose).toHaveBeenCalledWith("exit");
     api.setCameraMode("perspective");
     api.resetCamera();
     api.alignCamera("+a");
@@ -107,6 +116,7 @@ describe("testApi", () => {
     expect(Object.values(api.getVisibleSubsystems()).every((v) => v === false)).toBe(true);
     expect(api.getRendererMemory()).toBeNull();
     expect(api.getXRState()).toBeNull();
+    expect(api.getXRPanelControlPose("reset")).toBeNull();
     expect(() => api.setCameraMode("orthographic")).not.toThrow();
     expect(() => api.resetCamera()).not.toThrow();
     expect(() => api.alignCamera("+x")).not.toThrow();

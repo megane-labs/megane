@@ -13,8 +13,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
   - **AR** clears the background so the structure floats in the room the headset cameras show.
   - In the headset the atom and bond impostors are ray-cast from each eye with the exact perspective silhouette, and their edges are anti-aliased (alpha-to-coverage on the headset's multisampled buffer). The desktop rendering is unchanged.
   - Comfort: the structure starts far enough away that its near side is ~0.7 m from the eyes (a headset focuses at a fixed 1–2 m, so looking at things much nearer strains the eyes); anything within 50 cm of the eyes fades out and nothing within 30 cm is drawn; and a depth cue fades the far side of the structure toward the background (toward black in AR), so depth reads clearly even from inside a model.
-  - The view is for looking: panels, labels, picking, measurements and Builder editing stay on the page. WebXR needs HTTPS or `localhost`, and the VS Code webview has none, so VS Code shows no buttons. See [VR and AR headsets](docs/docs/guide/vr.md).
-  - A new `xr` Playwright project runs the flow under Meta's IWER Quest 3 emulator.
+  - **A panel in the headset** floats below the structure and glides back in front of you when you turn or walk away: play / pause, step and scrub the trajectory, **Measure**, **Clear**, **Reset** and **Exit**. Point at it with a controller or hand ray and press with the trigger or a pinch, so everything works with hand tracking alone (Quest 3 hands; glasses that track hands rather than controllers). B / Y also toggles playback. The page's timeline follows; Megane Builder's panel has Reset and Exit only.
+  - **Measuring in the headset**: with Measure on, the atom the ray points at lights up, and a pinch adds it to (or takes it out of) the same measurement selection as a right-click on the desktop — distance, angle or dihedral. The value floats above the atoms, and the page's Measurement panel shows it.
+  - **Atom labels** from a Label node show in the headset for the 64 labelled atoms nearest you.
+  - Cartoons, surfaces, polyhedra and arrows are lit from the viewer's side as on the desktop, wherever the structure is carried in the room, and polyhedron edges keep their width in each eye.
+  - The pipeline editor, Inspector and the other panels, the cell-axes inset and Builder editing stay on the page. WebXR needs HTTPS or `localhost`, and the VS Code webview has none, so VS Code shows no buttons. See [VR and AR headsets](docs/docs/guide/vr.md).
+  - A new `xr` Playwright project runs the flow — entering, grabbing and pressing the panel — under Meta's IWER Quest 3 emulator.
 
 ### Fixed
 

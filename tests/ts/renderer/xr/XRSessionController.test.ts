@@ -6,7 +6,7 @@
  * and restoring the desktop view.
  */
 
-import { describe, it, expect, vi, afterEach } from "vitest";
+import { describe, it, expect, vi, afterEach, beforeEach } from "vitest";
 import * as THREE from "three";
 import {
   applyXRShading,
@@ -20,9 +20,11 @@ import {
   XR_NEAR_FADE,
   XR_PLACEMENT_DISTANCE,
   XR_PLACEMENT_DROP,
+  XR_PICK_MIN_RADIUS,
   XR_PLACEMENT_RADIUS,
   XR_STICK_ZOOM_RATE,
 } from "@/renderer/xr/xrMath";
+import { stubCanvas2D } from "./fakeCanvas";
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
@@ -96,6 +98,12 @@ function setup(opts: { localFloor?: boolean; mode?: XRSessionMode } = {}) {
     getViewCamera: () => camera,
     getFocus: vi.fn(() => ({ center: v(0, 0, 0), radius: 25 })),
     onPresentingChange: vi.fn(),
+    pickAtom: vi.fn(() => null),
+    setHoverAtoms: vi.fn(),
+    getSelectedAtoms: vi.fn(() => []),
+    getMeasurement: vi.fn(() => null),
+    getAtomPosition: vi.fn(() => false),
+    getLabels: vi.fn(() => null),
   };
   const controller = new XRSessionController(host);
 
@@ -141,8 +149,13 @@ function track(xr: FakeXRManager, i: number, pos: THREE.Vector3, source: any = {
   return space;
 }
 
+beforeEach(() => {
+  stubCanvas2D();
+});
+
 afterEach(() => {
   vi.unstubAllGlobals();
+  vi.restoreAllMocks();
 });
 
 describe("applyXRShading", () => {
@@ -299,7 +312,10 @@ describe("XRSessionController session lifecycle", () => {
     await t.controller.exit();
     await t.controller.enter("immersive-vr");
     const rig = t.scene.getObjectByName("megane-xr-rig")!;
-    expect(rig.children).toEqual(t.xr.controllers);
+    expect(rig.children.filter((c) => t.xr.controllers.includes(c as THREE.Group))).toEqual(
+      t.xr.controllers,
+    );
+    expect(rig.children.filter((c) => c.name === "megane-xr-panel")).toHaveLength(1);
   });
 
   it("unsubscribes listeners and ends the session on dispose", async () => {
@@ -413,8 +429,9 @@ describe("XRSessionController frames", () => {
     const t = setup();
     await t.controller.enter("immersive-vr");
     t.frame(0);
-    const left = track(t.xr, 0, v(-0.1, 1.2, -0.4));
-    const right = track(t.xr, 1, v(0.1, 1.2, -0.4));
+    // Below the panel: the rays point at nothing, so the presses grab.
+    const left = track(t.xr, 0, v(-0.1, 1.0, -0.4));
+    const right = track(t.xr, 1, v(0.1, 1.0, -0.4));
     left.dispatchEvent({ type: "selectstart" });
     right.dispatchEvent({ type: "selectstart" });
     // The left hand drops out of tracking mid-gesture: the right hand takes
@@ -422,7 +439,7 @@ describe("XRSessionController frames", () => {
     left.visible = false;
     t.frame(16);
     const before = t.controller.getState().position;
-    right.matrix.makeTranslation(0.1, 1.3, -0.4);
+    right.matrix.makeTranslation(0.1, 1.1, -0.4);
     t.frame(32);
     expect(t.controller.getState().position[1] - before[1]).toBeCloseTo(0.1, 9);
     // The right controller disconnects: nothing grabs any more.
@@ -498,5 +515,371 @@ describe("XRSessionController frames", () => {
     t.frame(64);
     expect(t.controller.getState().position[1]).not.toBeCloseTo(placed[1], 3);
     expect(t.host.getFocus).toHaveBeenCalledTimes(2);
+  });
+});
+
+/** Point controller `i` at panel control `id` (an emulated pose 15 cm in front of it). */
+function aim(
+  t: ReturnType<typeof setup>,
+  i: number,
+  id: Parameters<XRSessionController["panelControlPose"]>[0],
+  source: any = {},
+) {
+  const pose = t.controller.panelControlPose(id);
+  expect(pose).not.toBeNull();
+  const space = track(t.xr, i, v(...pose!.position), source);
+  space.matrix.compose(v(...pose!.position), new THREE.Quaternion(...pose!.quaternion), v(1, 1, 1));
+  return space;
+}
+
+/** A page bridge with a 10-frame trajectory at frame 3 and a measurement selection. */
+function bridge() {
+  const state = { frame: 3, total: 10, playing: false };
+  return {
+    state,
+    playback: {
+      getState: vi.fn(() => ({ ...state })),
+      togglePlay: vi.fn(() => {
+        state.playing = !state.playing;
+      }),
+      seek: vi.fn((frame: number) => {
+        state.frame = frame;
+      }),
+    },
+    measure: { toggleAtom: vi.fn(), clear: vi.fn() },
+  };
+}
+
+describe("XRSessionController panel", () => {
+  it("offers Reset and Exit without a page bridge, placed below the view", async () => {
+    const t = setup();
+    expect(t.controller.panelControlPose("exit")).toBeNull();
+    await t.controller.enter("immersive-vr");
+    t.frame(0);
+    expect(t.controller.getState()).toMatchObject({ panel: ["reset", "exit"], measuring: false });
+    const panel = t.scene.getObjectByName("megane-xr-panel")!;
+    expect(panel.visible).toBe(true);
+    expect(panel.position.y).toBeLessThan(1.6);
+    expect(panel.position.z).toBeLessThan(0);
+    await t.controller.exit();
+    expect(t.controller.getState().panel).toEqual([]);
+    expect(t.controller.panelControlPose("exit")).toBeNull();
+  });
+
+  it("presses controls with the trigger, firing on release over them", async () => {
+    const t = setup();
+    const b = bridge();
+    t.controller.setBridge(b);
+    await t.controller.enter("immersive-vr");
+    t.frame(0);
+    expect(t.controller.getState().panel).toEqual([
+      "prev",
+      "play",
+      "next",
+      "scrub",
+      "measure",
+      "reset",
+      "exit",
+    ]);
+    const right = aim(t, 0, "play");
+    t.frame(16);
+    right.dispatchEvent({ type: "selectstart" });
+    // Pressing a control does not grab: the structure stays put.
+    const held = t.controller.getState().position;
+    right.matrix.setPosition(
+      right.matrix.elements[12] + 0.001,
+      right.matrix.elements[13],
+      right.matrix.elements[14],
+    );
+    t.frame(32);
+    expect(t.controller.getState().position).toEqual(held);
+    right.dispatchEvent({ type: "selectend" });
+    expect(b.playback.togglePlay).toHaveBeenCalledTimes(1);
+
+    aim(t, 0, "next");
+    right.dispatchEvent({ type: "selectstart" });
+    right.dispatchEvent({ type: "selectend" });
+    expect(b.playback.seek).toHaveBeenLastCalledWith(4);
+    aim(t, 0, "prev");
+    right.dispatchEvent({ type: "selectstart" });
+    right.dispatchEvent({ type: "selectend" });
+    expect(b.playback.seek).toHaveBeenLastCalledWith(3);
+
+    // Released after sliding off the control: nothing fires.
+    aim(t, 0, "play");
+    right.dispatchEvent({ type: "selectstart" });
+    right.matrix.makeTranslation(0, 1.6, 0);
+    right.dispatchEvent({ type: "selectend" });
+    expect(b.playback.togglePlay).toHaveBeenCalledTimes(1);
+  });
+
+  it("scrubs while the trigger is held on the bar, even past its end", async () => {
+    const t = setup();
+    const b = bridge();
+    t.controller.setBridge(b);
+    await t.controller.enter("immersive-vr");
+    t.frame(0);
+    const right = aim(t, 0, "scrub");
+    right.dispatchEvent({ type: "selectstart" });
+    // The middle of the bar is the middle of the trajectory.
+    expect(b.playback.seek).toHaveBeenLastCalledWith(5);
+    t.frame(16);
+    expect(b.playback.seek).toHaveBeenCalledTimes(1);
+    // Slide 50 cm to the right, off the panel: the last frame.
+    const panel = t.scene.getObjectByName("megane-xr-panel")!;
+    const rightward = v(1, 0, 0).applyQuaternion(panel.quaternion);
+    const p = v().setFromMatrixPosition(right.matrix).addScaledVector(rightward, 0.5);
+    right.matrix.setPosition(p);
+    t.frame(32);
+    expect(b.playback.seek).toHaveBeenLastCalledWith(9);
+    right.dispatchEvent({ type: "selectend" });
+    expect(b.playback.seek).toHaveBeenCalledTimes(2);
+  });
+
+  it("swallows a press on the panel's background instead of grabbing", async () => {
+    const t = setup();
+    await t.controller.enter("immersive-vr");
+    t.frame(0);
+    const right = aim(t, 0, "reset");
+    // Up into the status row: on the panel, on no control.
+    const panel = t.scene.getObjectByName("megane-xr-panel")!;
+    const up = v(0, 1, 0).applyQuaternion(panel.quaternion);
+    right.matrix.setPosition(v().setFromMatrixPosition(right.matrix).addScaledVector(up, 0.09));
+    right.dispatchEvent({ type: "selectstart" });
+    const held = t.controller.getState().position;
+    right.matrix.setPosition(v(0.5, 1.5, -0.2));
+    t.frame(16);
+    expect(t.controller.getState().position).toEqual(held);
+    right.dispatchEvent({ type: "selectend" });
+  });
+
+  it("puts the structure back with Reset and leaves with Exit", async () => {
+    const t = setup();
+    await t.controller.enter("immersive-vr");
+    t.frame(0);
+    const placed = t.controller.getState().position;
+    const left = track(t.xr, 1, v(0, 1.0, -0.6));
+    left.dispatchEvent({ type: "squeezestart" });
+    left.matrix.makeTranslation(0.3, 1.0, -0.6);
+    t.frame(16);
+    left.dispatchEvent({ type: "squeezeend" });
+    expect(t.controller.getState().position).not.toEqual(placed);
+    const right = aim(t, 0, "reset");
+    right.dispatchEvent({ type: "selectstart" });
+    right.dispatchEvent({ type: "selectend" });
+    t.frame(32);
+    const reset = t.controller.getState().position;
+    for (let i = 0; i < 3; i++) expect(reset[i]).toBeCloseTo(placed[i], 9);
+    aim(t, 0, "exit");
+    right.dispatchEvent({ type: "selectstart" });
+    right.dispatchEvent({ type: "selectend" });
+    await Promise.resolve();
+    expect(t.session.end).toHaveBeenCalled();
+    expect(t.controller.presenting).toBe(false);
+  });
+
+  it("toggles playback on B / Y", async () => {
+    const t = setup();
+    const b = bridge();
+    t.controller.setBridge(b);
+    await t.controller.enter("immersive-vr");
+    t.frame(0);
+    const buttons = [0, 1, 2, 3, 4, 5].map(() => ({ pressed: false }));
+    track(t.xr, 0, v(0.2, 1.2, -0.4), { gamepad: { axes: [], buttons } });
+    buttons[5].pressed = true;
+    t.frame(16);
+    t.frame(32); // held: no repeat
+    expect(b.playback.togglePlay).toHaveBeenCalledTimes(1);
+    buttons[5].pressed = false;
+    t.frame(48);
+    buttons[5].pressed = true;
+    t.frame(64);
+    expect(b.playback.togglePlay).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe("XRSessionController measure mode", () => {
+  /** A hit 0.5 Å-units… away: the host answers every ray with atom 7. */
+  function measuring() {
+    const t = setup();
+    const b = bridge();
+    t.controller.setBridge(b);
+    t.host.pickAtom.mockImplementation(() => ({ atomIndex: 7, distance: 30, position: [0, 0, 0] }));
+    return { t, b };
+  }
+
+  it("turns on from the panel, highlights the atom a ray points at and toggles it on a pinch", async () => {
+    const { t, b } = measuring();
+    await t.controller.enter("immersive-vr");
+    t.frame(0);
+    // Not measuring yet: rays do not pick atoms.
+    const left = track(t.xr, 1, v(0.3, 1.6, 0));
+    t.frame(16);
+    expect(t.host.pickAtom).not.toHaveBeenCalled();
+    const right = aim(t, 0, "measure");
+    right.dispatchEvent({ type: "selectstart" });
+    right.dispatchEvent({ type: "selectend" });
+    expect(t.controller.getState().measuring).toBe(true);
+    right.matrix.makeTranslation(-0.3, 1.6, 0);
+    t.frame(32);
+    expect(t.host.setHoverAtoms).toHaveBeenLastCalledWith([7]);
+    // The ray in structure space, each atom at least 8 mm wide in the room.
+    const [ray, minRadius] = t.host.pickAtom.mock.calls[0];
+    expect(ray).toBeInstanceOf(THREE.Ray);
+    expect(minRadius).toBeCloseTo(XR_PICK_MIN_RADIUS / t.controller.getState().scale, 6);
+    // The ray is drawn up to the atom, in the atom colour.
+    const line = left.children.find((c) => c instanceof THREE.Line) as THREE.Line;
+    expect(line.visible).toBe(true);
+    expect(line.scale.z).toBeCloseTo(30 * t.controller.getState().scale, 9);
+    // The same hover from both hands is sent once.
+    t.frame(48);
+    expect(t.host.setHoverAtoms).toHaveBeenCalledTimes(1);
+    left.dispatchEvent({ type: "selectstart" });
+    expect(b.measure.toggleAtom).toHaveBeenCalledWith(7);
+    // A pinch on an atom does not grab.
+    const held = t.controller.getState().position;
+    left.matrix.makeTranslation(0.5, 1.6, 0);
+    t.frame(64);
+    expect(t.controller.getState().position).toEqual(held);
+    left.dispatchEvent({ type: "selectend" });
+  });
+
+  it("grabs when a pinch points at no atom, and shows no ray while grabbing", async () => {
+    const { t } = measuring();
+    await t.controller.enter("immersive-vr");
+    t.frame(0);
+    const right = aim(t, 0, "measure");
+    right.dispatchEvent({ type: "selectstart" });
+    right.dispatchEvent({ type: "selectend" });
+    t.host.pickAtom.mockReturnValue(null);
+    right.matrix.makeTranslation(0.2, 1.6, 0);
+    t.frame(16);
+    const line = right.children.find((c) => c instanceof THREE.Line) as THREE.Line;
+    expect(line.visible).toBe(false);
+    right.dispatchEvent({ type: "selectstart" });
+    const before = t.controller.getState().position;
+    right.matrix.makeTranslation(0.3, 1.6, 0);
+    t.frame(32);
+    expect(t.controller.getState().position[0] - before[0]).toBeCloseTo(0.1, 9);
+    expect(line.visible).toBe(false);
+  });
+
+  it("shows the measurement over the measured atoms, clears it, and turns off", async () => {
+    const { t, b } = measuring();
+    t.host.getSelectedAtoms.mockReturnValue([1, 2]);
+    t.host.getMeasurement.mockReturnValue({
+      atoms: [1, 2],
+      type: "distance",
+      value: 1.5,
+      label: "1.500 Å",
+    });
+    t.host.getAtomPosition.mockImplementation((i: number, out: THREE.Vector3) => {
+      out.set(i, 0, 0);
+      return true;
+    });
+    await t.controller.enter("immersive-vr");
+    t.frame(0);
+    const label = t.scene.getObjectByName("megane-xr-measure-label")!;
+    expect(label.visible).toBe(true);
+    expect(label.position.toArray()).toEqual([1.5, 0, 0]);
+    expect(t.controller.getState().panel).toContain("clear");
+    const right = aim(t, 0, "clear");
+    right.dispatchEvent({ type: "selectstart" });
+    right.dispatchEvent({ type: "selectend" });
+    expect(b.measure.clear).toHaveBeenCalled();
+    // Turned on, then off again: the hover highlight is cleared.
+    aim(t, 0, "measure");
+    right.dispatchEvent({ type: "selectstart" });
+    right.dispatchEvent({ type: "selectend" });
+    right.matrix.makeTranslation(0.3, 1.6, 0);
+    t.frame(16);
+    expect(t.host.setHoverAtoms).toHaveBeenLastCalledWith([7]);
+    aim(t, 0, "measure");
+    right.dispatchEvent({ type: "selectstart" });
+    right.dispatchEvent({ type: "selectend" });
+    expect(t.host.setHoverAtoms).toHaveBeenLastCalledWith(null);
+    // A measurement whose atoms are gone shows no readout.
+    t.host.getAtomPosition.mockReturnValue(false);
+    t.frame(32);
+    expect(label.visible).toBe(false);
+  });
+
+  it("drops the measure mode when the page withdraws it, and on session end", async () => {
+    const { t } = measuring();
+    await t.controller.enter("immersive-vr");
+    t.frame(0);
+    const right = aim(t, 0, "measure");
+    right.dispatchEvent({ type: "selectstart" });
+    right.dispatchEvent({ type: "selectend" });
+    expect(t.controller.getState().measuring).toBe(true);
+    t.controller.setBridge({});
+    expect(t.controller.getState().measuring).toBe(false);
+    t.frame(16);
+    expect(t.controller.getState().panel).toEqual(["reset", "exit"]);
+    await t.controller.exit();
+    expect(t.controller.getState().measuring).toBe(false);
+  });
+});
+
+describe("XRSessionController scene", () => {
+  it("lights the meshes from the head and puts the lights back", async () => {
+    const t = setup();
+    const key = new THREE.DirectionalLight();
+    key.position.set(50, 50, 50);
+    t.scene.add(key);
+    await t.controller.enter("immersive-vr");
+    const rig = t.scene.getObjectByName("megane-xr-rig")!;
+    expect(key.parent).toBe(rig);
+    t.frame(0);
+    // Head looking down −z: the light comes from the viewer's side.
+    expect(key.position.z).toBeGreaterThan(0);
+    expect(key.position.length()).toBeCloseTo(1, 9);
+    await t.controller.exit();
+    expect(key.parent).toBe(t.scene);
+    expect(key.position.toArray()).toEqual([50, 50, 50]);
+  });
+
+  it("sizes fat lines by the eye they are drawn into", async () => {
+    const t = setup();
+    const material = Object.assign(new THREE.MeshBasicMaterial(), {
+      isLineMaterial: true,
+      resolution: new THREE.Vector2(800, 600),
+    });
+    t.scene.add(new THREE.Mesh(new THREE.BufferGeometry(), material));
+    await t.controller.enter("immersive-vr");
+    t.frame(0);
+    expect(material.resolution.toArray()).toEqual([1600, 1000]);
+    // Before three reports a viewport, a Quest-class eye is assumed.
+    t.xr.eyes[0].viewport = new THREE.Vector4(0, 0, 0, 0);
+    t.frame(16);
+    expect(material.resolution.x).toBeGreaterThan(1000);
+  });
+
+  it("shows atom labels near the head once it is tracked", async () => {
+    const t = setup();
+    t.host.getLabels.mockReturnValue({
+      labels: ["N", "CA"],
+      positions: new Float32Array([0, 0, 0, 1, 0, 0]),
+      count: 2,
+    });
+    await t.controller.enter("immersive-vr");
+    t.frame(0, null);
+    expect(t.controller.getState().labels).toBe(0);
+    t.frame(16);
+    expect(t.controller.getState().labels).toBe(2);
+    expect(t.scene.getObjectByName("megane-xr-labels")!.children).toHaveLength(2);
+    await t.controller.exit();
+    expect(t.scene.getObjectByName("megane-xr-labels")).toBeUndefined();
+    expect(t.controller.getState().labels).toBe(0);
+  });
+
+  it("frees the panel, labels and rays on dispose", async () => {
+    const t = setup();
+    await t.controller.enter("immersive-vr");
+    t.frame(0);
+    const panel = t.scene.getObjectByName("megane-xr-panel") as THREE.Mesh;
+    const dispose = vi.spyOn(panel.geometry, "dispose");
+    t.controller.dispose();
+    expect(dispose).toHaveBeenCalled();
   });
 });

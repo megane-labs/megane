@@ -42,6 +42,12 @@ export class LabelOverlay {
     this.labels = labels;
   }
 
+  /** The labels and the positions they are drawn at, for the headset (null: none). */
+  getData(): { labels: string[]; positions: Float32Array; count: number } | null {
+    if (!this.labels || !this.positions || this.nAtoms === 0) return null;
+    return { labels: this.labels, positions: this.positions, count: this.nAtoms };
+  }
+
   setAtomData(elements: Uint8Array, nAtoms: number): void {
     this.elements = elements;
     this.nAtoms = nAtoms;

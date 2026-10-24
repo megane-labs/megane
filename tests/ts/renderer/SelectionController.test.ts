@@ -108,6 +108,7 @@ describe("SelectionController — measurement selection", () => {
     expect(sel.hasSelection).toBe(false);
     expect(sel.toggle(1)).toEqual({ atoms: [1] });
     expect(sel.toggle(2)).toEqual({ atoms: [1, 2] });
+    expect(sel.selected).toEqual([1, 2]);
     expect(sel.hasSelection).toBe(true);
     expect(sel.toggle(1)).toEqual({ atoms: [2] });
   });
@@ -273,6 +274,16 @@ describe("SelectionController — drag gesture", () => {
 });
 
 describe("SelectionController — picking", () => {
+  it("picks the atom a 3D ray points at, as drawn", () => {
+    const { sel, state } = setup();
+    const ray = new THREE.Ray(new THREE.Vector3(3, 0, 10), new THREE.Vector3(0, 0, -1));
+    expect(sel.pickOnRay(ray, 0)?.atomIndex).toBe(1);
+    // Hidden by a per-atom opacity: not hit.
+    state.atomState = atomState({ opacityOverrides: new Float32Array([1, 0, 1, 1]) });
+    expect(sel.pickOnRay(ray, 0)).toBeNull();
+    expect(setup({ snapshot: null }).sel.pickOnRay(ray, 0)).toBeNull();
+  });
+
   it("picks the atom under the pixel", () => {
     const { sel } = setup();
     const hit = sel.pickAtPixel(80, 50);

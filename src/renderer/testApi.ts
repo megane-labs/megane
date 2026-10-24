@@ -19,6 +19,7 @@ import type { MeganeCameraMode, MeganeCameraState } from "./CameraController";
 import type { MeganeProjectedAtom } from "./SelectionController";
 import type { ViewAxis } from "./cameraOrientation";
 import type { MeganeXRState } from "./xr/XRSessionController";
+import type { XRPanelControl } from "./xr/XRPanel";
 
 const _testMode = (() => {
   try {
@@ -98,6 +99,17 @@ export interface MeganeTestApi {
   getRendererMemory: () => MeganeRendererMemory | null;
   /** Immersive (WebXR) session state; null before a renderer mounts. */
   getXRState: () => MeganeXRState | null;
+  /**
+   * Where an emulated controller must be (reference space) to point at the
+   * headset panel's control `id`; null outside a session or without it.
+   */
+  getXRPanelControlPose: (id: XRPanelControl) => XRControlPose | null;
+}
+
+/** A controller pose aimed at a headset panel control. */
+export interface XRControlPose {
+  position: [number, number, number];
+  quaternion: [number, number, number, number];
 }
 
 /** The renderer methods `window.__megane_test` forwards to. */
@@ -110,6 +122,7 @@ export interface TestApiRenderer {
   alignCameraToAxis(axis: ViewAxis): void;
   getRenderer(): THREE.WebGLRenderer;
   getXRState(): MeganeXRState;
+  testGetXRPanelControlPose(id: XRPanelControl): XRControlPose | null;
 }
 
 let _activeRenderer: TestApiRenderer | null = null;
@@ -155,6 +168,7 @@ export function setActiveRenderer(r: TestApiRenderer | null): void {
         return info ? { geometries: info.geometries, textures: info.textures } : null;
       },
       getXRState: () => _activeRenderer?.getXRState() ?? null,
+      getXRPanelControlPose: (id) => _activeRenderer?.testGetXRPanelControlPose(id) ?? null,
     };
   }
 }
