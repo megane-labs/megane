@@ -29,7 +29,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 - **A large trajectory no longer has to fit in memory.** Opening an XTC copied the whole file into the parse worker for as long as it was open, and the viewer kept its last 256 (128 for `megane serve`) decoded frames whatever their size: on a 104k-atom, 300-frame, 135 MB XTC that was ~135 MB for the file plus ~320 MB of frames (~3 GB of frames at 1M atoms).
   - The worker now leaves an XTC in its file: it reads the file's frame headers to index it and reads each frame's bytes when that frame is shown, so its memory no longer grows with the file. Every host that streams trajectories (web app, VS Code) does this; LAMMPS dumps and multi-frame XYZ / PDB are still read whole.
   - Frame caches (XTC, LAMMPS dump, multi-frame XYZ / PDB, `megane serve`) stop at 32 MiB of positions as well as at their frame count, keep at least two frames, and decode ahead only as far as they can hold. A frame that fell out is decoded again in ~10 ms off the main thread. Systems up to ~11k atoms keep every frame they did before.
-  - On that XTC, after playing it through twice, the viewer's renderer process went from 586 to 167 MB, and the whole browser from 734 to 278 MB.
+  - On that XTC, after playing it through twice, the viewer's renderer process went from 586 to 200 MB and the whole browser from 735 to 349 MB (medians of three runs); playing it through took as long as before.
 
 ### Fixed
 
