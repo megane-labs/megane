@@ -10,12 +10,26 @@
 
 import * as THREE from "three";
 
-/** Distance (m) in front of the head the structure is placed at. */
-export const XR_PLACEMENT_DISTANCE = 0.7;
+/**
+ * Distance (m) in front of the head the structure is placed at. A headset's
+ * lenses focus at a fixed 1–2 m, so anything looked at from much nearer than
+ * ~0.5 m makes the eyes converge on one distance while focusing at another
+ * (vergence–accommodation conflict), which tires them within minutes. At this
+ * distance and {@link XR_PLACEMENT_RADIUS} the near side starts at ~0.7 m.
+ */
+export const XR_PLACEMENT_DISTANCE = 1.1;
 /** How far (m) below eye level the structure's centre sits. */
 export const XR_PLACEMENT_DROP = 0.1;
 /** Radius (m) the structure's bounding sphere is scaled to on entry. */
-export const XR_PLACEMENT_RADIUS = 0.25;
+export const XR_PLACEMENT_RADIUS = 0.4;
+/** Nothing nearer to the eye than this (m) is drawn: too close to fuse. */
+export const XR_NEAR_CLIP = 0.2;
+/** Content fades in between {@link XR_NEAR_CLIP} and this distance (m). */
+export const XR_NEAR_FADE = 0.35;
+/** How far toward the background colour the depth cue fades the far side. */
+export const XR_DEPTH_CUE_STRENGTH = 0.45;
+/** Longest depth-cue ramp (m), so the gradient stays visible from inside a large model. */
+export const XR_DEPTH_CUE_MAX_SPAN = 3;
 /** Bounds on the model scale (metres per Å): 1 m spans 100 000 Å … 2 Å. */
 export const XR_MIN_SCALE = 1e-5;
 export const XR_MAX_SCALE = 0.5;
@@ -39,6 +53,28 @@ const _s = new THREE.Vector3();
 const _m = new THREE.Matrix4();
 const _m2 = new THREE.Matrix4();
 const Y_AXIS = new THREE.Vector3(0, 1, 0);
+
+/**
+ * Depth-cue ramp (m from the eye) for a structure whose bounding sphere sits at
+ * `center` with `radius` (reference space, metres) seen from `head`: the fade
+ * starts at the near side and is full at the far side, so the gradient spans
+ * the structure at any scale. From inside it the ramp starts where the near
+ * fade ends and is capped at {@link XR_DEPTH_CUE_MAX_SPAN}, so the atoms
+ * around you stay crisp while the far side of a large model recedes.
+ */
+export function depthCueRange(
+  head: THREE.Vector3,
+  center: THREE.Vector3,
+  radius: number,
+): { start: number; end: number } {
+  const distance = head.distanceTo(center);
+  const start = Math.max(XR_NEAR_FADE, distance - radius);
+  const end =
+    distance >= radius
+      ? distance + radius
+      : Math.min(distance + radius, start + XR_DEPTH_CUE_MAX_SPAN);
+  return { start, end: Math.max(end, start + 0.05) };
+}
 
 /** Clamp a model scale into [XR_MIN_SCALE, XR_MAX_SCALE]. */
 export function clampXRScale(scale: number): number {

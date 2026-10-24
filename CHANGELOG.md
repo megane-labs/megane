@@ -8,10 +8,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ### Added
 
-- **VR and passthrough AR headsets (WebXR).** Where the browser can start an immersive session (Meta Quest Browser; Chrome / Edge with a PC VR runtime), the viewer and Megane Builder show **VR** / **AR** buttons under the view-axis buttons. The structure enters the room about 70 cm ahead, the same side up as the desktop view, scaled to about half a metre across.
+- **VR and passthrough AR headsets (WebXR).** Where the browser can start an immersive session (Meta Quest Browser; Chrome / Edge with a PC VR runtime), the viewer and Megane Builder show **VR** / **AR** buttons under the view-axis buttons. The structure enters the room about 1.1 m ahead, the same side up as the desktop view, scaled to about 80 cm across.
   - Grab it with one controller (trigger or grip) or pinching hand to carry and turn it; with both to scale it about the point between them. Thumbsticks zoom and spin it, A / X puts it back in front of you, and the headset's system menu leaves.
   - **AR** clears the background so the structure floats in the room the headset cameras show.
-  - In the headset the atom and bond impostors are ray-cast from each eye with the exact perspective silhouette, so spheres and sticks stay round however close you lean in. The desktop rendering is unchanged.
+  - In the headset the atom and bond impostors are ray-cast from each eye with the exact perspective silhouette, and their edges are anti-aliased (alpha-to-coverage on the headset's multisampled buffer). The desktop rendering is unchanged.
+  - Comfort: the structure starts far enough away that its near side is ~0.7 m from the eyes (a headset focuses at a fixed 1–2 m, so looking at things much nearer strains the eyes); anything within 35 cm of the eyes fades out and nothing within 20 cm is drawn; and a depth cue fades the far side of the structure toward the background (toward black in AR), so depth reads clearly even from inside a model.
   - The view is for looking: panels, labels, picking, measurements and Builder editing stay on the page. WebXR needs HTTPS or `localhost`, and the VS Code webview has none, so VS Code shows no buttons. See [VR and AR headsets](docs/docs/guide/vr.md).
   - A new `xr` Playwright project runs the flow under Meta's IWER Quest 3 emulator.
 

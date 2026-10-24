@@ -9,12 +9,20 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
 import * as THREE from "three";
 import {
+  applyXRShading,
   EXACT_IMPOSTOR_UNIFORM,
-  setExactImpostors,
   XRSessionController,
   type XRHost,
 } from "@/renderer/xr/XRSessionController";
-import { XR_PLACEMENT_RADIUS, XR_STICK_ZOOM_RATE } from "@/renderer/xr/xrMath";
+import {
+  XR_DEPTH_CUE_STRENGTH,
+  XR_NEAR_CLIP,
+  XR_NEAR_FADE,
+  XR_PLACEMENT_DISTANCE,
+  XR_PLACEMENT_DROP,
+  XR_PLACEMENT_RADIUS,
+  XR_STICK_ZOOM_RATE,
+} from "@/renderer/xr/xrMath";
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
@@ -31,6 +39,24 @@ class FakeXRManager extends THREE.EventDispatcher<any> {
   });
   getController = (i: number) => this.controllers[i];
   getReferenceSpace = (): XRReferenceSpace | null => this.referenceSpace;
+  /** three's per-eye cameras; the viewport height sizes the edge fringe. */
+  readonly eyes: { viewport?: THREE.Vector4 }[] = [
+    { viewport: new THREE.Vector4(0, 0, 1600, 1000) },
+  ];
+  getCamera = () => ({ cameras: this.eyes });
+}
+
+/** A material carrying the impostor shaders' immersive uniforms. */
+function impostorMaterial(): THREE.ShaderMaterial {
+  return new THREE.ShaderMaterial({
+    uniforms: {
+      [EXACT_IMPOSTOR_UNIFORM]: { value: 0 },
+      uXRPixel: { value: 0 },
+      uXRNear: { value: new THREE.Vector2() },
+      uXRFog: { value: new THREE.Vector3() },
+      uXRFogColor: { value: new THREE.Vector3() },
+    },
+  });
 }
 
 function setup(opts: { localFloor?: boolean; mode?: XRSessionMode } = {}) {
@@ -61,10 +87,7 @@ function setup(opts: { localFloor?: boolean; mode?: XRSessionMode } = {}) {
   const scene = new THREE.Scene();
   const background = new THREE.Color(0xffffff);
   scene.background = background;
-  const impostor = new THREE.Mesh(
-    new THREE.BufferGeometry(),
-    new THREE.ShaderMaterial({ uniforms: { [EXACT_IMPOSTOR_UNIFORM]: { value: 0 } } }),
-  );
+  const impostor = new THREE.Mesh(new THREE.BufferGeometry(), impostorMaterial());
   scene.add(impostor);
   const camera = new THREE.PerspectiveCamera();
   const host: XRHost & { onPresentingChange: ReturnType<typeof vi.fn> } = {
@@ -91,8 +114,8 @@ function setup(opts: { localFloor?: boolean; mode?: XRSessionMode } = {}) {
     } as unknown as XRFrame;
     loop?.(time, xrFrame);
   };
-  const uniform = () =>
-    (impostor.material as THREE.ShaderMaterial).uniforms[EXACT_IMPOSTOR_UNIFORM].value;
+  const material = impostor.material as THREE.ShaderMaterial;
+  const uniform = () => material.uniforms[EXACT_IMPOSTOR_UNIFORM].value;
   return {
     xr,
     renderer,
@@ -104,6 +127,7 @@ function setup(opts: { localFloor?: boolean; mode?: XRSessionMode } = {}) {
     controller,
     frame,
     uniform,
+    material,
     getLoop: () => loop,
   };
 }
@@ -121,19 +145,47 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-describe("setExactImpostors", () => {
-  it("flips the uniform on every impostor material and skips other objects", () => {
+describe("applyXRShading", () => {
+  const shading = {
+    fogStart: 0.7,
+    fogEnd: 1.5,
+    fogStrength: 0.4,
+    fogColor: new THREE.Color(0.1, 0.2, 0.3),
+    pixel: 0.002,
+  };
+
+  it("switches impostor materials to the immersive shading and back", () => {
     const root = new THREE.Group();
-    const a = new THREE.Mesh(
+    const opaque = new THREE.Mesh(new THREE.BufferGeometry(), impostorMaterial());
+    const blended = new THREE.Mesh(new THREE.BufferGeometry(), impostorMaterial());
+    (blended.material as THREE.ShaderMaterial).transparent = true;
+    const plain = new THREE.Mesh(new THREE.BufferGeometry(), new THREE.MeshBasicMaterial());
+    root.add(opaque, blended, plain, new THREE.Group());
+    applyXRShading(root, shading);
+    const u = (opaque.material as THREE.ShaderMaterial).uniforms;
+    expect(u[EXACT_IMPOSTOR_UNIFORM].value).toBe(1);
+    expect(u.uXRPixel.value).toBe(0.002);
+    expect(u.uXRNear.value.toArray()).toEqual([XR_NEAR_CLIP, XR_NEAR_FADE]);
+    expect(u.uXRFog.value.toArray()).toEqual([0.7, 1.5, 0.4]);
+    expect(u.uXRFogColor.value.x).toBeCloseTo(0.1, 6);
+    // Alpha-to-coverage smooths opaque edges; blended ones use their alpha.
+    expect(opaque.material.alphaToCoverage).toBe(true);
+    expect(blended.material.alphaToCoverage).toBe(false);
+    expect(plain.material.alphaToCoverage).toBe(false);
+    applyXRShading(root, null);
+    expect(u[EXACT_IMPOSTOR_UNIFORM].value).toBe(0);
+    expect(opaque.material.alphaToCoverage).toBe(false);
+  });
+
+  it("tolerates materials without the immersive uniforms", () => {
+    const root = new THREE.Group();
+    const bare = new THREE.Mesh(
       new THREE.BufferGeometry(),
       new THREE.ShaderMaterial({ uniforms: { [EXACT_IMPOSTOR_UNIFORM]: { value: 0 } } }),
     );
-    const plain = new THREE.Mesh(new THREE.BufferGeometry(), new THREE.MeshBasicMaterial());
-    root.add(a, plain, new THREE.Group());
-    setExactImpostors(root, true);
-    expect((a.material as THREE.ShaderMaterial).uniforms[EXACT_IMPOSTOR_UNIFORM].value).toBe(1);
-    setExactImpostors(root, false);
-    expect((a.material as THREE.ShaderMaterial).uniforms[EXACT_IMPOSTOR_UNIFORM].value).toBe(0);
+    root.add(bare);
+    expect(() => applyXRShading(root, shading)).not.toThrow();
+    expect((bare.material as THREE.ShaderMaterial).uniforms[EXACT_IMPOSTOR_UNIFORM].value).toBe(1);
   });
 });
 
@@ -233,6 +285,9 @@ describe("XRSessionController session lifecycle", () => {
     await t.controller.enter("immersive-ar");
     expect(t.scene.background).toBeNull();
     expect(t.renderer.setClearAlpha).toHaveBeenLastCalledWith(0);
+    // With no background to fade into, the depth cue darkens instead.
+    t.frame(0);
+    expect(t.material.uniforms.uXRFogColor.value.toArray()).toEqual([0, 0, 0]);
     await t.controller.exit();
     expect(t.scene.background).toBe(t.background);
     expect(t.renderer.setClearAlpha).toHaveBeenLastCalledWith(1);
@@ -269,6 +324,16 @@ describe("XRSessionController frames", () => {
     expect(state.position[2]).toBeLessThan(0);
     expect(t.renderer.render).toHaveBeenCalledWith(t.scene, expect.any(THREE.PerspectiveCamera));
     expect(state.frames).toBe(1);
+    // The depth cue spans the structure as seen from the head: its near side
+    // to its far side, toward the background colour.
+    const fog = t.material.uniforms.uXRFog.value;
+    expect(fog.x).toBeCloseTo(XR_PLACEMENT_DISTANCE - XR_PLACEMENT_RADIUS, 2);
+    expect(fog.y).toBeCloseTo(XR_PLACEMENT_DISTANCE + XR_PLACEMENT_RADIUS, 2);
+    expect(fog.z).toBe(XR_DEPTH_CUE_STRENGTH);
+    expect(t.material.uniforms.uXRFogColor.value.toArray()).toEqual([1, 1, 1]);
+    // One pixel of the 1000-pixel-high eye viewport.
+    expect(t.material.uniforms.uXRPixel.value).toBeCloseTo(2 / 1000, 9);
+    expect(t.material.alphaToCoverage).toBe(true);
     // The rig cancels the scene transform so controllers stay in room space.
     const rig = t.scene.getObjectByName("megane-xr-rig")!;
     t.scene.updateMatrixWorld(true);
@@ -281,9 +346,14 @@ describe("XRSessionController frames", () => {
 
   it("waits for a viewer pose before placing", async () => {
     const t = setup();
+    // Before three reports an eye viewport, a Quest-class height is assumed.
+    t.xr.eyes.length = 0;
     await t.controller.enter("immersive-vr");
     t.frame(0, null);
     expect(t.controller.getState().scale).toBe(1);
+    // Nothing placed yet: no depth cue.
+    expect(t.material.uniforms.uXRFog.value.z).toBe(0);
+    expect(t.material.uniforms.uXRPixel.value).toBeCloseTo(2 / 1800, 9);
     t.xr.getReferenceSpace = () => null;
     t.frame(16);
     expect(t.controller.getState().scale).toBe(1);

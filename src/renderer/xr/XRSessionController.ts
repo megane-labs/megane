@@ -24,10 +24,14 @@
 import * as THREE from "three";
 import {
   computeXRPlacement,
+  depthCueRange,
   modelScale,
   oneHandGrab,
   stickSteer,
   twoHandGrab,
+  XR_DEPTH_CUE_STRENGTH,
+  XR_NEAR_CLIP,
+  XR_NEAR_FADE,
   type XRFocus,
 } from "./xrMath";
 import { getXRSystem, type MeganeXRMode } from "./xrSupport";
@@ -59,6 +63,22 @@ export interface MeganeXRState {
 /** Uniform the impostor shaders read to ray-cast exactly (see `shaders.ts`). */
 export const EXACT_IMPOSTOR_UNIFORM = "uExactImpostor";
 
+/** The immersive-only shading of the impostors (see `xrFinish` in `shaders.ts`). */
+export interface XRShading {
+  /** Depth-cue ramp, metres from the eye. */
+  fogStart: number;
+  fogEnd: number;
+  /** How far toward `fogColor` the far end fades (0 = off). */
+  fogStrength: number;
+  fogColor: THREE.Color;
+  /** 2 / per-eye viewport height in pixels: sizes the edge ramp's fringe. */
+  pixel: number;
+}
+
+const BLACK = new THREE.Color(0x000000);
+/** Per-eye viewport height assumed before three reports one (Quest 3 class). */
+const DEFAULT_EYE_HEIGHT = 1800;
+
 /** xr-standard gamepad indices. */
 const THUMBSTICK_X = 2;
 const THUMBSTICK_Y = 3;
@@ -69,14 +89,24 @@ const MARKER_GRAB = 0xf59e0b;
 
 /**
  * Switch every impostor material under `root` between the desktop shading
- * (0) and the exact perspective ray-cast an immersive view needs (1).
+ * (`null`) and the immersive one: the exact perspective ray-cast, the near
+ * fade, the depth cue, and alpha-to-coverage, which turns the shaders' edge
+ * alpha into smooth silhouettes on the headset's multisampled buffer.
+ * Transparent (blended) materials smooth their edges through blending
+ * instead, so they keep alpha-to-coverage off.
  */
-export function setExactImpostors(root: THREE.Object3D, exact: boolean): void {
-  const value = exact ? 1 : 0;
+export function applyXRShading(root: THREE.Object3D, shading: XRShading | null): void {
   root.traverse((obj) => {
     const material = (obj as THREE.Mesh).material as THREE.ShaderMaterial | undefined;
-    const uniform = material?.uniforms?.[EXACT_IMPOSTOR_UNIFORM];
-    if (uniform) uniform.value = value;
+    const uniforms = material?.uniforms;
+    if (!material || !uniforms?.[EXACT_IMPOSTOR_UNIFORM]) return;
+    uniforms[EXACT_IMPOSTOR_UNIFORM].value = shading ? 1 : 0;
+    material.alphaToCoverage = shading !== null && !material.transparent;
+    if (!shading) return;
+    if (uniforms.uXRPixel) uniforms.uXRPixel.value = shading.pixel;
+    uniforms.uXRNear?.value.set(XR_NEAR_CLIP, XR_NEAR_FADE);
+    uniforms.uXRFog?.value.set(shading.fogStart, shading.fogEnd, shading.fogStrength);
+    uniforms.uXRFogColor?.value.set(shading.fogColor.r, shading.fogColor.g, shading.fogColor.b);
   });
 }
 
@@ -122,6 +152,10 @@ export class XRSessionController {
   private model = new THREE.Matrix4();
   /** The structure's bounding sphere when it was last placed. */
   private focus: XRFocus | null = null;
+  /** Head pose (reference space) from the latest frame that had one. */
+  private readonly head = new THREE.Vector3();
+  private readonly headQuaternion = new THREE.Quaternion();
+  private headTracked = false;
   private placed = false;
   private lastTime: number | null = null;
   private saved: SavedView | null = null;
@@ -208,6 +242,8 @@ export class XRSessionController {
     this.mode = mode;
     this.frames = 0;
     this.placed = false;
+    this.focus = null;
+    this.headTracked = false;
     this.lastTime = null;
     this.saved = {
       position: scene.position.clone(),
@@ -342,22 +378,47 @@ export class XRSessionController {
     }
   }
 
-  private place(frame: XRFrame): void {
-    const renderer = this.host.getRenderer();
-    const space = renderer.xr.getReferenceSpace();
+  /** Read the head pose of `frame` into `head` / `headQuaternion`; false without one. */
+  private trackHead(frame: XRFrame): boolean {
+    const space = this.host.getRenderer().xr.getReferenceSpace();
     const pose = space ? frame.getViewerPose(space) : undefined;
-    if (!pose) return;
+    if (!pose) return false;
     const { position: p, orientation: o } = pose.transform;
+    this.head.set(p.x, p.y, p.z);
+    this.headQuaternion.set(o.x, o.y, o.z, o.w);
+    this.headTracked = true;
+    return true;
+  }
+
+  private place(): void {
     this.focus = this.host.getFocus();
     this.model = computeXRPlacement(
       this.focus,
-      new THREE.Vector3(p.x, p.y, p.z),
-      new THREE.Quaternion(o.x, o.y, o.z, o.w),
+      this.head,
+      this.headQuaternion,
       this.host.getViewCamera().quaternion,
     );
     this.placed = true;
     this.grab = null;
     this.regrab();
+  }
+
+  /** This frame's immersive shading: the depth cue spans the structure as seen now. */
+  private shading(scene: THREE.Scene): XRShading {
+    const fogColor = scene.background instanceof THREE.Color ? scene.background : BLACK;
+    // three sizes each eye's viewport before calling the frame loop.
+    const eyeHeight = this.host.getRenderer().xr.getCamera().cameras[0]?.viewport?.w ?? 0;
+    const pixel = 2 / (eyeHeight > 0 ? eyeHeight : DEFAULT_EYE_HEIGHT);
+    if (!this.focus || !this.headTracked) {
+      return { fogStart: 0, fogEnd: 1, fogStrength: 0, fogColor, pixel };
+    }
+    const center = this.focus.center.clone().applyMatrix4(this.model);
+    const { start, end } = depthCueRange(
+      this.head,
+      center,
+      this.focus.radius * modelScale(this.model),
+    );
+    return { fogStart: start, fogEnd: end, fogStrength: XR_DEPTH_CUE_STRENGTH, fogColor, pixel };
   }
 
   private readonly onFrame = (time: number, frame?: XRFrame): void => {
@@ -366,12 +427,12 @@ export class XRSessionController {
     const scene = this.host.getScene();
     const dt = this.lastTime === null ? 0 : Math.min((time - this.lastTime) / 1000, 0.1);
     this.lastTime = time;
-    if (frame && !this.placed) this.place(frame);
+    if (frame && this.trackHead(frame) && !this.placed) this.place();
     this.steer(dt);
     this.model.decompose(scene.position, scene.quaternion, scene.scale);
     this.rig.matrix.copy(this.model).invert();
     // Cheap (a few dozen objects) and catches layers created mid-session.
-    setExactImpostors(scene, true);
+    applyXRShading(scene, this.shading(scene));
     renderer.render(scene, this.camera);
     this.frames++;
   };
@@ -391,7 +452,7 @@ export class XRSessionController {
       this.saved = null;
     }
     scene.remove(this.rig);
-    setExactImpostors(scene, false);
+    applyXRShading(scene, null);
     for (const hand of this.hands) {
       hand.holds = 0;
       hand.source = null;

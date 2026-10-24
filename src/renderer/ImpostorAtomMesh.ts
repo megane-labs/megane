@@ -126,6 +126,10 @@ export class ImpostorAtomMesh {
         uAmbientDarkening: { value: ILLUSTRATIVE_AMBIENT_DARKENING },
         // Set by the WebXR session (see xr/XRSessionController.ts).
         uExactImpostor: { value: 0 },
+        uXRPixel: { value: 0 },
+        uXRNear: { value: new THREE.Vector2() },
+        uXRFog: { value: new THREE.Vector3() },
+        uXRFogColor: { value: new THREE.Vector3() },
       },
       depthWrite: true,
       depthTest: true,

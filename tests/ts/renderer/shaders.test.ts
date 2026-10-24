@@ -218,3 +218,31 @@ describe("immersive (WebXR) impostor path", () => {
     );
   });
 });
+
+describe("immersive (WebXR) finishing", () => {
+  it("routes both fragment shaders' output through xrFinish", () => {
+    for (const src of [atomFragmentShader, bondFragmentShader]) {
+      expect(src).toMatch(/vec4 xrFinish\(vec4 color, vec3 viewPos, float coverage\)/);
+      expect(src).toMatch(/if \(uExactImpostor != 1\) return color;/);
+      expect(src).not.toMatch(/fragColor\s*=\s*vec4\(/);
+    }
+  });
+
+  it("declares the finishing uniforms only where they are read", () => {
+    for (const src of [atomFragmentShader, bondFragmentShader]) {
+      expect(src).toMatch(/uniform vec2 uXRNear;/);
+      expect(src).toMatch(/uniform vec3 uXRFog;/);
+      expect(src).toMatch(/uniform vec3 uXRFogColor;/);
+    }
+    for (const src of [atomVertexShader, bondVertexShader]) {
+      expect(src).toMatch(/uniform float uXRPixel;/);
+    }
+  });
+
+  it("centres the edge ramp on the silhouette and drops what is too close", () => {
+    expect(atomFragmentShader).toMatch(/\(1\.0 - rim\) \/ max\(rimDeriv, 1e-6\) \+ 0\.5/);
+    expect(bondFragmentShader).toMatch(/\(1\.0 - rimB\) \/ max\(fwidth\(rimB\), 1e-6\) \+ 0\.5/);
+    expect(atomFragmentShader).toMatch(/length\(fragViewPos\) < uXRNear\.x\) discard/);
+    expect(bondFragmentShader).toMatch(/length\(hit\) < uXRNear\.x\) discard/);
+  });
+});
