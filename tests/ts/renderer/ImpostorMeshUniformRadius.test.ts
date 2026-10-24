@@ -241,5 +241,13 @@ describe("immersive (WebXR) shading uniform", () => {
         .value;
     expect(uniformOf(atoms)).toBe(0);
     expect(uniformOf(bonds)).toBe(0);
+    for (const mesh of [atoms, bonds]) {
+      const u = (mesh.mesh.material as unknown as { uniforms: Record<string, { value: unknown }> })
+        .uniforms;
+      expect(u.uXRPixel.value).toBe(0);
+      expect(u.uXRNear.value).toBeDefined();
+      expect(u.uXRFog.value).toBeDefined();
+      expect(u.uXRFogColor.value).toBeDefined();
+    }
   });
 });

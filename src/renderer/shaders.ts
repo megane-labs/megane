@@ -9,6 +9,32 @@
  * RawShaderMaterial requires explicit uniform/attribute declarations.
  */
 
+/**
+ * Immersive (WebXR) finishing shared by both impostor fragment shaders; a no-op
+ * on the desktop (`uExactImpostor` 0). Content nearer to the eye than
+ * `uXRNear.y` fades out and is gone inside `uXRNear.x` (too close to fuse into
+ * one image), the depth cue fades the far side toward `uXRFogColor` along the
+ * `uXRFog` ramp (start, end in metres from the eye, strength), and `coverage`
+ * — a one-pixel ramp centred on the silhouette — becomes alpha, which
+ * alpha-to-coverage turns into smooth edges on the headset's multisampled
+ * buffer. The exact billboards reach `uXRPixel` (2 / viewport height) past the
+ * silhouette so the ramp's outer half has fragments to draw.
+ */
+const XR_FINISH_GLSL = /* glsl */ `
+  uniform vec2 uXRNear;
+  uniform vec3 uXRFog;
+  uniform vec3 uXRFogColor;
+
+  vec4 xrFinish(vec4 color, vec3 viewPos, float coverage) {
+    if (uExactImpostor != 1) return color;
+    float eyeDist = length(viewPos);
+    float cue = clamp((eyeDist - uXRFog.x) / max(uXRFog.y - uXRFog.x, 1e-6), 0.0, 1.0);
+    color.rgb = mix(color.rgb, uXRFogColor, uXRFog.z * cue);
+    color.a *= coverage * clamp((eyeDist - uXRNear.x) / max(uXRNear.y - uXRNear.x, 1e-6), 0.0, 1.0);
+    return color;
+  }
+`;
+
 export const atomVertexShader = /* glsl */ `precision highp float;
   precision highp int;
 
@@ -19,6 +45,8 @@ export const atomVertexShader = /* glsl */ `precision highp float;
   uniform int uUsePerAtomOverrides;
   // 1 in an immersive (WebXR) view: perspective-exact billboard + ray-cast.
   uniform highp int uExactImpostor;
+  // Immersive view: one pixel's size at unit distance, times projection[1][1].
+  uniform float uXRPixel;
 
   // Per-vertex (quad corners)
   in vec3 position;
@@ -71,7 +99,8 @@ export const atomVertexShader = /* glsl */ `precision highp float;
       vec3 ref = abs(axis.y) < 0.99 ? vec3(0.0, 1.0, 0.0) : vec3(1.0, 0.0, 0.0);
       vec3 right = normalize(cross(axis, ref));
       vec3 up = cross(right, axis);
-      float extent = scaledRadius * d / sqrt(d * d - scaledRadius * scaledRadius);
+      float extent = scaledRadius * d / sqrt(d * d - scaledRadius * scaledRadius)
+        + d * uXRPixel / projectionMatrix[1][1];
       viewPos += (right * position.x + up * position.y) * extent;
     } else {
       viewPos.xy += position.xy * scaledRadius;
@@ -104,7 +133,7 @@ export const atomFragmentShader = /* glsl */ `precision highp float;
   uniform float uAmbientDarkening;
 
   out vec4 fragColor;
-
+${XR_FINISH_GLSL}
   void main() {
     // Desktop: the billboard's |uv|^2 (an orthographic view along -z). An
     // immersive view casts the real ray from the eye through this fragment
@@ -123,7 +152,17 @@ export const atomFragmentShader = /* glsl */ `precision highp float;
     // the 2x2 quad has terminated, which would make the outline flicker along
     // the very edge it is supposed to trace.
     float rim = sqrt(dist2);
-    float rimWidth = fwidth(rim) * uOutlineWidth;
+    float rimDeriv = fwidth(rim);
+    float rimWidth = rimDeriv * uOutlineWidth;
+    // Immersive view: a one-pixel edge ramp centred on the silhouette (see
+    // xrFinish). Its outer half lies just off the sphere and takes the
+    // silhouette's depth. The desktop draws hard edges.
+    float coverage = 1.0;
+    if (uExactImpostor == 1) {
+      coverage = clamp((1.0 - rim) / max(rimDeriv, 1e-6) + 0.5, 0.0, 1.0);
+      if (coverage <= 0.0) discard;
+      dist2 = min(dist2, 1.0);
+    }
     if (dist2 > 1.0) discard;
 
     // z: how squarely the surface faces the viewer (1 at the centre, 0 at
@@ -133,6 +172,7 @@ export const atomFragmentShader = /* glsl */ `precision highp float;
     vec3 fragViewPos;
     if (uExactImpostor == 1) {
       fragViewPos = rd * (dot(rd, vViewCenter) - vRadius * sqrt(1.0 - dist2));
+      if (length(fragViewPos) < uXRNear.x) discard;
       normal = (fragViewPos - vViewCenter) / vRadius;
       z = dot(normal, -rd);
     } else {
@@ -164,7 +204,7 @@ export const atomFragmentShader = /* glsl */ `precision highp float;
       // sphere normal's view-space Z: 1 facing the camera, 0 at the silhouette.
       vec3 shaded = vColor * mix(1.0 - uAmbientDarkening, 1.0, z);
       float edge = smoothstep(1.0 - rimWidth, 1.0 - rimWidth * 0.5, rim);
-      fragColor = vec4(mix(shaded, uOutlineColor, edge), finalOpacity);
+      fragColor = xrFinish(vec4(mix(shaded, uOutlineColor, edge), finalOpacity), fragViewPos, coverage);
       return;
     }
 
@@ -195,7 +235,7 @@ export const atomFragmentShader = /* glsl */ `precision highp float;
     vec3 color = vColor * (ambient + diffuse) * edgeFactor
                + vec3(1.0) * spec * 0.3
                + vec3(0.15) * fresnel;
-    fragColor = vec4(color, finalOpacity);
+    fragColor = xrFinish(vec4(color, finalOpacity), fragViewPos, coverage);
   }
 `;
 
@@ -209,6 +249,8 @@ export const bondVertexShader = /* glsl */ `precision highp float;
   uniform int uPositionTexWidth;
   // 1 in an immersive (WebXR) view: perspective-exact billboard.
   uniform highp int uExactImpostor;
+  // Immersive view: one pixel's size at unit distance, times projection[1][1].
+  uniform float uXRPixel;
 
   in vec3 position;
   in vec2 uv;
@@ -333,9 +375,10 @@ export const bondVertexShader = /* glsl */ `precision highp float;
         return;
       }
       vec3 facingSide = normalize(cross(dir, -foot / footDist));
-      float sideExtent = radius * footDist / sqrt(footDist * footDist - radius * radius);
+      float pixel = length(viewMid) * uXRPixel / projectionMatrix[1][1];
+      float sideExtent = radius * footDist / sqrt(footDist * footDist - radius * radius) + pixel;
       float reach = max(abs(dot(viewStart.xyz, dir)), abs(dot(viewEnd.xyz, dir)));
-      float axialExtent = len * 0.5 + reach * radius / (footDist - radius);
+      float axialExtent = len * 0.5 + reach * radius / (footDist - radius) + pixel;
       viewPos = viewMid
         + dir * (position.y * axialExtent)
         + facingSide * (position.x * sideExtent);
@@ -368,7 +411,7 @@ export const bondFragmentShader = /* glsl */ `precision highp float;
   uniform highp int uExactImpostor;
 
   out vec4 fragColor;
-
+${XR_FINISH_GLSL}
   void main() {
     // Analytic ray-cylinder intersection in view space. A flat billboard
     // parameterization mis-places the surface (and thus gl_FragDepth) for bonds
@@ -388,6 +431,17 @@ export const bondFragmentShader = /* glsl */ `precision highp float;
     float b = 2.0 * dot(rdPerp, ocPerp);
     float c = dot(ocPerp, ocPerp) - vRadius * vRadius;
     float disc = b * b - 4.0 * a * c;
+    // Immersive view: a one-pixel edge ramp centred on the silhouette, from
+    // the ray's closest approach to the axis in radii (see xrFinish). Taken
+    // before the discards so the derivative is defined. Its outer half misses
+    // the cylinder and takes the closest-approach point as its surface.
+    float coverage = 1.0;
+    if (uExactImpostor == 1) {
+      float rimB = sqrt(max(1.0 - disc / (4.0 * max(a, 1e-8) * vRadius * vRadius), 0.0));
+      coverage = clamp((1.0 - rimB) / max(fwidth(rimB), 1e-6) + 0.5, 0.0, 1.0);
+      if (coverage <= 0.0) discard;
+      disc = max(disc, 0.0);
+    }
     if (disc < 0.0 || a < 1e-8) discard;
     float sq = sqrt(disc);
     // Near (entry) root first; fall back to the far root if the camera is inside.
@@ -396,6 +450,7 @@ export const bondFragmentShader = /* glsl */ `precision highp float;
     if (t < 0.0) discard;
 
     vec3 hit = ro + t * rd;
+    if (uExactImpostor == 1 && length(hit) < uXRNear.x) discard;
     float axial = dot(hit - vViewMid, d);
     if (abs(axial) > vHalfLen) discard; // beyond the stick ends; the spheres cap it
 
@@ -460,6 +515,6 @@ export const bondFragmentShader = /* glsl */ `precision highp float;
     if (uUsePerBondOverrides == 1) {
       finalOpacity *= vBondOpacity;
     }
-    fragColor = vec4(color, finalOpacity);
+    fragColor = xrFinish(vec4(color, finalOpacity), hit, coverage);
   }
 `;

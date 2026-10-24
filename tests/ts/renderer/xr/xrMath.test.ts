@@ -4,6 +4,9 @@ import {
   boundingFocus,
   clampXRScale,
   computeXRPlacement,
+  depthCueRange,
+  XR_DEPTH_CUE_MAX_SPAN,
+  XR_NEAR_FADE,
   modelScale,
   oneHandGrab,
   stickSteer,
@@ -200,5 +203,33 @@ describe("stickSteer", () => {
     const angle = -XR_STICK_TURN_RATE * 0.2;
     expectVec(xAxis, v(Math.cos(angle), 0, -Math.sin(angle)));
     expectVec(v(0, 0, 0).applyMatrix4(turned), pivot);
+  });
+});
+
+describe("depthCueRange", () => {
+  it("spans the structure from its near side to its far side", () => {
+    const r = depthCueRange(v(0, 1.6, 0), v(0, 1.6, -1.1), 0.4);
+    expect(r.start).toBeCloseTo(0.7, 9);
+    expect(r.end).toBeCloseTo(1.5, 9);
+  });
+
+  it("never starts nearer than the near fade", () => {
+    const r = depthCueRange(v(0, 0, 0), v(0, 0, -0.5), 0.4);
+    expect(r.start).toBe(XR_NEAR_FADE);
+    expect(r.end).toBeCloseTo(0.9, 9);
+  });
+
+  it("caps the ramp from inside a large model so nearby atoms stay crisp", () => {
+    const r = depthCueRange(v(0, 0, 0), v(0, 0, -1), 10);
+    expect(r.start).toBe(XR_NEAR_FADE);
+    expect(r.end).toBeCloseTo(XR_NEAR_FADE + XR_DEPTH_CUE_MAX_SPAN, 9);
+    // A small model you are inside ends at its far side.
+    const small = depthCueRange(v(0, 0, 0), v(0, 0, -0.1), 0.3);
+    expect(small.end).toBeCloseTo(0.4, 9);
+  });
+
+  it("keeps a usable ramp for a vanishing model", () => {
+    const r = depthCueRange(v(0, 0, 0), v(0, 0, -2), 0);
+    expect(r.end - r.start).toBeCloseTo(0.05, 9);
   });
 });

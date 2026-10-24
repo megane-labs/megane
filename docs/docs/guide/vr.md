@@ -58,9 +58,25 @@ no WebXR, so the VS Code extension never shows them.
 | Leave | The headset's system menu | The headset's system menu |
 
 The structure enters the room the same side up as the desktop view showed
-it, about 70 cm ahead and slightly below eye level, scaled so that it is
-about half a metre across. Scaling anchors at the point between your hands,
-so put your hands on the part you want to enlarge.
+it, about 1.1 m ahead and slightly below eye level, scaled so that it is
+about 80 cm across. Scaling anchors at the point between your hands, so put
+your hands on the part you want to enlarge.
+
+### Comfort
+
+A headset's lenses focus at a fixed distance of one to two metres. Looking
+at something much nearer makes your eyes converge on one distance while
+focusing at another, which tires them quickly and, very close, stops the two
+images from fusing into one. So:
+
+- To see detail, **make the structure bigger** (both hands, or the
+  thumbstick) rather than leaning in.
+- Anything within 35 cm of your eyes fades out, and nothing within 20 cm is
+  drawn.
+- The far side of the structure fades toward the background colour (toward
+  black in AR). Near atoms stay crisp, so depth reads clearly, even from
+  inside a large model. On a white background the hydrogens fade first; a
+  dark theme keeps them visible further back.
 
 The pipeline, representation and colours are the ones the desktop view had;
 change them on the page before entering.
@@ -76,7 +92,8 @@ The immersive view is for looking at a structure. These still need the page:
 For contributors, the implementation is in `src/renderer/xr/`: placement and
 gestures in `xrMath.ts`, the session in `XRSessionController.ts`. In a
 session the impostor shaders switch to an exact perspective ray-cast
-(`uExactImpostor`), so spheres and sticks stay round however close you lean
-in. The `xr` Playwright project (`npm run test:e2e:xr`) runs the whole flow
+(`uExactImpostor`) and finish every fragment with `xrFinish` (`shaders.ts`):
+the near fade, the depth cue, and a one-pixel edge ramp that alpha-to-coverage
+turns into anti-aliased silhouettes. The `xr` Playwright project (`npm run test:e2e:xr`) runs the whole flow
 in headless Chromium under Meta's [IWER](https://github.com/meta-quest/immersive-web-emulation-runtime)
 Quest 3 emulator.
