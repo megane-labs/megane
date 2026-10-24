@@ -11,7 +11,7 @@ The Megane viewer ships through 5 distribution targets. Each one renders the sam
 
 All E2E uses `@playwright/test`. `puppeteer` is **not** in `package.json`; only `playwright` 1.56 is installed. Never add or invoke Puppeteer.
 
-**CI split** — see `.agents/skills/testing/SKILL.md` for the full story. The webapp-host and JupyterLab-host projects run in CI (`.github/workflows/e2e.yml`, via `npm run test:e2e:ci:webapp` / `test:e2e:ci:jupyterlab`) inside the pinned Playwright container, against the CI-only baseline set `tests/e2e/baselines-ci/` (selected with `MEGANE_E2E_BASELINE_DIR`; missing baselines are hard failures under `MEGANE_E2E_REQUIRE_BASELINE=1`). Those baselines are re-recorded **only** by the "E2E update baselines" workflow (add the `update-e2e-baselines` label to the PR, or workflow_dispatch), which runs in the same container and commits the PNGs to the dispatched branch — never capture them locally. The VSCode-hosted projects (`vscode`, `widget-vscode`) are local-only. `tests/e2e/baselines/` remains the local baseline set for everything below.
+**CI split** — see `.agents/skills/testing/SKILL.md` for the full story. The webapp-host and JupyterLab-host projects run in CI (`.github/workflows/e2e.yml`, via `npm run test:e2e:ci:webapp` — split over three runners as `test:e2e:ci:webapp:1`…`:3` — and `test:e2e:ci:jupyterlab`) inside the pinned Playwright container, against the CI-only baseline set `tests/e2e/baselines-ci/` (selected with `MEGANE_E2E_BASELINE_DIR`; missing baselines are hard failures under `MEGANE_E2E_REQUIRE_BASELINE=1`). Those baselines are re-recorded **only** by the "E2E update baselines" workflow (add the `update-e2e-baselines` label to the PR, or workflow_dispatch), which runs in the same container and commits the PNGs to the dispatched branch — never capture them locally. The VSCode-hosted projects (`vscode`, `widget-vscode`) are local-only. `tests/e2e/baselines/` remains the local baseline set for everything below.
 
 ## When E2E MUST run (CRITICAL RULE #9)
 
@@ -220,6 +220,8 @@ And add a script to `package.json`:
 ```
 "test:e2e:my-feature": "playwright test --project=my-feature"
 ```
+
+To run a webapp-hosted project in CI, append `--project=my-feature` to `test:e2e:ci:webapp` **and** to the lightest `test:e2e:ci:webapp:<n>` shard (compare the shard jobs' durations in a recent E2E run); `tests/ts/e2e-ci-shards.test.ts` fails until both lists agree.
 
 Cross-host specs use the host fixture from `tests/e2e/lib/host-fixture.ts`:
 
