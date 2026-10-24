@@ -123,13 +123,21 @@ gets flagged is two competing non-default treatments for one atom, whose winner
 is unspecified), and, when a structure is loaded, the graph is actually executed
 so the real `nodeErrors` (`Filter returned 0 atoms`, `Replicate requires a unit
 cell`, …) come back. Findings are fed into the **same** conversation and the
-model is asked to fix them, up to `MAX_REPAIR_ROUNDS` (`src/ai/client.ts`).
+model is asked to fix them, up to `MAX_REPAIR_ROUNDS` (`src/ai/generation.ts`).
 
 Two rules when touching this code: the self-check must never report a node the
 model did not write (`deserializePipeline` normalizes the graph and injects an
 `add_bond` node plus default viewport edges), and it must never report a finding
 that only means "the user has not opened a file yet" — every generated pipeline
 has `fileName: null` by design. Both are enforced by `tests/ts/ai/selfCheck.test.ts`.
+
+Megane Builder's Flow mode has the same assistant (`src/builder/flow/FlowChatBox.tsx`,
+prompt / self-check in `src/builder/flow/ai/`), built on the shared provider loop
+(`src/ai/generation.ts`, `runGeneration`) and dock (`src/components/AssistantDock.tsx`):
+it emits a `SerializedFlow`, applied with the flow store's `applyGenerated` (one Undo
+step; unchanged blocks keep their results). Both rules above hold for its check too
+(a *Manual structure* block with nothing open is not a finding), enforced by
+`tests/ts/builder/flow/ai/check.test.ts`.
 
 ## LLM Prompt-Eval CI (bench/llm)
 
