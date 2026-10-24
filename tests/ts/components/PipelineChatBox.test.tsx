@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach, beforeEach } from "vitest";
-import { render, screen, fireEvent, cleanup, waitFor } from "@testing-library/react";
+import { render, screen, fireEvent, cleanup, waitFor, act } from "@testing-library/react";
 
 type StoreNode = {
   id: string;
@@ -8,7 +8,10 @@ type StoreNode = {
   data: { params: Record<string, unknown> };
 };
 
-const { storeState } = vi.hoisted(() => ({
+const { storeState, listeners } = vi.hoisted(() => ({
+  // Store subscribers: the dock's host re-renders from the store, as it does
+  // under the real one, when the undo stack changes.
+  listeners: new Set<() => void>(),
   storeState: {
     nodes: [] as StoreNode[],
     nodeSnapshots: {} as Record<string, unknown>,
@@ -61,7 +64,10 @@ vi.mock("@/pipeline/store", () => {
     getState: () => storeState,
     getInitialState: () => storeState,
     setState: () => {},
-    subscribe: () => () => {},
+    subscribe: (listener: () => void) => {
+      listeners.add(listener);
+      return () => listeners.delete(listener);
+    },
   });
   return { usePipelineStore, createPipelineStore: () => usePipelineStore };
 });
@@ -80,6 +86,12 @@ import {
   tryExtractPipeline,
   RateLimitError,
 } from "@/ai/client";
+
+/** Replace the store's undo stack and tell its subscribers, as the store does. */
+function setUndoStack(stack: { id: number }[]) {
+  storeState.generatedUndoStack = stack;
+  act(() => listeners.forEach((l) => l()));
+}
 
 function openConfigPanel() {
   fireEvent.click(screen.getByTitle("AI Settings"));
@@ -117,14 +129,14 @@ beforeEach(() => {
     (_p: unknown, opts?: { checkpoint?: boolean }) => {
       if (!opts?.checkpoint) return null;
       const id = nextId++;
-      storeState.generatedUndoStack = [...storeState.generatedUndoStack, { id }];
+      setUndoStack([...storeState.generatedUndoStack, { id }]);
       return id;
     },
   );
   storeState.undoGeneratedPipeline.mockReset();
   storeState.undoGeneratedPipeline.mockImplementation(() => {
     if (storeState.generatedUndoStack.length === 0) return false;
-    storeState.generatedUndoStack = storeState.generatedUndoStack.slice(0, -1);
+    setUndoStack(storeState.generatedUndoStack.slice(0, -1));
     return true;
   });
 });
@@ -492,6 +504,21 @@ describe("PipelineChatBox — applying a generated pipeline", () => {
     expect(screen.queryByText(/fetch the molecule template/)).toBeNull();
   });
 
+  it("starts the reply over when a repair round begins", async () => {
+    (generatePipeline as ReturnType<typeof vi.fn>).mockImplementation(
+      async (_c, _m, onChunk: (c: string) => void, _s, _sum, _ctx, onRepair: () => void) => {
+        onChunk('```json\n{ "version": 3, "nodes": [] }\n```\nFirst try.');
+        onRepair();
+        onChunk('```json\n{ "version": 3, "nodes": [] }\n```\nFixed.');
+        return '```json\n{ "version": 3, "nodes": [] }\n```\nFixed.';
+      },
+    );
+    render(<PipelineChatBox />);
+    submit("show it");
+    expect(await screen.findByText("Fixed.")).toBeTruthy();
+    expect(screen.queryByText(/First try/)).toBeNull();
+  });
+
   it("applies through the store with one undo checkpoint per request", async () => {
     render(<PipelineChatBox />);
     submit("rebuild the view");
@@ -537,10 +564,9 @@ describe("PipelineChatBox — applying a generated pipeline", () => {
     render(<PipelineChatBox />);
     submit("first");
     await screen.findByText(/Pipeline applied/);
+    expect(screen.getByTestId("pipeline-chat-undo")).toBeTruthy();
     // e.g. a new file was opened, which empties the store's undo stack.
-    storeState.generatedUndoStack = [];
-    fireEvent.click(screen.getByTestId("pipeline-chat-toggle"));
-    fireEvent.click(screen.getByTestId("pipeline-chat-toggle"));
+    setUndoStack([]);
     expect(screen.queryByTestId("pipeline-chat-undo")).toBeNull();
   });
 

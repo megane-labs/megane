@@ -377,6 +377,142 @@ test.describe("builder-tools: webapp", () => {
     await expect(node("n1").getByTestId("builder-flow-node-summary")).toContainText("62 atoms");
   });
 
+  test("the Flow assistant builds a flow from a request, edits it, keeps results, and can undo", async ({
+    page,
+  }) => {
+    // Stand in for the Anthropic API: the first request builds rocksalt NaCl
+    // repeated 3 × 3 × 3; the follow-up reads the flow the assistant was sent
+    // and makes the supercell 2 × 2 × 2, as a model would.
+    const requests: { system: string; message: string }[] = [];
+    await page.route("https://api.anthropic.com/v1/messages", async (route) => {
+      const cors = {
+        "access-control-allow-origin": "*",
+        "access-control-allow-headers": "*",
+        "access-control-allow-methods": "POST, OPTIONS",
+      };
+      if (route.request().method() === "OPTIONS") {
+        await route.fulfill({ status: 204, headers: cors });
+        return;
+      }
+      const body = route.request().postDataJSON() as {
+        system: string;
+        messages: { content: unknown }[];
+      };
+      const message = String(body.messages[body.messages.length - 1].content);
+      requests.push({ system: body.system, message });
+      const current = /## Current flow[\s\S]*?```json\n([\s\S]*?)\n```/.exec(message);
+      let flow: { nodes: { params: Record<string, unknown> }[] };
+      let sentence: string;
+      if (current) {
+        flow = JSON.parse(current[1]);
+        for (const n of flow.nodes) if (n.params.type === "supercell") n.params.repeat = [2, 2, 2];
+        sentence = "Makes the supercell 2 × 2 × 2.";
+      } else {
+        flow = {
+          version: 1,
+          nodes: [
+            {
+              id: "n1",
+              position: { x: 40, y: 40 },
+              params: {
+                type: "crystal",
+                structure: "rocksalt",
+                elements: ["Na", "Cl", ""],
+                a: 5.64,
+              },
+            },
+            {
+              id: "n2",
+              position: { x: 40, y: 190 },
+              params: { type: "supercell", repeat: [3, 3, 3] },
+            },
+          ],
+          edges: [{ source: "n1", target: "n2", targetHandle: "structure" }],
+        } as never;
+        sentence = "Builds rocksalt NaCl repeated 3 × 3 × 3.";
+      }
+      const reply = "```json\n" + JSON.stringify(flow) + "\n```\n" + sentence;
+      const sse =
+        "event: content_block_delta\n" +
+        `data: ${JSON.stringify({ type: "content_block_delta", delta: { type: "text_delta", text: reply } })}\n\n` +
+        "event: message_delta\n" +
+        `data: ${JSON.stringify({ type: "message_delta", delta: { stop_reason: "end_turn" } })}\n\n`;
+      await route.fulfill({
+        status: 200,
+        headers: { ...cors, "content-type": "text/event-stream" },
+        body: sse,
+      });
+    });
+    await fakeToolServer(page, []);
+    await page.goto(`/builder.html?test=1#tools=${encodeURIComponent(SERVER)}&token=${TOKEN}`);
+    await page.getByTestId("builder-tools").click();
+    await expect(page.getByTestId("builder-tools-server-name")).toHaveText("megane-builder-tools");
+    await page.getByTestId("builder-tools").click();
+    await page.getByTestId("builder-mode-flow").click();
+
+    // The prompt bar sits between the graph and the selected block's pane.
+    const input = page.getByTestId("builder-flow-chat-input");
+    const graphBox = await page.getByTestId("builder-flow-graph").boundingBox();
+    const inputBox = await input.boundingBox();
+    const splitBox = await page.getByRole("separator").boundingBox();
+    expect(graphBox!.y + graphBox!.height).toBeLessThanOrEqual(inputBox!.y + 1);
+    expect(inputBox!.y + inputBox!.height).toBeLessThanOrEqual(splitBox!.y + 1);
+
+    // This build has no free-demo proxy, so enter a key in the settings.
+    await page.getByTestId("builder-flow-chat").locator('button[title="AI Settings"]').click();
+    await page
+      .locator('[data-testid="builder-flow-chat-settings"] input[type="password"]')
+      .fill("sk-ant-test");
+
+    await input.fill("a 3x3x3 supercell of rocksalt NaCl");
+    await input.press("Enter");
+    await expect(page.getByText("Builds rocksalt NaCl repeated 3 × 3 × 3.")).toBeVisible();
+    const node = (id: string) => page.locator(`.react-flow__node[data-id="${id}"]`);
+    await expect(page.locator(".react-flow__node")).toHaveCount(2);
+    await expect(page.locator(".react-flow__edge")).toHaveCount(1);
+    await expect(node("n2").getByTestId("builder-flow-node-supercell")).toContainText("3 × 3 × 3");
+    // The system prompt carried the connected server's tools; one request, no repair.
+    expect(requests).toHaveLength(1);
+    expect(requests[0].system).toContain('#### "liquid_box"');
+    expect(requests[0].message).toBe("a 3x3x3 supercell of rocksalt NaCl");
+
+    // The user runs what the assistant built: 8 atoms per cubic cell × 27.
+    await page.getByTestId("builder-flow-run").click();
+    await expect(node("n2").getByTestId("builder-flow-node-summary")).toContainText("216 atoms", {
+      timeout: 30_000,
+    });
+
+    // A follow-up about the selected block edits the flow in place. The
+    // conversation opens over the bottom of the graph; hide it to pick a block.
+    await page.getByTestId("builder-flow-chat-toggle").click();
+    await expect(page.getByTestId("builder-flow-chat-history")).toHaveCount(0);
+    await node("n2").click();
+    await expect(input).toHaveAttribute("placeholder", "Ask AI to change Supercell (n2)…");
+    await input.fill("make this 2 along each axis");
+    await input.press("Enter");
+    await expect(page.getByText("Makes the supercell 2 × 2 × 2.")).toBeVisible();
+    expect(requests).toHaveLength(2);
+    expect(requests[1].message).toContain("## Current flow");
+    expect(requests[1].message).toContain("Selected in the graph: `n2` (supercell).");
+    await expect(node("n2").getByTestId("builder-flow-node-supercell")).toContainText("2 × 2 × 2");
+    // The crystal it kept keeps its result; the changed supercell goes stale.
+    await expect(node("n1").getByTestId("builder-flow-node-crystal")).toHaveAttribute(
+      "data-status",
+      "done",
+    );
+    await expect(node("n2").getByTestId("builder-flow-node-supercell")).toHaveAttribute(
+      "data-status",
+      "stale",
+    );
+
+    // Undo puts the 3 × 3 × 3 flow back; Run takes its result from the cache.
+    await page.getByTestId("builder-flow-chat-undo").click();
+    await expect(page.getByText("(undone)")).toBeVisible();
+    await expect(node("n2").getByTestId("builder-flow-node-supercell")).toContainText("3 × 3 × 3");
+    await page.getByTestId("builder-flow-run").click();
+    await expect(node("n2").getByTestId("builder-flow-node-summary")).toContainText("216 atoms");
+  });
+
   test("a wrong token is reported and nothing connects", async ({ page }) => {
     await fakeToolServer(page, []);
     await page.goto("/builder.html?test=1");

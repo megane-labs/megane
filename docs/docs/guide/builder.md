@@ -458,8 +458,9 @@ cards, wires, minimap and properties pane. Its own rail, down the panel's
 left edge, holds **Add**, **Templates**, **Auto Layout**, **Undo** / **Redo** (of
 changes to the graph), **Run** (**Stop**
 while a run is going), the **File** menu (*Open flow…*, *Save flow*, *Clear
-all blocks*) and the theme button; the graph is on top, and the selected block's settings
-are under it, in the same rows as a pipeline node's.
+all blocks*) and the theme button; the graph is on top, the
+[AI assistant](#ai-assistant)'s prompt bar under it, and the selected block's settings
+under that, in the same rows as a pipeline node's.
 
 **Add** puts a block in the middle of the graph and selects it. It offers
 these blocks:
@@ -517,6 +518,47 @@ The templates that pack a box or solvate use the reference tool server's
 their tool blocks take the tool's defaults for every setting the template
 does not set once the server is connected. Each template's tool settings
 include a fixed seed, so it builds the same structure every time.
+
+### AI assistant
+
+Describe the model you want and the assistant builds the flow for you, as the
+viewer's [AI pipeline generator](./pipeline/index.md#ai-pipeline-generator)
+builds pipelines. Its prompt bar is docked under the graph; type a request
+like
+
+> A Pt(111) slab with a 3 × 3 layer of CO on top
+
+and press <kbd>Enter</kbd>. The blocks and wires appear in the graph as the
+answer arrives; press **Run** to build them (the assistant never runs the flow
+itself — a run can take minutes and replaces the Manual structure).
+
+Each request is sent with the flow in the graph, the blocks you have selected
+and the earlier messages, so follow-ups such as *"make the slab 6 layers"* or
+*"use this molecule instead"* (with a block selected) edit that flow instead of
+starting over. The assistant knows every block and its settings, your library
+molecules, whether a structure is open in Manual mode (a *Manual structure*
+block reads it), and the tools of the connected tool server with their inputs
+and settings; without a server it builds from the blocks that run in the
+browser, and says so when a request needs one (a packed liquid box,
+solvation). Blocks the new flow keeps unchanged keep their results, so the
+next Run only builds what changed.
+
+The speech-bubble button at the left of the bar opens the conversation over
+the bottom of the graph; a reply that changed the flow offers **Undo** while
+it is the latest change, and Ctrl/⌘+Z undoes it too (the whole request is one
+Undo step). A request waits while a run is in progress. The ⚙ button opens
+the same **AI Settings** as the viewer's assistant — provider, model and API
+key, or the free demo where the build offers it — and the choice is shared
+with it.
+
+The assistant checks its own output before you run it: blocks and settings
+Flow mode does not have, settings a block would refuse (a slab with Miller
+indices 0 0 0, an unknown element), wires into inputs a block does not have,
+inputs left empty, a loop, a supercell or slab fed a molecule (they need a
+unit cell), and tool settings outside the tool's form. Anything it finds is
+sent back to the model to fix, for up to two repair rounds.
+
+### Wiring and running
 
 Drag from a block's output (the dot at its bottom) to another block's input
 (a dot on its top) to wire them; a wire that would make a loop is refused.

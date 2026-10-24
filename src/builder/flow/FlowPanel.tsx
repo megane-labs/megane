@@ -1,8 +1,9 @@
 /**
  * The Flow panel: megane Builder's node-graph editor, built from the same
  * kit as the viewer's Pipeline panel (`components/graph/`) — the resizable
- * panel with its rail on the left, the graph canvas, the draggable split,
- * and the selected block's pane under it. It takes the place of the Details
+ * panel with its rail on the left, the graph canvas, the AI assistant's
+ * prompt bar (`FlowChatBox`), the draggable split, and the selected block's
+ * pane under it. It takes the place of the Details
  * and History panels on the right of the view while the Builder is in Flow
  * mode.
  *
@@ -47,6 +48,7 @@ import { isTypingTarget } from "../shortcuts";
 import { defaultBuiltinParams } from "./builtins";
 import { STRUCTURE_COLOR, blockColor } from "./describe";
 import { wouldCycle, type FlowDeps } from "./engine";
+import { FlowChatBox } from "./FlowChatBox";
 import { flowNodeTypes } from "./FlowNodeCard";
 import { FlowProperties } from "./FlowProperties";
 import { FlowRail, addMenuItems, type FlowActions } from "./FlowRail";
@@ -364,6 +366,9 @@ function FlowEditor({
           edgeActions={edgeActions}
           miniMapNodeColor={(n) => blockColor(n.data.params)}
         />
+        {/* The assistant sits between the graph it edits and the selected
+            block's pane, as in the viewer's pipeline editor. */}
+        <FlowChatBox deps={deps} hasTools={hasTools} />
         <SplitSeparator onMouseDown={handleSplitMouseDown} />
         <FlowProperties
           deps={deps}
