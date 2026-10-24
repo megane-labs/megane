@@ -293,6 +293,18 @@ describe("FlowPanel", () => {
     expect(screen.getByTestId("builder-flow-empty-hint").textContent).toContain("Add blocks");
   });
 
+  it("docks the AI assistant between the canvas and the split", () => {
+    wrap(<FlowPanel {...panelProps()} />);
+    const dock = screen.getByTestId("builder-flow-chat");
+    const graph = screen.getByTestId("builder-flow-graph");
+    const split = screen.getByRole("separator");
+    expect(graph.compareDocumentPosition(dock) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(dock.compareDocumentPosition(split) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(screen.getByTestId("builder-flow-chat-input").getAttribute("placeholder")).toBe(
+      "Ask AI to build or edit the flow…",
+    );
+  });
+
   it("adds blocks in the middle of the view, never on top of each other", () => {
     stores.tools.setState({ status: "connected", connection: connection() });
     const onCloseServer = vi.fn();

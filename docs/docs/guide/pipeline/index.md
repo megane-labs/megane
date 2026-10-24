@@ -54,6 +54,8 @@ Open **AI Settings** (the ⚙ button beside the chat input) to choose a provider
 
 The generator checks its own output after each generation: the pipeline schema, the selection-query syntax, edge types, and — when a structure is loaded — the errors the graph actually produces when executed (e.g. `Filter returned 0 atoms`). Any findings are sent back to the model to fix, for up to two repair rounds.
 
+Megane Builder's Flow mode has the same assistant for building models (a slab with molecules on it, a liquid box, a polymer melt): see [Flow mode's AI assistant](../builder.md#ai-assistant). Both share the AI settings.
+
 ## VS Code Extension Auto-Setup
 
 When you open a supported molecular file (`.pdb`, `.gro`, `.xyz`, `.cif`, `.data`, `.lammpstrj`, POSCAR, and the rest of the formats listed in [Platform Support](/platform-support)) in the Megane VS Code extension, it automatically creates a default pipeline consisting of `LoadStructure → Symmetry → Wrap → Replicate → AddBond → Viewport`. The AddBond source is picked from the format — bonds read from the file for formats that carry them (PDB, MOL/SDF, LAMMPS data, CML, …), distance-based inference otherwise. This gives you an immediate 3D view of the structure with bonds, without needing to build a pipeline manually. You can then modify the auto-generated pipeline in the editor as needed. A `.megane.json` file opens as the pipeline it describes (see [JSON](./json.md)).

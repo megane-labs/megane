@@ -495,3 +495,112 @@ describe("the pinned document", () => {
     expect(s.getState().stopping).toBe(false);
   });
 });
+
+describe("applying a generated flow", () => {
+  /** The chain's flow with the molecule's SMILES changed. */
+  function edited(s: StoreApi<FlowStore>, smiles: string): ReturnType<FlowStore["serialize"]> {
+    const flow = s.getState().serialize();
+    return {
+      ...flow,
+      nodes: flow.nodes.map((n) =>
+        n.params.type === "molecule" ? { ...n, params: { ...n.params, smiles } } : n,
+      ),
+    };
+  }
+
+  it("keeps the results of unchanged blocks and marks changed ones stale", async () => {
+    const { s, a, box } = chain();
+    await s.getState().run(fakeDeps());
+    const before = s.getState().nodes;
+
+    s.getState().applyGenerated(s.getState().serialize());
+    expect(s.getState().runs[a].status).toBe("done");
+    expect(s.getState().runs[box].status).toBe("done");
+    // An unchanged block keeps its params object, so nothing reads as edited.
+    expect(s.getState().nodes[0].data.params).toBe(before[0].data.params);
+
+    s.getState().applyGenerated(edited(s, "CO"));
+    expect(s.getState().runs[a].status).toBe("stale");
+    expect(s.getState().runs[box].status).toBe("stale");
+    expect((s.getState().nodes[0].data.params as { smiles: string }).smiles).toBe("CO");
+  });
+
+  it("drops the results of blocks the new flow leaves out, and keeps the selection", async () => {
+    const { s, a, box } = chain();
+    await s.getState().run(fakeDeps());
+    s.getState().selectNode(a);
+    const flow = s.getState().serialize();
+    s.getState().applyGenerated({
+      ...flow,
+      nodes: flow.nodes.filter((n) => n.id === a),
+      edges: [],
+    });
+    expect(s.getState().nodes.map((n) => n.id)).toEqual([a]);
+    expect(s.getState().nodes[0].selected).toBe(true);
+    expect(s.getState().runs[box]).toBeUndefined();
+    expect(s.getState().viewNodeId).toBeNull();
+  });
+
+  it("keeps the link to the Manual document and the file name, unlike load", () => {
+    const { s } = chain();
+    s.getState().setAdoptedKey("k");
+    const pin = { adoptedDocKey: "d2", base: { data: waterData(), key: "d1" } };
+    s.getState().setPinnedDocument(pin);
+    s.getState().load(s.getState().serialize(), { name: "mine.megane-flow.json" });
+    s.getState().setAdoptedKey("k");
+    s.getState().setPinnedDocument(pin);
+    s.getState().applyGenerated(s.getState().serialize());
+    expect(s.getState().adoptedKey).toBe("k");
+    expect(s.getState().pinnedDocument).toBe(pin);
+    expect(s.getState().fileName).toBe("mine.megane-flow.json");
+  });
+
+  it("is one Undo step per request, tagged with its checkpoint", () => {
+    const { s, box } = chain();
+    const original = s.getState().nodes;
+    const id = s.getState().applyGenerated(edited(s, "CO"));
+    expect(id).toEqual(expect.any(Number));
+    expect(s.getState().past.at(-1)?.generated).toBe(id);
+    // A repair round's fix replaces the graph inside the same step.
+    expect(s.getState().applyGenerated(edited(s, "CCO"), { checkpoint: false })).toBeNull();
+    expect(s.getState().past.at(-1)?.generated).toBe(id);
+
+    expect(s.getState().undoGenerated(id! + 1)).toBe(false);
+    expect(s.getState().undoGenerated(id!)).toBe(true);
+    expect(s.getState().nodes).toBe(original);
+    expect(s.getState().nodes.map((n) => n.id)).toContain(box);
+    // Nothing left to undo for that checkpoint.
+    expect(s.getState().undoGenerated(id!)).toBe(false);
+  });
+
+  it("hands out a new checkpoint each request, and loses it to a later change", () => {
+    const { s, a } = chain();
+    const first = s.getState().applyGenerated(edited(s, "CO"))!;
+    const second = s.getState().applyGenerated(edited(s, "CCO"))!;
+    expect(second).toBeGreaterThan(first);
+    s.getState().updateParams(a, { name: "x" } as Partial<FlowParams>);
+    expect(s.getState().undoGenerated(second)).toBe(false);
+  });
+
+  it("stops a run in progress, and will not undo during one", async () => {
+    const { s } = chain();
+    let release: () => void = () => {};
+    const deps = fakeDeps({
+      embedSmiles: () =>
+        new Promise((resolve) => {
+          release = () => resolve(waterData().snapshot);
+        }),
+    });
+    const id = s.getState().applyGenerated(edited(s, "CO"))!;
+    const running = s.getState().run(deps);
+    expect(s.getState().running).not.toBeNull();
+    expect(s.getState().undoGenerated(id)).toBe(false);
+
+    const controller = s.getState().running!;
+    s.getState().applyGenerated(edited(s, "CCO"));
+    expect(controller.signal.aborted).toBe(true);
+    expect(s.getState().running).toBeNull();
+    release();
+    expect(await running).toBe("cancelled");
+  });
+});
