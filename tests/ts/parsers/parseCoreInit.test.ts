@@ -17,7 +17,7 @@ const { init, wasmMock } = vi.hoisted(() => {
     "parse_cif parse_mmcif parse_lammps_data parse_prmtop parse_traj " +
     "parse_lammpstrj_structure parse_xtc_file parse_dcd_file parse_netcdf_file " +
     "parse_lammpstrj_file parse_structure_prefix parse_traj_frame0 decode_trajectory_frame0 " +
-    "XtcDecoder " +
+    "XtcDecoder XtcIndexer " +
     "LammpstrjDecoder StructureFrameDecoder infer_bonds_vdw parse_top_bonds " +
     "parse_top_bonds_with_includes parse_psf_bonds parse_pdb_bonds extract_labels " +
     "write_structure"

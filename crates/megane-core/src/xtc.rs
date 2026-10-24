@@ -74,10 +74,6 @@ impl<'a> XdrReader<'a> {
         Ok(slice)
     }
 
-    fn pos(&self) -> usize {
-        self.pos
-    }
-
     /// Jump to an absolute byte position (used to decode a single frame lazily).
     fn seek(&mut self, pos: usize) {
         self.pos = pos;
@@ -451,25 +447,32 @@ fn read_frame_header(xdr: &mut XdrReader) -> Result<Option<FrameHeader>, String>
     }))
 }
 
-/// Skip a compressed coordinate block without decoding it. The block's byte
-/// length is derivable from the fixed-size sub-header (`nbytes` at a fixed
-/// offset), so an index scan is O(1) per frame regardless of atom count.
-fn skip_coord_block(xdr: &mut XdrReader, natoms: usize) -> Result<(), String> {
+/// Size of the fixed frame header read by `read_frame_header`.
+const FRAME_HEADER_BYTES: usize = 52;
+
+/// Bytes from the start of a frame that the index scan reads to find where the
+/// next frame starts: the 52-byte header, the coordinate block's atom count,
+/// and — for a compressed block — its 32-byte sub-header and byte count.
+pub const FRAME_PEEK_BYTES: usize = FRAME_HEADER_BYTES + 4 + 32 + 4;
+
+/// Byte length of the coordinate block at the cursor (at its `lsize` field),
+/// read from its fixed-size sub-header (`nbytes` sits at a fixed offset), so
+/// the index scan is O(1) per frame regardless of atom count and never reads
+/// the block's body.
+fn coord_block_len(xdr: &mut XdrReader, natoms: usize) -> Result<usize, String> {
     let lsize = xdr.read_i32()? as usize;
     if lsize != natoms {
         return Err(format!("coord block size {} != natoms {}", lsize, natoms));
     }
     if natoms <= 9 {
         // Plain XDR floats: natoms*3 four-byte values (already 4-byte aligned).
-        xdr.skip(natoms * 3 * 4)?;
-        return Ok(());
+        return Ok(4 + natoms * 3 * 4);
     }
     // precision(4) + minint[3](12) + maxint[3](12) + smallidx(4) = 32 bytes.
     xdr.skip(32)?;
     let nbytes = xdr.read_u32()? as usize;
     // XDR opaque data is padded to a 4-byte boundary.
-    xdr.skip((nbytes + 3) & !3)?;
-    Ok(())
+    Ok(4 + 32 + 4 + ((nbytes + 3) & !3))
 }
 
 /// Lightweight index over an XTC file: per-frame byte offsets + times + the box,
@@ -480,59 +483,106 @@ pub struct XtcIndex {
     pub timestep_ps: f32,
     /// Box of the last frame (parity with `parse_xtc`'s single-box output).
     pub box_matrix: Option<[f32; 9]>,
-    /// Byte offset of each frame's magic header.
-    pub offsets: Vec<usize>,
+    /// Byte offset of each frame's magic header (64-bit: a file indexed in
+    /// windows by `XtcIndexBuilder` may be larger than wasm32's address space).
+    pub offsets: Vec<u64>,
     /// Per-frame time (ps).
     pub times: Vec<f32>,
 }
 
+/// Builds an [`XtcIndex`] from consecutive windows of a file instead of the
+/// whole of it, so a host can index a file it never loads into memory: hand
+/// [`scan`](Self::scan) the file's bytes from [`next_offset`](Self::next_offset)
+/// on, again and again, until that offset reaches the end of the file. A
+/// window needs only [`FRAME_PEEK_BYTES`] of each frame; the compressed
+/// coordinates past them are skipped without being read.
+#[derive(Default)]
+pub struct XtcIndexBuilder {
+    n_atoms: usize,
+    last_box: Option<[f32; 9]>,
+    offsets: Vec<u64>,
+    times: Vec<f32>,
+    next: u64,
+}
+
+impl XtcIndexBuilder {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// File offset of the next frame header, where the next window starts.
+    pub fn next_offset(&self) -> u64 {
+        self.next
+    }
+
+    /// Index every frame whose header lies in `window` (the file's bytes from
+    /// `next_offset()` on) and move `next_offset()` past them, possibly beyond
+    /// the window. Without `at_eof`, a frame whose first `FRAME_PEEK_BYTES`
+    /// are not all in the window waits for the next one; with it (the window
+    /// runs to the end of the file), fewer than 16 trailing bytes end the file
+    /// and anything else must parse. Returns how many frames were found.
+    pub fn scan(&mut self, window: &[u8], at_eof: bool) -> Result<usize, String> {
+        let mut pos = 0usize;
+        let mut found = 0usize;
+        while pos < window.len() {
+            let rest = &window[pos..];
+            if rest.len() < FRAME_PEEK_BYTES && !at_eof {
+                break;
+            }
+            let mut xdr = XdrReader::new(rest);
+            let header = match read_frame_header(&mut xdr)? {
+                Some(h) => h,
+                None => break,
+            };
+            if self.n_atoms == 0 {
+                self.n_atoms = header.natoms;
+            } else if header.natoms != self.n_atoms {
+                return Err(format!(
+                    "inconsistent atom count: {} vs {}",
+                    header.natoms, self.n_atoms
+                ));
+            }
+            let len = FRAME_HEADER_BYTES + coord_block_len(&mut xdr, self.n_atoms)?;
+            self.offsets.push(self.next + pos as u64);
+            self.times.push(header.time);
+            self.last_box = Some(header.box_matrix);
+            pos += len;
+            found += 1;
+        }
+        self.next += pos as u64;
+        Ok(found)
+    }
+
+    /// The index of a `file_len`-byte file whose windows have all been scanned.
+    pub fn finish(self, file_len: u64) -> Result<XtcIndex, String> {
+        if self.next > file_len {
+            return Err("truncated XTC frame: coordinates run past the end of the file".into());
+        }
+        if self.offsets.is_empty() {
+            return Err("no frames found in XTC file".into());
+        }
+        let n_frames = self.offsets.len();
+        let timestep_ps = if n_frames > 1 {
+            self.times[1] - self.times[0]
+        } else {
+            1.0
+        };
+        Ok(XtcIndex {
+            n_atoms: self.n_atoms,
+            n_frames,
+            timestep_ps,
+            box_matrix: self.last_box,
+            offsets: self.offsets,
+            times: self.times,
+        })
+    }
+}
+
 /// Scan an XTC file and build its frame index without decoding coordinates.
 pub fn build_index(data: &[u8]) -> Result<XtcIndex, String> {
-    let mut xdr = XdrReader::new(data);
-    let mut offsets: Vec<usize> = Vec::new();
-    let mut times: Vec<f32> = Vec::new();
-    let mut n_atoms: usize = 0;
-    let mut last_box: Option<[f32; 9]> = None;
-
-    loop {
-        let start = xdr.pos();
-        let header = match read_frame_header(&mut xdr)? {
-            Some(h) => h,
-            None => break,
-        };
-        if n_atoms == 0 {
-            n_atoms = header.natoms;
-        } else if header.natoms != n_atoms {
-            return Err(format!(
-                "inconsistent atom count: {} vs {}",
-                header.natoms, n_atoms
-            ));
-        }
-        offsets.push(start);
-        times.push(header.time);
-        last_box = Some(header.box_matrix);
-        skip_coord_block(&mut xdr, n_atoms)?;
-    }
-
-    if offsets.is_empty() {
-        return Err("no frames found in XTC file".into());
-    }
-
-    let n_frames = offsets.len();
-    let timestep_ps = if n_frames > 1 {
-        times[1] - times[0]
-    } else {
-        1.0
-    };
-
-    Ok(XtcIndex {
-        n_atoms,
-        n_frames,
-        timestep_ps,
-        box_matrix: last_box,
-        offsets,
-        times,
-    })
+    let mut builder = XtcIndexBuilder::new();
+    builder.scan(data, true)?;
+    builder.finish(data.len() as u64)
 }
 
 /// Decode a single frame's coordinates (Å) given its byte offset (from
@@ -684,10 +734,143 @@ mod tests {
         // Every lazily-decoded frame must be BIT-IDENTICAL to the eager frame:
         // decode_frame_at reuses the same decompress_coords, so this is exact.
         for i in 0..idx.n_frames {
-            let lazy = decode_frame_at(&data, idx.offsets[i], idx.n_atoms)
+            let lazy = decode_frame_at(&data, idx.offsets[i] as usize, idx.n_atoms)
                 .unwrap_or_else(|e| panic!("decode frame {i}: {e}"));
             assert_eq!(lazy, eager.frame(i), "frame {i} mismatch");
         }
+    }
+
+    fn demo_xtc() -> Vec<u8> {
+        std::fs::read(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../tests/fixtures/1crn_vibration.xtc"
+        ))
+        .expect("read XTC")
+    }
+
+    /// Index `data` the way a host reading a file in `window`-byte pieces does.
+    fn index_in_windows(data: &[u8], window: usize) -> Result<XtcIndex, String> {
+        let mut builder = XtcIndexBuilder::new();
+        while (builder.next_offset() as usize) < data.len() {
+            let start = builder.next_offset() as usize;
+            let end = (start + window).min(data.len());
+            builder.scan(&data[start..end], end == data.len())?;
+        }
+        builder.finish(data.len() as u64)
+    }
+
+    #[test]
+    fn windowed_index_matches_whole_file_index() {
+        let data = demo_xtc();
+        let whole = build_index(&data).expect("build index");
+        // From a window that holds only a header's worth of bytes to one that
+        // holds several frames: the index must not depend on how it was read.
+        for window in [FRAME_PEEK_BYTES, 100, 4096, 65536] {
+            let idx = index_in_windows(&data, window).expect("windowed index");
+            assert_eq!(idx.offsets, whole.offsets, "window {window}");
+            assert_eq!(idx.times, whole.times, "window {window}");
+            assert_eq!(idx.n_atoms, whole.n_atoms);
+            assert_eq!(idx.box_matrix, whole.box_matrix);
+            assert_eq!(idx.timestep_ps, whole.timestep_ps);
+        }
+    }
+
+    #[test]
+    fn a_frame_decodes_from_its_own_bytes() {
+        let data = demo_xtc();
+        let eager = parse_xtc(&data).expect("parse XTC");
+        let idx = index_in_windows(&data, 4096).expect("windowed index");
+        for i in [0, 1, idx.n_frames - 1] {
+            let start = idx.offsets[i] as usize;
+            let end = idx.offsets.get(i + 1).map_or(data.len(), |&o| o as usize);
+            let frame = decode_frame_at(&data[start..end], 0, idx.n_atoms).expect("decode");
+            assert_eq!(frame, eager.frame(i), "frame {i}");
+        }
+    }
+
+    #[test]
+    fn a_window_short_of_a_header_waits_for_more() {
+        let data = demo_xtc();
+        let mut builder = XtcIndexBuilder::new();
+        assert_eq!(builder.scan(&data[..FRAME_PEEK_BYTES - 1], false), Ok(0));
+        assert_eq!(builder.next_offset(), 0);
+    }
+
+    #[test]
+    fn a_truncated_file_is_rejected() {
+        let data = demo_xtc();
+        // The last frame's coordinates are cut short.
+        assert!(build_index(&data[..data.len() - 8]).is_err());
+        assert!(index_in_windows(&data[..data.len() - 8], 4096).is_err());
+        // A partial header after the last frame is corrupt too.
+        let mut extra = data.clone();
+        extra.extend_from_slice(&data[..20]);
+        assert!(build_index(&extra).is_err());
+        // Fewer bytes than a header's first fields end the file cleanly.
+        let mut tail = data.clone();
+        tail.extend_from_slice(&[0; 8]);
+        assert_eq!(build_index(&tail).expect("index").n_frames, 100);
+    }
+
+    /// A trajectory of `natoms <= 9` atoms, whose coordinates XTC stores as
+    /// plain floats instead of compressing them.
+    fn tiny_xtc(natoms: usize, frames: usize) -> Vec<u8> {
+        let mut out = Vec::new();
+        let push_i32 = |out: &mut Vec<u8>, v: i32| out.extend_from_slice(&v.to_be_bytes());
+        let push_f32 = |out: &mut Vec<u8>, v: f32| out.extend_from_slice(&v.to_be_bytes());
+        for f in 0..frames {
+            push_i32(&mut out, XTC_MAGIC);
+            push_i32(&mut out, natoms as i32);
+            push_i32(&mut out, f as i32); // step
+            push_f32(&mut out, f as f32 * 2.0); // time (ps)
+            for v in [3.0, 0.0, 0.0, 0.0, 3.0, 0.0, 0.0, 0.0, 3.0] {
+                push_f32(&mut out, v);
+            }
+            push_i32(&mut out, natoms as i32);
+            for c in 0..natoms * 3 {
+                push_f32(&mut out, (f * 100 + c) as f32);
+            }
+        }
+        out
+    }
+
+    #[test]
+    fn uncompressed_frames_are_indexed_in_windows_too() {
+        let data = tiny_xtc(2, 3);
+        let frame_len = FRAME_HEADER_BYTES + 4 + 2 * 3 * 4;
+        let whole = build_index(&data).expect("build index");
+        assert_eq!(whole.n_frames, 3);
+        assert_eq!(
+            whole.offsets,
+            vec![0, frame_len as u64, 2 * frame_len as u64]
+        );
+        assert_eq!(whole.timestep_ps, 2.0);
+        // Windows of FRAME_PEEK_BYTES or more (the builder's contract), here
+        // a frame and a bit or several frames.
+        for window in [FRAME_PEEK_BYTES, 2 * frame_len, 1000] {
+            let idx = index_in_windows(&data, window).expect("windowed index");
+            assert_eq!(idx.offsets, whole.offsets, "window {window}");
+        }
+        let last = &data[2 * frame_len..];
+        assert_eq!(decode_frame_at(last, 0, 2).expect("decode").len(), 6);
+    }
+
+    #[test]
+    fn an_empty_file_has_no_frames() {
+        assert!(build_index(&[]).is_err());
+        assert!(XtcIndexBuilder::new().finish(0).is_err());
+    }
+
+    #[test]
+    fn inconsistent_atom_counts_are_rejected() {
+        let data = demo_xtc();
+        let idx = build_index(&data).expect("build index");
+        let mut mixed = data[..idx.offsets[1] as usize].to_vec();
+        // A second frame claiming one atom more.
+        let mut second = data[idx.offsets[1] as usize..idx.offsets[2] as usize].to_vec();
+        second[4..8].copy_from_slice(&328i32.to_be_bytes());
+        mixed.extend_from_slice(&second);
+        assert!(build_index(&mixed).is_err());
     }
 
     #[test]

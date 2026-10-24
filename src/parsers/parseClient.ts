@@ -362,9 +362,12 @@ export function parseNetCDFFile(file: File, expectedNAtoms: number): Promise<XTC
 }
 
 /**
- * Build a lazy trajectory decoder in the worker: reads the file, scans its
- * frame index (no coordinate decode), and keeps the bytes resident in the
- * worker so frames can be decoded on demand via {@link decodeTrajectoryFrame}.
+ * Build a lazy trajectory decoder in the worker: scans its frame index (no
+ * coordinate decode) so frames can be decoded on demand via
+ * {@link decodeTrajectoryFrame}. An XTC stays in its File — the worker reads
+ * windows of it for the index and each frame's bytes when it is decoded, so
+ * its memory does not grow with the trajectory; a LAMMPS dump is read whole
+ * and kept resident in the worker.
  * Returns `null` — the single uniform "fall back to eager parse" signal — when
  * the worker is unavailable (incl. the `parseClientSync` build) or indexing fails.
  */
@@ -377,19 +380,27 @@ export async function indexTrajectoryLazy(
   try {
     const id = nextId++;
     const trajectoryId = nextTrajId++;
-    const buffer = await readBlobBuffer(file);
-    const index = await send<TrajectoryIndexResult>(
-      {
-        id,
-        op: "indexTrajectory",
-        wasm: resolveWasmUrl(),
-        kind,
-        trajectoryId,
-        bytes: buffer,
-        expectedNAtoms,
-      },
-      [buffer],
-    );
+    const wasm = resolveWasmUrl();
+    let index: TrajectoryIndexResult;
+    if (kind === "xtc") {
+      index = await send<TrajectoryIndexResult>(
+        {
+          id,
+          op: "indexTrajectoryFile",
+          wasm,
+          trajectoryId,
+          file,
+          expectedNAtoms,
+        },
+        [],
+      );
+    } else {
+      const buffer = await readBlobBuffer(file);
+      index = await send<TrajectoryIndexResult>(
+        { id, op: "indexTrajectory", wasm, kind, trajectoryId, bytes: buffer, expectedNAtoms },
+        [buffer],
+      );
+    }
     liveDecoders.add(trajectoryId);
     return { trajectoryId, kind, index };
   } catch {

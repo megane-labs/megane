@@ -58,6 +58,12 @@ interface MeganeTestReady {
   firstFrame: boolean;
   dataLoaded: boolean;
   frame: number;
+  /**
+   * Animation frames at which the canvas showed a structure and was current:
+   * redrawn that frame, or unchanged since the last redraw (the renderer draws
+   * on demand). Waiting for it to pass a value read before an interaction
+   * therefore waits until every change requested up to then is on screen.
+   */
   renderEpoch: number;
   atomCount?: number;
   /**
@@ -95,6 +101,13 @@ export interface MeganeTestApi {
   getVisibleSubsystems: () => MeganeSubsystemVisibility;
   setCameraMode: (mode: MeganeCameraMode) => void;
   resetCamera: () => void;
+  /**
+   * Have the renderer draw a frame on its next tick (it draws on demand).
+   * The viewer-region capture calls it every animation frame while it takes
+   * the screenshot, so the viewer keeps presenting frames as it did before it
+   * drew on demand (see `captureViewerRegion` in tests/e2e/lib/setup.ts).
+   */
+  requestRender: () => void;
   alignCamera: (axis: ViewAxis) => void;
   getRendererMemory: () => MeganeRendererMemory | null;
   /** Immersive (WebXR) session state; null before a renderer mounts. */
@@ -124,6 +137,7 @@ export interface TestApiRenderer {
   testGetVisibleSubsystems(): MeganeSubsystemVisibility;
   setCameraMode(mode: MeganeCameraMode): void;
   resetCamera(): void;
+  requestRender(): void;
   alignCameraToAxis(axis: ViewAxis): void;
   getRenderer(): THREE.WebGLRenderer;
   getXRState(): MeganeXRState;
@@ -168,6 +182,7 @@ export function setActiveRenderer(r: TestApiRenderer | null): void {
             },
       setCameraMode: (mode) => _activeRenderer?.setCameraMode(mode),
       resetCamera: () => _activeRenderer?.resetCamera(),
+      requestRender: () => _activeRenderer?.requestRender(),
       alignCamera: (axis) => _activeRenderer?.alignCameraToAxis(axis),
       getRendererMemory: () => {
         const info = _activeRenderer?.getRenderer().info.memory;
@@ -203,7 +218,7 @@ export function getTestReady(): MeganeTestReady | null {
   return w.__megane_test_ready;
 }
 
-/** Record a rendered frame (only once a structure is on screen). */
+/** Record an up-to-date frame (only once a structure is on screen); see `renderEpoch`. */
 export function signalRender(hasSnapshot: boolean): void {
   const r = getTestReady();
   if (!r || !hasSnapshot) return;

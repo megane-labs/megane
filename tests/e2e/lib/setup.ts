@@ -263,11 +263,40 @@ export async function captureViewerRegion(scope: Page | Frame, outPath: string):
     await stabilizeUi(scope as Page);
   }
   const target = scope.locator('[data-testid="viewer-root"]').first();
-  const buf = await target.screenshot({
-    path: outPath,
-    animations: "disabled",
-    caret: "hide",
+  // The viewer draws on demand, but a capture of an element that runs past
+  // the viewport needs the viewer's frame to keep presenting while Chromium
+  // grows the viewport for it: in the VS Code notebook (an out-of-process
+  // webview whose layout catches up asynchronously) an idle viewer is
+  // captured from a stale frame, 125 px off. Keep it drawing every
+  // animation frame for the duration of the capture, as it always did before
+  // it drew on demand.
+  await scope.evaluate(() => {
+    const w = window as {
+      __megane_test?: { requestRender?: () => void };
+      __meganeCaptureDraw?: number | null;
+    };
+    const tick = () => {
+      w.__megane_test?.requestRender?.();
+      w.__meganeCaptureDraw = requestAnimationFrame(tick);
+    };
+    tick();
   });
+  let buf: Buffer;
+  try {
+    buf = await target.screenshot({
+      path: outPath,
+      animations: "disabled",
+      caret: "hide",
+    });
+  } finally {
+    await scope
+      .evaluate(() => {
+        const w = window as { __meganeCaptureDraw?: number | null };
+        if (w.__meganeCaptureDraw != null) cancelAnimationFrame(w.__meganeCaptureDraw);
+        w.__meganeCaptureDraw = null;
+      })
+      .catch(() => {});
+  }
   return buf;
 }
 

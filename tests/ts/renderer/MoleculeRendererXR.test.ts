@@ -237,7 +237,7 @@ describe("MoleculeRenderer immersive view", () => {
     internals.clearSelection = vi.fn();
     internals.cameraController.dispose = vi.fn();
     internals.renderer.dispose = vi.fn();
-    internals.renderer.domElement = { parentNode: null };
+    internals.renderer.domElement = { parentNode: null, removeEventListener: vi.fn() };
     internals.pivotMarker.dispose = vi.fn();
     r.dispose();
     expect(xr.dispose).toHaveBeenCalled();

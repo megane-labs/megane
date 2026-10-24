@@ -16,11 +16,11 @@ import {
   parseTrajectoryCore,
   collectResultBuffers,
   indexTrajectoryCore,
+  indexXtcFileCore,
   indexStructureCore,
   decodeTrajectoryFrame0Core,
-  decodeFrameCore,
-  decodeFrameVectorsCore,
-  type WasmFrameDecoder,
+  decodeLazyFrameCore,
+  type LazyFrameDecoder,
 } from "./parseCore";
 import type { ParseRequest, ParseResponse } from "./parseMessages";
 
@@ -33,8 +33,10 @@ const ctx = self as unknown as WorkerSelf;
 
 // Persistent lazy per-frame decoders (trajectory OR multi-frame structure),
 // keyed by a client-allocated id. Each holds the whole file in WASM memory for
-// its lifetime so frames can be decoded on demand; freed on `disposeTrajectory`.
-const decoders = new Map<number, WasmFrameDecoder>();
+// its lifetime so frames can be decoded on demand — except an XTC indexed from
+// its File (`indexTrajectoryFile`), which reads each frame from the file —
+// and is freed on `disposeTrajectory`.
+const decoders = new Map<number, LazyFrameDecoder>();
 
 ctx.onmessage = async (e: MessageEvent<ParseRequest>) => {
   const req = e.data;
@@ -135,11 +137,20 @@ ctx.onmessage = async (e: MessageEvent<ParseRequest>) => {
         { id: req.id, ok: true, op: "indexTrajectory", result: index } satisfies ParseResponse,
         transfer,
       );
+    } else if (req.op === "indexTrajectoryFile") {
+      await ensureInit(req.wasm);
+      const { decoder, index } = await indexXtcFileCore(req.file, req.expectedNAtoms);
+      decoders.set(req.trajectoryId, decoder);
+      const transfer: Transferable[] = [index.times.buffer];
+      if (index.box) transfer.push(index.box.buffer);
+      ctx.postMessage(
+        { id: req.id, ok: true, op: "indexTrajectoryFile", result: index } satisfies ParseResponse,
+        transfer,
+      );
     } else if (req.op === "decodeFrame") {
       const decoder = decoders.get(req.trajectoryId);
       if (!decoder) throw new Error(`unknown trajectoryId ${req.trajectoryId}`);
-      const positions = decodeFrameCore(decoder, req.frame);
-      const vectors = decodeFrameVectorsCore(decoder, req.frame);
+      const { positions, vectors } = await decodeLazyFrameCore(decoder, req.frame);
       const vectorChannelCount = vectors.length > 0 ? vectors.length / (decoder.n_atoms * 3) : 0;
       const transfer: Transferable[] = [positions.buffer];
       if (vectors.length > 0) transfer.push(vectors.buffer);

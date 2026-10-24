@@ -79,6 +79,17 @@ describe("StreamFrameProvider", () => {
     expect(provider.getFrame(2)?.frameId).toBe(2);
   });
 
+  it("caps the cache by bytes as well as by frames", () => {
+    // 2 atoms = 24 bytes a frame: a 50-byte budget holds 2 of the 128 frames.
+    const provider = new StreamFrameProvider(client, META, 128, 50);
+    provider.receiveFrame(makeFrame(0));
+    provider.receiveFrame(makeFrame(1));
+    provider.receiveFrame(makeFrame(2));
+    expect(provider.getFrame(0)).toBeNull();
+    expect(provider.getFrame(1)?.frameId).toBe(1);
+    expect(provider.getFrame(2)?.frameId).toBe(2);
+  });
+
   it("re-receiving an existing frameId moves it to MRU position", () => {
     const provider = new StreamFrameProvider(client, META, 2);
     provider.receiveFrame(makeFrame(0));

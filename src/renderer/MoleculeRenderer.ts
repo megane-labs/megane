@@ -121,6 +121,12 @@ export class MoleculeRenderer {
   private readonly drawnCameraPosition = new THREE.Vector3(NaN, NaN, NaN);
   private readonly drawnCameraQuaternion = new THREE.Quaternion(NaN, NaN, NaN, NaN);
   private drawnCameraZoom = NaN;
+  private readonly drawnCameraProjection = new THREE.Matrix4().fromArray(new Array(16).fill(NaN));
+  /**
+   * Set when something drawn changed since the last frame. The loop redraws
+   * only then or when the camera moved; see {@link requestRender}.
+   */
+  private renderRequested = true;
   private fpsCounter = new FpsCounter();
   private snapshot: Snapshot | null = null;
   private currentPositions: Float32Array | null = null;
@@ -245,6 +251,8 @@ export class MoleculeRenderer {
     domEl.style.left = "0";
     domEl.style.width = "100%";
     domEl.style.height = "100%";
+    // A restored context starts blank, and nothing else asks for a frame then.
+    domEl.addEventListener("webglcontextrestored", this.onContextRestored);
     container.appendChild(domEl);
 
     // Label overlay (Canvas 2D on top of WebGL)
@@ -312,6 +320,7 @@ export class MoleculeRenderer {
    * keeps its current zoom/target instead of re-fitting to the new bounds.
    */
   loadSnapshot(snapshot: Snapshot, opts: { fit?: boolean } = {}): void {
+    this.requestRender();
     this.snapshot = snapshot;
     this.currentPositions = new Float32Array(snapshot.positions);
     this.cameraController.syncUpAxis(snapshot.box);
@@ -451,6 +460,7 @@ export class MoleculeRenderer {
    * to match this frame's differing atom count, elements, or cell.
    */
   updateFrame(frame: Frame): void {
+    this.requestRender();
     if (!this.snapshot || !this.atomRenderer || !this.bondRenderer) return;
     if (!this.currentPositions || this.currentPositions.length < frame.positions.length) {
       this.currentPositions = new Float32Array(frame.positions.length);
@@ -576,6 +586,7 @@ export class MoleculeRenderer {
    * Used for per-frame bond recalculation (e.g. distance-based bonds).
    */
   updateBonds(bonds: Uint32Array, bondOrders: Uint8Array | null): void {
+    this.requestRender();
     if (!this.snapshot || !this.bondRenderer) return;
     const positions = this.currentPositions ?? this.snapshot.positions;
     const updated: Snapshot = {
@@ -604,6 +615,7 @@ export class MoleculeRenderer {
     elements: Uint8Array | null,
     nAtoms: number,
   ): void {
+    this.requestRender();
     if (!this.snapshot || !this.bondRenderer) {
       // Called before the snapshot/bondRenderer exist (PipelineViewer's
       // parent-before-child effect ordering). Stash the args and replay them
@@ -647,12 +659,14 @@ export class MoleculeRenderer {
 
   /** Set per-atom labels for overlay display. */
   setLabels(labels: string[] | null): void {
+    this.requestRender();
     this.currentLabels = labels;
     this.syncLabelOverlay();
   }
 
   /** Apply the pipeline's Drawing Boundary atom collection. */
   setDrawingBoundary(boundary: DrawingBoundaryData | null): void {
+    this.requestRender();
     this.currentDrawingBoundary = boundary;
     if (boundary && this.snapshot) {
       const hidden = new Uint8Array(this.snapshot.nAtoms);
@@ -672,6 +686,7 @@ export class MoleculeRenderer {
 
   /** Apply outside-boundary neighbor images emitted by a coordination/bond stream. */
   setBondPeriodicImages(images: PeriodicAtomImageData | null): void {
+    this.requestRender();
     this.currentBondPeriodicImages = images;
     if (!this.snapshot) return;
     this.atomLayers.loadBondPeriodicImages(this.snapshot, images);
@@ -743,16 +758,19 @@ export class MoleculeRenderer {
 
   /** Set per-atom vector data for arrow display. */
   setVectors(vectors: Float32Array | null): void {
+    this.requestRender();
     this.arrowRenderer?.setVectors(vectors);
   }
 
   /** Set arrow scale multiplier. */
   setVectorScale(scale: number): void {
+    this.requestRender();
     this.arrowRenderer?.setScale(scale);
   }
 
   /** Load polyhedra mesh data for rendering. */
   loadPolyhedra(data: MeshData): void {
+    this.requestRender();
     if (!this.polyhedronRenderer) {
       this.polyhedronRenderer = new PolyhedronRenderer();
       this.scene.add(this.polyhedronRenderer.group);
@@ -762,6 +780,7 @@ export class MoleculeRenderer {
 
   /** Clear all polyhedra from the scene. */
   clearPolyhedra(): void {
+    this.requestRender();
     if (this.polyhedronRenderer) {
       this.polyhedronRenderer.clear();
     }
@@ -769,8 +788,12 @@ export class MoleculeRenderer {
 
   // ── Structure Layer Management ─────────────────────────────────
 
-  /** Get or create a structure layer for a given node ID. */
+  /**
+   * Get or create a structure layer for a given node ID. The caller restyles
+   * the layer it gets back, so this asks for a redraw.
+   */
   getOrCreateLayer(layerId: string): StructureLayer {
+    this.requestRender();
     let layer = this.layers.get(layerId);
     if (!layer) {
       layer = new StructureLayer(layerId, this.scene);
@@ -779,13 +802,15 @@ export class MoleculeRenderer {
     return layer;
   }
 
-  /** Get an existing structure layer (or undefined). */
+  /** Get an existing structure layer (or undefined); asks for a redraw, as {@link getOrCreateLayer}. */
   getLayer(layerId: string): StructureLayer | undefined {
+    this.requestRender();
     return this.layers.get(layerId);
   }
 
   /** Remove a structure layer and dispose its resources. */
   removeLayer(layerId: string): void {
+    this.requestRender();
     const layer = this.layers.get(layerId);
     if (layer) {
       layer.dispose();
@@ -800,6 +825,7 @@ export class MoleculeRenderer {
 
   /** Remove layers not in the given set of active IDs. */
   removeInactiveLayers(activeIds: Set<string>): void {
+    this.requestRender();
     for (const [id, layer] of this.layers) {
       if (!activeIds.has(id)) {
         layer.dispose();
@@ -813,6 +839,7 @@ export class MoleculeRenderer {
    * Call after loading snapshots into layers.
    */
   fitToViewAll(): void {
+    this.requestRender();
     // Collect all snapshots from layers
     const snapshots: Snapshot[] = [];
     if (this.snapshot) snapshots.push(this.snapshot);
@@ -828,31 +855,37 @@ export class MoleculeRenderer {
 
   /** Set atom radius scale multiplier. */
   setAtomScale(scale: number): void {
+    this.requestRender();
     this.atomLayers.setScale(scale, this.snapshot);
   }
 
   /** Set atom opacity (independent of bonds). */
   setAtomOpacity(opacity: number): void {
+    this.requestRender();
     this.atomLayers.setOpacity(opacity);
   }
 
   /** Set per-atom scale overrides from selection pipeline. */
   setAtomScaleOverrides(overrides: Float32Array): void {
+    this.requestRender();
     this.atomLayers.setScaleOverrides(overrides);
   }
 
   /** Set per-atom opacity overrides from selection pipeline. */
   setAtomOpacityOverrides(overrides: Float32Array): void {
+    this.requestRender();
     this.atomLayers.setOpacityOverrides(overrides);
   }
 
   /** Clear all per-atom overrides, reverting to global uniforms. */
   clearAtomOverrides(): void {
+    this.requestRender();
     this.atomLayers.clearOverrides();
   }
 
   /** Set bond radius scale multiplier. */
   setBondScale(scale: number): void {
+    this.requestRender();
     this.bondScale = scale;
     if (this.bondRenderer && this.snapshot) {
       this.bondRenderer.setScale(scale, this.snapshot);
@@ -861,6 +894,7 @@ export class MoleculeRenderer {
 
   /** Set bond opacity (independent of atoms). */
   setBondOpacity(opacity: number): void {
+    this.requestRender();
     this.bondOpacity = opacity;
     this.bondRenderer?.setOpacity(opacity);
   }
@@ -872,6 +906,7 @@ export class MoleculeRenderer {
    */
   applyAtomColorOverrides(overrides: Float32Array | null): void {
     if (overrides === this.atomLayers.state.colorOverrides) return;
+    this.requestRender();
     // Records the overrides (replayed on the next snapshot load even when no
     // mesh exists yet) and repaints the secondary layers.
     this.atomLayers.setColorOverrides(overrides);
@@ -932,16 +967,19 @@ export class MoleculeRenderer {
 
   /** Apply per-bond opacity overrides (one value per logical bond). */
   setBondOpacityOverrides(overrides: Float32Array): void {
+    this.requestRender();
     this.bondRenderer?.setBondOpacityOverrides(overrides);
   }
 
   /** Clear per-bond opacity overrides, reverting to global opacity. */
   clearBondOpacityOverrides(): void {
+    this.requestRender();
     this.bondRenderer?.clearBondOpacityOverrides();
   }
 
   /** Toggle atom visibility. */
   setAtomsVisible(visible: boolean): void {
+    this.requestRender();
     this.atomLayers.setVisible(visible);
   }
 
@@ -956,6 +994,7 @@ export class MoleculeRenderer {
    *                  unlit shading and a silhouette outline; bonds hidden
    */
   setRepresentationType(type: RepresentationType): void {
+    this.requestRender();
     this.representationType = type;
     // Illustrative draws touching vdW spheres, so the sticks it would hide
     // anyway are switched off (matching Mol*'s spacefill-only preset).
@@ -1013,6 +1052,7 @@ export class MoleculeRenderer {
    * mode and reloads the line geometry; this overlays the per-atom split on top.
    */
   setRepresentationByAtom(modes: RepresentationType[] | null): void {
+    this.requestRender();
     this.representationByAtom = modes;
 
     if (!modes) {
@@ -1061,6 +1101,7 @@ export class MoleculeRenderer {
    * back to atoms.
    */
   setBondsVisible(visible: boolean): void {
+    this.requestRender();
     this.bondsAvailable = visible;
     if (this.bondRenderer) {
       // "illustrative" shows atoms but never bonds — its spacefill spheres
@@ -1072,6 +1113,7 @@ export class MoleculeRenderer {
 
   /** Toggle simulation cell visibility. */
   setCellVisible(visible: boolean): void {
+    this.requestRender();
     if (this.cellRenderer) {
       this.cellRenderer.setVisible(visible);
     }
@@ -1084,6 +1126,7 @@ export class MoleculeRenderer {
 
   /** Toggle cell axes indicator visibility. */
   setCellAxesVisible(visible: boolean): void {
+    this.requestRender();
     if (this.cellAxesRenderer) {
       this.cellAxesRenderer.setVisible(visible);
     }
@@ -1091,6 +1134,7 @@ export class MoleculeRenderer {
 
   /** Toggle rotation-center marker visibility. */
   setPivotMarkerVisible(visible: boolean): void {
+    this.requestRender();
     this.pivotMarker?.setVisible(visible);
   }
 
@@ -1114,6 +1158,7 @@ export class MoleculeRenderer {
   /** Continue an axes-inset drag. Returns true if currently dragging. */
   moveAxesDrag(cssX: number, cssY: number): boolean {
     if (!this.axesDragging || !this.cellAxesRenderer || !this.container) return false;
+    this.requestRender();
     const dx = cssX - this.axesDragLastX;
     const dy = cssY - this.axesDragLastY;
     this.axesDragLastX = cssX;
@@ -1183,6 +1228,7 @@ export class MoleculeRenderer {
 
   /** Reset view to fit all atoms. */
   resetView(): void {
+    this.requestRender();
     if (this.snapshot) {
       this.cameraController.fitToView(this.snapshot);
     }
@@ -1196,6 +1242,7 @@ export class MoleculeRenderer {
    * {@link CameraController.setRotationCenter}.
    */
   setRotationCenter(x: number, y: number, z: number, animate = true): void {
+    this.requestRender();
     this.cameraController.setRotationCenter(x, y, z, animate);
   }
 
@@ -1205,16 +1252,19 @@ export class MoleculeRenderer {
    * keeping the view as {@link setRotationCenter} does.
    */
   resetRotationCenter(): void {
+    this.requestRender();
     this.cameraController.resetRotationCenter();
   }
 
   /** Set pixel insets for overlay panels that occlude viewport edges. */
   setViewInsets(left: number, right: number): void {
+    this.requestRender();
     this.cameraController.setViewInsets(left, right);
   }
 
   /** Switch between orthographic and perspective projection. */
   setPerspective(enabled: boolean): void {
+    this.requestRender();
     this.cameraController.setPerspective(enabled);
   }
 
@@ -1336,10 +1386,29 @@ export class MoleculeRenderer {
       return;
     }
     this.pivotMarker?.setVisible(this.pivotVisibleBeforeXR);
-    // Re-sync the canvas size on the first desktop frame.
+    // Re-sync the canvas size on the first desktop frame, and redraw it.
     this.lastContainerW = 0;
+    this.requestRender();
     this.animate();
   }
+
+  /**
+   * Redraw on the next animation frame.
+   *
+   * The viewer draws on demand: the loop redraws when the camera moved (drag,
+   * wheel, pivot animation, a projection change) or when something asked for
+   * a frame, and otherwise leaves the last frame on the canvas, so an idle
+   * viewer costs no GPU or main-thread time. Every method of this class that
+   * changes what is drawn calls this; code that changes the scene or the
+   * WebGL renderer directly (`getScene()`, `getRenderer()`) must call it too.
+   */
+  requestRender(): void {
+    this.renderRequested = true;
+  }
+
+  private onContextRestored = (): void => {
+    this.requestRender();
+  };
 
   /**
    * Live rendering stats for the performance HUD: current FPS (updated by the
@@ -1423,6 +1492,7 @@ export class MoleculeRenderer {
 
   /** Update the Three.js scene and canvas background color (e.g. when theme changes). */
   setBackgroundColor(hexColor: number): void {
+    this.requestRender();
     if (this.renderer) this.renderer.setClearColor(hexColor, 1);
     if (this.scene) this.scene.background = new THREE.Color(hexColor);
   }
@@ -1449,11 +1519,13 @@ export class MoleculeRenderer {
 
   /** Toggle atom selection (right-click). Returns new selection state. */
   toggleAtomSelection(atomIndex: number): SelectionState {
+    this.requestRender();
     return this.selection.toggle(atomIndex);
   }
 
   /** Set selected atoms directly (for external triggers). Returns new selection state. */
   setSelection(atomIndices: number[]): SelectionState {
+    this.requestRender();
     return this.selection.set(atomIndices);
   }
 
@@ -1463,16 +1535,19 @@ export class MoleculeRenderer {
    * measurement selection. Pass `null` or `[]` to clear.
    */
   setPreviewSelection(atomIndices: number[] | null): void {
+    this.requestRender();
     this.selection.setPreview(atomIndices);
   }
 
   /** Builder: mark the atoms a click would act on (null clears). */
   setHoverHighlight(atomIndices: number[] | null, color?: number): void {
+    this.requestRender();
     this.selection.setHover(atomIndices, color);
   }
 
   /** Builder: mark atoms in a close contact in red (null clears). */
   setWarningHighlight(atomIndices: number[] | null): void {
+    this.requestRender();
     this.selection.setWarning(atomIndices);
   }
 
@@ -1522,6 +1597,7 @@ export class MoleculeRenderer {
 
   /** Clear all selected atoms. */
   clearSelection(): void {
+    this.requestRender();
     this.selection.clear();
   }
 
@@ -1557,6 +1633,7 @@ export class MoleculeRenderer {
     this.lastContainerW = w;
     this.lastContainerH = h;
     this.lastDpr = dpr;
+    this.requestRender();
 
     this.renderer.setPixelRatio(dpr);
     this.cameraController.resize(w, h);
@@ -1590,18 +1667,29 @@ export class MoleculeRenderer {
     // Pivot animation / drag momentum, perspective clipping.
     this.cameraController.tick();
 
-    // While a file is still loading behind the first frame, leave the main
-    // thread to it: redraw at once when the camera moves, otherwise rarely.
+    // Draw on demand (see requestRender): a frame in which neither the camera
+    // nor anything drawn changed would repaint the same picture.
     const camera = this.camera;
     const cameraMoved =
       !camera.position.equals(this.drawnCameraPosition) ||
       !camera.quaternion.equals(this.drawnCameraQuaternion) ||
-      camera.zoom !== this.drawnCameraZoom;
+      camera.zoom !== this.drawnCameraZoom ||
+      !camera.projectionMatrix.equals(this.drawnCameraProjection);
+    if (!cameraMoved && !this.renderRequested) {
+      // The canvas already shows this frame.
+      signalRender(this.snapshot != null);
+      this.fpsCounter.tick(performance.now(), false);
+      return;
+    }
+    // While a file is still loading behind the first frame, leave the main
+    // thread to it: redraw at once when the camera moves, otherwise rarely.
     if (!cameraMoved && skipFrameForBackgroundLoad(frameTime, this.lastDrawAt)) return;
+    this.renderRequested = false;
     this.lastDrawAt = frameTime;
     this.drawnCameraPosition.copy(camera.position);
     this.drawnCameraQuaternion.copy(camera.quaternion);
     this.drawnCameraZoom = camera.zoom;
+    this.drawnCameraProjection.copy(camera.projectionMatrix);
 
     // Update pivot marker position and scale
     if (this.pivotMarker) {
@@ -1687,6 +1775,7 @@ export class MoleculeRenderer {
     // unmount cleanup, so it must not throw there: an exception in a React
     // effect cleanup takes down the page being navigated to.
     this.cameraController.dispose();
+    this.renderer?.domElement.removeEventListener("webglcontextrestored", this.onContextRestored);
     this.renderer?.dispose();
     if (this.container && this.renderer?.domElement.parentNode) {
       this.container.removeChild(this.renderer.domElement);
@@ -1702,11 +1791,13 @@ export class MoleculeRenderer {
 
   /** Switch projection mode by name (wraps setPerspective for symmetry). */
   setCameraMode(mode: MeganeCameraMode): void {
+    this.requestRender();
     this.cameraController.setCameraMode(mode);
   }
 
   /** Re-fit the camera to the current snapshot's bounding box. */
   resetCamera(): void {
+    this.requestRender();
     this.cameraController.resetCamera();
   }
 
@@ -1718,6 +1809,7 @@ export class MoleculeRenderer {
    * and up-vector conventions.
    */
   alignCameraToAxis(axis: ViewAxis): void {
+    this.requestRender();
     this.cameraController.alignCameraToAxis(axis);
   }
 
@@ -1733,6 +1825,7 @@ export class MoleculeRenderer {
 
   /** Restore camera to a previously saved state. */
   applyCameraState(state: MeganeCameraState): void {
+    this.requestRender();
     this.cameraController.applyCameraState(state);
   }
 

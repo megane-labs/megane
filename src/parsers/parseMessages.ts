@@ -53,6 +53,20 @@ export interface IndexTrajectoryRequest {
 }
 
 /**
+ * Request: build a lazy XTC decoder from the File itself — the worker scans
+ * the frame index from windows of it and reads each frame when it is decoded,
+ * so it never holds the whole file (see `indexXtcFileCore`).
+ */
+export interface IndexTrajectoryFileRequest {
+  id: number;
+  op: "indexTrajectoryFile";
+  wasm: WasmSource;
+  trajectoryId: number;
+  file: Blob;
+  expectedNAtoms: number;
+}
+
+/**
  * Request: build a lazy structure-frame decoder (scans extra frames, holds bytes
  * in the worker) AND parse frame 0 in the same round-trip — one file read yields
  * both the index and the eager snapshot.
@@ -148,6 +162,7 @@ export type ParseRequest =
   | TrajectoryFrame0Request
   | IndexStructureRequest
   | IndexTrajectoryRequest
+  | IndexTrajectoryFileRequest
   | DecodeFrameRequest
   | DisposeTrajectoryRequest
   | InitRequest
@@ -173,6 +188,7 @@ export interface ParseResponse {
     | "trajectoryFrame0"
     | "indexStructure"
     | "indexTrajectory"
+    | "indexTrajectoryFile"
     | "decodeFrame"
     | "disposeTrajectory"
     | "init"

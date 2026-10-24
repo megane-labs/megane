@@ -154,6 +154,24 @@ describe("LazyFrameProvider", () => {
     expect(held.length).toBeLessThanOrEqual(2);
   });
 
+  it("caps the cache by bytes, keeping the prefetch window inside it", async () => {
+    // 4 atoms = 48 bytes a frame: a 150-byte budget holds 3 frames, so at most
+    // 2 are decoded ahead of the requested one, whatever prefetchAhead asks.
+    const p = new LazyFrameProvider(makeHandle(), makeMeta(), {
+      decode: decode.fn,
+      dispose,
+      prefetchAhead: 10,
+      maxCacheBytes: 150,
+    });
+    expect(decode.fn.mock.calls.map((c) => c[1])).toEqual([0, 1, 2]);
+    await decode.flush();
+    decode.fn.mockClear();
+    p.getFrame(20);
+    expect(decode.fn.mock.calls.map((c) => c[1])).toEqual([20, 21, 22]);
+    await decode.flush();
+    expect([0, 1, 2, 20, 21, 22].filter((i) => p.getFrame(i) !== null)).toEqual([20, 21, 22]);
+  });
+
   it("tracks decoded count and fires onProgress", async () => {
     const p = make({ prefetchAhead: 0 });
     const progress = vi.fn();

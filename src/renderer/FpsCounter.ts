@@ -1,9 +1,11 @@
 /**
  * Minimal rolling FPS counter.
  *
- * Fed one timestamp per rendered frame (in ms, e.g. from `performance.now()`),
- * it recomputes frames-per-second once every `windowMs` and holds that value
- * until the next window closes. Pure and side-effect free so the timing math is
+ * Fed one timestamp per animation frame (in ms, e.g. from `performance.now()`),
+ * it recomputes the rate of *drawn* frames once every `windowMs` and holds that
+ * value until the next window closes. The renderer draws on demand, so frames
+ * it skipped (nothing changed) still close the window but are not counted: an
+ * idle viewer reads 0. Pure and side-effect free so the timing math is
  * unit-testable without a WebGL context.
  */
 export class FpsCounter {
@@ -16,13 +18,13 @@ export class FpsCounter {
     this.windowMs = windowMs;
   }
 
-  /** Record one rendered frame at time `nowMs`. */
-  tick(nowMs: number): void {
+  /** Record one animation frame at time `nowMs`; `drawn` is false for a skipped one. */
+  tick(nowMs: number, drawn = true): void {
     if (this.lastSample === null) {
       this.lastSample = nowMs;
       return;
     }
-    this.frames++;
+    if (drawn) this.frames++;
     const elapsed = nowMs - this.lastSample;
     if (elapsed >= this.windowMs) {
       this._fps = (this.frames * 1000) / elapsed;

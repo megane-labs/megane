@@ -21,6 +21,7 @@
 import type { Frame, TrajectoryMeta } from "../types";
 import type { FrameProvider } from "../pipeline/types";
 import type { DecodedLazyFrame } from "../parsers/parseClient";
+import { frameCacheCapacity } from "./frameCacheCapacity";
 
 /**
  * Minimal handle shape this provider needs — satisfied by both
@@ -38,7 +39,14 @@ const DEFAULT_CACHE_SIZE = 256;
 const DEFAULT_PREFETCH_AHEAD = 16;
 
 export interface LazyFrameProviderOptions {
+  /** Most frames the cache keeps (default 256). */
   maxCacheSize?: number;
+  /**
+   * Most bytes of decoded positions the cache keeps (default 32 MiB); see
+   * `frameCacheCapacity`. The cache always keeps at least two frames.
+   */
+  maxCacheBytes?: number;
+  /** Frames decoded ahead of the requested one; never more than the cache holds. */
   prefetchAhead?: number;
   /** Decode one underlying frame (defaults to the worker `decodeTrajectoryFrame`). */
   decode?: (trajectoryId: number, frame: number) => Promise<DecodedLazyFrame>;
@@ -99,8 +107,17 @@ export class LazyFrameProvider implements FrameProvider {
     this.baseOffset = this.basePositions ? 1 : 0;
     this.nFrames = this.decodableFrames + this.baseOffset;
     this.meta = meta;
-    this.maxCacheSize = opts.maxCacheSize ?? DEFAULT_CACHE_SIZE;
-    this.prefetchAhead = opts.prefetchAhead ?? DEFAULT_PREFETCH_AHEAD;
+    this.maxCacheSize = frameCacheCapacity(
+      this.nAtoms,
+      opts.maxCacheSize ?? DEFAULT_CACHE_SIZE,
+      opts.maxCacheBytes,
+    );
+    // A window wider than the cache would evict the frames it decodes before
+    // the playhead reaches them, and decode them again.
+    this.prefetchAhead = Math.min(
+      opts.prefetchAhead ?? DEFAULT_PREFETCH_AHEAD,
+      this.maxCacheSize - 1,
+    );
     this.decode = opts.decode ?? (() => Promise.reject(new Error("no decode fn")));
     this.disposeFn = opts.dispose ?? (() => {});
     // Seed a pre-decoded frame 0 (trajectory convention) so the cache serves it

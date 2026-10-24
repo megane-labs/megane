@@ -714,7 +714,7 @@ megane_core::for_each_trajectory_format!(wasm_trajectory_parsers);
 #[wasm_bindgen]
 pub struct XtcDecoder {
     bytes: Vec<u8>,
-    offsets: Vec<usize>,
+    offsets: Vec<u64>,
     n_atoms: usize,
     n_frames: u32,
     timestep_ps: f32,
@@ -785,9 +785,115 @@ impl XtcDecoder {
             .offsets
             .get(frame as usize)
             .ok_or_else(|| JsError::new("frame index out of range"))?;
-        let coords = xtc::decode_frame_at(&self.bytes, offset, self.n_atoms)
+        let coords = xtc::decode_frame_at(&self.bytes, offset as usize, self.n_atoms)
             .map_err(|e| JsError::new(&e))?;
         Ok(Float32Array::from(&coords[..]))
+    }
+}
+
+/// Builds an XTC frame index from windows of a file the host never loads
+/// whole (see `xtc::XtcIndexBuilder`): call `scan` with the file's bytes from
+/// `next_offset` on until `next_offset` reaches the file's length, then
+/// `finish`. Each frame is then decoded from its own bytes
+/// (`offsets[i]..offsets[i + 1]`, the last one to the end of the file) with
+/// `decode_trajectory_frame0(bytes, "xtc", n_atoms)`.
+#[wasm_bindgen]
+pub struct XtcIndexer {
+    builder: Option<xtc::XtcIndexBuilder>,
+    index: Option<xtc::XtcIndex>,
+}
+
+#[wasm_bindgen]
+impl XtcIndexer {
+    #[wasm_bindgen(constructor)]
+    pub fn new() -> XtcIndexer {
+        XtcIndexer {
+            builder: Some(xtc::XtcIndexBuilder::new()),
+            index: None,
+        }
+    }
+
+    /// File offset the next window must start at (a byte count, exact below 2^53).
+    #[wasm_bindgen(getter)]
+    pub fn next_offset(&self) -> f64 {
+        self.builder.as_ref().map_or(0, |b| b.next_offset()) as f64
+    }
+
+    /// Index the frames whose headers lie in `window`; `at_eof` says it runs
+    /// to the end of the file. Returns how many frames it held.
+    pub fn scan(&mut self, window: &[u8], at_eof: bool) -> Result<u32, JsError> {
+        let builder = self
+            .builder
+            .as_mut()
+            .ok_or_else(|| JsError::new("XtcIndexer already finished"))?;
+        let found = builder.scan(window, at_eof).map_err(|e| JsError::new(&e))?;
+        Ok(found as u32)
+    }
+
+    /// Close the index of a `file_len`-byte file; the getters below read it.
+    pub fn finish(&mut self, file_len: f64) -> Result<(), JsError> {
+        let builder = self
+            .builder
+            .take()
+            .ok_or_else(|| JsError::new("XtcIndexer already finished"))?;
+        self.index = Some(
+            builder
+                .finish(file_len as u64)
+                .map_err(|e| JsError::new(&e))?,
+        );
+        Ok(())
+    }
+
+    fn finished(&self) -> Result<&xtc::XtcIndex, JsError> {
+        self.index
+            .as_ref()
+            .ok_or_else(|| JsError::new("XtcIndexer not finished"))
+    }
+
+    #[wasm_bindgen(getter)]
+    pub fn n_atoms(&self) -> Result<u32, JsError> {
+        Ok(self.finished()?.n_atoms as u32)
+    }
+
+    #[wasm_bindgen(getter)]
+    pub fn n_frames(&self) -> Result<u32, JsError> {
+        Ok(self.finished()?.n_frames as u32)
+    }
+
+    #[wasm_bindgen(getter)]
+    pub fn timestep_ps(&self) -> Result<f32, JsError> {
+        Ok(self.finished()?.timestep_ps)
+    }
+
+    #[wasm_bindgen(getter)]
+    pub fn has_box(&self) -> Result<bool, JsError> {
+        Ok(self.finished()?.box_matrix.is_some())
+    }
+
+    /// Box of the last frame (row-major 3×3, Å); empty without one.
+    pub fn box_matrix(&self) -> Result<Float32Array, JsError> {
+        let index = self.finished()?;
+        Ok(match index.box_matrix {
+            Some(m) => Float32Array::from(&m[..]),
+            None => Float32Array::new_with_length(0),
+        })
+    }
+
+    /// Byte offset of each frame in the file.
+    pub fn offsets(&self) -> Result<Float64Array, JsError> {
+        let offsets: Vec<f64> = self.finished()?.offsets.iter().map(|&o| o as f64).collect();
+        Ok(Float64Array::from(&offsets[..]))
+    }
+
+    /// Per-frame time stamps (ps).
+    pub fn times(&self) -> Result<Float32Array, JsError> {
+        Ok(Float32Array::from(&self.finished()?.times[..]))
+    }
+}
+
+impl Default for XtcIndexer {
+    fn default() -> Self {
+        Self::new()
     }
 }
 

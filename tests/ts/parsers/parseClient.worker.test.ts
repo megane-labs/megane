@@ -133,12 +133,21 @@ describe("parseClient worker path", () => {
     expect(sync.parseXTCFile).toHaveBeenCalled();
   });
 
-  it("builds a lazy trajectory handle via the worker", async () => {
+  it("builds a lazy XTC handle from the File, without reading it on the main thread", async () => {
     const client = await freshClient();
-    const res = await client.indexTrajectoryLazy(fakeFile("t.xtc"), "xtc", 4);
-    expect(state.lastReq?.op).toBe("indexTrajectory");
+    const file = fakeFile("t.xtc");
+    const res = await client.indexTrajectoryLazy(file, "xtc", 4);
+    expect(state.lastReq?.op).toBe("indexTrajectoryFile");
+    expect((state.lastReq as { file?: unknown }).file).toBe(file);
     expect(res?.kind).toBe("xtc");
     expect(typeof res?.trajectoryId).toBe("number");
+  });
+
+  it("builds a lazy LAMMPS-dump handle from the file's bytes", async () => {
+    const client = await freshClient();
+    const res = await client.indexTrajectoryLazy(fakeFile("t.lammpstrj"), "lammpstrj", 4);
+    expect(state.lastReq?.op).toBe("indexTrajectory");
+    expect(res?.kind).toBe("lammpstrj");
   });
 
   it("returns null (full-read fallback) when trajectory indexing errors", async () => {
