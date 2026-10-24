@@ -225,6 +225,15 @@ fn sizeofints(num_of_ints: usize, sizes: &[u32]) -> u32 {
 
 // ---------- Decompress one frame's coordinates ----------
 
+/// GROMACS XTC stores coordinates in nanometers; convert to Angstroms.
+fn nm_to_angstrom(mut coords: Vec<f32>) -> Vec<f32> {
+    for v in &mut coords {
+        *v *= 10.0;
+    }
+    coords
+}
+
+/// One frame's coordinates in Å, whichever way the frame stores them.
 fn decompress_coords(xdr: &mut XdrReader, natoms: usize) -> Result<Vec<f32>, String> {
     // Read lsize (number of atoms in coordinate block)
     let lsize = xdr.read_i32()? as usize;
@@ -234,13 +243,13 @@ fn decompress_coords(xdr: &mut XdrReader, natoms: usize) -> Result<Vec<f32>, Str
 
     let size3 = natoms * 3;
 
-    // Small atom count: plain XDR floats
+    // Small atom count: plain XDR floats, in nm like the compressed ones
     if natoms <= 9 {
         let mut coords = Vec::with_capacity(size3);
         for _ in 0..size3 {
             coords.push(xdr.read_f32()?);
         }
-        return Ok(coords);
+        return Ok(nm_to_angstrom(coords));
     }
 
     // Read precision
@@ -400,12 +409,7 @@ fn decompress_coords(xdr: &mut XdrReader, natoms: usize) -> Result<Vec<f32>, Str
     // Truncate output to exactly natoms*3 (run-length can overshoot)
     output.truncate(size3);
 
-    // GROMACS XTC stores coordinates in nanometers; convert to Angstroms
-    for v in &mut output {
-        *v *= 10.0;
-    }
-
-    Ok(output)
+    Ok(nm_to_angstrom(output))
 }
 
 // ---------- Frame header + index scan (shared by eager and lazy paths) ----------
@@ -853,6 +857,27 @@ mod tests {
         }
         let last = &data[2 * frame_len..];
         assert_eq!(decode_frame_at(last, 0, 2).expect("decode").len(), 6);
+    }
+
+    #[test]
+    fn uncompressed_coordinates_are_converted_to_angstrom() {
+        // tiny_xtc writes frame f's coordinate c as (f * 100 + c) nm, and a
+        // 3 nm cubic box.
+        let data = tiny_xtc(2, 3);
+        let expected =
+            |f: usize| -> Vec<f32> { (0..6).map(|c| (f * 100 + c) as f32 * 10.0).collect() };
+        let eager = parse_xtc(&data).expect("parse XTC");
+        assert_eq!(eager.n_atoms, 2);
+        for f in 0..3 {
+            assert_eq!(eager.frame(f), expected(f), "eager frame {f}");
+        }
+        let idx = build_index(&data).expect("build index");
+        for f in 0..3 {
+            let lazy = decode_frame_at(&data, idx.offsets[f] as usize, 2).expect("decode");
+            assert_eq!(lazy, expected(f), "lazy frame {f}");
+        }
+        // The box was already converted; positions now share its unit.
+        assert_eq!(idx.box_matrix.expect("box")[0], 30.0);
     }
 
     #[test]
