@@ -214,6 +214,13 @@ export default defineConfig({
       use: { baseURL: `http://127.0.0.1:${PORT_WEBAPP}` },
     },
     {
+      // Immersive view (WebXR) under the IWER Quest 3 emulator. Webapp host;
+      // asserts session state and drawn pixels, no baselines.
+      name: "xr",
+      testMatch: /xr\.spec\.ts$/,
+      use: { baseURL: `http://127.0.0.1:${PORT_WEBAPP}` },
+    },
+    {
       // megane Builder, the structure editor at /builder.html (its own Vite entry).
       name: "builder",
       testMatch: /builder\.spec\.ts$/,

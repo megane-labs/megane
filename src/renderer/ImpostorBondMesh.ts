@@ -163,6 +163,8 @@ export class ImpostorBondMesh {
         uPositionTex: { value: this.positionTex },
         uPositionTexWidth: { value: 1 },
         uUsePerBondOverrides: { value: 0 },
+        // Set by the WebXR session (see xr/XRSessionController.ts).
+        uExactImpostor: { value: 0 },
       },
       depthWrite: true,
       depthTest: true,

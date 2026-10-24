@@ -45,6 +45,9 @@ import {
   type ViewDragGesture,
 } from "./SelectionController";
 import type { ViewAxis } from "./cameraOrientation";
+import { XRSessionController, type MeganeXRState } from "./xr/XRSessionController";
+import { boundingFocus, type XRFocus } from "./xr/xrMath";
+import type { MeganeXRMode } from "./xr/xrSupport";
 import {
   getTestReady,
   releaseActiveRenderer,
@@ -58,6 +61,8 @@ export type { MeganeSubsystemVisibility, MeganeRendererMemory, MeganeTestApi } f
 export type { MeganeCameraMode, MeganeCameraState } from "./CameraController";
 export type { MeganeProjectedAtom } from "./SelectionController";
 export type { RepresentationType } from "./representation";
+export type { MeganeXRState } from "./xr/XRSessionController";
+export type { MeganeXRMode } from "./xr/xrSupport";
 
 export class MoleculeRenderer {
   private container: HTMLElement | null = null;
@@ -156,6 +161,20 @@ export class MoleculeRenderer {
 
   /** Structure layers for multi-structure overlay rendering. */
   private layers = new Map<string, StructureLayer>();
+
+  /**
+   * Immersive WebXR view (VR / passthrough AR). While a session runs it owns
+   * the frame loop and the scene's transform; see `xr/XRSessionController`.
+   */
+  private readonly xr = new XRSessionController({
+    getRenderer: () => this.renderer,
+    getScene: () => this.scene,
+    getViewCamera: () => this.camera,
+    getFocus: () => this.xrFocus(),
+    onPresentingChange: (presenting) => this.onXRPresentingChange(presenting),
+  });
+  /** Pivot marker visibility to restore when the XR session ends. */
+  private pivotVisibleBeforeXR = false;
 
   /** Cartoon backbone renderer (lazy, created on first use). */
   private cartoonRenderer: CartoonRenderer | null = null;
@@ -1212,6 +1231,58 @@ export class MoleculeRenderer {
     return this.renderer;
   }
 
+  // ---- Immersive view (WebXR) ----
+
+  /**
+   * Show the structure in a VR headset ("immersive-vr") or in passthrough AR
+   * ("immersive-ar"). Must be called from a user gesture; rejects when the
+   * browser refuses the session.
+   */
+  enterXR(mode: MeganeXRMode): Promise<void> {
+    return this.xr.enter(mode);
+  }
+
+  /** End the immersive session, if any; the desktop view resumes. */
+  exitXR(): Promise<void> {
+    return this.xr.exit();
+  }
+
+  getXRState(): MeganeXRState {
+    return this.xr.getState();
+  }
+
+  /** Subscribe to immersive session start / end. Returns the unsubscribe function. */
+  onXRStateChange(listener: (state: MeganeXRState) => void): () => void {
+    return this.xr.subscribe(listener);
+  }
+
+  /** Bounding sphere of the structure on screen, for the XR placement. */
+  private xrFocus(): XRFocus {
+    if (!this.snapshot) return boundingFocus([], 0);
+    return boundingFocus(this.getCurrentPositions(), this.snapshot.nAtoms);
+  }
+
+  /**
+   * Hand the frame loop to the XR session and back. The desktop-only helpers
+   * (pivot crosshair; the label and cell-axes overlays are drawn by the
+   * desktop loop only) stay out of the headset view.
+   */
+  private onXRPresentingChange(presenting: boolean): void {
+    if (presenting) {
+      if (this.animationId !== null) {
+        cancelAnimationFrame(this.animationId);
+        this.animationId = null;
+      }
+      this.pivotVisibleBeforeXR = this.pivotMarker?.isVisible() ?? false;
+      this.pivotMarker?.setVisible(false);
+      return;
+    }
+    this.pivotMarker?.setVisible(this.pivotVisibleBeforeXR);
+    // Re-sync the canvas size on the first desktop frame.
+    this.lastContainerW = 0;
+    this.animate();
+  }
+
   /**
    * Live rendering stats for the performance HUD: current FPS (updated by the
    * rAF loop) and the draw-call count of the most recent frame. megane draws
@@ -1416,7 +1487,8 @@ export class MoleculeRenderer {
   }
 
   private onResize(): void {
-    if (!this.container) return;
+    // three.js owns the drawing buffer size while a headset presents.
+    if (!this.container || this.xr.presenting) return;
     const w = this.container.clientWidth;
     const h = this.container.clientHeight;
     if (w === 0 || h === 0) return;
@@ -1531,6 +1603,7 @@ export class MoleculeRenderer {
     if (this.animationId !== null) {
       cancelAnimationFrame(this.animationId);
     }
+    this.xr.dispose();
     this.clearSelection();
     this.atomLayers.dispose();
     if (this.bondRenderer) this.bondRenderer.dispose();

@@ -34,6 +34,7 @@ const sidebars: SidebarsConfig = {
         { type: "doc", id: "guide/vscode", label: "VS Code extension" },
         { type: "doc", id: "guide/jupyterlab", label: "JupyterLab extension" },
         { type: "doc", id: "guide/builder", label: "Builder (structure editor)" },
+        { type: "doc", id: "guide/vr", label: "VR and AR headsets" },
       ],
     },
     {

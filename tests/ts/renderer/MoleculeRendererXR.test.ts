@@ -1,0 +1,159 @@
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import * as THREE from "three";
+import { MoleculeRenderer } from "@/renderer/MoleculeRenderer";
+
+/**
+ * The renderer's side of the immersive view: it delegates the session to
+ * XRSessionController and, when the session starts or ends, hands the frame
+ * loop over and hides / restores the desktop-only pivot marker. mount() needs
+ * WebGL, so — as in the other MoleculeRenderer tests — the fields these paths
+ * touch are stubbed in.
+ */
+function renderer() {
+  const r = new MoleculeRenderer();
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const internals = r as any;
+  const camera = new THREE.PerspectiveCamera();
+  internals.container = { clientWidth: 100, clientHeight: 50 };
+  internals.cameraController = {
+    camera,
+    tick: vi.fn(),
+    resize: vi.fn(),
+    controls: { handleResize: vi.fn() },
+  };
+  internals.renderer = {
+    render: vi.fn(),
+    setPixelRatio: vi.fn(),
+    setSize: vi.fn(),
+    getSize: (v: THREE.Vector2) => v.set(10, 10),
+    getPixelRatio: () => 1,
+  };
+  internals.fpsCounter = { tick: vi.fn() };
+  const pivot = { visible: true };
+  internals.pivotMarker = {
+    isVisible: () => pivot.visible,
+    setVisible: vi.fn((visible: boolean) => {
+      pivot.visible = visible;
+    }),
+    update: vi.fn(),
+  };
+  const xr = {
+    presenting: false,
+    enter: vi.fn(async () => {}),
+    exit: vi.fn(async () => {}),
+    getState: vi.fn(() => ({ presenting: false })),
+    subscribe: vi.fn(() => () => {}),
+    dispose: vi.fn(),
+  };
+  internals.xr = xr;
+  return { r, internals, xr, pivot };
+}
+
+describe("MoleculeRenderer immersive view", () => {
+  beforeEach(() => {
+    vi.stubGlobal(
+      "requestAnimationFrame",
+      vi.fn(() => 42),
+    );
+    vi.stubGlobal("cancelAnimationFrame", vi.fn());
+  });
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("delegates enter / exit / state / subscribe to the session controller", async () => {
+    const { r, xr } = renderer();
+    await r.enterXR("immersive-ar");
+    expect(xr.enter).toHaveBeenCalledWith("immersive-ar");
+    await r.exitXR();
+    expect(xr.exit).toHaveBeenCalled();
+    expect(r.getXRState()).toEqual({ presenting: false });
+    const listener = vi.fn();
+    r.onXRStateChange(listener);
+    expect(xr.subscribe).toHaveBeenCalledWith(listener);
+  });
+
+  it("stops the desktop loop and hides the pivot marker while presenting", () => {
+    const { internals, pivot } = renderer();
+    internals.animationId = 7;
+    internals.onXRPresentingChange(true);
+    expect(cancelAnimationFrame).toHaveBeenCalledWith(7);
+    expect(internals.animationId).toBeNull();
+    expect(pivot.visible).toBe(false);
+    // Without a running loop (or a pivot marker) there is nothing to stop.
+    vi.mocked(cancelAnimationFrame).mockClear();
+    internals.pivotMarker = null;
+    internals.onXRPresentingChange(true);
+    expect(cancelAnimationFrame).not.toHaveBeenCalled();
+  });
+
+  it("restores the pivot marker and restarts the desktop loop afterwards", () => {
+    const { internals, pivot } = renderer();
+    internals.onXRPresentingChange(true);
+    internals.onXRPresentingChange(false);
+    expect(pivot.visible).toBe(true);
+    expect(requestAnimationFrame).toHaveBeenCalled();
+    expect(internals.animationId).toBe(42);
+    // The first desktop frame re-syncs the canvas to the container.
+    expect(internals.lastContainerW).toBe(100);
+    expect(internals.renderer.setSize).toHaveBeenCalledWith(100, 50, false);
+  });
+
+  it("leaves a hidden pivot marker hidden", () => {
+    const { internals, pivot } = renderer();
+    pivot.visible = false;
+    internals.onXRPresentingChange(true);
+    internals.onXRPresentingChange(false);
+    expect(pivot.visible).toBe(false);
+  });
+
+  it("does not resize the canvas while the headset owns it", () => {
+    const { internals, xr } = renderer();
+    xr.presenting = true;
+    internals.onResize();
+    expect(internals.renderer.setSize).not.toHaveBeenCalled();
+  });
+
+  it("places what is on screen: the current frame's bounding sphere", () => {
+    const { internals } = renderer();
+    expect(internals.xrFocus().radius).toBe(10);
+    internals.snapshot = { nAtoms: 2, positions: new Float32Array([0, 0, 0, 0, 0, 0]) };
+    internals.currentPositions = new Float32Array([0, 0, 0, 4, 0, 0]);
+    const focus = internals.xrFocus();
+    expect(focus.center.toArray()).toEqual([2, 0, 0]);
+    expect(focus.radius).toBeCloseTo(2 + 2, 9);
+  });
+
+  it("wires a real session controller to its own scene and camera", () => {
+    const r = new MoleculeRenderer();
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const internals = r as any;
+    const scene = new THREE.Scene();
+    const camera = new THREE.PerspectiveCamera();
+    const gl = {};
+    internals.scene = scene;
+    internals.renderer = gl;
+    internals.cameraController = { camera };
+    const host = internals.xr.host;
+    expect(host.getRenderer()).toBe(gl);
+    expect(host.getScene()).toBe(scene);
+    expect(host.getViewCamera()).toBe(camera);
+    expect(host.getFocus().radius).toBe(10);
+    const change = vi.spyOn(internals, "onXRPresentingChange").mockImplementation(() => {});
+    host.onPresentingChange(true);
+    expect(change).toHaveBeenCalledWith(true);
+  });
+
+  it("ends the session on dispose", () => {
+    const { r, xr, internals } = renderer();
+    internals.atomLayers = { dispose: vi.fn() };
+    internals.selection = { clear: vi.fn() };
+    internals.clearSelection = vi.fn();
+    internals.cameraController.dispose = vi.fn();
+    internals.renderer.dispose = vi.fn();
+    internals.renderer.domElement = { parentNode: null };
+    internals.pivotMarker.dispose = vi.fn();
+    r.dispose();
+    expect(xr.dispose).toHaveBeenCalled();
+  });
+});
