@@ -179,15 +179,52 @@ export interface OpenLabNotebookOpts {
 }
 
 /**
+ * How long Run All may go without finishing a code cell before the first boot
+ * is abandoned. A healthy boot finishes its first cell within a few seconds.
+ */
+const RUN_ALL_STALL_MS = 15_000;
+
+/**
+ * Resolve once Run All has made progress: a code cell finished (its prompt
+ * changed to `[n]:`) or the viewer reported ready. Throws after `timeout`.
+ *
+ * JupyterLab sometimes marks every cell `[*]:` but never sends the execute
+ * requests: the server log shows no request and the kernel stays idle until
+ * the page reconnects. That hit about every second CI run. Failing here lets
+ * the caller reload after `timeout` instead of waiting out the ready timeout.
+ */
+async function waitForRunAllProgress(
+  page: Page,
+  promptsBefore: string[],
+  timeout: number,
+): Promise<void> {
+  try {
+    await page.waitForFunction(
+      (before: string[]) => {
+        if ((window as { __megane_test_ready?: unknown }).__megane_test_ready) return true;
+        const prompts = document.querySelectorAll(".jp-CodeCell .jp-InputPrompt");
+        return [...prompts].some((p, i) => {
+          const text = p.textContent ?? "";
+          return /\[\d+\]/.test(text) && text !== before[i];
+        });
+      },
+      promptsBefore,
+      { timeout, polling: 250 },
+    );
+  } catch {
+    throw new Error(`Run All finished no cell within ${timeout} ms`);
+  }
+}
+
+/**
  * Open a notebook in JupyterLab and trigger Run All Cells (unless `runAll` is false). Waits for the
  * megane renderer's testMode ready signal. Sets `__MEGANE_TEST__=true` via
  * page.addInitScript.
  *
- * The boot is retried once: on a cold or busy runner the Run All menu click
- * can race the kernel start, in which case the first cell silently fails and
- * the widget output never mounts (`__megane_test_ready` stays null). A page
- * reload with a fresh Run All recovers that state, so a single transient
- * race no longer fails the whole spec (the widget-api CI flake).
+ * The boot is retried once after a page reload, which reconnects to the
+ * kernel. The first attempt gives up early when Run All stalls (see
+ * waitForRunAllProgress) or the widget never mounts (`__megane_test_ready`
+ * stays null); the retry waits the full timeout.
  */
 export async function openLabNotebook(page: Page, opts: OpenLabNotebookOpts): Promise<void> {
   await page.addInitScript(() => {
@@ -196,13 +233,13 @@ export async function openLabNotebook(page: Page, opts: OpenLabNotebookOpts): Pr
   // `reset` query forces JupyterLab to discard saved layout from a previous run.
   const url = `http://127.0.0.1:${opts.port}/lab/tree/${opts.notebook}?token=${opts.token}&test=1&reset`;
 
-  const bootOnce = async (waitTimeoutMs: number): Promise<void> => {
+  const bootOnce = async (waitTimeoutMs: number, stallMs?: number): Promise<void> => {
     await page.waitForSelector("#jp-main-dock-panel", { timeout: 30_000 });
 
-    // Wait for the kernel to settle before triggering Run All. The toolbar
-    // kernel name appearing is the coarse gate; the execution indicator
-    // reporting "idle" is the precise one (best-effort — the selector is
-    // JupyterLab-version-dependent, so a miss only skips the extra wait).
+    // Coarse, best-effort gates before Run All: the toolbar shows the kernel
+    // name while the kernel is still starting, and the execution indicator
+    // starts out "idle" before any kernel status arrives. Neither proves the
+    // kernel will run the cells; waitForRunAllProgress checks that.
     await page
       .locator(".jp-Toolbar")
       .filter({ hasText: "Python 3" })
@@ -216,12 +253,16 @@ export async function openLabNotebook(page: Page, opts: OpenLabNotebookOpts): Pr
       .catch(() => {});
 
     if (opts.runAll ?? true) {
+      const promptsBefore = await page
+        .locator(".jp-CodeCell .jp-InputPrompt")
+        .evaluateAll((els) => els.map((el) => el.textContent ?? ""));
       // Run All via the menu bar.
       await page.locator(".lm-MenuBar-itemLabel", { hasText: /^Run$/ }).first().click();
       await page
         .locator(".lm-Menu-itemLabel", { hasText: /Run All Cells/ })
         .first()
         .click();
+      if (stallMs !== undefined) await waitForRunAllProgress(page, promptsBefore, stallMs);
     }
 
     await waitForReady(page, {
@@ -233,10 +274,13 @@ export async function openLabNotebook(page: Page, opts: OpenLabNotebookOpts): Pr
   const totalTimeout = opts.waitTimeoutMs ?? 90_000;
   await page.goto(url, { waitUntil: "domcontentloaded" });
   try {
-    await bootOnce(Math.max(30_000, Math.floor(totalTimeout / 2)));
-  } catch {
-    // One retry from a clean page: reload discards the wedged notebook
-    // session and Run All executes against a settled kernel.
+    await bootOnce(Math.max(30_000, Math.floor(totalTimeout / 2)), RUN_ALL_STALL_MS);
+  } catch (e) {
+    // One retry from a clean page: the reload reconnects to the kernel, and
+    // Run All then reaches it.
+    console.warn(
+      `openLabNotebook: first boot of ${opts.notebook} failed (${(e as Error).message.split("\n")[0]}); reloading`,
+    );
     await page.reload({ waitUntil: "domcontentloaded" });
     await bootOnce(totalTimeout);
   }
