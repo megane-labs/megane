@@ -8,10 +8,15 @@
  * the headset cameras see. The session itself lives in the renderer
  * (`MoleculeRenderer.enterXR`); on a headset the page is hidden while it runs,
  * and on a tethered PC headset the button turns into "Exit".
+ *
+ * The page's trajectory playback and measurement selection are handed to the
+ * renderer as an `XRBridge`, so the headset's control panel can drive them
+ * and the timeline / Measurement panel follow. A host that passes neither
+ * (megane Builder) gets a panel with just Reset and Exit.
  */
 
 import { useEffect, useRef, useState, type CSSProperties } from "react";
-import type { MeganeXRMode, MeganeXRState } from "../renderer/MoleculeRenderer";
+import type { MeganeXRMode, MeganeXRState, XRBridge } from "../renderer/MoleculeRenderer";
 import { getXRSystem, supportedXRModes } from "../renderer/xr/xrSupport";
 import { overlayButtonStyle } from "./toolbarStyles";
 
@@ -20,6 +25,16 @@ export interface XRControlsTarget {
   enterXR(mode: MeganeXRMode): Promise<void>;
   exitXR(): Promise<void>;
   onXRStateChange(listener: (state: MeganeXRState) => void): () => void;
+  setXRBridge?(bridge: XRBridge | null): void;
+}
+
+/** The page's trajectory playback, as its Timeline sees it. */
+export interface XRControlsPlayback {
+  currentFrame: number;
+  totalFrames: number;
+  playing: boolean;
+  onSeek: (frame: number) => void;
+  onPlayPause: () => void;
 }
 
 export interface XRControlsProps {
@@ -27,6 +42,35 @@ export interface XRControlsProps {
   getTarget: () => XRControlsTarget | null;
   /** Extra style for the root (only rendered when a mode is supported). */
   style?: CSSProperties;
+  /** Playback the headset panel may drive (none: no playback controls). */
+  playback?: XRControlsPlayback;
+  /** Toggle an atom in the page's measurement selection (none: no measure mode). */
+  onToggleMeasureAtom?: (atomIndex: number) => void;
+  /** Clear the page's measurement selection. */
+  onClearMeasurement?: () => void;
+}
+
+/** The latest props, read by the bridge whenever the headset asks. */
+type BridgeProps = Pick<XRControlsProps, "playback" | "onToggleMeasureAtom" | "onClearMeasurement">;
+
+/** A bridge that always reads `props.current`, offering what the props offer now. */
+export function makeXRBridge(props: { current: BridgeProps }): XRBridge {
+  const { playback, onToggleMeasureAtom } = props.current;
+  return {
+    playback: playback && {
+      getState: () => {
+        const p = props.current.playback ?? playback;
+        return { frame: p.currentFrame, total: p.totalFrames, playing: p.playing };
+      },
+      togglePlay: () => (props.current.playback ?? playback).onPlayPause(),
+      seek: (frame) => (props.current.playback ?? playback).onSeek(frame),
+    },
+    measure: onToggleMeasureAtom && {
+      toggleAtom: (atomIndex) =>
+        (props.current.onToggleMeasureAtom ?? onToggleMeasureAtom)(atomIndex),
+      clear: () => props.current.onClearMeasurement?.(),
+    },
+  };
 }
 
 const MODE_LABEL: Record<MeganeXRMode, string> = {
@@ -47,11 +91,27 @@ const ERROR_STYLE: CSSProperties = {
   color: "var(--megane-danger-text)",
 };
 
-export function XRControls({ getTarget, style }: XRControlsProps) {
+export function XRControls({
+  getTarget,
+  style,
+  playback,
+  onToggleMeasureAtom,
+  onClearMeasurement,
+}: XRControlsProps) {
   const [modes, setModes] = useState<MeganeXRMode[]>([]);
   const [active, setActive] = useState<MeganeXRMode | null>(null);
   const [error, setError] = useState<string | null>(null);
   const unsubscribeRef = useRef<(() => void) | null>(null);
+  const bridgeProps = useRef<BridgeProps>({});
+  bridgeProps.current = { playback, onToggleMeasureAtom, onClearMeasurement };
+  const hasPlayback = playback !== undefined;
+  const hasMeasure = onToggleMeasureAtom !== undefined;
+
+  // Offer the headset what the page offers now: playback can appear (a
+  // trajectory loads) while a session runs.
+  useEffect(() => {
+    if (active) getTarget()?.setXRBridge?.(makeXRBridge(bridgeProps));
+  }, [active, hasPlayback, hasMeasure, getTarget]);
 
   useEffect(() => {
     let cancelled = false;
@@ -80,6 +140,7 @@ export function XRControls({ getTarget, style }: XRControlsProps) {
     if (!unsubscribeRef.current) {
       unsubscribeRef.current = target.onXRStateChange((state) => setActive(state.mode));
     }
+    target.setXRBridge?.(makeXRBridge(bridgeProps));
     // No await before enterXR: the session request needs this click's
     // user activation.
     target.enterXR(mode).catch((err: unknown) => {

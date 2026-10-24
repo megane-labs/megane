@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
 import { render, screen, cleanup, fireEvent, waitFor, act } from "@testing-library/react";
-import { XRControls, type XRControlsTarget } from "@/components/XRControls";
-import type { MeganeXRState } from "@/renderer/MoleculeRenderer";
+import { makeXRBridge, XRControls, type XRControlsTarget } from "@/components/XRControls";
+import type { MeganeXRState, XRBridge } from "@/renderer/MoleculeRenderer";
 
 type Listener = (state: MeganeXRState) => void;
 
@@ -27,10 +27,20 @@ function fakeTarget() {
         listener = null;
       });
     }),
+    setXRBridge: vi.fn((_bridge: XRBridge | null) => {}),
   } satisfies XRControlsTarget;
   const emit = (mode: MeganeXRState["mode"]) =>
     act(() => {
-      listener?.({ presenting: mode !== null, mode, frames: 0, scale: 1, position: [0, 0, 0] });
+      listener?.({
+        presenting: mode !== null,
+        mode,
+        frames: 0,
+        scale: 1,
+        position: [0, 0, 0],
+        panel: [],
+        measuring: false,
+        labels: 0,
+      });
     });
   return { target, emit, hasListener: () => listener !== null };
 }
@@ -129,5 +139,86 @@ describe("XRControls", () => {
     expect(xr.removeEventListener).toHaveBeenCalledWith("devicechange", expect.any(Function));
     expect(listeners.size).toBe(0);
     expect(hasListener()).toBe(false);
+  });
+});
+
+describe("XRControls bridge", () => {
+  const playback = (over: Partial<{ currentFrame: number; playing: boolean }> = {}) => ({
+    currentFrame: 2,
+    totalFrames: 8,
+    playing: false,
+    onSeek: vi.fn(),
+    onPlayPause: vi.fn(),
+    ...over,
+  });
+
+  it("hands the page's playback and measurement to the renderer on entry", async () => {
+    fakeXR(["immersive-vr"]);
+    const { target } = fakeTarget();
+    const pb = playback();
+    const onToggle = vi.fn();
+    const onClear = vi.fn();
+    render(
+      <XRControls
+        getTarget={() => target}
+        playback={pb}
+        onToggleMeasureAtom={onToggle}
+        onClearMeasurement={onClear}
+      />,
+    );
+    fireEvent.click(await screen.findByTestId("xr-enter-vr"));
+    const bridge = target.setXRBridge.mock.calls[0][0]!;
+    // Set before the session request, which needs the click's activation.
+    expect(target.setXRBridge.mock.invocationCallOrder[0]).toBeLessThan(
+      target.enterXR.mock.invocationCallOrder[0],
+    );
+    expect(bridge.playback!.getState()).toEqual({ frame: 2, total: 8, playing: false });
+    bridge.playback!.togglePlay();
+    bridge.playback!.seek(5);
+    expect(pb.onPlayPause).toHaveBeenCalled();
+    expect(pb.onSeek).toHaveBeenCalledWith(5);
+    bridge.measure!.toggleAtom(3);
+    bridge.measure!.clear();
+    expect(onToggle).toHaveBeenCalledWith(3);
+    expect(onClear).toHaveBeenCalled();
+  });
+
+  it("reads the latest props and re-sends when what the page offers changes", async () => {
+    fakeXR(["immersive-vr"]);
+    const { target, emit } = fakeTarget();
+    const { rerender } = render(<XRControls getTarget={() => target} />);
+    fireEvent.click(await screen.findByTestId("xr-enter-vr"));
+    expect(target.setXRBridge.mock.calls[0][0]).toEqual({
+      playback: undefined,
+      measure: undefined,
+    });
+    emit("immersive-vr");
+    const pb = playback({ currentFrame: 6, playing: true });
+    rerender(<XRControls getTarget={() => target} playback={pb} />);
+    const bridge = target.setXRBridge.mock.lastCall![0]!;
+    expect(bridge.playback!.getState()).toEqual({ frame: 6, total: 8, playing: true });
+    rerender(<XRControls getTarget={() => target} playback={{ ...pb, currentFrame: 7 }} />);
+    expect(bridge.playback!.getState().frame).toBe(7);
+  });
+});
+
+describe("makeXRBridge", () => {
+  it("falls back to the props it was made with once the page withdraws them", () => {
+    const onSeek = vi.fn();
+    const onToggle = vi.fn();
+    const props: { current: Parameters<typeof makeXRBridge>[0]["current"] } = {
+      current: {
+        playback: { currentFrame: 1, totalFrames: 3, playing: false, onSeek, onPlayPause: vi.fn() },
+        onToggleMeasureAtom: onToggle,
+      },
+    };
+    const bridge = makeXRBridge(props);
+    props.current = {};
+    expect(bridge.playback!.getState().frame).toBe(1);
+    bridge.playback!.seek(2);
+    expect(onSeek).toHaveBeenCalledWith(2);
+    bridge.measure!.toggleAtom(4);
+    expect(onToggle).toHaveBeenCalledWith(4);
+    expect(() => bridge.measure!.clear()).not.toThrow();
   });
 });

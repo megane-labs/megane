@@ -226,6 +226,87 @@ export function pickAtPixel(
   return null;
 }
 
+/** An atom a ray hit: the drawn copy's position and how far along the ray. */
+export interface RayAtomHit {
+  /** The atom's index in the primary structure (a periodic image's source). */
+  atomIndex: number;
+  /** Distance along the ray to where it enters the atom (ray units). */
+  distance: number;
+  /** Where the hit copy is drawn (the atom, or the image that was hit). */
+  position: [number, number, number];
+}
+
+/**
+ * The drawn atom a 3D ray points at — the headset's counterpart of
+ * {@link pickAtPixel}, for a controller or hand ray in structure space (Å,
+ * unit `ray.direction`). Atoms get their drawn radius (same factors as a
+ * click pick, so hidden atoms are never hit) but at least `minRadius`, which
+ * keeps small atoms hittable by a jittery hand ray. An atom the ray actually
+ * passes through wins over one only the `minRadius` margin reaches; among
+ * equals the nearest wins. Periodic and Drawing Boundary images resolve to
+ * their source atom.
+ */
+export function pickAtomOnRay(
+  ray: THREE.Ray,
+  snapshot: Snapshot,
+  currentPositions: Float32Array,
+  atomScale: number,
+  minRadius: number,
+  drawingBoundary: DrawingBoundaryData | null = null,
+  periodicImages: PeriodicAtomImageData | null = null,
+  radiusScale: number = BALL_STICK_ATOM_SCALE,
+  visibility: AtomPickVisibility | null = null,
+): RayAtomHit | null {
+  const { origin: o, direction: d } = ray;
+  const elements = snapshot.elements;
+  let best: RayAtomHit | null = null;
+  // 0: passes through the drawn sphere; 1: only within the margin.
+  let bestTier = 2;
+  let bestScore = Infinity;
+
+  const consider = (source: number, px: number, py: number, pz: number) => {
+    const factor = pickRadiusFactor(visibility, source);
+    if (factor <= 0) return;
+    const r = getRadius(elements[source]) * radiusScale * atomScale * factor;
+    const pickR = Math.max(r, minRadius);
+    const cx = px - o.x;
+    const cy = py - o.y;
+    const cz = pz - o.z;
+    const along = cx * d.x + cy * d.y + cz * d.z;
+    if (along < 0) return; // behind the hand
+    const perpSq = cx * cx + cy * cy + cz * cz - along * along;
+    if (perpSq > pickR * pickR) return;
+    const tier = perpSq <= r * r ? 0 : 1;
+    const entry = Math.max(0, along - Math.sqrt((tier === 0 ? r * r : pickR * pickR) - perpSq));
+    // Through a sphere: nearest entry wins. In the margin: closest to the ray.
+    const score = tier === 0 ? entry : Math.sqrt(perpSq) / pickR;
+    if (tier < bestTier || (tier === bestTier && score < bestScore)) {
+      bestTier = tier;
+      bestScore = score;
+      best = { atomIndex: source, distance: entry, position: [px, py, pz] };
+    }
+  };
+
+  const pos = currentPositions;
+  for (let i = 0; i < snapshot.nAtoms; i++) {
+    if (drawingBoundary && !drawingBoundary.sourceVisibleMask[i]) continue;
+    consider(i, pos[i * 3], pos[i * 3 + 1], pos[i * 3 + 2]);
+  }
+  for (const images of [drawingBoundary?.images, periodicImages]) {
+    if (!images) continue;
+    for (let image = 0; image < images.sourceIndices.length; image++) {
+      const i3 = image * 3;
+      consider(
+        images.sourceIndices[image],
+        images.positions[i3],
+        images.positions[i3 + 1],
+        images.positions[i3 + 2],
+      );
+    }
+  }
+  return best;
+}
+
 /** A rubber-band rectangle in client coordinates (any corner order). */
 export interface ClientRect {
   x0: number;

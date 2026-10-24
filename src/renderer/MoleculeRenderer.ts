@@ -45,7 +45,8 @@ import {
   type ViewDragGesture,
 } from "./SelectionController";
 import type { ViewAxis } from "./cameraOrientation";
-import { XRSessionController, type MeganeXRState } from "./xr/XRSessionController";
+import { XRSessionController, type MeganeXRState, type XRBridge } from "./xr/XRSessionController";
+import type { XRPanelControl } from "./xr/XRPanel";
 import { boundingFocus, type XRFocus } from "./xr/xrMath";
 import type { MeganeXRMode } from "./xr/xrSupport";
 import {
@@ -61,7 +62,7 @@ export type { MeganeSubsystemVisibility, MeganeRendererMemory, MeganeTestApi } f
 export type { MeganeCameraMode, MeganeCameraState } from "./CameraController";
 export type { MeganeProjectedAtom } from "./SelectionController";
 export type { RepresentationType } from "./representation";
-export type { MeganeXRState } from "./xr/XRSessionController";
+export type { MeganeXRState, XRBridge, XRPlaybackState } from "./xr/XRSessionController";
 export type { MeganeXRMode } from "./xr/xrSupport";
 
 export class MoleculeRenderer {
@@ -172,6 +173,12 @@ export class MoleculeRenderer {
     getViewCamera: () => this.camera,
     getFocus: () => this.xrFocus(),
     onPresentingChange: (presenting) => this.onXRPresentingChange(presenting),
+    pickAtom: (ray, minRadius) => this.selection.pickOnRay(ray, minRadius),
+    setHoverAtoms: (atoms) => this.selection.setHover(atoms),
+    getSelectedAtoms: () => this.selection.selected,
+    getMeasurement: () => this.selection.getMeasurement(),
+    getAtomPosition: (index, out) => this.xrAtomPosition(index, out),
+    getLabels: () => this.labelOverlay?.getData() ?? null,
   });
   /** Pivot marker visibility to restore when the XR session ends. */
   private pivotVisibleBeforeXR = false;
@@ -1251,9 +1258,31 @@ export class MoleculeRenderer {
     return this.xr.getState();
   }
 
+  /**
+   * Let the headset drive the page's trajectory playback and measurement
+   * selection, so the timeline and Measurement panel follow (null: the
+   * immersive view offers neither).
+   */
+  setXRBridge(bridge: XRBridge | null): void {
+    this.xr.setBridge(bridge);
+  }
+
+  /** Where an emulated controller must be to press panel control `id` (E2E probe). */
+  testGetXRPanelControlPose(id: XRPanelControl) {
+    return this.xr.panelControlPose(id);
+  }
+
   /** Subscribe to immersive session start / end. Returns the unsubscribe function. */
   onXRStateChange(listener: (state: MeganeXRState) => void): () => void {
     return this.xr.subscribe(listener);
+  }
+
+  /** Atom `index`'s position in the frame on screen, for the XR measurement readout. */
+  private xrAtomPosition(index: number, out: THREE.Vector3): boolean {
+    if (!this.snapshot || index < 0 || index >= this.snapshot.nAtoms) return false;
+    const p = this.getCurrentPositions();
+    out.set(p[index * 3], p[index * 3 + 1], p[index * 3 + 2]);
+    return true;
   }
 
   /** Bounding sphere of the structure on screen, for the XR placement. */

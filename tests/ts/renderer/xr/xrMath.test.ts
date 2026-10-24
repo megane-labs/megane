@@ -9,10 +9,18 @@ import {
   XR_NEAR_FADE,
   modelScale,
   oneHandGrab,
+  panelOutOfReach,
+  panelPose,
+  rayFromPose,
+  rayHitsPanel,
   stickSteer,
   twoHandGrab,
   XR_MAX_SCALE,
   XR_MIN_SCALE,
+  XR_PANEL_DISTANCE,
+  XR_PANEL_DROP,
+  XR_PANEL_FOLLOW_ANGLE,
+  XR_PANEL_FOLLOW_DISTANCE,
   XR_PLACEMENT_DISTANCE,
   XR_PLACEMENT_DROP,
   XR_PLACEMENT_RADIUS,
@@ -231,5 +239,102 @@ describe("depthCueRange", () => {
   it("keeps a usable ramp for a vanishing model", () => {
     const r = depthCueRange(v(0, 0, 0), v(0, 0, -2), 0);
     expect(r.end - r.start).toBeCloseTo(0.05, 9);
+  });
+});
+
+describe("panelPose", () => {
+  it("floats ahead and below the eyes, facing them, ignoring head pitch", () => {
+    const head = v(0.2, 1.6, 0.1);
+    // Looking down 30°: the panel still sits level ahead.
+    const pitched = new THREE.Quaternion().setFromAxisAngle(v(1, 0, 0), -Math.PI / 6);
+    const { position, quaternion } = panelPose(head, pitched);
+    expectVec(position, v(0.2, 1.6 - XR_PANEL_DROP, 0.1 - XR_PANEL_DISTANCE));
+    // Its face (+z) points at the eyes.
+    const normal = v(0, 0, 1).applyQuaternion(quaternion);
+    expectVec(normal, head.clone().sub(position).normalize());
+  });
+
+  it("follows the head's yaw", () => {
+    const yaw = new THREE.Quaternion().setFromAxisAngle(v(0, 1, 0), Math.PI / 2);
+    const { position } = panelPose(v(0, 1.6, 0), yaw);
+    // Turned left 90°: −z becomes −x.
+    expectVec(position, v(-XR_PANEL_DISTANCE, 1.6 - XR_PANEL_DROP, 0));
+  });
+
+  it("falls back to −z when the head looks straight down", () => {
+    const down = new THREE.Quaternion().setFromAxisAngle(v(1, 0, 0), -Math.PI / 2);
+    const { position } = panelPose(v(0, 1.6, 0), down);
+    expect(position.z).toBeCloseTo(-XR_PANEL_DISTANCE, 6);
+  });
+});
+
+describe("panelOutOfReach", () => {
+  const head = v(0, 1.6, 0);
+  const ahead = new THREE.Quaternion();
+
+  it("stays put inside the comfort zone", () => {
+    const { position } = panelPose(head, ahead);
+    expect(panelOutOfReach(position, head, ahead)).toBe(false);
+    // A glance 20° to the side does not move it.
+    const glance = new THREE.Quaternion().setFromAxisAngle(v(0, 1, 0), (20 * Math.PI) / 180);
+    expect(panelOutOfReach(position, head, glance)).toBe(false);
+  });
+
+  it("follows once the head turns well away", () => {
+    const { position } = panelPose(head, ahead);
+    const turned = new THREE.Quaternion().setFromAxisAngle(v(0, 1, 0), XR_PANEL_FOLLOW_ANGLE + 0.3);
+    expect(panelOutOfReach(position, head, turned)).toBe(true);
+  });
+
+  it("follows once the user walks away from it", () => {
+    const { position } = panelPose(head, ahead);
+    const walked = v(0, 1.6, XR_PANEL_FOLLOW_DISTANCE + 0.1);
+    expect(panelOutOfReach(position, walked, ahead)).toBe(true);
+  });
+
+  it("follows when the panel is right above or below the head", () => {
+    const position = v(0, 1.25, 0);
+    expect(panelOutOfReach(position, head, ahead)).toBe(true);
+  });
+});
+
+describe("rayFromPose", () => {
+  it("points along the pose's −z axis from its origin", () => {
+    const pose = new THREE.Matrix4().compose(
+      v(1, 2, 3),
+      new THREE.Quaternion().setFromAxisAngle(v(0, 1, 0), Math.PI / 2),
+      v(1, 1, 1),
+    );
+    const ray = rayFromPose(pose);
+    expectVec(ray.origin, v(1, 2, 3));
+    expectVec(ray.direction, v(-1, 0, 0));
+  });
+});
+
+describe("rayHitsPanel", () => {
+  const panel = new THREE.Matrix4().makeTranslation(0, 1, -1);
+  const ray = (origin: THREE.Vector3, dir: THREE.Vector3) =>
+    new THREE.Ray(origin, dir.clone().normalize());
+
+  it("maps the hit to panel coordinates from the top left", () => {
+    const hit = rayHitsPanel(ray(v(0, 1, 0), v(0, 0, -1)), panel, 0.4, 0.2)!;
+    expect(hit.u).toBeCloseTo(0.5, 9);
+    expect(hit.v).toBeCloseTo(0.5, 9);
+    expect(hit.distance).toBeCloseTo(1, 9);
+    const corner = rayHitsPanel(ray(v(-0.15, 1.05, 0), v(0, 0, -1)), panel, 0.4, 0.2)!;
+    expect(corner.u).toBeCloseTo(0.125, 9);
+    expect(corner.v).toBeCloseTo(0.25, 9);
+  });
+
+  it("misses past the edges, from behind, and pointing away", () => {
+    expect(rayHitsPanel(ray(v(0.3, 1, 0), v(0, 0, -1)), panel, 0.4, 0.2)).toBeNull();
+    expect(rayHitsPanel(ray(v(0, 1, -2), v(0, 0, 1)), panel, 0.4, 0.2)).toBeNull();
+    expect(rayHitsPanel(ray(v(0, 1, 0), v(0, 0, 1)), panel, 0.4, 0.2)).toBeNull();
+    expect(rayHitsPanel(ray(v(0, 1, 0), v(1, 0, 0)), panel, 0.4, 0.2)).toBeNull();
+  });
+
+  it("keeps answering past the edges when unbounded", () => {
+    const hit = rayHitsPanel(ray(v(0.3, 1, 0), v(0, 0, -1)), panel, 0.4, 0.2, false)!;
+    expect(hit.u).toBeCloseTo(1.25, 9);
   });
 });

@@ -33,10 +33,12 @@ import type { AtomLayerState } from "./AtomLayerGroup";
 import { getRadius, BALL_STICK_ATOM_SCALE } from "../constants";
 import {
   pickAtPixel,
+  pickAtomOnRay,
   projectToScreen,
   atomsInRect,
   screenDragToWorldDelta,
   type ClientRect,
+  type RayAtomHit,
 } from "./Picking";
 import { computeMeasurement } from "./Selection";
 
@@ -196,6 +198,11 @@ export class SelectionController {
     return this.selectedAtoms.length > 0;
   }
 
+  /** The atoms in the measurement selection, in selection order. */
+  get selected(): readonly number[] {
+    return this.selectedAtoms;
+  }
+
   // ---- Picking ----
 
   /** Perform a pick at the given screen coordinates using CPU screen-space projection. */
@@ -212,6 +219,31 @@ export class SelectionController {
       atomState.scale,
       clientX,
       clientY,
+      this.view.getDrawingBoundary(),
+      this.view.getBondPeriodicImages(),
+      this.view.getAtomRadiusScale(),
+      {
+        globalOpacity: atomState.opacity,
+        opacity: atomState.opacityOverrides,
+        scale: atomState.scaleOverrides,
+      },
+    );
+  }
+
+  /**
+   * The drawn atom a 3D ray points at (structure space, Å; see
+   * `pickAtomOnRay`), each atom picked at no less than `minRadius` Å.
+   */
+  pickOnRay(ray: THREE.Ray, minRadius: number): RayAtomHit | null {
+    const snapshot = this.view.getSnapshot();
+    if (!snapshot) return null;
+    const atomState = this.view.getAtomState();
+    return pickAtomOnRay(
+      ray,
+      snapshot,
+      this.view.getCurrentPositions(),
+      atomState.scale,
+      minRadius,
       this.view.getDrawingBoundary(),
       this.view.getBondPeriodicImages(),
       this.view.getAtomRadiusScale(),

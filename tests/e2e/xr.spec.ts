@@ -25,6 +25,14 @@ interface XRState {
   frames: number;
   scale: number;
   position: [number, number, number];
+  panel: string[];
+  measuring: boolean;
+  labels: number;
+}
+
+interface ControlPose {
+  position: [number, number, number];
+  quaternion: [number, number, number, number];
 }
 
 type XRWindow = Window & {
@@ -33,11 +41,15 @@ type XRWindow = Window & {
     metaQuest3: unknown;
   };
   __iwer: EmulatedDevice;
-  __megane_test: { getXRState: () => XRState | null };
+  __megane_test: {
+    getXRState: () => XRState | null;
+    getXRPanelControlPose: (id: string) => ControlPose | null;
+  };
 };
 
 interface EmulatedController {
-  position: { x: number; y: number; z: number };
+  position: { x: number; y: number; z: number; set(x: number, y: number, z: number): void };
+  quaternion: { set(x: number, y: number, z: number, w: number): void };
   updateButtonValue(id: string, value: number): void;
 }
 
@@ -81,6 +93,37 @@ async function waitForXRFrames(page: Page, atLeast: number): Promise<void> {
 async function settle(page: Page): Promise<void> {
   const { frames } = await xrState(page);
   await waitForXRFrames(page, frames + 3);
+}
+
+/**
+ * Point the right controller at headset panel control `id` and pull the
+ * trigger once, the way a hand would pinch it.
+ */
+async function pressPanel(page: Page, id: string): Promise<void> {
+  await page.evaluate((control) => {
+    const w = window as unknown as XRWindow;
+    const pose = w.__megane_test.getXRPanelControlPose(control);
+    if (!pose) throw new Error(`no panel control ${control}`);
+    const right = w.__iwer.controllers.right;
+    right.position.set(...pose.position);
+    right.quaternion.set(...pose.quaternion);
+  }, id);
+  await settle(page);
+  for (const value of [1, 0]) {
+    const { frames } = await xrState(page);
+    await page.evaluate((v) => {
+      (window as unknown as XRWindow).__iwer.controllers.right.updateButtonValue("trigger", v);
+    }, value);
+    // A few frames to see the press — or none at all once Exit ends the session.
+    await page.waitForFunction(
+      (n) => {
+        const state = (window as unknown as XRWindow).__megane_test.getXRState();
+        return !state?.presenting || state.frames >= n;
+      },
+      frames + 3,
+      { timeout: 20_000 },
+    );
+  }
 }
 
 /** Fraction of pixels in each half of the page that are not background white. */
@@ -206,6 +249,40 @@ test.describe("xr: webapp", () => {
     );
   });
 
+  test("the headset panel steps the trajectory, toggles measuring and exits", async ({ page }) => {
+    await emulateQuest3(page);
+    await page.goto("/?test=1", { waitUntil: "domcontentloaded" });
+    await waitForReady(page);
+    const viewer = page.locator("[data-total-frames]").first();
+    const total = Number(await viewer.getAttribute("data-total-frames"));
+    await page.locator('[data-testid="xr-enter-vr"]').click();
+    await waitForXRFrames(page, 5);
+    const state = await xrState(page);
+    expect(state.panel).toEqual(expect.arrayContaining(["measure", "reset", "exit"]));
+
+    if (total > 1) {
+      // The demo trajectory: the panel's step button moves the page's timeline.
+      expect(state.panel).toEqual(expect.arrayContaining(["prev", "play", "next", "scrub"]));
+      const before = Number(await viewer.getAttribute("data-current-frame"));
+      await pressPanel(page, "next");
+      await expect(viewer).toHaveAttribute("data-current-frame", String(before + 1));
+    }
+
+    // Pressing a control does not grab the structure.
+    const placed = (await xrState(page)).position;
+    await pressPanel(page, "measure");
+    expect((await xrState(page)).measuring).toBe(true);
+    expect((await xrState(page)).position).toEqual(placed);
+    await pressPanel(page, "measure");
+    expect((await xrState(page)).measuring).toBe(false);
+
+    await pressPanel(page, "exit");
+    await page.waitForFunction(
+      () => (window as unknown as XRWindow).__megane_test.getXRState()?.presenting === false,
+    );
+    await expect(page.locator('[data-testid="xr-enter-vr"]')).toBeVisible();
+  });
+
   test("megane Builder offers the same immersive view", async ({ page }) => {
     await emulateQuest3(page);
     await page.addInitScript(() => {
@@ -216,6 +293,8 @@ test.describe("xr: webapp", () => {
     await page.locator('[data-testid="xr-enter-vr"]').click();
     await waitForXRFrames(page, 3);
     expect(await xrState(page)).toMatchObject({ presenting: true, mode: "immersive-vr" });
+    // Builder hands the headset no playback or measurement: Reset and Exit only.
+    expect((await xrState(page)).panel).toEqual(["reset", "exit"]);
     await page.evaluate(() => (window as unknown as XRWindow).__iwer.activeSession?.end());
     await page.waitForFunction(
       () => (window as unknown as XRWindow).__megane_test.getXRState()?.presenting === false,

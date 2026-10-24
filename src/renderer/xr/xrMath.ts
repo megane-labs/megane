@@ -209,3 +209,106 @@ export function stickSteer(
   _m2.makeTranslation(-pivot.x, -pivot.y, -pivot.z);
   return new THREE.Matrix4().multiplyMatrices(_m, _m2).multiply(model);
 }
+
+/** Distance (m) ahead of the head the control panel floats at. */
+export const XR_PANEL_DISTANCE = 0.5;
+/**
+ * How far (m) below eye level the control panel floats: look down to use it.
+ * About 35° down, clear of a freshly placed structure's lower edge (~25°).
+ */
+export const XR_PANEL_DROP = 0.35;
+/** The panel starts following the head once it is this far (rad) off to the side. */
+export const XR_PANEL_FOLLOW_ANGLE = (40 * Math.PI) / 180;
+/** …or this far (m) from where it would be placed now (the user walked). */
+export const XR_PANEL_FOLLOW_DISTANCE = 0.35;
+/** How quickly a following panel catches up (e-folds per second). */
+export const XR_PANEL_FOLLOW_RATE = 5;
+/**
+ * Smallest pick radius (m) an atom gets: a hand-tracking ray jitters by a few
+ * millimetres, so a small atom far away would otherwise be hard to hit.
+ */
+export const XR_PICK_MIN_RADIUS = 0.008;
+
+/** The head's forward direction, flattened onto the floor (unit). */
+function levelForward(headQuaternion: THREE.Quaternion, out: THREE.Vector3): THREE.Vector3 {
+  out.set(0, 0, -1).applyQuaternion(headQuaternion);
+  out.y = 0;
+  if (out.lengthSq() < 1e-8) out.set(0, 0, -1);
+  return out.normalize();
+}
+
+/**
+ * Where the control panel belongs for a head at `head` / `headQuaternion`:
+ * {@link XR_PANEL_DISTANCE} ahead (level with the floor, ignoring head pitch)
+ * and {@link XR_PANEL_DROP} below the eyes, its face (+z) turned to the eyes.
+ */
+export function panelPose(
+  head: THREE.Vector3,
+  headQuaternion: THREE.Quaternion,
+): { position: THREE.Vector3; quaternion: THREE.Quaternion } {
+  const forward = levelForward(headQuaternion, _v1);
+  const position = head
+    .clone()
+    .addScaledVector(forward, XR_PANEL_DISTANCE)
+    .add(_v2.set(0, -XR_PANEL_DROP, 0));
+  // Object-style lookAt: +z points from the panel to the eyes.
+  _m.lookAt(head, position, Y_AXIS);
+  return { position, quaternion: new THREE.Quaternion().setFromRotationMatrix(_m) };
+}
+
+/**
+ * Whether a panel at `position` has fallen out of reach of a head at `head`
+ * / `headQuaternion`: more than {@link XR_PANEL_FOLLOW_ANGLE} off to the side
+ * of where the head faces, or {@link XR_PANEL_FOLLOW_DISTANCE} from where it
+ * would be placed now. Inside that comfort zone it stays put, so it does not
+ * swim around with every glance.
+ */
+export function panelOutOfReach(
+  position: THREE.Vector3,
+  head: THREE.Vector3,
+  headQuaternion: THREE.Quaternion,
+): boolean {
+  const target = panelPose(head, headQuaternion).position;
+  if (position.distanceTo(target) > XR_PANEL_FOLLOW_DISTANCE) return true;
+  const toPanel = _v2.subVectors(position, head);
+  toPanel.y = 0;
+  if (toPanel.lengthSq() < 1e-8) return true;
+  return toPanel.normalize().angleTo(levelForward(headQuaternion, _v1)) > XR_PANEL_FOLLOW_ANGLE;
+}
+
+/**
+ * The pointing ray of a controller or hand from its target-ray pose
+ * (`matrix`): from its origin along its −z axis.
+ */
+export function rayFromPose(matrix: THREE.Matrix4, out = new THREE.Ray()): THREE.Ray {
+  out.origin.setFromMatrixPosition(matrix);
+  out.direction.set(-matrix.elements[8], -matrix.elements[9], -matrix.elements[10]).normalize();
+  return out;
+}
+
+/**
+ * Where `ray` (in the panel's parent space) meets a `width` × `height` m
+ * panel whose pose is `panelMatrix` (centred, facing +z): `u` / `v` run 0–1
+ * from the left / top edge, `distance` is along the ray (m). Null when the
+ * ray comes from behind the panel or points away, and — unless `bounded` is
+ * false (a slider dragged past the edge) — when it misses the panel.
+ */
+export function rayHitsPanel(
+  ray: THREE.Ray,
+  panelMatrix: THREE.Matrix4,
+  width: number,
+  height: number,
+  bounded = true,
+): { u: number; v: number; distance: number } | null {
+  const local = ray.clone().applyMatrix4(_m2.copy(panelMatrix).invert());
+  // Facing +z: a usable ray starts in front and travels toward −z.
+  if (local.origin.z <= 0 || local.direction.z >= -1e-6) return null;
+  const t = -local.origin.z / local.direction.z;
+  const x = local.origin.x + local.direction.x * t;
+  const y = local.origin.y + local.direction.y * t;
+  const u = x / width + 0.5;
+  const v = 0.5 - y / height;
+  if (bounded && (u < 0 || u > 1 || v < 0 || v > 1)) return null;
+  // The panel's scale is 1, so distances in its space are metres.
+  return { u, v, distance: t };
+}

@@ -144,6 +144,53 @@ describe("MoleculeRenderer immersive view", () => {
     expect(change).toHaveBeenCalledWith(true);
   });
 
+  it("answers the session's picking, measurement and label questions", () => {
+    const r = new MoleculeRenderer();
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const internals = r as any;
+    const selection = {
+      pickOnRay: vi.fn(() => ({ atomIndex: 1, distance: 2, position: [0, 0, 0] })),
+      setHover: vi.fn(),
+      selected: [1, 0],
+      getMeasurement: vi.fn(() => ({ atoms: [1, 0], type: "distance", value: 4, label: "4 Å" })),
+    };
+    internals.selection = selection;
+    const data = { labels: ["A"], positions: new Float32Array(3), count: 1 };
+    internals.labelOverlay = { getData: () => data };
+    internals.snapshot = { nAtoms: 2, positions: new Float32Array(6) };
+    internals.currentPositions = new Float32Array([0, 0, 0, 4, 5, 6]);
+    const host = internals.xr.host;
+    const ray = new THREE.Ray();
+    expect(host.pickAtom(ray, 0.5).atomIndex).toBe(1);
+    expect(selection.pickOnRay).toHaveBeenCalledWith(ray, 0.5);
+    host.setHoverAtoms([3]);
+    expect(selection.setHover).toHaveBeenCalledWith([3]);
+    expect(host.getSelectedAtoms()).toEqual([1, 0]);
+    expect(host.getMeasurement().label).toBe("4 Å");
+    expect(host.getLabels()).toBe(data);
+    const out = new THREE.Vector3();
+    expect(host.getAtomPosition(1, out)).toBe(true);
+    expect(out.toArray()).toEqual([4, 5, 6]);
+    expect(host.getAtomPosition(2, out)).toBe(false);
+    expect(host.getAtomPosition(-1, out)).toBe(false);
+    internals.snapshot = null;
+    internals.labelOverlay = null;
+    expect(host.getAtomPosition(0, out)).toBe(false);
+    expect(host.getLabels()).toBeNull();
+  });
+
+  it("forwards the page bridge and the panel probe to the session controller", () => {
+    const r = new MoleculeRenderer();
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const internals = r as any;
+    const setBridge = vi.spyOn(internals.xr, "setBridge");
+    const bridge = { playback: undefined };
+    r.setXRBridge(bridge);
+    expect(setBridge).toHaveBeenCalledWith(bridge);
+    // Outside a session the panel has nothing to point at.
+    expect(r.testGetXRPanelControlPose("exit")).toBeNull();
+  });
+
   it("ends the session on dispose", () => {
     const { r, xr, internals } = renderer();
     internals.atomLayers = { dispose: vi.fn() };
