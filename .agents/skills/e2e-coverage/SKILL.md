@@ -271,6 +271,7 @@ When a comparison fails, `<name>.diff.png` and `<name>.new.png` land next to the
 | Webview frame not found | code-server version drift | `getWebviewFrame()` falls back to `iframe[src*="vscode-webview"]`; check selector |
 | Pixel diff > 2 % unexpectedly | font/cursor/clock drift | add `mask` region in `stabilizeUi()`, do NOT raise threshold |
 | widget-jupyterlab `widget.js missing` | `npm run build:widget` not run | run it before the project |
+| log line `openLabNotebook: first boot of X failed (Run All finished no cell within 15000 ms); reloading` | JupyterLab marked the cells `[*]` but never sent them to the kernel (a known intermittent stall; the server log shows no execute request) | nothing — the reload recovers it. Only a failure after the reload is a real one |
 | jupyterlab-doc `labextension not built` | `npm run build:lab` not run + copy step skipped | rerun setup commands above |
 
 ## Cross-References
