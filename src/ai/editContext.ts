@@ -53,15 +53,23 @@ export function compactPipeline(pipeline: SerializedPipeline): unknown {
   };
 }
 
+/**
+ * The section restating the most recent turns, or null when there are none.
+ * Shared with the Builder's Flow assistant, whose requests carry the same.
+ */
+export function historySection(history: ChatTurn[]): string | null {
+  const recent = history.slice(-MAX_HISTORY_TURNS);
+  if (recent.length === 0) return null;
+  const lines = recent.map((t) => `${t.role === "user" ? "User" : "You"}: ${t.content}`);
+  return `## Conversation so far\n\n${lines.join("\n")}`;
+}
+
 /** Wrap `request` in the edit context. With no context at all it is sent as-is. */
 export function buildEditRequest(request: string, ctx: EditContext): string {
   const sections: string[] = [];
 
-  const history = ctx.history.slice(-MAX_HISTORY_TURNS);
-  if (history.length > 0) {
-    const lines = history.map((t) => `${t.role === "user" ? "User" : "You"}: ${t.content}`);
-    sections.push(`## Conversation so far\n\n${lines.join("\n")}`);
-  }
+  const history = historySection(ctx.history);
+  if (history) sections.push(history);
 
   if (ctx.pipeline && ctx.pipeline.nodes.length > 0) {
     const selected = ctx.pipeline.nodes.filter((n) => ctx.selectedNodeIds.includes(n.id));

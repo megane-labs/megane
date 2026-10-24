@@ -20,6 +20,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
   - The pipeline editor, Inspector and the other panels, the cell-axes inset and Builder editing stay on the page. WebXR needs HTTPS or `localhost`, and the VS Code webview has none, so VS Code shows no buttons. See [VR and AR headsets](docs/docs/guide/vr.md).
   - A new `xr` Playwright project runs the flow — entering, grabbing and pressing the panel — under Meta's IWER Quest 3 emulator.
 
+- **An AI assistant in Megane Builder's Flow mode.** The viewer's AI pipeline generator now has a Flow counterpart: a prompt bar docked under the Flow graph turns a request such as *"a Pt(111) slab with a 3 × 3 layer of CO on top"* into blocks and wires, which the user then runs. See [Flow mode's AI assistant](docs/docs/guide/builder.md#ai-assistant).
+  - Each request carries the flow in the graph, the selected blocks and the recent turns, so follow-ups edit the flow; the system prompt describes every block with its defaults and inputs, the library molecules, the Manual structure, and the connected tool server's tools and their forms. Without a server the assistant builds from the in-browser blocks and says when a request needs one.
+  - The flow is applied as soon as its JSON closes, as one Undo step the reply offers to undo; blocks the new flow keeps unchanged keep their results, so the next Run only rebuilds what changed. A request waits while a run is in progress.
+  - Like the viewer's generator it checks its own output and sends findings back for up to two repair rounds: unknown blocks and settings, settings a block would refuse, wires into inputs that do not exist, empty required inputs, loops, a supercell or slab fed a structure with no unit cell, and tool settings outside the tool's form.
+  - Under the hood the provider conversation and repair loop (`src/ai/generation.ts`) and the dock (`src/components/AssistantDock.tsx`) are shared by both assistants, and both use the same AI settings.
+
 ### Fixed
 
 - **The web app no longer requests `/api/files` where the server offers no file browsing.** It asked at every start, so the docs site's app, a static deployment, the Docker image (`--no-files`) and a `megane serve` opened from another machine each logged a 404 or 403 in the browser console. `megane serve` now marks the page it serves (`<meta name="megane-server-files">`) when file browsing is on for that browser, and the app asks only then (or under the Vite dev server, which proxies `/api` to `megane serve`).

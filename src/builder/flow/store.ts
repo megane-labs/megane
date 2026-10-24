@@ -32,7 +32,15 @@ import { create, type StateCreator, type StoreApi } from "zustand";
 import { createStore } from "zustand/vanilla";
 import { registerTestStores, GLOBAL_BUNDLE_ID } from "../../stores/testRegistry";
 import type { BuilderToolInfo } from "../tools/contract";
-import { downstream, nodeKey, runFlow, topoOrder, wouldCycle, type FlowDeps } from "./engine";
+import {
+  downstream,
+  nodeKey,
+  runFlow,
+  stableStringify,
+  topoOrder,
+  wouldCycle,
+  type FlowDeps,
+} from "./engine";
 import { completeToolParams } from "./ports";
 import {
   FLOW_NODE_TYPES,
@@ -51,6 +59,8 @@ export type FlowNode = Node<FlowNodeData>;
 export interface FlowGraphState {
   nodes: FlowNode[];
   edges: Edge[];
+  /** On the step an AI assistant's apply recorded: that apply's checkpoint id. */
+  generated?: number;
 }
 
 /** Most graph states Undo keeps. */
@@ -173,6 +183,26 @@ export interface FlowStore {
   clear: () => void;
   serialize: () => SerializedFlow;
   load: (flow: SerializedFlow, options?: LoadOptions) => void;
+  /**
+   * Replace the graph with one the AI assistant generated. Unlike `load`, it
+   * keeps what the new graph keeps: a block with the same id, settings and
+   * wires keeps its result (one that changed goes stale, so the next Run
+   * redoes only what changed), a kept block stays selected, and the link
+   * between the flow and the Manual document (`adoptedKey`,
+   * `pinnedDocument`) and the file name stay. A run in progress is stopped,
+   * as `load` stops it.
+   *
+   * `checkpoint` (default true) records the graph it replaces as one Undo
+   * step tagged with a new checkpoint id, which it returns; a later apply for
+   * the same request passes false, replacing the graph again within that
+   * step, and gets null.
+   */
+  applyGenerated: (flow: SerializedFlow, options?: { checkpoint?: boolean }) => number | null;
+  /**
+   * Undo the apply that recorded checkpoint `id`, while it is still the last
+   * change (and no run is in progress). Returns whether it did.
+   */
+  undoGenerated: (id: number) => boolean;
 }
 
 /** Vertical step between a new block and the lowest one. */
@@ -260,6 +290,9 @@ export function parseSerializedFlow(raw: unknown): SerializedFlow {
 }
 
 export const flowStateCreator: StateCreator<FlowStore> = (set, get) => {
+  /** The last checkpoint id `applyGenerated` handed out. */
+  let lastCheckpoint = 0;
+
   /** The history fields of a change: the graph as it is now goes on `past`. */
   const record = (): Pick<FlowStore, "past" | "future" | "editKey"> => {
     const s = get();
@@ -572,6 +605,46 @@ export const flowStateCreator: StateCreator<FlowStore> = (set, get) => {
         stopping: false,
         fileName: options?.name ?? null,
       });
+    },
+
+    applyGenerated: (flow, options) => {
+      const s = get();
+      s.running?.abort();
+      const now = new Map(s.nodes.map((n) => [n.id, n]));
+      const nodes: FlowNode[] = flow.nodes.map((n) => {
+        const cur = now.get(n.id);
+        // The same settings keep the same object, so `restore` sees the block unchanged.
+        const same = cur && stableStringify(cur.data.params) === stableStringify(n.params);
+        return {
+          id: n.id,
+          type: n.params.type,
+          position: { ...n.position },
+          data: { params: same ? cur.data.params : n.params },
+          ...(cur?.selected ? { selected: true } : {}),
+        };
+      });
+      const edges = flow.edges.map((e) => makeEdge(e.source, e.target, e.targetHandle));
+      const checkpoint = options?.checkpoint !== false;
+      const id = checkpoint ? ++lastCheckpoint : null;
+      set({
+        ...(checkpoint
+          ? {
+              past: pushed(s.past, { nodes: s.nodes, edges: s.edges, generated: id! }),
+              future: [],
+            }
+          : {}),
+        ...restore({ nodes, edges }),
+        running: null,
+        stopping: false,
+      });
+      return id;
+    },
+
+    undoGenerated: (id) => {
+      const s = get();
+      if (s.running || s.past[s.past.length - 1]?.generated !== id) return false;
+      s.undo();
+      return true;
     },
   };
 };
