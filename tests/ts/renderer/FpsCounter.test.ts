@@ -46,6 +46,17 @@ describe("FpsCounter", () => {
     expect(c.fps).toBe(first);
   });
 
+  it("counts only drawn frames, so an idle viewer reads 0", () => {
+    const c = new FpsCounter(500);
+    c.tick(0);
+    // 10 animation frames over 500ms, of which 5 were drawn → 10 fps.
+    for (let i = 1; i <= 10; i++) c.tick(50 * i, i % 2 === 0);
+    expect(c.fps).toBe(10);
+    // A window of skipped frames only (nothing changed on screen).
+    for (let i = 1; i <= 10; i++) c.tick(500 + 50 * i, false);
+    expect(c.fps).toBe(0);
+  });
+
   it("defaults to a 500ms window", () => {
     const c = new FpsCounter();
     c.tick(0);

@@ -21,6 +21,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
   - The pipeline editor, Inspector and the other panels, the cell-axes inset, and the Builder's File / Structure / Tools menus, Inspector fields, History list and Flow mode stay on the page. WebXR needs HTTPS or `localhost`, and the VS Code webview has none, so VS Code shows no buttons. See [VR and AR headsets](docs/docs/guide/vr.md).
   - A new `xr` Playwright project runs the flow — entering, grabbing, pressing the panel, and deleting, adding and dragging atoms in the Builder — under Meta's IWER Quest 3 emulator.
 
+### Changed
+
+- **An idle viewer no longer redraws 60 times a second.** The viewer now draws on demand: it redraws while the camera moves or when what is shown changes (a new structure, a trajectory frame, a restyle, a selection, a resize), and otherwise leaves the last picture on screen. With nothing moving, the web app's main thread went from fully busy to ~3 % (1015 → 30 ms of tasks per second) and the browser's total CPU from 327 % to 7 % of a core (headless Chromium, software WebGL); the demo trajectory also finishes loading sooner (1809 → 1213 ms), since rendering no longer competes with it. Every host benefits, including several Jupyter widgets on one page. The performance HUD's FPS now counts drawn frames, so it reads 0 while nothing changes.
+  - `MoleculeRenderer.requestRender()` is new for code that drives the renderer directly: call it after editing the scene or the WebGL renderer through `getScene()` / `getRenderer()`. Moving the camera through `getCamera()` needs no call.
+- **The pipeline editor's edges only march while the pointer is over the graph.** Their dash animation repainted the whole graph every frame for as long as the editor was open (most of the remaining idle CPU above: 124 % → 7 % of a core); it now holds still otherwise, and stays off for `prefers-reduced-motion`. The same applies to megane Builder's Flow mode.
+
 ### Fixed
 
 - **The web app no longer requests `/api/files` where the server offers no file browsing.** It asked at every start, so the docs site's app, a static deployment, the Docker image (`--no-files`) and a `megane serve` opened from another machine each logged a 404 or 403 in the browser console. `megane serve` now marks the page it serves (`<meta name="megane-server-files">`) when file browsing is on for that browser, and the app asks only then (or under the Vite dev server, which proxies `/api` to `megane serve`).

@@ -17,6 +17,13 @@
  *                  renderer process, the GPU process, and the whole browser
  *                  process tree, read from /proc (Linux only)
  *
+ * With `--idle <ms>`, once the memory has been read the page is left untouched
+ * for that long and the run also records what the viewer costs while nobody
+ * interacts with it: main-thread task time (CDP TaskDuration), the frames the
+ * renderer actually drew, and the CPU time of the renderer process, the GPU
+ * process and the whole browser tree (/proc, Linux only) as a percentage of
+ * one core.
+ *
  * With `--file <path>`, once the startup demo has settled the file is opened
  * through the Load Structure node and the run also records how long it took to
  * show (fileLoadMs), how long the main thread was blocked meanwhile
@@ -40,6 +47,8 @@
  *   --no-gzip       serve uncompressed (default gzips text + wasm, like a CDN)
  *   --path P        page path to open (default "/?test=1")
  *   --file F        after startup, open F via the Load Structure node
+ *   --idle MS       after the memory is read, measure idle CPU over MS (default
+ *                   0 = skip)
  *   --settle MS     idle time before the memory is read (default 1500); the
  *                   parse worker is released after 10 s idle, so use ~12000 to
  *                   see steady-state memory
@@ -67,6 +76,7 @@ const opts = {
   file: null,
   dpr: 1,
   settle: 1500,
+  idle: 0,
 };
 const builds = [];
 for (let i = 0; i < argv.length; i++) {
@@ -79,6 +89,7 @@ for (let i = 0; i < argv.length; i++) {
   else if (a === "--file") opts.file = resolve(argv[++i]);
   else if (a === "--dpr") opts.dpr = Number(argv[++i]);
   else if (a === "--settle") opts.settle = Number(argv[++i]);
+  else if (a === "--idle") opts.idle = Number(argv[++i]);
   else if (a.includes("=")) {
     const [label, dir] = a.split("=");
     builds.push({ label, dir: resolve(dir) });
@@ -229,6 +240,65 @@ function processMemory() {
   return out;
 }
 
+/** Linux USER_HZ: /proc reports CPU time in these ticks (100 on every mainstream kernel). */
+const CLOCK_TICKS_PER_SECOND = 100;
+
+/** User + system CPU seconds a process has used (/proc/<pid>/stat utime + stime). */
+function cpuSeconds(pid) {
+  try {
+    const stat = readFileSync(`/proc/${pid}/stat`, "utf8");
+    // Fields 14 and 15 (utime, stime), counted after the parenthesised name.
+    const after = stat.slice(stat.lastIndexOf(")") + 2).split(" ");
+    return (Number(after[11]) + Number(after[12])) / CLOCK_TICKS_PER_SECOND;
+  } catch {
+    return 0;
+  }
+}
+
+/** CPU seconds of the renderer, the GPU process and the whole browser tree. */
+function processCpu() {
+  const out = { renderer: 0, gpu: 0, total: 0 };
+  if (!existsSync("/proc/self/stat")) return null;
+  for (const pid of readProcTree(process.pid)) {
+    if (pid === process.pid) continue;
+    const s = cpuSeconds(pid);
+    const type = processType(pid);
+    out.total += s;
+    if (type === "renderer") out.renderer += s;
+    else if (type === "gpu-process") out.gpu += s;
+  }
+  return out;
+}
+
+/**
+ * Leave the page alone for `opts.idle` ms and report what it costs meanwhile:
+ * main-thread task time, frames drawn, and per-process CPU as % of one core.
+ */
+async function measureIdle(page, cdp) {
+  const taskSeconds = async () =>
+    (await cdp.send("Performance.getMetrics")).metrics.find((m) => m.name === "TaskDuration")
+      ?.value ?? 0;
+  const drawnFrames = () => page.evaluate(() => (window.__meganeFrameTimes ?? []).slice());
+  const framesBefore = await drawnFrames();
+  const lastBefore = framesBefore.length ? framesBefore[framesBefore.length - 1] : -Infinity;
+  const task0 = await taskSeconds();
+  const cpu0 = processCpu();
+  const t0 = Date.now();
+  await page.waitForTimeout(opts.idle);
+  const seconds = (Date.now() - t0) / 1000;
+  const cpu1 = processCpu();
+  const task1 = await taskSeconds();
+  const framesAfter = await drawnFrames();
+  const pct = (key) => (cpu0 && cpu1 ? (100 * (cpu1[key] - cpu0[key])) / seconds : null);
+  return {
+    idleTaskMsPerSec: (1000 * (task1 - task0)) / seconds,
+    idleFramesPerSec: framesAfter.filter((t) => t > lastBefore).length / seconds,
+    idleRendererCpuPct: pct("renderer"),
+    idleGpuCpuPct: pct("gpu"),
+    idleTotalCpuPct: pct("total"),
+  };
+}
+
 // ---- One measured page load ----
 
 async function measureOnce(build) {
@@ -238,7 +308,9 @@ async function measureOnce(build) {
   const chromium = getChromium();
   const browser = await chromium.launch({
     headless: true,
-    args: ["--use-gl=swiftshader", "--enable-precise-memory-info"],
+    // Newer Chromium builds refuse `--use-gl=swiftshader` (no WebGL at all)
+    // unless software WebGL is opted into explicitly; older ones ignore the flag.
+    args: ["--use-gl=swiftshader", "--enable-unsafe-swiftshader", "--enable-precise-memory-info"],
   });
   try {
     const context = await browser.newContext({
@@ -317,12 +389,14 @@ async function measureOnce(build) {
         .map((m) => ({ name: m.name.replace(/-\d{10,}$/, ""), duration: m.duration })),
     );
     const mem = processMemory();
+    const idle = opts.idle > 0 ? await measureIdle(page, cdp) : null;
     const bytes = { ...counter, total: counter.js + counter.wasm + counter.css + counter.other };
     return {
       visibleMs,
       settledMs,
       scriptMs,
       ...file,
+      ...idle,
       heapMB: heapUsed / 1024 / 1024,
       ...mem,
       bytes,
@@ -390,7 +464,7 @@ const results = new Map(builds.map((b) => [b.label, []]));
 console.log(
   `profile-startup: ${opts.runs} run(s) x ${builds.length} build(s), throttle=${opts.throttle}, ` +
     `cpu=${opts.cpu}x, gzip=${opts.gzip}, path=${opts.path}, ` +
-    `dpr=${opts.dpr}, settle=${opts.settle}ms`,
+    `dpr=${opts.dpr}, settle=${opts.settle}ms, idle=${opts.idle}ms`,
 );
 for (let run = 0; run < opts.runs; run++) {
   for (const b of builds) {
@@ -405,6 +479,11 @@ for (let run = 0; run < opts.runs; run++) {
         (opts.file
           ? ` file=${r.fileLoadMs?.toFixed(0)}ms blocking=${r.fileBlockingMs?.toFixed(0)}ms ` +
             `longest=${r.fileLongestTaskMs?.toFixed(0)}ms`
+          : "") +
+        (opts.idle > 0
+          ? ` idle: task=${r.idleTaskMsPerSec?.toFixed(1)}ms/s frames=${r.idleFramesPerSec?.toFixed(1)}/s ` +
+            `cpu renderer=${r.idleRendererCpuPct?.toFixed(1)}% gpu=${r.idleGpuCpuPct?.toFixed(1)}% ` +
+            `total=${r.idleTotalCpuPct?.toFixed(1)}%`
           : "") +
         (r.errors.length ? ` errors=${JSON.stringify(r.errors)}` : ""),
     );
@@ -431,6 +510,15 @@ const rows = [
   ["Renderer process PSS (MB)", (r) => r.rendererMB, 1],
   ["GPU process PSS (MB)", (r) => r.gpuMB, 1],
   ["Browser tree PSS (MB)", (r) => r.totalMB, 1],
+  ...(opts.idle > 0
+    ? [
+        ["Idle: main-thread task time (ms/s)", (r) => r.idleTaskMsPerSec, 1],
+        ["Idle: frames drawn (/s)", (r) => r.idleFramesPerSec, 1],
+        ["Idle: renderer process CPU (% of a core)", (r) => r.idleRendererCpuPct, 1],
+        ["Idle: GPU process CPU (% of a core)", (r) => r.idleGpuCpuPct, 1],
+        ["Idle: browser tree CPU (% of a core)", (r) => r.idleTotalCpuPct, 1],
+      ]
+    : []),
 ];
 const labels = builds.map((b) => b.label);
 const lines = [];

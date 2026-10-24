@@ -34,6 +34,21 @@ export const graphEdgeTypes = { deletable: DeletableEdge };
 /** Neutral edge colour for an edge whose data type is unknown. */
 export const DEFAULT_EDGE_COLOR = "#94a3b8";
 
+/**
+ * Animated edges march their dashes by animating `stroke-dashoffset`, which
+ * the browser cannot hand to the compositor: every frame repaints the graph
+ * on the main thread, for as long as the editor is on screen. They run while
+ * the pointer is over the graph (someone is looking at it) and hold still
+ * otherwise, and not at all for anyone who asked for reduced motion.
+ */
+export const EDGE_ANIMATION_CSS = `
+.megane-split-editor .react-flow__edge.animated path { animation-play-state: paused; }
+.megane-split-editor:hover .react-flow__edge.animated path { animation-play-state: running; }
+@media (prefers-reduced-motion: reduce) {
+  .megane-split-editor .react-flow__edge.animated path { animation: none; }
+}
+`;
+
 /** Edges as every editor draws them: deletable, animated, in their data type's colour. */
 export function styleEdges(edges: Edge[], colorOf: (edge: Edge) => string): Edge[] {
   return edges.map((edge) => ({
@@ -81,7 +96,7 @@ export function GraphCanvas<N extends Node>({
       className="megane-split-editor"
       style={{ flex: 1, position: "relative", minHeight: 0 }}
     >
-      <style>{REACT_FLOW_CSS + NODE_CARD_CSS}</style>
+      <style>{REACT_FLOW_CSS + NODE_CARD_CSS + EDGE_ANIMATION_CSS}</style>
       <EdgeActionsContext.Provider value={edgeActions}>
         <ReactFlow<N, Edge>
           {...flowProps}

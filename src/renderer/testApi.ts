@@ -58,6 +58,12 @@ interface MeganeTestReady {
   firstFrame: boolean;
   dataLoaded: boolean;
   frame: number;
+  /**
+   * Animation frames at which the canvas showed a structure and was current:
+   * redrawn that frame, or unchanged since the last redraw (the renderer draws
+   * on demand). Waiting for it to pass a value read before an interaction
+   * therefore waits until every change requested up to then is on screen.
+   */
   renderEpoch: number;
   atomCount?: number;
   /**
@@ -203,7 +209,7 @@ export function getTestReady(): MeganeTestReady | null {
   return w.__megane_test_ready;
 }
 
-/** Record a rendered frame (only once a structure is on screen). */
+/** Record an up-to-date frame (only once a structure is on screen); see `renderEpoch`. */
 export function signalRender(hasSnapshot: boolean): void {
   const r = getTestReady();
   if (!r || !hasSnapshot) return;
