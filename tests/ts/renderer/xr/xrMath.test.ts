@@ -224,8 +224,8 @@ describe("depthCueRange", () => {
     expect(r.start).toBe(XR_NEAR_FADE);
     expect(r.end).toBeCloseTo(XR_NEAR_FADE + XR_DEPTH_CUE_MAX_SPAN, 9);
     // A small model you are inside ends at its far side.
-    const small = depthCueRange(v(0, 0, 0), v(0, 0, -0.1), 0.3);
-    expect(small.end).toBeCloseTo(0.4, 9);
+    const small = depthCueRange(v(0, 0, 0), v(0, 0, -0.1), 0.6);
+    expect(small.end).toBeCloseTo(0.7, 9);
   });
 
   it("keeps a usable ramp for a vanishing model", () => {
