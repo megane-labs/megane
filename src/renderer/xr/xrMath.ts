@@ -23,9 +23,9 @@ export const XR_PLACEMENT_DROP = 0.1;
 /** Radius (m) the structure's bounding sphere is scaled to on entry. */
 export const XR_PLACEMENT_RADIUS = 0.4;
 /** Nothing nearer to the eye than this (m) is drawn: too close to fuse. */
-export const XR_NEAR_CLIP = 0.2;
+export const XR_NEAR_CLIP = 0.3;
 /** Content fades in between {@link XR_NEAR_CLIP} and this distance (m). */
-export const XR_NEAR_FADE = 0.35;
+export const XR_NEAR_FADE = 0.5;
 /** How far toward the background colour the depth cue fades the far side. */
 export const XR_DEPTH_CUE_STRENGTH = 0.45;
 /** Longest depth-cue ramp (m), so the gradient stays visible from inside a large model. */

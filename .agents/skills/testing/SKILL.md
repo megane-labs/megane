@@ -240,6 +240,15 @@ baseline-update workflow and for local runs. When you add a webapp-host
 project to CI, add it to `test:e2e:ci:webapp` **and** to the lightest
 shard; `tests/ts/e2e-ci-shards.test.ts` fails until the two agree.
 
+The workflow's `scope` job runs only the host groups a change can reach,
+decided by `scripts/e2e-scope.mjs` from the changed paths: root markdown,
+`docs/`, agent tooling, other workflows, unit-test trees, `vscode-megane/`
+and `workers/` run no E2E, and the Python package, `jupyterlab-megane/` and
+the widget bundles run only the JupyterLab hosts. Any path it does not list
+runs everything. When you add a top-level directory or move build inputs,
+update its lists and `tests/ts/e2e-scope.test.ts`. A skipped CI host is not
+a reason to skip your local runs (CRITICAL RULE #9).
+
 This design exists because of two historical CI blockers:
 
   - `webapp` / `contract`: Playwright's webServer manager hit a

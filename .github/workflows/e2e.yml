@@ -32,6 +32,12 @@ name: E2E
 # CPU, and two browsers on one 4-vCPU runner slowed every test by ~45%.
 # Add a new webapp-host project to `test:e2e:ci:webapp` and to the
 # lightest shard; tests/ts/e2e-ci-shards.test.ts fails until they agree.
+#
+# The `scope` job skips the host groups a change cannot reach: a PR that only
+# touches docs, the VS Code extension or the LLM proxy worker runs no E2E,
+# and a Python-only PR runs only the JupyterLab hosts. The path lists live in
+# scripts/e2e-scope.mjs; any path they do not list runs everything. A job
+# skipped by its `if:` reports success, so required checks still resolve.
 
 on:
   push:
@@ -52,8 +58,44 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # Which host groups the change can reach. The E2E jobs run unless this
+  # answers "false", so if it fails they all run.
+  scope:
+    name: E2E scope
+    runs-on: ubuntu-latest
+    outputs:
+      webapp: ${{ steps.scope.outputs.webapp }}
+      jupyterlab: ${{ steps.scope.outputs.jupyterlab }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # A pull_request checkout is the PR merged into its base: the first
+          # parent is the base, so HEAD^1..HEAD is exactly what the PR changes.
+          fetch-depth: 2
+
+      - name: Classify the changed paths
+        id: scope
+        shell: bash
+        env:
+          EVENT: ${{ github.event_name }}
+          BEFORE: ${{ github.event.before }}
+        run: |
+          case "$EVENT" in
+            pull_request) base=HEAD^1 ;;
+            push) base=$BEFORE; git fetch --depth=1 origin "$base" || base= ;;
+            *) base= ;;
+          esac
+          if [ -z "$base" ]; then
+            echo "Nothing to compare a $EVENT event with; running every E2E job."
+            printf 'webapp=true\njupyterlab=true\n' >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          git diff --name-only --no-renames "$base" HEAD | node scripts/e2e-scope.mjs
+
   e2e-webapp-shard:
     name: E2E webapp host (pixel) ${{ matrix.shard }}/${{ strategy.job-total }}
+    needs: scope
+    if: ${{ !cancelled() && needs.scope.outputs.webapp != 'false' }}
     runs-on: ubuntu-latest
     container:
       image: mcr.microsoft.com/playwright:v1.56.1-noble
@@ -102,18 +144,28 @@ jobs:
 
   # Keeps the single "E2E webapp host (pixel)" check that existed before the
   # split, so a branch-protection rule naming it still resolves. Green only
-  # when every shard passed.
+  # when every shard passed, or when `scope` found nothing they could test.
   e2e-webapp:
     name: E2E webapp host (pixel)
-    needs: e2e-webapp-shard
+    needs: [scope, e2e-webapp-shard]
     if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
     steps:
       - name: Require every webapp shard to pass
-        run: test "${{ needs.e2e-webapp-shard.result }}" = success
+        env:
+          NEEDED: ${{ needs.scope.outputs.webapp }}
+          SHARDS: ${{ needs.e2e-webapp-shard.result }}
+        run: |
+          if [ "$NEEDED" = false ]; then
+            echo "No changed path can reach the webapp hosts; the shards were skipped."
+            exit 0
+          fi
+          test "$SHARDS" = success
 
   e2e-jupyterlab:
     name: E2E JupyterLab hosts (pixel)
+    needs: scope
+    if: ${{ !cancelled() && needs.scope.outputs.jupyterlab != 'false' }}
     runs-on: ubuntu-latest
     container:
       image: mcr.microsoft.com/playwright:v1.56.1-noble

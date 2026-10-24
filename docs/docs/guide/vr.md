@@ -119,7 +119,7 @@ images from fusing into one. So:
 
 - To see detail, **make the structure bigger** (both hands, or the
   thumbstick) rather than leaning in.
-- Anything within 35 cm of your eyes fades out, and nothing within 20 cm is
+- Anything within 50 cm of your eyes fades out, and nothing within 30 cm is
   drawn.
 - The far side of the structure fades toward the background colour (toward
   black in AR). Near atoms stay crisp, so depth reads clearly, even from

@@ -11,7 +11,7 @@ The Megane viewer ships through 5 distribution targets. Each one renders the sam
 
 All E2E uses `@playwright/test`. `puppeteer` is **not** in `package.json`; only `playwright` 1.56 is installed. Never add or invoke Puppeteer.
 
-**CI split** — see `.agents/skills/testing/SKILL.md` for the full story. The webapp-host and JupyterLab-host projects run in CI (`.github/workflows/e2e.yml`, via `npm run test:e2e:ci:webapp` — split over three runners as `test:e2e:ci:webapp:1`…`:3` — and `test:e2e:ci:jupyterlab`) inside the pinned Playwright container, against the CI-only baseline set `tests/e2e/baselines-ci/` (selected with `MEGANE_E2E_BASELINE_DIR`; missing baselines are hard failures under `MEGANE_E2E_REQUIRE_BASELINE=1`). Those baselines are re-recorded **only** by the "E2E update baselines" workflow (add the `update-e2e-baselines` label to the PR, or workflow_dispatch), which runs in the same container and commits the PNGs to the dispatched branch — never capture them locally. The VSCode-hosted projects (`vscode`, `widget-vscode`) are local-only. `tests/e2e/baselines/` remains the local baseline set for everything below.
+**CI split** — see `.agents/skills/testing/SKILL.md` for the full story. The webapp-host and JupyterLab-host projects run in CI (`.github/workflows/e2e.yml`, via `npm run test:e2e:ci:webapp` — split over three runners as `test:e2e:ci:webapp:1`…`:3` — and `test:e2e:ci:jupyterlab`; a change runs only the host groups `scripts/e2e-scope.mjs` says its paths can reach) inside the pinned Playwright container, against the CI-only baseline set `tests/e2e/baselines-ci/` (selected with `MEGANE_E2E_BASELINE_DIR`; missing baselines are hard failures under `MEGANE_E2E_REQUIRE_BASELINE=1`). Those baselines are re-recorded **only** by the "E2E update baselines" workflow (add the `update-e2e-baselines` label to the PR, or workflow_dispatch), which runs in the same container and commits the PNGs to the dispatched branch — never capture them locally. The VSCode-hosted projects (`vscode`, `widget-vscode`) are local-only. `tests/e2e/baselines/` remains the local baseline set for everything below.
 
 ## When E2E MUST run (CRITICAL RULE #9)
 
@@ -271,6 +271,7 @@ When a comparison fails, `<name>.diff.png` and `<name>.new.png` land next to the
 | Webview frame not found | code-server version drift | `getWebviewFrame()` falls back to `iframe[src*="vscode-webview"]`; check selector |
 | Pixel diff > 2 % unexpectedly | font/cursor/clock drift | add `mask` region in `stabilizeUi()`, do NOT raise threshold |
 | widget-jupyterlab `widget.js missing` | `npm run build:widget` not run | run it before the project |
+| log line `openLabNotebook: first boot of X failed (Run All finished no cell within 15000 ms); reloading` | JupyterLab marked the cells `[*]` but never sent them to the kernel (a known intermittent stall; the server log shows no execute request) | nothing — the reload recovers it. Only a failure after the reload is a real one |
 | jupyterlab-doc `labextension not built` | `npm run build:lab` not run + copy step skipped | rerun setup commands above |
 
 ## Cross-References
