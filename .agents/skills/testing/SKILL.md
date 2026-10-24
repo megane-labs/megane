@@ -230,6 +230,16 @@ are re-recorded in the same container by the "E2E update baselines"
 dispatched on. A missing CI baseline is a hard failure
 (`MEGANE_E2E_REQUIRE_BASELINE=1`) — never a silent auto-create.
 
+The webapp-host projects are split over three runners, one per
+`test:e2e:ci:webapp:<n>` script, grouped by measured run time (Playwright's
+count-based `--shard` left the slowest of three shards at 1.5x an even
+split). Each runner runs one worker: SwiftShader renders on the CPU, so a
+second browser on the same 4-vCPU runner slows every test instead of
+halving the wall time. `test:e2e:ci:webapp` stays the full list, used by the
+baseline-update workflow and for local runs. When you add a webapp-host
+project to CI, add it to `test:e2e:ci:webapp` **and** to the lightest
+shard; `tests/ts/e2e-ci-shards.test.ts` fails until the two agree.
+
 This design exists because of two historical CI blockers:
 
   - `webapp` / `contract`: Playwright's webServer manager hit a

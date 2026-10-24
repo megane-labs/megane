@@ -22,6 +22,16 @@ name: E2E
 #
 # The VSCode-hosted projects (vscode, widget-vscode) remain local-only:
 # they need a full code-server install and are not run here.
+#
+# The webapp-host projects take ~14 min on one runner, so they are split
+# over three runners, one per `test:e2e:ci:webapp:<n>` script. The groups
+# are balanced by measured run time, not test count: Playwright's --shard
+# splits by count, and a pipeline-editor test costs ~3x a format-loading
+# one, so the slowest of its three shards ran 1.5x an even split. Each
+# runner keeps one worker: the renderer draws through SwiftShader on the
+# CPU, and two browsers on one 4-vCPU runner slowed every test by ~45%.
+# Add a new webapp-host project to `test:e2e:ci:webapp` and to the
+# lightest shard; tests/ts/e2e-ci-shards.test.ts fails until they agree.
 
 on:
   push:
@@ -42,11 +52,16 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  e2e-webapp:
-    name: E2E webapp host (pixel)
+  e2e-webapp-shard:
+    name: E2E webapp host (pixel) ${{ matrix.shard }}/${{ strategy.job-total }}
     runs-on: ubuntu-latest
     container:
       image: mcr.microsoft.com/playwright:v1.56.1-noble
+    strategy:
+      # Let every shard finish so one run reports all pixel diffs.
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3]
     env:
       MEGANE_E2E_BASELINE_DIR: tests/e2e/baselines-ci
       MEGANE_E2E_REQUIRE_BASELINE: "1"
@@ -71,19 +86,31 @@ jobs:
       - name: Run webapp-host Playwright projects
         env:
           MEGANE_E2E_NO_WEBSERVER: "1"
-        run: npm run test:e2e:ci:webapp
+        run: npm run test:e2e:ci:webapp:${{ matrix.shard }}
 
       - name: Upload report and pixel diffs
         if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: e2e-webapp-failure
+          name: e2e-webapp-failure-${{ matrix.shard }}
           retention-days: 7
           path: |
             playwright-report/
             test-results/
             tests/e2e/baselines-ci/**/*.diff.png
             tests/e2e/baselines-ci/**/*.new.png
+
+  # Keeps the single "E2E webapp host (pixel)" check that existed before the
+  # split, so a branch-protection rule naming it still resolves. Green only
+  # when every shard passed.
+  e2e-webapp:
+    name: E2E webapp host (pixel)
+    needs: e2e-webapp-shard
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require every webapp shard to pass
+        run: test "${{ needs.e2e-webapp-shard.result }}" = success
 
   e2e-jupyterlab:
     name: E2E JupyterLab hosts (pixel)
