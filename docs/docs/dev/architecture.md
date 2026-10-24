@@ -342,4 +342,4 @@ the same PR. The full per-host registration checklist lives in the
 | **Python bindings** | `crates/megane-python/`, `python/megane/` |
 | **Pipeline store** | `src/pipeline/store.ts` (Zustand) |
 | **Binary protocol** | `src/protocol/protocol.ts` (decoder; mirrors the encoder in `python/megane/protocol.py`), `src/protocol/WorkerPool.ts` + `decode.worker.ts` (off-main-thread decoding) |
-| **Frame providers** | `src/stream/WebSocketClient.ts` (reconnecting client for the `megane serve` backend in `python/megane/server.py`), `src/stream/StreamFrameProvider.ts` (WebSocket `request_frame` + LRU cache), `src/stream/LazyFrameProvider.ts` (parse-worker-backed lazy frame decoding) |
+| **Frame providers** | `src/stream/WebSocketClient.ts` (reconnecting client for the `megane serve` backend in `python/megane/server.py`), `src/stream/StreamFrameProvider.ts` (WebSocket `request_frame` + LRU cache), `src/stream/LazyFrameProvider.ts` (parse-worker-backed lazy frame decoding); both caches are capped in frames and in bytes (`src/stream/frameCacheCapacity.ts`, 128 MiB by default) |

@@ -12,6 +12,7 @@
 import type { Frame, TrajectoryMeta } from "../types";
 import type { FrameProvider } from "../pipeline/types";
 import type { WebSocketClient } from "./WebSocketClient";
+import { frameCacheCapacity } from "./frameCacheCapacity";
 
 const DEFAULT_CACHE_SIZE = 128;
 
@@ -25,10 +26,19 @@ export class StreamFrameProvider implements FrameProvider {
   private maxCacheSize: number;
   private onFrameReady: ((frame: Frame) => void) | null = null;
 
-  constructor(client: WebSocketClient, meta: TrajectoryMeta, maxCacheSize = DEFAULT_CACHE_SIZE) {
+  /**
+   * `maxCacheSize` caps the cache in frames; it is capped in bytes too (see
+   * `frameCacheCapacity`), so a large system keeps fewer frames.
+   */
+  constructor(
+    client: WebSocketClient,
+    meta: TrajectoryMeta,
+    maxCacheSize = DEFAULT_CACHE_SIZE,
+    maxCacheBytes?: number,
+  ) {
     this.client = client;
     this.meta = meta;
-    this.maxCacheSize = maxCacheSize;
+    this.maxCacheSize = frameCacheCapacity(meta.nAtoms, maxCacheSize, maxCacheBytes);
   }
 
   /** Register a callback for when an async frame arrives. */

@@ -24,6 +24,12 @@
  * process and the whole browser tree (/proc, Linux only) as a percentage of
  * one core.
  *
+ * With `--traj <path>` (after `--file`), the trajectory is then opened through
+ * the Load Trajectory node (trajLoadMs: until its frames can be played), and
+ * with `--scrub N` every frame of it is shown once, in order, N times
+ * (scrubMs: the time each pass took), so the memory figures include what the
+ * frame cache keeps of a trajectory that has been played through.
+ *
  * With `--file <path>`, once the startup demo has settled the file is opened
  * through the Load Structure node and the run also records how long it took to
  * show (fileLoadMs), how long the main thread was blocked meanwhile
@@ -47,6 +53,8 @@
  *   --no-gzip       serve uncompressed (default gzips text + wasm, like a CDN)
  *   --path P        page path to open (default "/?test=1")
  *   --file F        after startup, open F via the Load Structure node
+ *   --traj F        then open trajectory F via the Load Trajectory node
+ *   --scrub N       then show every trajectory frame in order, N passes
  *   --idle MS       after the memory is read, measure idle CPU over MS (default
  *                   0 = skip)
  *   --settle MS     idle time before the memory is read (default 1500); the
@@ -77,6 +85,8 @@ const opts = {
   dpr: 1,
   settle: 1500,
   idle: 0,
+  traj: null,
+  scrub: 0,
 };
 const builds = [];
 for (let i = 0; i < argv.length; i++) {
@@ -90,6 +100,8 @@ for (let i = 0; i < argv.length; i++) {
   else if (a === "--dpr") opts.dpr = Number(argv[++i]);
   else if (a === "--settle") opts.settle = Number(argv[++i]);
   else if (a === "--idle") opts.idle = Number(argv[++i]);
+  else if (a === "--traj") opts.traj = resolve(argv[++i]);
+  else if (a === "--scrub") opts.scrub = Number(argv[++i]);
   else if (a.includes("=")) {
     const [label, dir] = a.split("=");
     builds.push({ label, dir: resolve(dir) });
@@ -372,6 +384,7 @@ async function measureOnce(build) {
       .catch(() => null);
 
     const file = opts.file ? await openFile(page) : null;
+    const traj = opts.traj ? await openTrajectory(page) : null;
 
     // Let deferred work (idle callbacks, worker warm-up) finish, then GC so the
     // heap figure is live data rather than garbage awaiting collection.
@@ -396,6 +409,7 @@ async function measureOnce(build) {
       settledMs,
       scriptMs,
       ...file,
+      ...traj,
       ...idle,
       heapMB: heapUsed / 1024 / 1024,
       ...mem,
@@ -451,6 +465,50 @@ async function openFile(page) {
   };
 }
 
+/**
+ * Open `opts.traj` through the Load Trajectory node and time it until the
+ * pipeline's file-trajectory channel goes live; then, for `opts.scrub` passes,
+ * show every frame in order, each only once the playback store holds it.
+ */
+async function openTrajectory(page) {
+  await page.evaluate(() => {
+    const s = window.__megane_test_pipeline_store.getState();
+    window.__baseFp = s.fileProvider;
+    window.__baseFf = s.fileFrames;
+  });
+  const input = page.locator('[data-testid="load-trajectory-input"]').first();
+  const t0 = Date.now();
+  await input.setInputFiles(opts.traj);
+  await page.waitForFunction(
+    () => {
+      const s = window.__megane_test_pipeline_store.getState();
+      const live = s.fileProvider !== window.__baseFp || s.fileFrames !== window.__baseFf;
+      return live && window.__megane_test_playback_store.getState().totalFrames > 1;
+    },
+    null,
+    { polling: 50, timeout: 300000 },
+  );
+  const trajLoadMs = Date.now() - t0;
+  const scrubMs = [];
+  for (let pass = 0; pass < opts.scrub; pass++) {
+    scrubMs.push(
+      await page.evaluate(async () => {
+        const playback = window.__megane_test_playback_store;
+        const total = playback.getState().totalFrames;
+        const start = performance.now();
+        for (let i = 0; i < total; i++) {
+          playback.getState().seekFrame(i);
+          while (playback.getState().currentFrameData?.frameId !== i) {
+            await new Promise((r) => setTimeout(r, 1));
+          }
+        }
+        return performance.now() - start;
+      }),
+    );
+  }
+  return { trajLoadMs, scrubMs };
+}
+
 // ---- Driver ----
 
 function median(values) {
@@ -480,6 +538,9 @@ for (let run = 0; run < opts.runs; run++) {
           ? ` file=${r.fileLoadMs?.toFixed(0)}ms blocking=${r.fileBlockingMs?.toFixed(0)}ms ` +
             `longest=${r.fileLongestTaskMs?.toFixed(0)}ms`
           : "") +
+        (opts.traj
+          ? ` traj=${r.trajLoadMs}ms scrub=${r.scrubMs.map((t) => t.toFixed(0)).join("/")}ms`
+          : "") +
         (opts.idle > 0
           ? ` idle: task=${r.idleTaskMsPerSec?.toFixed(1)}ms/s frames=${r.idleFramesPerSec?.toFixed(1)}/s ` +
             `cpu renderer=${r.idleRendererCpuPct?.toFixed(1)}% gpu=${r.idleGpuCpuPct?.toFixed(1)}% ` +
@@ -500,6 +561,12 @@ const rows = [
         ["File: longest main-thread task (ms)", (r) => r.fileLongestTaskMs, 0],
       ]
     : []),
+  ...(opts.traj ? [["Trajectory: time until playable (ms)", (r) => r.trajLoadMs, 0]] : []),
+  ...Array.from({ length: opts.scrub }, (_, pass) => [
+    `Trajectory: show every frame, pass ${pass + 1} (ms)`,
+    (r) => r.scrubMs[pass],
+    0,
+  ]),
   ["Main-thread script until visible (ms)", (r) => r.scriptMs, 0],
   ["Transferred: JS (KB)", (r) => r.bytes.js / 1024, 0],
   ["Transferred: WASM (KB)", (r) => r.bytes.wasm / 1024, 0],
