@@ -115,6 +115,8 @@ const { wasmMock } = vi.hoisted(() => {
       timestep_ps = 1;
       has_box = true;
       scan(window: Uint8Array) {
+        // A 7-byte window holds no frame: the scan cannot move on.
+        if (window.length === 7) return 0;
         const found = Math.floor(window.length / 8);
         this.next_offset += found * 8;
         this.n_frames += found;
@@ -337,6 +339,26 @@ describe("parse.worker onmessage", () => {
     await handler({ data: { id: 22, op: "disposeTrajectory", trajectoryId: 200 } });
     await handler({ data: { id: 23, op: "decodeFrame", trajectoryId: 200, frame: 0 } });
     expect(posts[3].ok).toBe(false);
+  });
+
+  it("fails an XTC index scan that stops making progress", async () => {
+    const { handler, posts } = await loadWorker();
+    const file = {
+      size: 7 + 64 * 1024,
+      slice: () => ({ arrayBuffer: async () => new ArrayBuffer(7) }),
+    };
+    await handler({
+      data: {
+        id: 24,
+        op: "indexTrajectoryFile",
+        wasm: undefined,
+        trajectoryId: 240,
+        file,
+        expectedNAtoms: 4,
+      },
+    });
+    expect(posts[0]).toMatchObject({ id: 24, ok: false });
+    expect(posts[0].error).toMatch(/no progress/);
   });
 
   it("indexes a LAMMPS dump (kind=lammpstrj) and decodes a frame with vectors", async () => {

@@ -836,6 +836,8 @@ export async function indexXtcFileCore(
       const atEof = end === file.size;
       const found = indexer.scan(new Uint8Array(await read(file, start, end)), atEof);
       if (atEof) break;
+      // A window holds at least one frame's header, so the scan always moves on.
+      if (indexer.next_offset <= start) throw new Error("XTC index scan made no progress");
       if (found > 1) window = Math.min(window * 2, XTC_INDEX_WINDOW_MAX);
     }
     indexer.finish(file.size);

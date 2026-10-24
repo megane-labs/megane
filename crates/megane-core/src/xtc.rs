@@ -812,6 +812,49 @@ mod tests {
         assert_eq!(build_index(&tail).expect("index").n_frames, 100);
     }
 
+    /// A trajectory of `natoms <= 9` atoms, whose coordinates XTC stores as
+    /// plain floats instead of compressing them.
+    fn tiny_xtc(natoms: usize, frames: usize) -> Vec<u8> {
+        let mut out = Vec::new();
+        let push_i32 = |out: &mut Vec<u8>, v: i32| out.extend_from_slice(&v.to_be_bytes());
+        let push_f32 = |out: &mut Vec<u8>, v: f32| out.extend_from_slice(&v.to_be_bytes());
+        for f in 0..frames {
+            push_i32(&mut out, XTC_MAGIC);
+            push_i32(&mut out, natoms as i32);
+            push_i32(&mut out, f as i32); // step
+            push_f32(&mut out, f as f32 * 2.0); // time (ps)
+            for v in [3.0, 0.0, 0.0, 0.0, 3.0, 0.0, 0.0, 0.0, 3.0] {
+                push_f32(&mut out, v);
+            }
+            push_i32(&mut out, natoms as i32);
+            for c in 0..natoms * 3 {
+                push_f32(&mut out, (f * 100 + c) as f32);
+            }
+        }
+        out
+    }
+
+    #[test]
+    fn uncompressed_frames_are_indexed_in_windows_too() {
+        let data = tiny_xtc(2, 3);
+        let frame_len = FRAME_HEADER_BYTES + 4 + 2 * 3 * 4;
+        let whole = build_index(&data).expect("build index");
+        assert_eq!(whole.n_frames, 3);
+        assert_eq!(
+            whole.offsets,
+            vec![0, frame_len as u64, 2 * frame_len as u64]
+        );
+        assert_eq!(whole.timestep_ps, 2.0);
+        // Windows of FRAME_PEEK_BYTES or more (the builder's contract), here
+        // a frame and a bit or several frames.
+        for window in [FRAME_PEEK_BYTES, 2 * frame_len, 1000] {
+            let idx = index_in_windows(&data, window).expect("windowed index");
+            assert_eq!(idx.offsets, whole.offsets, "window {window}");
+        }
+        let last = &data[2 * frame_len..];
+        assert_eq!(decode_frame_at(last, 0, 2).expect("decode").len(), 6);
+    }
+
     #[test]
     fn an_empty_file_has_no_frames() {
         assert!(build_index(&[]).is_err());
