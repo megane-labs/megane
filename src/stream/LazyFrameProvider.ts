@@ -42,7 +42,7 @@ export interface LazyFrameProviderOptions {
   /** Most frames the cache keeps (default 256). */
   maxCacheSize?: number;
   /**
-   * Most bytes of decoded positions the cache keeps (default 128 MiB); see
+   * Most bytes of decoded positions the cache keeps (default 32 MiB); see
    * `frameCacheCapacity`. The cache always keeps at least two frames.
    */
   maxCacheBytes?: number;

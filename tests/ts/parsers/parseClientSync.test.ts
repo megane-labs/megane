@@ -122,6 +122,7 @@ const { calls, wasmMock } = vi.hoisted(() => {
       );
       return "1\n\nC 0 0 0\n";
     },
+    XtcIndexer: class {},
     XtcDecoder: class {
       n_atoms = 4;
       n_frames = 2;

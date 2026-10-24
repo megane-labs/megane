@@ -5,10 +5,15 @@
  * the system: 256 frames of a 100k-atom trajectory pin ~300 MB, and of a
  * 1M-atom one ~3 GB, which takes the tab down. The cache is therefore capped
  * by bytes too; small systems still keep every frame up to the frame limit.
+ *
+ * The budget is small because a frame that fell out is cheap to get back: the
+ * parse worker decodes a 100k-atom XTC frame in ~10 ms, off the main thread,
+ * and the provider decodes ahead of the playhead. 32 MiB still holds that
+ * read-ahead window (16 frames) for systems up to ~160k atoms.
  */
 
-/** Most bytes of decoded positions a frame cache keeps by default (128 MiB). */
-export const DEFAULT_FRAME_CACHE_BYTES = 128 * 1024 * 1024;
+/** Most bytes of decoded positions a frame cache keeps by default (32 MiB). */
+export const DEFAULT_FRAME_CACHE_BYTES = 32 * 1024 * 1024;
 
 /**
  * Fewest frames a cache keeps whatever their size: the frame on screen and

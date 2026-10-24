@@ -9,14 +9,17 @@ const MiB = 1024 * 1024;
 
 describe("frameCacheCapacity", () => {
   it("keeps the frame limit for a small system", () => {
-    // 3000 atoms = 36 KB a frame: 256 frames are 9 MB, well under the budget.
+    // 3000 atoms = 36 KB a frame: 256 frames are 9 MB, under the budget.
     expect(frameCacheCapacity(3000, 256)).toBe(256);
+    // Still the 16-frame read-ahead plus the frame on screen at 160k atoms.
+    expect(frameCacheCapacity(160_000, 256)).toBeGreaterThanOrEqual(17);
   });
 
   it("caps a large system by bytes", () => {
-    // 100k atoms = 1.2 MB a frame: 128 MiB holds 111 of them, not 256.
+    // 100k atoms = 1.2 MB a frame: 32 MiB holds 27 of them, not 256.
     const n = 100_000;
     const capacity = frameCacheCapacity(n, 256);
+    expect(capacity).toBe(27);
     expect(capacity).toBe(Math.floor(DEFAULT_FRAME_CACHE_BYTES / (n * 12)));
     expect(capacity * n * 12).toBeLessThanOrEqual(DEFAULT_FRAME_CACHE_BYTES);
   });

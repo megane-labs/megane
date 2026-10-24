@@ -107,6 +107,31 @@ const { wasmMock } = vi.hoisted(() => {
       }
       free() {}
     },
+    // Windowed indexer over 8-byte "frames" (n_atoms 4).
+    XtcIndexer: class {
+      next_offset = 0;
+      n_atoms = 4;
+      n_frames = 0;
+      timestep_ps = 1;
+      has_box = true;
+      scan(window: Uint8Array) {
+        const found = Math.floor(window.length / 8);
+        this.next_offset += found * 8;
+        this.n_frames += found;
+        return found;
+      }
+      finish() {}
+      box_matrix() {
+        return new Float32Array(9);
+      }
+      offsets() {
+        return Float64Array.from({ length: this.n_frames }, (_, i) => i * 8);
+      }
+      times() {
+        return new Float32Array(this.n_frames);
+      }
+      free() {}
+    },
     LammpstrjDecoder: class {
       n_atoms = 4;
       n_frames = 2;
@@ -272,6 +297,46 @@ describe("parse.worker onmessage", () => {
     await handler({ data: { id: 13, op: "decodeFrame", trajectoryId: 100, frame: 0 } });
     expect(posts[3].ok).toBe(false);
     expect(posts[3].error).toMatch(/unknown trajectoryId/);
+  });
+
+  it("indexes an XTC from its File and decodes a frame by reading just its bytes", async () => {
+    const { handler, posts } = await loadWorker();
+    // jsdom's Blob cannot be read, so the File is a stand-in recording its reads.
+    const reads: [number, number][] = [];
+    const file = {
+      size: 16,
+      slice: (start: number, end: number) => {
+        reads.push([start, end]);
+        return { arrayBuffer: async () => new ArrayBuffer(end - start) };
+      },
+    };
+    await handler({
+      data: {
+        id: 20,
+        op: "indexTrajectoryFile",
+        wasm: undefined,
+        trajectoryId: 200,
+        file,
+        expectedNAtoms: 4,
+      },
+    });
+    expect(posts[0].error).toBeUndefined();
+    expect(posts[0]).toMatchObject({ id: 20, ok: true, op: "indexTrajectoryFile" });
+    const index = posts[0].result as { nFrames: number; hasBox: boolean; boxOrigin: unknown };
+    expect(index.nFrames).toBe(2);
+    expect(index.hasBox).toBe(true);
+    expect(index.boxOrigin).toBeNull();
+
+    await handler({ data: { id: 21, op: "decodeFrame", trajectoryId: 200, frame: 1 } });
+    expect(posts[1]).toMatchObject({ id: 21, ok: true, op: "decodeFrame" });
+    const decoded = posts[1].result as { positions: Float32Array; vectorChannelCount: number };
+    expect(decoded.positions).toHaveLength(4 * 3);
+    expect(decoded.vectorChannelCount).toBe(0);
+    expect(reads[reads.length - 1]).toEqual([8, 16]); // frame 1's bytes only
+
+    await handler({ data: { id: 22, op: "disposeTrajectory", trajectoryId: 200 } });
+    await handler({ data: { id: 23, op: "decodeFrame", trajectoryId: 200, frame: 0 } });
+    expect(posts[3].ok).toBe(false);
   });
 
   it("indexes a LAMMPS dump (kind=lammpstrj) and decodes a frame with vectors", async () => {

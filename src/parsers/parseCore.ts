@@ -132,6 +132,51 @@ export interface WasmTrajectoryDecoder extends WasmFrameDecoder {
   box_origin(): Float32Array;
 }
 
+/** Windowed XTC frame indexer (see `XtcIndexer` in megane-wasm). */
+interface WasmXtcIndexer {
+  /** File offset the next window must start at. */
+  readonly next_offset: number;
+  scan(window: Uint8Array, atEof: boolean): number;
+  finish(fileLen: number): void;
+  readonly n_atoms: number;
+  readonly n_frames: number;
+  readonly timestep_ps: number;
+  readonly has_box: boolean;
+  box_matrix(): Float32Array;
+  offsets(): Float64Array;
+  times(): Float32Array;
+  free(): void;
+}
+
+/**
+ * A lazy decoder that leaves the file where it is — on disk for a file the
+ * user picked — and reads each frame's bytes when that frame is asked for, so
+ * the worker's memory does not grow with the trajectory (a `WasmXtcDecoder`
+ * copies the whole file into WASM memory, which never shrinks again).
+ */
+export interface FileFrameDecoder {
+  readonly n_atoms: number;
+  decodeFrame(frame: number): Promise<Float32Array>;
+  free(): void;
+}
+
+/** A worker-held lazy decoder: the file in WASM memory, or read from the file per frame. */
+export type LazyFrameDecoder = WasmFrameDecoder | FileFrameDecoder;
+
+/** Reads `blob[start, end)`; the default goes through the Blob API. */
+export type BlobRangeReader = (blob: Blob, start: number, end: number) => Promise<ArrayBuffer>;
+
+const readBlobRange: BlobRangeReader = (blob, start, end) => blob.slice(start, end).arrayBuffer();
+
+/**
+ * First window the XTC index scan reads. It needs ~92 bytes of each frame, so a
+ * window over large frames holds one header and the scan jumps to the next;
+ * while windows keep holding several (small) frames it doubles, up to
+ * {@link XTC_INDEX_WINDOW_MAX}, so the scan is not one read per frame.
+ */
+export const XTC_INDEX_WINDOW_MIN = 64 * 1024;
+export const XTC_INDEX_WINDOW_MAX = 4 * 1024 * 1024;
+
 /** Persistent XTC decoder (owns the file bytes; decodes one frame on demand). */
 export interface WasmXtcDecoder extends WasmTrajectoryDecoder {
   times(): Float32Array;
@@ -230,6 +275,7 @@ interface WasmModule {
   parse_traj_frame0: (head: Uint8Array, tail: Uint8Array, totalLen: number) => WasmParseResult;
   decode_trajectory_frame0: (data: Uint8Array, kind: string, nAtoms: number) => Float32Array;
   XtcDecoder: new (data: Uint8Array) => WasmXtcDecoder;
+  XtcIndexer: new () => WasmXtcIndexer;
   LammpstrjDecoder: new (data: Uint8Array) => WasmLammpstrjDecoder;
   StructureFrameDecoder: new (data: Uint8Array, kind: string) => WasmStructureFrameDecoder;
   infer_bonds_vdw: (positions: Float32Array, elements: Uint8Array, n_atoms: number) => Uint32Array;
@@ -305,6 +351,7 @@ export async function ensureInit(wasmUrl?: string | WebAssembly.Module): Promise
         parse_traj_frame0: wasm.parse_traj_frame0,
         decode_trajectory_frame0: wasm.decode_trajectory_frame0,
         XtcDecoder: wasm.XtcDecoder,
+        XtcIndexer: wasm.XtcIndexer,
         LammpstrjDecoder: wasm.LammpstrjDecoder,
         StructureFrameDecoder: wasm.StructureFrameDecoder,
         infer_bonds_vdw: wasm.infer_bonds_vdw,
@@ -765,6 +812,80 @@ export function indexTrajectoryCore(
     heterogeneous: kind === "lammpstrj" && (decoder as WasmLammpstrjDecoder).heterogeneous === true,
   };
   return { decoder, index };
+}
+
+/**
+ * Build a lazy XTC decoder that reads the file instead of holding it: the
+ * frame index comes from windows of the file (see {@link XTC_INDEX_WINDOW_MIN})
+ * and each frame is decoded from its own bytes, `offsets[i]` up to the next
+ * frame. Same index and frames as {@link indexTrajectoryCore} for `"xtc"`.
+ * Requires `ensureInit` first.
+ */
+export async function indexXtcFileCore(
+  file: Blob,
+  expectedNAtoms: number,
+  read: BlobRangeReader = readBlobRange,
+): Promise<{ decoder: FileFrameDecoder; index: TrajectoryIndexResult }> {
+  const wasm = wasmModule!;
+  const indexer = new wasm.XtcIndexer();
+  try {
+    let window = XTC_INDEX_WINDOW_MIN;
+    while (indexer.next_offset < file.size) {
+      const start = indexer.next_offset;
+      const end = Math.min(start + window, file.size);
+      const atEof = end === file.size;
+      const found = indexer.scan(new Uint8Array(await read(file, start, end)), atEof);
+      if (atEof) break;
+      if (found > 1) window = Math.min(window * 2, XTC_INDEX_WINDOW_MAX);
+    }
+    indexer.finish(file.size);
+    const nAtoms = indexer.n_atoms;
+    if (nAtoms !== expectedNAtoms) {
+      throw new Error(`XTC atom count (${nAtoms}) does not match structure (${expectedNAtoms})`);
+    }
+    const offsets = indexer.offsets();
+    const nFrames = indexer.n_frames;
+    const index: TrajectoryIndexResult = {
+      nAtoms,
+      nFrames,
+      timestepPs: indexer.timestep_ps,
+      hasBox: indexer.has_box,
+      box: indexer.has_box ? indexer.box_matrix() : null,
+      boxOrigin: null,
+      times: indexer.times(),
+      vectorChannelNames: [],
+      heterogeneous: false,
+    };
+    const decoder: FileFrameDecoder = {
+      n_atoms: nAtoms,
+      async decodeFrame(frame) {
+        if (!(frame >= 0 && frame < nFrames)) throw new Error("frame index out of range");
+        const end = frame + 1 < nFrames ? offsets[frame + 1] : file.size;
+        const bytes = new Uint8Array(await read(file, offsets[frame], end));
+        return wasm.decode_trajectory_frame0(bytes, "xtc", nAtoms);
+      },
+      free() {
+        /* nothing held outside the file itself */
+      },
+    };
+    return { decoder, index };
+  } finally {
+    indexer.free();
+  }
+}
+
+/** Decode one frame's positions (Å) and embedded vectors from a worker-held lazy decoder. */
+export async function decodeLazyFrameCore(
+  decoder: LazyFrameDecoder,
+  frame: number,
+): Promise<{ positions: Float32Array; vectors: Float32Array }> {
+  if ("decodeFrame" in decoder) {
+    return { positions: await decoder.decodeFrame(frame), vectors: new Float32Array(0) };
+  }
+  return {
+    positions: decodeFrameCore(decoder, frame),
+    vectors: decodeFrameVectorsCore(decoder, frame),
+  };
 }
 
 /**
