@@ -21,9 +21,7 @@ def parse_psf_bonds(path: str) -> np.ndarray:
         ``(M, 2)`` uint32 array of 0-indexed bond pairs.
     """
     from megane import megane_parser
+    from megane.parsers.common import read_text
 
-    with open(path, encoding="utf-8", errors="replace") as f:
-        text = f.read()
-
-    bonds = megane_parser.parse_psf_bonds(text)
+    bonds = megane_parser.parse_psf_bonds(read_text(path))
     return np.asarray(bonds, dtype=np.uint32).reshape(-1, 2)

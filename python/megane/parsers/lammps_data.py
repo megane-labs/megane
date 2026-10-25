@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 
 from megane import megane_parser
-from megane.parsers.common import Structure, structure_from_result
+from megane.parsers.common import Structure, read_text, structure_from_result
 
 logger = logging.getLogger(__name__)
 
@@ -17,8 +17,7 @@ def load_lammps_data(path: str) -> Structure:
     Auto-detects style from comment hint or field count.
     """
     logger.debug("Loading LAMMPS data file: %s", path)
-    with open(path) as f:
-        text = f.read()
+    text = read_text(path)
 
     result = megane_parser.parse_lammps_data(text)
     logger.info("Loaded LAMMPS data: %d atoms, %d bonds", result.n_atoms, len(result.bonds))

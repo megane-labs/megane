@@ -32,10 +32,20 @@ pub struct RealTopFileSystem {
 impl TopFileSystem for RealTopFileSystem {
     fn read(&self, path: &str) -> Option<String> {
         let in_base = std::path::Path::new(&self.base_dir).join(path);
-        std::fs::read_to_string(&in_base)
-            .or_else(|_| std::fs::read_to_string(path))
+        read_text_lossy(&in_base)
+            .or_else(|_| read_text_lossy(std::path::Path::new(path)))
             .ok()
     }
+}
+
+/// A text file decoded as the browser hosts decode it (`File.text()`): UTF-8
+/// with a leading byte-order mark dropped and invalid bytes replaced, so a
+/// Latin-1 comment neither fails the topology nor hides an `#include`.
+#[cfg(not(target_arch = "wasm32"))]
+fn read_text_lossy(path: &std::path::Path) -> std::io::Result<String> {
+    let bytes = std::fs::read(path)?;
+    let bytes = bytes.strip_prefix(b"\xEF\xBB\xBF").unwrap_or(&bytes);
+    Ok(String::from_utf8_lossy(bytes).into_owned())
 }
 
 /// A [`TopFileSystem`] backed by an in-memory map of path → content.
@@ -513,7 +523,7 @@ pub fn parse_top_bonds_from_path(path: &str, n_atoms: usize) -> Result<Vec<(u32,
         .map(|p| p.to_string_lossy().to_string())
         .unwrap_or_else(|| ".".to_string());
 
-    let text = std::fs::read_to_string(path).map_err(|e| format!("Cannot read {path}: {e}"))?;
+    let text = read_text_lossy(top_path).map_err(|e| format!("Cannot read {path}: {e}"))?;
 
     let fs = RealTopFileSystem { base_dir };
     parse_top_bonds_with_fs(&text, &fs, n_atoms)
@@ -989,5 +999,35 @@ SOL  2
     fn test_from_path_missing_file_error() {
         let result = parse_top_bonds_from_path("/nonexistent/path.top", 10);
         assert!(result.is_err());
+    }
+
+    /// A Latin-1 byte in a comment (`; Å` written as 0xC5) and a UTF-8 BOM are
+    /// read the way the browser's `File.text()` reads them, in the topology and
+    /// in an included file, instead of failing it or dropping the include.
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn test_from_path_reads_non_utf8_bytes_like_the_browser() {
+        use std::fs;
+        use tempfile::tempdir;
+
+        let dir = tempdir().unwrap();
+        fs::write(
+            dir.path().join("mol.itp"),
+            b"\xEF\xBB\xBF; distances in \xC5\n[ bonds ]\n1 2 1\n2 3 1\n",
+        )
+        .unwrap();
+        let top_path = dir.path().join("system.top");
+        fs::write(
+            &top_path,
+            b"\xEF\xBB\xBF; made by caf\xE9\n#include \"mol.itp\"\n",
+        )
+        .unwrap();
+
+        let bonds = parse_top_bonds_from_path(top_path.to_str().unwrap(), 10).unwrap();
+        assert_eq!(bonds, vec![(0, 1), (1, 2)]);
+        assert_eq!(
+            read_text_lossy(&dir.path().join("mol.itp")).unwrap(),
+            "; distances in \u{FFFD}\n[ bonds ]\n1 2 1\n2 3 1\n"
+        );
     }
 }

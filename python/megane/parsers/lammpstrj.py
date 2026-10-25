@@ -8,6 +8,7 @@ from megane import megane_parser
 from megane.parsers.common import (
     InMemoryTrajectory,
     Structure,
+    read_text,
     structure_and_trajectory_from_result,
     trajectory_from_traj_result,
 )
@@ -31,8 +32,7 @@ def load_lammpstrj(dump_path: str) -> InMemoryTrajectory:
         InMemoryTrajectory with frame-by-frame access.
     """
     logger.debug("Loading LAMMPS dump file: %s", dump_path)
-    with open(dump_path) as f:
-        text = f.read()
+    text = read_text(dump_path)
 
     result = megane_parser.parse_lammpstrj(text)
     trajectory = trajectory_from_traj_result(result)
@@ -73,8 +73,7 @@ def load_lammpstrj_structure(dump_path: str) -> tuple[Structure, InMemoryTraject
         Tuple of (Structure, InMemoryTrajectory).
     """
     logger.debug("Loading LAMMPS dump as structure: %s", dump_path)
-    with open(dump_path) as f:
-        text = f.read()
+    text = read_text(dump_path)
 
     result = megane_parser.parse_lammpstrj_structure(text)
 
