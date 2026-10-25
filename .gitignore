@@ -67,6 +67,7 @@ coverage.xml
 
 # megane LLM benchmark generated results
 bench/llm/results/
+bench/flow/results/
 
 # code-server built from npm by scripts/install-code-server.sh (E2E host,
 # used when the prebuilt binary from code-server.dev is unavailable)

@@ -159,6 +159,16 @@ JSON array of usernames, defaults to `["hodakamori"]`), so applying the label
 as another user is a no-op. See `bench/llm/README.md` for the full rubric and
 local usage.
 
+`bench/flow/` is the same for Megane Builder's Flow assistant, with one more
+dimension: every generated flow is **run** in Node (production `runFlow`,
+`megane-rdkit` for SMILES, the reference tool server's recorded results) and
+what its output block builds is graded. Every case needs a reference answer and
+counterexamples in `bench/flow/golden.ts` (built through the flow store, never
+hand-written JSON); `tests/ts/bench/flow-bench.test.ts` fails unless each
+reference scores 1.0 when run and a counterexample fails on what it builds.
+The **`llm-eval-flow`** label runs `.github/workflows/llm-flow-eval.yml` with
+the same provider variables, secrets and allowlist. See `bench/flow/README.md`.
+
 ## Skills
 
 Project-specific skills are defined in `.agents/skills/<name>/SKILL.md` (the vendor-neutral [Agent Skills](https://agentskills.io/specification) layout). Codex CLI discovers that directory natively; Claude Code reads the same files through the `.claude/skills` symlink. Each skill provides instructions for a specific workflow. Always follow the skill's instructions when performing the corresponding task. Invoke one explicitly with `/<name>` in Claude Code or `$<name>` in Codex.
