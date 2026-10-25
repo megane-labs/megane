@@ -18,9 +18,10 @@
 
 import { useCallback } from "react";
 import { useReactFlow } from "@xyflow/react";
-import { extractTrailingExplanation, hasClosedFence } from "../../ai/generation";
+import { extractTrailingExplanation, looksLikePayload } from "../../ai/generation";
 import {
   AssistantDock,
+  throwIfAborted,
   type AssistantReply,
   type AssistantRequest,
 } from "../../components/AssistantDock";
@@ -93,6 +94,9 @@ export function FlowChatBox({ deps, hasTools }: FlowChatBoxProps) {
       let appliedJSON: string | null = null;
       let appliedCount = 0;
       const apply = (raw: RawFlow) => {
+        // Nothing lands once the request was cancelled or the dock went away:
+        // applying would also stop a run started since.
+        if (signal.aborted) return;
         const flow = prepareGeneratedFlow(raw, ctx);
         if (!flow) return;
         const json = JSON.stringify(flow);
@@ -130,12 +134,14 @@ export function FlowChatBox({ deps, hasTools }: FlowChatBoxProps) {
           onRestart();
         },
       );
+      throwIfAborted(signal);
       const last = tryExtractFlow(full);
       if (last) apply(last);
 
       if (appliedJSON === null) {
-        // No flow: an answer in prose (a tool server is needed, say) is the reply.
-        if (!hasClosedFence(full) && full.trim()) return { content: full.trim() };
+        // No flow: an answer in prose (a tool server is needed, say) is the
+        // reply. A fence or JSON object that holds no flow is not prose.
+        if (!looksLikePayload(full) && full.trim()) return { content: full.trim() };
         throw new Error("The reply held no flow.");
       }
       const explanation = extractTrailingExplanation(full);

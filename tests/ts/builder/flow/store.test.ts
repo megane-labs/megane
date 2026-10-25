@@ -254,6 +254,65 @@ describe("flow store", () => {
     expect(s.getState().runs[box].status).toBe("idle");
   });
 
+  it("keeps a run cancelled by Clear or Open out of the graph that replaced it", async () => {
+    for (const replace of [
+      (s: StoreApi<FlowStore>) => s.getState().clear(),
+      (s: StoreApi<FlowStore>) => s.getState().load({ version: 1, nodes: [], edges: [] }),
+    ]) {
+      const s = createFlowStore();
+      const a = s.getState().addNode({ ...mol("O"), name: "water" });
+      await s.getState().run(fakeDeps());
+      expect(s.getState().runs[a].status).toBe("done");
+
+      // The next run hangs on the molecule until the abort.
+      s.getState().updateParams(a, { smiles: "CCO", name: "ethanol" } as Partial<FlowParams>);
+      let release: () => void = () => {};
+      const running = s.getState().run(
+        fakeDeps({
+          embedSmiles: () =>
+            new Promise((resolve) => {
+              release = () => resolve(waterData().snapshot);
+            }),
+        }),
+      );
+      expect(s.getState().runs[a].status).toBe("running");
+      replace(s);
+      expect(s.getState().runs).toEqual({});
+      release();
+      expect(await running).toBe("cancelled");
+
+      // Nothing of the old run lands, not even on a new block that reuses the id.
+      expect(s.getState().runs).toEqual({});
+      expect(s.getState().viewNodeId).toBeNull();
+      const b = s.getState().addNode({ ...mol("N"), name: "ammonia" });
+      expect(b).toBe(a);
+      expect(s.getState().runs[b]).toBeUndefined();
+    }
+  });
+
+  it("keeps a run started after Clear going while the cleared one settles", async () => {
+    const s = createFlowStore();
+    const a = s.getState().addNode(mol("O"));
+    let release: () => void = () => {};
+    const first = s.getState().run(
+      fakeDeps({
+        embedSmiles: () =>
+          new Promise((resolve) => {
+            release = () => resolve(waterData().snapshot);
+          }),
+      }),
+    );
+    s.getState().clear();
+    const b = s.getState().addNode(mol("N"));
+    expect(await s.getState().run(fakeDeps())).toBe("finished");
+    // The cleared run settles only now, after the new one finished.
+    release();
+    expect(await first).toBe("cancelled");
+    expect(b).toBe(a);
+    expect(s.getState().runs[b].status).toBe("done");
+    expect(s.getState().running).toBeNull();
+  });
+
   it("reports a loop on every block", async () => {
     const s = createFlowStore();
     s.setState({
@@ -269,6 +328,17 @@ describe("flow store", () => {
     await s.getState().run(fakeDeps());
     expect(s.getState().runs.a.error).toContain("loop");
     expect(s.getState().runs.b.status).toBe("error");
+
+    // Not on the graph that replaced the looped one, though.
+    s.setState({ runs: {} });
+    const looped = s.getState().run(fakeDeps());
+    s.getState().load({
+      version: 1,
+      nodes: [{ id: "c", position: { x: 0, y: 0 }, params: mol() }],
+      edges: [],
+    });
+    expect(await looped).toBe("cancelled");
+    expect(s.getState().runs).toEqual({});
   });
 
   it("saves and opens a flow, and clears", async () => {
@@ -602,5 +672,42 @@ describe("applying a generated flow", () => {
     expect(s.getState().running).toBeNull();
     release();
     expect(await running).toBe("cancelled");
+  });
+
+  it("puts a block the stopped run was running back as it was before the run", async () => {
+    const { s, a, box } = chain();
+    await s.getState().run(fakeDeps());
+    const before = s.getState().runs[a];
+    s.getState().updateParams(a, { name: "renamed" } as Partial<FlowParams>);
+    expect(s.getState().runs[a].status).toBe("stale");
+
+    let release: () => void = () => {};
+    const running = s.getState().run(
+      fakeDeps({
+        embedSmiles: () =>
+          new Promise((resolve) => {
+            release = () => resolve(waterData().snapshot);
+          }),
+      }),
+    );
+    expect(s.getState().runs[a].status).toBe("running");
+    // The model keeps both blocks unchanged.
+    s.getState().applyGenerated(s.getState().serialize());
+    // No block is left spinning: the molecule is back to its stale result.
+    expect(s.getState().runs[a]).toMatchObject({ status: "stale", data: before.data });
+    expect(s.getState().runs[box].status).toBe("stale");
+
+    release();
+    expect(await running).toBe("cancelled");
+    expect(s.getState().runs[a]).toMatchObject({ status: "stale", data: before.data });
+
+    // A block that had no result before the run goes back to having none.
+    const t = createFlowStore();
+    const m = t.getState().addNode(mol("O"));
+    const hung = t.getState().run(fakeDeps({ embedSmiles: () => new Promise(() => {}) }));
+    expect(t.getState().runs[m].status).toBe("running");
+    t.getState().applyGenerated(t.getState().serialize());
+    expect(t.getState().runs[m]).toBeUndefined();
+    void hung;
   });
 });

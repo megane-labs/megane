@@ -27,7 +27,13 @@ export function computeAngle(pos: Float32Array, a: number, b: number, c: number)
   return Math.acos(Math.max(-1, Math.min(1, dot / (magBA * magBC)))) * (180 / Math.PI);
 }
 
-/** Compute dihedral angle (in degrees) for atoms a-b-c-d. */
+/**
+ * Compute the signed dihedral angle (in degrees, −180…180) for atoms a-b-c-d.
+ *
+ * IUPAC convention: looking along b→c, the angle is positive when a must turn
+ * clockwise to eclipse d (the sign MDAnalysis and MDTraj report):
+ * φ = atan2(|b2| b1·(b2×b3), (b1×b2)·(b2×b3)).
+ */
 export function computeDihedral(
   pos: Float32Array,
   a: number,
@@ -51,14 +57,8 @@ export function computeDihedral(
     n2y = b2z * b3x - b2x * b3z,
     n2z = b2x * b3y - b2y * b3x;
   const b2len = Math.sqrt(b2x * b2x + b2y * b2y + b2z * b2z);
-  const ub2x = b2x / b2len,
-    ub2y = b2y / b2len,
-    ub2z = b2z / b2len;
-  const m1x = n1y * ub2z - n1z * ub2y,
-    m1y = n1z * ub2x - n1x * ub2z,
-    m1z = n1x * ub2y - n1y * ub2x;
   const x = n1x * n2x + n1y * n2y + n1z * n2z;
-  const y = m1x * n2x + m1y * n2y + m1z * n2z;
+  const y = b2len * (b1x * n2x + b1y * n2y + b1z * n2z);
   return Math.atan2(y, x) * (180 / Math.PI);
 }
 

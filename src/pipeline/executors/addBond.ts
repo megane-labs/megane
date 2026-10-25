@@ -30,6 +30,8 @@ export interface PbcBondResult {
   nAtoms: number;
   /** Source atom + lattice shift of each appended ghost atom (see BondData.imageMap). */
   imageMap?: PeriodicImageMap | null;
+  /** Source atom of each appended ghost / image atom (see `BondData.ghostSourceIndices`). */
+  ghostSourceIndices?: Uint32Array | null;
 }
 
 /** Attach one minimum-image lattice shift to each explicit structural bond. */
@@ -191,6 +193,7 @@ function renderPeriodicTopology(
     elements,
     nAtoms: elements.length,
     imageMap,
+    ghostSourceIndices: imageMap.sourceIndices,
   };
 }
 
@@ -260,6 +263,7 @@ export function expandPeriodicTopologyForDrawingBoundary(
       sourceIndices: boundary.images.sourceIndices,
       latticeShifts: boundary.images.latticeShifts,
     },
+    ghostSourceIndices: boundary.images.sourceIndices,
   };
 }
 
@@ -479,6 +483,7 @@ export function bondDataFromSnapshotBonds(particle: ParticleData): BondData | nu
     nAtoms: rendered.nAtoms,
     imageMap: rendered.imageMap ?? null,
     atomElements: snapshot.elements,
+    ghostSourceIndices: rendered.ghostSourceIndices ?? null,
     selectedBondIndices: null,
     bondOpacityOverrides: null,
     periodicTopology: topology,
@@ -533,6 +538,7 @@ export function executeAddBond(
     nAtoms: rendered.nAtoms,
     imageMap: rendered.imageMap ?? null,
     atomElements: snapshot.elements,
+    ghostSourceIndices: rendered.ghostSourceIndices ?? null,
     selectedBondIndices: null,
     bondOpacityOverrides: null,
     periodicTopology: topology,

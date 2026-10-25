@@ -125,6 +125,14 @@ export interface BondData {
   imageMap?: PeriodicImageMap | null;
   // Base atom elements (non-ghost), used by bond filter for element/atom_index queries
   atomElements: Uint8Array | null;
+  /**
+   * The structural atom behind each endpoint appended past the structure's own
+   * atoms (a PBC half-bond ghost or a Drawing Boundary copy): entry `k` is the
+   * source of endpoint `nAtoms - ghostSourceIndices.length + k`. Particle
+   * filters and bond queries test such an endpoint as its source atom. Absent
+   * or null when every endpoint is a structural atom.
+   */
+  ghostSourceIndices?: Uint32Array | null;
   // Bond selection (set by filter node with bond_query)
   selectedBondIndices: Uint32Array | null; // null = all bonds selected
   // Per-bond opacity overrides (set by modify node when selectedBondIndices is non-null)

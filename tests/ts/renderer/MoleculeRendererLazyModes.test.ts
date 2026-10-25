@@ -6,7 +6,9 @@
  */
 
 import { describe, it, expect, vi } from "vitest";
+import * as THREE from "three";
 import { MoleculeRenderer } from "@/renderer/MoleculeRenderer";
+import { SurfaceRenderer } from "@/renderer/SurfaceRenderer";
 import { ImpostorAtomMesh } from "@/renderer/ImpostorAtomMesh";
 import { ImpostorBondMesh } from "@/renderer/ImpostorBondMesh";
 import { LineRenderer } from "@/renderer/LineRenderer";
@@ -67,6 +69,26 @@ describe("MoleculeRenderer — representations built on demand", () => {
     // Bond 0-1 is drawn at frame positions: midpoint x=3, atom B x=6.
     expect(Array.from(arr.slice(3, 6))).toEqual([3, 0, 0]);
     expect(Array.from(arr.slice(9, 12))).toEqual([6, 0, 0]);
+  });
+
+  it("builds the surface at the current frame when surface mode is turned on", () => {
+    const { renderer, internals } = makeRenderer();
+    const surface = new SurfaceRenderer();
+    internals.surfaceRenderer = surface;
+    renderer.setRepresentationType("atoms");
+    // Paused on a frame where the molecule sits 30 Å away from frame 0. The
+    // hidden surface skips the frame, so it must catch up when shown.
+    const moved = [30, 0, 0, 32, 0, 0, 39, 9, 9];
+    renderer.updateFrame(frame(moved));
+    const load = vi.spyOn(surface, "loadSnapshot");
+    renderer.setRepresentationType("surface");
+
+    expect(surface.mesh.visible).toBe(true);
+    expect(Array.from(load.mock.lastCall![0].positions)).toEqual(moved);
+    const geometry = (surface.mesh.children[0] as THREE.Mesh).geometry;
+    geometry.computeBoundingBox();
+    // Every surface vertex wraps the moved atoms (x ≥ 30 − vdW − probe radius).
+    expect(geometry.boundingBox!.min.x).toBeGreaterThan(25);
   });
 
   it("does not rebuild the whole structure as lines when a line subset is cleared", () => {

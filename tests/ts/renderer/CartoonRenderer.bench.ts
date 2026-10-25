@@ -27,7 +27,7 @@ function makeProteinSnapshot(nChains: number, residuesPerChain: number): Snapsho
   const positions = new Float32Array(nCa * 3);
   const caIndices = new Uint32Array(nCa);
   const caChainIds = new Uint8Array(nCa);
-  const caResNums = new Uint32Array(nCa);
+  const caResNums = new Int32Array(nCa);
   const caSsType = new Uint8Array(nCa);
 
   let a = 0;
