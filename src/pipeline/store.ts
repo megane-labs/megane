@@ -33,8 +33,15 @@ import { applyQuickStyle, type QuickStyle } from "./quickStyle";
 import { findPrimaryLoader, loaderEdits } from "./editHistory";
 import { mergeGeneratedGraph, type GraphCheckpoint } from "./generatedApply";
 import { registerTestStores, GLOBAL_BUNDLE_ID } from "../stores/testRegistry";
+import { basename } from "../parsers/fileNames";
 
 let nextNodeId = 1;
+
+/** Whether two loader `fileName`s name the same file, whatever directory they give. */
+function sameFileName(a: unknown, b: unknown): boolean {
+  if (typeof a !== "string" || typeof b !== "string") return a === b;
+  return basename(a) === basename(b);
+}
 
 function generateNodeId(): string {
   return `node-${nextNodeId++}`;
@@ -551,11 +558,14 @@ export const pipelineStateCreator: StateCreator<PipelineStore> = (set, get, api)
         if (n.id !== id) return n;
         const next = { ...n.data.params, ...params } as typeof n.data.params;
         // The edit history belongs to the file it was authored against:
-        // loading a different file into the loader starts it fresh.
+        // loading a different file into the loader starts it fresh. The same
+        // file under another directory is not a different file: a pipeline
+        // written by Python names it by its path ("data/water.pdb"), and the
+        // hosts attach it from beside the pipeline by its basename.
         if (
           n.type === "load_structure" &&
           "fileName" in params &&
-          params.fileName !== (n.data.params as LoadStructureParams).fileName &&
+          !sameFileName(params.fileName, (n.data.params as LoadStructureParams).fileName) &&
           (n.data.params as LoadStructureParams).edits?.length
         ) {
           (next as LoadStructureParams).edits = [];
