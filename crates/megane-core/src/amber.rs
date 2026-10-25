@@ -1,13 +1,15 @@
 //! AMBER prmtop topology and inpcrd/rst7 coordinate parsers.
 //!
 //! prmtop uses %FLAG/%FORMAT block structure.
-//! inpcrd uses fixed-width F12.7 coordinates (6 per line).
+//! inpcrd/rst7 uses fixed-width F12.7 values (6 per line): coordinates, then
+//! optional velocities (restart files), then an optional box.
 
 use std::collections::HashMap;
 
 use crate::atomic::{element_from_atom_name_in_residue, mass_to_atomic_num};
 use crate::cell::cell_params_to_matrix;
 use crate::structure::ParsedStructure;
+use crate::trajectory::{VectorChannel, VectorFrame};
 
 /// Parse an AMBER prmtop topology file.
 ///
@@ -124,20 +126,79 @@ pub fn parse_prmtop(text: &str) -> Result<ParsedStructure, String> {
 /// Parse prmtop topology and inpcrd/rst7 coordinates together.
 pub fn parse(prmtop: &str, inpcrd: &str) -> Result<ParsedStructure, String> {
     let mut structure = parse_prmtop(prmtop)?;
-    let (coords, box_mat) = parse_inpcrd(inpcrd, structure.n_atoms)?;
-    structure.positions = coords;
+    let crd = parse_inpcrd(inpcrd, structure.n_atoms)?;
+    structure.positions = crd.positions;
     // The inpcrd box takes precedence; a prmtop BOX_DIMENSIONS box (if any)
     // stands when the inpcrd carries none.
-    if box_mat.is_some() {
-        structure.box_matrix = box_mat;
+    if crd.box_matrix.is_some() {
+        structure.box_matrix = crd.box_matrix;
+    }
+    // Restart velocities are not rendered, but they are kept as a static
+    // vector channel so the information the file carries is not discarded.
+    if let Some(vectors) = crd.velocities {
+        structure.vector_channels.push(VectorChannel {
+            name: "velocity".to_string(),
+            frames: vec![VectorFrame { frame: 0, vectors }],
+        });
     }
     Ok(structure)
 }
 
+/// AMBER's internal velocity unit is Å per (1/20.455) ps; multiplying by this
+/// factor gives Å/ps, the unit every other velocity channel uses (GRO, …).
+pub const AMBER_VELOCITY_TO_A_PER_PS: f32 = 20.455;
+
+/// The contents of an AMBER inpcrd / rst7 coordinate file.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Inpcrd {
+    /// Positions in Å, `[x0, y0, z0, x1, …]`.
+    pub positions: Vec<f32>,
+    /// Velocities in Å/ps (converted from AMBER's internal unit, see
+    /// [`AMBER_VELOCITY_TO_A_PER_PS`]), when the file is a restart that
+    /// carries them.
+    pub velocities: Option<Vec<f32>>,
+    /// The periodic box, when the file carries one.
+    pub box_matrix: Option<[f32; 9]>,
+}
+
+/// Width of one `F12.7` field.
+const INPCRD_FIELD: usize = 12;
+
+/// Parse one inpcrd data line.
+///
+/// The format is fixed-width `6F12.7`: a value that fills all twelve columns
+/// (`-100.1234567`, `1000.0000000`) touches its neighbour with no space in
+/// between, so the line is cut into 12-column fields rather than split on
+/// whitespace. A line that is not fixed-width (a free-format file written by
+/// another tool) falls back to whitespace splitting; a line that parses in
+/// neither form is an error.
+fn parse_inpcrd_line(line: &str, line_no: usize) -> Result<Vec<f32>, String> {
+    let line = line.trim_end();
+    let fixed: Option<Vec<f32>> = line
+        .as_bytes()
+        .chunks(INPCRD_FIELD)
+        .map(|field| std::str::from_utf8(field).ok()?.trim().parse::<f32>().ok())
+        .collect();
+    if let Some(vals) = fixed {
+        return Ok(vals);
+    }
+    line.split_whitespace()
+        .map(|tok| {
+            tok.parse::<f32>()
+                .map_err(|_| format!("inpcrd: cannot parse value {tok:?} on line {line_no}"))
+        })
+        .collect()
+}
+
 /// Parse an AMBER inpcrd/rst7 coordinate file.
 ///
-/// Returns `(positions_angstrom, optional_box_matrix)`.
-pub fn parse_inpcrd(text: &str, n_atoms: usize) -> Result<(Vec<f32>, Option<[f32; 9]>), String> {
+/// After the title and the `NATOM [TIME]` line come `3·NATOM` coordinates,
+/// then (restart files only) `3·NATOM` velocities, then (periodic systems
+/// only) the box `a b c α β γ`. The value count therefore has to be one of
+/// `3N`, `3N+6`, `6N` or `6N+6`; any other count is an error. For `N = 2`,
+/// `3N+6 == 6N`: twelve values are read as coordinates plus a box, the
+/// common case.
+pub fn parse_inpcrd(text: &str, n_atoms: usize) -> Result<Inpcrd, String> {
     let mut lines = text.lines();
 
     // Title line (required)
@@ -159,41 +220,52 @@ pub fn parse_inpcrd(text: &str, n_atoms: usize) -> Result<(Vec<f32>, Option<[f32
         ));
     }
 
-    // Coordinates in F12.7 format, 6 per line. Collect all remaining lines and
-    // tokenise by whitespace (works for both space-separated and adjacent fields).
-    let remaining: String = lines.collect::<Vec<&str>>().join("\n");
     let mut all_vals: Vec<f32> = Vec::with_capacity(n_atoms * 3 + 6);
-    for token in remaining.split_whitespace() {
-        if let Ok(v) = token.parse::<f32>() {
-            all_vals.push(v);
+    for (k, line) in lines.enumerate() {
+        if line.trim().is_empty() {
+            continue;
         }
+        // 1-based, after the title and NATOM lines.
+        all_vals.extend(parse_inpcrd_line(line, k + 3)?);
     }
 
-    // Optional box: last 6 values are (a, b, c, alpha, beta, gamma) in Å / degrees
-    let box_mat = if all_vals.len() == n_atoms * 3 + 6 {
-        let box_vals: Vec<f32> = all_vals.drain(n_atoms * 3..).collect();
-        Some(cell_params_to_matrix(
-            box_vals[0],
-            box_vals[1],
-            box_vals[2],
-            box_vals[3],
-            box_vals[4],
-            box_vals[5],
-        ))
+    let n3 = n_atoms * 3;
+    let (has_velocities, has_box) = match all_vals.len() {
+        n if n == n3 => (false, false),
+        n if n == n3 + 6 => (false, true),
+        n if n == 2 * n3 => (true, false),
+        n if n == 2 * n3 + 6 => (true, true),
+        n => {
+            return Err(format!(
+                "inpcrd: expected {n3} coordinate values (plus optional {n3} velocities \
+                 and a 6-value box) for {n_atoms} atoms, but got {n}"
+            ))
+        }
+    };
+
+    // The box `a b c alpha beta gamma` (Å / degrees) is always last.
+    let box_matrix = if has_box {
+        let b: Vec<f32> = all_vals.drain(all_vals.len() - 6..).collect();
+        Some(cell_params_to_matrix(b[0], b[1], b[2], b[3], b[4], b[5]))
+    } else {
+        None
+    };
+    let velocities = if has_velocities {
+        Some(
+            all_vals
+                .drain(n3..)
+                .map(|v| v * AMBER_VELOCITY_TO_A_PER_PS)
+                .collect(),
+        )
     } else {
         None
     };
 
-    if all_vals.len() < n_atoms * 3 {
-        return Err(format!(
-            "inpcrd: expected {} coordinate values but got {}",
-            n_atoms * 3,
-            all_vals.len()
-        ));
-    }
-    all_vals.truncate(n_atoms * 3);
-
-    Ok((all_vals, box_mat))
+    Ok(Inpcrd {
+        positions: all_vals,
+        velocities,
+        box_matrix,
+    })
 }
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
@@ -448,6 +520,132 @@ water box
         let inpcrd = "test\n       3\n   1.0   2.0\n";
         let result = parse_inpcrd(inpcrd, 3);
         assert!(result.is_err());
+    }
+
+    /// A restart (rst7) with velocities holds 6N + 6 values: the box is the
+    /// last six, and the velocities become an Å/ps vector channel.
+    #[test]
+    fn test_rst7_with_velocities_keeps_box_and_velocities() {
+        let rst = "\
+WAT
+     3  0.1000000E+02
+   1.0000000   2.0000000   3.0000000   1.9600000   2.0000000   3.0000000
+   0.7600000   2.9300000   3.0000000
+   0.1000000   0.2000000   0.3000000   0.1000000   0.2000000   0.3000000
+   0.1000000   0.2000000  -0.3000000
+  30.0000000  30.0000000  30.0000000  90.0000000  90.0000000  90.0000000
+";
+        let s = parse(WATER_PRMTOP, rst).expect("rst7 parse failed");
+        assert_eq!(
+            s.positions,
+            vec![1.0, 2.0, 3.0, 1.96, 2.0, 3.0, 0.76, 2.93, 3.0]
+        );
+        let bm = s.box_matrix.expect("box must survive the velocity block");
+        assert!((bm[0] - 30.0).abs() < 1e-4 && (bm[8] - 30.0).abs() < 1e-4);
+        assert_eq!(s.vector_channels.len(), 1);
+        let ch = &s.vector_channels[0];
+        assert_eq!(ch.name, "velocity");
+        assert_eq!(ch.frames.len(), 1);
+        assert_eq!(ch.frames[0].frame, 0);
+        let v = &ch.frames[0].vectors;
+        assert_eq!(v.len(), 9);
+        // AMBER units (Å / (1/20.455 ps)) → Å/ps.
+        assert!((v[0] - 0.1 * 20.455).abs() < 1e-4);
+        assert!((v[8] + 0.3 * 20.455).abs() < 1e-4);
+    }
+
+    /// 6N values: velocities without a box.
+    #[test]
+    fn test_rst7_with_velocities_without_box() {
+        let rst = "\
+WAT
+     3
+   1.0000000   2.0000000   3.0000000   1.9600000   2.0000000   3.0000000
+   0.7600000   2.9300000   3.0000000
+   0.1000000   0.2000000   0.3000000   0.1000000   0.2000000   0.3000000
+   0.1000000   0.2000000   0.3000000
+";
+        let crd = parse_inpcrd(rst, 3).expect("parse");
+        assert_eq!(crd.positions[8], 3.0);
+        assert!(crd.box_matrix.is_none());
+        let v = crd.velocities.expect("velocities");
+        assert!((v[1] - 0.2 * 20.455).abs() < 1e-4);
+        // A plain inpcrd has no velocity channel.
+        let s = parse(WATER_PRMTOP, WATER_INPCRD).unwrap();
+        assert!(s.vector_channels.is_empty());
+    }
+
+    /// F12.7 values that fill all twelve columns touch their neighbour; the
+    /// fields are cut by column, so nothing merges, shifts or leaks.
+    #[test]
+    fn test_inpcrd_full_width_fields_do_not_merge() {
+        let rst = "\
+WAT
+     3
+   1.0000000-100.1234567   3.0000000   1.9600000   2.0000000   3.0000000
+1000.00000002000.0000000   3.0000000
+  30.0000000  30.0000000  30.0000000  90.0000000  90.0000000  90.0000000
+";
+        let s = parse(WATER_PRMTOP, rst).expect("parse");
+        assert_eq!(s.positions.len(), 9);
+        assert!((s.positions[1] + 100.123_45).abs() < 1e-4);
+        assert_eq!(&s.positions[6..9], &[1000.0, 2000.0, 3.0]);
+        let bm = s.box_matrix.expect("box");
+        assert!((bm[0] - 30.0).abs() < 1e-4);
+    }
+
+    /// Whitespace-separated files that are not fixed-width still load.
+    #[test]
+    fn test_inpcrd_free_format_lines_fall_back_to_whitespace() {
+        let crd = parse_inpcrd("t\n3\n1.0 2.0 3.0\n4.0 5.0 6.0\n\n7.0 8.0 9.0\n\n", 3).unwrap();
+        assert_eq!(
+            crd.positions,
+            vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0]
+        );
+        assert!(crd.velocities.is_none() && crd.box_matrix.is_none());
+    }
+
+    /// A field that is not a number is an error, not silently skipped.
+    #[test]
+    fn test_inpcrd_unparseable_field_is_an_error() {
+        let rst = "\
+WAT
+     3
+   1.0000000   2.0000000   3.0000000   1.9600000  2.0000000x   3.0000000
+   0.7600000   2.9300000   3.0000000
+";
+        let err = parse_inpcrd(rst, 3).unwrap_err();
+        assert!(err.contains("2.0000000x"), "{err}");
+        assert!(err.contains("line 3"), "{err}");
+    }
+
+    /// Value counts other than 3N, 3N+6, 6N, 6N+6 are rejected.
+    #[test]
+    fn test_inpcrd_unexpected_value_count_is_an_error() {
+        let rst = "\
+WAT
+     3
+   1.0000000   2.0000000   3.0000000   1.9600000   2.0000000   3.0000000
+   0.7600000   2.9300000   3.0000000   1.0000000   1.0000000   1.0000000
+";
+        let err = parse_inpcrd(rst, 3).unwrap_err();
+        assert!(err.contains("got 12"), "{err}");
+    }
+
+    /// For two atoms 3N+6 == 6N; twelve values read as coordinates + box.
+    #[test]
+    fn test_inpcrd_two_atoms_twelve_values_is_a_box() {
+        let rst = "\
+t
+     2
+   1.0000000   2.0000000   3.0000000   4.0000000   5.0000000   6.0000000
+  10.0000000  11.0000000  12.0000000  90.0000000  90.0000000  90.0000000
+";
+        let crd = parse_inpcrd(rst, 2).unwrap();
+        assert_eq!(crd.positions, vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0]);
+        assert!(crd.velocities.is_none());
+        let bm = crd.box_matrix.expect("box");
+        assert!((bm[4] - 11.0).abs() < 1e-4);
     }
 
     #[test]

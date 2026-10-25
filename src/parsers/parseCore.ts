@@ -77,7 +77,7 @@ interface WasmParseResult {
   scalar_channel_data(): Float32Array;
   ca_indices(): Uint32Array;
   ca_chain_ids(): Uint8Array;
-  ca_res_nums(): Uint32Array;
+  ca_res_nums(): Int32Array;
   ca_ss_type(): Uint8Array;
   // Heterogeneous-trajectory side table (all empty/false for uniform files).
   heterogeneous: boolean;

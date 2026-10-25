@@ -1,4 +1,4 @@
-use js_sys::{Float32Array, Float64Array, Object, Reflect, Uint32Array, Uint8Array};
+use js_sys::{Float32Array, Float64Array, Int32Array, Object, Reflect, Uint32Array, Uint8Array};
 use wasm_bindgen::prelude::*;
 
 use megane_core::formats::{self, FormatInput, StructureFormat, TrajectoryFormat};
@@ -111,7 +111,7 @@ pub struct ParseResult {
     // Cα backbone data for cartoon rendering
     ca_indices: Vec<u32>,
     ca_chain_ids: Vec<u8>,
-    ca_res_nums: Vec<u32>,
+    ca_res_nums: Vec<i32>,
     ca_ss_type: Vec<u8>,
     // Crystallographic symmetry operations (newline-delimited `x,y,z` strings).
     symmetry_ops: String,
@@ -285,9 +285,9 @@ impl ParseResult {
         Uint8Array::from(&self.ca_chain_ids[..])
     }
 
-    /// Per-Cα residue sequence number.
-    pub fn ca_res_nums(&self) -> Uint32Array {
-        Uint32Array::from(&self.ca_res_nums[..])
+    /// Per-Cα residue sequence number (signed: expression tags sit below 1).
+    pub fn ca_res_nums(&self) -> Int32Array {
+        Int32Array::from(&self.ca_res_nums[..])
     }
 
     /// Per-Cα secondary-structure type: 0 = coil, 1 = helix, 2 = sheet.

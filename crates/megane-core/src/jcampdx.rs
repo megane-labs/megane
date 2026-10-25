@@ -184,14 +184,25 @@ fn tokenize(field: &str) -> Vec<Token> {
     out
 }
 
+/// Most points DUP runs may expand a table to when its block declares no
+/// `##NPOINTS` (2^24, far beyond any 1D spectrum).
+const MAX_UNDECLARED_POINTS: usize = 1 << 24;
+
 /// Decode an `(X++(Y..Y))` table: the first token of each line is the X value,
 /// the rest are Y values in AFFN / SQZ / DIF / DUP form.
+///
+/// DUP is the only token that expands, by a count read from the file, so it
+/// may not take the table past `n_points` (the block's `##NPOINTS`) or, when
+/// that is absent, [`MAX_UNDECLARED_POINTS`]. A run that would is an error.
 fn decode_xyy(
     lines: &[&str],
     x_factor: f64,
     y_factor: f64,
     delta_x: Option<f64>,
-) -> (Vec<f64>, Vec<f64>) {
+    n_points: Option<usize>,
+) -> Result<(Vec<f64>, Vec<f64>), String> {
+    let declared = n_points.filter(|&n| n > 0);
+    let max_points = declared.unwrap_or(MAX_UNDECLARED_POINTS);
     let mut xs: Vec<f64> = Vec::new();
     let mut ys: Vec<f64> = Vec::new();
     let mut last_y: Option<f64> = None;
@@ -236,9 +247,23 @@ fn decode_xyy(
                 }
                 Token::Dup(n) => {
                     if let Some(v) = running {
-                        for _ in 0..n {
-                            line_ys.push(v);
+                        // Points so far; a continued line's first value may
+                        // be the DIF checkpoint dropped below, so not counted.
+                        let held = ys.len() + line_ys.len()
+                            - usize::from(!ys.is_empty() && !line_ys.is_empty());
+                        if n > max_points.saturating_sub(held) {
+                            return Err(match declared {
+                                Some(np) => format!(
+                                    "JCAMP-DX: a DUP run of {} takes the data table past ##NPOINTS={np}",
+                                    n + 1
+                                ),
+                                None => format!(
+                                    "JCAMP-DX: a DUP run of {} takes the data table past {max_points} points (no ##NPOINTS declared)",
+                                    n + 1
+                                ),
+                            });
                         }
+                        line_ys.extend(std::iter::repeat_n(v, n));
                     }
                 }
             }
@@ -247,11 +272,15 @@ fn decode_xyy(
             continue;
         }
         // A continued DIF block restates the previous line's last Y as a
-        // checkpoint; drop that duplicate.
+        // checkpoint; drop that duplicate. The line's X is the checkpoint's
+        // ("the abscissa does not advance before the next line", JCAMP-DX
+        // 4.24 §5.8.2), so the values after it start one step further on.
+        let mut first_step = 0usize;
         if uses_dif {
             if let Some(prev) = last_y {
                 if !ys.is_empty() && (line_ys[0] - prev).abs() < 1e-9 {
                     line_ys.remove(0);
+                    first_step = 1;
                 }
             }
         }
@@ -261,12 +290,12 @@ fn decode_xyy(
 
         let dx = delta_x.unwrap_or(0.0);
         for (k, y) in line_ys.iter().enumerate() {
-            xs.push(line_x + dx * k as f64);
+            xs.push(line_x + dx * (k + first_step) as f64);
             ys.push(y * y_factor);
         }
         last_y = line_ys.last().copied();
     }
-    (xs, ys)
+    Ok((xs, ys))
 }
 
 /// Decode an `(XY..XY)` peak table: alternating X,Y pairs, AFFN only.
@@ -468,7 +497,7 @@ fn parse_block(lines: &[&str]) -> Result<(Spectrum, TableKind), String> {
 
     let (kind, x, y) = match data_kind {
         Some("xyy") => {
-            let (x, y) = decode_xyy(&data_lines, x_factor, y_factor, delta_x);
+            let (x, y) = decode_xyy(&data_lines, x_factor, y_factor, delta_x, n_points)?;
             (TableKind::Spectrum, x, y)
         }
         Some("xyxy") => {
@@ -486,7 +515,7 @@ fn parse_block(lines: &[&str]) -> Result<(Spectrum, TableKind), String> {
             // Decode Y with its factor; the raw X column is only a point
             // counter in Bruker exports, so discard it and rebuild the
             // abscissa from the declared FIRST/LAST of the X variable.
-            let (_, y) = decode_xyy(&data_lines, 1.0, yf, None);
+            let (_, y) = decode_xyy(&data_lines, 1.0, yf, None, n_points)?;
             let first = nt_firsts.get(x_col).and_then(|f| f.parse::<f64>().ok());
             let last = nt_lasts.get(x_col).and_then(|f| f.parse::<f64>().ok());
             let n = y.len();
@@ -673,6 +702,30 @@ mod tests {
         assert_eq!(s.y, vec![10.0; 5]);
     }
 
+    /// DUP is the one ASDF token that expands: `S0000000` in an 80-byte file
+    /// meant ten million points, and a longer count aborted the process. DUP
+    /// runs may not take the table past `##NPOINTS`, or past a fixed ceiling
+    /// when the block declares no point count.
+    #[test]
+    fn a_dup_run_past_the_point_count_is_an_error() {
+        let with_n = "##TITLE=dup\n##JCAMP-DX=4.24\n##DELTAX=1\n##NPOINTS=4\n\
+                      ##XYDATA=(X++(Y..Y))\n0 A0S0000000\n##END=\n";
+        let err = parse(with_n).unwrap_err();
+        assert!(err.contains("NPOINTS=4"), "{err}");
+        // A run that ends exactly at NPOINTS (`V` = 4 occurrences) decodes.
+        let exact = with_n.replace("S0000000", "V");
+        assert_eq!(parse(&exact).unwrap().y, vec![10.0; 4]);
+
+        let no_n = |data: &str| {
+            format!("##TITLE=dup\n##JCAMP-DX=4.24\n##DELTAX=1\n##XYDATA=(X++(Y..Y))\n0 {data}\n##END=\n")
+        };
+        // One run past the ceiling, and two runs that only pass it together.
+        let err = parse(&no_n("A0S99999999999")).unwrap_err();
+        assert!(err.contains("DUP"), "{err}");
+        assert!(parse(&no_n("A0S0000000S0000000")).is_err());
+        assert_eq!(parse(&no_n("A0W")).unwrap().y, vec![10.0; 5]);
+    }
+
     #[test]
     fn drops_the_dif_checkpoint_between_lines() {
         let text = "\
@@ -681,12 +734,15 @@ mod tests {
 ##DELTAX=1.0
 ##XYDATA=(X++(Y..Y))
 0 A0JJ
-3 A2JJ
+2 A2JJ
+4 A4J
 ##END=
 ";
         let s = parse(text).unwrap();
-        // Line 1: 10, 11, 12. Line 2 restates 12 as a checkpoint, then 13, 14.
-        assert_eq!(s.y, vec![10.0, 11.0, 12.0, 13.0, 14.0]);
+        // Line 1: 10, 11, 12 at X 0..2. Line 2 restates 12 as a checkpoint at
+        // its own X (2, the abscissa does not advance), then 13, 14 at 3, 4.
+        assert_eq!(s.y, vec![10.0, 11.0, 12.0, 13.0, 14.0, 15.0]);
+        assert_eq!(s.x, vec![0.0, 1.0, 2.0, 3.0, 4.0, 5.0]);
     }
 
     /// A flat baseline in an AFFN table legitimately repeats the previous
@@ -1072,9 +1128,11 @@ mod fixture_tests {
             min < 60.0,
             "expected absorption bands, got a minimum of {min}"
         );
-        // The abscissa spans the declared range.
+        // The abscissa spans the declared range, point for point in both
+        // files (the ASDF lines carry their DIF checkpoint's X).
         assert!((affn.x[0] - 400.0).abs() < 1e-6);
         assert!((affn.x[affn.x.len() - 1] - 4000.0).abs() < 1e-6);
+        assert_eq!(asdf.x, affn.x);
     }
 
     /// Jmol's Chromium(III) demo, trimmed to the link block plus the first two

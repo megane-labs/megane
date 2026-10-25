@@ -179,18 +179,60 @@ fn image_shift(img: [f32; 3], bm: &[f32; 9]) -> [f32; 3] {
     ]
 }
 
+/// Decode a frame's `ITEM: BOX BOUNDS` rows into the cell (rows = cell
+/// vectors a, b, c) and its true lower corner `(xlo, ylo, zlo)`.
+///
+/// An orthogonal box is written as `lo hi` per axis. A restricted-triclinic
+/// box is written as `lo_bound hi_bound tilt` (tilts `xy`, `xz`, `yz` in row
+/// order), where LAMMPS widens the x and y extents to the bounding box of the
+/// tilted cell:
+///
+/// ```text
+/// xlo_bound = xlo + MIN(0, xy, xz, xy + xz)    xhi_bound = xhi + MAX(0, xy, xz, xy + xz)
+/// ylo_bound = ylo + MIN(0, yz)                 yhi_bound = yhi + MAX(0, yz)
+/// ```
+///
+/// Inverting that is the lossless read of the cell the file asserts, giving
+/// `a = (lx, 0, 0)`, `b = (xy, ly, 0)`, `c = (xz, yz, lz)`.
+fn cell_from_bounds(lo: [f64; 3], hi: [f64; 3], tilt: Option<[f64; 3]>) -> ([f32; 9], [f32; 3]) {
+    let [xy, xz, yz] = tilt.unwrap_or([0.0; 3]);
+    let xlo = lo[0] - 0.0f64.min(xy).min(xz).min(xy + xz);
+    let xhi = hi[0] - 0.0f64.max(xy).max(xz).max(xy + xz);
+    let ylo = lo[1] - 0.0f64.min(yz);
+    let yhi = hi[1] - 0.0f64.max(yz);
+    let (zlo, zhi) = (lo[2], hi[2]);
+    let matrix = [
+        (xhi - xlo) as f32,
+        0.0,
+        0.0,
+        xy as f32,
+        (yhi - ylo) as f32,
+        0.0,
+        xz as f32,
+        yz as f32,
+        (zhi - zlo) as f32,
+    ];
+    (matrix, [xlo as f32, ylo as f32, zlo as f32])
+}
+
+/// Scaled (fractional) dump coordinates to Cartesian, triclinic-correct:
+/// `r = origin + xs·a + ys·b + zs·c`, i.e. LAMMPS'
+/// `x = xlo + xs·lx + ys·xy + zs·xz`, `y = ylo + ys·ly + zs·yz`,
+/// `z = zlo + zs·lz`.
+#[inline]
+fn scaled_to_cartesian(s: [f32; 3], bm: &[f32; 9], origin: &[f32; 3]) -> [f32; 3] {
+    let r = image_shift(s, bm);
+    [r[0] + origin[0], r[1] + origin[1], r[2] + origin[2]]
+}
+
 /// Parsed header of one LAMMPS dump frame (everything up to the first atom line).
 struct FrameHeader {
     n_atoms: usize,
     timestep: f64,
     box_matrix: [f32; 9],
-    // Box dims for scaled-coordinate conversion.
-    lx: f32,
-    ly: f32,
-    lz: f32,
-    xlo: f32,
-    ylo: f32,
-    zlo: f32,
+    /// True lower corner `(xlo, ylo, zlo)` of the cell — the origin the cell
+    /// vectors start from (for a triclinic box, not the `*_bound` values).
+    origin: [f32; 3],
     layout: ColumnLayout,
     /// Line index of the first atom line (line after "ITEM: ATOMS ...").
     atoms_start: usize,
@@ -269,37 +311,7 @@ fn read_frame_header(lines: &[&str], i: usize) -> Result<FrameHeader, String> {
         }
     }
 
-    let box_matrix = if is_triclinic {
-        let xy = tilt[0] as f32;
-        let xz = tilt[1] as f32;
-        let yz = tilt[2] as f32;
-        let xlo_bound = lo[0] as f32;
-        let xhi_bound = hi[0] as f32;
-        let ylo_bound = lo[1] as f32;
-        let yhi_bound = hi[1] as f32;
-        let zlo = lo[2] as f32;
-        let zhi = hi[2] as f32;
-        let xlo = xlo_bound - xy.min(0.0) - xz.min(0.0) - (xy + xz).min(0.0).min(0.0);
-        let xhi = xhi_bound - xy.max(0.0) - xz.max(0.0) - (xy + xz).max(0.0).max(0.0);
-        let ylo = ylo_bound - yz.min(0.0);
-        let yhi = yhi_bound - yz.max(0.0);
-        let lx = xhi - xlo;
-        let ly = yhi - ylo;
-        let lz = zhi - zlo;
-        [lx, 0.0, 0.0, xy, ly, 0.0, xz, yz, lz]
-    } else {
-        let lx = (hi[0] - lo[0]) as f32;
-        let ly = (hi[1] - lo[1]) as f32;
-        let lz = (hi[2] - lo[2]) as f32;
-        [lx, 0.0, 0.0, 0.0, ly, 0.0, 0.0, 0.0, lz]
-    };
-
-    let lx = (hi[0] - lo[0]) as f32;
-    let ly = (hi[1] - lo[1]) as f32;
-    let lz = (hi[2] - lo[2]) as f32;
-    let xlo = lo[0] as f32;
-    let ylo = lo[1] as f32;
-    let zlo = lo[2] as f32;
+    let (box_matrix, origin) = cell_from_bounds(lo, hi, is_triclinic.then_some(tilt));
 
     i += 1;
     if i >= n_lines {
@@ -311,12 +323,7 @@ fn read_frame_header(lines: &[&str], i: usize) -> Result<FrameHeader, String> {
         n_atoms,
         timestep,
         box_matrix,
-        lx,
-        ly,
-        lz,
-        xlo,
-        ylo,
-        zlo,
+        origin,
         layout,
         atoms_start: i + 1,
     })
@@ -371,21 +378,25 @@ fn read_atom_block(
         max_col = max_col.max(ic[0]).max(ic[1]).max(ic[2]);
     }
 
+    // `NUMBER OF ATOMS` is a header claim: reserve no more atoms than the
+    // lines left can hold (one atom per line), so a huge count fails on the
+    // missing lines below instead of on the allocation.
+    let cap = n_atoms.min(n_lines.saturating_sub(header.atoms_start));
     // (id, x, y, z, type) — type is 0 when not captured.
-    let mut atoms: Vec<(usize, f32, f32, f32, u8)> = Vec::with_capacity(n_atoms);
+    let mut atoms: Vec<(usize, f32, f32, f32, u8)> = Vec::with_capacity(cap);
     let mut atoms_sorted = true;
     let mut prev_id: usize = 0;
     let mut frame_vec_atoms: Vec<Vec<(usize, f32, f32, f32)>> = layout
         .vector_groups
         .iter()
-        .map(|_| Vec::with_capacity(n_atoms))
+        .map(|_| Vec::with_capacity(cap))
         .collect();
     // Per-column unsorted scalar buffer (empty when scalars aren't wanted).
     let mut frame_scalar_atoms: Vec<Vec<(usize, f32)>> = if capture_scalars {
         layout
             .scalar_cols
             .iter()
-            .map(|_| Vec::with_capacity(n_atoms))
+            .map(|_| Vec::with_capacity(cap))
             .collect()
     } else {
         Vec::new()
@@ -422,9 +433,7 @@ fn read_atom_block(
             .map_err(|_| format!("Cannot parse z at line {}", i + 1))?;
 
         if let CoordType::Scaled = layout.coord_type {
-            x = x * header.lx + header.xlo;
-            y = y * header.ly + header.ylo;
-            z = z * header.lz + header.zlo;
+            [x, y, z] = scaled_to_cartesian([x, y, z], &header.box_matrix, &header.origin);
         }
 
         // Decode the absolute position the file encodes as wrapped coordinate
@@ -658,7 +667,7 @@ impl LammpstrjIndexBuilder {
         if self.offsets.is_empty() {
             self.n_atoms = header.n_atoms;
             self.box_matrix = Some(header.box_matrix);
-            self.box_origin = Some([header.xlo, header.ylo, header.zlo]);
+            self.box_origin = Some(header.origin);
             self.vector_channel_names = header
                 .layout
                 .vector_groups
@@ -750,7 +759,7 @@ pub fn decode_frame_at(
     const HEADER_MARGIN: usize = 16;
     let lines: Vec<&str> = slice
         .lines()
-        .take(expected_n_atoms + HEADER_MARGIN)
+        .take(expected_n_atoms.saturating_add(HEADER_MARGIN))
         .collect();
     if lines.is_empty() || lines[0].trim() != "ITEM: TIMESTEP" {
         return Err("frame offset is not at an ITEM: TIMESTEP boundary".to_string());
@@ -888,34 +897,10 @@ pub fn parse_lammpstrj(text: &str) -> Result<LammpstrjData, String> {
 
         // Build this frame's box matrix. Frame 0 becomes the representative
         // `box_matrix`; a per-frame side table is recorded only when it varies.
-        let frame_box: [f32; 9] = if is_triclinic {
-            let xy = tilt[0] as f32;
-            let xz = tilt[1] as f32;
-            let yz = tilt[2] as f32;
-            // For triclinic, lo/hi include tilt adjustments
-            let xlo_bound = lo[0] as f32;
-            let xhi_bound = hi[0] as f32;
-            let ylo_bound = lo[1] as f32;
-            let yhi_bound = hi[1] as f32;
-            let zlo = lo[2] as f32;
-            let zhi = hi[2] as f32;
-            let xlo = xlo_bound - xy.min(0.0) - xz.min(0.0) - (xy + xz).min(0.0).min(0.0);
-            let xhi = xhi_bound - xy.max(0.0) - xz.max(0.0) - (xy + xz).max(0.0).max(0.0);
-            let ylo = ylo_bound - yz.min(0.0);
-            let yhi = yhi_bound - yz.max(0.0);
-            let lx = xhi - xlo;
-            let ly = yhi - ylo;
-            let lz = zhi - zlo;
-            [lx, 0.0, 0.0, xy, ly, 0.0, xz, yz, lz]
-        } else {
-            let lx = (hi[0] - lo[0]) as f32;
-            let ly = (hi[1] - lo[1]) as f32;
-            let lz = (hi[2] - lo[2]) as f32;
-            [lx, 0.0, 0.0, 0.0, ly, 0.0, 0.0, 0.0, lz]
-        };
+        let (frame_box, frame_origin) = cell_from_bounds(lo, hi, is_triclinic.then_some(tilt));
         if box_matrix.is_none() {
             box_matrix = Some(frame_box);
-            box_origin = Some([lo[0] as f32, lo[1] as f32, lo[2] as f32]);
+            box_origin = Some(frame_origin);
         }
         // Detect a per-frame cell change; backfill earlier frames with frame 0's
         // box the first time it diverges.
@@ -929,14 +914,6 @@ pub fn parse_lammpstrj(text: &str) -> Result<LammpstrjData, String> {
         if recording_cell {
             per_frame_boxes.push(frame_box);
         }
-
-        // Box dimensions for scaled coordinate conversion
-        let lx = (hi[0] - lo[0]) as f32;
-        let ly = (hi[1] - lo[1]) as f32;
-        let lz = (hi[2] - lo[2]) as f32;
-        let xlo_f = lo[0] as f32;
-        let ylo_f = lo[1] as f32;
-        let zlo_f = lo[2] as f32;
 
         // ITEM: ATOMS header
         i += 1;
@@ -987,8 +964,11 @@ pub fn parse_lammpstrj(text: &str) -> Result<LammpstrjData, String> {
             .collect();
 
         // Read atom lines — accumulate both positions and per-group vector data.
+        // The header's count is reserved only as far as the lines left can
+        // hold it (one atom per line); a larger count fails on the missing lines.
+        let cap = frame_n_atoms.min(n_lines.saturating_sub(i + 1));
         // (id, x, y, z, type) — type is 0 when not captured this frame.
-        let mut atoms: Vec<(usize, f32, f32, f32, u8)> = Vec::with_capacity(frame_n_atoms);
+        let mut atoms: Vec<(usize, f32, f32, f32, u8)> = Vec::with_capacity(cap);
         // Track whether atom ids arrive already ascending so we can skip the sort.
         let mut atoms_sorted = true;
         let mut prev_id: usize = 0;
@@ -996,7 +976,7 @@ pub fn parse_lammpstrj(text: &str) -> Result<LammpstrjData, String> {
         let mut frame_vec_atoms: Vec<Vec<(usize, f32, f32, f32)>> = layout
             .vector_groups
             .iter()
-            .map(|_| Vec::with_capacity(frame_n_atoms))
+            .map(|_| Vec::with_capacity(cap))
             .collect();
 
         for _ in 0..frame_n_atoms {
@@ -1030,9 +1010,7 @@ pub fn parse_lammpstrj(text: &str) -> Result<LammpstrjData, String> {
 
             // Convert scaled coordinates to Cartesian
             if let CoordType::Scaled = layout.coord_type {
-                x = x * lx + xlo_f;
-                y = y * ly + ylo_f;
-                z = z * lz + zlo_f;
+                [x, y, z] = scaled_to_cartesian([x, y, z], &frame_box, &frame_origin);
             }
 
             // Decode the absolute position the file encodes as wrapped
@@ -1299,7 +1277,7 @@ pub fn parse_lammpstrj_structure(text: &str) -> Result<ParsedStructure, String> 
             positions = frame_positions;
             elements = frame_elements;
             box_matrix = Some(frame_box);
-            box_origin = Some([header.xlo, header.ylo, header.zlo]);
+            box_origin = Some(header.origin);
         } else {
             let change = FrameChange {
                 topology: !frames.varies_topology() && frame_elements != elements,
@@ -1454,6 +1432,26 @@ mod tests {
                 assert_eq!(got.heterogeneous, whole.heterogeneous);
             }
         }
+    }
+
+    /// `NUMBER OF ATOMS` is a header claim: a dump declaring 10^11 atoms with
+    /// one atom line must fail on the missing lines, not reserve room for
+    /// every declared atom (which aborted the process).
+    #[test]
+    fn a_declared_atom_count_past_the_file_is_an_error_not_an_allocation() {
+        let text = "ITEM: TIMESTEP\n0\nITEM: NUMBER OF ATOMS\n100000000000\n\
+                    ITEM: BOX BOUNDS pp pp pp\n0 1\n0 1\n0 1\n\
+                    ITEM: ATOMS id type x y z\n1 1 0 0 0\n";
+        let err = parse_lammpstrj(text).err().expect("eager parse rejects it");
+        assert!(err.contains("Unexpected end of file"), "{err}");
+        let err = parse_lammpstrj_structure(text)
+            .err()
+            .expect("structure lane rejects it");
+        assert!(err.contains("Unexpected end of file"), "{err}");
+        // The single-frame decoder takes the count from the index; a count at
+        // the top of `usize` must not overflow its line budget.
+        let offset = 0;
+        assert!(decode_frame_at(text, offset, usize::MAX).is_err());
     }
 
     #[test]
@@ -1982,8 +1980,9 @@ mod tests {
 
     #[test]
     fn image_flags_decode_triclinic_cell() {
-        // Tilted cell a=(7,0,0), b=(2,10,0), c=(1,0.5,10): the shift is
-        // ix·a + iy·b + iz·c, not a per-axis multiple.
+        // Tilted cell a=(10,0,0), b=(2,10,0), c=(1,0.5,10), whose bounding box
+        // LAMMPS writes as x 0..13, y 0..10.5: the shift is ix·a + iy·b + iz·c,
+        // not a per-axis multiple.
         let text = "ITEM: TIMESTEP\n0\n\
                     ITEM: NUMBER OF ATOMS\n2\n\
                     ITEM: BOX BOUNDS xy xz yz pp pp pp\n\
@@ -1995,10 +1994,10 @@ mod tests {
                     2 1 2.0 2.0 2.0 0 0 -1\n";
         let data = parse_lammpstrj(text).unwrap();
         let bm = data.box_matrix.unwrap();
-        assert!((bm[0] - 7.0).abs() < 1e-5); // lx after tilt recovery
+        assert!((bm[0] - 10.0).abs() < 1e-5); // lx after tilt recovery
         let f0 = data.frame(0);
-        // atom 1: (1,1,1) + a + b + c = (11, 11.5, 11)
-        assert!((f0[0] - 11.0).abs() < 1e-4);
+        // atom 1: (1,1,1) + a + b + c = (14, 11.5, 11)
+        assert!((f0[0] - 14.0).abs() < 1e-4);
         assert!((f0[1] - 11.5).abs() < 1e-4);
         assert!((f0[2] - 11.0).abs() < 1e-4);
         // atom 2: (2,2,2) - c = (1, 1.5, -8)
@@ -2008,6 +2007,80 @@ mod tests {
         // Structure lane matches.
         let s = parse_lammpstrj_structure(text).unwrap();
         assert_eq!(s.positions, f0.to_vec());
+    }
+
+    /// Cell a=(10,0,0), b=(2,10,0), c=(1,0.5,10) at the origin, as LAMMPS
+    /// writes it: the x/y bounds are the tilted cell's bounding box.
+    const TRICLINIC_SCALED: &str = "ITEM: TIMESTEP\n0\n\
+                    ITEM: NUMBER OF ATOMS\n3\n\
+                    ITEM: BOX BOUNDS xy xz yz pp pp pp\n\
+                    0.0 13.0 2.0\n\
+                    0.0 10.5 1.0\n\
+                    0.0 10.0 0.5\n\
+                    ITEM: ATOMS id type xs ys zs\n\
+                    1 1 0.0 1.0 0.0\n\
+                    2 1 0.5 0.0 0.0\n\
+                    3 1 0.0 0.0 1.0\n";
+
+    fn assert_close(got: &[f32], want: &[f32]) {
+        assert_eq!(got.len(), want.len(), "{got:?} vs {want:?}");
+        for (g, w) in got.iter().zip(want) {
+            assert!((g - w).abs() < 1e-4, "{got:?} vs {want:?}");
+        }
+    }
+
+    #[test]
+    fn triclinic_bounds_recover_the_true_cell() {
+        let cell = [10.0, 0.0, 0.0, 2.0, 10.0, 0.0, 1.0, 0.5, 10.0];
+        let data = parse_lammpstrj(TRICLINIC_SCALED).unwrap();
+        assert_close(&data.box_matrix.unwrap(), &cell);
+        assert_eq!(data.box_origin, Some([0.0, 0.0, 0.0]));
+        let s = parse_lammpstrj_structure(TRICLINIC_SCALED).unwrap();
+        assert_close(&s.box_matrix.unwrap(), &cell);
+        assert_eq!(s.box_origin, Some([0.0, 0.0, 0.0]));
+        let idx = build_index(TRICLINIC_SCALED).unwrap();
+        assert_close(&idx.box_matrix.unwrap(), &cell);
+        assert_eq!(idx.box_origin, Some([0.0, 0.0, 0.0]));
+    }
+
+    #[test]
+    fn triclinic_scaled_coords_follow_the_tilt() {
+        // xs ys zs = (0,1,0) is the tip of b, (0.5,0,0) is a/2, (0,0,1) is c.
+        let want = [2.0, 10.0, 0.0, 5.0, 0.0, 0.0, 1.0, 0.5, 10.0];
+        let data = parse_lammpstrj(TRICLINIC_SCALED).unwrap();
+        assert_close(data.frame(0), &want);
+        let s = parse_lammpstrj_structure(TRICLINIC_SCALED).unwrap();
+        assert_close(&s.positions, &want);
+        let idx = build_index(TRICLINIC_SCALED).unwrap();
+        let lazy = decode_frame_at(TRICLINIC_SCALED, idx.offsets[0], idx.n_atoms).unwrap();
+        assert_close(&lazy.positions, &want);
+    }
+
+    #[test]
+    fn triclinic_negative_tilt_keeps_the_true_lower_corner() {
+        // a=(10,0,0), b=(-2,10,0), c=(0,-1,10) with its lower corner at
+        // (5, 1, 0): LAMMPS writes xlo_bound = 5 + MIN(0,-2,0,-2) = 3,
+        // xhi_bound = 15 + MAX(0,-2,0,-2) = 15, ylo_bound = 1 - 1 = 0.
+        let text = "ITEM: TIMESTEP\n0\n\
+                    ITEM: NUMBER OF ATOMS\n1\n\
+                    ITEM: BOX BOUNDS xy xz yz pp pp pp\n\
+                    3.0 15.0 -2.0\n\
+                    0.0 11.0 0.0\n\
+                    0.0 10.0 -1.0\n\
+                    ITEM: ATOMS id type xs ys zs\n\
+                    1 1 0.0 1.0 1.0\n";
+        let data = parse_lammpstrj(text).unwrap();
+        assert_close(
+            &data.box_matrix.unwrap(),
+            &[10.0, 0.0, 0.0, -2.0, 10.0, 0.0, 0.0, -1.0, 10.0],
+        );
+        assert_eq!(data.box_origin, Some([5.0, 1.0, 0.0]));
+        // origin + b + c = (5 - 2 + 0, 1 + 10 - 1, 0 + 10) = (3, 10, 10)
+        assert_close(data.frame(0), &[3.0, 10.0, 10.0]);
+        let s = parse_lammpstrj_structure(text).unwrap();
+        assert_eq!(s.box_origin, Some([5.0, 1.0, 0.0]));
+        assert_close(&s.positions, &[3.0, 10.0, 10.0]);
+        assert_eq!(build_index(text).unwrap().box_origin, Some([5.0, 1.0, 0.0]));
     }
 
     #[test]
