@@ -484,7 +484,9 @@ export class MoleculeRenderer {
     }
 
     // The highlights mark atoms by index: put them where they are now (a
-    // Builder drag reloads the snapshot with the moved positions).
+    // Builder drag reloads the snapshot with the moved positions, the wrap
+    // node re-maps them), and forget measured atoms a smaller structure lacks.
+    this.selection.syncToSnapshot();
     this.selection.refreshHighlights();
 
     if (opts.fit !== false) {
@@ -1648,6 +1650,11 @@ export class MoleculeRenderer {
   setSelection(atomIndices: number[]): SelectionState {
     this.requestRender();
     return this.selection.set(atomIndices);
+  }
+
+  /** The measurement selection as it stands (a new snapshot may have trimmed it). */
+  getSelection(): SelectionState {
+    return { atoms: [...this.selection.selected] };
   }
 
   /**

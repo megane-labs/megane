@@ -139,3 +139,23 @@ describe("Viewport — loadSnapshot camera-fit gating", () => {
     cleanup();
   });
 });
+
+describe("Viewport — onFrameUpdated after a snapshot load", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("tells the host after every snapshot load, with or without a frame", () => {
+    const onFrameUpdated = vi.fn();
+    const first = makeSnapshot();
+    const { rerender } = render(
+      <Viewport snapshot={first} frame={null} onFrameUpdated={onFrameUpdated} />,
+    );
+    expect(onFrameUpdated).toHaveBeenCalledTimes(1);
+    const remapped: Snapshot = { ...first, positions: new Float32Array([5, 5, 5, 6, 5, 5]) };
+    rerender(<Viewport snapshot={remapped} frame={null} onFrameUpdated={onFrameUpdated} />);
+    expect(onFrameUpdated).toHaveBeenCalledTimes(2);
+    expect(rendererMock.updateFrame).not.toHaveBeenCalled();
+    cleanup();
+  });
+});

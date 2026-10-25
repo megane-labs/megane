@@ -182,6 +182,45 @@ describe("SelectionController — measurement selection", () => {
     state.snapshot = null;
     expect(sel.getMeasurement()).toBeNull();
   });
+
+  it("syncToSnapshot() drops atoms a smaller structure lacks and redraws the rest", () => {
+    const { sel, state } = setup();
+    sel.set([0, 3]);
+    state.snapshot = {
+      ...makeSnapshot(),
+      nAtoms: 2,
+      positions: new Float32Array([5, 0, 0, 3, 0, 0]),
+      elements: new Uint8Array([6, 7]),
+    };
+    sel.syncToSnapshot();
+    expect(sel.selected).toEqual([0]);
+    expect(sel.getMeasurement()).toBeNull();
+    expect(sel.selectionGroup.children.length).toBe(1);
+    expect(sel.selectionGroup.children[0].position.toArray()).toEqual([5, 0, 0]);
+  });
+
+  it("syncToSnapshot() keeps atoms the structure still has, at their new positions", () => {
+    const { sel, state } = setup();
+    sel.set([0, 1]);
+    // The wrap node re-maps the coordinates of the same structure.
+    state.snapshot = {
+      ...makeSnapshot(),
+      positions: new Float32Array([0, 0, 0, 6, 0, 0, 3, 3, 0, 0, 3, 3]),
+    };
+    sel.syncToSnapshot();
+    expect(sel.selected).toEqual([0, 1]);
+    expect(sel.getMeasurement()?.value).toBeCloseTo(6, 6);
+    expect(sel.selectionGroup.children[1].position.toArray()).toEqual([6, 0, 0]);
+  });
+
+  it("syncToSnapshot() empties the selection without a snapshot", () => {
+    const { sel, state } = setup();
+    sel.set([0, 1]);
+    state.snapshot = null;
+    sel.syncToSnapshot();
+    expect(sel.hasSelection).toBe(false);
+    expect(sel.selectionGroup.children.length).toBe(0);
+  });
 });
 
 describe("SelectionController — preview highlight", () => {

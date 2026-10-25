@@ -64,3 +64,17 @@ def test_parse_dcd_rejects_empty_input():
     """parse_dcd raises on empty input rather than panicking."""
     with pytest.raises(ValueError):
         megane_parser.parse_dcd(b"")
+
+
+def test_parse_dcd_reports_a_dropped_incomplete_last_frame():
+    """A DCD cut inside its last frame keeps the whole frames and says so."""
+    data = (FIXTURES / "water.dcd").read_bytes()
+
+    assert megane_parser.parse_dcd(data).warnings == []
+
+    # 60 bytes short: the last frame keeps its cell record but loses X, Y, Z.
+    result = megane_parser.parse_dcd(data[:-60])
+
+    assert result.n_frames == 4
+    assert len(result.warnings) == 1
+    assert result.warnings[0].startswith("DCD: frame 5 is incomplete")

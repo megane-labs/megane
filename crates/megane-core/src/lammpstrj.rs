@@ -837,6 +837,8 @@ pub fn parse_lammpstrj(text: &str) -> Result<LammpstrjData, String> {
     // Outer Vec = one entry per named group; inner Vec<VectorFrame> = one entry per frame.
     let mut vec_group_names: Vec<&'static str> = Vec::new();
     let mut vec_group_frames: Vec<Vec<VectorFrame>> = Vec::new();
+    // A frame the reader drops, reported rather than silently lost (rule #11).
+    let mut warnings: Vec<String> = Vec::new();
 
     while i < n_lines {
         let line = lines[i].trim();
@@ -880,6 +882,9 @@ pub fn parse_lammpstrj(text: &str) -> Result<LammpstrjData, String> {
             && atoms_header.saturating_add(frame_n_atoms) >= n_lines
         {
             timesteps.pop();
+            warnings.push(format!(
+                "Dropped the last frame (frame {n_frames}): the file ends inside its atom lines"
+            ));
             break;
         }
 
@@ -1252,6 +1257,7 @@ pub fn parse_lammpstrj(text: &str) -> Result<LammpstrjData, String> {
         frame_positions_flat,
         vector_channels,
         hetero,
+        warnings,
     })
 }
 
@@ -1917,6 +1923,14 @@ mod tests {
         let eager = parse_lammpstrj(&text).unwrap();
         let idx = build_index(&text).unwrap();
         assert_eq!((eager.n_frames, idx.n_frames), (2, 2));
+        // The eager parse reports the drop instead of losing it silently.
+        assert_eq!(eager.warnings.len(), 1, "{:?}", eager.warnings);
+        assert!(
+            eager.warnings[0].starts_with("Dropped the last frame (frame 2)"),
+            "{}",
+            eager.warnings[0]
+        );
+        assert!(parse_lammpstrj(sample_dump()).unwrap().warnings.is_empty());
         let cells = idx.frame_cells.expect("per-frame cells");
         assert_eq!(cells.iter().map(|c| c[0]).collect::<Vec<_>>(), [10.0, 12.0]);
         for (f, cell) in cells.iter().enumerate() {

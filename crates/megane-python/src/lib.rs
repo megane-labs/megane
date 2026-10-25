@@ -722,6 +722,10 @@ struct PyTrajectoryData {
     /// Per-frame row-major 3×3 cells (empty when the cell is constant).
     #[pyo3(get)]
     frame_cells: Py<PyArray1<f32>>,
+    /// Non-fatal parse warnings (e.g. a dropped incomplete last frame), as on
+    /// `PyStructure`. Empty for a clean parse.
+    #[pyo3(get)]
+    warnings: Vec<String>,
 }
 
 /// Build a `PyTrajectoryData` from a core `TrajectoryData`, taking the uniform
@@ -773,6 +777,7 @@ fn py_trajectory_from_data(
             frame_atom_offsets: Array1::from_vec(h.atom_offsets).into_pyarray(py).into(),
             frame_elements: Array1::from_vec(h.elements_flat).into_pyarray(py).into(),
             frame_cells: Array1::from_vec(h.cells_flat).into_pyarray(py).into(),
+            warnings: traj.warnings,
         });
     }
 
@@ -810,6 +815,7 @@ fn py_trajectory_from_data(
         frame_atom_offsets: empty_u32(),
         frame_elements: empty_u8(),
         frame_cells: empty_f32(),
+        warnings: traj.warnings,
     })
 }
 
