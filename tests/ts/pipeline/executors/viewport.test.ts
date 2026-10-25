@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { executeViewport } from "@/pipeline/executors/viewport";
 import type {
+  BondData,
   ParticleData,
   PipelineData,
   ViewportParams,
@@ -111,5 +112,63 @@ describe("executeViewport — selections beat a global style", () => {
     const state = executeViewport(baseParams, inputs([global, layer]));
     expect(state.representationByAtom).toEqual(["licorice", "line"]);
     expect(state.representationMode).toBe("licorice");
+  });
+});
+
+describe("executeViewport — bond pruning keeps per-bond channels aligned", () => {
+  // Atoms: C0, C1, H2, H3. Bond 0 = H2–H3, bond 1 = C0–C1.
+  function makeBond(overrides: Partial<BondData> = {}): BondData {
+    return {
+      type: "bond",
+      sourceNodeId: "a",
+      bondIndices: new Uint32Array([2, 3, 0, 1]),
+      bondOrders: new Uint8Array([1, 2]),
+      nBonds: 2,
+      scale: 1,
+      opacity: 1,
+      positions: null,
+      elements: null,
+      nAtoms: 0,
+      atomElements: new Uint8Array([6, 6, 1, 1]),
+      selectedBondIndices: new Uint32Array([0]),
+      bondOpacityOverrides: new Float32Array([0, 1]),
+      ...overrides,
+    };
+  }
+
+  function run(bond: BondData): BondData {
+    const carbons = makeParticle("a", null, new Uint32Array([0, 1]));
+    const state = executeViewport(
+      baseParams,
+      new Map<string, PipelineData[]>([
+        ["particle", [carbons]],
+        ["bond", [bond]],
+      ]),
+    );
+    return state.bonds[0];
+  }
+
+  it("drops the opacity override of a pruned bond instead of shifting it onto a survivor", () => {
+    const out = run(makeBond());
+    expect(out.nBonds).toBe(1);
+    expect(Array.from(out.bondIndices)).toEqual([0, 1]);
+    expect(Array.from(out.bondOrders!)).toEqual([2]);
+    // The surviving C–C bond keeps its own (opaque) override.
+    expect(Array.from(out.bondOpacityOverrides!)).toEqual([1]);
+  });
+
+  it("renumbers the bond selection to the compacted bond list", () => {
+    // Select only the C–C bond (old index 1) → new index 0.
+    const out = run(makeBond({ selectedBondIndices: new Uint32Array([1]) }));
+    expect(Array.from(out.selectedBondIndices!)).toEqual([0]);
+    // A selection that only named pruned bonds becomes empty, not stale.
+    expect(Array.from(run(makeBond()).selectedBondIndices!)).toEqual([]);
+  });
+
+  it("leaves absent per-bond channels absent", () => {
+    const out = run(makeBond({ selectedBondIndices: null, bondOpacityOverrides: null }));
+    expect(out.nBonds).toBe(1);
+    expect(out.selectedBondIndices).toBeNull();
+    expect(out.bondOpacityOverrides).toBeNull();
   });
 });
