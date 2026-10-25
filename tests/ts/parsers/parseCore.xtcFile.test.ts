@@ -13,6 +13,7 @@ import {
   indexTrajectoryCore,
   indexXtcFileCore,
   decodeLazyFrameCore,
+  parseTrajectoryCore,
   XTC_INDEX_WINDOW_MIN,
   type BlobRangeReader,
 } from "@/parsers/parseCore";
@@ -29,6 +30,33 @@ function recordingReader(bytes: Uint8Array) {
     return bytes.slice(start, end).buffer;
   };
   return { read, reads };
+}
+
+/**
+ * An uncompressed 2-atom XTC (natoms ≤ 9 stores plain floats) whose cubic box
+ * edge is `edges[f]` nm in frame f, as an NPT run writes it.
+ */
+function xtcWithBoxes(edges: number[]): Uint8Array {
+  const words: number[] = [];
+  const view = new DataView(new ArrayBuffer(4));
+  const i32 = (v: number) => {
+    view.setInt32(0, v);
+    words.push(...new Uint8Array(view.buffer));
+  };
+  const f32 = (v: number) => {
+    view.setFloat32(0, v);
+    words.push(...new Uint8Array(view.buffer));
+  };
+  edges.forEach((edge, f) => {
+    i32(1995); // magic
+    i32(2); // natoms
+    i32(f); // step
+    f32(f); // time (ps)
+    for (const v of [edge, 0, 0, 0, edge, 0, 0, 0, edge]) f32(v);
+    i32(2); // lsize
+    for (let c = 0; c < 6; c++) f32(f + c * 0.1);
+  });
+  return Uint8Array.from(words);
 }
 
 beforeAll(async () => {
@@ -91,5 +119,41 @@ describe("indexXtcFileCore", () => {
   it("reads through the Blob API by default", async () => {
     const { decoder } = await indexXtcFileCore(new Blob([XTC]), N_ATOMS);
     expect((await decoder.decodeFrame(0)).positions).toHaveLength(N_ATOMS * 3);
+  });
+
+  it("gives every frame its own box when the box changes, as the eager parse does", async () => {
+    // Box 3 → 4 → 5 nm: the eager frames carry 30 / 40 / 50 Å cells.
+    const bytes = xtcWithBoxes([3, 4, 5]);
+    const eager = parseTrajectoryCore({ kind: "xtc", bytes, expectedNAtoms: 2 });
+    expect(eager.frames.map((f) => f.box?.[0])).toEqual([30, 40, 50]);
+    const file = await indexXtcFileCore(new Blob([bytes]), 2);
+    const memory = indexTrajectoryCore(bytes, "xtc", 2);
+    for (const { decoder, index } of [file, memory]) {
+      expect(index.frameCells).toBe(true);
+      // Frame 0's box is the representative cell, not the last frame's.
+      expect(index.box?.[0]).toBe(30);
+      for (let f = 0; f < eager.frames.length; f++) {
+        const got = await decodeLazyFrameCore(decoder, f);
+        expect(got.positions).toEqual(eager.frames[f].positions);
+        expect(got.box).toEqual(eager.frames[f].box);
+      }
+    }
+    memory.decoder.free();
+  });
+
+  it("leaves frames on the base cell when the box stays put", async () => {
+    const bytes = xtcWithBoxes([3, 3]);
+    const eager = parseTrajectoryCore({ kind: "xtc", bytes, expectedNAtoms: 2 });
+    const file = await indexXtcFileCore(new Blob([bytes]), 2);
+    const memory = indexTrajectoryCore(bytes, "xtc", 2);
+    for (const { decoder, index } of [file, memory]) {
+      expect(index.frameCells).toBe(false);
+      expect(index.box?.[0]).toBe(30);
+      for (let f = 0; f < 2; f++) {
+        expect(eager.frames[f].box).toBeUndefined();
+        expect((await decodeLazyFrameCore(decoder, f)).box).toBeUndefined();
+      }
+    }
+    memory.decoder.free();
   });
 });

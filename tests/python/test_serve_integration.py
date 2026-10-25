@@ -131,3 +131,34 @@ def test_serve_upload_while_running(serve):
     data = r.json()
     assert data["nAtoms"] == 327
     assert data["nBonds"] > 0
+
+
+def test_serve_refuses_other_sites(serve, tmp_path):
+    """Hidden files, rebound Host names and cross-origin pages are refused by a running server."""
+    from websockets.exceptions import InvalidStatus
+    from websockets.sync.client import connect
+
+    (tmp_path / ".ssh").mkdir()
+    (tmp_path / ".ssh" / "id_rsa").write_text("PRIVATE KEY\n")
+    (tmp_path / "a.pdb").write_bytes((FIXTURES / "1crn.pdb").read_bytes())
+    _, port = serve(str(FIXTURES / "1crn.pdb"), "--files-root", str(tmp_path))
+    base = f"http://127.0.0.1:{port}"
+
+    content = f"{base}/api/files/content"
+    assert httpx.get(content, params={"path": "a.pdb"}).status_code == 200
+    assert httpx.get(content, params={"path": ".ssh/id_rsa"}).status_code == 403
+    rebound = httpx.get(content, params={"path": "a.pdb"}, headers={"host": f"evil.example:{port}"})
+    assert rebound.status_code == 403
+
+    upload = httpx.post(
+        f"{base}/api/upload",
+        files={"pdb": ("1crn.pdb", (FIXTURES / "1crn.pdb").read_bytes(), "chemical/x-pdb")},
+        headers={"origin": "http://evil.example"},
+    )
+    assert upload.status_code == 403
+
+    with pytest.raises(InvalidStatus) as exc:
+        connect(f"ws://127.0.0.1:{port}/ws", origin="http://evil.example", open_timeout=5)
+    assert exc.value.response.status_code == 403
+    with connect(f"ws://127.0.0.1:{port}/ws", origin=base, open_timeout=5) as ws:
+        assert ws.recv(timeout=5)[:4] == b"MEGN"
