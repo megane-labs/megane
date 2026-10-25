@@ -68,7 +68,7 @@ function makeStructureResult(opts: MockStructureOpts) {
       scalar_channel_data: () => opts.scalarChannelData ?? new Float32Array(),
       ca_indices: () => Uint32Array.from({ length: caCount }, (_, i) => i),
       ca_chain_ids: () => Uint8Array.from({ length: caCount }, () => 65),
-      ca_res_nums: () => Uint32Array.from({ length: caCount }, (_, i) => i + 1),
+      ca_res_nums: () => Int32Array.from({ length: caCount }, (_, i) => i + 1),
       ca_ss_type: () => Uint8Array.from({ length: caCount }, () => 1),
       free,
     },
@@ -204,7 +204,7 @@ function makeHeteroResult() {
       vector_channel_data: () => new Float32Array(),
       ca_indices: () => new Uint32Array(),
       ca_chain_ids: () => new Uint8Array(),
-      ca_res_nums: () => new Uint32Array(),
+      ca_res_nums: () => new Int32Array(),
       ca_ss_type: () => new Uint8Array(),
       // Heterogeneous side table.
       heterogeneous: true,

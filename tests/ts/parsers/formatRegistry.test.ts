@@ -101,6 +101,16 @@ describe("WASM format registry", () => {
     );
   });
 
+  it("carries signed Cα residue numbers (expression tags below 1)", () => {
+    const pdb =
+      "ATOM      1  CA  HIS A  -1       0.000   0.000   0.000  1.00  0.00           C\n" +
+      "ATOM      2  CA  MET A   1       3.800   0.000   0.000  1.00  0.00           C\n" +
+      "END\n";
+    const resNums = wasm.parse_pdb(pdb).ca_res_nums();
+    expect(resNums).toBeInstanceOf(Int32Array);
+    expect(Array.from(resNums)).toEqual([-1, 1]);
+  });
+
   it("declares each parser's argument with the registry encoding", () => {
     for (const { binding, encoding } of registry.structure) {
       const arg = encoding === "binary" ? "data: Uint8Array" : "text: string";
