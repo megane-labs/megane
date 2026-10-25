@@ -295,6 +295,22 @@ describe("usePlaybackStore", () => {
       expect(usePlaybackStore.getState().currentFrame).toBe(2);
     });
 
+    it("keeps playing when the loop start is set past the loop end", () => {
+      usePlaybackStore.getState().setProvider(makeProvider(100));
+      // Mid-edit in the Timeline: start typed as 80 while the end is still 20.
+      usePlaybackStore.getState().setLoopRange(80, 20);
+      usePlaybackStore.getState().seekFrame(78);
+      usePlaybackStore.getState().play();
+      const interval = 1000 / 30;
+      const seen: number[] = [];
+      for (let i = 0; i < 4; i++) {
+        vi.advanceTimersByTime(interval + 1);
+        seen.push(usePlaybackStore.getState().currentFrame);
+      }
+      // 78→79→80→20→21, not frozen on frame 80.
+      expect(seen).toEqual([79, 80, 20, 21]);
+    });
+
     it("advances faster with speedMultiplier > 1", () => {
       usePlaybackStore.getState().setProvider(makeProvider(10));
       usePlaybackStore.getState().setSpeedMultiplier(2);

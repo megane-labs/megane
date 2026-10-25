@@ -304,6 +304,10 @@ export function WidgetViewer({
 
   return (
     <div
+      // Focusable (by click, not Tab) so a click on the viewer takes keyboard
+      // focus away from the notebook cell: the Timeline's ←/→ shortcut only
+      // answers while focus is inside the viewer it is drawn over.
+      tabIndex={-1}
       data-testid="megane-viewer"
       data-megane-context="widget-pipeline"
       data-atom-count={effectiveSnapshot?.nAtoms ?? 0}
@@ -315,6 +319,7 @@ export function WidgetViewer({
         height: "100%",
         position: "relative",
         overflow: "hidden",
+        outline: "none",
       }}
     >
       <Viewport

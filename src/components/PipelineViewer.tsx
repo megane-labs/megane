@@ -274,7 +274,9 @@ export function PipelineViewer({ pipeline, width = "100%", height = 500 }: Pipel
   }
 
   return (
-    <div style={containerStyle}>
+    // Focusable (by click, not Tab) so the Timeline's ←/→ shortcut, which
+    // only answers while focus is inside this viewer, works after a click.
+    <div tabIndex={-1} style={{ ...containerStyle, outline: "none" }}>
       <Viewport
         snapshot={primarySnapshot}
         frame={currentFrameData}

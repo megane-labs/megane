@@ -11,7 +11,9 @@ Code and JupyterLab extensions, in a notebook cell::
 
 The front end writes the edited structure back into the widget state after
 every edit (``_document``), so :meth:`Builder.save`, :meth:`Builder.text` and
-:meth:`Builder.to_ase` read what is on screen without a round trip. *File ›
+:meth:`Builder.to_ase` read what is on screen without a round trip. Until it
+has written back a file :meth:`Builder.load` just opened (in the same cell, or
+with the Builder never displayed), they read that file. *File ›
 Save* in the cell writes into :attr:`Builder.save_dir` (the kernel's working
 directory unless set) and never overwrites a file: a taken name gets a ``-1``,
 ``-2``, … suffix.
@@ -64,6 +66,51 @@ def _safe_name(name: str) -> str:
     return base if base not in ("", ".", "..") else "structure.xyz"
 
 
+def _source_document(data: bytes, name: str) -> dict[str, Any]:
+    """The ``_document`` the front end writes back once it has opened ``data`` as ``name``.
+
+    The same Rust parser and writer the front end runs as WASM
+    (``documentState`` in src/builderWidget.ts), here through PyO3, so a file
+    loaded from Python reads the same before the front end has answered (or
+    with no front end at all). Empty when no parser reads the file; the front
+    end then reports why.
+    """
+    import numpy as np
+
+    from megane import megane_parser
+    from megane.parsers.common import structure_from_result
+    from megane.parsers.dispatch import BINARY_PARSERS, TEXT_PARSERS, structure_ext
+    from megane.writers import write_structure
+
+    ext = structure_ext(name)
+    try:
+        if ext in TEXT_PARSERS:
+            # TextDecoder's default in the browser: UTF-8, invalid bytes replaced.
+            result = getattr(megane_parser, TEXT_PARSERS[ext])(data.decode("utf-8", errors="replace"))
+        elif ext in BINARY_PARSERS:
+            result = getattr(megane_parser, BINARY_PARSERS[ext])(data)
+        else:
+            return {}
+    except ValueError:
+        return {}
+    structure = structure_from_result(result)
+    labels = result.atom_labels if result.atom_labels and len(result.atom_labels) == structure.n_atoms else None
+    texts: dict[str, str | None] = {}
+    for fmt in _FORMATS:
+        try:
+            texts[fmt] = write_structure(structure, fmt, atom_labels=labels, chain_ids=result.chain_ids)
+        except ValueError:
+            texts[fmt] = None
+    return {
+        "name": name,
+        "n_atoms": structure.n_atoms,
+        "n_bonds": len(structure.bonds),
+        "n_edits": 0,
+        "has_cell": bool(np.any(structure.box != 0)),
+        **texts,
+    }
+
+
 class Builder(anywidget.AnyWidget):
     """megane Builder — an interactive structure editor — in a notebook cell.
 
@@ -108,6 +155,8 @@ class Builder(anywidget.AnyWidget):
     ) -> None:
         super().__init__(height=height, _instance_id=uuid.uuid4().hex, **kwargs)
         self.save_dir: pathlib.Path | None = pathlib.Path(save_dir) if save_dir is not None else None
+        # (_source_seq, document) of the loaded file, read on first use.
+        self._loaded: tuple[int, dict[str, Any]] = (0, {})
         self.on_msg(self._handle_message)
         if path is not None:
             self.load(path)
@@ -124,8 +173,16 @@ class Builder(anywidget.AnyWidget):
         return self.load_bytes(text.encode("utf-8"), name)
 
     def load_bytes(self, data: bytes, name: str) -> Builder:
-        """Open a structure given as bytes; *name*'s extension picks the parser."""
+        """Open a structure given as bytes; *name*'s extension picks the parser.
+
+        The previous document is dropped at once: until the front end writes
+        the new one back, :meth:`save`, :meth:`text`, :meth:`to_ase` and the
+        counts read the loaded file, and a re-displayed Builder opens it.
+        """
         with self.hold_sync():
+            # Cleared with the new source in one update: restoreDocument
+            # (src/builderWidget.ts) prefers _document over _source.
+            self._document = {}
             self._source = bytes(data)
             self._source_name = name
             self._source_seq += 1
@@ -133,20 +190,30 @@ class Builder(anywidget.AnyWidget):
 
     # ── Builder → Python ──
 
+    def _shown(self) -> dict[str, Any]:
+        """``_document``, or before the front end has written it, the loaded file's document."""
+        if self._document or not self._source:
+            return self._document
+        seq, doc = self._loaded
+        if seq != self._source_seq:
+            doc = _source_document(self._source, self._source_name)
+            self._loaded = (self._source_seq, doc)
+        return doc
+
     @property
     def file_name(self) -> str | None:
         """The document's name (``"caffeine.sdf"``, ``"untitled"``), or None with nothing open."""
-        return self._document.get("name") or None
+        return self._shown().get("name") or None
 
     @property
     def n_atoms(self) -> int:
         """Atoms in the structure on screen (0 with nothing open)."""
-        return int(self._document.get("n_atoms") or 0)
+        return int(self._shown().get("n_atoms") or 0)
 
     @property
     def n_bonds(self) -> int:
         """Bonds in the structure on screen."""
-        return int(self._document.get("n_bonds") or 0)
+        return int(self._shown().get("n_bonds") or 0)
 
     def text(self, fmt: StructureFormat = "xyz") -> str:
         """The structure on screen as ``"xyz"`` (extended XYZ with a cell), ``"pdb"``,
@@ -163,7 +230,7 @@ class Builder(anywidget.AnyWidget):
             raise ValueError(f"unknown format {fmt!r}; expected one of {', '.join(_FORMATS)}")
         if self.n_atoms == 0:
             raise RuntimeError("the Builder has no atoms yet; display it and open or build a structure")
-        value = self._document.get(fmt)
+        value = self._shown().get(fmt)
         if value is None:
             raise ValueError(f"this structure cannot be written as {fmt.upper()}")
         return str(value)
@@ -180,7 +247,7 @@ class Builder(anywidget.AnyWidget):
             import ase.io
         except ImportError as exc:  # pragma: no cover - depends on the environment
             raise ImportError("Builder.to_ase() needs ASE: pip install ase") from exc
-        fmt = "extxyz" if self._document.get("has_cell") else "xyz"
+        fmt = "extxyz" if self._shown().get("has_cell") else "xyz"
         return ase.io.read(io.StringIO(self.text("xyz")), format=fmt)
 
     # ── Requests from the front end ──
