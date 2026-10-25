@@ -726,7 +726,11 @@ function extractHeteroFrames(result: WasmParseResult): Frame[] {
 
   const hasElems = elemsFlat.length > 0;
   const hasCells = cellsFlat.length > 0;
-  const hasBonds = bondsFlat.length > 0 && bondOffsets.length > 0;
+  // Constant topology is told by the offsets alone: a varying topology whose
+  // later frames have no bonds at all also leaves `bondsFlat` empty, and those
+  // frames must get an empty bond list, not frame 0's (crates/megane-core
+  // `ParsedStructure::frame_bonds` makes the same call).
+  const hasBonds = bondOffsets.length > 0;
 
   for (let i = 0; i < nFrames; i++) {
     const a = offsets[i];
