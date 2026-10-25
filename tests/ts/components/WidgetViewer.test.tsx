@@ -677,6 +677,52 @@ describe("WidgetViewer — per-frame bond recalc", () => {
       expect(store.getState().nodes.find((n) => n.id === "insp-global-atoms")).toBeDefined();
     });
 
+    it("keeps the topology bonds Python sent inline when writing an edit back", () => {
+      // AddBonds(top="topol.top"): the kernel parses the topology and sends
+      // the bond indices inside the pipeline JSON, the widget's only copy.
+      const withTopology = JSON.stringify({
+        version: 3,
+        nodes: [
+          ...JSON.parse(pipelineJson).nodes,
+          {
+            type: "add_bond",
+            id: "bonds-q",
+            position: { x: 0, y: 150 },
+            bondSource: "file",
+            bondFileName: "topol.top",
+            bondFileData: [0, 1],
+          },
+        ],
+        edges: [
+          ...JSON.parse(pipelineJson).edges,
+          {
+            source: "loader-q",
+            target: "bonds-q",
+            sourceHandle: "particle",
+            targetHandle: "particle",
+          },
+          { source: "bonds-q", target: "viewport-q", sourceHandle: "bond", targetHandle: "bond" },
+        ],
+      });
+      const { onPipelineChange, view, props } = mount({ pipelineJson: withTopology });
+      fireEvent.change(view.getByTestId("quick-style-atom-scale"), { target: { value: "0.6" } });
+      act(() => {
+        vi.advanceTimersByTime(QUICK_STYLE_SYNC_DELAY_MS);
+      });
+      const json = onPipelineChange.mock.calls[0][0] as string;
+      const bonds = JSON.parse(json).nodes.find((n: { id: string }) => n.id === "bonds-q");
+      expect(bonds.bondFileName).toBe("topol.top");
+      expect(bonds.bondFileData).toEqual([0, 1]);
+
+      // A fresh view of the model (re-displayed cell, reopened notebook)
+      // still draws the topology bonds.
+      const reopened = createPipelineStore();
+      render(<WidgetViewer {...props} pipelineJson={json} pipelineStore={reopened} />);
+      const drawn = reopened.getState().viewportState.bonds;
+      expect(drawn.map((b) => b.nBonds)).toEqual([1]);
+      expect(Array.from(drawn[0].bondIndices)).toEqual([0, 1]);
+    });
+
     it("flushes a pending edit on unmount", () => {
       const { onPipelineChange, view } = mount();
       fireEvent.click(view.getByTestId("quick-style-perspective"));
