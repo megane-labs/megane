@@ -19,7 +19,7 @@
  * (`normalizeParams`), as a template's blocks do.
  */
 
-import { hasClosedFence, lastFencedJSON } from "../../../ai/generation";
+import { lastJSONPayload, looksLikePayload, type JSONPayload } from "../../../ai/generation";
 import { BULK_STRUCTURES } from "../../../crystal/bulk";
 import type { LibraryMolecule } from "../../library/types";
 import type { BuilderToolInfo, FieldSpec } from "../../tools/contract";
@@ -50,9 +50,17 @@ function isRawFlow(value: unknown): value is RawFlow {
   return v.version === 1 && Array.isArray(v.nodes) && Array.isArray(v.edges);
 }
 
-/** The flow in the last closed fence of `text` that is one, or null. */
+/**
+ * The last flow payload in `text` (a closed fence with any label, or a bare
+ * object), with whether it was fenced, or null. See `lastJSONPayload`.
+ */
+export function extractFlowPayload(text: string): JSONPayload<RawFlow> | null {
+  return lastJSONPayload(text, isRawFlow);
+}
+
+/** The last flow payload in `text`, fenced or bare, or null. */
 export function tryExtractFlow(text: string): RawFlow | null {
-  return lastFencedJSON(text, isRawFlow);
+  return extractFlowPayload(text)?.value ?? null;
 }
 
 type Json = Record<string, unknown>;
@@ -685,9 +693,9 @@ export function buildFlowRepairPrompt(errors: string[]): string {
 /**
  * Whether a reply needs another round, and with what prompt (the
  * `diagnose` of the shared repair loop): null for a flow that checks out
- * and for a reply with no fence at all (prose, e.g. saying a tool server is
- * needed); the unparsable prompt for a fence that holds no flow; the repair
- * prompt for a flow with findings.
+ * and for a reply with no fence or JSON object at all (prose, e.g. saying a
+ * tool server is needed); the unparsable prompt for a fence or object that
+ * holds no flow; the repair prompt for a flow with findings.
  */
 export function diagnoseFlowResponse(
   text: string,
@@ -695,7 +703,7 @@ export function diagnoseFlowResponse(
 ): { prompt: string; errors: string[] } | null {
   const flow = tryExtractFlow(text);
   if (!flow) {
-    if (!hasClosedFence(text)) return null;
+    if (!looksLikePayload(text)) return null;
     return {
       prompt: buildUnparsableFlowPrompt(),
       errors: ["the fenced block is not valid, complete flow JSON"],

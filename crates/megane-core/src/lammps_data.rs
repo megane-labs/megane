@@ -1,7 +1,9 @@
 /// LAMMPS data file parser.
 ///
-/// Supports atom_style: atomic, charge, and full (real).
-/// Auto-detects style from comment hint (`Atoms # full`) or field count.
+/// Supports atom_style: atomic, charge, molecular / bond / angle, and full
+/// (real). The style comes from the section's comment hint (`Atoms # full`);
+/// a hint naming a LAMMPS atom style this reader does not support is an
+/// error. Without a hint the style is guessed from the field count.
 use std::collections::{HashMap, HashSet};
 
 use crate::atomic::mass_to_atomic_num;
@@ -18,29 +20,78 @@ enum AtomStyle {
     Atomic,
     /// atom_id type charge x y z
     Charge,
+    /// atom_id mol_id type x y z (`molecular`, `bond` and `angle`)
+    Molecular,
     /// atom_id mol_id type charge x y z
     Full,
 }
 
-/// Try to detect atom style from the comment after `Atoms` keyword.
-/// e.g. `Atoms # full` → Some(Full)
-fn parse_style_hint(line: &str) -> Option<AtomStyle> {
-    let hash_pos = line.find('#')?;
-    let hint = line[hash_pos + 1..].trim().to_lowercase();
+/// LAMMPS atom styles whose `Atoms` layout this reader does not implement.
+/// A hint naming one of them is an error: guessing its columns from the
+/// field count would read the wrong ones as positions.
+const UNSUPPORTED_STYLES: &[&str] = &[
+    "amoeba",
+    "apip",
+    "body",
+    "bpm/sphere",
+    "dielectric",
+    "dipole",
+    "dpd",
+    "edpd",
+    "electron",
+    "ellipsoid",
+    "hybrid",
+    "line",
+    "mdpd",
+    "oxdna",
+    "peri",
+    "rheo",
+    "rheo/thermal",
+    "smd",
+    "sph",
+    "sphere",
+    "spin",
+    "tdpd",
+    "template",
+    "tri",
+    "wavepacket",
+];
+
+/// Read the atom style from the comment after the `Atoms` keyword
+/// (`Atoms # full` → `Ok(Some(Full))`). Like LAMMPS, only the first word of
+/// the comment is the style. A comment that names no atom style is not a
+/// hint (`Ok(None)`); one naming a style this reader cannot lay out is an
+/// error rather than a guess.
+fn parse_style_hint(line: &str) -> Result<Option<AtomStyle>, String> {
+    let Some(hash_pos) = line.find('#') else {
+        return Ok(None);
+    };
+    let hint = line[hash_pos + 1..]
+        .split_whitespace()
+        .next()
+        .unwrap_or("")
+        .to_lowercase();
     match hint.as_str() {
-        "atomic" => Some(AtomStyle::Atomic),
-        "charge" => Some(AtomStyle::Charge),
-        "full" | "real" => Some(AtomStyle::Full),
-        _ => None,
+        "atomic" => Ok(Some(AtomStyle::Atomic)),
+        "charge" => Ok(Some(AtomStyle::Charge)),
+        "molecular" | "bond" | "angle" => Ok(Some(AtomStyle::Molecular)),
+        "full" | "real" => Ok(Some(AtomStyle::Full)),
+        h if UNSUPPORTED_STYLES.contains(&h) => Err(format!(
+            "LAMMPS data: atom_style '{h}' (Atoms # {h}) is not supported"
+        )),
+        _ => Ok(None),
     }
 }
 
-/// Detect atom style from number of whitespace-separated fields.
+/// Guess the atom style from the number of fields on an Atoms line (comment
+/// excluded), allowing for the three optional image flags `ix iy iz`.
+/// `6` / `9` fields are ambiguous between `charge` and `molecular`; they are
+/// read as `charge` — add an `Atoms # molecular` hint for the other.
 fn detect_style_from_fields(n_fields: usize) -> Option<AtomStyle> {
     match n_fields {
-        5 => Some(AtomStyle::Atomic),
-        6 => Some(AtomStyle::Charge),
-        7.. => Some(AtomStyle::Full),
+        5 | 8 => Some(AtomStyle::Atomic),
+        6 | 9 => Some(AtomStyle::Charge),
+        7 | 10.. => Some(AtomStyle::Full),
         _ => None,
     }
 }
@@ -63,7 +114,7 @@ struct HeaderData {
     has_tilt: bool,
     masses_start: Option<usize>,
     atoms_start: Option<usize>,
-    atoms_style_hint: Option<AtomStyle>,
+    atoms_style_hint: Result<Option<AtomStyle>, String>,
     bonds_start: Option<usize>,
 }
 
@@ -84,7 +135,7 @@ fn parse_header(lines: &[&str]) -> HeaderData {
         has_tilt: false,
         masses_start: None,
         atoms_start: None,
-        atoms_style_hint: None,
+        atoms_style_hint: Ok(None),
         bonds_start: None,
     };
 
@@ -259,9 +310,15 @@ fn parse_atoms_section(
     let style = if let Some(hint) = style_hint {
         hint
     } else if data_start < lines.len() {
-        let field_count = lines[data_start].split_whitespace().count();
-        detect_style_from_fields(field_count)
-            .ok_or("Cannot detect atom_style: unexpected number of fields")?
+        let line = lines[data_start];
+        let fields = line.split('#').next().unwrap_or(line);
+        let field_count = fields.split_whitespace().count();
+        detect_style_from_fields(field_count).ok_or_else(|| {
+            format!(
+                "Cannot detect atom_style from {field_count} fields; \
+                 add an `Atoms # <style>` hint"
+            )
+        })?
     } else {
         return Err("Atoms section is empty".into());
     };
@@ -275,10 +332,10 @@ fn parse_atoms_section(
     // Per-atom columns the style carries beyond position/type.
     let mut charges: Option<Vec<f32>> = match style {
         AtomStyle::Charge | AtomStyle::Full => Some(Vec::with_capacity(n_atoms)),
-        AtomStyle::Atomic => None,
+        AtomStyle::Atomic | AtomStyle::Molecular => None,
     };
     let mut mol_ids: Option<Vec<f32>> = match style {
-        AtomStyle::Full => Some(Vec::with_capacity(n_atoms)),
+        AtomStyle::Molecular | AtomStyle::Full => Some(Vec::with_capacity(n_atoms)),
         _ => None,
     };
 
@@ -323,6 +380,22 @@ fn parse_atoms_section(
                 let z: f32 = tokens[5].parse().map_err(|_| "bad z")?;
                 if let Some(qs) = charges.as_mut() {
                     qs.push(q);
+                }
+                (aid, tid, x, y, z)
+            }
+            AtomStyle::Molecular => {
+                // atom_id mol_id type x y z
+                if tokens.len() < 6 {
+                    continue;
+                }
+                let aid: u32 = tokens[0].parse().map_err(|_| "bad atom_id")?;
+                let mid: f32 = tokens[1].parse().map_err(|_| "bad mol_id")?;
+                let tid: u32 = tokens[2].parse().map_err(|_| "bad type")?;
+                let x: f32 = tokens[3].parse().map_err(|_| "bad x")?;
+                let y: f32 = tokens[4].parse().map_err(|_| "bad y")?;
+                let z: f32 = tokens[5].parse().map_err(|_| "bad z")?;
+                if let Some(ms) = mol_ids.as_mut() {
+                    ms.push(mid);
                 }
                 (aid, tid, x, y, z)
             }
@@ -455,13 +528,8 @@ pub fn parse(text: &str) -> Result<ParsedStructure, String> {
         .map(|s| parse_masses_section(&lines, s))
         .unwrap_or_default();
 
-    let atoms = parse_atoms_section(
-        &lines,
-        atoms_line,
-        hd.atoms_style_hint,
-        &type_to_mass,
-        hd.n_atoms,
-    )?;
+    let style_hint = hd.atoms_style_hint?;
+    let atoms = parse_atoms_section(&lines, atoms_line, style_hint, &type_to_mass, hd.n_atoms)?;
 
     if atoms.count == 0 {
         return Err("No atoms parsed from Atoms section".into());
@@ -556,11 +624,35 @@ mod tests {
 
     #[test]
     fn test_parse_style_hint() {
-        assert_eq!(parse_style_hint("Atoms # atomic"), Some(AtomStyle::Atomic));
-        assert_eq!(parse_style_hint("Atoms # charge"), Some(AtomStyle::Charge));
-        assert_eq!(parse_style_hint("Atoms # full"), Some(AtomStyle::Full));
-        assert_eq!(parse_style_hint("Atoms # real"), Some(AtomStyle::Full));
-        assert_eq!(parse_style_hint("Atoms"), None);
+        assert_eq!(
+            parse_style_hint("Atoms # atomic"),
+            Ok(Some(AtomStyle::Atomic))
+        );
+        assert_eq!(
+            parse_style_hint("Atoms # charge"),
+            Ok(Some(AtomStyle::Charge))
+        );
+        assert_eq!(parse_style_hint("Atoms # full"), Ok(Some(AtomStyle::Full)));
+        assert_eq!(parse_style_hint("Atoms # real"), Ok(Some(AtomStyle::Full)));
+        for style in ["molecular", "bond", "angle", "Molecular"] {
+            assert_eq!(
+                parse_style_hint(&format!("Atoms # {style}")),
+                Ok(Some(AtomStyle::Molecular))
+            );
+        }
+        // Only the first word of the comment is the style.
+        assert_eq!(
+            parse_style_hint("Atoms  # full   written by tool"),
+            Ok(Some(AtomStyle::Full))
+        );
+        assert_eq!(parse_style_hint("Atoms"), Ok(None));
+        assert_eq!(parse_style_hint("Atoms #"), Ok(None));
+        // A comment that names no atom style is not a hint.
+        assert_eq!(parse_style_hint("Atoms # id type x y z"), Ok(None));
+        // A style this reader cannot lay out is an error, not a guess.
+        let err = parse_style_hint("Atoms # sphere").unwrap_err();
+        assert!(err.contains("'sphere'"), "{err}");
+        assert!(parse_style_hint("Atoms # hybrid").is_err());
     }
 
     #[test]
@@ -568,8 +660,95 @@ mod tests {
         assert_eq!(detect_style_from_fields(5), Some(AtomStyle::Atomic));
         assert_eq!(detect_style_from_fields(6), Some(AtomStyle::Charge));
         assert_eq!(detect_style_from_fields(7), Some(AtomStyle::Full));
+        // The same styles followed by the three image flags.
+        assert_eq!(detect_style_from_fields(8), Some(AtomStyle::Atomic));
+        assert_eq!(detect_style_from_fields(9), Some(AtomStyle::Charge));
         assert_eq!(detect_style_from_fields(10), Some(AtomStyle::Full));
+        assert_eq!(detect_style_from_fields(12), Some(AtomStyle::Full));
         assert_eq!(detect_style_from_fields(3), None);
+    }
+
+    /// A small two-type system whose Atoms section is supplied per test.
+    fn data_with_atoms(header: &str, rows: &str) -> String {
+        format!(
+            "LAMMPS data file\n\n2 atoms\n2 atom types\n\n\
+             0.0 10.0 xlo xhi\n0.0 10.0 ylo yhi\n0.0 10.0 zlo zhi\n\n\
+             Masses\n\n1 15.999\n2 1.008\n\n{header}\n\n{rows}"
+        )
+    }
+
+    /// `Atoms # molecular` (and `bond` / `angle`, which share its layout:
+    /// id mol type x y z) with image flags. The old reader did not know the
+    /// hint and guessed `full` from the 9 fields, putting y, z and an image
+    /// flag into the position and inventing a charge channel.
+    #[test]
+    fn test_parse_molecular_style_with_image_flags() {
+        for style in ["molecular", "bond", "angle"] {
+            let data = data_with_atoms(
+                &format!("Atoms # {style}"),
+                "1 7 1 1.0 2.0 3.0 0 0 0\n2 7 2 4.0 5.0 6.0 1 -1 0\n",
+            );
+            let s = parse(&data).unwrap_or_else(|e| panic!("{style}: {e}"));
+            assert_eq!(s.n_atoms, 2);
+            assert_eq!(s.positions, vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0], "{style}");
+            assert_eq!(s.elements, vec![8, 1], "{style}");
+            assert_eq!(s.atom_labels, Some(vec!["1".into(), "2".into()]));
+            let names: Vec<&str> = s.scalar_channels.iter().map(|c| c.name.as_str()).collect();
+            assert_eq!(names, vec!["mol_id"], "{style}: no charge column");
+            assert_eq!(s.scalar_channels[0].frames[0].values, vec![7.0, 7.0]);
+        }
+    }
+
+    /// Six fields under a molecular hint: the type comes from the third
+    /// column, not from the mol-id column a `charge` guess would use.
+    #[test]
+    fn test_parse_molecular_style_without_image_flags() {
+        let data = data_with_atoms(
+            "Atoms # molecular",
+            "1 1 2 1.0 2.0 3.0\n2 1 1 4.0 5.0 6.0\n",
+        );
+        let s = parse(&data).unwrap();
+        assert_eq!(s.elements, vec![1, 8]);
+        assert_eq!(s.positions, vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0]);
+    }
+
+    /// A hint naming an atom style this reader cannot lay out is an error.
+    #[test]
+    fn test_unsupported_style_hint_is_an_error() {
+        let data = data_with_atoms(
+            "Atoms # sphere",
+            "1 1 1.0 1.0 1.0 2.0 3.0\n2 2 1.0 1.0 4.0 5.0 6.0\n",
+        );
+        let err = match parse(&data) {
+            Ok(_) => panic!("expected an error"),
+            Err(e) => e,
+        };
+        assert!(err.contains("atom_style 'sphere'"), "{err}");
+    }
+
+    /// Without a hint, image flags are recognised by the field count, and a
+    /// trailing comment does not count as fields.
+    #[test]
+    fn test_field_count_detection_allows_image_flags_and_comments() {
+        let data = data_with_atoms("Atoms", "1 1 1.0 2.0 3.0 0 0 1\n2 2 4.0 5.0 6.0 0 0 0\n");
+        let s = parse(&data).unwrap();
+        assert_eq!(s.positions, vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0]);
+        assert!(s.scalar_channels.is_empty());
+
+        let data = data_with_atoms(
+            "Atoms # id type x y z",
+            "1 1 1.0 2.0 3.0 # O\n2 2 4.0 5.0 6.0 # H\n",
+        );
+        let s = parse(&data).unwrap();
+        assert_eq!(s.positions, vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0]);
+        assert_eq!(s.elements, vec![8, 1]);
+
+        let data = data_with_atoms("Atoms", "1 1 1.0 2.0\n2 2 4.0 5.0\n");
+        let err = match parse(&data) {
+            Ok(_) => panic!("expected an error"),
+            Err(e) => e,
+        };
+        assert!(err.contains("from 4 fields"), "{err}");
     }
 
     #[test]

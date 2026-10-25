@@ -267,6 +267,38 @@ describe("evaluateBondSelection: molecule_id field", () => {
     const result = evaluateBondSelection("molecule_id == 0", bondIndices, bondElements, 4);
     expect(result).toEqual(new Set([0, 1]));
   });
+
+  it("uses the structural topology when the drawn bonds have ghost endpoints", () => {
+    // Structure: O0–H1, O0–H2 (mol 0), O3–H4 (mol 1); 5 structural atoms.
+    const structural = new Uint32Array([0, 1, 0, 2, 3, 4]);
+    const elements = new Uint8Array([8, 1, 1, 8, 1]);
+    // Drawn: O0–H1, O0→ghost5, ghost6→H2 (ghost first), O3–H4, and a bond
+    // between two ghosts (7, 8) that has no structural endpoint.
+    const drawn = new Uint32Array([0, 1, 0, 5, 6, 2, 3, 4, 7, 8]);
+    const query = (q: string) => evaluateBondSelection(q, drawn, elements, 5, 9, structural);
+    expect(query("molecule_id == 0")).toEqual(new Set([0, 1, 2]));
+    expect(query("molecule_id == 1")).toEqual(new Set([3]));
+    // A bond with no structural endpoint belongs to no molecule.
+    expect(query("molecule_id < 0")).toEqual(new Set([4]));
+    // The topology reaches comparisons nested in not / and / or.
+    expect(query("not molecule_id == 0")).toEqual(new Set([3, 4]));
+    expect(query("molecule_id == 0 and bond_index > 0")).toEqual(new Set([1, 2]));
+    expect(query("molecule_id == 1 or molecule_id < 0")).toEqual(new Set([3, 4]));
+  });
+
+  it("reads ghost endpoints as their source atoms when the copies are known", () => {
+    // Same drawing as above, with the ghosts' sources known: 5 = H2, 6 = O0,
+    // 7 = O3, 8 = H4. The ghost-to-ghost bond now belongs to O3's molecule.
+    const structural = new Uint32Array([0, 1, 0, 2, 3, 4]);
+    const elements = new Uint8Array([8, 1, 1, 8, 1]);
+    const drawn = new Uint32Array([0, 1, 0, 5, 6, 2, 3, 4, 7, 8]);
+    const ghosts = new Uint32Array([2, 0, 3, 4]);
+    const query = (q: string) =>
+      evaluateBondSelection(q, drawn, elements, 5, 9, structural, ghosts);
+    expect(query("molecule_id == 0")).toEqual(new Set([0, 1, 2]));
+    expect(query("molecule_id == 1")).toEqual(new Set([3, 4]));
+    expect(query("molecule_id < 0")).toEqual(new Set());
+  });
 });
 
 describe("bondEndpointResolver", () => {
