@@ -94,31 +94,32 @@ function noInput(): NodeError {
 /**
  * Resolve the atom labels used for selection / coloring / text labels (e.g.
  * `resname == "HOH"`, color-by-residue, Label Generator's "resname" source).
- * The user-selected *display* label source wins when set
- * (`ctx.atomLabels`); otherwise we fall back to the residue labels parsed from
- * the structure file and stored per load_structure node in `ctx.nodeSnapshots`.
+ * The user-selected *display* label source wins when set (`ctx.atomLabels`);
+ * otherwise we use the residue labels parsed from the structure file, which
+ * the load_structure node attached to the stream's snapshot
+ * (`Snapshot.atomLabels`).
  *
  * This keeps `resname` selections and residue coloring working out of the box
  * without forcing the user to switch the display label source — and without
  * turning on on-screen atom text labels, which are driven by a separate path
  * (the label_generator node / `LabelData`), not by these labels.
  *
- * Keying off the stream's `sourceNodeId` means multi-loader graphs each resolve
- * to their own structure's labels.
+ * Reading them off the stream's own snapshot means multi-loader graphs each
+ * resolve to their own structure's labels, and labels stay aligned with the
+ * atoms after Replicate, Symmetry and structure edits copy or reorder them.
  */
 export function resolveEffectiveLabels(
   ctx: PipelineExecutionContext,
-  sourceNodeId: string | undefined,
+  particle: ParticleData | undefined,
 ): string[] | null {
   if (ctx.atomLabels) return ctx.atomLabels;
-  if (sourceNodeId) return ctx.nodeSnapshots?.[sourceNodeId]?.labels ?? null;
-  return null;
+  return particle?.source.atomLabels ?? null;
 }
 
-/** Read the source load_structure node id from a node's incoming particle stream. */
-export function particleSourceNodeId(inputs: Map<string, PipelineData[]>): string | undefined {
+/** The particle stream on a node's `in` port, if that is what is wired in. */
+export function inputParticle(inputs: Map<string, PipelineData[]>): ParticleData | undefined {
   const inData = inputs.get("in")?.[0];
-  return inData?.type === "particle" ? (inData as ParticleData).sourceNodeId : undefined;
+  return inData?.type === "particle" ? (inData as ParticleData) : undefined;
 }
 
 /** Structure channels a load_structure node resolves for itself. */
@@ -127,6 +128,8 @@ interface StructureSource {
   frames: Frame[] | null;
   meta: TrajectoryMeta | null;
   provider: FrameProvider | null;
+  /** The file's residue labels, when the node has its own parse. */
+  labels: string[] | null;
 }
 
 /**
@@ -144,16 +147,18 @@ function resolveStructureSource(
     frames: nodeData?.frames ?? ctx.structureFrames ?? null,
     meta: nodeData?.meta ?? ctx.structureMeta ?? null,
     provider: nodeData?.frames ? null : (ctx.structureProvider ?? null),
+    labels: nodeData?.labels ?? null,
   };
 }
 
 export const NODE_EXECUTORS: NodeExecutorRegistry = {
   load_structure: ({ id, params, ctx, addError }) => {
-    const { snapshot, frames, meta, provider } = resolveStructureSource(ctx, id);
+    const { snapshot, frames, meta, provider, labels } = resolveStructureSource(ctx, id);
     const editWarnings: string[] = [];
     const outputs = executeLoadStructure(params, snapshot, frames, meta, id, provider, {
       editsBypassed: ctx.editsBypassed,
       warnings: editWarnings,
+      labels,
     });
     if (!snapshot) {
       addError({ message: "No structure data available", severity: "warning" });
@@ -229,7 +234,7 @@ export const NODE_EXECUTORS: NodeExecutorRegistry = {
   },
 
   filter: ({ params, inputs, ctx, addError }) => {
-    const labels = resolveEffectiveLabels(ctx, particleSourceNodeId(inputs));
+    const labels = resolveEffectiveLabels(ctx, inputParticle(inputs));
     const outputs = executeFilter(params, inputs, labels);
     const outData = outputs.get("out");
     if (!inputs.get("in")?.length) {
@@ -302,7 +307,7 @@ export const NODE_EXECUTORS: NodeExecutorRegistry = {
   },
 
   color: ({ params, inputs, ctx, addError }) => {
-    const labels = resolveEffectiveLabels(ctx, particleSourceNodeId(inputs));
+    const labels = resolveEffectiveLabels(ctx, inputParticle(inputs));
     const outputs = executeColor(params, inputs, labels);
     if (!inputs.get("in")?.length) addError(noInput());
     return { outputs };
@@ -317,7 +322,7 @@ export const NODE_EXECUTORS: NodeExecutorRegistry = {
   label_generator: ({ params, inputs, ctx, addError }) => {
     // Same label resolution as Filter / Color, read off the `particle` port.
     const particle = inputs.get("particle")?.[0] as ParticleData | undefined;
-    const labels = resolveEffectiveLabels(ctx, particle?.sourceNodeId);
+    const labels = resolveEffectiveLabels(ctx, particle);
     const outputs = executeLabelGenerator(params, inputs, labels);
     if (!inputs.get("particle")?.length) addError(noInput());
     return { outputs };

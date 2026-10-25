@@ -1,7 +1,7 @@
 import type { Snapshot } from "../../types";
 import type { PipelineData, ParticleData, TrajectoryData, SymmetryParams } from "../types";
 import { invert3x3 } from "./mathUtils";
-import { tileArray, tileIndices } from "./tile";
+import { tileArray, tileIndices, tileLabels } from "./tile";
 
 /**
  * Symmetry node — space-group expansion of a crystallographic asymmetric unit.
@@ -271,6 +271,7 @@ export function expandSymmetry(
     bondOrders,
     atomChainIds,
     atomBFactors,
+    atomLabels: src.atomLabels && tileLabels(src.atomLabels, nBase, nImages),
     // Cα backbone arrays: caIndices shift per image, the rest tile. CIF (the
     // only ops-bearing format) never carries them, but stale asymmetric-unit
     // arrays must not survive on an expanded snapshot.
