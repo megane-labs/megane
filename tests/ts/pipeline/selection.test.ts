@@ -92,6 +92,18 @@ describe("evaluateSelection", () => {
     expect(result).toEqual(new Set([2])); // only oxygen (mass 15.999)
   });
 
+  it("filters elements past uranium by symbol and mass", () => {
+    // U, Np, Pu, Og: the parsers resolve all of them, so queries must too.
+    const heavy = makeSnapshot({
+      nAtoms: 4,
+      positions: [0, 0, 0, 1, 0, 0, 2, 0, 0, 3, 0, 0],
+      elements: [92, 93, 94, 118],
+    });
+    expect(evaluateSelection('element == "Np"', heavy, null)).toEqual(new Set([1]));
+    expect(evaluateSelection('element == "Og"', heavy, null)).toEqual(new Set([3]));
+    expect(evaluateSelection("mass > 240", heavy, null)).toEqual(new Set([2, 3]));
+  });
+
   it("filters by resname", () => {
     const result = evaluateSelection('resname == "ALA"', testSnapshot, testLabels);
     expect(result).toEqual(new Set([0, 1]));
