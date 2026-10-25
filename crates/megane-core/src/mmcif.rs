@@ -9,7 +9,7 @@
 /// cartoon rendering.
 use std::collections::{HashMap, HashSet};
 
-use crate::atomic::element_from_symbol;
+use crate::atomic::{element_from_atom_name_in_residue, element_from_symbol};
 use crate::bonds;
 use crate::cell::cell_params_to_matrix;
 use crate::cif_lex::{field, starts_with_ci, Document, Value};
@@ -48,6 +48,8 @@ struct AtomSiteColumns {
     group_pdb: Option<usize>,
     type_symbol: Option<usize>,
     label_atom_id: Option<usize>,
+    label_alt_id: Option<usize>,
+    label_comp_id: Option<usize>,
     label_asym_id: Option<usize>,
     auth_asym_id: Option<usize>,
     label_seq_id: Option<usize>,
@@ -65,6 +67,8 @@ impl AtomSiteColumns {
             group_pdb: None,
             type_symbol: None,
             label_atom_id: None,
+            label_alt_id: None,
+            label_comp_id: None,
             label_asym_id: None,
             auth_asym_id: None,
             label_seq_id: None,
@@ -83,6 +87,8 @@ impl AtomSiteColumns {
             "_atom_site.group_pdb" => self.group_pdb = Some(idx),
             "_atom_site.type_symbol" => self.type_symbol = Some(idx),
             "_atom_site.label_atom_id" => self.label_atom_id = Some(idx),
+            "_atom_site.label_alt_id" => self.label_alt_id = Some(idx),
+            "_atom_site.label_comp_id" => self.label_comp_id = Some(idx),
             "_atom_site.label_asym_id" => self.label_asym_id = Some(idx),
             "_atom_site.auth_asym_id" => self.auth_asym_id = Some(idx),
             "_atom_site.label_seq_id" => self.label_seq_id = Some(idx),
@@ -312,6 +318,8 @@ pub(crate) fn parse_document(text: &str, doc: &Document) -> Result<ParsedStructu
     let mut ca_chain_ids: Vec<u8> = Vec::new();
     let mut ca_res_nums: Vec<i32> = Vec::new();
     let mut addr: Vec<AtomAddress> = Vec::new();
+    // Alternate-location id per atom (first byte; 0 for `.`/`?`/absent).
+    let mut altlocs: Vec<u8> = Vec::new();
 
     // Loop rows are a CIF token stream (see `cif_lex`): quoted atom names
     // such as `"O5'"` or `'N A'` stay one value and a row may wrap lines.
@@ -338,11 +346,20 @@ pub(crate) fn parse_document(text: &str, doc: &Document) -> Result<ParsedStructu
                 continue;
             };
 
-            // Element
+            // Element: type_symbol, falling back to the atom name read in
+            // its residue context when the column is absent, null (`?`/`.`)
+            // or unreadable, as the PDB parser does without an element column.
             let elem = at(row, cols.type_symbol)
                 .and_then(|v| v.get())
                 .map(element_from_symbol)
-                .unwrap_or(0);
+                .filter(|&z| z != 0)
+                .unwrap_or_else(|| {
+                    let text_of = |c: Option<usize>| at(row, c).and_then(|v| v.get());
+                    element_from_atom_name_in_residue(
+                        text_of(cols.label_atom_id).unwrap_or(""),
+                        text_of(cols.label_comp_id).unwrap_or(""),
+                    )
+                });
 
             // Model membership: rows are grouped by model number; the
             // first number seen is the base structure.
@@ -409,6 +426,7 @@ pub(crate) fn parse_document(text: &str, doc: &Document) -> Result<ParsedStructu
                 atom_labels.push(atom_name);
                 chain_ids.push(chain_byte);
                 bfactors.push(bfac);
+                altlocs.push(first_byte(cols.label_alt_id).unwrap_or(0));
             }
 
             model_elements[mi].push(elem);
@@ -458,7 +476,9 @@ pub(crate) fn parse_document(text: &str, doc: &Document) -> Result<ParsedStructu
     // ligand links, metal coordination). mmCIF carries no routine polymer
     // connectivity, so distance inference still covers everything else; the
     // declared pairs are passed to it as existing bonds so they are never
-    // duplicated.
+    // duplicated, and no pair is inferred between two atoms whose
+    // connectivity the file already declares (or between alternate
+    // conformers).
     let mut file_bonds: Vec<(u32, u32)> = Vec::new();
     let mut bond_set: HashSet<(u32, u32)> = HashSet::new();
     if !conn.rows.is_empty() {
@@ -542,6 +562,7 @@ pub(crate) fn parse_document(text: &str, doc: &Document) -> Result<ParsedStructu
 
     let n_file_bonds = file_bonds.len();
     let inferred = bonds::infer_bonds(&positions, &elements, n_atoms, &bond_set);
+    let inferred = bonds::drop_inferred_ruled_out_by_file(inferred, &file_bonds, &altlocs, n_atoms);
     let mut all_bonds = file_bonds;
     all_bonds.extend(inferred);
 
@@ -573,7 +594,7 @@ pub(crate) fn parse_document(text: &str, doc: &Document) -> Result<ParsedStructu
         ca_chain_ids,
         ca_res_nums,
         ca_ss_type,
-        symmetry_ops: crate::cif::symmetry_ops(text, doc),
+        symmetry_ops: crate::cif::symmetry_ops(text, &doc.items),
         warnings,
         hetero,
         ..Default::default()
@@ -1319,6 +1340,52 @@ HELX_P A . . A -1 0
         assert_eq!(a.bonds, b.bonds);
     }
 
+    /// Without a `type_symbol` (column absent, or a `?`/`.` null) the element
+    /// comes from the atom name read in its residue context, the next field
+    /// in the element precedence, exactly as the PDB parser does.
+    #[test]
+    fn missing_type_symbols_fall_back_to_the_atom_name() {
+        let text = "data_x
+loop_
+_atom_site.group_PDB
+_atom_site.id
+_atom_site.label_atom_id
+_atom_site.label_comp_id
+_atom_site.label_asym_id
+_atom_site.label_seq_id
+_atom_site.Cartn_x
+_atom_site.Cartn_y
+_atom_site.Cartn_z
+ATOM 1 N ALA A 1 0 0 0
+ATOM 2 CA ALA A 1 1.4 0 0
+HETATM 3 CA CA B . 5 0 0
+HETATM 4 OW HOH C . 9 0 0
+";
+        assert_eq!(parse(text).unwrap().elements, vec![7, 6, 20, 8]);
+
+        let with_nulls = "data_x
+loop_
+_atom_site.group_PDB
+_atom_site.id
+_atom_site.type_symbol
+_atom_site.label_atom_id
+_atom_site.label_comp_id
+_atom_site.Cartn_x
+_atom_site.Cartn_y
+_atom_site.Cartn_z
+_atom_site.pdbx_PDB_model_num
+ATOM 1 ? N ALA 0 0 0 1
+ATOM 2 . CA ALA 1.4 0 0 1
+ATOM 3 S SG CYS 3 0 0 1
+ATOM 1 ? N ALA 0 0 1 2
+ATOM 2 . CA ALA 1.4 0 1 2
+ATOM 3 S SG CYS 3 0 1 2
+";
+        let s = parse(with_nulls).unwrap();
+        assert_eq!(s.elements, vec![7, 6, 16]);
+        assert!(s.hetero.is_none(), "later models resolve the same elements");
+    }
+
     #[test]
     fn test_element_from_symbol() {
         assert_eq!(element_from_symbol("C"), 6);
@@ -1327,5 +1394,87 @@ HELX_P A . . A -1 0
         assert_eq!(element_from_symbol("S"), 16);
         assert_eq!(element_from_symbol("FE"), 26);
         assert_eq!(element_from_symbol("ZN"), 30);
+    }
+
+    /// SER with two alternate side-chain conformers (`label_alt_id` A/B).
+    const SER_ALTLOC_MMCIF: &str = r#"data_alt
+loop_
+_atom_site.group_PDB
+_atom_site.id
+_atom_site.type_symbol
+_atom_site.label_atom_id
+_atom_site.label_alt_id
+_atom_site.label_comp_id
+_atom_site.label_asym_id
+_atom_site.label_seq_id
+_atom_site.Cartn_x
+_atom_site.Cartn_y
+_atom_site.Cartn_z
+ATOM 1 N N . SER A 1 0.000 0.000 0.000
+ATOM 2 C CA ? SER A 1 1.460 0.000 0.000
+ATOM 3 C CB A SER A 1 2.000 1.400 0.000
+ATOM 4 C CB B SER A 1 2.000 1.200 0.600
+ATOM 5 O OG A SER A 1 3.400 1.500 0.000
+ATOM 6 O OG B SER A 1 3.300 1.000 1.100
+#
+"#;
+
+    #[test]
+    fn test_inferred_bonds_never_join_alternate_conformers() {
+        let s = parse(SER_ALTLOC_MMCIF).unwrap();
+        let mut bonds = s.bonds.clone();
+        bonds.sort_unstable();
+        assert_eq!(bonds, vec![(0, 1), (1, 2), (1, 3), (2, 4), (3, 5)]);
+    }
+
+    /// Zn coordinated by two Cys SG atoms (`metalc`). The two SG atoms sit
+    /// 2.6 Å apart, inside the S-S cutoff, but both have declared
+    /// connectivity, so no SG-SG bond may be inferred; SG1-CB1 still is.
+    const ZN_SITE_MMCIF: &str = r#"data_zn
+loop_
+_atom_site.group_PDB
+_atom_site.id
+_atom_site.type_symbol
+_atom_site.label_atom_id
+_atom_site.label_comp_id
+_atom_site.label_asym_id
+_atom_site.label_seq_id
+_atom_site.auth_asym_id
+_atom_site.auth_seq_id
+_atom_site.Cartn_x
+_atom_site.Cartn_y
+_atom_site.Cartn_z
+HETATM 1 ZN ZN ZN B . B 101 0.000 0.000 0.000
+ATOM 2 S SG CYS A 1 A 1 2.300 0.000 0.000
+ATOM 3 S SG CYS A 2 A 2 0.832 2.144 0.000
+ATOM 4 C CB CYS A 1 A 1 3.200 -1.400 0.000
+#
+loop_
+_struct_conn.id
+_struct_conn.conn_type_id
+_struct_conn.ptnr1_label_asym_id
+_struct_conn.ptnr1_label_seq_id
+_struct_conn.ptnr1_label_atom_id
+_struct_conn.ptnr1_auth_asym_id
+_struct_conn.ptnr1_auth_seq_id
+_struct_conn.ptnr2_label_asym_id
+_struct_conn.ptnr2_label_seq_id
+_struct_conn.ptnr2_label_atom_id
+_struct_conn.ptnr2_auth_asym_id
+_struct_conn.ptnr2_auth_seq_id
+metalc1 metalc B . ZN B 101 A 1 SG A 1
+metalc2 metalc B . ZN B 101 A 2 SG A 2
+#
+"#;
+
+    #[test]
+    fn test_inference_is_not_layered_on_file_declared_atoms() {
+        let s = parse(ZN_SITE_MMCIF).unwrap();
+        assert!(s.warnings.is_empty(), "{:?}", s.warnings);
+        assert_eq!(s.n_file_bonds, 2);
+        let mut file = s.bonds[..2].to_vec();
+        file.sort_unstable();
+        assert_eq!(file, vec![(0, 1), (0, 2)]);
+        assert_eq!(&s.bonds[2..], &[(1, 3)]);
     }
 }

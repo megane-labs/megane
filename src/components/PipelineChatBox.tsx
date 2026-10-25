@@ -19,7 +19,12 @@ import type { PipelineNodeType, SerializedPipeline } from "../pipeline/types";
 import { NODE_TYPE_LABELS } from "../pipeline/types";
 import type { Frame, Snapshot, TrajectoryMeta } from "../types";
 import { useScopedPipelineStore, usePipelineStoreApi } from "../stores/MeganeProvider";
-import { AssistantDock, type AssistantRequest, type AssistantReply } from "./AssistantDock";
+import {
+  AssistantDock,
+  throwIfAborted,
+  type AssistantRequest,
+  type AssistantReply,
+} from "./AssistantDock";
 
 export { chatHistory, replaceTrailingAssistant, type ChatMessage } from "./AssistantDock";
 
@@ -34,25 +39,39 @@ interface StructureStateSlice {
 }
 
 /**
- * Resolve the structure the user currently has on screen, for the prompt's
+ * Resolve the structures the user currently has on screen, for the prompt's
  * structure summary and for running the generated pipeline during the
  * self-check.
  *
- * The store's global `snapshot` / `atomLabels` fields are the primary source,
- * but a structure opened into a loader node lives in that node's snapshot
- * instead (and so does one re-attached after the assistant rebuilt the graph
- * with new node ids). Falling back to the first `load_structure` node's
- * snapshot keeps both the summary and the self-check working either way.
+ * The store's global `snapshot` field is the primary structure, but a
+ * structure opened into a loader node lives in that node's snapshot instead
+ * (and so does one re-attached after the assistant rebuilt the graph with new
+ * node ids). Falling back to the first `load_structure` node's snapshot keeps
+ * both the summary and the self-check working either way.
+ *
+ * Every loader's own structure goes along too (`nodeSnapshots`, `loaderIds`),
+ * so the self-check runs each generated loader against the structure it will
+ * hold, as the store does; `atomLabels` is the store's own display-label
+ * override, which the store runs the graph with, so each loader's residue
+ * labels come from its own entry.
  */
 export function resolveStructureContext(state: StructureStateSlice): SelfCheckContext {
-  const loader = state.nodes.find((n) => n.type === "load_structure");
-  const fallback = loader ? (state.nodeSnapshots[loader.id] ?? null) : null;
+  const loaderIds = state.nodes.filter((n) => n.type === "load_structure").map((n) => n.id);
+  const fallback = loaderIds.length > 0 ? (state.nodeSnapshots[loaderIds[0]] ?? null) : null;
   return {
     snapshot: state.snapshot ?? fallback?.snapshot ?? null,
-    atomLabels: state.atomLabels ?? fallback?.labels ?? null,
+    atomLabels: state.atomLabels ?? null,
     structureFrames: state.structureFrames ?? fallback?.frames ?? null,
     structureMeta: state.structureMeta ?? fallback?.meta ?? null,
+    nodeSnapshots: state.nodeSnapshots,
+    loaderIds,
   };
+}
+
+/** The labels the structure summary describes: the display labels, else the primary loader's. */
+export function summaryLabels(ctx: SelfCheckContext): string[] | null {
+  const primary = ctx.loaderIds?.[0];
+  return ctx.atomLabels ?? (primary ? ctx.nodeSnapshots?.[primary]?.labels : null) ?? null;
 }
 
 /** Placeholder for the prompt bar, naming the selected node when there is one. */
@@ -103,6 +122,8 @@ export function PipelineChatBox() {
       let appliedNodeCount = -1;
       let appliedJSON: string | null = null;
       const applyPipeline = (pipeline: SerializedPipeline) => {
+        // Nothing lands once the request was cancelled or the dock went away.
+        if (signal.aborted) return;
         const id = pipelineApi
           .getState()
           .applyGeneratedPipeline(pipeline, { checkpoint: appliedJSON === null });
@@ -117,7 +138,7 @@ export function PipelineChatBox() {
       const checkContext = resolveStructureContext(state);
       const structureSummary = summarizeStructure(
         checkContext.snapshot ?? null,
-        checkContext.atomLabels ?? null,
+        summaryLabels(checkContext),
       );
 
       // The generator (system prompt, skills, self-check) is only needed once
@@ -163,6 +184,8 @@ export function PipelineChatBox() {
           onRestart();
         },
       );
+
+      throwIfAborted(signal);
 
       // The final round's pipeline may only be complete in the final text (or
       // have arrived after a tool round trip), so apply it now if streaming

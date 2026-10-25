@@ -476,51 +476,48 @@ pub fn parse_dcd(data: &[u8]) -> Result<DcdData, String> {
             }
         }
 
-        // X coordinates
-        let x_rec = match reader.read_record() {
-            Ok(r) => r,
-            Err(e) => {
-                warnings.push(incomplete(e));
-                break;
+        // X, Y and Z coordinate records. A record cut off by the end of the
+        // file (or of the wrong size) after a complete frame ends the
+        // trajectory there, whichever axis it is: the incomplete last frame
+        // is dropped, as the fixed-layout reader (`read_layout`) counts only
+        // whole frames, and the drop is reported.
+        let mut axes = [&[][..]; 3];
+        let mut complete = true;
+        for (axis, slot) in axes.iter_mut().enumerate() {
+            let (article, name) = [("an", "X"), ("a", "Y"), ("a", "Z")][axis];
+            match reader.read_record() {
+                Ok(rec) if rec.len() == expected_coord_bytes => *slot = rec,
+                Ok(rec) if n_frames == 0 => {
+                    return Err(format!(
+                        "DCD {}-coord record size {} != expected {}",
+                        name,
+                        rec.len(),
+                        expected_coord_bytes
+                    ));
+                }
+                Ok(rec) => {
+                    warnings.push(format!(
+                        "DCD: frame {} has {article} {name}-coordinate record of {} bytes \
+                         (expected {}); reading stopped there and the last {frame_bytes} \
+                         bytes of the file were dropped",
+                        n_frames + 1,
+                        rec.len(),
+                        expected_coord_bytes
+                    ));
+                    complete = false;
+                    break;
+                }
+                Err(e) => {
+                    warnings.push(incomplete(e));
+                    complete = false;
+                    break;
+                }
             }
-        };
-        if x_rec.len() != expected_coord_bytes {
-            if n_frames == 0 {
-                return Err(format!(
-                    "DCD X-coord record size {} != expected {}",
-                    x_rec.len(),
-                    expected_coord_bytes
-                ));
-            }
-            warnings.push(format!(
-                "DCD: frame {} has an X-coordinate record of {} bytes (expected {}); \
-                 reading stopped there and the last {frame_bytes} bytes of the file were dropped",
-                n_frames + 1,
-                x_rec.len(),
-                expected_coord_bytes
-            ));
+        }
+        if !complete {
             break;
         }
-
-        // Y coordinates
-        let y_rec = reader.read_record()?;
-        if y_rec.len() != expected_coord_bytes {
-            return Err(format!(
-                "DCD Y-coord record size {} != expected {}",
-                y_rec.len(),
-                expected_coord_bytes
-            ));
-        }
-
-        // Z coordinates
-        let z_rec = reader.read_record()?;
-        if z_rec.len() != expected_coord_bytes {
-            return Err(format!(
-                "DCD Z-coord record size {} != expected {}",
-                z_rec.len(),
-                expected_coord_bytes
-            ));
-        }
+        let [x_rec, y_rec, z_rec] = axes;
 
         // Build interleaved [x0,y0,z0, x1,y1,z1, …] straight into the flat buffer.
         if le {
@@ -916,6 +913,38 @@ mod tests {
     }
 
     #[test]
+    fn a_last_frame_cut_in_its_y_or_z_record_is_reported() {
+        // Cell (56) + X, Y, Z (16 each) = 104 bytes per frame; cuts of up to
+        // 32 bytes end the file inside the last frame's Y or Z record.
+        let blob = build_multi_frame_cells(true, &[(10.0, 10.0, 10.0); 3]);
+        for cut in [3, 16, 20, 31] {
+            let r = parse_dcd(&blob[..blob.len() - cut]).unwrap();
+            assert_eq!(r.n_frames, 2, "cut {cut}");
+            assert_eq!(r.warnings.len(), 1, "cut {cut}: {:?}", r.warnings);
+            let w = &r.warnings[0];
+            assert!(
+                w.starts_with("DCD: frame 3 is incomplete"),
+                "cut {cut}: {w}"
+            );
+            assert!(
+                w.contains(&format!("{} bytes", 104 - cut)),
+                "cut {cut}: {w}"
+            );
+        }
+        // A wrong-sized Y or Z record after frame 0 is named by its axis.
+        for (keep, axis) in [(32, "a Y"), (16, "a Z")] {
+            let mut blob = build_multi_frame_cells(true, &[(10.0, 10.0, 10.0); 2]);
+            blob.truncate(blob.len() - keep);
+            write_record(&mut blob, &[0u8; 4], true);
+            let r = parse_dcd(&blob).unwrap();
+            assert_eq!(r.n_frames, 1, "{axis}");
+            assert_eq!(r.warnings.len(), 1, "{:?}", r.warnings);
+            let want = format!("DCD: frame 2 has {axis}-coordinate record of 4 bytes");
+            assert!(r.warnings[0].starts_with(&want), "{}", r.warnings[0]);
+        }
+    }
+
+    #[test]
     fn layout_frame_rejects_bytes_that_are_not_a_frame() {
         let blob = build_multi_frame_cells(true, &[(10.0, 10.0, 10.0)]);
         let layout = read_layout(&blob, blob.len() as u64).unwrap();
@@ -1185,6 +1214,60 @@ mod tests {
         let err = parse_dcd(&out).err().expect("expected error");
         assert!(err.contains("NAMNF=2"), "got: {err}");
         assert!(err.contains("not supported"), "got: {err}");
+    }
+
+    #[test]
+    fn a_truncated_last_frame_is_dropped_whichever_record_it_cuts() {
+        let data = std::fs::read(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../tests/fixtures/water.dcd"
+        ))
+        .expect("read DCD");
+        let full = parse_dcd(&data).unwrap();
+        assert_eq!(full.n_frames, 5);
+        // water.dcd has 3 atoms: each coordinate record is 4 + 12 + 4 bytes,
+        // so cutting 3 / 20 / 40 / 60 bytes ends the file inside the last
+        // frame's Z, Z, Y and X record.
+        for cut in [3usize, 20, 40, 60] {
+            let t = &data[..data.len() - cut];
+            let eager = parse_dcd(t).unwrap_or_else(|e| panic!("cut {cut}: {e}"));
+            let layout = read_layout(t, t.len() as u64).unwrap();
+            assert_eq!(eager.n_frames, 4, "cut {cut}");
+            assert_eq!(layout.n_frames, eager.n_frames, "cut {cut}");
+            assert_eq!(
+                eager.frame_positions_flat,
+                full.frame_positions_flat[..4 * 9],
+                "cut {cut}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_wrong_sized_first_frame_record_is_still_an_error() {
+        let data = std::fs::read(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../tests/fixtures/water.dcd"
+        ))
+        .expect("read DCD");
+        let header = read_header(&data).unwrap();
+        // The first frame's Y record (after its cell and X records) claims 8 bytes.
+        let x_end = header.frames_start + if header.has_cell { 56 } else { 0 } + 20;
+        let mut d = data[..x_end].to_vec();
+        let size = if header.le {
+            8u32.to_le_bytes()
+        } else {
+            8u32.to_be_bytes()
+        };
+        for _ in 0..2 {
+            d.extend_from_slice(&size);
+            d.extend_from_slice(&[0u8; 8]);
+            d.extend_from_slice(&size);
+        }
+        let err = parse_dcd(&d).err().unwrap();
+        assert!(
+            err.contains("Y-coord record size 8 != expected 12"),
+            "{err}"
+        );
     }
 
     /// A little-endian CHARMM DCD whose NATOM block holds `natom`, followed by

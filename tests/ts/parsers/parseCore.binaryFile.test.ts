@@ -67,6 +67,86 @@ function dcdWithCells(nAtoms: number, nFrames: number, titleBytes = 80): Uint8Ar
   return Uint8Array.from(parts);
 }
 
+/**
+ * A CDF-1 AMBER NetCDF of `nFrames` frames of `nAtoms` atoms with `time`,
+ * `coordinates`, `velocities` (with AMBER's `scale_factor` 20.455) and `forces`
+ * record variables. Frame f's coordinate k is `f*100 + k`, its stored velocity
+ * `f + k/10`, its force `-(f + k)`.
+ */
+function netcdfWithVectors(nAtoms: number, nFrames: number): Uint8Array {
+  const out: number[] = [];
+  const u32 = (v: number) => {
+    const b = new Uint8Array(4);
+    new DataView(b.buffer).setUint32(0, v);
+    out.push(...b);
+  };
+  const f32 = (v: number) => {
+    const b = new Uint8Array(4);
+    new DataView(b.buffer).setFloat32(0, v);
+    out.push(...b);
+  };
+  const name = (s: string) => {
+    u32(s.length);
+    out.push(...new TextEncoder().encode(s));
+    while (out.length % 4 !== 0) out.push(0);
+  };
+  const vsize = nAtoms * 12;
+  const header = (begin: number) => {
+    out.length = 0;
+    out.push(...new TextEncoder().encode("CDF\x01"));
+    u32(nFrames);
+    u32(10); // NC_DIMENSION
+    u32(3);
+    for (const [dim, size] of [
+      ["frame", 0],
+      ["atom", nAtoms],
+      ["spatial", 3],
+    ] as const) {
+      name(dim);
+      u32(size);
+    }
+    u32(0); // no global attributes
+    u32(0);
+    u32(11); // NC_VARIABLE
+    u32(4);
+    let at = begin;
+    for (const [v, dims, size] of [
+      ["time", [0], 4],
+      ["coordinates", [0, 1, 2], vsize],
+      ["velocities", [0, 1, 2], vsize],
+      ["forces", [0, 1, 2], vsize],
+    ] as const) {
+      name(v);
+      u32(dims.length);
+      for (const d of dims) u32(d);
+      if (v === "velocities") {
+        u32(12); // NC_ATTRIBUTE
+        u32(1);
+        name("scale_factor");
+        u32(5); // NC_FLOAT
+        u32(1);
+        f32(20.455);
+      } else {
+        u32(0);
+        u32(0);
+      }
+      u32(5); // NC_FLOAT
+      u32(size);
+      u32(at);
+      at += size;
+    }
+    return out.length;
+  };
+  header(header(0));
+  for (let f = 0; f < nFrames; f++) {
+    f32(f);
+    for (let k = 0; k < nAtoms * 3; k++) f32(f * 100 + k);
+    for (let k = 0; k < nAtoms * 3; k++) f32(f + k / 10);
+    for (let k = 0; k < nAtoms * 3; k++) f32(-(f + k));
+  }
+  return Uint8Array.from(out);
+}
+
 beforeAll(async () => {
   await ensureInit(
     new WebAssembly.Module(readFileSync(join(ROOT, "crates/megane-wasm/pkg/megane_wasm_bg.wasm"))),
@@ -123,6 +203,27 @@ describe("indexBinaryTrajectoryFileCore", () => {
       expect(got.positions).toEqual(eager.frames[f].positions);
       expect(got.box?.[0]).toBeCloseTo(10 + f);
       expect(got.box).toEqual(eager.frames[f].box);
+    }
+    decoder.free();
+  });
+
+  it("streams NetCDF velocities and forces with each frame, as the eager parse has them", async () => {
+    const bytes = netcdfWithVectors(2, 3);
+    const eager = parseTrajectoryCore({ kind: "netcdf", bytes, expectedNAtoms: 2 });
+    expect(eager.vectorChannels.map((c) => c.name)).toEqual(["velocity", "force"]);
+    const [velocity, force] = eager.vectorChannels;
+    // Stored velocities times the file's scale_factor (Å/ps).
+    expect(velocity.frames[1].vectors[0]).toBeCloseTo(1 * 20.455, 3);
+    expect(Array.from(force.frames[2].vectors)).toEqual([-2, -3, -4, -5, -6, -7]);
+    const { decoder, index } = await indexBinaryTrajectoryFileCore(new Blob([bytes]), "netcdf", 2);
+    expect(index.vectorChannelNames).toEqual(["velocity", "force"]);
+    for (let f = 0; f < 3; f++) {
+      const got = await decoder.decodeFrame(f);
+      expect(got.positions).toEqual(eager.frames[f].positions);
+      expect(Array.from(got.vectors)).toEqual([
+        ...velocity.frames[f].vectors,
+        ...force.frames[f].vectors,
+      ]);
     }
     decoder.free();
   });

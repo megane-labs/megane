@@ -32,10 +32,20 @@ pub struct RealTopFileSystem {
 impl TopFileSystem for RealTopFileSystem {
     fn read(&self, path: &str) -> Option<String> {
         let in_base = std::path::Path::new(&self.base_dir).join(path);
-        std::fs::read_to_string(&in_base)
-            .or_else(|_| std::fs::read_to_string(path))
+        read_text_lossy(&in_base)
+            .or_else(|_| read_text_lossy(std::path::Path::new(path)))
             .ok()
     }
+}
+
+/// A text file decoded as the browser hosts decode it (`File.text()`): UTF-8
+/// with a leading byte-order mark dropped and invalid bytes replaced, so a
+/// Latin-1 comment neither fails the topology nor hides an `#include`.
+#[cfg(not(target_arch = "wasm32"))]
+fn read_text_lossy(path: &std::path::Path) -> std::io::Result<String> {
+    let bytes = std::fs::read(path)?;
+    let bytes = bytes.strip_prefix(b"\xEF\xBB\xBF").unwrap_or(&bytes);
+    Ok(String::from_utf8_lossy(bytes).into_owned())
 }
 
 /// A [`TopFileSystem`] backed by an in-memory map of path → content.
@@ -386,7 +396,9 @@ fn parse_top_bonds_grouped(text: &str, n_atoms: usize) -> Option<Vec<(u32, u32)>
                     Some(v) => v,
                     None => continue,
                 };
-                if ow == 0 {
+                // Index 0 has no OW; an OW in the top two u32 indices has no
+                // hydrogens that `ow + 2` could name without overflowing.
+                if ow == 0 || ow > u32::MAX - 2 {
                     continue;
                 }
                 current_max_atom_index = current_max_atom_index.max(ow + 2);
@@ -432,21 +444,30 @@ fn parse_top_bonds_grouped(text: &str, n_atoms: usize) -> Option<Vec<(u32, u32)>
     };
 
     let mut bonds = Vec::new();
-    let mut offset: u32 = 0;
+    // Global index of the next copy's first atom.
+    let mut offset: usize = 0;
     for (name, count) in order {
         let Some(moltype) = moltypes.get(&name) else {
             // Unresolvable molecule type (e.g. missing #include) — stop here
             // rather than guess its atom count and miscompute later offsets.
             break;
         };
-        for _ in 0..count {
+        // A copy that starts at or past the structure's last atom has no bond
+        // inside it, so only the copies starting below `n_atoms` are walked: a
+        // huge `[ molecules ]` count neither loops for ages nor overflows the
+        // offset. A type with no atoms has no bonds and takes no indices.
+        let copies = match moltype.n_atoms {
+            0 => 0,
+            size => count.min(n_atoms.saturating_sub(offset).div_ceil(size)),
+        };
+        for _ in 0..copies {
             for &(a, b) in &moltype.bonds {
-                let (ga, gb) = (offset + a, offset + b);
-                if (gb as usize) < n_atoms {
-                    bonds.push((ga, gb));
+                let gb = offset + b as usize;
+                if gb < n_atoms {
+                    bonds.push(((offset + a as usize) as u32, gb as u32));
                 }
             }
-            offset += moltype.n_atoms as u32;
+            offset += moltype.n_atoms;
         }
     }
 
@@ -509,7 +530,9 @@ fn parse_top_bonds_flat(text: &str, n_atoms: usize) -> Vec<(u32, u32)> {
                 Some(v) => v,
                 None => continue,
             };
-            if ow == 0 {
+            // As in the grouped reader: no OW at 0, and none whose hydrogen
+            // index `ow + 1` would overflow.
+            if ow == 0 || ow == u32::MAX {
                 continue;
             }
             push(ow - 1, ow, &mut bonds);
@@ -605,7 +628,7 @@ pub fn parse_top_bonds_from_path(path: &str, n_atoms: usize) -> Result<Vec<(u32,
         .map(|p| p.to_string_lossy().to_string())
         .unwrap_or_else(|| ".".to_string());
 
-    let text = std::fs::read_to_string(path).map_err(|e| format!("Cannot read {path}: {e}"))?;
+    let text = read_text_lossy(top_path).map_err(|e| format!("Cannot read {path}: {e}"))?;
 
     let fs = RealTopFileSystem { base_dir };
     parse_top_bonds_with_fs(&text, &fs, n_atoms)
@@ -1053,6 +1076,39 @@ SOL  2
         assert!(!bonds.is_empty());
     }
 
+    /// A `[ molecules ]` count is a claim about the system, not a loop bound:
+    /// copies that start past the structure's last atom contribute no bonds,
+    /// so 1.5·10^9 waters over a 9-atom structure yield the three waters'
+    /// bonds instead of looping until the u32 atom offset overflows.
+    #[test]
+    fn a_huge_molecule_count_stops_at_the_structure_atoms() {
+        let text = "[ moleculetype ]\nSOL 2\n[ atoms ]\n1 OW 1 SOL OW 1 0 16\n\
+                    2 HW 1 SOL HW1 1 0 1\n3 HW 1 SOL HW2 1 0 1\n[ bonds ]\n1 2\n1 3\n\
+                    [ moleculetype ]\nEMPTY 1\n\
+                    [ molecules ]\nEMPTY 4000000000\nSOL 1500000000\n";
+        assert_eq!(
+            parse_top_bonds(text, 9),
+            vec![(0, 1), (0, 2), (3, 4), (3, 5), (6, 7), (6, 8)]
+        );
+        assert!(parse_top_bonds(text, 0).is_empty());
+    }
+
+    /// A settle on the last representable atom index has no hydrogens to
+    /// bond; it is skipped instead of overflowing `ow + 2`.
+    #[test]
+    fn a_settle_at_the_top_of_the_index_range_is_skipped() {
+        let text = format!(
+            "[ moleculetype ]\nSOL 2\n[ atoms ]\n1 OW 1 SOL OW 1 0 16\n\
+             2 HW 1 SOL HW1 1 0 1\n3 HW 1 SOL HW2 1 0 1\n\
+             [ settles ]\n1 1 0.1 0.16\n{} 1 0.1 0.16\n[ molecules ]\nSOL 1\n",
+            u32::MAX
+        );
+        assert_eq!(parse_top_bonds(&text, 3), vec![(0, 1), (0, 2)]);
+        // The flat reader (no `[ moleculetype ]`) skips it the same way.
+        let flat = format!("[ settles ]\n1 1 0.1 0.16\n{} 1 0.1 0.16\n", u32::MAX);
+        assert_eq!(parse_top_bonds(&flat, 3), vec![(0, 1), (0, 2)]);
+    }
+
     // ── Preprocessor conditionals ─────────────────────────────────────────────
 
     /// CHARMM36 `tip3p.itp`: `[ atoms ]` is listed twice under
@@ -1243,5 +1299,35 @@ W 2
     fn test_from_path_missing_file_error() {
         let result = parse_top_bonds_from_path("/nonexistent/path.top", 10);
         assert!(result.is_err());
+    }
+
+    /// A Latin-1 byte in a comment (`; Å` written as 0xC5) and a UTF-8 BOM are
+    /// read the way the browser's `File.text()` reads them, in the topology and
+    /// in an included file, instead of failing it or dropping the include.
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn test_from_path_reads_non_utf8_bytes_like_the_browser() {
+        use std::fs;
+        use tempfile::tempdir;
+
+        let dir = tempdir().unwrap();
+        fs::write(
+            dir.path().join("mol.itp"),
+            b"\xEF\xBB\xBF; distances in \xC5\n[ bonds ]\n1 2 1\n2 3 1\n",
+        )
+        .unwrap();
+        let top_path = dir.path().join("system.top");
+        fs::write(
+            &top_path,
+            b"\xEF\xBB\xBF; made by caf\xE9\n#include \"mol.itp\"\n",
+        )
+        .unwrap();
+
+        let bonds = parse_top_bonds_from_path(top_path.to_str().unwrap(), 10).unwrap();
+        assert_eq!(bonds, vec![(0, 1), (1, 2)]);
+        assert_eq!(
+            read_text_lossy(&dir.path().join("mol.itp")).unwrap(),
+            "; distances in \u{FFFD}\n[ bonds ]\n1 2 1\n2 3 1\n"
+        );
     }
 }

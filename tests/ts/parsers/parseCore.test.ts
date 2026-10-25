@@ -276,6 +276,21 @@ describe("parseWithFn heterogeneous", () => {
     // Cell still present.
     expect(out.frames[0].box!.length).toBe(9);
   });
+
+  it("gives bondless frames an empty bond list, not frame 0's bonds", () => {
+    // Topology varies (offsets present) but no extra frame has a bond, so the
+    // flat bond array is empty. Each frame must carry zero bonds; leaving
+    // `bonds` unset made the renderer fall back to frame 0's bonds.
+    const { result } = makeHeteroResult();
+    result.frame_bond_offsets = () => Uint32Array.from([0, 0, 0]);
+    result.frame_bonds = () => new Uint32Array();
+    const out = parseWithFn(() => result as never, "");
+    for (const frame of out.frames) {
+      expect(frame.bonds).toBeDefined();
+      expect(frame.bonds!.length).toBe(0);
+      expect(frame.nBonds).toBe(0);
+    }
+  });
 });
 
 function makeXtcResult(nAtoms: number, nFrames: number) {

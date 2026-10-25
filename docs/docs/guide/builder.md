@@ -138,7 +138,7 @@ always adds and removes H to keep valences filled, even on a skeleton, and
 
 The Details panel shows **only the settings the current tool uses**: the
 element (one-click buttons for the common ones; **Periodic table** opens a
-table of every element up to U beside the panel — cells tinted by family,
+table of every element (H to Og) beside the panel — cells tinted by family,
 and pointing at one shows its name, atomic number, mass, family and the
 colour the view draws it in; or any atomic number in the *Z* field) for
 *Add atom* and *Element*, the bond order (single, double, triple, aromatic)

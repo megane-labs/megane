@@ -142,12 +142,14 @@ const { wasmMock } = vi.hoisted(() => {
       free() {}
     },
     // Fixed-layout binary trajectory: 3 atoms, 2 frames of 8 bytes after a
-    // 16-byte header, each with a cell of edge 10 + frame and time 2 × frame.
+    // 16-byte header, each with a cell of edge 10 + frame, time 2 × frame and
+    // a velocity channel of -frame.
     BinaryFrameLayout: class {
       n_atoms = 3;
       n_frames = 2;
       timestep_ps = NaN;
       has_cell = true;
+      vector_channel_names = "velocity";
       frame_len = 8;
       frame_start(i: number) {
         return 16 + i * 8;
@@ -157,6 +159,7 @@ const { wasmMock } = vi.hoisted(() => {
           positions: () => new Float32Array(9).fill(i),
           cell: () => new Float32Array([10 + i, 0, 0, 0, 10 + i, 0, 0, 0, 10 + i]),
           time: 2 * i,
+          vectors: () => new Float32Array(9).fill(-i),
           free: () => {},
         };
       }
@@ -276,6 +279,7 @@ interface WorkerResponse {
   op: string;
   result?: unknown;
   error?: string;
+  fatal?: boolean;
   wasmBytes?: number;
 }
 
@@ -386,6 +390,51 @@ describe("parse.worker onmessage", () => {
     });
     expect(posts[0].ok).toBe(true);
     expect(posts[0].op).toBe("trajectory");
+  });
+
+  it("marks an ordinary parse error as not fatal", async () => {
+    const { handler, posts } = await loadWorker();
+    await handler({
+      data: {
+        id: 31,
+        op: "trajectory",
+        wasm: undefined,
+        kind: "xtc",
+        bytes: new Uint8Array([1]).buffer,
+        expectedNAtoms: 999,
+      },
+    });
+    expect(posts[0]).toMatchObject({ id: 31, ok: false });
+    expect(posts[0].fatal).toBeUndefined();
+  });
+
+  it("marks a WASM module that will not start as fatal", async () => {
+    const start = wasmMock.default;
+    wasmMock.default = async () => {
+      throw new Error("could not fetch the module");
+    };
+    try {
+      const { handler, posts } = await loadWorker();
+      await handler({ data: { id: 32, op: "structure", wasm: undefined, ext: ".pdb", text: "" } });
+      expect(posts[0]).toMatchObject({ id: 32, ok: false, fatal: true });
+      expect(posts[0].error).toMatch(/could not fetch the module/);
+    } finally {
+      wasmMock.default = start;
+    }
+  });
+
+  it("marks a trap inside the WASM module as fatal", async () => {
+    const parse = wasmMock.parse_pdb;
+    wasmMock.parse_pdb = () => {
+      throw new WebAssembly.RuntimeError("unreachable");
+    };
+    try {
+      const { handler, posts } = await loadWorker();
+      await handler({ data: { id: 33, op: "structure", wasm: undefined, ext: ".pdb", text: "X" } });
+      expect(posts[0]).toMatchObject({ id: 33, ok: false, fatal: true });
+    } finally {
+      wasmMock.parse_pdb = parse;
+    }
   });
 
   it("posts an error response when parsing throws", async () => {
@@ -609,16 +658,30 @@ describe("parse.worker onmessage", () => {
       },
     });
     expect(posts[0].error).toBeUndefined();
-    const index = posts[0].result as { nFrames: number; timestepPs: number; box: Float32Array };
+    const index = posts[0].result as {
+      nFrames: number;
+      timestepPs: number;
+      box: Float32Array;
+      vectorChannelNames: string[];
+    };
     expect(index.nFrames).toBe(2);
     expect(index.timestepPs).toBe(2);
     expect(index.box[0]).toBe(10);
+    expect(index.vectorChannelNames).toEqual(["velocity"]);
     expect(reads[0]).toEqual([0, 32]); // the head (the whole small file)
 
     await handler({ data: { id: 61, op: "decodeFrame", trajectoryId: 600, frame: 1 } });
-    const frame = posts[1].result as { positions: Float32Array; box?: Float32Array };
+    const frame = posts[1].result as {
+      positions: Float32Array;
+      box?: Float32Array;
+      vectors: Float32Array;
+      vectorChannelCount: number;
+    };
     expect(frame.positions[0]).toBe(1);
     expect(frame.box?.[0]).toBe(11);
+    // The frame's velocities ride along, as a dump's vectors do.
+    expect(frame.vectors[0]).toBe(-1);
+    expect(frame.vectorChannelCount).toBe(1);
   });
 
   it("fails an XTC index scan that stops making progress", async () => {

@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 
 from megane import megane_parser
-from megane.parsers.common import Structure, structure_from_result
+from megane.parsers.common import Structure, read_text, structure_from_result
 
 __all__ = ["load_mol2"]
 
@@ -22,8 +22,7 @@ def load_mol2(path: str) -> Structure:
         Parsed Structure with positions in Angstroms.
     """
     logger.debug("Loading MOL2 file: %s", path)
-    with open(path) as f:
-        text = f.read()
+    text = read_text(path)
 
     result = megane_parser.parse_mol2(text)
     logger.info("Loaded MOL2: %d atoms, %d bonds", result.n_atoms, len(result.bonds))

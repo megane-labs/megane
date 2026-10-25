@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 
 from megane import megane_parser
-from megane.parsers.common import Structure, structure_from_result
+from megane.parsers.common import Structure, read_text, structure_from_result
 
 __all__ = ["load_mol", "load_sdf"]
 
@@ -27,8 +27,7 @@ def load_mol(path: str) -> Structure:
         Parsed Structure with positions in Angstroms.
     """
     logger.debug("Loading MOL file: %s", path)
-    with open(path) as f:
-        text = f.read()
+    text = read_text(path)
 
     structure = _load_mol_text(text)
     logger.info("Loaded MOL: %d atoms, %d bonds", structure.n_atoms, len(structure.bonds))
@@ -48,8 +47,7 @@ def load_sdf(path: str) -> Structure:
         Parsed Structure with positions in Angstroms.
     """
     logger.debug("Loading SDF file: %s", path)
-    with open(path) as f:
-        text = f.read()
+    text = read_text(path)
 
     structure = _load_mol_text(text)
     logger.info("Loaded SDF: %d atoms, %d bonds", structure.n_atoms, len(structure.bonds))
