@@ -4,10 +4,12 @@ import type {
   BondData,
   AddBondParams,
   PeriodicBondTopologyData,
+  PeriodicImageMap,
 } from "../types";
 import { inferBondsVdwJS, DEFAULT_VDW_BOND_FACTOR } from "../../parsers/inferBondsJS";
 import { DEFAULT_RADIUS, VDW_RADII } from "../../constants";
 import { invert3x3 } from "./mathUtils";
+import { positionsWithPeriodicImages } from "../../logic/periodicImages";
 import { collectDisplaySites, displaySiteKey, type DisplaySite } from "./displaySites";
 import {
   minimumImageTargetShift,
@@ -26,6 +28,8 @@ export interface PbcBondResult {
   positions: Float32Array | null;
   elements: Uint8Array | null;
   nAtoms: number;
+  /** Source atom + lattice shift of each appended ghost atom (see BondData.imageMap). */
+  imageMap?: PeriodicImageMap | null;
   /** Source atom of each appended ghost / image atom (see `BondData.ghostSourceIndices`). */
   ghostSourceIndices?: Uint32Array | null;
 }
@@ -131,9 +135,9 @@ function renderPeriodicTopology(
 
   const bonds: number[] = [];
   const orders: number[] = [];
-  const ghostPositions: number[] = [];
-  const ghostElements: number[] = [];
   const ghostSources: number[] = [];
+  const ghostShifts: number[] = [];
+  const ghostElements: number[] = [];
   let ghostIndex = snapshot.nAtoms;
   for (let bond = 0; bond < topology.bondIndices.length / 2; bond++) {
     const source = topology.bondIndices[bond * 2];
@@ -147,28 +151,22 @@ function renderPeriodicTopology(
       continue;
     }
 
-    ghostPositions.push(
-      snapshot.positions[target * 3] + a * box[0] + b * box[3] + c * box[6],
-      snapshot.positions[target * 3 + 1] + a * box[1] + b * box[4] + c * box[7],
-      snapshot.positions[target * 3 + 2] + a * box[2] + b * box[5] + c * box[8],
-    );
-    ghostElements.push(snapshot.elements[target]);
+    // The target's image next to the source…
     ghostSources.push(target);
+    ghostShifts.push(a, b, c);
+    ghostElements.push(snapshot.elements[target]);
     bonds.push(source, ghostIndex++);
     if (topology.bondOrders) orders.push(topology.bondOrders[bond]);
 
-    ghostPositions.push(
-      snapshot.positions[source * 3] - a * box[0] - b * box[3] - c * box[6],
-      snapshot.positions[source * 3 + 1] - a * box[1] - b * box[4] - c * box[7],
-      snapshot.positions[source * 3 + 2] - a * box[2] - b * box[5] - c * box[8],
-    );
-    ghostElements.push(snapshot.elements[source]);
+    // …and the source's image next to the target.
     ghostSources.push(source);
+    ghostShifts.push(-a, -b, -c);
+    ghostElements.push(snapshot.elements[source]);
     bonds.push(target, ghostIndex++);
     if (topology.bondOrders) orders.push(topology.bondOrders[bond]);
   }
 
-  if (ghostPositions.length === 0) {
+  if (ghostSources.length === 0) {
     return {
       bondIndices: new Uint32Array(bonds),
       bondOrders: topology.bondOrders ? new Uint8Array(orders) : null,
@@ -179,9 +177,11 @@ function renderPeriodicTopology(
     };
   }
 
-  const positions = new Float32Array(snapshot.positions.length + ghostPositions.length);
-  positions.set(snapshot.positions);
-  positions.set(ghostPositions, snapshot.positions.length);
+  const imageMap: PeriodicImageMap = {
+    sourceIndices: new Uint32Array(ghostSources),
+    latticeShifts: new Int32Array(ghostShifts),
+  };
+  const positions = positionsWithPeriodicImages(snapshot.positions, snapshot.nAtoms, imageMap, box);
   const elements = new Uint8Array(snapshot.elements.length + ghostElements.length);
   elements.set(snapshot.elements);
   elements.set(ghostElements, snapshot.elements.length);
@@ -192,7 +192,8 @@ function renderPeriodicTopology(
     positions,
     elements,
     nAtoms: elements.length,
-    ghostSourceIndices: new Uint32Array(ghostSources),
+    imageMap,
+    ghostSourceIndices: imageMap.sourceIndices,
   };
 }
 
@@ -258,6 +259,10 @@ export function expandPeriodicTopologyForDrawingBoundary(
     positions,
     elements,
     nAtoms: elements.length,
+    imageMap: {
+      sourceIndices: boundary.images.sourceIndices,
+      latticeShifts: boundary.images.latticeShifts,
+    },
     ghostSourceIndices: boundary.images.sourceIndices,
   };
 }
@@ -476,6 +481,7 @@ export function bondDataFromSnapshotBonds(particle: ParticleData): BondData | nu
     positions: rendered.positions,
     elements: rendered.elements,
     nAtoms: rendered.nAtoms,
+    imageMap: rendered.imageMap ?? null,
     atomElements: snapshot.elements,
     ghostSourceIndices: rendered.ghostSourceIndices ?? null,
     selectedBondIndices: null,
@@ -530,6 +536,7 @@ export function executeAddBond(
     positions: rendered.positions,
     elements: rendered.elements,
     nAtoms: rendered.nAtoms,
+    imageMap: rendered.imageMap ?? null,
     atomElements: snapshot.elements,
     ghostSourceIndices: rendered.ghostSourceIndices ?? null,
     selectedBondIndices: null,

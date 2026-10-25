@@ -438,7 +438,9 @@ export class ImpostorBondMesh {
 
   private copyPositionsToTexData(positions: Float32Array): void {
     const data = this.positionTexData;
-    const n = this.nAtoms;
+    // A caller with only the real atoms' positions leaves the texels of the
+    // ghost endpoints past them as they were, rather than writing NaN there.
+    const n = Math.min(this.nAtoms, Math.floor(positions.length / 3));
     for (let i = 0; i < n; i++) {
       const i3 = i * 3;
       const i4 = i * 4;
