@@ -86,21 +86,26 @@ export async function loadTemplateStructureInto(
 }
 
 /**
- * The bundled fixtures the multi-file templates need, as the host's bundler
- * resolves them: small structures inline as text, the DFT grids as URLs
- * (~460 kB of text each belongs in an emitted asset, not the entry bundle).
+ * The bundled fixtures the multi-file templates need, as URLs the host's
+ * bundler emits them at: they are fetched when the template is applied, so
+ * none of them weighs on the entry bundle every visitor downloads.
  */
 export interface TemplateAssetSources {
-  /** Raw text of `caffeine_b3lyp.sdf`, the frame the two DFT grids share. */
-  caffeineB3lypSdf: string;
+  /** URL of `caffeine_b3lyp.sdf`, the frame the two DFT grids share. */
+  caffeineB3lypSdfUrl: string;
   /** URL of `caffeine_b3lyp_density.cube`. */
   caffeineDensityCubeUrl: string;
   /** URL of `caffeine_b3lyp_esp.cube`. */
   caffeineEspCubeUrl: string;
-  /** Raw text of `1ubq.pdb`. */
-  ubiquitinPdb: string;
-  /** Raw text of `1ubq_cg.pdb`. */
-  ubiquitinCgPdb: string;
+  /** URL of `1ubq.pdb`. */
+  ubiquitinPdbUrl: string;
+  /** URL of `1ubq_cg.pdb`. */
+  ubiquitinCgPdbUrl: string;
+}
+
+/** The text at `url` (a bundled fixture). */
+export async function fetchText(url: string): Promise<string> {
+  return (await fetch(url)).text();
 }
 
 /**
@@ -121,7 +126,7 @@ export async function loadMultiFileTemplate(
   if (templateId === "esp") {
     // The density is contoured; the potential only colors the contour, so it
     // goes into the second loader, the one wired to `colorVolumetric`.
-    await loadPrimary(sources.caffeineB3lypSdf, "caffeine_b3lyp.sdf");
+    await loadPrimary(await fetchText(sources.caffeineB3lypSdfUrl), "caffeine_b3lyp.sdf");
     await loadTemplateVolumetric(
       getState,
       sources.caffeineDensityCubeUrl,
@@ -140,8 +145,12 @@ export async function loadMultiFileTemplate(
     // `loadPrimary` fills the first load_structure node (the all-atom one);
     // the coarse-grained beads are a second, independent structure, so they go
     // straight into their own loader's snapshot slot.
-    await loadPrimary(sources.ubiquitinPdb, "1ubq.pdb");
-    await loadTemplateStructureInto(getState, "loader-cg", sources.ubiquitinCgPdb, "1ubq_cg.pdb");
+    const [allAtom, beads] = await Promise.all([
+      fetchText(sources.ubiquitinPdbUrl),
+      fetchText(sources.ubiquitinCgPdbUrl),
+    ]);
+    await loadPrimary(allAtom, "1ubq.pdb");
+    await loadTemplateStructureInto(getState, "loader-cg", beads, "1ubq_cg.pdb");
     return true;
   }
   return false;

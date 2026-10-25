@@ -221,11 +221,16 @@ describe("loadMultiFileTemplate", () => {
   const cubeText = readFileSync(CUBE_PATH, "utf8");
 
   const sources: TemplateAssetSources = {
-    caffeineB3lypSdf: "SDF TEXT",
+    caffeineB3lypSdfUrl: "/caffeine_b3lyp.sdf",
     caffeineDensityCubeUrl: "/caffeine_b3lyp_density.cube",
     caffeineEspCubeUrl: "/caffeine_b3lyp_esp.cube",
-    ubiquitinPdb: "AA PDB TEXT",
-    ubiquitinCgPdb: "CG PDB TEXT",
+    ubiquitinPdbUrl: "/1ubq.pdb",
+    ubiquitinCgPdbUrl: "/1ubq_cg.pdb",
+  };
+  const texts: Record<string, string> = {
+    "/caffeine_b3lyp.sdf": "SDF TEXT",
+    "/1ubq.pdb": "AA PDB TEXT",
+    "/1ubq_cg.pdb": "CG PDB TEXT",
   };
 
   beforeEach(() => {
@@ -233,7 +238,10 @@ describe("loadMultiFileTemplate", () => {
     parseStructureTextMock.mockResolvedValue(makeParseResult(76));
     vi.stubGlobal(
       "fetch",
-      vi.fn(async () => ({ text: async () => cubeText }) as unknown as Response),
+      vi.fn(
+        async (url: string) =>
+          ({ text: async () => texts[url] ?? cubeText }) as unknown as Response,
+      ),
     );
   });
 

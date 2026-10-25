@@ -18,20 +18,20 @@ import { usePlaybackStore } from "./stores/usePlaybackStore";
 import { restorePipelineFromHash } from "./pipeline/shareLink";
 import { useTour } from "./tour/useTour";
 import { parseXTCFile } from "./parsers/xtc";
-import { loadMultiFileTemplate } from "./pipeline/templateAssets";
+import { fetchText, loadMultiFileTemplate } from "./pipeline/templateAssets";
 import type { TemplateAssetSources } from "./pipeline/templateAssets";
 import { MemoryFrameProvider } from "./pipeline/types";
 import defaultPDB from "../tests/fixtures/caffeine_water.pdb?raw";
 import defaultXtcUrl from "../tests/fixtures/caffeine_water_vibration.xtc?url";
-import perovskiteXYZ from "../tests/fixtures/perovskite_srtio3_3x3x3.xyz?raw";
-import auNanoparticleXYZ from "../tests/fixtures/au_nanoparticle.xyz?raw";
-import ubiquitinPDB from "../tests/fixtures/1ubq.pdb?raw";
-import ubiquitinCgPDB from "../tests/fixtures/1ubq_cg.pdb?raw";
-import glycineCIF from "../tests/fixtures/glycine_csd.cif?raw";
-import caffeineB3lypSDF from "../tests/fixtures/caffeine_b3lyp.sdf?raw";
-// The larger template files are fetched rather than inlined: a 170 kB PDB entry
-// and two ~460 kB DFT grids belong in emitted assets, not in the entry bundle
-// every visitor downloads.
+// Only the startup demo is inlined; every template's files are fetched when
+// the template is applied, so they stay out of the entry bundle every visitor
+// downloads.
+import perovskiteXyzUrl from "../tests/fixtures/perovskite_srtio3_3x3x3.xyz?url";
+import auNanoparticleXyzUrl from "../tests/fixtures/au_nanoparticle.xyz?url";
+import ubiquitinPdbUrl from "../tests/fixtures/1ubq.pdb?url";
+import ubiquitinCgPdbUrl from "../tests/fixtures/1ubq_cg.pdb?url";
+import glycineCifUrl from "../tests/fixtures/glycine_csd.cif?url";
+import caffeineB3lypSdfUrl from "../tests/fixtures/caffeine_b3lyp.sdf?url";
 import proteasePdbUrl from "../tests/fixtures/1hsg.pdb?url";
 import caffeineDensityCubeUrl from "../tests/fixtures/caffeine_b3lyp_density.cube?url";
 import caffeineEspCubeUrl from "../tests/fixtures/caffeine_b3lyp_esp.cube?url";
@@ -48,11 +48,11 @@ export type { DataMode };
 
 /** Bundled fixtures for the templates that load more than one file. */
 const TEMPLATE_ASSETS: TemplateAssetSources = {
-  caffeineB3lypSdf: caffeineB3lypSDF,
+  caffeineB3lypSdfUrl,
   caffeineDensityCubeUrl,
   caffeineEspCubeUrl,
-  ubiquitinPdb: ubiquitinPDB,
-  ubiquitinCgPdb: ubiquitinCgPDB,
+  ubiquitinPdbUrl,
+  ubiquitinCgPdbUrl,
 };
 
 function App() {
@@ -98,14 +98,13 @@ function App() {
         const xtcFile = new File([blob], "caffeine_water_vibration.xtc");
         await ds.local.loadXtc(xtcFile);
       } else if (pendingTemplateId === "solid") {
-        await ds.local.loadText(perovskiteXYZ, "perovskite_srtio3_3x3x3.xyz");
+        await ds.local.loadText(await fetchText(perovskiteXyzUrl), "perovskite_srtio3_3x3x3.xyz");
       } else if (pendingTemplateId === "molecular_crystal") {
-        await ds.local.loadText(glycineCIF, "glycine_csd.cif");
+        await ds.local.loadText(await fetchText(glycineCifUrl), "glycine_csd.cif");
       } else if (pendingTemplateId === "surface_mesh") {
-        await ds.local.loadText(auNanoparticleXYZ, "au_nanoparticle.xyz");
+        await ds.local.loadText(await fetchText(auNanoparticleXyzUrl), "au_nanoparticle.xyz");
       } else if (pendingTemplateId === "protein") {
-        const proteasePdb = await (await fetch(proteasePdbUrl)).text();
-        await ds.local.loadText(proteasePdb, "1hsg.pdb");
+        await ds.local.loadText(await fetchText(proteasePdbUrl), "1hsg.pdb");
       } else if (pendingTemplateId === "streaming") {
         // Load via ds.local so ds.snapshot updates → Viewport.loadSnapshot uses caffeine atoms
         const result = await ds.local.loadText(defaultPDB, "caffeine_water.pdb");
