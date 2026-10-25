@@ -156,6 +156,34 @@ describe("useMeganeLocal — two-phase lazy structure", () => {
     expect(parseFileMock).not.toHaveBeenCalled();
   });
 
+  it("offers a streamed .traj's vector channels, frame 0's from the index", async () => {
+    const f0 = makeFrame0(); // frame 0 from the file's first bytes: no vectors
+    prefixMock.mockResolvedValue(f0);
+    const momenta = Float32Array.from([1, 2, 3, 4, 5, 6, 7, 8, 9]);
+    const indexedFrame0 = {
+      ...makeFrame0(),
+      vectorChannels: [{ name: "momenta", frames: [{ frame: 0, vectors: momenta }] }],
+    };
+    indexMock.mockResolvedValue({
+      handle: {
+        trajectoryId: 12,
+        kind: "traj",
+        index: { nAtoms: 3, nFrames: 2, vectorChannelNames: ["momenta"] },
+      },
+      frame0: indexedFrame0,
+    });
+
+    const { result } = renderHook(() => useMeganeLocal());
+    await act(async () => {
+      await result.current.loadFile(new File(["dummy"], "md.traj"));
+    });
+    await flushBackground();
+
+    const channels = usePipelineStore.getState().embeddedVectorChannels;
+    expect(channels?.map((c) => c.name)).toEqual(["momenta"]);
+    expect(channels![0].frames).toEqual([{ frame: 0, vectors: momenta }]);
+  });
+
   it("falls back to a single full read when the prefix can't hold frame 0", async () => {
     const f0 = makeFrame0();
     prefixMock.mockResolvedValue(null); // frame 0 too big for the prefix

@@ -40,6 +40,11 @@ class Structure:
     box_origin: np.ndarray = field(default_factory=lambda: np.zeros(3, dtype=np.float32))
     # Crystallographic symmetry operations as `x,y,z`-style strings (CIF only).
     symmetry_ops: list[str] = field(default_factory=list)
+    # How many leading rows of ``bonds`` the file itself declares; the rest were
+    # inferred from distances by the parser (only for formats or files that
+    # carry no connectivity). ``None`` when unknown, in which case every bond
+    # counts as declared.
+    n_file_bonds: int | None = None
 
 
 def structure_from_result(result: Any) -> Structure:
@@ -58,6 +63,7 @@ def structure_from_result(result: Any) -> Structure:
         box=np.asarray(result.box_matrix, dtype=np.float32),
         box_origin=np.asarray(result.box_origin, dtype=np.float32),
         symmetry_ops=list(result.symmetry_ops),
+        n_file_bonds=int(result.n_file_bonds),
     )
 
 

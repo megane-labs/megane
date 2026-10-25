@@ -124,6 +124,9 @@ export function applyViewportState(
       );
       layer.setBondScale(bond.scale);
       if (bond.bondOpacityOverrides) {
+        // Per-bond values already hold the global opacity (the Modify node
+        // folds it in), and the shader multiplies the two: global 1.
+        layer.setBondOpacity(1);
         layer.setBondOpacityOverrides(bond.bondOpacityOverrides);
       } else {
         layer.clearBondOpacityOverrides();
@@ -382,16 +385,19 @@ function applyBondSettings(
   if (!prevBond || bond.scale !== prevBond.scale) {
     renderer.setBondScale(bond.scale);
   }
-  if (!prevBond || bond.bondOpacityOverrides !== prevBond?.bondOpacityOverrides) {
-    if (bond.bondOpacityOverrides) {
-      renderer.setBondOpacityOverrides(bond.bondOpacityOverrides);
-    } else {
-      renderer.clearBondOpacityOverrides();
-      if (!prevBond || bond.opacity !== prevBond.opacity) {
-        renderer.setBondOpacity(bond.opacity);
-      }
+  // Per-bond values already hold the stream's global opacity (the Modify node
+  // folds it in), and the shader multiplies the two, so the global one is 1
+  // while they are set. Whatever was applied before must not leak into it.
+  const overrides = bond.bondOpacityOverrides;
+  if (overrides) {
+    if (!prevBond || overrides !== prevBond.bondOpacityOverrides) {
+      renderer.setBondOpacity(1);
+      renderer.setBondOpacityOverrides(overrides);
     }
-  } else if (!prevBond || bond.opacity !== prevBond.opacity) {
+  } else if (!prevBond || prevBond.bondOpacityOverrides) {
+    renderer.clearBondOpacityOverrides();
+    renderer.setBondOpacity(bond.opacity);
+  } else if (bond.opacity !== prevBond.opacity) {
     renderer.setBondOpacity(bond.opacity);
   }
 }

@@ -333,6 +333,29 @@ fn extract_frame_vector(
         .filter(|v| v.len() == n_atoms * 3)
 }
 
+/// Whether frame `json` stores [`TRAJ_VECTOR_CHANNELS`] entry `k` as
+/// `n_atoms * 3` values inside `data`, checked without decoding an array
+/// that sits in the file (an inline list is read).
+fn frame_vector_in_view(
+    data: FileView<'_>,
+    json: &serde_json::Value,
+    k: usize,
+    n_atoms: usize,
+) -> bool {
+    let (_, parent, key) = TRAJ_VECTOR_CHANNELS[k];
+    let obj = match parent {
+        Some(p) => json.get(p),
+        None => Some(json),
+    };
+    match obj
+        .and_then(|o| o.get(format!("{key}.")))
+        .and_then(parse_ndarray_ref)
+    {
+        Some(array) => array.len() == n_atoms * 3 && array.bytes(data).is_some(),
+        None => extract_frame_vector(data, json, k, n_atoms, true).is_some(),
+    }
+}
+
 /// Extract atomic numbers from a frame's JSON metadata.
 fn extract_numbers(
     data: FileView<'_>,
@@ -848,6 +871,10 @@ pub struct TrajIndexBuilder {
     cells: Option<Vec<Option<[f32; 9]>>>,
     heterogeneous: bool,
     frame0: Option<ParsedStructure>,
+    /// How many frames (frame 0 included) store each [`TRAJ_VECTOR_CHANNELS`]
+    /// entry, and frame 0's values of the ones it stores.
+    vector_frames: [usize; TRAJ_VECTOR_CHANNELS.len()],
+    frame0_vectors: [Option<Vec<f32>>; TRAJ_VECTOR_CHANNELS.len()],
 }
 
 impl TrajIndexBuilder {
@@ -871,6 +898,8 @@ impl TrajIndexBuilder {
             cells: None,
             heterogeneous: false,
             frame0: None,
+            vector_frames: [0; TRAJ_VECTOR_CHANNELS.len()],
+            frame0_vectors: [None, None],
         })
     }
 
@@ -977,6 +1006,16 @@ impl TrajIndexBuilder {
         if n_coords != self.n_atoms * 3 {
             self.heterogeneous = true;
         }
+        for k in 0..TRAJ_VECTOR_CHANNELS.len() {
+            let stored = if item == 0 {
+                self.frame0_vectors[k] =
+                    extract_frame_vector(view, &json, k, n_coords / 3, frame_le);
+                self.frame0_vectors[k].is_some()
+            } else {
+                frame_vector_in_view(view, &json, k, n_coords / 3)
+            };
+            self.vector_frames[k] += usize::from(stored);
+        }
         self.ends.push(offset + 8 + json_len as u64);
         Ok(())
     }
@@ -999,9 +1038,42 @@ impl TrajIndexBuilder {
         Ok(inline.len())
     }
 
-    /// Frame 0's snapshot, once frame 0 is added (taken: a second call gets `None`).
+    /// Frame 0's snapshot, once frame 0 is added (taken: a second call gets
+    /// `None`). Once every frame is added it carries frame 0's values of the
+    /// [`vector_channel_names`](Self::vector_channel_names) channels.
     pub fn take_frame0(&mut self) -> Option<ParsedStructure> {
-        self.frame0.take()
+        let mut frame0 = self.frame0.take()?;
+        for k in self.streamed_vectors() {
+            if let Some(vectors) = self.frame0_vectors[k].take() {
+                frame0.vector_channels.push(VectorChannel {
+                    name: TRAJ_VECTOR_CHANNELS[k].0.to_string(),
+                    frames: vec![VectorFrame { frame: 0, vectors }],
+                });
+            }
+        }
+        Some(frame0)
+    }
+
+    /// The [`TRAJ_VECTOR_CHANNELS`] entries every frame stores, once every
+    /// frame is added.
+    fn streamed_vectors(&self) -> Vec<usize> {
+        if !self.is_complete() {
+            return Vec::new();
+        }
+        (0..TRAJ_VECTOR_CHANNELS.len())
+            .filter(|&k| self.vector_frames[k] == self.offsets.len())
+            .collect()
+    }
+
+    /// The per-atom vector channels (`momenta`, `force`) every frame stores,
+    /// which [`decode_vectors`](Self::decode_vectors) returns per frame, as
+    /// [`parse_traj`] makes them frame-synced channels. Empty until every
+    /// frame is added.
+    pub fn vector_channel_names(&self) -> Vec<&'static str> {
+        self.streamed_vectors()
+            .into_iter()
+            .map(|k| TRAJ_VECTOR_CHANNELS[k].0)
+            .collect()
     }
 
     /// Atoms in frame 0.
@@ -1014,9 +1086,12 @@ impl TrajIndexBuilder {
         self.offsets.len().saturating_sub(1)
     }
 
-    /// Whether a frame's atom count or elements differ from frame 0's.
+    /// Whether a frame's atom count or elements differ from frame 0's, or a
+    /// per-atom vector array (momenta, forces) is stored in only some frames:
+    /// [`parse_traj`] keeps frame 0's values of such an array with a warning.
     pub fn heterogeneous(&self) -> bool {
-        self.heterogeneous
+        let n_items = self.offsets.len();
+        self.heterogeneous || self.vector_frames.iter().any(|&n| n > 0 && n < n_items)
     }
 
     /// Whether the cell changes between frames, so each frame carries its own.
@@ -1038,6 +1113,29 @@ impl TrajIndexBuilder {
     /// Whether every frame has been added.
     pub fn is_complete(&self) -> bool {
         !self.offsets.is_empty() && self.ends.len() == self.offsets.len()
+    }
+
+    /// Decode extra frame `frame`'s vector channels from its bytes
+    /// ([`frame_range`](Self::frame_range)), concatenated in
+    /// [`vector_channel_names`](Self::vector_channel_names) order
+    /// (`n_atoms * 3` values each).
+    pub fn decode_vectors(&self, frame: usize, bytes: &[u8]) -> Result<Vec<f32>, String> {
+        let (start, _) = self.frame_range(frame).ok_or("frame index out of range")?;
+        let view = FileView {
+            data: bytes,
+            base: start,
+        };
+        let json = read_json_metadata(view, self.offsets[frame + 1], self.header.little_endian)?;
+        let frame_le = arrays_little_endian(&json);
+        let mut out = Vec::new();
+        for k in self.streamed_vectors() {
+            let vectors =
+                extract_frame_vector(view, &json, k, self.n_atoms, frame_le).ok_or_else(|| {
+                    format!("frame {} has no {}", frame + 1, TRAJ_VECTOR_CHANNELS[k].0)
+                })?;
+            out.extend_from_slice(&vectors);
+        }
+        Ok(out)
     }
 
     /// Decode extra frame `frame`'s positions from its bytes
@@ -1615,6 +1713,85 @@ mod tests {
             );
         }
         assert!(s.warnings.is_empty());
+    }
+
+    #[test]
+    fn the_frame_index_streams_the_vectors_every_frame_stores() {
+        let data = ulm_with_vectors(&[(true, true), (true, true), (true, true)]);
+        let eager = parse_traj(&data).unwrap();
+        let mut index = index_in_frames(&data).unwrap();
+        assert!(!index.heterogeneous());
+        assert_eq!(index.vector_channel_names(), ["momenta", "force"]);
+        // Frame 0's values ride on the frame-0 snapshot, the others decode
+        // per frame from the frame's own bytes, as the full parse reads them.
+        let frame0 = index.take_frame0().unwrap();
+        assert_eq!(frame0.vector_channels.len(), 2);
+        for (lazy, full) in frame0.vector_channels.iter().zip(&eager.vector_channels) {
+            assert_eq!(lazy.name, full.name);
+            assert_eq!(lazy.frames.len(), 1);
+            assert_eq!(lazy.frames[0].frame, 0);
+            assert_eq!(lazy.frames[0].vectors, full.frames[0].vectors);
+        }
+        for f in 0..index.n_frames() {
+            let (start, end) = index.frame_range(f).unwrap();
+            let got = index
+                .decode_vectors(f, &data[start as usize..end as usize])
+                .unwrap();
+            let want: Vec<f32> = eager
+                .vector_channels
+                .iter()
+                .flat_map(|c| c.frames[f + 1].vectors.clone())
+                .collect();
+            assert_eq!(got, want);
+        }
+        assert!(index.decode_vectors(index.n_frames(), &data).is_err());
+    }
+
+    #[test]
+    fn the_frame_index_leaves_vectors_some_frames_lack_to_the_full_parse() {
+        // Forces missing from frame 1: the full parse keeps frame 0's values
+        // with a warning, which the index cannot stream.
+        let index = index_in_frames(&ulm_with_vectors(&[(true, true), (true, false)])).unwrap();
+        assert!(index.heterogeneous());
+        // No arrays at all: nothing to stream, and the file stays uniform.
+        let data = ulm_with_vectors(&[(false, false), (false, false)]);
+        let mut index = index_in_frames(&data).unwrap();
+        assert!(!index.heterogeneous());
+        assert!(index.vector_channel_names().is_empty());
+        assert!(index.take_frame0().unwrap().vector_channels.is_empty());
+        let (start, end) = index.frame_range(0).unwrap();
+        assert_eq!(
+            index.decode_vectors(0, &data[start as usize..end as usize]),
+            Ok(vec![])
+        );
+        // An index still being built streams nothing yet.
+        let mut partial =
+            TrajIndexBuilder::new(&data[..ULM_HEADER_LEN], data.len() as u64).unwrap();
+        let (start, end) = partial.table_range();
+        partial
+            .set_table(&data[start as usize..end as usize])
+            .unwrap();
+        assert!(partial.vector_channel_names().is_empty());
+    }
+
+    #[test]
+    fn a_vector_array_counts_only_with_one_value_per_atom_coordinate_in_the_frame() {
+        let data = [0u8; 40];
+        let view = FileView::whole(&data);
+        // Inline lists are read; arrays in the file are only located.
+        let inline = serde_json::json!({ "momenta": [[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]] });
+        assert!(frame_vector_in_view(view, &inline, 0, 2));
+        assert!(!frame_vector_in_view(view, &inline, 0, 3));
+        let stored = serde_json::json!({
+            "calculator.": { "forces.": { "ndarray": [[2, 3], "float64", 0] } }
+        });
+        assert!(!frame_vector_in_view(view, &stored, 1, 2)); // 6 * 8 bytes past the 40
+        let small = serde_json::json!({
+            "calculator.": { "forces.": { "ndarray": [[2, 3], "float32", 0] } }
+        });
+        assert!(frame_vector_in_view(view, &small, 1, 2));
+        assert!(!frame_vector_in_view(view, &small, 0, 2)); // no momenta
+        assert!(!frame_vector_in_view(view, &inline, 1, 2)); // no calculator
     }
 
     #[test]

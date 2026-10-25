@@ -143,4 +143,28 @@ describe("executeModify — bond scale & opacity", () => {
     // The upstream array is not written to.
     expect(Array.from(upstream)).toEqual([expect.closeTo(0.2), 1.0]);
   });
+
+  // Regression: a selective modify seeded the other bonds with 1.0, so an
+  // upstream unselected modify's opacity vanished from them.
+  it("folds an upstream global opacity into the bonds outside its selection", () => {
+    const bond = makeBond({ opacity: 0.5, selectedBondIndices: new Uint32Array([1]) });
+    const out = executeModify(baseParams({ opacity: 0 }), inputs(bond));
+    expect(Array.from((out.get("out") as BondData).bondOpacityOverrides!)).toEqual([0.5, 0]);
+  });
+
+  it("sets every bond when unselected, replacing upstream per-bond opacity", () => {
+    const bond = makeBond({ bondOpacityOverrides: new Float32Array([0.2, 1.0]) });
+    const result = executeModify(baseParams({ opacity: 0.6 }), inputs(bond)).get("out") as BondData;
+    expect(result.opacity).toBe(0.6);
+    expect(result.bondOpacityOverrides).toBeNull();
+  });
+
+  it("leaves the opacity as it is upstream when unselected at opacity 1, as for atoms", () => {
+    const upstream = new Float32Array([0.2, 1.0]);
+    const bond = makeBond({ opacity: 0.4, bondOpacityOverrides: upstream });
+    const result = executeModify(baseParams({ scale: 2 }), inputs(bond)).get("out") as BondData;
+    expect(result.scale).toBe(2);
+    expect(result.opacity).toBe(0.4);
+    expect(result.bondOpacityOverrides).toBe(upstream);
+  });
 });

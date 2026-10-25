@@ -202,7 +202,7 @@ molecule_id == 0                       # Bonds within the first molecule
 
 The bond query selects which bonds a downstream **Modify** node applies opacity overrides to. This lets you selectively fade specific bonds without removing them from the scene.
 
-Bond filters compose like atom filters: a second bond-query Filter downstream of a first one narrows its selection (the bonds both queries match), and a Modify keeps the opacity that an earlier Modify gave to bonds outside its own selection.
+Bond filters compose like atom filters: a second bond-query Filter downstream of a first one narrows its selection (the bonds both queries match), and a Modify keeps the opacity that an earlier Modify gave to bonds outside its own selection — a whole-stream opacity included. A Modify with no bond selection sets the opacity of every bond; at opacity 1 it leaves the bond opacity as it was, the same as on an atom stream.
 
 ## Editor Examples
 

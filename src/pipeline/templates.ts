@@ -351,11 +351,8 @@ function createEspTemplate(): PipelineGraph {
  *    is otherwise the same grey carbon.
  *  - The CG beads take their bonds from the file's CONECT records
  *    (`bondSource: "structure"`), which join consecutive residues. The
- *    all-atom side gets no AddBond: 1UBQ is an X-ray entry with no CONECT for
- *    the protein, and opening a `.pdb` sets every AddBond reachable from that
- *    loader to `"structure"` (`syncAddBondSourceForLoader`), so a bond node
- *    here would only ever show "No bonds found". The ghost is what the user
- *    asked for anyway: the all-atom model, semi-transparent.
+ *    all-atom side gets no AddBond: the ghost is what the user asked for, the
+ *    all-atom model, semi-transparent.
  *
  * 1ubq.pdb's crystallographic cell is deliberately left unwired: it belongs to
  * the all-atom model only and its box would dwarf the comparison.

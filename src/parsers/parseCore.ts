@@ -38,6 +38,8 @@ export interface XTCParseResult {
   meta: TrajectoryMeta;
   /** Per-atom vector channels embedded in the file (e.g. LAMMPS dump vx/vy/vz). */
   vectorChannels: VectorChannel[];
+  /** Non-fatal parse warnings, e.g. a dropped incomplete last frame (empty when clean). */
+  warnings: string[];
 }
 
 /** Trajectory formats handled by the binary/text trajectory parsers. */
@@ -113,6 +115,8 @@ interface WasmXtcResult {
   frame_atom_offsets(): Uint32Array;
   frame_elements(): Uint8Array;
   frame_cells(): Float32Array;
+  /** Non-fatal parse warnings, newline-delimited (empty for a clean parse). */
+  warnings: string;
   free(): void;
 }
 
@@ -255,6 +259,10 @@ interface WasmTrajFileIndexer {
   frame_start(frame: number): number;
   frame_end(frame: number): number;
   decode(frame: number, bytes: Uint8Array): Float32Array;
+  /** Newline-joined vector channels every frame stores (momenta, force). */
+  readonly vector_channel_names: string;
+  /** A frame's vector channels, concatenated in `vector_channel_names` order. */
+  decode_vectors(frame: number, bytes: Uint8Array): Float32Array;
   free(): void;
 }
 
@@ -365,6 +373,12 @@ export interface StructureIndexResult {
    * discards the decoder and reparses the whole file eagerly.
    */
   heterogeneous: boolean;
+  /**
+   * Per-atom vector channels each decoded frame carries (a `.traj`'s momenta
+   * and forces), in the order its `vectors` concatenate them; frame 0's come
+   * with the frame-0 snapshot. Absent or empty without any.
+   */
+  vectorChannelNames?: string[];
 }
 
 /** Lightweight trajectory index (from `indexTrajectoryCore`) — no bulk coordinates. */
@@ -636,6 +650,18 @@ function getParserForExtension(ext: string): ParseFn {
 }
 
 /**
+ * Split a WASM result's newline-delimited warnings and log each one to the
+ * console, which is how parse warnings reach the user.
+ */
+function splitWarnings(text: string | undefined): string[] {
+  const warnings = text ? text.split("\n") : [];
+  for (const w of warnings) {
+    console.warn(`[megane parser] ${w}`);
+  }
+  return warnings;
+}
+
+/**
  * Convert a WASM structure parse result into `Snapshot` + `Frame[]`.
  * Exported for unit testing with a hand-built mock result (no WASM required).
  */
@@ -684,10 +710,7 @@ export function parseWithFn(parseFn: ParseFn, text: string): StructureParseResul
 
   // Surface non-fatal parser warnings (e.g. atoms the file declares that the
   // parser could not represent) instead of letting them vanish silently.
-  const warnings = result.warnings ? result.warnings.split("\n") : [];
-  for (const w of warnings) {
-    console.warn(`[megane parser] ${w}`);
-  }
+  const warnings = splitWarnings(result.warnings);
 
   const heteroMeta = heterogeneous
     ? {
@@ -868,8 +891,12 @@ export function extractFrames(
     result.vector_channel_data(),
   );
 
+  // Surface non-fatal parser warnings (e.g. a dropped incomplete last frame)
+  // the same way structure parses do, instead of letting them vanish.
+  const warnings = splitWarnings(result.warnings);
+
   result.free();
-  return { frames, meta, vectorChannels };
+  return { frames, meta, vectorChannels, warnings };
 }
 
 /**
@@ -1313,10 +1340,14 @@ export async function indexTrajFileCore(
     }
     const frame0 = parseWithFn(() => indexer.frame0(), "");
     const nFrames = indexer.n_frames;
+    // Momenta / forces every frame stores stream with each frame, as the
+    // eager parse makes them frame-synced channels.
+    const vectorChannelNames = indexer.vector_channel_names.split("\n").filter((n) => n.length > 0);
     const index: StructureIndexResult = {
       nAtoms: indexer.n_atoms,
       nFrames,
       heterogeneous: indexer.heterogeneous,
+      vectorChannelNames,
     };
     const varyingCells = indexer.varying_cells;
     const readFrame = readAheadReader(file, read);
@@ -1327,7 +1358,10 @@ export async function indexTrajFileCore(
         const bytes = await readFrame(indexer.frame_start(frame), indexer.frame_end(frame));
         const out: DecodedFileFrame = {
           positions: indexer.decode(frame, bytes),
-          vectors: new Float32Array(0),
+          vectors:
+            vectorChannelNames.length > 0
+              ? indexer.decode_vectors(frame, bytes)
+              : new Float32Array(0),
         };
         if (varyingCells) out.box = indexer.frame_cell(frame);
         return out;

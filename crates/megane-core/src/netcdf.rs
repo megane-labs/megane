@@ -646,6 +646,7 @@ pub fn parse_netcdf(data: &[u8]) -> Result<TrajectoryData, String> {
         frame_positions_flat,
         vector_channels,
         hetero,
+        warnings: Vec::new(),
     })
 }
 

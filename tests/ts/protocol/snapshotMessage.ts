@@ -18,15 +18,27 @@ export function makeSnapshotBuffer(opts: {
   box?: number[];
   boxOrigin?: number[];
   symmetryOps?: string[];
+  nFileBonds?: number;
 }): ArrayBuffer {
-  const { nAtoms, nBonds, positions, elements, bonds, bondOrders, box, boxOrigin, symmetryOps } =
-    opts;
+  const {
+    nAtoms,
+    nBonds,
+    positions,
+    elements,
+    bonds,
+    bondOrders,
+    box,
+    boxOrigin,
+    symmetryOps,
+    nFileBonds,
+  } = opts;
 
   let flags = 0;
   if (bondOrders) flags |= 0x01; // HAS_BOND_ORDERS
   if (box) flags |= 0x02; // HAS_BOX
   if (boxOrigin) flags |= 0x08; // HAS_BOX_ORIGIN
   if (symmetryOps) flags |= 0x10; // HAS_SYMMETRY_OPS
+  if (nFileBonds !== undefined) flags |= 0x20; // HAS_FILE_BOND_COUNT
   const symRaw = symmetryOps ? new TextEncoder().encode(symmetryOps.join("\n")) : null;
 
   // Calculate total size
@@ -39,6 +51,7 @@ export function makeSnapshotBuffer(opts: {
   if (box) size += 36;
   if (boxOrigin) size += 12;
   if (symRaw) size += 4 + symRaw.length + ((4 - ((4 + symRaw.length) % 4)) % 4);
+  if (nFileBonds !== undefined) size += 4;
 
   const buf = new ArrayBuffer(size);
   const view = new DataView(buf);
@@ -111,6 +124,12 @@ export function makeSnapshotBuffer(opts: {
     new Uint8Array(buf, offset, symRaw.length).set(symRaw);
     offset += symRaw.length;
     offset += (4 - (offset % 4)) % 4;
+  }
+
+  // File-declared bond count (last field)
+  if (nFileBonds !== undefined) {
+    view.setUint32(offset, nFileBonds, true);
+    offset += 4;
   }
 
   return buf;

@@ -81,6 +81,49 @@ describe("usePipelineStore", () => {
     });
   });
 
+  describe("onNodesChange removal (the Delete key)", () => {
+    const snapshot = {
+      nAtoms: 1,
+      nBonds: 0,
+      nFileBonds: 0,
+      positions: new Float32Array(3),
+      elements: new Uint8Array([6]),
+      bonds: new Uint32Array(0),
+      bondOrders: null,
+      box: null,
+      boxOrigin: null,
+      atomChainIds: null,
+      atomBFactors: null,
+    };
+
+    it("drops the per-node data of the removed nodes, like removeNode", () => {
+      const s = usePipelineStore.getState();
+      const extra = s.addNode("load_structure" as PipelineNodeType);
+      s.setNodeSnapshot("loader-1", { snapshot, frames: null, meta: null, labels: null });
+      s.setNodeSnapshot(extra, { snapshot, frames: null, meta: null, labels: null });
+      s.setNodeParseError(extra, "Failed to parse file: bad");
+      s.setNodeStreamingData(extra, { snapshot, streamProvider: null });
+
+      usePipelineStore.getState().onNodesChange([{ type: "remove", id: extra }]);
+
+      const state = usePipelineStore.getState();
+      expect(state.nodes.find((n) => n.id === extra)).toBeUndefined();
+      expect(state.nodeSnapshots[extra]).toBeUndefined();
+      expect(state.nodeParseErrors[extra]).toBeUndefined();
+      expect(state.nodeStreamingData[extra]).toBeUndefined();
+      // The other loader keeps its data.
+      expect(state.nodeSnapshots["loader-1"]?.snapshot).toBe(snapshot);
+    });
+
+    it("leaves per-node data alone for changes that remove nothing", () => {
+      const s = usePipelineStore.getState();
+      s.setNodeSnapshot("loader-1", { snapshot, frames: null, meta: null, labels: null });
+      const before = usePipelineStore.getState().nodeSnapshots;
+      s.onNodesChange([{ type: "select", id: "loader-1", selected: true }]);
+      expect(usePipelineStore.getState().nodeSnapshots).toBe(before);
+    });
+  });
+
   describe("removeEdge", () => {
     const loaderEdge = () =>
       usePipelineStore

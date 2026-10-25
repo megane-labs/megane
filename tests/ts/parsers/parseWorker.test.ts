@@ -201,6 +201,11 @@ const { wasmMock } = vi.hoisted(() => {
       decode(frame: number) {
         return new Float32Array(9).fill(frame);
       }
+      // Momenta in every frame: 3 atoms × 3 components, all `-frame`.
+      vector_channel_names = "momenta";
+      decode_vectors(frame: number) {
+        return new Float32Array(9).fill(-frame);
+      }
       free() {}
     },
     netcdf_timestep: (_n: number, t0: number, t1: number) => t1 - t0,
@@ -584,7 +589,12 @@ describe("parse.worker onmessage", () => {
       index: { nFrames: number };
       frame0: { snapshot: { nAtoms: number } };
     };
-    expect(index).toEqual({ nAtoms: 3, nFrames: 2, heterogeneous: false });
+    expect(index).toEqual({
+      nAtoms: 3,
+      nFrames: 2,
+      heterogeneous: false,
+      vectorChannelNames: ["momenta"],
+    });
     expect(frame0.snapshot.nAtoms).toBe(3);
     expect(reads.slice(0, 2)).toEqual([
       [0, 48],
@@ -592,9 +602,17 @@ describe("parse.worker onmessage", () => {
     ]);
 
     await handler({ data: { id: 46, op: "decodeFrame", trajectoryId: 450, frame: 1 } });
-    const decoded = posts[1].result as { positions: Float32Array; box: Float32Array };
+    const decoded = posts[1].result as {
+      positions: Float32Array;
+      box: Float32Array;
+      vectors: Float32Array;
+      vectorChannelCount: number;
+    };
     expect(Array.from(decoded.positions)).toEqual(new Array(9).fill(1));
     expect(decoded.box[0]).toBe(11);
+    // The frame's momenta ride with it.
+    expect(Array.from(decoded.vectors)).toEqual(new Array(9).fill(-1));
+    expect(decoded.vectorChannelCount).toBe(1);
     await handler({ data: { id: 47, op: "disposeTrajectory", trajectoryId: 450 } });
     expect(posts[2].ok).toBe(true);
   });

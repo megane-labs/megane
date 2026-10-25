@@ -367,7 +367,7 @@ AddBonds(
 
 | Parameter | Type          | Default      | Description                                                                                                                                   |
 | --------- | ------------- | ------------ | --------------------------------------------------------------------------------------------------------------------------------------------- |
-| `source`  | `str`         | `"distance"` | `"distance"` for VDW-based inference; `"structure"` (alias `"file"`) to read bonds from the structure file (e.g. CONECT records in PDB)       |
+| `source`  | `str`         | `"distance"` | `"distance"` for VDW-based inference; `"structure"` (alias `"file"`) to read bonds from the structure file (e.g. CONECT records in PDB; a file that declares none falls back to VDW-based inference)       |
 | `top`     | `str \| None` | `None`       | Path to a topology file (GROMACS `.top` or CHARMM/NAMD `.psf`). When provided, `source` is ignored and bonds are read from the topology file; their parsed pairs are written into the JSON as `bondFileData`. |
 | `vdw_scale` | `float \| None` | `None` | Threshold scale for distance inference (written as `vdwScale`): atoms bond when their separation is `≤ (vdw_i + vdw_j) * vdw_scale`. `None` uses the viewer's default, `0.6`. |
 
