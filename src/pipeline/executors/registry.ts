@@ -132,28 +132,42 @@ interface StructureSource {
   labels: string[] | null;
 }
 
+/** The graph's primary loader: the first load_structure node. */
+function primaryLoaderId(nodes: readonly Node<PipelineNodeData>[]): string | undefined {
+  return nodes.find((n) => n.data.params.type === "load_structure")?.id;
+}
+
 /**
  * Per-node snapshot takes priority; fall back to the global snapshot for
  * backward compat. A lazy structure provider applies only when the node has no
  * eager frames of its own (mirrors executeLoadTrajectory's provider precedence).
+ *
+ * The global structure-frame channels (eager frames, lazy provider) belong to
+ * the primary loader, the only one `applyStructureToPipeline` gives them to. A
+ * second loader that holds a structure of its own without frames must not
+ * play the primary's; one with no data at all still falls back to every
+ * global channel, as before.
  */
 function resolveStructureSource(
   ctx: PipelineExecutionContext,
   loaderId: string | undefined,
+  nodes: readonly Node<PipelineNodeData>[],
 ): StructureSource {
   const nodeData = loaderId ? ctx.nodeSnapshots?.[loaderId] : undefined;
+  const primary = primaryLoaderId(nodes);
+  const ownsGlobalFrames = !nodeData || primary === undefined || primary === loaderId;
   return {
     snapshot: nodeData?.snapshot ?? ctx.snapshot ?? null,
-    frames: nodeData?.frames ?? ctx.structureFrames ?? null,
-    meta: nodeData?.meta ?? ctx.structureMeta ?? null,
-    provider: nodeData?.frames ? null : (ctx.structureProvider ?? null),
+    frames: nodeData?.frames ?? (ownsGlobalFrames ? (ctx.structureFrames ?? null) : null),
+    meta: nodeData?.meta ?? (ownsGlobalFrames ? (ctx.structureMeta ?? null) : null),
+    provider: nodeData?.frames || !ownsGlobalFrames ? null : (ctx.structureProvider ?? null),
     labels: nodeData?.labels ?? null,
   };
 }
 
 export const NODE_EXECUTORS: NodeExecutorRegistry = {
-  load_structure: ({ id, params, ctx, addError }) => {
-    const { snapshot, frames, meta, provider, labels } = resolveStructureSource(ctx, id);
+  load_structure: ({ id, params, nodes, ctx, addError }) => {
+    const { snapshot, frames, meta, provider, labels } = resolveStructureSource(ctx, id, nodes);
     const editWarnings: string[] = [];
     const outputs = executeLoadStructure(params, snapshot, frames, meta, id, provider, {
       editsBypassed: ctx.editsBypassed,
@@ -175,12 +189,15 @@ export const NODE_EXECUTORS: NodeExecutorRegistry = {
 
   load_trajectory: ({ params, inputs, nodes, ctx }) => {
     // "structure" mode forwards the structure file's own frames; resolve
-    // them exactly like load_structure does (first loader node's per-node
-    // snapshot, global channels as fallback).
+    // them exactly like load_structure does, for the loader wired to this
+    // node's particle input (the graph's first loader when nothing is wired).
     let structureSource: StructureSource | null = null;
     if (params.source === "structure") {
-      const loader = nodes.find((n) => n.data.params.type === "load_structure");
-      structureSource = resolveStructureSource(ctx, loader?.id);
+      const wiredId = (inputs.get("particle")?.[0] as ParticleData | undefined)?.sourceNodeId;
+      const isLoader = (n: Node<PipelineNodeData>) => n.data.params.type === "load_structure";
+      const loader =
+        nodes.find((n) => n.id === wiredId && isLoader(n)) ?? nodes.find((n) => isLoader(n));
+      structureSource = resolveStructureSource(ctx, loader?.id, nodes);
     }
     const outputs = executeLoadTrajectory(
       params,
