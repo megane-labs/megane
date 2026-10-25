@@ -23,6 +23,14 @@ from megane.builder_tools.config import HttpServer, ServerConfig, StdioServer, d
 
 INSTALL_HINT = 'Tool servers need the MCP SDK on the Jupyter server: pip install "megane[tools]", then restart Jupyter.'
 
+#: How long a stdio server may take to answer ``initialize``: the first start of
+#: one run by uvx downloads its environment (the reference server's is over
+#: 100 MB). The same as VS Code's ``STDIO_START_TIMEOUT_MS`` (vscode-megane/src/sdkClient.ts).
+STDIO_START_TIMEOUT_S = 10 * 60
+#: How long an HTTP server may take to answer ``initialize``: the MCP TypeScript
+#: SDK's default request timeout, which VS Code's HTTP connections use.
+HTTP_START_TIMEOUT_S = 60
+
 
 def _dump(model: Any) -> dict[str, Any]:
     return model.model_dump(by_alias=True, exclude_none=True, mode="json")
@@ -103,8 +111,34 @@ class SdkToolClient:
         return self._open
 
     async def start(self) -> None:
+        """Connect: start the server and wait for its answer to ``initialize``.
+
+        A server that does not answer in time (a command that starts but never
+        speaks MCP), and one nobody waits for any more (``start`` cancelled),
+        is stopped, which ends a stdio server's process, instead of being left
+        starting with everyone who waits for it.
+        """
         self._task = asyncio.ensure_future(self._run())
-        await self._ready
+        timeout = STDIO_START_TIMEOUT_S if isinstance(self.config, StdioServer) else HTTP_START_TIMEOUT_S
+        try:
+            # Shielded: giving up must not cancel _ready, which _run still settles.
+            await asyncio.wait_for(asyncio.shield(self._ready), timeout)
+        except asyncio.TimeoutError:
+            await self._abandon()
+            raise TimeoutError(
+                f'The tool server "{self.config.id}" did not answer the MCP initialize request '
+                f"within {timeout:g} s; is it an MCP server?"
+            ) from None
+        except asyncio.CancelledError:
+            await self._abandon()
+            raise
+
+    async def _abandon(self) -> None:
+        assert self._task is not None
+        self._task.cancel()
+        await asyncio.gather(self._task, return_exceptions=True)
+        if self._ready.done() and not self._ready.cancelled():
+            self._ready.exception()  # nobody waits for it any more; don't log it as unretrieved
 
     async def _run(self) -> None:
         from mcp import ClientSession, StdioServerParameters

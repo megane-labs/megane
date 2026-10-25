@@ -14,7 +14,7 @@ import { loadVectorFileData } from "../logic/vectorSourceLogic";
 import { parseStructureFile, shouldUseLazyStructure } from "../parsers/structure";
 import { pdbMayHaveModels } from "../parsers/pdbModels";
 import type { StructureParseResult, FileStructureKind } from "../parsers/structure";
-import { applyStructureToPipeline } from "../pipeline/openFile";
+import { applyStructureToPipeline, beginStructureLoad } from "../pipeline/openFile";
 import type { Snapshot } from "../types";
 import type {
   StructureLoadHandler,
@@ -57,6 +57,9 @@ export function useNodeLoadHandlers({
   useEffect(() => {
     const handler: StructureLoadHandler = (nodeId, file) => {
       const isPrimary = nodeId === primaryNodeIdRef.current;
+      // Parses finish out of order (a small file picked right after a big one
+      // can be done first); only the newest load into this node may land.
+      const isLatest = beginStructureLoad(pipelineApi, nodeId);
 
       // Large multi-frame structure files (XYZ / multi-MODEL PDB / ASE .traj), primary node
       // only: stream via the lazy path. Delegate to the legacy loader
@@ -100,6 +103,7 @@ export function useNodeLoadHandlers({
       function parseEagerly() {
         parseStructureFile(file)
           .then((result) => {
+            if (!isLatest()) return;
             clearNodeParseError(nodeId);
             // The same helper every structure-open path uses: node snapshot,
             // AddBond source, embedded vector channels and — for the primary
@@ -116,6 +120,7 @@ export function useNodeLoadHandlers({
             }
           })
           .catch((err: unknown) => {
+            if (!isLatest()) return;
             const message = err instanceof Error ? err.message : String(err);
             setNodeParseError(nodeId, `Failed to parse file: ${message}`);
           });

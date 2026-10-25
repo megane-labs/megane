@@ -61,8 +61,8 @@ fn parse_helix_range(line: &str) -> Option<SsRange> {
         return None;
     }
     let chain_id = line.as_bytes().get(19).copied().unwrap_or(b' ');
-    let start = u32::try_from(hy36_decode(&line[21..25])?).ok()?;
-    let end = u32::try_from(hy36_decode(&line[33..37])?).ok()?;
+    let start = hy36_decode(&line[21..25])?;
+    let end = hy36_decode(&line[33..37])?;
     Some(SsRange {
         chain_id,
         start,
@@ -77,8 +77,8 @@ fn parse_sheet_range(line: &str) -> Option<SsRange> {
         return None;
     }
     let chain_id = line.as_bytes().get(21).copied().unwrap_or(b' ');
-    let start = u32::try_from(hy36_decode(&line[22..26])?).ok()?;
-    let end = u32::try_from(hy36_decode(&line[33..37])?).ok()?;
+    let start = hy36_decode(&line[22..26])?;
+    let end = hy36_decode(&line[33..37])?;
     Some(SsRange {
         chain_id,
         start,
@@ -88,7 +88,8 @@ fn parse_sheet_range(line: &str) -> Option<SsRange> {
 }
 
 /// If `line` is an ATOM record for a Cα atom, return (chain_id, res_num).
-fn parse_ca_info(line: &str) -> Option<(u8, u32)> {
+/// Residue numbers are signed: expression tags are commonly numbered below 1.
+fn parse_ca_info(line: &str) -> Option<(u8, i32)> {
     if line.len() < 27 {
         return None;
     }
@@ -97,7 +98,7 @@ fn parse_ca_info(line: &str) -> Option<(u8, u32)> {
         return None;
     }
     let chain_id = line.as_bytes().get(21).copied().unwrap_or(b' ');
-    let res_num = u32::try_from(hy36_decode(&line[22..26])?).ok()?;
+    let res_num = hy36_decode(&line[22..26])?;
     Some((chain_id, res_num))
 }
 
@@ -259,7 +260,7 @@ fn parse_impl(text: &str, frame0_only: bool) -> Result<ParsedStructure, String> 
     // Secondary-structure ranges from HELIX/SHEET records.
     let mut ss_ranges: Vec<SsRange> = Vec::new();
     // Backbone Cα data collected from the first model only.
-    let mut raw_ca: Vec<(usize, u8, u32)> = Vec::new(); // (atom_index, chain_id, res_num)
+    let mut raw_ca: Vec<(usize, u8, i32)> = Vec::new(); // (atom_index, chain_id, res_num)
 
     for line in text.lines() {
         let record = if line.len() >= 6 {
@@ -835,6 +836,30 @@ mod tests {
         let pdb = line("CA", "9999", 0.0) + &line("CA", "A000", 3.8) + "END\n";
         let s = parse(&pdb).unwrap();
         assert_eq!(s.ca_res_nums, vec![9_999, 10_000]);
+    }
+
+    /// Expression tags are numbered below 1 (`HIS A  -2`, `MET A   0`). Their
+    /// Cα atoms belong to the backbone like any other, and a HELIX/SHEET that
+    /// starts in the tag still covers them.
+    #[test]
+    fn keeps_negative_residue_numbers_on_the_backbone_and_in_ss_ranges() {
+        let pdb = "\
+HELIX    1   1 HIS A   -2  MET A    1  1                                   4
+SHEET    1   A 1 GLY B  -5  GLY B  -4  0
+ATOM      1  CA  HIS A  -2       0.000   0.000   0.000  1.00  0.00           C
+ATOM      2  CA  HIS A  -1       3.800   0.000   0.000  1.00  0.00           C
+ATOM      3  CA  MET A   0       7.600   0.000   0.000  1.00  0.00           C
+ATOM      4  CA  MET A   1      11.400   0.000   0.000  1.00  0.00           C
+ATOM      5  CA  GLY B  -5       0.000   9.000   0.000  1.00  0.00           C
+ATOM      6  CA  GLY B  -4       3.800   9.000   0.000  1.00  0.00           C
+ATOM      7  CA  GLY B  -3       7.600   9.000   0.000  1.00  0.00           C
+END
+";
+        let s = parse(pdb).unwrap();
+        assert_eq!(s.ca_indices, vec![0, 1, 2, 3, 4, 5, 6]);
+        assert_eq!(s.ca_res_nums, vec![-2, -1, 0, 1, -5, -4, -3]);
+        assert_eq!(s.ca_chain_ids, b"AAAABBB".to_vec());
+        assert_eq!(s.ca_ss_type, vec![1, 1, 1, 1, 2, 2, 0]);
     }
 
     #[test]

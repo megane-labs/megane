@@ -251,6 +251,63 @@ describe("useNodeLoadHandlers — double-parse fix", () => {
     expect(onUploadStructure).toHaveBeenCalledWith(file, expect.anything());
   });
 
+  describe("two loads into one node finishing out of order", () => {
+    function deferred<T>() {
+      let resolve!: (value: T) => void;
+      let reject!: (err: unknown) => void;
+      const promise = new Promise<T>((res, rej) => {
+        resolve = res;
+        reject = rej;
+      });
+      return { promise, resolve, reject };
+    }
+
+    it("keeps the later file when the earlier parse finishes last", async () => {
+      seedStore("n1");
+      const big = deferred<StructureParseResult>();
+      const small = deferred<StructureParseResult>();
+      parseMock.mockReturnValueOnce(big.promise).mockReturnValueOnce(small.promise);
+      const onUploadStructure = vi.fn();
+      renderHook(() => useNodeLoadHandlers({ snapshot: null, onUploadStructure }));
+
+      const bigFile = new File(["big"], "big.pdb");
+      const smallFile = new File(["small"], "small.xyz");
+      await act(async () => {
+        captured.structure?.("n1", bigFile);
+        captured.structure?.("n1", smallFile);
+        small.resolve(makeResult());
+        await small.promise;
+        big.resolve(makeResult());
+        await big.promise;
+        await Promise.resolve();
+      });
+
+      expect(onUploadStructure).toHaveBeenCalledTimes(1);
+      expect(onUploadStructure).toHaveBeenCalledWith(smallFile, expect.anything());
+      expect(usePipelineStore.getState().setNodeSnapshot).toHaveBeenCalledTimes(1);
+    });
+
+    it("does not report the failure of a parse a later load replaced", async () => {
+      seedStore("n1");
+      const big = deferred<StructureParseResult>();
+      parseMock.mockReturnValueOnce(big.promise).mockResolvedValueOnce(makeResult());
+      const onUploadStructure = vi.fn();
+      renderHook(() => useNodeLoadHandlers({ snapshot: null, onUploadStructure }));
+
+      await act(async () => {
+        captured.structure?.("n1", new File(["big"], "big.pdb"));
+        captured.structure?.("n1", new File(["small"], "small.xyz"));
+        await Promise.resolve();
+        big.reject(new Error("malformed"));
+        await big.promise.catch(() => {});
+        await Promise.resolve();
+      });
+
+      expect(usePipelineStore.getState().setNodeParseError).not.toHaveBeenCalled();
+      expect(onUploadStructure).toHaveBeenCalledTimes(1);
+    });
+  });
+
   it("does not call onUploadStructure when parsing fails", async () => {
     seedStore("n1");
     parseMock.mockRejectedValue(new Error("bad file"));

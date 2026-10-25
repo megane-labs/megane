@@ -140,7 +140,7 @@ docker run --rm -p 127.0.0.1:8080:8080 -v ./mydata:/data megane \
 
 Then open a file from the Load Structure node's *Open from server…*. The page does not load a file named on the `megane serve` command line, so browse to it instead. Docker's port mapping makes your browser a non-local client of the container, which is why `--files-any-host` is needed; publishing the port on `127.0.0.1` keeps it reachable from your machine only.
 
-Without Docker, `megane serve` also lets the Load nodes browse files on the machine it runs on (*Open from server…*), which is handy over an SSH tunnel to a workstation or cluster node. `--files-root DIR` sets the folder it browses, `--no-files` turns it off, and `--files-any-host` serves it to other machines on the network (by default only clients on the server's own machine). See the [CLI guide](https://megane-labs.github.io/megane/guide/cli).
+Without Docker, `megane serve` also lets the Load nodes browse files on the machine it runs on (*Open from server…*), which is handy over an SSH tunnel to a workstation or cluster node. `--files-root DIR` sets the folder it browses, `--no-files` turns it off, and `--host 0.0.0.0 --files-any-host` serves it to other machines on the network (by default the server listens on `127.0.0.1`, so only its own machine reaches it; hidden files are never served). See the [CLI guide](https://megane-labs.github.io/megane/guide/cli).
 
 ### Megane Builder tools
 
