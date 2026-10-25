@@ -126,3 +126,11 @@ def test_variable_cell_xyz():
     assert trajectory.get_cell(0)[0, 0] == 10.0
     assert trajectory.get_cell(1)[0, 0] == 12.0
     assert trajectory.get_cell(2)[0, 0] == 14.0
+
+
+def test_atomic_numbers_in_the_element_column():
+    """``8 0 0 0`` names oxygen by atomic number instead of giving Z=0."""
+    from megane import megane_parser
+
+    s = megane_parser.parse_xyz("2\n\n8 0 0 0\n1 0.96 0 0\n")
+    assert s.elements.tolist() == [8, 1]
