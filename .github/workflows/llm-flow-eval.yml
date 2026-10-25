@@ -1,0 +1,143 @@
+name: LLM Flow Eval
+
+# Opt-in benchmark for Megane Builder's Flow assistant (`bench/flow/`): makes
+# real, paid LLM API calls, runs every flow the assistant writes through the
+# Flow engine with RDKit (in Node, no browser), grades what it builds, and
+# posts a before/after comparison of the PR branch and its base as a PR
+# comment. Add the `llm-eval-flow` label to a PR to run it, or start it from
+# Actions > LLM Flow Eval on any branch (that run reports the branch alone, in
+# the job summary and the uploaded artifact).
+#
+# It shares the pipeline benchmark's settings (see llm-prompt-eval.yml): the
+# provider comes from the `MEGANE_LLM_BENCH_PROVIDER` repository variable
+# (`openrouter` by default, or `plamo` / `anthropic`), the key from the matching
+# repository secret (`OPENROUTER_API_KEY` / `PLAMO_API_KEY` /
+# `ANTHROPIC_API_KEY`), the model from `MEGANE_LLM_BENCH_MODEL` (empty: the
+# provider's default), and only the users in the `LLM_EVAL_ALLOWED_USERS`
+# variable (a JSON array, default `["hodakamori"]`) can trigger a run. Forks
+# get no secrets, so it only runs for PRs from branches of this repository.
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, labeled]
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      cases:
+        description: "Comma-separated case ids to run (empty: all)"
+        required: false
+        default: ""
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  llm-flow-eval:
+    name: LLM Flow before/after eval
+    if: |
+      contains(fromJSON(vars.LLM_EVAL_ALLOWED_USERS || '["hodakamori"]'), github.actor) &&
+      (github.event_name == 'workflow_dispatch' ||
+       contains(github.event.pull_request.labels.*.name, 'llm-eval-flow'))
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      MEGANE_LLM_BENCH: "1"
+      MEGANE_LLM_BENCH_CASES: ${{ inputs.cases || '' }}
+      PLAMO_API_KEY: ${{ secrets.PLAMO_API_KEY }}
+      OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+      MEGANE_LLM_PROVIDER: ${{ vars.MEGANE_LLM_BENCH_PROVIDER || 'openrouter' }}
+      # Empty falls through to the provider's default model (bench/llm/providers.ts).
+      MEGANE_LLM_MODEL: ${{ vars.MEGANE_LLM_BENCH_MODEL || '' }}
+    steps:
+      - name: Checkout the branch (after)
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          path: after
+
+      - name: Checkout the PR base (before)
+        if: github.event_name == 'pull_request'
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          path: before
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Install dependencies (after)
+        working-directory: after
+        run: npm ci
+
+      - name: Run benchmark (after)
+        working-directory: after
+        run: |
+          npx vitest run tests/ts/bench/flow.bench.test.ts
+          cp "$(ls -t bench/flow/results/*.json | head -1)" "$GITHUB_WORKSPACE/after.json"
+
+      # The base of the PR that adds the benchmark has none: the comment then
+      # reports the branch alone.
+      - name: Run benchmark (before)
+        if: github.event_name == 'pull_request'
+        working-directory: before
+        run: |
+          if [ ! -f tests/ts/bench/flow.bench.test.ts ]; then
+            echo "The base branch has no Flow benchmark; reporting the PR branch alone."
+            exit 0
+          fi
+          npm ci
+          npx vitest run tests/ts/bench/flow.bench.test.ts
+          cp "$(ls -t bench/flow/results/*.json | head -1)" "$GITHUB_WORKSPACE/before.json"
+
+      - name: Compare results
+        run: |
+          before=before.json
+          [ -f "$before" ] || before=-
+          node after/bench/llm/compare-results.mjs "$before" after.json comparison.md
+          cat comparison.md >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: llm-flow-eval-reports
+          if-no-files-found: ignore
+          path: |
+            before.json
+            after.json
+            comparison.md
+            after/bench/flow/results/*.md
+
+      - name: Comment on PR
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require("fs");
+            const body = fs.readFileSync("comparison.md", "utf-8");
+            const marker = "<!-- llm-flow-eval -->";
+            const comment = `${marker}\n${body}`;
+            const { data: comments } = await github.rest.issues.listComments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+            });
+            const existing = comments.find((c) => c.body && c.body.startsWith(marker));
+            if (existing) {
+              await github.rest.issues.updateComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: existing.id,
+                body: comment,
+              });
+            } else {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.issue.number,
+                body: comment,
+              });
+            }
