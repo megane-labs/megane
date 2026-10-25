@@ -56,6 +56,7 @@ export function executeFilter(
           bond.nBonds,
           bond.nAtoms,
           bond.periodicTopology?.bondIndices,
+          bond.ghostSourceIndices,
         );
         if (selectedSet !== null) {
           outputs.set("out", {

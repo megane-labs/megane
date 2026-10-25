@@ -26,6 +26,8 @@ export interface PbcBondResult {
   positions: Float32Array | null;
   elements: Uint8Array | null;
   nAtoms: number;
+  /** Source atom of each appended ghost / image atom (see `BondData.ghostSourceIndices`). */
+  ghostSourceIndices?: Uint32Array | null;
 }
 
 /** Attach one minimum-image lattice shift to each explicit structural bond. */
@@ -131,6 +133,7 @@ function renderPeriodicTopology(
   const orders: number[] = [];
   const ghostPositions: number[] = [];
   const ghostElements: number[] = [];
+  const ghostSources: number[] = [];
   let ghostIndex = snapshot.nAtoms;
   for (let bond = 0; bond < topology.bondIndices.length / 2; bond++) {
     const source = topology.bondIndices[bond * 2];
@@ -150,6 +153,7 @@ function renderPeriodicTopology(
       snapshot.positions[target * 3 + 2] + a * box[2] + b * box[5] + c * box[8],
     );
     ghostElements.push(snapshot.elements[target]);
+    ghostSources.push(target);
     bonds.push(source, ghostIndex++);
     if (topology.bondOrders) orders.push(topology.bondOrders[bond]);
 
@@ -159,6 +163,7 @@ function renderPeriodicTopology(
       snapshot.positions[source * 3 + 2] - a * box[2] - b * box[5] - c * box[8],
     );
     ghostElements.push(snapshot.elements[source]);
+    ghostSources.push(source);
     bonds.push(target, ghostIndex++);
     if (topology.bondOrders) orders.push(topology.bondOrders[bond]);
   }
@@ -187,6 +192,7 @@ function renderPeriodicTopology(
     positions,
     elements,
     nAtoms: elements.length,
+    ghostSourceIndices: new Uint32Array(ghostSources),
   };
 }
 
@@ -252,6 +258,7 @@ export function expandPeriodicTopologyForDrawingBoundary(
     positions,
     elements,
     nAtoms: elements.length,
+    ghostSourceIndices: boundary.images.sourceIndices,
   };
 }
 
@@ -470,6 +477,7 @@ export function bondDataFromSnapshotBonds(particle: ParticleData): BondData | nu
     elements: rendered.elements,
     nAtoms: rendered.nAtoms,
     atomElements: snapshot.elements,
+    ghostSourceIndices: rendered.ghostSourceIndices ?? null,
     selectedBondIndices: null,
     bondOpacityOverrides: null,
     periodicTopology: topology,
@@ -523,6 +531,7 @@ export function executeAddBond(
     elements: rendered.elements,
     nAtoms: rendered.nAtoms,
     atomElements: snapshot.elements,
+    ghostSourceIndices: rendered.ghostSourceIndices ?? null,
     selectedBondIndices: null,
     bondOpacityOverrides: null,
     periodicTopology: topology,
