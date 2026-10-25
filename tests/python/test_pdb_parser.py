@@ -85,6 +85,18 @@ def test_empty_box_fixture_is_a_cell_without_atoms():
     assert abs(s.box[2, 2] - 10.0) < 1e-4
 
 
+def test_non_ascii_text_does_not_panic():
+    """A multi-byte character across a fixed column used to panic the parser."""
+    from megane import megane_parser
+
+    comment = "#\u00c4\u00d6\u00dc note"
+    # The segID's last character straddles the element field's first column.
+    atom = "ATOM      1  N   ALA A   1      17.047  14.099   3.625  1.00 13.79      PRO\u00e9 N  "
+    s = megane_parser.parse_pdb("\n".join([comment, atom, "END"]))
+    assert s.n_atoms == 1
+    assert s.elements.tolist() == [7]
+
+
 def test_model_without_endmdl_is_kept():
     """``MODEL 1 ... END`` without ``ENDMDL`` is a model, not an empty file."""
     from megane import megane_parser
