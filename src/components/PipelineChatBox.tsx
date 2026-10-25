@@ -19,7 +19,12 @@ import type { PipelineNodeType, SerializedPipeline } from "../pipeline/types";
 import { NODE_TYPE_LABELS } from "../pipeline/types";
 import type { Frame, Snapshot, TrajectoryMeta } from "../types";
 import { useScopedPipelineStore, usePipelineStoreApi } from "../stores/MeganeProvider";
-import { AssistantDock, type AssistantRequest, type AssistantReply } from "./AssistantDock";
+import {
+  AssistantDock,
+  throwIfAborted,
+  type AssistantRequest,
+  type AssistantReply,
+} from "./AssistantDock";
 
 export { chatHistory, replaceTrailingAssistant, type ChatMessage } from "./AssistantDock";
 
@@ -117,6 +122,8 @@ export function PipelineChatBox() {
       let appliedNodeCount = -1;
       let appliedJSON: string | null = null;
       const applyPipeline = (pipeline: SerializedPipeline) => {
+        // Nothing lands once the request was cancelled or the dock went away.
+        if (signal.aborted) return;
         const id = pipelineApi
           .getState()
           .applyGeneratedPipeline(pipeline, { checkpoint: appliedJSON === null });
@@ -139,8 +146,8 @@ export function PipelineChatBox() {
       // with the page; the request itself takes far longer than the import.
       const {
         generatePipeline,
-        extractPipelineJSON,
         tryExtractPipeline,
+        looksLikePayload,
         formatActionSummary,
         extractTrailingExplanation,
       } = await import("../ai/client");
@@ -152,9 +159,11 @@ export function PipelineChatBox() {
         (chunk) => {
           streamBuffer += chunk;
           onChunk(chunk);
-          // Apply (or re-apply) the graph as soon as a complete JSON block has
-          // streamed in. The model emits the JSON first, so the graph and the
-          // viewport update without waiting for the trailing explanation.
+          // Apply (or re-apply) the graph as soon as a complete JSON payload
+          // has streamed in. The model emits the JSON first, so the graph and
+          // the viewport update without waiting for the trailing explanation.
+          // This reads the reply exactly as the self-check does, so a repair
+          // round's fix is applied however the model formatted it.
           const candidate = tryExtractPipeline(streamBuffer);
           if (candidate) {
             const candidateJSON = JSON.stringify(candidate);
@@ -176,10 +185,22 @@ export function PipelineChatBox() {
         },
       );
 
-      // Fallback: the JSON may only have closed in the final, non-streamed text
-      // (or arrived after a tool round trip), so apply it now if we haven't yet.
+      throwIfAborted(signal);
+
+      // The final round's pipeline may only be complete in the final text (or
+      // have arrived after a tool round trip), so apply it now if streaming
+      // has not.
+      const final = tryExtractPipeline(fullResponse);
+      if (final && JSON.stringify(final) !== appliedJSON) applyPipeline(final);
+
       if (appliedJSON === null) {
-        applyPipeline(extractPipelineJSON(fullResponse));
+        // No pipeline: an answer in prose (what is in this file, which file to
+        // open) is the reply. A fence or JSON object that holds no pipeline is
+        // not prose.
+        if (!looksLikePayload(fullResponse) && fullResponse.trim()) {
+          return { content: fullResponse.trim() };
+        }
+        throw new Error("The reply held no pipeline.");
       }
 
       // Show the assistant's own explanation (the sentence that follows the

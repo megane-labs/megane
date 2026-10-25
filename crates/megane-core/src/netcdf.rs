@@ -63,7 +63,8 @@ impl<'a> Reader<'a> {
 
     fn read_string(&mut self) -> Result<String, String> {
         let len = self.read_u32()? as usize;
-        let padded = (len + 3) & !3;
+        // `len + 3` overflows usize on wasm32 for a length near u32::MAX.
+        let padded = padded4(Some(len)).ok_or("NetCDF string length overflows")?;
         if self.remaining() < padded {
             return Err("unexpected EOF reading string".into());
         }
@@ -82,7 +83,8 @@ impl<'a> Reader<'a> {
             6 => 8,
             _ => return Err(format!("unknown nc_type {nc_type} in attribute")),
         };
-        let padded = (nelems * elem_size + 3) & !3;
+        let padded = padded4(nelems.checked_mul(elem_size))
+            .ok_or("NetCDF attribute payload size overflows")?;
         if self.remaining() < padded {
             return Err("unexpected EOF skipping attribute payload".into());
         }
@@ -129,6 +131,12 @@ impl<'a> Reader<'a> {
     }
 }
 
+/// `n` rounded up to the 4-byte XDR boundary, or `None` when `n` is missing
+/// or the rounding overflows `usize` (a size near `u32::MAX` on wasm32).
+fn padded4(n: Option<usize>) -> Option<usize> {
+    n?.checked_add(3).map(|v| v & !3)
+}
+
 // ─── variable descriptor ───────────────────────────────────────────────────
 
 struct VarDesc {
@@ -150,7 +158,9 @@ fn parse_dim_list(r: &mut Reader) -> Result<Vec<(String, u32)>, String> {
     if tag != TAG_DIM {
         return Err(format!("expected NC_DIMENSION tag ({TAG_DIM}), got {tag}"));
     }
-    let mut dims = Vec::with_capacity(count as usize);
+    // `count` is a header claim; every entry takes at least 8 bytes (name
+    // length + size), so reserve no more entries than the bytes left can hold.
+    let mut dims = Vec::with_capacity((count as usize).min(r.remaining() / 8));
     for _ in 0..count {
         let name = r.read_string()?;
         let size = r.read_u32()?;
@@ -168,11 +178,14 @@ fn parse_var_list(r: &mut Reader) -> Result<Vec<VarDesc>, String> {
     if tag != TAG_VAR {
         return Err(format!("expected NC_VARIABLE tag ({TAG_VAR}), got {tag}"));
     }
-    let mut vars = Vec::with_capacity(count as usize);
+    // As for dimensions: every variable entry takes at least 28 bytes (name
+    // length, ndims, attribute-list header, type, vsize, begin), and every
+    // dimension id 4.
+    let mut vars = Vec::with_capacity((count as usize).min(r.remaining() / 28));
     for _ in 0..count {
         let name = r.read_string()?;
         let ndims = r.read_u32()? as usize;
-        let mut dimids = Vec::with_capacity(ndims);
+        let mut dimids = Vec::with_capacity(ndims.min(r.remaining() / 4));
         for _ in 0..ndims {
             dimids.push(r.read_u32()?);
         }
@@ -320,7 +333,11 @@ pub fn read_layout(head: &[u8], file_len: u64) -> Result<NetcdfLayout, String> {
             coord_var.nc_type
         ));
     }
-    let expected_vsize = n_atoms * 3 * 4;
+    // Checked: on wasm32 a huge 'atom' dimension would wrap the product and
+    // let a small vsize pass for it.
+    let expected_vsize = n_atoms
+        .checked_mul(3 * 4)
+        .ok_or_else(|| format!("'atom' dimension {n_atoms} is too large"))?;
     if coord_var.vsize as usize != expected_vsize {
         return Err(format!(
             "'coordinates' vsize {} != {} (n_atoms={n_atoms} × 3 × 4)",
@@ -335,23 +352,6 @@ pub fn read_layout(head: &[u8], file_len: u64) -> Result<NetcdfLayout, String> {
         .map(|v| (v.vsize as u64 + 3) & !3)
         .sum();
 
-    // number of frames
-    let n_frames: usize = if numrecs_raw == 0xFFFF_FFFF {
-        if recsize == 0 {
-            return Err("streaming numrecs and recsize=0 — cannot determine frame count".into());
-        }
-        file_len
-            .saturating_sub(coord_var.begin)
-            .checked_div(recsize)
-            .unwrap_or(0) as usize
-    } else {
-        numrecs_raw as usize
-    };
-
-    if n_frames == 0 {
-        return Err("NetCDF trajectory has 0 frames".into());
-    }
-
     // A non-record variable is the same in every frame: read it from frame 0's
     // record offsets as the eager reader does (`begin + i * recsize`).
     let record_start = vars
@@ -361,6 +361,26 @@ pub fn read_layout(head: &[u8], file_len: u64) -> Result<NetcdfLayout, String> {
         .min()
         .unwrap_or(coord_var.begin)
         .min(coord_var.begin);
+
+    // number of frames
+    let n_frames: usize = if numrecs_raw == 0xFFFF_FFFF {
+        if recsize == 0 {
+            return Err("streaming numrecs and recsize=0 — cannot determine frame count".into());
+        }
+        // Whole records from where the record section starts, not from where
+        // `coordinates` sits in it: a record variable defined before it
+        // (`time`) starts the record earlier.
+        file_len
+            .saturating_sub(record_start)
+            .checked_div(recsize)
+            .unwrap_or(0) as usize
+    } else {
+        numrecs_raw as usize
+    };
+
+    if n_frames == 0 {
+        return Err("NetCDF trajectory has 0 frames".into());
+    }
     let off = |v: &VarDesc| v.begin.checked_sub(record_start);
     Ok(NetcdfLayout {
         n_atoms,
@@ -1077,6 +1097,41 @@ mod tests {
         assert!(parse_netcdf(data).is_err());
     }
 
+    /// A header whose list counts claim billions of entries must fail on the
+    /// missing bytes instead of reserving memory for every claimed entry
+    /// (a 16-byte file used to ask for ~137 GB and abort the process).
+    #[test]
+    fn huge_header_counts_are_an_error_not_an_allocation() {
+        let be = |v: u32| v.to_be_bytes();
+        // dim_list: NC_DIMENSION tag, count 0xFFFFFFFF, then nothing.
+        let mut dims = b"CDF\x01".to_vec();
+        dims.extend(be(1));
+        dims.extend(be(TAG_DIM));
+        dims.extend(be(u32::MAX));
+        assert_eq!(dims.len(), 16);
+        assert!(parse_netcdf(&dims).is_err());
+
+        // var_list: no dims, no global attributes, NC_VARIABLE count 0xFFFFFFFF.
+        let mut vars = b"CDF\x01".to_vec();
+        vars.extend(be(1));
+        vars.extend([0; 16]);
+        vars.extend(be(TAG_VAR));
+        vars.extend(be(u32::MAX));
+        assert!(parse_netcdf(&vars).is_err());
+
+        // One variable whose dimension-id count claims 0xFFFFFFFF entries.
+        let mut ndims = b"CDF\x01".to_vec();
+        ndims.extend(be(1));
+        ndims.extend([0; 16]);
+        ndims.extend(be(TAG_VAR));
+        ndims.extend(be(1));
+        ndims.extend(be(1));
+        ndims.extend(b"x\0\0\0");
+        ndims.extend(be(u32::MAX));
+        assert!(parse_netcdf(&ndims).is_err());
+        assert!(read_layout(&ndims, ndims.len() as u64).is_err());
+    }
+
     #[test]
     fn test_parse_fixture() {
         let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../../tests/fixtures/water.nc");
@@ -1086,5 +1141,96 @@ mod tests {
         let result = parse_netcdf(&data).expect("parse water.nc");
         assert_eq!(result.n_atoms, 3, "water has 3 atoms");
         assert!(result.n_frames >= 1, "at least 1 frame");
+    }
+
+    /// `coordinates` (time defined first), `n_frames` whole
+    /// `coordinates` (the order cpptraj and pytraj write), `n_frames` whole
+    /// records of `n_atoms` atoms, with `numrecs` in the header. Frame f's
+    /// time is `f` ps and its coordinates are `f*100 + k`.
+    fn nc_time_first(numrecs: u32, n_atoms: u32, n_frames: usize) -> Vec<u8> {
+        fn name(out: &mut Vec<u8>, s: &str) {
+            out.extend_from_slice(&(s.len() as u32).to_be_bytes());
+            out.extend_from_slice(s.as_bytes());
+            while !out.len().is_multiple_of(4) {
+                out.push(0);
+            }
+        }
+        let header = |time_begin: u32| {
+            let mut out = b"CDF\x01".to_vec();
+            let w = |out: &mut Vec<u8>, v: u32| out.extend_from_slice(&v.to_be_bytes());
+            w(&mut out, numrecs);
+            w(&mut out, TAG_DIM);
+            w(&mut out, 3);
+            for (dim, size) in [("frame", 0), ("atom", n_atoms), ("spatial", 3)] {
+                name(&mut out, dim);
+                w(&mut out, size);
+            }
+            w(&mut out, 0); // no global attributes
+            w(&mut out, 0);
+            w(&mut out, TAG_VAR);
+            w(&mut out, 2);
+            let vars: [(&str, &[u32], u32, u32); 2] = [
+                ("time", &[0], 4, time_begin),
+                ("coordinates", &[0, 1, 2], n_atoms * 12, time_begin + 4),
+            ];
+            for (var, dims, vsize, begin) in vars {
+                name(&mut out, var);
+                w(&mut out, dims.len() as u32);
+                for d in dims {
+                    w(&mut out, *d);
+                }
+                w(&mut out, 0); // no attributes
+                w(&mut out, 0);
+                w(&mut out, NC_FLOAT);
+                w(&mut out, vsize);
+                w(&mut out, begin);
+            }
+            out
+        };
+        let mut out = header(header(0).len() as u32);
+        for f in 0..n_frames {
+            out.extend_from_slice(&(f as f32).to_be_bytes());
+            for k in 0..n_atoms * 3 {
+                out.extend_from_slice(&((f * 100) as f32 + k as f32).to_be_bytes());
+            }
+        }
+        out
+    }
+
+    #[test]
+    fn streaming_numrecs_counts_records_from_the_first_record_variable() {
+        // numrecs = STREAMING: the frame count comes from the file length,
+        // measured from where the records start (`time`), not from where
+        // `coordinates` sits inside the first one.
+        let counted = nc_time_first(5, 3, 5);
+        let mut streaming = counted.clone();
+        streaming[4..8].copy_from_slice(&0xFFFF_FFFFu32.to_be_bytes());
+        let layout = read_layout(&streaming, streaming.len() as u64).unwrap();
+        assert_eq!(layout.n_frames, 5);
+        let eager = parse_netcdf(&streaming).unwrap();
+        let want = parse_netcdf(&counted).unwrap();
+        assert_eq!(eager.n_frames, 5);
+        assert_eq!(eager.frame_positions_flat, want.frame_positions_flat);
+        assert_eq!(eager.frame(4)[0], 400.0);
+        assert_eq!(eager.timestep_ps, 1.0);
+        // A record cut short is not a frame.
+        let cut = &streaming[..streaming.len() - 1];
+        assert_eq!(read_layout(cut, cut.len() as u64).unwrap().n_frames, 4);
+        assert_eq!(parse_netcdf(cut).unwrap().n_frames, 4);
+    }
+
+    #[test]
+    fn padding_near_the_address_space_does_not_wrap() {
+        // On wasm32 a string length or attribute size near u32::MAX would wrap
+        // `n + 3`; the padding refuses instead.
+        assert_eq!(padded4(Some(5)), Some(8));
+        assert_eq!(padded4(Some(usize::MAX - 2)), None);
+        assert_eq!(padded4(None), None);
+        // A string length past the header is still an EOF error.
+        let mut d = b"CDF\x01".to_vec();
+        for w in [1u32, TAG_DIM, 1, 0xFFFF_FFFE] {
+            d.extend_from_slice(&w.to_be_bytes());
+        }
+        assert!(parse_netcdf(&d).err().unwrap().contains("string"));
     }
 }

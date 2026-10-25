@@ -368,6 +368,12 @@ describe("Flow scorer", () => {
       "has a trailing explanation",
       "explanation is a short single sentence",
     ]);
+    // A bare flow is applied (and graded), but it was not fenced.
+    expect(
+      scoreFormat('{"version":1}\nBuilds Cu.', flow, false)
+        .checks.filter((c) => !c.passed)
+        .map((c) => c.label),
+    ).toContain("the reply holds a flow in a fenced block");
   });
 
   it("fails a tool-call check when the tool was never called", () => {
