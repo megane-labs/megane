@@ -72,6 +72,16 @@ export interface PeriodicAtomImageData {
   latticeShifts: Int32Array;
 }
 
+/**
+ * Where each periodic copy appended after a structure's own atoms comes from:
+ * copy `i` is structural atom `sourceIndices[i]` translated by the integer
+ * lattice shift `latticeShifts[3i..3i+2]` (a, b, c).
+ */
+export interface PeriodicImageMap {
+  sourceIndices: Uint32Array;
+  latticeShifts: Int32Array;
+}
+
 /** Result of applying a fractional Drawing Boundary to a particle stream. */
 export interface DrawingBoundaryData {
   /** Inclusive fractional lower bounds along a, b, c. */
@@ -106,6 +116,13 @@ export interface BondData {
   positions: Float32Array | null; // null = use particle positions
   elements: Uint8Array | null; // null = use particle elements
   nAtoms: number; // total atoms including ghosts (0 = use particle nAtoms)
+  /**
+   * Provenance of the atoms `positions` appends after the structure's own, so a
+   * trajectory frame can move half-bond ghost endpoints with their atoms. Null
+   * or absent when nothing is appended, or when the bonds are recomputed per
+   * frame anyway (distance bonds during playback).
+   */
+  imageMap?: PeriodicImageMap | null;
   // Base atom elements (non-ghost), used by bond filter for element/atom_index queries
   atomElements: Uint8Array | null;
   /**

@@ -2,11 +2,26 @@
 
 from __future__ import annotations
 
+import os
 from collections import OrderedDict
 from dataclasses import dataclass, field
 from typing import Any, Union
 
 import numpy as np
+
+
+def read_text(path: str | os.PathLike[str]) -> str:
+    """A text file's contents, decoded the way the browser hosts decode it.
+
+    ``File.text()`` / ``TextDecoder`` read UTF-8, drop a leading byte-order
+    mark and replace invalid bytes with U+FFFD, so a PDB with a Latin-1 ``Å``
+    in a REMARK opens there. Reading with the platform's default encoding
+    instead (strict UTF-8 on Linux and macOS, cp932 or cp1252 on Windows)
+    raised ``UnicodeDecodeError`` for the same file in ``view()``,
+    ``set_pipeline()`` and ``megane serve``.
+    """
+    with open(path, encoding="utf-8-sig", errors="replace") as f:
+        return f.read()
 
 
 @dataclass

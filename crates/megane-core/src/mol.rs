@@ -88,7 +88,7 @@ fn parse_v3000_ctab(lines: &[&str]) -> Result<crate::structure::ParsedStructure,
         }
 
         // Content after the 7-char prefix "M  V30 "; empty for bare "M  V30".
-        let content = if trimmed.len() > 7 { &trimmed[7..] } else { "" };
+        let content = trimmed.get(7..).unwrap_or("");
 
         // Merge with any pending continuation prefix.
         let mut full = match pending.take() {
@@ -353,19 +353,17 @@ pub fn parse(text: &str) -> Result<crate::structure::ParsedStructure, String> {
             mass_deltas.push(dd as f32);
             formal_charges.push(decode_v2000_charge(ccc));
         } else {
-            let x: f32 = line[0..10]
-                .trim()
-                .parse()
-                .map_err(|_| format!("bad x at atom {}", i + 1))?;
-            let y: f32 = line[10..20]
-                .trim()
-                .parse()
-                .map_err(|_| format!("bad y at atom {}", i + 1))?;
-            let z: f32 = line[20..30]
-                .trim()
-                .parse()
-                .map_err(|_| format!("bad z at atom {}", i + 1))?;
-            let sym = crate::atomic::capitalize(line[31..34].trim());
+            // Byte columns: a field a multi-byte character straddles is
+            // unreadable rather than sliced mid-character.
+            let coord = |start: usize, axis: &str| -> Result<f32, String> {
+                line.get(start..start + 10)
+                    .and_then(|f| f.trim().parse().ok())
+                    .ok_or_else(|| format!("bad {} at atom {}", axis, i + 1))
+            };
+            let x = coord(0, "x")?;
+            let y = coord(10, "y")?;
+            let z = coord(20, "z")?;
+            let sym = crate::atomic::capitalize(line.get(31..34).unwrap_or("").trim());
             positions.push(x);
             positions.push(y);
             positions.push(z);
@@ -487,7 +485,7 @@ fn parse_mol_int_signed(line: &str, start: usize, end: usize) -> Option<i64> {
     if start >= end {
         return None;
     }
-    line[start..end].trim().parse().ok()
+    line.get(start..end)?.trim().parse().ok()
 }
 
 /// Parse an integer from a fixed-width field in a MOL file line.
@@ -496,15 +494,33 @@ pub(crate) fn parse_mol_int(line: &str, start: usize, end: usize) -> Result<usiz
     if start >= end {
         return Err(format!("field {}..{} out of range", start, end));
     }
-    line[start..end]
+    let field = line
+        .get(start..end)
+        .ok_or_else(|| format!("field {}..{} splits a character", start, end))?;
+    field
         .trim()
         .parse()
-        .map_err(|_| format!("cannot parse integer from '{}'", &line[start..end]))
+        .map_err(|_| format!("cannot parse integer from '{}'", field))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A multi-byte UTF-8 character that straddles a fixed column makes that
+    /// field unreadable (an error for a required one) instead of panicking.
+    #[test]
+    fn non_ascii_columns_cannot_panic_the_reader() {
+        // `é` straddles byte 10, the end of the V2000 x field.
+        let atom = "x\n  test\n\n  1  0  0  0  0  0            999 V2000\n    0.000\u{e9}    0.0000    0.0000 C   0  0  0  0  0  0\nM  END\n";
+        assert!(parse(atom).is_err_and(|e| e.contains("bad x")));
+        // `é` straddles byte 3, the end of the counts line's atom count.
+        let counts = "x\n  test\n\n  \u{e9}  0  0  0  0  0            999 V2000\nM  END\n";
+        assert!(parse(counts).is_err());
+        // `é` straddles byte 7, the end of a V3000 line's `M  V30 ` prefix.
+        let v3000 = VALID_V3000.replace("M  V30 BEGIN ATOM\n", "M  V30 BEGIN ATOM\nM  V30\u{e9}\n");
+        assert_eq!(parse(&v3000).unwrap().n_atoms, 3);
+    }
 
     fn v2000_with_bonds(bond_lines: &str) -> String {
         let n_bonds = bond_lines.lines().count();

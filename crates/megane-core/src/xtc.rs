@@ -527,15 +527,13 @@ pub struct XtcIndex {
     pub n_atoms: usize,
     pub n_frames: usize,
     pub timestep_ps: f32,
-    /// Box of the last frame (parity with `parse_xtc`'s single-box output).
+    /// Frame 0's box: the representative cell `parse_xtc` reports.
     pub box_matrix: Option<[f32; 9]>,
     /// Byte offset of each frame's magic header (64-bit: a file indexed in
     /// windows by `XtcIndexBuilder` may be larger than wasm32's address space).
     pub offsets: Vec<u64>,
     /// Per-frame time (ps).
     pub times: Vec<f32>,
-    /// Frame 0's box (the representative cell `parse_xtc` reports).
-    pub first_box: Option<[f32; 9]>,
     /// Every frame's box, when it is not the same in all of them (an NPT run);
     /// `None` for a constant cell, as `parse_xtc` builds no side table then.
     pub frame_cells: Option<Vec<[f32; 9]>>,
@@ -550,7 +548,6 @@ pub struct XtcIndex {
 #[derive(Default)]
 pub struct XtcIndexBuilder {
     n_atoms: usize,
-    last_box: Option<[f32; 9]>,
     first_box: Option<[f32; 9]>,
     /// Recorded from the first frame whose box differs from frame 0's.
     cells: Vec<[f32; 9]>,
@@ -602,7 +599,6 @@ impl XtcIndexBuilder {
             let len = coord_block_len(&mut xdr, self.n_atoms)?.saturating_add(FRAME_HEADER_BYTES);
             self.offsets.push(self.next + pos as u64);
             self.times.push(header.time);
-            self.last_box = Some(header.box_matrix);
             // The per-frame cell table `parse_xtc` builds, the same way.
             let first = *self.first_box.get_or_insert(header.box_matrix);
             if !self.varies_cell && first != header.box_matrix {
@@ -638,10 +634,9 @@ impl XtcIndexBuilder {
             n_atoms: self.n_atoms,
             n_frames,
             timestep_ps,
-            box_matrix: self.last_box,
+            box_matrix: self.first_box,
             offsets: self.offsets,
             times: self.times,
-            first_box: self.first_box,
             frame_cells: self.varies_cell.then_some(self.cells),
         })
     }
@@ -935,15 +930,19 @@ mod tests {
             data[at..at + 4].copy_from_slice(&edge.to_be_bytes());
         }
         let idx = build_index(&data).expect("build index");
-        let first = idx.first_box.expect("frame 0 box");
-        // Boxes are read in nm and kept in Å.
-        assert_eq!(first[0], 30.0);
+        // Frame 0's box is the representative cell, as `parse_xtc` reports it
+        // (boxes are read in nm and kept in Å).
+        let eager = parse_xtc(&data).expect("parse");
+        assert_eq!(idx.box_matrix.expect("frame 0 box")[0], 30.0);
+        assert_eq!(idx.box_matrix, eager.box_matrix);
         let cells = idx.frame_cells.expect("per-frame cells");
         assert_eq!(
             cells.iter().map(|c| c[0]).collect::<Vec<_>>(),
             [30.0, 40.0, 50.0]
         );
-        assert_eq!(idx.box_matrix.expect("last box")[0], 50.0);
+        for (f, cell) in cells.iter().enumerate() {
+            assert_eq!(Some(&cell[..]), eager.frame_cell(f));
+        }
         // A box that stays put records no per-frame table.
         assert!(build_index(&tiny_xtc(2, 3)).unwrap().frame_cells.is_none());
     }

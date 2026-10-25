@@ -1,5 +1,20 @@
 import { describe, it, expect } from "vitest";
-import { tileArray, tileIndices } from "@/pipeline/executors/tile";
+import { tileArray, tileIndices, tileLabels } from "@/pipeline/executors/tile";
+
+describe("tileLabels", () => {
+  it("repeats one block of nAtoms labels per image, filling gaps with empty labels", () => {
+    expect(tileLabels(["HOH1", "NA2"], 2, 3)).toEqual([
+      "HOH1",
+      "NA2",
+      "HOH1",
+      "NA2",
+      "HOH1",
+      "NA2",
+    ]);
+    expect(tileLabels(["HOH1"], 2, 2)).toEqual(["HOH1", "", "HOH1", ""]);
+    expect(tileLabels(["HOH1", "NA2", "CL3"], 2, 1)).toEqual(["HOH1", "NA2"]);
+  });
+});
 
 describe("tileIndices", () => {
   it("shifts each copy by the image's atom offset", () => {

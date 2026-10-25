@@ -9,6 +9,7 @@ import numpy as np
 from numpy.typing import NDArray
 
 from megane import megane_parser
+from megane.parsers.common import read_text
 
 __all__ = ["Spectrum", "load_jcampdx"]
 
@@ -64,8 +65,7 @@ def load_jcampdx(path: str) -> Spectrum:
     """
     logger.debug("Loading JCAMP-DX spectrum: %s", path)
 
-    with open(path) as f:
-        text = f.read()
+    text = read_text(path)
 
     result = megane_parser.parse_jcampdx(text)
 

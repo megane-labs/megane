@@ -60,7 +60,11 @@ export function executeModify(
   } else if (inData.type === "bond") {
     const bond = inData as BondData;
     if (bond.selectedBondIndices !== null) {
-      const opacityArr = new Float32Array(bond.nBonds).fill(1.0);
+      // Start from the upstream per-bond opacity so bonds outside this
+      // selection keep a fade an earlier modify gave them.
+      const opacityArr = bond.bondOpacityOverrides
+        ? new Float32Array(bond.bondOpacityOverrides)
+        : new Float32Array(bond.nBonds).fill(1.0);
       for (const idx of bond.selectedBondIndices) {
         opacityArr[idx] = params.opacity;
       }

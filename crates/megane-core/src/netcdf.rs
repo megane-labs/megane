@@ -7,7 +7,7 @@
 /// Only the variables needed for trajectory visualization are decoded:
 /// `coordinates`, `time`, `cell_lengths`, `cell_angles`.
 use crate::cell::cell_params_to_matrix;
-use crate::trajectory::TrajectoryData;
+use crate::trajectory::{TrajectoryData, VectorChannel, VectorFrame};
 
 const TAG_DIM: u32 = 10;
 const TAG_VAR: u32 = 11;
@@ -93,21 +93,36 @@ impl<'a> Reader<'a> {
     }
 
     fn skip_att_list(&mut self) -> Result<(), String> {
+        self.read_att_list().map(|_| ())
+    }
+
+    /// Read an attribute list, keeping only a numeric `scale_factor` (the
+    /// netCDF convention: stored value × scale_factor = the value meant).
+    fn read_att_list(&mut self) -> Result<Option<f64>, String> {
         let tag = self.read_u32()?;
         let count = self.read_u32()?;
         if tag == 0 && count == 0 {
-            return Ok(());
+            return Ok(None);
         }
         if tag != TAG_ATT {
             return Err(format!("expected NC_ATTRIBUTE tag ({TAG_ATT}), got {tag}"));
         }
+        let mut scale_factor = None;
         for _ in 0..count {
-            let _name = self.read_string()?;
+            let name = self.read_string()?;
             let nc_type = self.read_u32()?;
             let nelems = self.read_u32()? as usize;
+            let payload = self.pos;
             self.skip_att_payload(nc_type, nelems)?;
+            if name == "scale_factor" && nelems >= 1 {
+                scale_factor = match nc_type {
+                    NC_FLOAT => Some(self.read_f32_at(payload)? as f64),
+                    NC_DOUBLE => Some(self.read_f64_at(payload)?),
+                    _ => scale_factor,
+                };
+            }
         }
-        Ok(())
+        Ok(scale_factor)
     }
 
     /// Read a f32 from an absolute byte offset (big-endian).
@@ -145,6 +160,8 @@ struct VarDesc {
     nc_type: u32,
     vsize: u32,
     begin: u64,
+    /// The variable's `scale_factor` attribute, when it has a numeric one.
+    scale_factor: Option<f64>,
 }
 
 // ─── parse helpers ─────────────────────────────────────────────────────────
@@ -189,7 +206,7 @@ fn parse_var_list(r: &mut Reader) -> Result<Vec<VarDesc>, String> {
         for _ in 0..ndims {
             dimids.push(r.read_u32()?);
         }
-        r.skip_att_list()?;
+        let scale_factor = r.read_att_list()?;
         let nc_type = r.read_u32()?;
         let vsize = r.read_u32()?;
         let begin = r.read_begin()?;
@@ -199,6 +216,7 @@ fn parse_var_list(r: &mut Reader) -> Result<Vec<VarDesc>, String> {
             nc_type,
             vsize,
             begin,
+            scale_factor,
         });
     }
     Ok(vars)
@@ -222,6 +240,21 @@ pub struct NetcdfLayout {
     time_off: Option<u64>,
     cell_len_off: Option<u64>,
     cell_ang_off: Option<u64>,
+    /// Per-atom vector record variables (AMBER `velocities` / `forces`), in
+    /// channel order.
+    vectors: Vec<VectorVar>,
+}
+
+/// A per-atom `(frame, atom, spatial)` float record variable decoded as a
+/// vector channel.
+struct VectorVar {
+    /// Channel name (megane's conventional `velocity` / `force`).
+    name: &'static str,
+    /// Offset within a record.
+    off: u64,
+    /// The variable's `scale_factor` (AMBER velocities carry 20.455, turning
+    /// the stored values into Å/ps); applied on decode.
+    scale: Option<f32>,
 }
 
 /// One frame of a [`NetcdfLayout`].
@@ -232,6 +265,9 @@ pub struct NetcdfFrame {
     pub cell: Option<[f32; 9]>,
     /// This frame's `time` (ps), when the file carries a float one.
     pub time: Option<f32>,
+    /// This frame's per-atom vectors (`n_atoms * 3` each), parallel to
+    /// [`NetcdfLayout::vector_channel_names`].
+    pub vectors: Vec<Vec<f32>>,
 }
 
 impl NetcdfLayout {
@@ -243,6 +279,12 @@ impl NetcdfLayout {
     /// The file carries a float `time` per frame.
     pub fn has_time(&self) -> bool {
         self.time_off.is_some()
+    }
+
+    /// Names of the per-atom vector channels each frame decodes
+    /// (`velocity`, `force`), in [`NetcdfFrame::vectors`] order.
+    pub fn vector_channel_names(&self) -> Vec<&'static str> {
+        self.vectors.iter().map(|v| v.name).collect()
     }
 
     /// Where in a record the cell is (offset from the record start, length).
@@ -265,7 +307,14 @@ impl NetcdfLayout {
             self.cell_len_off.map(|o| o + 24),
             self.cell_ang_off.map(|o| o + 24),
         ];
-        ends.into_iter().flatten().fold(self.recsize, u64::max)
+        let vector_ends = self
+            .vectors
+            .iter()
+            .map(|v| v.off + self.n_atoms as u64 * 12);
+        ends.into_iter()
+            .flatten()
+            .chain(vector_ends)
+            .fold(self.recsize, u64::max)
     }
 }
 
@@ -352,23 +401,6 @@ pub fn read_layout(head: &[u8], file_len: u64) -> Result<NetcdfLayout, String> {
         .map(|v| (v.vsize as u64 + 3) & !3)
         .sum();
 
-    // number of frames
-    let n_frames: usize = if numrecs_raw == 0xFFFF_FFFF {
-        if recsize == 0 {
-            return Err("streaming numrecs and recsize=0 — cannot determine frame count".into());
-        }
-        file_len
-            .saturating_sub(coord_var.begin)
-            .checked_div(recsize)
-            .unwrap_or(0) as usize
-    } else {
-        numrecs_raw as usize
-    };
-
-    if n_frames == 0 {
-        return Err("NetCDF trajectory has 0 frames".into());
-    }
-
     // A non-record variable is the same in every frame: read it from frame 0's
     // record offsets as the eager reader does (`begin + i * recsize`).
     let record_start = vars
@@ -378,7 +410,42 @@ pub fn read_layout(head: &[u8], file_len: u64) -> Result<NetcdfLayout, String> {
         .min()
         .unwrap_or(coord_var.begin)
         .min(coord_var.begin);
+
+    // number of frames
+    let n_frames: usize = if numrecs_raw == 0xFFFF_FFFF {
+        if recsize == 0 {
+            return Err("streaming numrecs and recsize=0 — cannot determine frame count".into());
+        }
+        // Whole records from where the record section starts, not from where
+        // `coordinates` sits in it: a record variable defined before it
+        // (`time`) starts the record earlier.
+        file_len
+            .saturating_sub(record_start)
+            .checked_div(recsize)
+            .unwrap_or(0) as usize
+    } else {
+        numrecs_raw as usize
+    };
+
+    if n_frames == 0 {
+        return Err("NetCDF trajectory has 0 frames".into());
+    }
     let off = |v: &VarDesc| v.begin.checked_sub(record_start);
+    // AMBER's optional per-atom record variables, laid out like coordinates.
+    let vectors = [("velocities", "velocity"), ("forces", "force")]
+        .into_iter()
+        .filter_map(|(var, name)| {
+            let v = vars.iter().find(|v| v.name == var)?;
+            if v.nc_type != NC_FLOAT || v.vsize as usize != expected_vsize || !is_record(v) {
+                return None;
+            }
+            Some(VectorVar {
+                name,
+                off: off(v)?,
+                scale: v.scale_factor.map(|f| f as f32),
+            })
+        })
+        .collect();
     Ok(NetcdfLayout {
         n_atoms,
         n_frames,
@@ -388,6 +455,7 @@ pub fn read_layout(head: &[u8], file_len: u64) -> Result<NetcdfLayout, String> {
         time_off: time_var.and_then(off),
         cell_len_off: cell_len_var.and_then(off),
         cell_ang_off: cell_len_var.and(cell_ang_var).and_then(off),
+        vectors,
     })
 }
 
@@ -420,10 +488,27 @@ fn decode_frame(
         .and_then(at)
         .and_then(|t| r.read_f32_at(t).ok());
     let cell = read_cell(layout, data, base, i)?;
+    let mut vectors = Vec::with_capacity(layout.vectors.len());
+    for v in &layout.vectors {
+        let start = at(v.off).ok_or("record precedes its bytes")?;
+        let mut values = Vec::with_capacity(n_coords);
+        for j in 0..n_coords {
+            let x = r.read_f32_at(start + j * 4).map_err(|_| {
+                format!(
+                    "frame {i} {} out of bounds (offset {})",
+                    v.name,
+                    rec + v.off
+                )
+            })?;
+            values.push(v.scale.map_or(x, |f| x * f));
+        }
+        vectors.push(values);
+    }
     Ok(NetcdfFrame {
         positions,
         cell,
         time,
+        vectors,
     })
 }
 
@@ -510,10 +595,21 @@ pub fn parse_netcdf(data: &[u8]) -> Result<TrajectoryData, String> {
     let mut varies_cell = false;
     let mut cells_ended = false;
     let mut times = [None, None];
+    let mut vector_channels: Vec<VectorChannel> = layout
+        .vector_channel_names()
+        .into_iter()
+        .map(|name| VectorChannel {
+            name: name.to_string(),
+            frames: Vec::new(),
+        })
+        .collect();
 
     for i in 0..n_frames {
         let frame = decode_frame(&layout, data, 0, i)?;
         frame_positions_flat.extend_from_slice(&frame.positions);
+        for (channel, vectors) in vector_channels.iter_mut().zip(frame.vectors) {
+            channel.frames.push(VectorFrame { frame: i, vectors });
+        }
         if let Some(t) = times.get_mut(i) {
             *t = frame.time;
         }
@@ -548,7 +644,7 @@ pub fn parse_netcdf(data: &[u8]) -> Result<TrajectoryData, String> {
         box_matrix,
         box_origin: None,
         frame_positions_flat,
-        vector_channels: vec![],
+        vector_channels,
         hetero,
     })
 }
@@ -1138,6 +1234,210 @@ mod tests {
         let result = parse_netcdf(&data).expect("parse water.nc");
         assert_eq!(result.n_atoms, 3, "water has 3 atoms");
         assert!(result.n_frames >= 1, "at least 1 frame");
+    }
+
+    /// A CDF-1 AMBER file with `time`, `coordinates`, `velocities` (carrying
+    /// AMBER's `scale_factor` attribute when `velocity_scale` is set) and
+    /// `forces` record variables. In frame f atom-coordinate k holds
+    /// `f*100 + k`, the stored velocity `f + k/10` and the force `-(f + k)`.
+    fn nc_with_vectors(n_atoms: u32, n_frames: usize, velocity_scale: Option<f32>) -> Vec<u8> {
+        fn name(out: &mut Vec<u8>, s: &str) {
+            out.extend_from_slice(&(s.len() as u32).to_be_bytes());
+            out.extend_from_slice(s.as_bytes());
+            while !out.len().is_multiple_of(4) {
+                out.push(0);
+            }
+        }
+        let vsize = n_atoms * 12;
+        let header = |begin: u32| {
+            let mut out = b"CDF\x01".to_vec();
+            let w = |out: &mut Vec<u8>, v: u32| out.extend_from_slice(&v.to_be_bytes());
+            w(&mut out, n_frames as u32);
+            w(&mut out, TAG_DIM);
+            w(&mut out, 3);
+            for (dim, size) in [("frame", 0), ("atom", n_atoms), ("spatial", 3)] {
+                name(&mut out, dim);
+                w(&mut out, size);
+            }
+            w(&mut out, 0); // no global attributes
+            w(&mut out, 0);
+            w(&mut out, TAG_VAR);
+            w(&mut out, 4);
+            let vars: [(&str, &[u32], u32, Option<f32>); 4] = [
+                ("time", &[0], 4, None),
+                ("coordinates", &[0, 1, 2], vsize, None),
+                ("velocities", &[0, 1, 2], vsize, velocity_scale),
+                ("forces", &[0, 1, 2], vsize, None),
+            ];
+            let mut at = begin;
+            for (var, dims, size, scale) in vars {
+                name(&mut out, var);
+                w(&mut out, dims.len() as u32);
+                for d in dims {
+                    w(&mut out, *d);
+                }
+                match scale {
+                    Some(f) => {
+                        w(&mut out, TAG_ATT);
+                        w(&mut out, 2);
+                        // A text attribute first, to be skipped.
+                        name(&mut out, "units");
+                        w(&mut out, 2); // NC_CHAR
+                        name(&mut out, "angstrom/picosecond");
+                        name(&mut out, "scale_factor");
+                        w(&mut out, NC_FLOAT);
+                        w(&mut out, 1);
+                        out.extend_from_slice(&f.to_be_bytes());
+                    }
+                    None => {
+                        w(&mut out, 0);
+                        w(&mut out, 0);
+                    }
+                }
+                w(&mut out, NC_FLOAT);
+                w(&mut out, size);
+                w(&mut out, at);
+                at += size;
+            }
+            out
+        };
+        let mut out = header(header(0).len() as u32);
+        for f in 0..n_frames {
+            out.extend_from_slice(&(f as f32).to_be_bytes());
+            let n = n_atoms as usize * 3;
+            for k in 0..n {
+                out.extend_from_slice(&((f * 100 + k) as f32).to_be_bytes());
+            }
+            for k in 0..n {
+                out.extend_from_slice(&(f as f32 + k as f32 / 10.0).to_be_bytes());
+            }
+            for k in 0..n {
+                out.extend_from_slice(&(-((f + k) as f32)).to_be_bytes());
+            }
+        }
+        out
+    }
+
+    #[test]
+    fn velocities_and_forces_become_vector_channels() {
+        let data = nc_with_vectors(2, 3, Some(20.455));
+        let t = parse_netcdf(&data).unwrap();
+        assert_eq!(t.n_frames, 3);
+        assert_eq!(t.frame(2)[0], 200.0);
+        let names: Vec<&str> = t.vector_channels.iter().map(|c| c.name.as_str()).collect();
+        assert_eq!(names, ["velocity", "force"]);
+        let (vel, force) = (&t.vector_channels[0], &t.vector_channels[1]);
+        assert_eq!(vel.frames.len(), 3);
+        assert_eq!(force.frames.len(), 3);
+        for f in 0..3 {
+            assert_eq!(vel.frames[f].frame, f);
+            // The stored values times the file's scale_factor (Å/ps).
+            for k in 0..6 {
+                let stored = f as f32 + k as f32 / 10.0;
+                assert!((vel.frames[f].vectors[k] - stored * 20.455).abs() < 1e-4);
+                assert_eq!(force.frames[f].vectors[k], -((f + k) as f32));
+            }
+        }
+        // The fixed-layout reader decodes the same vectors from each record.
+        let layout = read_layout(&data, data.len() as u64).unwrap();
+        assert_eq!(layout.vector_channel_names(), ["velocity", "force"]);
+        for f in 0..3 {
+            let start = (layout.record_start + f as u64 * layout.recsize) as usize;
+            let end = (start as u64 + layout.record_span()) as usize;
+            let rec = decode_layout_record(&layout, &data[start..end.min(data.len())], f).unwrap();
+            assert_eq!(
+                rec.vectors,
+                [
+                    vel.frames[f].vectors.clone(),
+                    force.frames[f].vectors.clone()
+                ]
+            );
+        }
+    }
+
+    #[test]
+    fn vectors_without_a_scale_factor_are_read_as_stored() {
+        let t = parse_netcdf(&nc_with_vectors(1, 1, None)).unwrap();
+        assert_eq!(t.vector_channels[0].frames[0].vectors, [0.0, 0.1, 0.2]);
+        // A file without them has no vector channels.
+        let plain = build_netcdf(1, &[vec![0.0, 0.0, 0.0]], &[0.0], None, None);
+        assert!(parse_netcdf(&plain).unwrap().vector_channels.is_empty());
+    }
+
+    /// `coordinates` (time defined first), `n_frames` whole
+    /// `coordinates` (the order cpptraj and pytraj write), `n_frames` whole
+    /// records of `n_atoms` atoms, with `numrecs` in the header. Frame f's
+    /// time is `f` ps and its coordinates are `f*100 + k`.
+    fn nc_time_first(numrecs: u32, n_atoms: u32, n_frames: usize) -> Vec<u8> {
+        fn name(out: &mut Vec<u8>, s: &str) {
+            out.extend_from_slice(&(s.len() as u32).to_be_bytes());
+            out.extend_from_slice(s.as_bytes());
+            while !out.len().is_multiple_of(4) {
+                out.push(0);
+            }
+        }
+        let header = |time_begin: u32| {
+            let mut out = b"CDF\x01".to_vec();
+            let w = |out: &mut Vec<u8>, v: u32| out.extend_from_slice(&v.to_be_bytes());
+            w(&mut out, numrecs);
+            w(&mut out, TAG_DIM);
+            w(&mut out, 3);
+            for (dim, size) in [("frame", 0), ("atom", n_atoms), ("spatial", 3)] {
+                name(&mut out, dim);
+                w(&mut out, size);
+            }
+            w(&mut out, 0); // no global attributes
+            w(&mut out, 0);
+            w(&mut out, TAG_VAR);
+            w(&mut out, 2);
+            let vars: [(&str, &[u32], u32, u32); 2] = [
+                ("time", &[0], 4, time_begin),
+                ("coordinates", &[0, 1, 2], n_atoms * 12, time_begin + 4),
+            ];
+            for (var, dims, vsize, begin) in vars {
+                name(&mut out, var);
+                w(&mut out, dims.len() as u32);
+                for d in dims {
+                    w(&mut out, *d);
+                }
+                w(&mut out, 0); // no attributes
+                w(&mut out, 0);
+                w(&mut out, NC_FLOAT);
+                w(&mut out, vsize);
+                w(&mut out, begin);
+            }
+            out
+        };
+        let mut out = header(header(0).len() as u32);
+        for f in 0..n_frames {
+            out.extend_from_slice(&(f as f32).to_be_bytes());
+            for k in 0..n_atoms * 3 {
+                out.extend_from_slice(&((f * 100) as f32 + k as f32).to_be_bytes());
+            }
+        }
+        out
+    }
+
+    #[test]
+    fn streaming_numrecs_counts_records_from_the_first_record_variable() {
+        // numrecs = STREAMING: the frame count comes from the file length,
+        // measured from where the records start (`time`), not from where
+        // `coordinates` sits inside the first one.
+        let counted = nc_time_first(5, 3, 5);
+        let mut streaming = counted.clone();
+        streaming[4..8].copy_from_slice(&0xFFFF_FFFFu32.to_be_bytes());
+        let layout = read_layout(&streaming, streaming.len() as u64).unwrap();
+        assert_eq!(layout.n_frames, 5);
+        let eager = parse_netcdf(&streaming).unwrap();
+        let want = parse_netcdf(&counted).unwrap();
+        assert_eq!(eager.n_frames, 5);
+        assert_eq!(eager.frame_positions_flat, want.frame_positions_flat);
+        assert_eq!(eager.frame(4)[0], 400.0);
+        assert_eq!(eager.timestep_ps, 1.0);
+        // A record cut short is not a frame.
+        let cut = &streaming[..streaming.len() - 1];
+        assert_eq!(read_layout(cut, cut.len() as u64).unwrap().n_frames, 4);
+        assert_eq!(parse_netcdf(cut).unwrap().n_frames, 4);
     }
 
     #[test]

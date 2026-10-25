@@ -138,24 +138,18 @@ fn parse_frame_block(
         }
 
         if collect_topology {
-            // Residue number (cols 0-5) and residue name (cols 5-10)
-            let res_num = if line.len() >= 5 {
-                line[0..5].trim()
-            } else {
-                ""
-            };
-            let res_name = if line.len() >= 10 {
-                line[5..10].trim()
-            } else {
-                ""
-            };
+            // Residue number (cols 0-5) and residue name (cols 5-10). These
+            // are byte columns: a field a multi-byte character straddles is
+            // left blank rather than sliced mid-character.
+            let res_num = line.get(0..5).map_or("", str::trim);
+            let res_name = line.get(5..10).map_or("", str::trim);
             labels.push(format!("{}{}", res_name, res_num));
 
             // Atom name: columns 11-15 (0-indexed: 10..15). GRO carries no
             // element column, so the element comes from the name read in the
             // context of its residue: a protein "CA" is a Cα carbon, an ion
             // residue "CA" is calcium.
-            let atom_name = if line.len() >= 15 { &line[10..15] } else { "" };
+            let atom_name = line.get(10..15).unwrap_or("");
             elements.push(element_from_atom_name_in_residue(atom_name, res_name));
         }
 
@@ -366,6 +360,26 @@ fn parse_box_line(line: &str) -> Option<[f32; 9]> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// GRO columns are byte columns (GROMACS writes them with `printf`), so a
+    /// two-byte `é` that fits its five-byte residue-name field keeps every
+    /// later column in place, and one that overflows it leaves the name
+    /// fields unread instead of panicking the parser.
+    #[test]
+    fn non_ascii_names_cannot_panic_the_column_reader() {
+        let aligned = "t\n1\n    1SOL\u{e9}   OW    1   0.100   0.200   0.300\n   1.0 1.0 1.0\n";
+        let s = parse(aligned).unwrap();
+        assert_eq!(s.elements, vec![8]);
+        assert_eq!(s.atom_labels, Some(vec!["SOL\u{e9}1".to_string()]));
+
+        // `é` straddles byte 10, the end of the residue name and the start
+        // of the atom name.
+        let straddling = "t\n1\n    1SOLX\u{e9}  OW    1   0.100   0.200   0.300\n   1.0 1.0 1.0\n";
+        let s = parse(straddling).unwrap();
+        assert_eq!(s.n_atoms, 1);
+        assert_eq!(s.positions, vec![1.0, 2.0, 3.0]);
+        assert_eq!(s.atom_labels, Some(vec!["1".to_string()]));
+    }
 
     #[test]
     fn test_parse_simple_gro() {

@@ -570,6 +570,11 @@ pub struct LammpstrjIndex {
     pub offsets: Vec<usize>,
     /// Vector channel names (velocity/force) from the first frame's layout.
     pub vector_channel_names: Vec<String>,
+    /// Every frame's box, when it is not the same in all of them (an NPT run);
+    /// `None` for a constant cell, as `parse_lammpstrj` builds no per-frame
+    /// cell table then. Read from the `BOX BOUNDS` headers the scan already
+    /// parses, so a lazy host can give each frame its own cell.
+    pub frame_cells: Option<Vec<[f32; 9]>>,
     /// True when some frame's atom count differs from frame 0. The lazy
     /// positions-only decoder can't represent a jagged trajectory, so the host
     /// reparses the whole dump eagerly (building the `TrajHetero` side table).
@@ -619,7 +624,13 @@ pub struct LammpstrjIndexBuilder {
     box_matrix: Option<[f32; 9]>,
     box_origin: Option<[f32; 3]>,
     vector_channel_names: Vec<String>,
-    heterogeneous: bool,
+    /// Recorded from the first frame whose box differs from frame 0's.
+    cells: Vec<[f32; 9]>,
+    varies_cell: bool,
+    /// Frames whose atom count differs from frame 0's, and whether the last
+    /// one added is among them (so dropping it as incomplete can undo that).
+    differing_frames: usize,
+    last_differs: bool,
 }
 
 impl LammpstrjIndexBuilder {
@@ -666,11 +677,23 @@ impl LammpstrjIndexBuilder {
                 .iter()
                 .map(|g| g.name.to_string())
                 .collect();
-        } else if header.n_atoms != self.n_atoms {
-            // A jagged dump is admitted here (not rejected); the host falls back
-            // to an eager parse because the positions-only lazy decoder can't
-            // stream frames whose atom count differs from frame 0.
-            self.heterogeneous = true;
+        }
+        // A jagged dump is admitted here (not rejected); the host falls back
+        // to an eager parse because the positions-only lazy decoder can't
+        // stream frames whose atom count differs from frame 0.
+        self.last_differs = header.n_atoms != self.n_atoms;
+        self.differing_frames += self.last_differs as usize;
+        // The per-frame cell table `parse_lammpstrj` builds, the same way:
+        // backfill frame 0's box the first time a frame's box differs.
+        if !self.varies_cell && self.box_matrix != Some(header.box_matrix) {
+            self.varies_cell = true;
+            self.cells.extend(std::iter::repeat_n(
+                self.box_matrix.unwrap_or(header.box_matrix),
+                self.offsets.len(),
+            ));
+        }
+        if self.varies_cell {
+            self.cells.push(header.box_matrix);
         }
         self.offsets.push(start);
         // Only the first two time stamps set the time step.
@@ -686,13 +709,39 @@ impl LammpstrjIndexBuilder {
         Ok(())
     }
 
+    /// Whether the last frame pushed is still missing atom lines.
+    fn last_frame_incomplete(&self) -> bool {
+        matches!(self.scan, LammpstrjScan::Atoms { .. })
+    }
+
     /// The index of everything pushed so far.
-    pub fn finish(self) -> Result<LammpstrjIndex, String> {
+    pub fn finish(mut self) -> Result<LammpstrjIndex, String> {
         if let LammpstrjScan::Header { lines, .. } = &self.scan {
             // A header cut off by the end of the file fails exactly as the
             // whole-text reader does.
             let refs: Vec<&str> = lines.iter().map(String::as_str).collect();
             read_frame_header(&refs, 0)?;
+        }
+        if self.last_frame_incomplete() {
+            // The file ends inside the last frame's atom lines (a dump cut
+            // off mid-write): drop that frame, as the whole-text readers do.
+            // Frame 0 cut off leaves no frame to show.
+            if self.offsets.len() == 1 {
+                return Err("Unexpected end of file in atom data".to_string());
+            }
+            self.offsets.pop();
+            self.timesteps.truncate(self.offsets.len());
+            self.differing_frames -= self.last_differs as usize;
+            // Its cell goes with it. When it was the only frame whose box
+            // differed, the eager parse (which never reads the dropped
+            // frame's box) records no per-frame table, so neither does this.
+            if self.varies_cell {
+                self.cells.pop();
+                if self.cells.iter().all(|c| Some(*c) == self.box_matrix) {
+                    self.varies_cell = false;
+                    self.cells.clear();
+                }
+            }
         }
         if self.offsets.is_empty() {
             return Err("No frames found in file".to_string());
@@ -710,13 +759,17 @@ impl LammpstrjIndexBuilder {
             box_origin: self.box_origin,
             offsets: self.offsets.iter().map(|&o| o as usize).collect(),
             vector_channel_names: self.vector_channel_names,
-            heterogeneous: self.heterogeneous,
+            frame_cells: self.varies_cell.then_some(self.cells),
+            heterogeneous: self.differing_frames > 0,
         })
     }
 
-    /// Byte offset of each frame's `ITEM: TIMESTEP` line, as file offsets.
+    /// Byte offset of each complete frame's `ITEM: TIMESTEP` line, as file
+    /// offsets: a last frame still missing atom lines is left out, as
+    /// [`finish`](Self::finish) drops it.
     pub fn file_offsets(&self) -> &[u64] {
-        &self.offsets
+        let complete = self.offsets.len() - self.last_frame_incomplete() as usize;
+        &self.offsets[..complete]
     }
 }
 
@@ -817,6 +870,18 @@ pub fn parse_lammpstrj(text: &str) -> Result<LammpstrjData, String> {
             .trim()
             .parse()
             .map_err(|_| format!("Cannot parse number of atoms at line {}", i + 1))?;
+
+        // A later frame whose header is whole but whose atom lines run past
+        // the end of the file (a dump cut off mid-write) is dropped, as the
+        // index scan drops it. Its header is BOX BOUNDS + 3 rows + ATOMS.
+        let atoms_header = i + 5;
+        if n_frames > 0
+            && atoms_header < n_lines
+            && atoms_header.saturating_add(frame_n_atoms) >= n_lines
+        {
+            timesteps.pop();
+            break;
+        }
 
         if n_frames == 0 {
             n_atoms = frame_n_atoms;
@@ -1227,6 +1292,7 @@ pub fn parse_lammpstrj_structure(text: &str) -> Result<ParsedStructure, String> 
     // = one entry per column; inner Vec<ScalarFrame> = one entry per frame.
     let mut scalar_names: Vec<String> = Vec::new();
     let mut scalar_frames: Vec<Vec<ScalarFrame>> = Vec::new();
+    let mut warnings: Vec<String> = Vec::new();
 
     let mut i = 0usize;
     while i < n_lines {
@@ -1236,6 +1302,14 @@ pub fn parse_lammpstrj_structure(text: &str) -> Result<ParsedStructure, String> 
         }
         let header = read_frame_header(&lines, i)?;
         let frame_atoms = header.n_atoms;
+        if frame_idx > 0 && header.atoms_start.saturating_add(frame_atoms) > n_lines {
+            // A later frame cut off inside its atom lines: drop it (as the
+            // trajectory lane and the index do) and say so.
+            warnings.push(format!(
+                "Dropped the last frame (frame {frame_idx}): the file ends inside its atom lines"
+            ));
+            break;
+        }
         let frame_box = header.box_matrix;
         // want_types=true so the `type` column (when present) becomes the
         // per-atom element proxy; want_scalars=true so extra numeric columns
@@ -1314,7 +1388,6 @@ pub fn parse_lammpstrj_structure(text: &str) -> Result<ParsedStructure, String> 
     // representation, and a partially-present column would desync from
     // playback. Skipped columns are reported once, aggregated.
     let mut scalar_channels: Vec<ScalarChannel> = Vec::new();
-    let mut warnings: Vec<String> = Vec::new();
     if !scalar_names.is_empty() {
         if varies_atoms {
             warnings.push(format!(
@@ -1794,6 +1867,73 @@ mod tests {
     }
 
     #[test]
+    fn build_index_records_a_changing_cell_like_the_eager_parse() {
+        // Box 10 → 10 → 12 → 14: the index keeps frame 0's box as the
+        // representative cell and every frame's box once one differs.
+        let mut text = String::new();
+        for (f, edge) in [10.0f32, 10.0, 12.0, 14.0].iter().enumerate() {
+            text += &format!(
+                "ITEM: TIMESTEP\n{f}\nITEM: NUMBER OF ATOMS\n1\n\
+                 ITEM: BOX BOUNDS pp pp pp\n0 {edge}\n0 {edge}\n0 {edge}\n\
+                 ITEM: ATOMS id type x y z\n1 1 1 1 1\n"
+            );
+        }
+        let eager = parse_lammpstrj(&text).unwrap();
+        let idx = build_index(&text).unwrap();
+        assert!(!idx.heterogeneous);
+        assert_eq!(idx.box_matrix, eager.box_matrix);
+        let cells = idx.frame_cells.expect("per-frame cells");
+        assert_eq!(
+            cells.iter().map(|c| c[0]).collect::<Vec<_>>(),
+            [10.0, 10.0, 12.0, 14.0]
+        );
+        for (f, cell) in cells.iter().enumerate() {
+            assert_eq!(Some(&cell[..]), eager.frame_cell(f));
+        }
+        // A box that stays put records no per-frame table.
+        assert!(build_index(sample_dump()).unwrap().frame_cells.is_none());
+    }
+
+    #[test]
+    fn build_index_drops_a_truncated_last_frame_with_its_cell() {
+        // Two atoms per frame; the last frame ends after its first atom line.
+        let dump = |edges: [f32; 3]| {
+            let mut text = String::new();
+            for (f, edge) in edges.iter().enumerate() {
+                text += &format!(
+                    "ITEM: TIMESTEP\n{f}\nITEM: NUMBER OF ATOMS\n2\n\
+                     ITEM: BOX BOUNDS pp pp pp\n0 {edge}\n0 {edge}\n0 {edge}\n\
+                     ITEM: ATOMS id type x y z\n1 1 1 1 1\n"
+                );
+                if f + 1 < edges.len() {
+                    text += "2 1 2 2 2\n";
+                }
+            }
+            text
+        };
+
+        // Box 10 → 12 → 14 (cut): the dropped frame's cell leaves the table.
+        let text = dump([10.0, 12.0, 14.0]);
+        let eager = parse_lammpstrj(&text).unwrap();
+        let idx = build_index(&text).unwrap();
+        assert_eq!((eager.n_frames, idx.n_frames), (2, 2));
+        let cells = idx.frame_cells.expect("per-frame cells");
+        assert_eq!(cells.iter().map(|c| c[0]).collect::<Vec<_>>(), [10.0, 12.0]);
+        for (f, cell) in cells.iter().enumerate() {
+            assert_eq!(Some(&cell[..]), eager.frame_cell(f));
+        }
+
+        // Box 10 → 10 → 14 (cut): only the dropped frame's box differed, so
+        // neither reader keeps a per-frame table.
+        let text = dump([10.0, 10.0, 14.0]);
+        let eager = parse_lammpstrj(&text).unwrap();
+        let idx = build_index(&text).unwrap();
+        assert_eq!((eager.n_frames, idx.n_frames), (2, 2));
+        assert!(eager.frame_cell(0).is_none());
+        assert!(idx.frame_cells.is_none());
+    }
+
+    #[test]
     fn structure_uniform_splits_frame0_topology() {
         let s = parse_lammpstrj_structure(sample_dump()).unwrap();
         assert_eq!(s.n_atoms, 3);
@@ -2187,5 +2327,88 @@ mod tests {
         );
         assert!(s.scalar_channels.is_empty());
         assert!(s.warnings.is_empty());
+    }
+
+    /// `text` without its last `n` lines.
+    fn drop_last_lines(text: &str, n: usize) -> String {
+        let lines: Vec<&str> = text.lines().collect();
+        lines[..lines.len() - n].join("\n") + "\n"
+    }
+
+    #[test]
+    fn a_last_frame_cut_off_in_its_atom_lines_is_dropped_everywhere() {
+        let text = std::fs::read_to_string(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../tests/fixtures/water.lammpstrj"
+        ))
+        .expect("read dump");
+        let full = parse_lammpstrj(&text).unwrap();
+        let n = full.n_frames;
+        assert!(n >= 2);
+        // Cut 1 atom line, or every atom line, of the last frame.
+        for cut in [1, full.n_atoms] {
+            let t = drop_last_lines(&text, cut);
+            let eager = parse_lammpstrj(&t).unwrap();
+            assert_eq!(eager.n_frames, n - 1, "cut {cut}");
+            assert_eq!(
+                eager.frame_positions_flat,
+                full.frame_positions_flat[..(n - 1) * full.n_atoms * 3]
+            );
+            assert_eq!(eager.timestep_ps, full.timestep_ps);
+
+            let s = parse_lammpstrj_structure(&t).unwrap();
+            assert_eq!(s.extra_frame_count(), n - 2, "cut {cut}");
+            assert_eq!(s.warnings.len(), 1, "{:?}", s.warnings);
+            assert!(s.warnings[0].contains("Dropped the last frame"));
+
+            let idx = build_index(&t).unwrap();
+            assert_eq!(idx.n_frames, n - 1, "cut {cut}");
+            assert_eq!(idx.offsets.len(), n - 1);
+            let last = *idx.offsets.last().unwrap();
+            let frame = decode_frame_at(&t, last, idx.n_atoms).unwrap();
+            assert_eq!(frame.positions, full.frame(n - 2));
+            // The line-fed builder hands out only the complete frames too.
+            let mut builder = LammpstrjIndexBuilder::default();
+            crate::lines::for_each_line(&t, |line, start, _| builder.push_line(line, start))
+                .unwrap();
+            assert_eq!(builder.file_offsets().len(), n - 1);
+        }
+    }
+
+    #[test]
+    fn a_frame_0_cut_off_in_its_atom_lines_is_an_error() {
+        let text = "ITEM: TIMESTEP\n0\nITEM: NUMBER OF ATOMS\n2\n\
+                    ITEM: BOX BOUNDS pp pp pp\n0 10\n0 10\n0 10\n\
+                    ITEM: ATOMS id type x y z\n1 1 0 0 0\n";
+        for err in [
+            parse_lammpstrj(text).err().unwrap(),
+            parse_lammpstrj_structure(text).err().unwrap(),
+            build_index(text).err().unwrap(),
+        ] {
+            assert!(err.contains("Unexpected end of file in atom data"), "{err}");
+        }
+    }
+
+    #[test]
+    fn a_dropped_last_frame_does_not_count_as_a_changed_atom_count() {
+        // Frame 1 claims 3 atoms (frame 0 has 1) but is cut off: once it is
+        // dropped the dump is uniform, so the host may stream it lazily.
+        let text = "ITEM: TIMESTEP\n0\nITEM: NUMBER OF ATOMS\n1\n\
+                    ITEM: BOX BOUNDS pp pp pp\n0 10\n0 10\n0 10\n\
+                    ITEM: ATOMS id type x y z\n1 1 0 0 0\n\
+                    ITEM: TIMESTEP\n10\nITEM: NUMBER OF ATOMS\n3\n\
+                    ITEM: BOX BOUNDS pp pp pp\n0 10\n0 10\n0 10\n\
+                    ITEM: ATOMS id type x y z\n1 1 1 1 1\n";
+        let idx = build_index(text).unwrap();
+        assert_eq!(idx.n_frames, 1);
+        assert!(!idx.heterogeneous);
+        assert_eq!(idx.timestep_ps, 0.0);
+        let eager = parse_lammpstrj(text).unwrap();
+        assert_eq!(eager.n_frames, 1);
+        assert!(eager.hetero.is_none());
+        assert_eq!(eager.timestep_ps, 0.0);
+        // A whole jagged frame still counts.
+        let whole = format!("{text}2 1 2 2 2\n3 1 3 3 3\n");
+        assert!(build_index(&whole).unwrap().heterogeneous);
     }
 }
