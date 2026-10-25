@@ -15,9 +15,14 @@ import {
 } from "./validatePipeline";
 import type { SelfCheckContext } from "./selfCheck";
 import { getSkills } from "./skillLoader";
-import { hasClosedFence, lastFencedJSON, runGeneration } from "./generation";
+import { fencePattern, lastJSONPayload, looksLikePayload, runGeneration } from "./generation";
 
-export { MAX_REPAIR_ROUNDS, RateLimitError, extractTrailingExplanation } from "./generation";
+export {
+  MAX_REPAIR_ROUNDS,
+  RateLimitError,
+  extractTrailingExplanation,
+  looksLikePayload,
+} from "./generation";
 
 // ─── Public API ──────────────────────────────────────────────────────
 
@@ -71,11 +76,12 @@ export async function generatePipeline(
  *
  * There are three outcomes. A pipeline that checks out is done. A pipeline with
  * findings gets the standard repair prompt. A response that *tried* to emit a
- * pipeline — it has a closed fence — but produced nothing parsable is the worst
- * case (nothing can be applied at all), so it is asked for the JSON again;
- * without this it would be the one failure the loop silently accepted. A reply
- * with no fence at all is prose, e.g. the model asking which file to load, and
- * is deliberately left alone.
+ * pipeline (it has a code fence, closed or not, or a JSON object; see
+ * `looksLikePayload`) but produced nothing parsable is the worst case (nothing
+ * can be applied at all), so it is asked for the JSON again; without this it
+ * would be the one failure the loop silently accepted. A reply with neither is
+ * prose, e.g. the model asking which file to load, and is deliberately left
+ * alone.
  */
 export function diagnoseResponse(
   text: string,
@@ -83,7 +89,7 @@ export function diagnoseResponse(
 ): { prompt: string; errors: string[] } | null {
   const pipeline = tryExtractPipeline(text);
   if (!pipeline) {
-    if (!hasClosedFence(text)) return null;
+    if (!looksLikePayload(text)) return null;
     const message = "the fenced block is not valid, complete pipeline JSON";
     return { prompt: buildUnparsablePipelinePrompt(), errors: [message] };
   }
@@ -115,7 +121,7 @@ export function formatActionSummary(nodeCount: number): string {
  * never surfaced to the user.
  */
 export function stripPipelineJSON(text: string): string {
-  const withoutFence = text.replace(/```(?:json)?\s*\n?[\s\S]*?```/g, "").trim();
+  const withoutFence = text.replace(fencePattern(), "").trim();
   if (withoutFence !== text.trim()) {
     return withoutFence;
   }
@@ -137,23 +143,22 @@ function isSerializedPipeline(value: unknown): value is SerializedPipeline {
 }
 
 /**
- * Scan every closed ```` ``` ```` fence pair in `text` and return the parsed
- * pipeline from the *last* one that validates as a SerializedPipeline, or
- * `null` if none do.
+ * The *last* pipeline payload in `text`, fenced (any label) or bare, or `null`
+ * if there is none (see `lastJSONPayload`).
  *
  * The system prompt asks for the pipeline JSON first and a one-sentence
  * explanation last, but a less precise model can stream an earlier fence
  * (e.g. echoing a fetched skill template) that also happens to be valid
- * pipeline JSON. Preferring the *last* valid fence picks the model's final
+ * pipeline JSON. Preferring the *last* valid payload picks the model's final
  * answer over any earlier preamble/template echo.
  */
 function findLastValidPipeline(text: string): SerializedPipeline | null {
-  return lastFencedJSON(text, isSerializedPipeline);
+  return lastJSONPayload(text, isSerializedPipeline)?.value ?? null;
 }
 
 /**
  * Extract a SerializedPipeline JSON from the LLM response text.
- * Prefers the last closed fence that validates as a pipeline (see
+ * Prefers the last payload that validates as a pipeline (see
  * {@link findLastValidPipeline}); falls back to the first ```` ``` ````
  * fenced block (or raw `{...}` extraction) for precise error reporting when
  * no fence holds valid pipeline JSON.
@@ -163,7 +168,7 @@ export function extractPipelineJSON(response: string): SerializedPipeline {
   if (fromFence) return fromFence;
 
   // Try fenced code block first
-  const fenceMatch = response.match(/```(?:json)?\s*\n?([\s\S]*?)```/);
+  const fenceMatch = fencePattern().exec(response);
   let jsonStr: string;
 
   if (fenceMatch) {
@@ -198,12 +203,15 @@ export function extractPipelineJSON(response: string): SerializedPipeline {
 
 /**
  * Try to extract a complete pipeline from a partial streaming buffer, returning
- * the parsed pipeline as soon as a *closed* ```` ```json ```` fence has arrived
- * and validates (see {@link findLastValidPipeline}), or `null` otherwise.
+ * the parsed pipeline as soon as a complete payload (a closed fence, or a bare
+ * object whose last brace has arrived) validates (see
+ * {@link findLastValidPipeline}), or `null` otherwise.
  * Unlike {@link extractPipelineJSON} this never throws on incomplete or
  * invalid input, so it is safe to call on every streamed chunk to apply (or
- * re-apply, once a later fence validates) the graph without waiting for the
- * trailing one-sentence explanation.
+ * re-apply, once a later payload validates) the graph without waiting for the
+ * trailing one-sentence explanation. The chat box, the self-check
+ * (`diagnoseResponse`) and the final apply all read a reply through it, so
+ * they agree on what the reply holds.
  */
 export function tryExtractPipeline(partial: string): SerializedPipeline | null {
   return findLastValidPipeline(partial);

@@ -672,7 +672,7 @@ export function applyEditOps(src: Snapshot, ops: EditOp[]): EditResult {
   // Cα backbone: keep the entries whose atom survived, remapped to new indices.
   let caIndices: Uint32Array | undefined;
   let caChainIds: Uint8Array | undefined;
-  let caResNums: Uint32Array | undefined;
+  let caResNums: Int32Array | undefined;
   let caSsType: Uint8Array | undefined;
   if (src.caIndices) {
     const keep: number[] = [];
@@ -686,7 +686,7 @@ export function applyEditOps(src: Snapshot, ops: EditOp[]): EditResult {
     }
     caIndices = new Uint32Array(mapped);
     if (src.caChainIds) caChainIds = new Uint8Array(keep.map((c) => src.caChainIds![c]));
-    if (src.caResNums) caResNums = new Uint32Array(keep.map((c) => src.caResNums![c]));
+    if (src.caResNums) caResNums = new Int32Array(keep.map((c) => src.caResNums![c]));
     if (src.caSsType) caSsType = new Uint8Array(keep.map((c) => src.caSsType![c]));
   }
 

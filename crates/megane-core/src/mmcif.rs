@@ -9,7 +9,7 @@
 /// cartoon rendering.
 use std::collections::{HashMap, HashSet};
 
-use crate::atomic::element_from_symbol;
+use crate::atomic::{element_from_atom_name_in_residue, element_from_symbol};
 use crate::bonds;
 use crate::cell::cell_params_to_matrix;
 use crate::cif_lex::{field, starts_with_ci, Document, Value};
@@ -48,6 +48,7 @@ struct AtomSiteColumns {
     group_pdb: Option<usize>,
     type_symbol: Option<usize>,
     label_atom_id: Option<usize>,
+    label_comp_id: Option<usize>,
     label_asym_id: Option<usize>,
     auth_asym_id: Option<usize>,
     label_seq_id: Option<usize>,
@@ -65,6 +66,7 @@ impl AtomSiteColumns {
             group_pdb: None,
             type_symbol: None,
             label_atom_id: None,
+            label_comp_id: None,
             label_asym_id: None,
             auth_asym_id: None,
             label_seq_id: None,
@@ -83,6 +85,7 @@ impl AtomSiteColumns {
             "_atom_site.group_pdb" => self.group_pdb = Some(idx),
             "_atom_site.type_symbol" => self.type_symbol = Some(idx),
             "_atom_site.label_atom_id" => self.label_atom_id = Some(idx),
+            "_atom_site.label_comp_id" => self.label_comp_id = Some(idx),
             "_atom_site.label_asym_id" => self.label_asym_id = Some(idx),
             "_atom_site.auth_asym_id" => self.auth_asym_id = Some(idx),
             "_atom_site.label_seq_id" => self.label_seq_id = Some(idx),
@@ -169,11 +172,11 @@ fn ss_range_from_fields(
     auth_end: Value,
     ss_type: u8,
 ) -> Option<SsRange> {
-    let (chain, beg, end) = match (label_beg.as_u32(), label_end.as_u32()) {
+    let (chain, beg, end) = match (label_beg.as_i32(), label_end.as_i32()) {
         (Some(b), Some(e)) => (label_asym, b, e),
         _ => {
-            let b = auth_beg.as_u32()?;
-            let e = auth_end.as_u32()?;
+            let b = auth_beg.as_i32()?;
+            let e = auth_end.as_i32()?;
             let chain = match auth_asym.get() {
                 Some(a) if !a.is_empty() => auth_asym,
                 _ => label_asym,
@@ -310,7 +313,7 @@ pub(crate) fn parse_document(text: &str, doc: &Document) -> Result<ParsedStructu
     let mut bfactors: Vec<f32> = Vec::new();
     let mut ca_indices: Vec<u32> = Vec::new();
     let mut ca_chain_ids: Vec<u8> = Vec::new();
-    let mut ca_res_nums: Vec<u32> = Vec::new();
+    let mut ca_res_nums: Vec<i32> = Vec::new();
     let mut addr: Vec<AtomAddress> = Vec::new();
 
     // Loop rows are a CIF token stream (see `cif_lex`): quoted atom names
@@ -338,11 +341,20 @@ pub(crate) fn parse_document(text: &str, doc: &Document) -> Result<ParsedStructu
                 continue;
             };
 
-            // Element
+            // Element: type_symbol, falling back to the atom name read in
+            // its residue context when the column is absent, null (`?`/`.`)
+            // or unreadable, as the PDB parser does without an element column.
             let elem = at(row, cols.type_symbol)
                 .and_then(|v| v.get())
                 .map(element_from_symbol)
-                .unwrap_or(0);
+                .filter(|&z| z != 0)
+                .unwrap_or_else(|| {
+                    let text_of = |c: Option<usize>| at(row, c).and_then(|v| v.get());
+                    element_from_atom_name_in_residue(
+                        text_of(cols.label_atom_id).unwrap_or(""),
+                        text_of(cols.label_comp_id).unwrap_or(""),
+                    )
+                });
 
             // Model membership: rows are grouped by model number; the
             // first number seen is the base structure.
@@ -388,7 +400,11 @@ pub(crate) fn parse_document(text: &str, doc: &Document) -> Result<ParsedStructu
                     let atom_idx = model_elements[0].len() as u32;
                     ca_indices.push(atom_idx);
                     ca_chain_ids.push(chain_byte);
-                    ca_res_nums.push(label_seq.or(auth_seq).unwrap_or(0));
+                    // Signed: author numbering puts expression tags below 1.
+                    let res_num = at(row, cols.label_seq_id)
+                        .and_then(|v| v.as_i32())
+                        .or_else(|| at(row, cols.auth_seq_id).and_then(|v| v.as_i32()));
+                    ca_res_nums.push(res_num.unwrap_or(0));
                 }
 
                 // Residue addressing for _struct_conn partner resolution.
@@ -569,7 +585,7 @@ pub(crate) fn parse_document(text: &str, doc: &Document) -> Result<ParsedStructu
         ca_chain_ids,
         ca_res_nums,
         ca_ss_type,
-        symmetry_ops: crate::cif::symmetry_ops(text, doc),
+        symmetry_ops: crate::cif::symmetry_ops(text, &doc.items),
         warnings,
         hetero,
         ..Default::default()
@@ -1266,6 +1282,43 @@ TURN_P A 1 3 A 1 3
         assert_eq!(s.ca_ss_type, vec![1, 1, 2]);
     }
 
+    /// Author numbering puts expression tags below 1. A file that carries only
+    /// `auth_seq_id` keeps those Cα residue numbers signed, and a helix that
+    /// starts in the tag still covers them.
+    #[test]
+    fn negative_auth_residue_numbers_reach_the_backbone() {
+        let text = "data_tag
+loop_
+_atom_site.group_PDB
+_atom_site.id
+_atom_site.type_symbol
+_atom_site.label_atom_id
+_atom_site.label_comp_id
+_atom_site.label_asym_id
+_atom_site.auth_seq_id
+_atom_site.Cartn_x
+_atom_site.Cartn_y
+_atom_site.Cartn_z
+ATOM 1 C CA HIS A -1 0.0 0.0 0.0
+ATOM 2 C CA MET A 0 3.8 0.0 0.0
+ATOM 3 C CA ALA A 1 7.6 0.0 0.0
+#
+loop_
+_struct_conf.conf_type_id
+_struct_conf.beg_label_asym_id
+_struct_conf.beg_label_seq_id
+_struct_conf.end_label_seq_id
+_struct_conf.beg_auth_asym_id
+_struct_conf.beg_auth_seq_id
+_struct_conf.end_auth_seq_id
+HELX_P A . . A -1 0
+#
+";
+        let s = parse(text).expect("parse");
+        assert_eq!(s.ca_res_nums, vec![-1, 0, 1]);
+        assert_eq!(s.ca_ss_type, vec![1, 1, 0]);
+    }
+
     /// `cif::parse` hands dotted-tag documents to `parse_document` with the
     /// already-lexed document; the result must match `mmcif::parse`.
     #[test]
@@ -1276,6 +1329,52 @@ TURN_P A 1 3 A 1 3
         assert_eq!(a.positions, b.positions);
         assert_eq!(a.elements, b.elements);
         assert_eq!(a.bonds, b.bonds);
+    }
+
+    /// Without a `type_symbol` (column absent, or a `?`/`.` null) the element
+    /// comes from the atom name read in its residue context, the next field
+    /// in the element precedence, exactly as the PDB parser does.
+    #[test]
+    fn missing_type_symbols_fall_back_to_the_atom_name() {
+        let text = "data_x
+loop_
+_atom_site.group_PDB
+_atom_site.id
+_atom_site.label_atom_id
+_atom_site.label_comp_id
+_atom_site.label_asym_id
+_atom_site.label_seq_id
+_atom_site.Cartn_x
+_atom_site.Cartn_y
+_atom_site.Cartn_z
+ATOM 1 N ALA A 1 0 0 0
+ATOM 2 CA ALA A 1 1.4 0 0
+HETATM 3 CA CA B . 5 0 0
+HETATM 4 OW HOH C . 9 0 0
+";
+        assert_eq!(parse(text).unwrap().elements, vec![7, 6, 20, 8]);
+
+        let with_nulls = "data_x
+loop_
+_atom_site.group_PDB
+_atom_site.id
+_atom_site.type_symbol
+_atom_site.label_atom_id
+_atom_site.label_comp_id
+_atom_site.Cartn_x
+_atom_site.Cartn_y
+_atom_site.Cartn_z
+_atom_site.pdbx_PDB_model_num
+ATOM 1 ? N ALA 0 0 0 1
+ATOM 2 . CA ALA 1.4 0 0 1
+ATOM 3 S SG CYS 3 0 0 1
+ATOM 1 ? N ALA 0 0 1 2
+ATOM 2 . CA ALA 1.4 0 1 2
+ATOM 3 S SG CYS 3 0 1 2
+";
+        let s = parse(with_nulls).unwrap();
+        assert_eq!(s.elements, vec![7, 6, 16]);
+        assert!(s.hetero.is_none(), "later models resolve the same elements");
     }
 
     #[test]

@@ -105,9 +105,9 @@ struct PyStructure {
     /// Per-Cα chain identifier as an ASCII byte.
     #[pyo3(get)]
     ca_chain_ids: Py<PyArray1<u8>>,
-    /// Per-Cα residue sequence number.
+    /// Per-Cα residue sequence number (signed: expression tags sit below 1).
     #[pyo3(get)]
-    ca_res_nums: Py<PyArray1<u32>>,
+    ca_res_nums: Py<PyArray1<i32>>,
     /// Per-Cα secondary-structure type: 0 = coil, 1 = helix, 2 = sheet.
     #[pyo3(get)]
     ca_ss_type: Py<PyArray1<u8>>,
@@ -388,10 +388,14 @@ fn io_err(e: std::io::Error) -> PyErr {
     pyo3::exceptions::PyOSError::new_err(e.to_string())
 }
 
+/// Bytes `start..end` of `file`, or fewer where the file ends first. `end`
+/// may come from a header (a NetCDF record span), so the buffer is reserved
+/// only for the bytes the file actually has past `start`.
 fn read_range(file: &mut std::fs::File, start: u64, end: u64) -> std::io::Result<Vec<u8>> {
     use std::io::{Read, Seek, SeekFrom};
+    let available = file.metadata()?.len().saturating_sub(start);
     file.seek(SeekFrom::Start(start))?;
-    let mut buf = Vec::with_capacity(end.saturating_sub(start) as usize);
+    let mut buf = Vec::with_capacity(end.saturating_sub(start).min(available) as usize);
     file.take(end.saturating_sub(start)).read_to_end(&mut buf)?;
     Ok(buf)
 }
@@ -475,7 +479,6 @@ impl TrajectoryFile {
                 box_matrix: None,
                 offsets: Vec::new(),
                 times: Vec::new(),
-                first_box: None,
                 frame_cells: None,
             }),
             n_atoms: 0,
@@ -503,7 +506,7 @@ impl TrajectoryFile {
                 this.n_atoms = index.n_atoms;
                 this.n_frames = index.n_frames;
                 this.timestep_ps = index.timestep_ps;
-                this.first_box = index.first_box;
+                this.first_box = index.box_matrix;
                 this.frame_cells = index.frame_cells.clone();
                 this.layout = FrameLayout::Xtc(index);
             }

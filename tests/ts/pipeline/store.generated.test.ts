@@ -165,3 +165,91 @@ describe("pipeline store — generated pipelines", () => {
     expect(store.getState().generatedUndoStack).toHaveLength(20);
   });
 });
+
+describe("pipeline store — generated pipelines on a loaded trajectory", () => {
+  const frames = [0, 1, 2].map((i) => ({
+    frameId: i,
+    nAtoms: 3,
+    positions: new Float32Array([0, 0, i, 0.757, 0.586, i, -0.757, 0.586, i]),
+  }));
+  const loaded = {
+    version: 3,
+    nodes: [
+      {
+        type: "load_structure",
+        id: "loader-1",
+        position: { x: 0, y: 0 },
+        fileName: "md.xyz",
+        hasTrajectory: true,
+        hasCell: false,
+        enabled: true,
+      },
+      { type: "viewport", id: "viewport-1", position: { x: 0, y: 200 }, enabled: true },
+    ],
+    edges: [
+      {
+        source: "loader-1",
+        target: "viewport-1",
+        sourceHandle: "particle",
+        targetHandle: "particle",
+      },
+    ],
+  } as SerializedPipeline;
+
+  /** The model's edit, shaped like the prompt's examples: its loader holds no trajectory. */
+  function restyled(loaderId: string): SerializedPipeline {
+    return {
+      version: 3,
+      nodes: [
+        {
+          type: "load_structure",
+          id: loaderId,
+          position: { x: 0, y: 0 },
+          fileName: null,
+          hasTrajectory: false,
+          hasCell: false,
+        },
+        { type: "representation", id: "rep-1", position: { x: 0, y: 100 }, mode: "licorice" },
+        { type: "viewport", id: "viewport-1", position: { x: 0, y: 200 } },
+      ],
+      edges: [
+        { source: loaderId, target: "rep-1", sourceHandle: "particle", targetHandle: "particle" },
+        { source: "rep-1", target: "viewport-1", sourceHandle: "out", targetHandle: "particle" },
+      ],
+    } as SerializedPipeline;
+  }
+
+  let store: ReturnType<typeof createPipelineStore>;
+  const trajectoryEdges = () =>
+    store
+      .getState()
+      .edges.filter((e) => e.targetHandle === "trajectory")
+      .map((e) => `${e.source}.${e.sourceHandle}->${e.target}`);
+
+  beforeEach(() => {
+    store = createPipelineStore();
+    store.getState().loadPipeline(loaded, {
+      "loader-1": {
+        snapshot: water(),
+        frames,
+        meta: { nFrames: 3, timestepPs: 1, nAtoms: 3 } as never,
+        labels: null,
+      },
+    });
+  });
+
+  it.each([
+    ["keeps the loader", "loader-1"],
+    ["rebuilds the loader", "loader-new"],
+  ])("keeps the trajectory playing when the model %s", (_label, loaderId) => {
+    expect(trajectoryEdges()).toEqual(["loader-1.trajectory->viewport-1"]);
+    expect(store.getState().viewportState.trajectories).toHaveLength(1);
+
+    store.getState().applyGeneratedPipeline(restyled(loaderId), { checkpoint: true });
+
+    const loader = store.getState().nodes.find((n) => n.id === loaderId)!;
+    expect((loader.data.params as LoadStructureParams).hasTrajectory).toBe(true);
+    expect(trajectoryEdges()).toEqual([`${loaderId}.trajectory->viewport-1`]);
+    expect(store.getState().viewportState.trajectories).toHaveLength(1);
+  });
+});

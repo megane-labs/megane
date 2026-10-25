@@ -1,4 +1,4 @@
-use js_sys::{Float32Array, Float64Array, Object, Reflect, Uint32Array, Uint8Array};
+use js_sys::{Float32Array, Float64Array, Int32Array, Object, Reflect, Uint32Array, Uint8Array};
 use wasm_bindgen::prelude::*;
 
 use megane_core::formats::{self, FormatInput, StructureFormat, TrajectoryFormat};
@@ -111,7 +111,7 @@ pub struct ParseResult {
     // Cα backbone data for cartoon rendering
     ca_indices: Vec<u32>,
     ca_chain_ids: Vec<u8>,
-    ca_res_nums: Vec<u32>,
+    ca_res_nums: Vec<i32>,
     ca_ss_type: Vec<u8>,
     // Crystallographic symmetry operations (newline-delimited `x,y,z` strings).
     symmetry_ops: String,
@@ -285,9 +285,9 @@ impl ParseResult {
         Uint8Array::from(&self.ca_chain_ids[..])
     }
 
-    /// Per-Cα residue sequence number.
-    pub fn ca_res_nums(&self) -> Uint32Array {
-        Uint32Array::from(&self.ca_res_nums[..])
+    /// Per-Cα residue sequence number (signed: expression tags sit below 1).
+    pub fn ca_res_nums(&self) -> Int32Array {
+        Int32Array::from(&self.ca_res_nums[..])
     }
 
     /// Per-Cα secondary-structure type: 0 = coil, 1 = helix, 2 = sheet.
@@ -706,6 +706,16 @@ macro_rules! wasm_trajectory_parsers {
 
 megane_core::for_each_trajectory_format!(wasm_trajectory_parsers);
 
+/// Frame `frame`'s cell from an index's per-frame cell table (row-major 3×3,
+/// Å), or empty when the cell is constant (every frame then uses the index's
+/// `box_matrix`, frame 0's box) or `frame` is out of range.
+fn frame_cell_array(cells: Option<&[[f32; 9]]>, frame: u32) -> Float32Array {
+    match cells.and_then(|c| c.get(frame as usize)) {
+        Some(c) => Float32Array::from(&c[..]),
+        None => Float32Array::new_with_length(0),
+    }
+}
+
 /// Persistent XTC decoder for lazy/streaming playback.
 ///
 /// Owns the whole XTC file in wasm memory and holds a lightweight frame index
@@ -722,6 +732,7 @@ pub struct XtcDecoder {
     has_box: bool,
     box_matrix: Vec<f32>,
     times: Vec<f32>,
+    frame_cells: Option<Vec<[f32; 9]>>,
 }
 
 #[wasm_bindgen]
@@ -742,6 +753,7 @@ impl XtcDecoder {
             has_box,
             box_matrix,
             times: idx.times,
+            frame_cells: idx.frame_cells,
         })
     }
 
@@ -765,8 +777,21 @@ impl XtcDecoder {
         self.has_box
     }
 
+    /// Frame 0's box (row-major 3×3, Å), as `parse_xtc_file` reports it.
     pub fn box_matrix(&self) -> Float32Array {
         Float32Array::from(&self.box_matrix[..])
+    }
+
+    /// True when the box changes between frames (an NPT run): each frame's
+    /// own box is then `frame_cell(frame)`.
+    #[wasm_bindgen(getter)]
+    pub fn varying_cells(&self) -> bool {
+        self.frame_cells.is_some()
+    }
+
+    /// Frame `frame`'s box; empty unless the box changes between frames.
+    pub fn frame_cell(&self, frame: u32) -> Float32Array {
+        frame_cell_array(self.frame_cells.as_deref(), frame)
     }
 
     /// Box origin — always empty for XTC (coordinates are absolute, box at
@@ -871,13 +896,28 @@ impl XtcIndexer {
         Ok(self.finished()?.box_matrix.is_some())
     }
 
-    /// Box of the last frame (row-major 3×3, Å); empty without one.
+    /// Frame 0's box (row-major 3×3, Å); empty without one.
     pub fn box_matrix(&self) -> Result<Float32Array, JsError> {
         let index = self.finished()?;
         Ok(match index.box_matrix {
             Some(m) => Float32Array::from(&m[..]),
             None => Float32Array::new_with_length(0),
         })
+    }
+
+    /// True when the box changes between frames (an NPT run): each frame's
+    /// own box is then `frame_cell(frame)`.
+    #[wasm_bindgen(getter)]
+    pub fn varying_cells(&self) -> Result<bool, JsError> {
+        Ok(self.finished()?.frame_cells.is_some())
+    }
+
+    /// Frame `frame`'s box; empty unless the box changes between frames.
+    pub fn frame_cell(&self, frame: u32) -> Result<Float32Array, JsError> {
+        Ok(frame_cell_array(
+            self.finished()?.frame_cells.as_deref(),
+            frame,
+        ))
     }
 
     /// Byte offset of each frame in the file.
@@ -1118,6 +1158,29 @@ impl TextFrameIndexer {
         })
     }
 
+    /// Dump only: true when the box changes between frames (an NPT run): each
+    /// frame's own box is then `frame_cell(frame)`.
+    #[wasm_bindgen(getter)]
+    pub fn varying_cells(&self) -> Result<bool, JsError> {
+        Ok(matches!(
+            self.finished()?,
+            TextIndex::Lammpstrj(lammpstrj::LammpstrjIndex {
+                frame_cells: Some(_),
+                ..
+            })
+        ))
+    }
+
+    /// Dump only: frame `frame`'s box; empty unless the box changes between
+    /// frames.
+    pub fn frame_cell(&self, frame: u32) -> Result<Float32Array, JsError> {
+        let cells = match self.finished()? {
+            TextIndex::Lammpstrj(i) => i.frame_cells.as_deref(),
+            _ => None,
+        };
+        Ok(frame_cell_array(cells, frame))
+    }
+
     /// Dump only: newline-joined vector channel names (velocity/force).
     #[wasm_bindgen(getter)]
     pub fn vector_channel_names(&self) -> Result<String, JsError> {
@@ -1258,24 +1321,36 @@ impl BinaryFrameLayout {
         }) as f64
     }
 
+    /// Newline-joined names of the per-atom vector channels each frame
+    /// decodes (NetCDF `velocity` / `force`), in `vectors()` order; empty
+    /// for DCD.
+    #[wasm_bindgen(getter)]
+    pub fn vector_channel_names(&self) -> String {
+        match &self.inner {
+            BinaryLayout::Dcd(_) => String::new(),
+            BinaryLayout::Netcdf(l) => l.vector_channel_names().join("\n"),
+        }
+    }
+
     /// Decode frame `i` from its bytes (read from `frame_start(i)`).
     pub fn decode(&self, bytes: &[u8], i: u32) -> Result<DecodedBinaryFrame, JsError> {
-        let (positions, cell, time) = match &self.inner {
+        let (positions, cell, time, vectors) = match &self.inner {
             BinaryLayout::Dcd(l) => {
                 let (positions, cell) =
                     dcd::decode_layout_frame(l, bytes).map_err(|e| JsError::new(&e))?;
-                (positions, cell, None)
+                (positions, cell, None, Vec::new())
             }
             BinaryLayout::Netcdf(l) => {
                 let f = netcdf::decode_layout_record(l, bytes, i as usize)
                     .map_err(|e| JsError::new(&e))?;
-                (f.positions, f.cell, f.time)
+                (f.positions, f.cell, f.time, f.vectors.concat())
             }
         };
         Ok(DecodedBinaryFrame {
             positions,
             cell,
             time,
+            vectors,
         })
     }
 }
@@ -1419,6 +1494,7 @@ pub struct DecodedBinaryFrame {
     positions: Vec<f32>,
     cell: Option<[f32; 9]>,
     time: Option<f32>,
+    vectors: Vec<f32>,
 }
 
 #[wasm_bindgen]
@@ -1440,6 +1516,12 @@ impl DecodedBinaryFrame {
     #[wasm_bindgen(getter)]
     pub fn time(&self) -> f32 {
         self.time.unwrap_or(f32::NAN)
+    }
+
+    /// This frame's per-atom vector channels, concatenated in
+    /// `vector_channel_names` order (`n_atoms * 3` each); empty without any.
+    pub fn vectors(&self) -> Float32Array {
+        Float32Array::from(&self.vectors[..])
     }
 }
 
@@ -1469,6 +1551,7 @@ pub struct LammpstrjDecoder {
     /// Newline-joined vector channel names (velocity/force), in decode order.
     vector_channel_names: Vec<String>,
     heterogeneous: bool,
+    frame_cells: Option<Vec<[f32; 9]>>,
 }
 
 #[wasm_bindgen]
@@ -1491,6 +1574,7 @@ impl LammpstrjDecoder {
             box_origin,
             vector_channel_names: idx.vector_channel_names,
             heterogeneous: idx.heterogeneous,
+            frame_cells: idx.frame_cells,
         })
     }
 
@@ -1522,6 +1606,16 @@ impl LammpstrjDecoder {
     /// Box origin (lower corner, 3 floats), or empty ⇒ (0,0,0).
     pub fn box_origin(&self) -> Float32Array {
         Float32Array::from(&self.box_origin[..])
+    }
+    /// True when the box changes between frames (an NPT run): each frame's
+    /// own box is then `frame_cell(frame)`.
+    #[wasm_bindgen(getter)]
+    pub fn varying_cells(&self) -> bool {
+        self.frame_cells.is_some()
+    }
+    /// Frame `frame`'s box; empty unless the box changes between frames.
+    pub fn frame_cell(&self, frame: u32) -> Float32Array {
+        frame_cell_array(self.frame_cells.as_deref(), frame)
     }
     /// Number of per-atom vector channels (velocity/force).
     #[wasm_bindgen(getter)]

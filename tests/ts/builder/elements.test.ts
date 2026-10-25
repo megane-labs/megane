@@ -18,6 +18,8 @@ describe("element names and families", () => {
     expect(ELEMENT_NAMES[1]).toBe("Hydrogen");
     expect(ELEMENT_NAMES[26]).toBe("Iron");
     expect(ELEMENT_NAMES[92]).toBe("Uranium");
+    expect(ELEMENT_NAMES[93]).toBe("Neptunium");
+    expect(ELEMENT_NAMES[118]).toBe("Oganesson");
   });
 
   it("sorts elements into their families", () => {
@@ -32,6 +34,9 @@ describe("element names and families", () => {
     expect([f(26), f(79), f(104)]).toEqual(["transition", "transition", "transition"]);
     expect([f(57), f(71)]).toEqual(["lanthanide", "lanthanide"]);
     expect([f(89), f(103)]).toEqual(["actinide", "actinide"]);
+    // The superheavy p block, by group: Nh..Lv under Tl..Po, Ts, Og.
+    expect([f(112), f(113), f(116)]).toEqual(["transition", "post-transition", "post-transition"]);
+    expect([f(117), f(118)]).toEqual(["halogen", "noble-gas"]);
     for (let z = 1; z <= TABLE_MAX_Z; z++) expect(FAMILIES[f(z)].label).toBeTruthy();
   });
 });

@@ -29,7 +29,7 @@ export function tileLabels(labels: string[], nAtoms: number, total: number): str
   return out;
 }
 
-type TileableArray = Float32Array | Uint8Array | Uint32Array;
+type TileableArray = Float32Array | Uint8Array | Uint32Array | Int32Array;
 
 /** Concatenate `total` copies of `arr` into a new array of the same type. */
 export function tileArray<T extends TileableArray>(arr: T, total: number): T {

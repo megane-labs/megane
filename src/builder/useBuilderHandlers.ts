@@ -65,6 +65,12 @@ interface ActiveDrag {
   base: number;
   /** The redo stack at the press, put back if the drag writes nothing. */
   redoStack: EditOp[];
+  /**
+   * The document version at the press, put back with the redo stack: each
+   * move of the drag bumps it, and a drag that writes nothing (Esc) must not
+   * leave the document reading as edited.
+   */
+  docVersion: number;
   atoms: number[];
   refs: Map<number, EditAtomRef>;
   /** Rendered positions at the press. */
@@ -265,6 +271,7 @@ export function useBuilderHandlers(
       drag.current = {
         base: state.edits.length,
         redoStack: state.redoStack,
+        docVersion: state.docVersion,
         atoms: group,
         refs: new Map(group.map((i) => [i, refFor(i)!])),
         start: new Float32Array(snapshot.positions),
@@ -304,8 +311,11 @@ export function useBuilderHandlers(
       const state = api.getState();
       const contacts = state.drag?.contacts.length ?? 0;
       if (cancel) state.setDragOps(d.base, []);
-      // A drag that moved nothing leaves no step, and the redo stack as it was.
-      if (api.getState().edits.length === d.base) api.setState({ redoStack: d.redoStack });
+      // A drag that moved nothing leaves no step, and the redo stack and the
+      // saved state as they were.
+      if (api.getState().edits.length === d.base) {
+        api.setState({ redoStack: d.redoStack, docVersion: d.docVersion });
+      }
       state.setDrag(null);
       if (!cancel && contacts > 0 && api.getState().edits.length > d.base) {
         state.reportInfo(

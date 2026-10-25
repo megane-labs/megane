@@ -31,13 +31,34 @@ import { performOpenFile, type OpenFileOptions } from "./openFile";
 import { reconcileInspectorLayers, isInspectorLayerId, type InspectorLayer } from "./inspectorSync";
 import { applyQuickStyle, type QuickStyle } from "./quickStyle";
 import { findPrimaryLoader, loaderEdits } from "./editHistory";
-import { mergeGeneratedGraph, type GraphCheckpoint } from "./generatedApply";
+import { mergeGeneratedGraph, withFileBoundParams, type GraphCheckpoint } from "./generatedApply";
 import { registerTestStores, GLOBAL_BUNDLE_ID } from "../stores/testRegistry";
+import { basename } from "../parsers/fileNames";
 
 let nextNodeId = 1;
 
-function generateNodeId(): string {
-  return `node-${nextNodeId++}`;
+/** Whether two loader `fileName`s name the same file, whatever directory they give. */
+function sameFileName(a: unknown, b: unknown): boolean {
+  if (typeof a !== "string" || typeof b !== "string") return a === b;
+  return basename(a) === basename(b);
+}
+
+/**
+ * A `node-N` id that no node in `state` has and no per-node data is keyed by.
+ * Graphs installed from a saved pipeline, a share link or the assistant carry
+ * ids this counter never issued (the editor saves its own `node-N`s), so the
+ * counter alone would hand one of them out again.
+ */
+function generateNodeId(
+  state: Pick<PipelineStore, "nodes" | "nodeSnapshots" | "nodeParseErrors" | "nodeStreamingData">,
+): string {
+  const taken = new Set(state.nodes.map((n) => n.id));
+  for (const data of [state.nodeSnapshots, state.nodeParseErrors, state.nodeStreamingData]) {
+    for (const id of Object.keys(data)) taken.add(id);
+  }
+  let id = `node-${nextNodeId++}`;
+  while (taken.has(id)) id = `node-${nextNodeId++}`;
+  return id;
 }
 
 export interface PipelineStore {
@@ -505,7 +526,7 @@ export const pipelineStateCreator: StateCreator<PipelineStore> = (set, get, api)
   },
 
   addNode: (type, position) => {
-    const id = generateNodeId();
+    const id = generateNodeId(get());
     let fallbackPosition = { x: 425, y: 50 };
     if (!position) {
       const currentNodes = get().nodes;
@@ -551,11 +572,14 @@ export const pipelineStateCreator: StateCreator<PipelineStore> = (set, get, api)
         if (n.id !== id) return n;
         const next = { ...n.data.params, ...params } as typeof n.data.params;
         // The edit history belongs to the file it was authored against:
-        // loading a different file into the loader starts it fresh.
+        // loading a different file into the loader starts it fresh. The same
+        // file under another directory is not a different file: a pipeline
+        // written by Python names it by its path ("data/water.pdb"), and the
+        // hosts attach it from beside the pipeline by its basename.
         if (
           n.type === "load_structure" &&
           "fileName" in params &&
-          params.fileName !== (n.data.params as LoadStructureParams).fileName &&
+          !sameFileName(params.fileName, (n.data.params as LoadStructureParams).fileName) &&
           (n.data.params as LoadStructureParams).edits?.length
         ) {
           (next as LoadStructureParams).edits = [];
@@ -694,8 +718,13 @@ export const pipelineStateCreator: StateCreator<PipelineStore> = (set, get, api)
   },
 
   applyGeneratedPipeline: (json, opts) => {
-    const generated = deserializePipeline(json);
     const prev = get();
+    // Carry the loaded files' params into the JSON before the graph is built
+    // from it: the edges the deserializer derives depend on them (a loader
+    // with a trajectory feeds the viewport's trajectory port), and the model's
+    // loaders say no file and no trajectory.
+    const draft = mergeGeneratedGraph(prev, deserializePipeline(json).nodes);
+    const generated = deserializePipeline(withFileBoundParams(json, draft.nodes));
     const merged = mergeGeneratedGraph(prev, generated.nodes);
     let checkpointId: number | null = null;
     let stack = prev.generatedUndoStack;

@@ -24,11 +24,13 @@
  * model and fed back through the repair round trip in `client.ts`.
  */
 
+import type { Node } from "@xyflow/react";
 import type { Snapshot } from "../types";
 import type { SerializedPipeline, PipelineNodeType } from "../pipeline/types";
-import { NODE_PORTS, NODE_TYPE_LABELS, canConnect } from "../pipeline/types";
-import type { PipelineExecutionContext } from "../pipeline/execute";
+import { NODE_PORTS, NODE_TYPE_LABELS, canConnect, defaultParams } from "../pipeline/types";
+import type { PipelineExecutionContext, PipelineNodeData } from "../pipeline/execute";
 import { executePipeline } from "../pipeline/execute";
+import { mergeGeneratedGraph } from "../pipeline/generatedApply";
 import { deserializePipeline } from "../pipeline/serialize";
 import { validatePipeline } from "../pipeline/validate";
 import { evaluateSelection } from "../pipeline/selection";
@@ -42,8 +44,59 @@ import { evaluateSelection } from "../pipeline/selection";
  */
 export type SelfCheckContext = Pick<
   PipelineExecutionContext,
-  "snapshot" | "atomLabels" | "structureFrames" | "structureMeta"
->;
+  "snapshot" | "atomLabels" | "structureFrames" | "structureMeta" | "nodeSnapshots"
+> & {
+  /**
+   * The `load_structure` node ids of the editor's graph, in graph order; with
+   * `nodeSnapshots`, the structures they hold. Each loader of a candidate
+   * pipeline is checked against the structure applying it would give that
+   * loader (`mergeGeneratedGraph`): a loader the model kept keeps its own, and
+   * a graph rebuilt from scratch hands the primary loader's structure to its
+   * first new loader. Without them, every loader is checked against `snapshot`.
+   */
+  loaderIds?: string[];
+};
+
+/** {@link candidateContext} for a serialized pipeline; `ctx` when it cannot be loaded. */
+function candidateContextOf(pipeline: SerializedPipeline, ctx: SelfCheckContext): SelfCheckContext {
+  if (!ctx.nodeSnapshots) return ctx;
+  try {
+    return candidateContext(deserializePipeline(pipeline).nodes, ctx);
+  } catch {
+    // The runtime check reports a pipeline that cannot be loaded.
+    return ctx;
+  }
+}
+
+/**
+ * `ctx` with `nodeSnapshots` keyed by the loader ids of `nodes` (a candidate
+ * pipeline's deserialized nodes), mapped from the editor's loaders exactly as
+ * applying the pipeline maps them (see {@link SelfCheckContext.loaderIds}).
+ */
+function candidateContext(
+  nodes: Node<PipelineNodeData>[],
+  ctx: SelfCheckContext,
+): SelfCheckContext {
+  if (!ctx.nodeSnapshots) return ctx;
+  const editorLoaders = (ctx.loaderIds ?? Object.keys(ctx.nodeSnapshots)).map(
+    (id): Node<PipelineNodeData> => ({
+      id,
+      type: "load_structure",
+      position: { x: 0, y: 0 },
+      data: { params: defaultParams("load_structure"), enabled: true },
+    }),
+  );
+  const { nodeSnapshots } = mergeGeneratedGraph(
+    {
+      nodes: editorLoaders,
+      nodeSnapshots: ctx.nodeSnapshots,
+      nodeParseErrors: {},
+      nodeStreamingData: {},
+    },
+    nodes,
+  );
+  return { ...ctx, nodeSnapshots, loaderIds: Object.keys(nodeSnapshots) };
+}
 
 /** Node types that pass a particle stream through without changing membership. */
 const PARTICLE_PASSTHROUGH: ReadonlySet<string> = new Set([
@@ -283,8 +336,7 @@ export function collectOverlapErrors(
     }
   }
 
-  const snapshot = ctx.snapshot ?? null;
-  const atomLabels = ctx.atomLabels ?? null;
+  const run = candidateContextOf(pipeline, ctx);
   const errors: string[] = [];
 
   for (let i = 0; i < branches.length; i++) {
@@ -297,6 +349,12 @@ export function collectOverlapErrors(
       // how its atoms are drawn, so there is nothing for the other branch to
       // conflict with: whatever it covers, the picture is the other branch's.
       if (!a.treated || !b.treated) continue;
+
+      // The structure of the branches' own loader, resolved as the executor
+      // resolves it (`resolveStructureSource`, `resolveEffectiveLabels`).
+      const loaded = run.nodeSnapshots?.[a.loaderId];
+      const snapshot = loaded?.snapshot ?? run.snapshot ?? null;
+      const atomLabels = run.atomLabels ?? loaded?.labels ?? null;
 
       if (!snapshot) {
         // No data to intersect: only an entirely unfiltered branch is provably
@@ -461,7 +519,8 @@ export function collectRuntimeErrors(
   if (!ctx.snapshot) return errors;
 
   try {
-    const { nodeErrors } = executePipeline(graph.nodes, graph.edges, ctx);
+    const run = candidateContext(graph.nodes, ctx);
+    const { nodeErrors } = executePipeline(graph.nodes, graph.edges, run);
     for (const [nodeId, list] of nodeErrors) {
       if (!authored.has(nodeId)) continue;
       for (const err of list) {
