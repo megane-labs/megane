@@ -20,7 +20,7 @@ function water(extra: Partial<Snapshot> = {}): Snapshot {
     atomBFactors: new Float32Array([1, 2, 3]),
     caIndices: new Uint32Array([0, 2]),
     caChainIds: new Uint8Array([65, 65]),
-    caResNums: new Uint32Array([1, 1]),
+    caResNums: new Int32Array([1, 1]),
     caSsType: new Uint8Array([0, 1]),
     ...extra,
   };

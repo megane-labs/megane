@@ -1,6 +1,11 @@
 import { describe, it, expect } from "vitest";
 import type { Node } from "@xyflow/react";
-import { mergeGeneratedGraph, FILE_BOUND_PARAM_KEYS } from "@/pipeline/generatedApply";
+import {
+  mergeGeneratedGraph,
+  withFileBoundParams,
+  FILE_BOUND_PARAM_KEYS,
+} from "@/pipeline/generatedApply";
+import type { SerializedPipeline } from "@/pipeline/types";
 import type { NodeSnapshotData, PipelineNodeData } from "@/pipeline/execute";
 import type { NodeStreamingData } from "@/pipeline/executors/streaming";
 
@@ -126,5 +131,29 @@ describe("mergeGeneratedGraph", () => {
     for (const key of ["bondFileData", "volumetricData", "spectrumData", "parseError"]) {
       expect(FILE_BOUND_PARAM_KEYS).toContain(key);
     }
+  });
+});
+
+describe("withFileBoundParams", () => {
+  it("writes the merged nodes' file params onto the serialized nodes of the same id", () => {
+    const json = {
+      version: 3,
+      nodes: [
+        { type: "load_structure", id: "loader-1", position: { x: 0, y: 0 }, hasTrajectory: false },
+        { type: "filter", id: "filter-1", position: { x: 0, y: 0 }, query: "all" },
+      ],
+      edges: [],
+    } as unknown as SerializedPipeline;
+    const merged = [
+      node("loader-1", "load_structure", { fileName: "md.xyz", hasTrajectory: true }),
+    ];
+
+    const out = withFileBoundParams(json, merged);
+
+    expect(out.nodes[0]).toMatchObject({ id: "loader-1", fileName: "md.xyz", hasTrajectory: true });
+    // A node with no merged counterpart is left as the model wrote it.
+    expect(out.nodes[1]).toBe(json.nodes[1]);
+    // The input is not mutated.
+    expect((json.nodes[0] as unknown as { hasTrajectory: boolean }).hasTrajectory).toBe(false);
   });
 });

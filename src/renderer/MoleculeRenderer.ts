@@ -179,6 +179,11 @@ export class MoleculeRenderer {
   private lastContainerW = 0;
   private lastContainerH = 0;
   private lastDpr = 1;
+  /**
+   * True while `resizeForCapture` holds the drawing buffer at an export size.
+   * The render loop and the resize observer leave the size alone meanwhile.
+   */
+  private capturing = false;
   /** True until the first frame has been rendered after mount; used for perf hook. */
   private firstFramePending = true;
 
@@ -1522,11 +1527,15 @@ export class MoleculeRenderer {
   /**
    * Temporarily resize the renderer for capture, suppressing auto-resize.
    * Returns a restore function to call after capture is complete.
+   *
+   * GIF and video exports wait for animation frames between captured frames,
+   * so the live render loop keeps running at the export size: it must not
+   * size the canvas back to its container (the frames would be drawn at the
+   * viewport size and stretched), and neither may a container resize that
+   * lands mid-export. Both are held off until the restore function runs.
    */
   resizeForCapture(width: number, height: number): () => void {
-    const savedW = this.lastContainerW;
-    const savedH = this.lastContainerH;
-    const savedDpr = this.lastDpr;
+    this.capturing = true;
 
     // Set size at 1:1 pixel ratio for exact resolution control
     this.renderer.setPixelRatio(1);
@@ -1534,15 +1543,11 @@ export class MoleculeRenderer {
     this.labelOverlay?.resize(width, height, 1);
     this.cameraController.resizeForCapture(width, height);
 
-    // Update cached values to prevent animate() from overriding
-    this.lastContainerW = width;
-    this.lastContainerH = height;
-    this.lastDpr = 1;
-
+    let restored = false;
     return () => {
-      this.lastContainerW = savedW;
-      this.lastContainerH = savedH;
-      this.lastDpr = savedDpr;
+      if (restored) return;
+      restored = true;
+      this.capturing = false;
       this.onResize();
     };
   }
@@ -1678,8 +1683,9 @@ export class MoleculeRenderer {
   }
 
   private onResize(): void {
-    // three.js owns the drawing buffer size while a headset presents.
-    if (!this.container || this.xr.presenting) return;
+    // three.js owns the drawing buffer size while a headset presents, and an
+    // export owns it until resizeForCapture's restore runs.
+    if (!this.container || this.xr.presenting || this.capturing) return;
     const w = this.container.clientWidth;
     const h = this.container.clientHeight;
     if (w === 0 || h === 0) return;
@@ -1709,7 +1715,8 @@ export class MoleculeRenderer {
     // When browser zoom changes, clientWidth/DPR update immediately but
     // ResizeObserver may fire after the next rAF, causing the viewport
     // and canvas buffer to be out of sync for one or more frames.
-    if (this.container) {
+    // An export in progress keeps its own size (see resizeForCapture).
+    if (this.container && !this.capturing) {
       const w = this.container.clientWidth;
       const h = this.container.clientHeight;
       const dpr = Math.min(window.devicePixelRatio, 2);

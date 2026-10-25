@@ -5,91 +5,68 @@
 
 // ── Symbol ↔ atomic number ────────────────────────────────────────────────
 
-/// Maps element symbol strings (e.g. "Fe", "Na") to their atomic numbers.
+/// Maps an element symbol in canonical case (e.g. "Fe", "Na", "Nb", "Pu") to
+/// its atomic number, or `0` when it names no element.
+///
+/// Every element H..Og (Z = 1..=118) is known: the lookup is derived from
+/// [`SYMBOLS`], so it can never fall out of step with
+/// [`atomic_num_to_symbol`]. The deuterium symbol `"D"` (used for deuterated
+/// sites in PDB/mmCIF element columns, neutron-diffraction CIFs and MDL
+/// molfiles) resolves to hydrogen. The match is case-sensitive: callers
+/// normalise with [`capitalize`] first, so `"FE"` and `"fe"` return `0`.
 pub fn symbol_to_atomic_num(sym: &str) -> u8 {
-    match sym {
-        "H" => 1,
-        "He" => 2,
-        "Li" => 3,
-        "Be" => 4,
-        "B" => 5,
-        "C" => 6,
-        "N" => 7,
-        "O" => 8,
-        "F" => 9,
-        "Ne" => 10,
-        "Na" => 11,
-        "Mg" => 12,
-        "Al" => 13,
-        "Si" => 14,
-        "P" => 15,
-        "S" => 16,
-        "Cl" => 17,
-        "Ar" => 18,
-        "K" => 19,
-        "Ca" => 20,
-        "Sc" => 21,
-        "Ti" => 22,
-        "V" => 23,
-        "Cr" => 24,
-        "Mn" => 25,
-        "Fe" => 26,
-        "Co" => 27,
-        "Ni" => 28,
-        "Cu" => 29,
-        "Zn" => 30,
-        "Ga" => 31,
-        "Ge" => 32,
-        "As" => 33,
-        "Se" => 34,
-        "Br" => 35,
-        "Kr" => 36,
-        "Rb" => 37,
-        "Sr" => 38,
-        "Y" => 39,
-        "Zr" => 40,
-        "Mo" => 42,
-        "Ru" => 44,
-        "Rh" => 45,
-        "Pd" => 46,
-        "Ag" => 47,
-        "Cd" => 48,
-        "In" => 49,
-        "Sn" => 50,
-        "Sb" => 51,
-        "Te" => 52,
-        "I" => 53,
-        "Xe" => 54,
-        "Cs" => 55,
-        "Ba" => 56,
-        "La" => 57,
-        "Ce" => 58,
-        "Nd" => 60,
-        "Sm" => 62,
-        "Eu" => 63,
-        "Gd" => 64,
-        "Tb" => 65,
-        "Dy" => 66,
-        "Ho" => 67,
-        "Er" => 68,
-        "Yb" => 70,
-        "Lu" => 71,
-        "Hf" => 72,
-        "Ta" => 73,
-        "W" => 74,
-        "Re" => 75,
-        "Os" => 76,
-        "Ir" => 77,
-        "Pt" => 78,
-        "Au" => 79,
-        "Hg" => 80,
-        "Tl" => 81,
-        "Pb" => 82,
-        "Bi" => 83,
-        "Th" => 90,
-        "U" => 92,
+    if sym == "D" {
+        return 1;
+    }
+    indexed_symbol_str(sym)
+}
+
+/// [`SYMBOL_INDEX`] lookup of a canonical-case one- or two-letter string.
+/// Unlike [`symbol_to_atomic_num`] it does not know `"D"`.
+fn indexed_symbol_str(sym: &str) -> u8 {
+    match *sym.as_bytes() {
+        [first] => indexed_symbol(first, None),
+        [first, second] => indexed_symbol(first, Some(second)),
         _ => 0,
     }
+}
+
+/// Number of slots per leading letter in [`SYMBOL_INDEX`]: slot 0 is the
+/// one-letter symbol, slots 1..=26 the two-letter symbols `Xa`..`Xz`.
+const SYMBOL_INDEX_STRIDE: usize = 27;
+
+/// `(first letter, optional second letter)` → atomic number, built at compile
+/// time from [`SYMBOLS`] so every symbol it holds maps back to its own Z.
+const SYMBOL_INDEX: [u8; 26 * SYMBOL_INDEX_STRIDE] = build_symbol_index();
+
+const fn build_symbol_index() -> [u8; 26 * SYMBOL_INDEX_STRIDE] {
+    let mut index = [0u8; 26 * SYMBOL_INDEX_STRIDE];
+    let mut z = 1;
+    while z < SYMBOLS.len() {
+        let sym = SYMBOLS[z].as_bytes();
+        let slot = if sym.len() == 2 {
+            (sym[1] - b'a') as usize + 1
+        } else {
+            0
+        };
+        index[(sym[0] - b'A') as usize * SYMBOL_INDEX_STRIDE + slot] = z as u8;
+        z += 1;
+    }
+    index
+}
+
+/// Look a canonical-case symbol (upper-case `first`, lower-case `second`) up
+/// in [`SYMBOL_INDEX`]. Any other byte means "not a symbol" and yields `0`.
+fn indexed_symbol(first: u8, second: Option<u8>) -> u8 {
+    if !first.is_ascii_uppercase() {
+        return 0;
+    }
+    let slot = match second {
+        None => 0,
+        Some(c) if c.is_ascii_lowercase() => (c - b'a') as usize + 1,
+        Some(_) => return 0,
+    };
+    SYMBOL_INDEX[(first - b'A') as usize * SYMBOL_INDEX_STRIDE + slot]
 }
 
 /// Element symbols indexed by atomic number (`SYMBOLS[0]` is the empty
@@ -197,96 +174,129 @@ pub fn vdw_radius(atomic_num: u8) -> f32 {
 
 // ── Mass → atomic number ──────────────────────────────────────────────────
 
+/// `(mass in amu, atomic number)` for every element [`mass_to_atomic_num`]
+/// can recognise, in Z order.
+///
+/// Standard atomic weights are used where IUPAC defines one; elements with no
+/// stable isotope use the mass of their longest-lived isotope (Tc-98, Pm-145,
+/// At-210, Rn-222, ..., Lr-262). Three groups are left out on purpose, because
+/// a mass alone cannot tell them apart from a neighbour:
+///
+/// * Po (Po-209, 208.98) is indistinguishable from Bi (208.98);
+/// * Bk (Bk-247, 247.07) is indistinguishable from Cm (247.07);
+/// * the transactinides (Z >= 104) have no settled isotope masses, and several
+///   coincide (Ds/Rg 281, Fl/Mc 289, Lv/Ts 293).
+const MASS_TABLE: &[(f32, u8)] = &[
+    (1.008, 1),    // H
+    (4.003, 2),    // He
+    (6.941, 3),    // Li
+    (9.012, 4),    // Be
+    (10.81, 5),    // B
+    (12.011, 6),   // C
+    (14.007, 7),   // N
+    (15.999, 8),   // O
+    (18.998, 9),   // F
+    (20.180, 10),  // Ne
+    (22.990, 11),  // Na
+    (24.305, 12),  // Mg
+    (26.982, 13),  // Al
+    (28.086, 14),  // Si
+    (30.974, 15),  // P
+    (32.065, 16),  // S
+    (35.453, 17),  // Cl
+    (39.948, 18),  // Ar
+    (39.098, 19),  // K
+    (40.078, 20),  // Ca
+    (44.956, 21),  // Sc
+    (47.867, 22),  // Ti
+    (50.942, 23),  // V
+    (51.996, 24),  // Cr
+    (54.938, 25),  // Mn
+    (55.845, 26),  // Fe
+    (58.933, 27),  // Co
+    (58.693, 28),  // Ni
+    (63.546, 29),  // Cu
+    (65.380, 30),  // Zn
+    (69.723, 31),  // Ga
+    (72.630, 32),  // Ge
+    (74.922, 33),  // As
+    (78.971, 34),  // Se
+    (79.904, 35),  // Br
+    (83.798, 36),  // Kr
+    (85.468, 37),  // Rb
+    (87.620, 38),  // Sr
+    (88.906, 39),  // Y
+    (91.224, 40),  // Zr
+    (92.906, 41),  // Nb
+    (95.950, 42),  // Mo
+    (97.907, 43),  // Tc
+    (101.07, 44),  // Ru
+    (102.91, 45),  // Rh
+    (106.42, 46),  // Pd
+    (107.87, 47),  // Ag
+    (112.41, 48),  // Cd
+    (114.82, 49),  // In
+    (118.71, 50),  // Sn
+    (121.76, 51),  // Sb
+    (127.60, 52),  // Te
+    (126.90, 53),  // I
+    (131.29, 54),  // Xe
+    (132.91, 55),  // Cs
+    (137.33, 56),  // Ba
+    (138.91, 57),  // La
+    (140.12, 58),  // Ce
+    (140.91, 59),  // Pr
+    (144.24, 60),  // Nd
+    (144.91, 61),  // Pm
+    (150.36, 62),  // Sm
+    (151.96, 63),  // Eu
+    (157.25, 64),  // Gd
+    (158.93, 65),  // Tb
+    (162.50, 66),  // Dy
+    (164.93, 67),  // Ho
+    (167.26, 68),  // Er
+    (168.93, 69),  // Tm
+    (173.05, 70),  // Yb
+    (174.97, 71),  // Lu
+    (178.49, 72),  // Hf
+    (180.95, 73),  // Ta
+    (183.84, 74),  // W
+    (186.21, 75),  // Re
+    (190.23, 76),  // Os
+    (192.22, 77),  // Ir
+    (195.08, 78),  // Pt
+    (196.97, 79),  // Au
+    (200.59, 80),  // Hg
+    (204.38, 81),  // Tl
+    (207.20, 82),  // Pb
+    (208.98, 83),  // Bi
+    (209.99, 85),  // At
+    (222.02, 86),  // Rn
+    (223.02, 87),  // Fr
+    (226.03, 88),  // Ra
+    (227.03, 89),  // Ac
+    (232.04, 90),  // Th
+    (231.04, 91),  // Pa
+    (238.03, 92),  // U
+    (237.05, 93),  // Np
+    (244.06, 94),  // Pu
+    (243.06, 95),  // Am
+    (247.07, 96),  // Cm
+    (251.08, 98),  // Cf
+    (252.08, 99),  // Es
+    (257.10, 100), // Fm
+    (258.10, 101), // Md
+    (259.10, 102), // No
+    (262.11, 103), // Lr
+];
+
 /// Map atomic mass (in amu) to atomic number.
 /// Uses closest match within tolerance of 0.5 amu.
 pub(crate) fn mass_to_atomic_num(mass: f32) -> u8 {
-    const TABLE: &[(f32, u8)] = &[
-        (1.008, 1),   // H
-        (4.003, 2),   // He
-        (6.941, 3),   // Li
-        (9.012, 4),   // Be
-        (10.81, 5),   // B
-        (12.011, 6),  // C
-        (14.007, 7),  // N
-        (15.999, 8),  // O
-        (18.998, 9),  // F
-        (20.180, 10), // Ne
-        (22.990, 11), // Na
-        (24.305, 12), // Mg
-        (26.982, 13), // Al
-        (28.086, 14), // Si
-        (30.974, 15), // P
-        (32.065, 16), // S
-        (35.453, 17), // Cl
-        (39.948, 18), // Ar
-        (39.098, 19), // K
-        (40.078, 20), // Ca
-        (44.956, 21), // Sc
-        (47.867, 22), // Ti
-        (50.942, 23), // V
-        (51.996, 24), // Cr
-        (54.938, 25), // Mn
-        (55.845, 26), // Fe
-        (58.933, 27), // Co
-        (58.693, 28), // Ni
-        (63.546, 29), // Cu
-        (65.380, 30), // Zn
-        (69.723, 31), // Ga
-        (72.630, 32), // Ge
-        (74.922, 33), // As
-        (78.971, 34), // Se
-        (79.904, 35), // Br
-        (83.798, 36), // Kr
-        (85.468, 37), // Rb
-        (87.620, 38), // Sr
-        (88.906, 39), // Y
-        (91.224, 40), // Zr
-        (95.950, 42), // Mo
-        (101.07, 44), // Ru
-        (102.91, 45), // Rh
-        (106.42, 46), // Pd
-        (107.87, 47), // Ag
-        (112.41, 48), // Cd
-        (114.82, 49), // In
-        (118.71, 50), // Sn
-        (121.76, 51), // Sb
-        (127.60, 52), // Te
-        (126.90, 53), // I
-        (131.29, 54), // Xe
-        (132.91, 55), // Cs
-        (137.33, 56), // Ba
-        (138.91, 57), // La
-        (140.12, 58), // Ce
-        (144.24, 60), // Nd
-        (150.36, 62), // Sm
-        (151.96, 63), // Eu
-        (157.25, 64), // Gd
-        (158.93, 65), // Tb
-        (162.50, 66), // Dy
-        (164.93, 67), // Ho
-        (167.26, 68), // Er
-        (173.05, 70), // Yb
-        (174.97, 71), // Lu
-        (178.49, 72), // Hf
-        (180.95, 73), // Ta
-        (183.84, 74), // W
-        (186.21, 75), // Re
-        (190.23, 76), // Os
-        (192.22, 77), // Ir
-        (195.08, 78), // Pt
-        (196.97, 79), // Au
-        (200.59, 80), // Hg
-        (204.38, 81), // Tl
-        (207.20, 82), // Pb
-        (208.98, 83), // Bi
-        (232.04, 90), // Th
-        (238.03, 92), // U
-    ];
-
     let mut best_z: u8 = 0;
     let mut best_diff = 0.5_f32;
 
-    for &(m, z) in TABLE {
+    for &(m, z) in MASS_TABLE {
         let diff = (mass - m).abs();
         if diff < best_diff {
             best_diff = diff;
@@ -299,23 +309,59 @@ pub(crate) fn mass_to_atomic_num(mass: f32) -> u8 {
 
 // ── Atom-name heuristics ──────────────────────────────────────────────────
 
-/// Look up a one- or two-letter ASCII symbol (`first` upper-cased, `second`
-/// lower-cased) without allocating. Returns 0 for any non-ASCII letter, which
-/// can never be part of an element symbol.
-fn ascii_symbol_to_atomic_num(first: char, second: Option<char>) -> u8 {
+/// Case-fold a one- or two-letter ASCII symbol (`first` upper-cased, `second`
+/// lower-cased) and look it up in [`SYMBOL_INDEX`] without allocating.
+/// Returns 0 for any non-ASCII letter, which can never be part of an element
+/// symbol.
+fn ascii_indexed_symbol(first: char, second: Option<char>) -> u8 {
     if !first.is_ascii() {
         return 0;
     }
-    let mut buf = [first.to_ascii_uppercase() as u8, 0];
-    let len = match second {
-        None => 1,
-        Some(c) if c.is_ascii() => {
-            buf[1] = c.to_ascii_lowercase() as u8;
-            2
-        }
+    let second = match second {
+        None => None,
+        Some(c) if c.is_ascii() => Some(c.to_ascii_lowercase() as u8),
         Some(_) => return 0,
     };
-    std::str::from_utf8(&buf[..len]).map_or(0, symbol_to_atomic_num)
+    indexed_symbol(first.to_ascii_uppercase() as u8, second)
+}
+
+/// [`symbol_to_atomic_num`] for a case-insensitive one- or two-letter ASCII
+/// symbol taken from an explicit element field. Knows every element plus the
+/// deuterium symbol `"D"`.
+fn ascii_symbol_to_atomic_num(first: char, second: Option<char>) -> u8 {
+    if second.is_none() && first.eq_ignore_ascii_case(&'D') {
+        return 1;
+    }
+    ascii_indexed_symbol(first, second)
+}
+
+/// Elements an atom **name** may resolve to.
+///
+/// An explicit element field can name any element, but an atom name is only
+/// a hint, and most rare or radioactive two-letter symbols collide with
+/// ordinary atom names: heme "NB" (Nb), ATP "PA" (Pa), ligand "CM" (Cm),
+/// "NH" (Nh), "HS" (Hs), "NO" (No), "CN" (Cn), "OG" (Og). Name guessing
+/// therefore keeps to the elements that force fields and ligand libraries
+/// actually name atoms after, so those names keep falling back to their
+/// first letter, and never to deuterium.
+fn is_name_guess_element(z: u8) -> bool {
+    matches!(z, 1..=40 | 42 | 44..=58 | 60 | 62..=68 | 70..=83 | 90 | 92)
+}
+
+/// Keep `z` only if an atom name may resolve to it (see
+/// [`is_name_guess_element`]); otherwise `0`.
+fn name_guess(z: u8) -> u8 {
+    if is_name_guess_element(z) {
+        z
+    } else {
+        0
+    }
+}
+
+/// [`ascii_indexed_symbol`] restricted to the elements an atom name may
+/// resolve to.
+fn name_symbol_to_atomic_num(first: char, second: Option<char>) -> u8 {
+    name_guess(ascii_indexed_symbol(first, second))
 }
 
 /// Resolve an element from an explicit element-symbol field such as a CIF /
@@ -346,7 +392,8 @@ pub(crate) fn element_from_symbol(s: &str) -> u8 {
 /// (e.g. "CL", "FE", "OW", "HW1").
 ///
 /// Tries a two-character symbol first (e.g. "Cl", "Fe"), then falls back to
-/// the first character. Because a name alone cannot distinguish a protein
+/// the first character, considering only the elements of
+/// [`is_name_guess_element`]. Because a name alone cannot distinguish a protein
 /// α-carbon "CA" from a calcium ion "CA", prefer
 /// [`element_from_atom_name_in_residue`] whenever the residue name is known.
 pub(crate) fn element_from_atom_name(name: &str) -> u8 {
@@ -368,10 +415,10 @@ pub(crate) fn element_from_atom_name(name: &str) -> u8 {
     // Two-character symbol first (e.g. "CL" → "Cl", "FE" → "Fe").
     if let Some(second) = second {
         let num = if first.is_ascii() && second.is_ascii() {
-            ascii_symbol_to_atomic_num(first, Some(second))
+            name_symbol_to_atomic_num(first, Some(second))
         } else {
             let two: String = first.to_uppercase().chain(second.to_lowercase()).collect();
-            symbol_to_atomic_num(&two)
+            name_guess(indexed_symbol_str(&two))
         };
         if num != 0 {
             return num;
@@ -380,10 +427,10 @@ pub(crate) fn element_from_atom_name(name: &str) -> u8 {
 
     // Fall back to a single-character symbol.
     if first.is_ascii() {
-        ascii_symbol_to_atomic_num(first, None)
+        name_symbol_to_atomic_num(first, None)
     } else {
         let one: String = first.to_uppercase().collect();
-        symbol_to_atomic_num(&one)
+        name_guess(indexed_symbol_str(&one))
     }
 }
 
@@ -499,7 +546,7 @@ pub(crate) fn element_from_atom_name_in_residue(name: &str, res_name: &str) -> u
     {
         return 34; // Se
     }
-    ascii_symbol_to_atomic_num(first, None)
+    name_symbol_to_atomic_num(first, None)
 }
 
 // ── Tests ─────────────────────────────────────────────────────────────────
@@ -515,14 +562,75 @@ mod tests {
         assert_eq!(atomic_num_to_symbol(26), "Fe");
         assert_eq!(atomic_num_to_symbol(118), "Og");
         assert_eq!(atomic_num_to_symbol(119), "");
-        // Every symbol the forward table knows maps back to the same Z.
+        // The compile-time index is what a runtime build produces.
+        assert_eq!(build_symbol_index(), SYMBOL_INDEX);
+        // Every element's symbol maps back to the same Z — no gaps allowed.
         for z in 1..=118u8 {
             let sym = atomic_num_to_symbol(z);
-            let back = symbol_to_atomic_num(sym);
-            if back != 0 {
-                assert_eq!(back, z, "round trip failed for {sym}");
-            }
+            assert_eq!(symbol_to_atomic_num(sym), z, "round trip failed for {sym}");
         }
+    }
+
+    #[test]
+    fn test_symbol_to_atomic_num_previously_missing_elements() {
+        for (sym, z) in [
+            ("Nb", 41),
+            ("Tc", 43),
+            ("Pr", 59),
+            ("Pm", 61),
+            ("Tm", 69),
+            ("Po", 84),
+            ("At", 85),
+            ("Rn", 86),
+            ("Fr", 87),
+            ("Ra", 88),
+            ("Ac", 89),
+            ("Pa", 91),
+            ("Np", 93),
+            ("Pu", 94),
+            ("Am", 95),
+            ("Og", 118),
+        ] {
+            assert_eq!(symbol_to_atomic_num(sym), z, "{sym}");
+        }
+        // Deuterium is hydrogen; tritium's "T" is not resolved (zeolite CIFs
+        // label tetrahedral sites "T1", "T2", …).
+        assert_eq!(symbol_to_atomic_num("D"), 1);
+        assert_eq!(symbol_to_atomic_num("T"), 0);
+        // Case-sensitive, like the match table it replaces.
+        assert_eq!(symbol_to_atomic_num("NB"), 0);
+        assert_eq!(symbol_to_atomic_num("nb"), 0);
+        assert_eq!(symbol_to_atomic_num("fe"), 0);
+        assert_eq!(symbol_to_atomic_num("Fe "), 0);
+        assert_eq!(symbol_to_atomic_num("N1"), 0);
+        assert_eq!(symbol_to_atomic_num("Ω"), 0);
+    }
+
+    #[test]
+    fn test_parsers_resolve_previously_missing_elements() {
+        let xyz = "4\nLiNbO3 fragment\nLi 0 0 0\nNb 2 0 0\nPr 4 0 0\nTm 6 0 0\n";
+        assert_eq!(
+            crate::xyz::parse(xyz).unwrap().elements,
+            vec![3, 41, 59, 69]
+        );
+
+        let cif = "data_x\n_cell_length_a 5.15\n_cell_length_b 5.15\n_cell_length_c 13.86\n\
+                   _cell_angle_alpha 90\n_cell_angle_beta 90\n_cell_angle_gamma 120\n\
+                   loop_\n_atom_site_label\n_atom_site_type_symbol\n_atom_site_fract_x\n\
+                   _atom_site_fract_y\n_atom_site_fract_z\nLi1 Li 0 0 0.28\nNb1 Nb 0 0 0\n\
+                   O1 O 0.05 0.34 0.06\nPu1 Pu 0.5 0.5 0.5\n";
+        assert_eq!(crate::cif::parse(cif).unwrap().elements, vec![3, 41, 8, 94]);
+
+        let poscar = "LiNbO3\n1.0\n5 0 0\n0 5 0\n0 0 5\nLi Nb O\n1 1 1\nDirect\n\
+                      0 0 0\n0.5 0.5 0.5\n0.25 0.25 0.25\n";
+        assert_eq!(crate::vasp::parse(poscar).unwrap().elements, vec![3, 41, 8]);
+
+        let pdb =
+            "HETATM    1 NB   NB  A   1       0.000   0.000   0.000  1.00  0.00          NB\n\
+                   HETATM    2 PR   PR  A   2       3.000   0.000   0.000  1.00  0.00          PR\n\
+                   HETATM    3  D   HOH A   3       6.000   0.000   0.000  1.00  0.00           D\n\
+                   END\n";
+        assert_eq!(crate::pdb::parse(pdb).unwrap().elements, vec![41, 59, 1]);
     }
 
     #[test]
@@ -566,6 +674,30 @@ mod tests {
         assert_eq!(mass_to_atomic_num(55.845), 26); // Fe
         assert_eq!(mass_to_atomic_num(196.97), 79); // Au
         assert_eq!(mass_to_atomic_num(999.0), 0); // unknown
+                                                  // Previously missing elements.
+        assert_eq!(mass_to_atomic_num(92.906), 41); // Nb
+        assert_eq!(mass_to_atomic_num(140.91), 59); // Pr
+        assert_eq!(mass_to_atomic_num(168.93), 69); // Tm
+        assert_eq!(mass_to_atomic_num(231.04), 91); // Pa
+        assert_eq!(mass_to_atomic_num(244.06), 94); // Pu
+                                                    // Po-209 would be indistinguishable from Bi, so Bi keeps its mass.
+        assert_eq!(mass_to_atomic_num(208.98), 83);
+    }
+
+    #[test]
+    fn test_mass_table_is_complete_and_unambiguous() {
+        // Z order, and every entry resolves back to its own element.
+        for pair in MASS_TABLE.windows(2) {
+            assert!(pair[0].1 < pair[1].1, "MASS_TABLE out of Z order");
+        }
+        for &(mass, z) in MASS_TABLE {
+            assert_eq!(mass_to_atomic_num(mass), z, "mass {mass} round trip");
+        }
+        // Everything up to Lr is present except the two documented
+        // collisions (Po with Bi, Bk with Cm).
+        let present: Vec<u8> = MASS_TABLE.iter().map(|&(_, z)| z).collect();
+        let expected: Vec<u8> = (1..=103u8).filter(|z| !matches!(z, 84 | 97)).collect();
+        assert_eq!(present, expected);
     }
 
     #[test]
@@ -607,6 +739,64 @@ mod tests {
                                                   // Non-ASCII letters never form a symbol (and must not panic).
         assert_eq!(element_from_symbol("Ω"), 0);
         assert_eq!(element_from_symbol("Cé"), 6);
+        // Every element, including the ones the old table was missing.
+        assert_eq!(element_from_symbol("Nb"), 41); // was N
+        assert_eq!(element_from_symbol("NB"), 41);
+        assert_eq!(element_from_symbol("Nb5+"), 41);
+        assert_eq!(element_from_symbol("Pu1"), 94); // was P
+        assert_eq!(element_from_symbol("Pr3+"), 59); // was P
+        assert_eq!(element_from_symbol("Np"), 93); // was N
+        assert_eq!(element_from_symbol("D"), 1); // deuterium
+        assert_eq!(element_from_symbol("D12"), 1);
+        assert_eq!(element_from_symbol("T1"), 0); // zeolite T site, not tritium
+    }
+
+    /// The elements atom-name guessing resolved to before the symbol table was
+    /// completed. Name guessing must keep exactly this set.
+    const NAME_GUESS_SYMBOLS: &[&str] = &[
+        "H", "He", "Li", "Be", "B", "C", "N", "O", "F", "Ne", "Na", "Mg", "Al", "Si", "P", "S",
+        "Cl", "Ar", "K", "Ca", "Sc", "Ti", "V", "Cr", "Mn", "Fe", "Co", "Ni", "Cu", "Zn", "Ga",
+        "Ge", "As", "Se", "Br", "Kr", "Rb", "Sr", "Y", "Zr", "Mo", "Ru", "Rh", "Pd", "Ag", "Cd",
+        "In", "Sn", "Sb", "Te", "I", "Xe", "Cs", "Ba", "La", "Ce", "Nd", "Sm", "Eu", "Gd", "Tb",
+        "Dy", "Ho", "Er", "Yb", "Lu", "Hf", "Ta", "W", "Re", "Os", "Ir", "Pt", "Au", "Hg", "Tl",
+        "Pb", "Bi", "Th", "U",
+    ];
+
+    #[test]
+    fn test_atom_name_guessing_unchanged_by_complete_table() {
+        let oracle = |sym: &str| -> u8 {
+            if NAME_GUESS_SYMBOLS.contains(&sym) {
+                symbol_to_atomic_num(sym)
+            } else {
+                0
+            }
+        };
+        let letters: Vec<char> = ('A'..='Z').chain('a'..='z').collect();
+        for &a in &letters {
+            let one = a.to_ascii_uppercase().to_string();
+            assert_eq!(element_from_atom_name(&a.to_string()), oracle(&one), "{a}");
+            for &b in &letters {
+                let name: String = [a, b].iter().collect();
+                let two = capitalize(&name);
+                let want = match oracle(&two) {
+                    0 => oracle(&one),
+                    z => z,
+                };
+                assert_eq!(element_from_atom_name(&name), want, "{name}");
+            }
+        }
+        // Atom names that would otherwise read as rare elements.
+        assert_eq!(element_from_atom_name("NB"), 7); // heme pyrrole N, not Nb
+        assert_eq!(element_from_atom_name("PA"), 15); // ATP alpha-P, not Pa
+        assert_eq!(element_from_atom_name("CM"), 6); // not Cm
+        assert_eq!(element_from_atom_name("NH1"), 7); // not Nh
+        assert_eq!(element_from_atom_name("D1"), 0); // never deuterium
+        assert_eq!(element_from_atom_name("ſ"), 16); // Unicode path: 'ſ' upper-cases to 'S'
+        assert_eq!(element_from_atom_name("Nſ"), 7); // "NS" is no element → 'N'
+        assert_eq!(element_from_atom_name("Pſ"), 15);
+        assert_eq!(element_from_atom_name_in_residue("D", "ALA"), 0);
+        assert_eq!(element_from_atom_name_in_residue("PA", "ATP"), 15);
+        assert_eq!(element_from_atom_name_in_residue("NB", "HEM"), 7);
     }
 
     #[test]
