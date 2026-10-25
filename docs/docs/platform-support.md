@@ -290,6 +290,17 @@ back to an eager parse so no frame is dropped. The Jupyter widget,
 whose frames come from the Python kernel, receives the per-frame elements/cell
 over its binary protocol as well.
 
+Note: **Per-atom vectors** stored in a trajectory become vector channels for the
+Vector Overlay node, as a LAMMPS dump's `vx vy vz` / `fx fy fz` columns do.
+AMBER NetCDF `velocities` (multiplied by the variable's `scale_factor`
+attribute, which AMBER sets to 20.455 so the values come out in Å/ps) and
+`forces` become `velocity` and `force` channels, both from the eager parse and
+when a large file streams lazily. ASE `.traj` `momenta` and the calculator's
+`forces` become `momenta` and `force` channels. Momenta are kept as momenta,
+because converting them to velocities needs masses that most files leave to
+ASE's element table. A large (≥ 8 MB) `.traj` that streams lazily does not offer
+them yet.
+
 ### Topology formats
 
 Topology files carry bond information but no coordinates. They are used with

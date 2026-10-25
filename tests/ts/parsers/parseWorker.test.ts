@@ -142,12 +142,14 @@ const { wasmMock } = vi.hoisted(() => {
       free() {}
     },
     // Fixed-layout binary trajectory: 3 atoms, 2 frames of 8 bytes after a
-    // 16-byte header, each with a cell of edge 10 + frame and time 2 × frame.
+    // 16-byte header, each with a cell of edge 10 + frame, time 2 × frame and
+    // a velocity channel of -frame.
     BinaryFrameLayout: class {
       n_atoms = 3;
       n_frames = 2;
       timestep_ps = NaN;
       has_cell = true;
+      vector_channel_names = "velocity";
       frame_len = 8;
       frame_start(i: number) {
         return 16 + i * 8;
@@ -157,6 +159,7 @@ const { wasmMock } = vi.hoisted(() => {
           positions: () => new Float32Array(9).fill(i),
           cell: () => new Float32Array([10 + i, 0, 0, 0, 10 + i, 0, 0, 0, 10 + i]),
           time: 2 * i,
+          vectors: () => new Float32Array(9).fill(-i),
           free: () => {},
         };
       }
@@ -609,16 +612,30 @@ describe("parse.worker onmessage", () => {
       },
     });
     expect(posts[0].error).toBeUndefined();
-    const index = posts[0].result as { nFrames: number; timestepPs: number; box: Float32Array };
+    const index = posts[0].result as {
+      nFrames: number;
+      timestepPs: number;
+      box: Float32Array;
+      vectorChannelNames: string[];
+    };
     expect(index.nFrames).toBe(2);
     expect(index.timestepPs).toBe(2);
     expect(index.box[0]).toBe(10);
+    expect(index.vectorChannelNames).toEqual(["velocity"]);
     expect(reads[0]).toEqual([0, 32]); // the head (the whole small file)
 
     await handler({ data: { id: 61, op: "decodeFrame", trajectoryId: 600, frame: 1 } });
-    const frame = posts[1].result as { positions: Float32Array; box?: Float32Array };
+    const frame = posts[1].result as {
+      positions: Float32Array;
+      box?: Float32Array;
+      vectors: Float32Array;
+      vectorChannelCount: number;
+    };
     expect(frame.positions[0]).toBe(1);
     expect(frame.box?.[0]).toBe(11);
+    // The frame's velocities ride along, as a dump's vectors do.
+    expect(frame.vectors[0]).toBe(-1);
+    expect(frame.vectorChannelCount).toBe(1);
   });
 
   it("fails an XTC index scan that stops making progress", async () => {
