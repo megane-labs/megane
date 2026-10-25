@@ -112,13 +112,17 @@ impl<'a> DcdReader<'a> {
     fn read_record(&mut self) -> Result<&'a [u8], String> {
         let size = self.read_u32()? as usize;
         let start = self.pos;
-        let end = start + size;
-        if end + 4 > self.data.len() {
-            return Err(format!(
-                "DCD record ({} bytes) extends beyond file end (pos {})",
-                size, start
-            ));
-        }
+        // Checked: on wasm32 a record size near u32::MAX would wrap past the
+        // end-of-file test and slice backwards.
+        let end = match start.checked_add(size) {
+            Some(end) if end.checked_add(4).is_some_and(|e| e <= self.data.len()) => end,
+            _ => {
+                return Err(format!(
+                    "DCD record ({} bytes) extends beyond file end (pos {})",
+                    size, start
+                ))
+            }
+        };
         self.pos = end;
         let end_marker = self.read_u32()? as usize;
         if size != end_marker {
@@ -260,15 +264,18 @@ fn read_header(data: &[u8]) -> Result<DcdHeader, String> {
             natom_rec.len()
         ));
     }
-    let n_atoms = if le {
+    let natom = if le {
         read_i32_le(natom_rec, 0)
     } else {
         read_i32_be(natom_rec, 0)
-    } as usize;
-
-    if n_atoms == 0 {
-        return Err("DCD file reports zero atoms".into());
-    }
+    };
+    let n_atoms = match usize::try_from(natom) {
+        Ok(0) => return Err("DCD file reports zero atoms".into()),
+        // Every frame reads `n_atoms * 3` four-byte floats (one record of
+        // `n_atoms * 4` bytes per axis): that must not overflow (wasm32).
+        Ok(n) if n.checked_mul(3 * 4).is_some() => n,
+        _ => return Err(format!("DCD file reports an invalid atom count {natom}")),
+    };
 
     Ok(DcdHeader {
         le,
@@ -1108,5 +1115,54 @@ mod tests {
         let err = parse_dcd(&out).err().expect("expected error");
         assert!(err.contains("NAMNF=2"), "got: {err}");
         assert!(err.contains("not supported"), "got: {err}");
+    }
+
+    /// A little-endian CHARMM DCD whose NATOM block holds `natom`, followed by
+    /// one frame of 4-byte coordinate records.
+    fn dcd_with_natom(natom: i32) -> Vec<u8> {
+        let mut d = Vec::new();
+        let record = |d: &mut Vec<u8>, payload: &[u8]| {
+            d.extend_from_slice(&(payload.len() as u32).to_le_bytes());
+            d.extend_from_slice(payload);
+            d.extend_from_slice(&(payload.len() as u32).to_le_bytes());
+        };
+        let mut hdr = [0u8; 84];
+        hdr[..4].copy_from_slice(b"CORD");
+        hdr[4..8].copy_from_slice(&1i32.to_le_bytes()); // NSET
+        hdr[80..84].copy_from_slice(&24i32.to_le_bytes()); // CHARMM
+        record(&mut d, &hdr);
+        record(&mut d, &0i32.to_le_bytes()); // title
+        record(&mut d, &natom.to_le_bytes());
+        for _ in 0..3 {
+            record(&mut d, &0f32.to_le_bytes());
+        }
+        d
+    }
+
+    #[test]
+    fn a_negative_atom_count_is_an_error() {
+        for natom in [-1, i32::MIN] {
+            let d = dcd_with_natom(natom);
+            let err = parse_dcd(&d).err().expect("negative NATOM");
+            assert!(err.contains("invalid atom count"), "{err}");
+            assert!(read_layout(&d, d.len() as u64).is_err());
+        }
+        assert!(parse_dcd(&dcd_with_natom(0))
+            .err()
+            .unwrap()
+            .contains("zero atoms"));
+        // A sane count still parses.
+        assert_eq!(parse_dcd(&dcd_with_natom(1)).unwrap().n_frames, 1);
+    }
+
+    #[test]
+    fn a_record_running_past_the_file_is_an_error() {
+        let mut d = dcd_with_natom(1);
+        // The title record's size field (after the 92-byte header record).
+        d[92..96].copy_from_slice(&u32::MAX.to_le_bytes());
+        assert!(parse_dcd(&d)
+            .err()
+            .unwrap()
+            .contains("extends beyond file end"));
     }
 }

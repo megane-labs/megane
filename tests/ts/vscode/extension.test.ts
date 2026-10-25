@@ -543,6 +543,29 @@ describe("MeganeEditorProvider — structureViewer", () => {
     expect(payload.topFilename).toBeNull();
   });
 
+  it("drops the document once posted and reads it again for a webview that loads again", async () => {
+    const provider = getProvider("megane.structureViewer");
+    mockState.readFile
+      .mockResolvedValueOnce(new Uint8Array([1, 2])) // read at open
+      .mockResolvedValueOnce(new Uint8Array([3])); // read for the second "ready"
+
+    const doc = { uri: VscodeUri.file("/work/run.traj"), dispose: vi.fn() };
+    const { panel, fireMessage } = makeWebviewPanel();
+    await provider.resolveCustomEditor(doc, panel, {});
+    fireMessage({ type: "ready" });
+    expect(panel.webview.postMessage).toHaveBeenCalledTimes(1);
+
+    // The webview reloaded: it gets the file again, not a copy kept since open.
+    fireMessage({ type: "ready" });
+    await vi.waitFor(() => expect(panel.webview.postMessage).toHaveBeenCalledTimes(2));
+    expect(mockState.readFile).toHaveBeenCalledTimes(2);
+    const [first, second] = panel.webview.postMessage.mock.calls.map(
+      (c) => c[0] as { contentBytes: ArrayBuffer },
+    );
+    expect(new Uint8Array(first.contentBytes)).toEqual(new Uint8Array([1, 2]));
+    expect(new Uint8Array(second.contentBytes)).toEqual(new Uint8Array([3]));
+  });
+
   it("ignores webview messages whose type is not 'ready'", async () => {
     const provider = getProvider("megane.structureViewer");
     mockState.readFile.mockResolvedValue(new Uint8Array([0]));
@@ -743,6 +766,54 @@ describe("MeganeEditorProvider — frameChange message handling", () => {
     for (const item of mockState.statusBarItems) {
       expect(item.dispose).toHaveBeenCalledTimes(1);
     }
+  });
+
+  it("shows a tab's status bar items only while it is the active editor", async () => {
+    const provider = getProvider("megane.structureViewer");
+    mockState.readFile.mockResolvedValue(new Uint8Array([1]));
+
+    const doc = { uri: VscodeUri.file("/work/run.pdb"), dispose: vi.fn() };
+    const { panel, fireMessage, fireViewStateChange } = makeWebviewPanel();
+    await provider.resolveCustomEditor(doc, panel, {});
+    const [frameItem, selItem] = mockState.statusBarItems;
+    fireMessage({ type: "frameChange", frame: 3 });
+    fireMessage({ type: "selectionChange", selection: { atoms: [1, 2] } });
+    expect(frameItem.show).toHaveBeenCalledTimes(1);
+    expect(selItem.show).toHaveBeenCalledTimes(1);
+
+    // Another editor comes to the front: both items leave the status bar.
+    fireViewStateChange(false);
+    expect(frameItem.hide).toHaveBeenCalledTimes(1);
+    expect(selItem.hide).toHaveBeenCalledTimes(1);
+
+    // Playback goes on in the background without showing the item.
+    fireMessage({ type: "frameChange", frame: 4 });
+    expect(frameItem.text).toBe("$(megane-frame) Frame 4");
+    expect(frameItem.show).toHaveBeenCalledTimes(1);
+
+    // Back in front: the items come back with what the tab last reported.
+    fireViewStateChange(true);
+    expect(frameItem.show).toHaveBeenCalledTimes(2);
+    expect(selItem.show).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not show empty status bar items when a tab becomes active", async () => {
+    const provider = getProvider("megane.structureViewer");
+    mockState.readFile.mockResolvedValue(new Uint8Array([1]));
+
+    const doc = { uri: VscodeUri.file("/work/one.pdb"), dispose: vi.fn() };
+    const { panel, fireMessage, fireViewStateChange } = makeWebviewPanel();
+    await provider.resolveCustomEditor(doc, panel, {});
+    const [frameItem, selItem] = mockState.statusBarItems;
+    fireMessage({
+      type: "measurementChange",
+      measurement: { type: "distance", value: 1.5, label: "1.500 Å", atoms: [0, 1] },
+    });
+    fireMessage({ type: "measurementChange", measurement: null });
+    fireViewStateChange(false);
+    fireViewStateChange(true);
+    expect(frameItem.show).not.toHaveBeenCalled();
+    expect(selItem.show).toHaveBeenCalledTimes(1); // the measurement, before it was cleared
   });
 
   it("does not call postMessage for frameChange messages", async () => {
@@ -984,6 +1055,33 @@ describe("MeganePipelineEditorProvider — pipelineViewer", () => {
     );
     expect(payload.companionFiles).toEqual([]);
     expect(mockState.readFile).toHaveBeenCalledTimes(1);
+  });
+
+  it("drops the companions once posted and reads them again for a webview that loads again", async () => {
+    const pipeline = {
+      version: 3,
+      nodes: [{ id: "t", type: "load_trajectory", fileName: "run.xtc" }],
+      edges: [],
+    };
+    const provider = getProvider("megane.pipelineViewer");
+    mockState.readFile
+      .mockResolvedValueOnce(pipelineBytes(pipeline))
+      .mockResolvedValueOnce(new Uint8Array([1]))
+      .mockResolvedValueOnce(pipelineBytes(pipeline))
+      .mockResolvedValueOnce(new Uint8Array([2]));
+    const doc = { uri: VscodeUri.file("/work/pipe.megane.json"), dispose: vi.fn() };
+    const { panel, fireMessage } = makeWebviewPanel();
+    await provider.resolveCustomEditor(doc, panel, {});
+    fireMessage({ type: "ready" });
+    expect(panel.webview.postMessage).toHaveBeenCalledTimes(1);
+
+    fireMessage({ type: "ready" });
+    await vi.waitFor(() => expect(panel.webview.postMessage).toHaveBeenCalledTimes(2));
+    expect(mockState.readFile).toHaveBeenCalledTimes(4);
+    const contents = panel.webview.postMessage.mock.calls.map((c) =>
+      Array.from(new Uint8Array((c[0] as CompanionPayload).companionFiles[0].content)),
+    );
+    expect(contents).toEqual([[1], [2]]);
   });
 
   it("rejects pipelines whose version is not 3", async () => {

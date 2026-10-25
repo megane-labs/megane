@@ -6,7 +6,12 @@
 /// Magic number that identifies an XTC frame header.
 const XTC_MAGIC: i32 = 1995;
 
+/// Smallest valid `smallidx` (the first non-zero `MAGICINTS` entry).
 const FIRSTIDX: usize = 9;
+/// Largest valid `smallidx` (the last `MAGICINTS` entry). A `smallidx` outside
+/// `FIRSTIDX..=LASTIDX` names a zero or missing magic integer, so decoding
+/// with it would divide by zero or index past the table.
+const LASTIDX: usize = MAGICINTS.len() - 1;
 
 #[rustfmt::skip]
 static MAGICINTS: [u32; 73] = [
@@ -26,6 +31,12 @@ use crate::trajectory::TrajectoryData;
 pub type XtcData = TrajectoryData;
 
 // ---------- XDR primitive readers ----------
+
+/// `n` rounded up to the 4-byte XDR boundary, or `None` when that overflows
+/// `usize` (a length near `u32::MAX` on wasm32).
+fn xdr_padded(n: usize) -> Option<usize> {
+    n.checked_add(3).map(|v| v & !3)
+}
 
 struct XdrReader<'a> {
     data: &'a [u8],
@@ -65,12 +76,12 @@ impl<'a> XdrReader<'a> {
 
     /// Read `n` raw bytes, advancing position (XDR pads to 4-byte boundary).
     fn read_opaque(&mut self, n: usize) -> Result<&'a [u8], String> {
-        let padded = (n + 3) & !3;
-        if self.pos + padded > self.data.len() {
-            return Err("unexpected end of data reading opaque".into());
-        }
+        let end = xdr_padded(n)
+            .and_then(|padded| self.pos.checked_add(padded))
+            .filter(|&end| end <= self.data.len())
+            .ok_or("unexpected end of data reading opaque")?;
         let slice = &self.data[self.pos..self.pos + n];
-        self.pos += padded;
+        self.pos = end;
         Ok(slice)
     }
 
@@ -82,10 +93,11 @@ impl<'a> XdrReader<'a> {
     /// Advance `n` bytes without reading (used by the index scan to skip past a
     /// compressed coordinate block).
     fn skip(&mut self, n: usize) -> Result<(), String> {
-        if self.pos + n > self.data.len() {
-            return Err("unexpected end of data while skipping".into());
-        }
-        self.pos += n;
+        self.pos = self
+            .pos
+            .checked_add(n)
+            .filter(|&end| end <= self.data.len())
+            .ok_or("unexpected end of data while skipping")?;
         Ok(())
     }
 }
@@ -241,7 +253,11 @@ fn decompress_coords(xdr: &mut XdrReader, natoms: usize) -> Result<Vec<f32>, Str
         return Err(format!("coord block size {} != natoms {}", lsize, natoms));
     }
 
-    let size3 = natoms * 3;
+    // Checked (wasm32): room for natoms*3 ints plus the run-length overshoot pad.
+    let size3 = natoms
+        .checked_mul(3)
+        .filter(|&n| n <= usize::MAX - 36)
+        .ok_or_else(|| format!("XTC atom count {natoms} is too large"))?;
 
     // Small atom count: plain XDR floats, in nm like the compressed ones
     if natoms <= 9 {
@@ -271,7 +287,13 @@ fn decompress_coords(xdr: &mut XdrReader, natoms: usize) -> Result<Vec<f32>, Str
 
     let mut sizeint = [0u32; 3];
     for i in 0..3 {
-        sizeint[i] = (maxint[i] - minint[i] + 1) as u32;
+        // A range is at least one integer and, as in the C reference's `int`
+        // arithmetic, below 2^31 (so a large coordinate takes at most 31 bits).
+        sizeint[i] = i32::try_from(maxint[i] as i64 - minint[i] as i64 + 1)
+            .ok()
+            .filter(|&n| n > 0)
+            .map(|n| n as u32)
+            .ok_or_else(|| format!("invalid XTC coordinate range {}..{}", minint[i], maxint[i]))?;
     }
 
     // Determine encoding mode
@@ -285,7 +307,11 @@ fn decompress_coords(xdr: &mut XdrReader, natoms: usize) -> Result<Vec<f32>, Str
         sizeofints(3, &sizeint)
     };
 
-    let mut smallidx = xdr.read_i32()? as usize;
+    let smallidx_raw = xdr.read_i32()?;
+    let mut smallidx = usize::try_from(smallidx_raw)
+        .ok()
+        .filter(|i| (FIRSTIDX..=LASTIDX).contains(i))
+        .ok_or_else(|| format!("invalid XTC smallidx {smallidx_raw}"))?;
     let tmp_idx = if smallidx > 0 { smallidx - 1 } else { 0 };
     let tmp_idx = if FIRSTIDX > tmp_idx {
         FIRSTIDX
@@ -387,8 +413,12 @@ fn decompress_coords(xdr: &mut XdrReader, natoms: usize) -> Result<Vec<f32>, Str
             output.push(coords[this + 2] as f32 * inv_precision);
         }
 
-        // Adjust smallidx
-        smallidx = (smallidx as i32 + is_smaller) as usize;
+        // Adjust smallidx; a step out of the table is a corrupt bitstream (the
+        // C reference rejects the zero magic integer below FIRSTIDX too).
+        smallidx = smallidx
+            .checked_add_signed(is_smaller as isize)
+            .filter(|i| (FIRSTIDX..=LASTIDX).contains(i))
+            .ok_or("invalid sizesmall in xdr3dfcoord")?;
         if is_smaller < 0 {
             smallnum = smaller;
             if smallidx > FIRSTIDX {
@@ -401,9 +431,6 @@ fn decompress_coords(xdr: &mut XdrReader, natoms: usize) -> Result<Vec<f32>, Str
             smallnum = MAGICINTS[smallidx] / 2;
         }
         sizesmall = [MAGICINTS[smallidx]; 3];
-        if sizesmall[0] == 0 {
-            return Err("invalid sizesmall in xdr3dfcoord".into());
-        }
     }
 
     // Truncate output to exactly natoms*3 (run-length can overshoot)
@@ -434,10 +461,12 @@ fn read_frame_header(xdr: &mut XdrReader) -> Result<Option<FrameHeader>, String>
     if magic != XTC_MAGIC {
         return Err(format!("bad XTC magic: {} (expected {})", magic, XTC_MAGIC));
     }
-    let natoms = xdr.read_i32()? as usize;
-    if natoms == 0 {
-        return Err("zero atoms in XTC frame".into());
-    }
+    let natoms_raw = xdr.read_i32()?;
+    let natoms = match usize::try_from(natoms_raw) {
+        Ok(0) => return Err("zero atoms in XTC frame".into()),
+        Ok(n) => n,
+        Err(_) => return Err(format!("negative atom count {natoms_raw} in XTC frame")),
+    };
     let _step = xdr.read_i32()?;
     let time = xdr.read_f32()?;
     let mut box_matrix = [0f32; 9];
@@ -476,7 +505,9 @@ fn coord_block_len(xdr: &mut XdrReader, natoms: usize) -> Result<usize, String> 
     xdr.skip(32)?;
     let nbytes = xdr.read_u32()? as usize;
     // XDR opaque data is padded to a 4-byte boundary.
-    Ok(4 + 32 + 4 + ((nbytes + 3) & !3))
+    xdr_padded(nbytes)
+        .and_then(|padded| padded.checked_add(4 + 32 + 4))
+        .ok_or_else(|| format!("XTC coordinate block of {nbytes} bytes is too large"))
 }
 
 /// Lightweight index over an XTC file: per-frame byte offsets + times + the box,
@@ -555,7 +586,9 @@ impl XtcIndexBuilder {
                     header.natoms, self.n_atoms
                 ));
             }
-            let len = FRAME_HEADER_BYTES + coord_block_len(&mut xdr, self.n_atoms)?;
+            // Saturating (wasm32): a frame longer than the address space runs
+            // past the end of the file, which `finish` reports.
+            let len = coord_block_len(&mut xdr, self.n_atoms)?.saturating_add(FRAME_HEADER_BYTES);
             self.offsets.push(self.next + pos as u64);
             self.times.push(header.time);
             self.last_box = Some(header.box_matrix);
@@ -569,10 +602,10 @@ impl XtcIndexBuilder {
             if self.varies_cell {
                 self.cells.push(header.box_matrix);
             }
-            pos += len;
+            pos = pos.saturating_add(len);
             found += 1;
         }
-        self.next += pos as u64;
+        self.next = self.next.saturating_add(pos as u64);
         Ok(found)
     }
 
@@ -952,5 +985,120 @@ mod tests {
         .expect("read XTC");
         // An offset that is not a frame boundary must error (bad magic), not panic.
         assert!(decode_frame_at(&data, 3, 327).is_err());
+    }
+
+    fn crn_fixture() -> Vec<u8> {
+        std::fs::read(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../tests/fixtures/1crn_vibration.xtc"
+        ))
+        .expect("read XTC")
+    }
+
+    /// One compressed frame of `natoms` atoms: every coordinate range is the single
+    /// integer 0 (one bit per large coordinate), then `smallidx` and the
+    /// bitstream `bits`.
+    fn compressed_frame(natoms: i32, smallidx: i32, bits: &[u8]) -> Vec<u8> {
+        let mut d = Vec::new();
+        d.extend_from_slice(&XTC_MAGIC.to_be_bytes());
+        d.extend_from_slice(&natoms.to_be_bytes());
+        d.extend_from_slice(&0i32.to_be_bytes()); // step
+        d.extend_from_slice(&0f32.to_be_bytes()); // time
+        d.extend_from_slice(&[0u8; 36]); // box
+        d.extend_from_slice(&natoms.to_be_bytes()); // lsize
+        d.extend_from_slice(&1000f32.to_be_bytes()); // precision
+        d.extend_from_slice(&[0u8; 24]); // minint = maxint = 0
+        d.extend_from_slice(&smallidx.to_be_bytes());
+        d.extend_from_slice(&(bits.len() as u32).to_be_bytes());
+        d.extend_from_slice(bits);
+        while !d.len().is_multiple_of(4) {
+            d.push(0);
+        }
+        d
+    }
+
+    #[test]
+    fn smallidx_outside_the_magic_table_is_an_error() {
+        // The fixture's first frame keeps smallidx at bytes 84..88 (after the
+        // 52-byte header, lsize, precision and minint/maxint).
+        let crn = crn_fixture();
+        for bad in [-1i32, 0, 5, 8, 73, 100] {
+            let mut d = crn.clone();
+            d[84..88].copy_from_slice(&bad.to_be_bytes());
+            let err = parse_xtc(&d)
+                .err()
+                .unwrap_or_else(|| panic!("smallidx {bad}"));
+            assert!(err.contains("smallidx"), "smallidx {bad}: {err}");
+        }
+        // The table's ends are valid: an all-zero bitstream decodes.
+        for ok in [FIRSTIDX as i32, LASTIDX as i32] {
+            let d = compressed_frame(10, ok, &[0; 8]);
+            assert_eq!(parse_xtc(&d).expect("valid smallidx").n_frames, 1);
+        }
+    }
+
+    #[test]
+    fn a_zero_magic_integer_is_rejected_before_dividing_by_it() {
+        // smallidx 5 names MAGICINTS[5] == 0; a run of small coordinates
+        // (large = 0, flag = 1, run = 3) would divide by it.
+        let d = compressed_frame(10, 5, &[0b0100_0110, 0, 0, 0]);
+        assert!(parse_xtc(&d).err().unwrap().contains("smallidx"));
+    }
+
+    #[test]
+    fn smallidx_stepping_past_the_table_is_an_error() {
+        // large = 0, flag = 1, run_val = 2 → is_smaller = +1 with no run, so
+        // smallidx steps from LASTIDX past the end of MAGICINTS.
+        let d = compressed_frame(10, LASTIDX as i32, &[0b0100_0100, 0, 0, 0]);
+        assert!(parse_xtc(&d).err().unwrap().contains("sizesmall"));
+        // run_val = 0 → is_smaller = -1: from FIRSTIDX down to a zero magic
+        // integer, which the C reference rejects too.
+        let d = compressed_frame(10, FIRSTIDX as i32, &[0b0100_0000, 0, 0, 0]);
+        assert!(parse_xtc(&d).err().unwrap().contains("sizesmall"));
+    }
+
+    #[test]
+    fn a_negative_atom_count_is_an_error() {
+        let d = compressed_frame(-1, 9, &[0; 4]);
+        assert!(parse_xtc(&d).err().unwrap().contains("negative atom count"));
+        assert!(build_index(&d)
+            .err()
+            .unwrap()
+            .contains("negative atom count"));
+        assert!(decode_frame_at(&d, 0, 10).is_err());
+    }
+
+    #[test]
+    fn an_empty_coordinate_range_is_an_error() {
+        // maxint < minint: a range of zero (or fewer) integers, which the
+        // bitstream would divide by.
+        let mut d = compressed_frame(10, 9, &[0; 4]);
+        // minint[0] sits after the header, lsize and precision.
+        d[60..64].copy_from_slice(&5i32.to_be_bytes());
+        assert!(parse_xtc(&d).err().unwrap().contains("coordinate range"));
+        // A range past i32 (the C reference's `int` arithmetic).
+        let mut d = compressed_frame(10, 9, &[0; 4]);
+        d[60..64].copy_from_slice(&i32::MIN.to_be_bytes());
+        d[72..76].copy_from_slice(&i32::MAX.to_be_bytes());
+        assert!(parse_xtc(&d).err().unwrap().contains("coordinate range"));
+    }
+
+    #[test]
+    fn sizes_near_the_address_space_do_not_wrap() {
+        // On wasm32 `nbytes + 3` overflows `usize`; the padding must refuse
+        // rather than wrap to a tiny length.
+        assert_eq!(xdr_padded(5), Some(8));
+        assert_eq!(xdr_padded(usize::MAX - 2), None);
+        let mut xdr = XdrReader::new(&[0u8; 8]);
+        assert!(xdr.read_opaque(usize::MAX - 2).is_err());
+        assert!(xdr.read_opaque(usize::MAX).is_err());
+        assert!(xdr.skip(usize::MAX).is_err());
+        // A byte count past the file is an error in the eager parse and the
+        // index alike.
+        let d = compressed_frame(10, 9, &[0; 4]);
+        let mut huge = d.clone();
+        huge[88..92].copy_from_slice(&0xFFFF_FFFEu32.to_be_bytes());
+        assert!(parse_xtc(&huge).is_err());
+        assert!(build_index(&huge).is_err());
     }
 }

@@ -72,9 +72,18 @@ class _Entry:
     holders: int = 0
 
 
+#: How long ``ToolServerPool.close`` waits for the servers still starting to stop.
+CLOSE_TIMEOUT_S = 10.0
+
+
 def _close_soon(client: ToolClient) -> None:
     task = asyncio.ensure_future(client.close())
     task.add_done_callback(lambda t: t.cancelled() or t.exception())
+
+
+def _started(start: asyncio.Future[ToolClient]) -> bool:
+    """Whether a finished start connected (rather than failed or was cancelled)."""
+    return not start.cancelled() and start.exception() is None
 
 
 class ToolServerPool:
@@ -94,16 +103,18 @@ class ToolServerPool:
         return f"{config.id}\0{server_fingerprint(config)}"
 
     async def acquire(self, config: ServerConfig) -> Lease:
+        """A lease on ``config``'s connection, started unless one is already up or starting.
+
+        Everyone waiting for a starting connection counts as its holder, so
+        when the last of them is cancelled (its tab closed) the start is
+        cancelled too, which stops a stdio server's process.
+        """
         key = self._key(config)
         entry = self._entries.get(key)
-        if entry is not None:
-            try:
-                existing: ToolClient | None = await asyncio.shield(entry.client)
-            except Exception:
-                existing = None
-            if (existing is None or not existing.open) and self._entries.get(key) is entry:
-                del self._entries[key]
-                entry = None
+        if entry is not None and entry.client.done() and not (_started(entry.client) and entry.client.result().open):
+            # It failed to start, or its server went away: start it again.
+            del self._entries[key]
+            entry = None
         if entry is None:
             entry = _Entry(client=asyncio.ensure_future(self._factory(config)))
             self._entries[key] = entry
@@ -111,10 +122,14 @@ class ToolServerPool:
         held.holders += 1
         try:
             client = await asyncio.shield(held.client)
-        except Exception:
+        except BaseException:
+            # The start was cancelled by close(), not this waiter (whose own
+            # cancellation leaves the shielded start running).
+            closed = held.client.cancelled()
             held.holders -= 1
-            if self._entries.get(key) is held:
-                del self._entries[key]
+            self._give_up(key, held)
+            if closed:
+                raise RuntimeError("The tool server connection was closed while it was starting.") from None
             raise
 
         def release() -> None:
@@ -127,17 +142,37 @@ class ToolServerPool:
 
         return Lease(client, release)
 
+    def _give_up(self, key: str, held: _Entry) -> None:
+        """A waiter stopped waiting for ``held``: its start failed, or the waiter was cancelled."""
+        start = held.client
+        failed = start.done() and not _started(start)
+        if not failed and held.holders > 0:
+            return  # others still wait for this connection or hold it
+        if self._entries.get(key) is held:
+            del self._entries[key]
+        if not start.done():
+            start.cancel()  # nobody waits for it any more: stop the starting server
+        elif not failed:
+            _close_soon(start.result())  # it connected just as its last waiter left
+
     async def close(self) -> None:
-        """Close every connection (the Jupyter server is stopping)."""
-        entries = list(self._entries.values())
+        """Close every connection (the Jupyter server is stopping).
+
+        Connections still starting are cancelled, which stops their servers,
+        and waited for at most :data:`CLOSE_TIMEOUT_S`, so a server that never
+        answers cannot hold up the shutdown.
+        """
+        starts = [entry.client for entry in self._entries.values()]
         self._entries.clear()
-        for entry in entries:
-            try:
-                client = await entry.client
-            except Exception:
+        for start in starts:
+            start.cancel()  # no-op on a finished start
+        if starts:
+            await asyncio.wait(starts, timeout=CLOSE_TIMEOUT_S)
+        for start in starts:
+            if not start.done() or not _started(start):
                 continue
             try:
-                await client.close()
+                await start.result().close()
             except Exception:
                 pass
 
@@ -287,11 +322,17 @@ class BuilderToolsBridge:
             held[1].release()
 
     def dispose(self) -> None:
-        """The tab closed: cancel its calls, release its servers, stop answering."""
+        """The tab closed: cancel its calls and connects, release its servers, stop answering.
+
+        A connect still waiting for its server to start is cancelled too: the
+        pool then stops the start when no other tab waits for it.
+        """
         for server_id in list(self._held):
             self._drop(server_id)
         for _, call in list(self._calls.values()):
             call.cancel()
+        for task in list(self._tasks):
+            task.cancel()
         self._disposed = True
 
 

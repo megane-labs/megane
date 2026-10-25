@@ -8,8 +8,9 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
 import {
   MAX_REPAIR_ROUNDS,
-  hasClosedFence,
-  lastFencedJSON,
+  fencePattern,
+  lastJSONPayload,
+  looksLikePayload,
   runGeneration,
   type GenerationSpec,
 } from "@/ai/generation";
@@ -82,15 +83,61 @@ describe("reply helpers", () => {
   const isNumbered = (v: unknown): v is { n: number } =>
     typeof v === "object" && v !== null && typeof (v as { n?: unknown }).n === "number";
 
+  const value = (text: string) => lastJSONPayload(text, isNumbered)?.value ?? null;
+
   it("takes the last fence the caller accepts", () => {
     const text =
       '```json\n{"n": 1}\n```\n```\n{"m": 2}\n```\n```json\nnot json\n```\n```\n{"n": 3}\n```';
-    expect(lastFencedJSON(text, isNumbered)).toEqual({ n: 3 });
-    expect(lastFencedJSON("no fences", isNumbered)).toBeNull();
+    expect(lastJSONPayload(text, isNumbered)).toEqual({ value: { n: 3 }, fenced: true });
+    expect(value("no fences")).toBeNull();
   });
 
-  it("tells a closed fence from an open one", () => {
-    expect(hasClosedFence("```json\n{}\n```")).toBe(true);
-    expect(hasClosedFence("```json\n{")).toBe(false);
+  it("reads a fence whatever its label and its case", () => {
+    for (const label of ["JSON", "Json", "jsonc", "json5", "javascript", ""]) {
+      expect(value("```" + label + '\n{"n": 1}\n```\nDone.')).toEqual({ n: 1 });
+    }
+    expect(value('```json {"n": 2}```')).toEqual({ n: 2 });
+    expect(value('```{"n": 3}```')).toEqual({ n: 3 });
+  });
+
+  it("reads bare JSON, before or after prose, and marks it unfenced", () => {
+    expect(lastJSONPayload('{"n": 1}\nFixed it.', isNumbered)).toEqual({
+      value: { n: 1 },
+      fenced: false,
+    });
+    expect(value('Here it is:\n{\n  "n": 2\n}\nDone.')).toEqual({ n: 2 });
+    // Braces in strings and in prose do not confuse it.
+    expect(value('Use {curly} braces. {"q": "}{", "n": 4}')).toEqual({ q: "}{", n: 4 });
+    expect(value('{"q": "a \\" } b", "n": 5}')).toEqual({ q: 'a " } b', n: 5 });
+    // A JSON value the caller does not take is skipped, with what it nests.
+    expect(value('{"wrap": {"n": 1}}')).toBeNull();
+  });
+
+  it("prefers whichever payload comes last, fenced or bare", () => {
+    expect(value('```json\n{"n": 1}\n```\n{"n": 2}')).toEqual({ n: 2 });
+    expect(value('{"n": 1}\n```json\n{"n": 2}\n```')).toEqual({ n: 2 });
+  });
+
+  it("waits for an object that is still streaming", () => {
+    expect(value('{"n": 1, "more": [')).toBeNull();
+    expect(value('```json\n{"n": 1, "more": [')).toBeNull();
+    // Once it closes it counts, even before the fence does.
+    expect(value('```json\n{"n": 1}\n')).toEqual({ n: 1 });
+    // A brace inside a string does not close the object.
+    expect(value('{"n": 1, "s": "}')).toBeNull();
+  });
+
+  it("matches fences with any label", () => {
+    expect("```JSON\n{}\n```".replace(fencePattern(), "")).toBe("");
+    const bodies = [...'```jsonc\n{"a":1}\n``` ```\n2\n```'.matchAll(fencePattern())];
+    expect(bodies.map((m) => m[1].trim())).toEqual(['{"a":1}', "2"]);
+  });
+
+  it("tells an attempted payload from prose", () => {
+    expect(looksLikePayload("```json\n{}\n```")).toBe(true);
+    expect(looksLikePayload("```json\n{")).toBe(true);
+    expect(looksLikePayload('{ "version": 3, "nodes": [')).toBe(true);
+    expect(looksLikePayload("There is no water here, so there is nothing to hide.")).toBe(false);
+    expect(looksLikePayload("Use a {curly} brace.")).toBe(false);
   });
 });

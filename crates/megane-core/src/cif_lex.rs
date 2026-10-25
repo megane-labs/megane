@@ -62,6 +62,12 @@ impl<'a> Value<'a> {
     pub fn as_u32(&self) -> Option<u32> {
         self.get().and_then(|s| s.parse().ok())
     }
+
+    /// Parse the value as a signed integer (e.g. an author residue number,
+    /// which is below 1 for expression tags).
+    pub fn as_i32(&self) -> Option<i32> {
+        self.get().and_then(|s| s.parse().ok())
+    }
 }
 
 /// Strip a trailing parenthesized standard uncertainty from a CIF number.
@@ -669,6 +675,9 @@ mod tests {
         assert_eq!(q("abc").as_f32(), None);
         assert_eq!(q("12").as_u32(), Some(12));
         assert_eq!(q("?").as_u32(), None);
+        assert_eq!(q("-3").as_i32(), Some(-3));
+        assert_eq!(q("-3").as_u32(), None);
+        assert_eq!(q(".").as_i32(), None);
         assert!(MISSING.is_missing());
     }
 
