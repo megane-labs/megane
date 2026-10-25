@@ -617,7 +617,11 @@ pub fn parse_traj(data: &[u8]) -> Result<ParsedStructure, String> {
 
     let extra = offsets.len().saturating_sub(1);
     let mut positions: Vec<f32> = Vec::new();
-    let mut frames = HeteroFramesBuilder::with_capacity(n_atoms, extra);
+    // The table length is a header claim and later frames may be smaller than
+    // frame 0, so reserve no more frame-0-sized frames than the file could
+    // hold as float32 positions; past that the buffer grows as frames arrive.
+    let fit = data.len() / n_atoms.saturating_mul(12).max(1);
+    let mut frames = HeteroFramesBuilder::with_capacity(n_atoms, extra.min(fit));
 
     for (i, &off) in offsets.iter().enumerate() {
         let json = if i == 0 {
@@ -1137,6 +1141,59 @@ mod tests {
         // Per-frame elements/bonds present and correctly sized.
         assert_eq!(result.frame_elements(3).expect("elements").len(), 15);
         assert!(!result.frame_bonds(3).expect("bonds").is_empty());
+    }
+
+    /// The offset table's length is a header claim, so the extra-frame buffer
+    /// is reserved for no more frames of frame 0's size than the file's bytes
+    /// could hold. A 100 000-atom frame 0 followed by 20 000 one-atom frames
+    /// used to reserve 6·10^9 floats (24 GB) up front and abort the process.
+    #[test]
+    fn extra_frames_are_not_reserved_at_frame0_size_beyond_the_file() {
+        const N: usize = 100_000;
+        const K: usize = 20_000;
+        let mut out = vec![0u8; ULM_HEADER_LEN];
+        out[..8].copy_from_slice(ULM_MAGIC);
+        out[24..32].copy_from_slice(&1i64.to_le_bytes());
+        out[32..40].copy_from_slice(&((K + 1) as i64).to_le_bytes());
+        let numbers_at = out.len();
+        out.extend(std::iter::repeat_n(1u8, N));
+        let positions_at = out.len();
+        for i in 0..N {
+            for v in [i as f32 * 5.0, 0.0, 0.0] {
+                out.extend(v.to_le_bytes());
+            }
+        }
+        let mut offsets = Vec::with_capacity(K + 1);
+        let mut push_json = |out: &mut Vec<u8>, json: &str| {
+            offsets.push(out.len() as i64);
+            out.extend((json.len() as i64).to_le_bytes());
+            out.extend(json.as_bytes());
+        };
+        push_json(
+            &mut out,
+            &format!(
+                r#"{{"numbers.": {{"ndarray": [[{N}], "uint8", {numbers_at}]}}, "positions.": {{"ndarray": [[{N}, 3], "float32", {positions_at}]}}}}"#
+            ),
+        );
+        for _ in 0..K {
+            push_json(&mut out, r#"{"numbers": [1], "positions": [[0, 0, 0]]}"#);
+        }
+        let pos0 = out.len() as i64;
+        out[40..48].copy_from_slice(&pos0.to_le_bytes());
+        for o in offsets {
+            out.extend(o.to_le_bytes());
+        }
+
+        let s = parse_traj(&out).expect("parse");
+        assert_eq!(s.n_atoms, N);
+        assert_eq!(s.extra_frame_count(), K);
+        assert!(s.hetero.as_ref().expect("atom count varies").varies_atoms);
+        assert!(
+            s.frame_positions_flat.capacity() * 4 <= out.len(),
+            "reserved {} floats for a {}-byte file",
+            s.frame_positions_flat.capacity(),
+            out.len()
+        );
     }
 
     #[test]

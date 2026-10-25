@@ -378,21 +378,25 @@ fn read_atom_block(
         max_col = max_col.max(ic[0]).max(ic[1]).max(ic[2]);
     }
 
+    // `NUMBER OF ATOMS` is a header claim: reserve no more atoms than the
+    // lines left can hold (one atom per line), so a huge count fails on the
+    // missing lines below instead of on the allocation.
+    let cap = n_atoms.min(n_lines.saturating_sub(header.atoms_start));
     // (id, x, y, z, type) — type is 0 when not captured.
-    let mut atoms: Vec<(usize, f32, f32, f32, u8)> = Vec::with_capacity(n_atoms);
+    let mut atoms: Vec<(usize, f32, f32, f32, u8)> = Vec::with_capacity(cap);
     let mut atoms_sorted = true;
     let mut prev_id: usize = 0;
     let mut frame_vec_atoms: Vec<Vec<(usize, f32, f32, f32)>> = layout
         .vector_groups
         .iter()
-        .map(|_| Vec::with_capacity(n_atoms))
+        .map(|_| Vec::with_capacity(cap))
         .collect();
     // Per-column unsorted scalar buffer (empty when scalars aren't wanted).
     let mut frame_scalar_atoms: Vec<Vec<(usize, f32)>> = if capture_scalars {
         layout
             .scalar_cols
             .iter()
-            .map(|_| Vec::with_capacity(n_atoms))
+            .map(|_| Vec::with_capacity(cap))
             .collect()
     } else {
         Vec::new()
@@ -734,7 +738,7 @@ pub fn decode_frame_at(
     const HEADER_MARGIN: usize = 16;
     let lines: Vec<&str> = slice
         .lines()
-        .take(expected_n_atoms + HEADER_MARGIN)
+        .take(expected_n_atoms.saturating_add(HEADER_MARGIN))
         .collect();
     if lines.is_empty() || lines[0].trim() != "ITEM: TIMESTEP" {
         return Err("frame offset is not at an ITEM: TIMESTEP boundary".to_string());
@@ -939,8 +943,11 @@ pub fn parse_lammpstrj(text: &str) -> Result<LammpstrjData, String> {
             .collect();
 
         // Read atom lines — accumulate both positions and per-group vector data.
+        // The header's count is reserved only as far as the lines left can
+        // hold it (one atom per line); a larger count fails on the missing lines.
+        let cap = frame_n_atoms.min(n_lines.saturating_sub(i + 1));
         // (id, x, y, z, type) — type is 0 when not captured this frame.
-        let mut atoms: Vec<(usize, f32, f32, f32, u8)> = Vec::with_capacity(frame_n_atoms);
+        let mut atoms: Vec<(usize, f32, f32, f32, u8)> = Vec::with_capacity(cap);
         // Track whether atom ids arrive already ascending so we can skip the sort.
         let mut atoms_sorted = true;
         let mut prev_id: usize = 0;
@@ -948,7 +955,7 @@ pub fn parse_lammpstrj(text: &str) -> Result<LammpstrjData, String> {
         let mut frame_vec_atoms: Vec<Vec<(usize, f32, f32, f32)>> = layout
             .vector_groups
             .iter()
-            .map(|_| Vec::with_capacity(frame_n_atoms))
+            .map(|_| Vec::with_capacity(cap))
             .collect();
 
         for _ in 0..frame_n_atoms {
@@ -1404,6 +1411,26 @@ mod tests {
                 assert_eq!(got.heterogeneous, whole.heterogeneous);
             }
         }
+    }
+
+    /// `NUMBER OF ATOMS` is a header claim: a dump declaring 10^11 atoms with
+    /// one atom line must fail on the missing lines, not reserve room for
+    /// every declared atom (which aborted the process).
+    #[test]
+    fn a_declared_atom_count_past_the_file_is_an_error_not_an_allocation() {
+        let text = "ITEM: TIMESTEP\n0\nITEM: NUMBER OF ATOMS\n100000000000\n\
+                    ITEM: BOX BOUNDS pp pp pp\n0 1\n0 1\n0 1\n\
+                    ITEM: ATOMS id type x y z\n1 1 0 0 0\n";
+        let err = parse_lammpstrj(text).err().expect("eager parse rejects it");
+        assert!(err.contains("Unexpected end of file"), "{err}");
+        let err = parse_lammpstrj_structure(text)
+            .err()
+            .expect("structure lane rejects it");
+        assert!(err.contains("Unexpected end of file"), "{err}");
+        // The single-frame decoder takes the count from the index; a count at
+        // the top of `usize` must not overflow its line budget.
+        let offset = 0;
+        assert!(decode_frame_at(text, offset, usize::MAX).is_err());
     }
 
     #[test]
