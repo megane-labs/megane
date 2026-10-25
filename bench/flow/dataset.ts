@@ -25,6 +25,7 @@ import {
   isFormula,
   moleculeArg,
   none,
+  noOverlap,
   onlyElements,
   some,
 } from "./checks";
@@ -200,7 +201,7 @@ export const FLOW_DATASET: FlowBenchCase[] = [
           test: (p) => p.type === "adsorb" && same(p.grid, [3, 3]),
         },
       ],
-      result: [some("Au"), count("O", 9), count("H", 18), cell()],
+      result: [some("Au"), count("O", 9), count("H", 18), cell(), noOverlap()],
     },
   },
   {
@@ -223,7 +224,7 @@ export const FLOW_DATASET: FlowBenchCase[] = [
         },
       ],
       // CO written as methanol ("CO") or formaldehyde ("C=O") brings hydrogens.
-      result: [some("Pt"), count("C", 4), count("O", 4), none("H")],
+      result: [some("Pt"), count("C", 4), count("O", 4), none("H"), noOverlap()],
     },
   },
   {
@@ -247,7 +248,7 @@ export const FLOW_DATASET: FlowBenchCase[] = [
           test: (p) => p.type === "adsorb" && same(p.grid, [2, 2]),
         },
       ],
-      result: [some("Cu"), count("C", 4), count("O", 4), count("H", 16)],
+      result: [some("Cu"), count("C", 4), count("O", 4), count("H", 16), noOverlap()],
     },
   },
 
@@ -428,7 +429,7 @@ export const FLOW_DATASET: FlowBenchCase[] = [
         { label: "6 layers", block: "slab", test: (p) => p.type === "slab" && p.layers === 6 },
         { label: "still (1 1 1)", block: "slab", test: miller(1, 1, 1) },
       ],
-      result: [some("Pt"), count("O", 9)],
+      result: [some("Pt"), count("O", 9), noOverlap()],
     },
   },
   {
@@ -439,7 +440,7 @@ export const FLOW_DATASET: FlowBenchCase[] = [
     rubric: {
       keeps: ["n1", "n2", "n4"],
       unchanged: ["n1", "n2", "n4"],
-      result: [some("Pt"), count("N", 9), none("O")],
+      result: [some("Pt"), count("N", 9), none("O"), noOverlap()],
     },
   },
 ];

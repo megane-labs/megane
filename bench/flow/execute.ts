@@ -26,6 +26,8 @@ export interface StructureSummary {
   cell: boolean;
   /** Bonds per element pair, symbols sorted (`"C-H"`, `"H-O"`): tells isomers apart. */
   bonds: Record<string, number>;
+  /** How close two different molecules come, in Å (`closestContact`); null with only one. */
+  closest: number | null;
 }
 
 export interface ExecutionResult {
@@ -53,7 +55,61 @@ export function summarize(name: string, snapshot: Snapshot): StructureSummary {
       .join("-");
     bonds[pair] = (bonds[pair] ?? 0) + 1;
   }
-  return { name, atoms: snapshot.nAtoms, elements, cell: !!snapshot.box, bonds };
+  return {
+    name,
+    atoms: snapshot.nAtoms,
+    elements,
+    cell: !!snapshot.box,
+    bonds,
+    closest: closestContact(snapshot),
+  };
+}
+
+/**
+ * The shortest distance between atoms of two different molecules (sets of
+ * atoms joined by bonds; an unbonded atom is one by itself), counting the
+ * neighbouring periodic images when there is a cell — an atom's own molecule
+ * included, one cell over. Null when nothing qualifies (one molecule and no
+ * cell). Molecules placed on top of each other — nine waters laid on a
+ * surface cell with room for one — show here and nowhere else in the
+ * summary: their atom counts are right.
+ */
+export function closestContact(snapshot: Snapshot): number | null {
+  const n = snapshot.nAtoms;
+  const p = snapshot.positions;
+  const molecule = Array.from({ length: n }, (_, i) => i);
+  const find = (i: number): number => {
+    while (molecule[i] !== i) i = molecule[i] = molecule[molecule[i]];
+    return i;
+  };
+  for (let b = 0; b < snapshot.nBonds; b++) {
+    molecule[find(snapshot.bonds[2 * b])] = find(snapshot.bonds[2 * b + 1]);
+  }
+  const box = snapshot.box;
+  const shifts: number[][] = [[0, 0, 0]];
+  if (box) {
+    for (const u of [-1, 0, 1])
+      for (const v of [-1, 0, 1])
+        for (const w of [-1, 0, 1])
+          if (u || v || w)
+            shifts.push([0, 1, 2].map((k) => u * box[k] + v * box[3 + k] + w * box[6 + k]));
+  }
+  let best = Infinity;
+  for (let i = 0; i < n; i++) {
+    for (let j = i; j < n; j++) {
+      const sameMolecule = find(i) === find(j);
+      const dx = p[3 * j] - p[3 * i];
+      const dy = p[3 * j + 1] - p[3 * i + 1];
+      const dz = p[3 * j + 2] - p[3 * i + 2];
+      // Within a molecule only its images count; an atom and its own image too.
+      for (let k = sameMolecule ? 1 : 0; k < shifts.length; k++) {
+        const s = shifts[k];
+        const d = (dx + s[0]) ** 2 + (dy + s[1]) ** 2 + (dz + s[2]) ** 2;
+        if (d < best) best = d;
+      }
+    }
+  }
+  return best === Infinity ? null : Math.sqrt(best);
 }
 
 /** The graph the engine reads, from a saved flow. */

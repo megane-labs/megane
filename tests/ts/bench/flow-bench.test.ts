@@ -19,7 +19,13 @@ import {
   recordedResult,
   referenceTools,
 } from "../../../bench/flow/environment";
-import { executeFlow, graphOf, summarize, type ExecutionResult } from "../../../bench/flow/execute";
+import {
+  closestContact,
+  executeFlow,
+  graphOf,
+  summarize,
+  type ExecutionResult,
+} from "../../../bench/flow/execute";
 import { GOLDEN, replyWith } from "../../../bench/flow/golden";
 import { flowRequest, generateFlowLive } from "../../../bench/flow/providers";
 import { aggregateFlow, flowToJSON, flowToMarkdown } from "../../../bench/flow/report";
@@ -31,9 +37,10 @@ import {
   scoreSchema,
   type ExecuteFn,
 } from "../../../bench/flow/scorer";
-import { called, moleculeArg } from "../../../bench/flow/checks";
+import { called, moleculeArg, noOverlap } from "../../../bench/flow/checks";
 import type { FlowBenchCase } from "../../../bench/flow/types";
 import { FLOW_NODE_TYPES } from "@/builder/flow/types";
+import type { Snapshot } from "@/types";
 import { moleculeToMolblock } from "@/builder/tools/payload";
 import { PRESET_MOLECULES } from "@/builder/library/presets";
 
@@ -121,6 +128,7 @@ describe("Flow benchmark environment", () => {
       elements: { O: 1, H: 2 },
       cell: false,
       bonds: { "H-O": 2 },
+      closest: null,
     });
     expect(() => readMolblock("not a mol block")).toThrow("V2000");
     const bad = moleculeToMolblock(water).replace(/ O  /, " Xx ");
@@ -153,6 +161,61 @@ describe("Flow benchmark environment", () => {
       ok: false,
       error: "No recorded result for no_such_tool.",
     });
+  });
+});
+
+/** O atoms on the x axis at `xs`, bonded as the flat index pairs `bonds`, in an `edge` Å cube or none. */
+function atoms(xs: number[], bonds: number[] = [], edge?: number): Snapshot {
+  return {
+    nAtoms: xs.length,
+    nBonds: bonds.length / 2,
+    nFileBonds: bonds.length / 2,
+    positions: new Float32Array(xs.flatMap((x) => [x, 0, 0])),
+    elements: new Uint8Array(xs.length).fill(8),
+    bonds: new Uint32Array(bonds),
+    bondOrders: null,
+    box: edge ? new Float32Array([edge, 0, 0, 0, edge, 0, 0, 0, edge]) : null,
+    boxOrigin: null,
+    atomChainIds: null,
+    atomBFactors: null,
+  };
+}
+
+describe("closestContact", () => {
+  it("measures between molecules, not along bonds", () => {
+    // Two O–O "molecules" 1 Å long, 3 Å apart.
+    expect(closestContact(atoms([0, 1, 4, 5], [0, 1, 2, 3]))).toBeCloseTo(3);
+    // Unbonded, every atom is its own molecule.
+    expect(closestContact(atoms([0, 1, 4]))).toBeCloseTo(1);
+    // One molecule with no cell has nothing to come close to; nor has one atom.
+    expect(closestContact(atoms([0, 1], [0, 1]))).toBeNull();
+    expect(closestContact(atoms([0]))).toBeNull();
+  });
+
+  it("counts the periodic images, a molecule's own included", () => {
+    // A 1 Å molecule in a 2.5 Å cell meets its own image 1.5 Å over.
+    expect(closestContact(atoms([0, 1], [0, 1], 2.5))).toBeCloseTo(1.5);
+    // One atom in a cell: its image one cell over.
+    expect(closestContact(atoms([0], [], 3))).toBeCloseTo(3);
+    // Across the cell's face, not the long way through it.
+    expect(closestContact(atoms([0.5, 9.5], [], 10))).toBeCloseTo(1);
+    const cu = summarize("", manualStructure("cu-cell").snapshot);
+    expect(cu.closest).toBeCloseTo(3.61 / Math.SQRT2);
+  });
+
+  it("noOverlap passes molecules at least the distance apart, and a lone one", () => {
+    const run = (closest: number | null): ExecutionResult => ({
+      built: true,
+      error: null,
+      output: { name: "", atoms: 2, elements: {}, cell: false, bonds: {}, closest },
+      calls: [],
+    });
+    const check = noOverlap();
+    expect(check.label).toBe("no two molecules closer than 1.5 Å");
+    expect(check.test(run(2))).toBe(true);
+    expect(check.test(run(1.2))).toBe(false);
+    expect(check.test(run(null))).toBe(true);
+    expect(noOverlap(1).test(run(1.2))).toBe(true);
   });
 });
 
@@ -238,7 +301,7 @@ describe("Flow scorer", () => {
     const stub: ExecuteFn = async (): Promise<ExecutionResult> => ({
       built: true,
       error: null,
-      output: { name: "Cu", atoms: 4, elements: { Cu: 4 }, cell: true, bonds: {} },
+      output: { name: "Cu", atoms: 4, elements: { Cu: 4 }, cell: true, bonds: {}, closest: 2.55 },
       calls: [],
     });
     const twoOutputs = replyWith({

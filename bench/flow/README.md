@@ -15,13 +15,13 @@ and still build carbon monoxide as methanol; only running it shows that.
 
 ## What it measures
 
-| Dimension  | Weight | What it checks                                                                                                                                                   |
-| ---------- | ------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **schema** | 0.20   | The reply holds a flow the Builder can hold; the production self-check (`collectFlowErrors`) finds nothing; one output block, which every block feeds.           |
-| **task**   | 0.25   | The blocks, tools and wires the request implies are there; for an edit, the blocks it did not ask to touch are kept (same id, same type).                        |
-| **params** | 0.15   | Settings the request pins (Miller indices, layers, a grid, repeat counts, a lattice constant); for an edit, untouched blocks keep their settings.                |
-| **result** | 0.30   | The output block builds a structure, and it is the right one: atoms of which elements, how many, a unit cell, bonds per element pair; for a tool, what it asked. |
-| **format** | 0.10   | Fenced JSON first, then one short sentence. A case whose right answer is prose (a packed box with no tool server connected) checks for prose instead.            |
+| Dimension  | Weight | What it checks                                                                                                                                                                                         |
+| ---------- | ------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| **schema** | 0.20   | The reply holds a flow the Builder can hold; the production self-check (`collectFlowErrors`) finds nothing; one output block, which every block feeds.                                                 |
+| **task**   | 0.25   | The blocks, tools and wires the request implies are there; for an edit, the blocks it did not ask to touch are kept (same id, same type).                                                              |
+| **params** | 0.15   | Settings the request pins (Miller indices, layers, a grid, repeat counts, a lattice constant); for an edit, untouched blocks keep their settings.                                                      |
+| **result** | 0.30   | The output block builds a structure, and it is the right one: atoms of which elements, how many, a unit cell, bonds per element pair, placed molecules that do not overlap; for a tool, what it asked. |
+| **format** | 0.10   | Fenced JSON first, then one short sentence. A case whose right answer is prose (a packed box with no tool server connected) checks for prose instead.                                                  |
 
 A dimension with no checks is n/a and left out of the total, which is
 renormalised over the rest. The report gives the mean total, the pass rate
@@ -65,8 +65,9 @@ runs in the normal `npm test` suite (no network) and fails unless:
   reach it, and every expected atom count is one the engine really produces;
 - every counterexample scores below 1.0, and for every case that expects a
   flow at least one fails on **what it builds** (methanol for CO, PVA for PEO,
-  the slab cut from a new crystal instead of the open structure, the edit that
-  also changed the grid, …).
+  nine waters stacked on a slab cell with room for one, the slab cut from a new
+  crystal instead of the open structure, the edit that also changed the grid,
+  …).
 
 A rubric that passes everything is indistinguishable from one that works; the
 counterexamples are what show this one does not.

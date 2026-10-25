@@ -245,10 +245,16 @@ export const GOLDEN: Record<string, GoldenCase> = {
     ],
   },
   "adsorb-water-au100": {
+    // The grid spreads the molecules over the slab's cell, so nine waters
+    // need a 3 × 3 slab: on the 4.08 Å cell of a 1 × 1 one they overlap.
     reference: flow(() =>
-      onSlab(AU, { miller: [1, 0, 0] }, library("preset:water", "WAT"), [3, 3]),
+      onSlab(AU, { miller: [1, 0, 0], repeat: [3, 3] }, library("preset:water", "WAT"), [3, 3]),
     ),
     counterexamples: [
+      {
+        label: "a 1 × 1 slab: the nine waters overlap",
+        reply: flow(() => onSlab(AU, { miller: [1, 0, 0] }, library("preset:water"), [3, 3])),
+      },
       {
         label: "2 × 2 grid",
         reply: flow(() => onSlab(AU, { miller: [1, 0, 0] }, library("preset:water"), [2, 2])),

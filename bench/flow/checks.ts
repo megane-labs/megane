@@ -52,6 +52,21 @@ export function bondCount(a: string, b: string, n: number): ResultCheck {
   };
 }
 
+/**
+ * No two molecules of the output come closer than `min` Å, periodic images
+ * included (`closestContact`): placed molecules overlap neither each other,
+ * the surface, nor their own images one cell over.
+ */
+export function noOverlap(min = 1.5): ResultCheck {
+  return {
+    label: `no two molecules closer than ${min} Å`,
+    test: (run) => {
+      const d = output(run).closest;
+      return d === null || d >= min;
+    },
+  };
+}
+
 /** The output holds as many atoms of `a` as of `b` (a 1:1 compound). */
 export function equalCounts(a: string, b: string): ResultCheck {
   return {
