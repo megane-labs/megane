@@ -16,6 +16,7 @@ import {
   indexTrajectoryCore,
   indexDumpFileCore,
   decodeLazyFrameCore,
+  parseTrajectoryCore,
   TEXT_INDEX_WINDOW,
   readAheadReader,
   type BlobRangeReader,
@@ -182,6 +183,20 @@ describe("indexDumpFileCore", () => {
   it("rejects a dump whose atom count does not match the structure", async () => {
     const file = new Blob([enc.encode(dumpText(2))]);
     await expect(indexDumpFileCore(file, 9)).rejects.toThrow(/atom count \(4\)/);
+  });
+
+  it("drops a last frame cut off in its atom lines, as the eager parse does", async () => {
+    // Three frames of 4 atoms, the last one missing its final atom line.
+    const text = dumpText(3).split("\n").slice(0, -2).join("\n") + "\n";
+    const bytes = enc.encode(text);
+    const eager = parseTrajectoryCore({ kind: "lammpstrj", text, expectedNAtoms: 4 });
+    expect(eager.frames).toHaveLength(2);
+    const { decoder, index } = await indexDumpFileCore(new Blob([bytes]), 4);
+    expect(index.nFrames).toBe(2);
+    for (let f = 0; f < 2; f++) {
+      expect((await decoder.decodeFrame(f)).positions).toEqual(eager.frames[f].positions);
+    }
+    await expect(decoder.decodeFrame(2)).rejects.toThrow(/out of range/);
   });
 
   it("reports a jagged dump as heterogeneous", async () => {
