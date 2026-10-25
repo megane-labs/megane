@@ -19,7 +19,7 @@ export {
   type StructureLazyHandle,
   type StructureLazyResult,
 } from "./parseClient";
-export type { LazyStructureKind } from "./parseCore";
+export type { LazyStructureKind, FileStructureKind } from "./parseCore";
 export {
   inferBondsVdw,
   parseTopBonds,

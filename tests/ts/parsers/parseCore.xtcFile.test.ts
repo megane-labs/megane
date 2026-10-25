@@ -90,6 +90,6 @@ describe("indexXtcFileCore", () => {
 
   it("reads through the Blob API by default", async () => {
     const { decoder } = await indexXtcFileCore(new Blob([XTC]), N_ATOMS);
-    expect(await decoder.decodeFrame(0)).toHaveLength(N_ATOMS * 3);
+    expect((await decoder.decodeFrame(0)).positions).toHaveLength(N_ATOMS * 3);
   });
 });

@@ -413,18 +413,6 @@ pub fn parse(text: &str) -> Result<crate::structure::ParsedStructure, String> {
 
 // ---------- Lazy / streaming support ----------
 
-/// Byte offset of each line, so the index scan can record where each frame
-/// begins in the raw text (for lazy per-frame decode from that offset).
-fn line_byte_starts(text: &str) -> Vec<usize> {
-    let mut starts = Vec::new();
-    let mut pos = 0usize;
-    for line in text.split('\n') {
-        starts.push(pos);
-        pos += line.len() + 1;
-    }
-    starts
-}
-
 /// Lightweight index over a multi-frame XYZ: byte offset of each EXTRA frame
 /// (frames 1..N; frame 0 is the eager snapshot), built without parsing
 /// coordinates. Frames whose atom count differs from frame 0 are skipped, exactly
@@ -445,6 +433,9 @@ pub struct XyzIndex {
     /// (A same-atom-count frame that varies only in element identity is not
     /// detectable here without parsing atoms and is left to the eager path.)
     pub heterogeneous: bool,
+    /// Byte offset just past frame 0's last line: `text[..frame0_end]` holds
+    /// all of frame 0, so it can be parsed without the rest of the file.
+    pub frame0_end: u64,
 }
 
 /// Parse only the first frame of an XYZ file into a `ParsedStructure` (topology,
@@ -577,64 +568,152 @@ pub fn parse_frame0(text: &str) -> Result<crate::structure::ParsedStructure, Str
 /// Scan a multi-frame XYZ and record each EXTRA frame's byte offset without
 /// decoding coordinates.
 pub fn build_index(text: &str) -> Result<XyzIndex, String> {
-    let lines: Vec<&str> = text.lines().collect();
-    let starts = line_byte_starts(text);
-    let mut offset = 0usize;
-    let mut first_n_atoms: Option<usize> = None;
-    let mut first_lattice: Option<[f32; 9]> = None;
-    let mut offsets: Vec<usize> = Vec::new();
-    let mut heterogeneous = false;
+    let mut builder = XyzIndexBuilder::default();
+    crate::lines::for_each_line(text, |line, start, end| builder.push_line(line, start, end))?;
+    builder.finish()
+}
 
-    while offset < lines.len() {
-        let count_line = lines[offset].trim();
-        if count_line.is_empty() {
-            offset += 1;
-            continue;
-        }
-        let n_atoms: usize = match count_line.parse() {
-            Ok(n) => n,
-            Err(_) => return Err(format!("cannot parse atom count at line {}", offset + 1)),
-        };
-        if offset + 2 + n_atoms > lines.len() {
-            break; // incomplete frame, matches eager
-        }
-        let frame_lattice = parse_lattice(lines[offset + 1]);
-        match first_n_atoms {
-            None => {
-                first_n_atoms = Some(n_atoms);
-                first_lattice = frame_lattice;
-                // frame 0 is the eager snapshot — not an extra frame
+/// Where the XYZ index scan is within a frame.
+#[derive(Default)]
+enum XyzScan {
+    /// Expecting a frame's atom-count line (blank lines are skipped).
+    #[default]
+    Count,
+    /// Expecting the comment line of a frame of `n_atoms` atoms.
+    Comment { start: u64, n_atoms: usize },
+    /// Skipping `remaining` atom lines of a frame.
+    Atoms {
+        start: u64,
+        n_atoms: usize,
+        remaining: usize,
+        lattice: Option<[f32; 9]>,
+        has_channels: bool,
+    },
+}
+
+/// The [`build_index`] scan, fed one line at a time (see `crate::lines`), so a
+/// file can be indexed window by window without being held whole.
+#[derive(Default)]
+pub struct XyzIndexBuilder {
+    scan: XyzScan,
+    line_no: usize,
+    first_n_atoms: Option<usize>,
+    first_lattice: Option<[f32; 9]>,
+    offsets: Vec<u64>,
+    heterogeneous: bool,
+    frame0_end: u64,
+}
+
+impl XyzIndexBuilder {
+    /// Take the next line (without its line break), spanning bytes `start..end`.
+    pub fn push_line(&mut self, line: &str, start: u64, end: u64) -> Result<(), String> {
+        self.line_no += 1;
+        match std::mem::take(&mut self.scan) {
+            XyzScan::Count => {
+                let count_line = line.trim();
+                if count_line.is_empty() {
+                    return Ok(());
+                }
+                let n_atoms: usize = count_line
+                    .parse()
+                    .map_err(|_| format!("cannot parse atom count at line {}", self.line_no))?;
+                self.scan = XyzScan::Comment { start, n_atoms };
             }
-            Some(fn0) => {
-                if n_atoms != fn0 {
-                    heterogeneous = true;
-                }
-                // A present-and-different per-frame cell also makes the file
-                // heterogeneous (a missing lattice inherits frame 0's cell).
-                if let Some(fl) = frame_lattice {
-                    if Some(fl) != first_lattice {
-                        heterogeneous = true;
-                    }
-                }
+            XyzScan::Comment { start, n_atoms } => {
+                let lattice = parse_lattice(line);
                 // An extra frame that declares extractable per-atom properties
                 // needs the eager parser (which turns them into channels); the
                 // positions-only lazy decode would silently drop them.
-                if !heterogeneous && !channel_plan(lines[offset + 1]).is_empty() {
-                    heterogeneous = true;
+                let has_channels = self.first_n_atoms.is_some()
+                    && !self.heterogeneous
+                    && !channel_plan(line).is_empty();
+                if n_atoms == 0 {
+                    self.complete(start, n_atoms, lattice, has_channels, end);
+                } else {
+                    self.scan = XyzScan::Atoms {
+                        start,
+                        n_atoms,
+                        remaining: n_atoms,
+                        lattice,
+                        has_channels,
+                    };
                 }
-                offsets.push(starts[offset]);
+            }
+            XyzScan::Atoms {
+                start,
+                n_atoms,
+                remaining,
+                lattice,
+                has_channels,
+            } => {
+                if remaining == 1 {
+                    self.complete(start, n_atoms, lattice, has_channels, end);
+                } else {
+                    self.scan = XyzScan::Atoms {
+                        start,
+                        n_atoms,
+                        remaining: remaining - 1,
+                        lattice,
+                        has_channels,
+                    };
+                }
             }
         }
-        offset += 2 + n_atoms;
+        Ok(())
     }
 
-    let n_atoms = first_n_atoms.ok_or("XYZ file contains no atoms")?;
-    Ok(XyzIndex {
-        n_atoms,
-        n_extra_frames: offsets.len(),
-        offsets,
-        heterogeneous,
-    })
+    /// A whole frame was seen (an incomplete last frame never gets here, so it
+    /// is dropped, as the eager parser does).
+    fn complete(
+        &mut self,
+        start: u64,
+        n_atoms: usize,
+        lattice: Option<[f32; 9]>,
+        has_channels: bool,
+        end: u64,
+    ) {
+        match self.first_n_atoms {
+            None => {
+                // frame 0 is the eager snapshot — not an extra frame
+                self.first_n_atoms = Some(n_atoms);
+                self.first_lattice = lattice;
+                self.frame0_end = end;
+            }
+            Some(n0) => {
+                if n_atoms != n0 {
+                    self.heterogeneous = true;
+                }
+                // A present-and-different per-frame cell also makes the file
+                // heterogeneous (a missing lattice inherits frame 0's cell).
+                if let Some(fl) = lattice {
+                    if Some(fl) != self.first_lattice {
+                        self.heterogeneous = true;
+                    }
+                }
+                if has_channels {
+                    self.heterogeneous = true;
+                }
+                self.offsets.push(start);
+            }
+        }
+    }
+
+    /// The index of everything pushed so far.
+    pub fn finish(self) -> Result<XyzIndex, String> {
+        let n_atoms = self.first_n_atoms.ok_or("XYZ file contains no atoms")?;
+        Ok(XyzIndex {
+            n_atoms,
+            n_extra_frames: self.offsets.len(),
+            offsets: self.offsets.into_iter().map(|o| o as usize).collect(),
+            heterogeneous: self.heterogeneous,
+            frame0_end: self.frame0_end,
+        })
+    }
+
+    /// Byte offset of each extra frame's count line, as file offsets.
+    pub fn file_offsets(&self) -> &[u64] {
+        &self.offsets
+    }
 }
 
 /// Decode a single XYZ frame's positions (Å) given its count-line byte offset.
@@ -686,6 +765,62 @@ mod tests {
     /// columns (an atom name and a partial charge) after x/y/z. megane
     /// dispatches `.jxyz` straight to this parser, so the extra columns must
     /// land in the atom label rather than break the coordinate read.
+    fn index_in_windows(text: &str, window: usize) -> XyzIndex {
+        let mut b = XyzIndexBuilder::default();
+        crate::lines::feed_in_windows(text, window, |l, s, e| b.push_line(l, s, e)).unwrap();
+        b.finish().unwrap()
+    }
+
+    #[test]
+    fn windowed_index_matches_the_whole_text_index() {
+        for name in [
+            "water_multiframe.xyz",
+            "hetero_atoms.xyz",
+            "hetero_cell.xyz",
+            "water_md.extxyz",
+        ] {
+            let text = std::fs::read_to_string(format!(
+                "{}/../../tests/fixtures/{name}",
+                env!("CARGO_MANIFEST_DIR")
+            ))
+            .unwrap();
+            let whole = build_index(&text).unwrap();
+            for window in [1, 7, 64, 1000, text.len()] {
+                let got = index_in_windows(&text, window);
+                assert_eq!(got.offsets, whole.offsets, "{name} @ {window}");
+                assert_eq!(got.n_atoms, whole.n_atoms);
+                assert_eq!(got.heterogeneous, whole.heterogeneous, "{name}");
+                assert_eq!(got.frame0_end, whole.frame0_end);
+            }
+        }
+    }
+
+    #[test]
+    fn frame0_parses_from_the_text_before_frame0_end() {
+        let text = "3\nfirst\nO 0 0 0\nH 0.96 0 0\nH 0 0.96 0\n\n3\nsecond\nO 1 0 0\nH 1.96 0 0\nH 1 0.96 0\n";
+        let idx = build_index(text).unwrap();
+        assert_eq!(idx.offsets, vec![text.find("3\nsecond").unwrap()]);
+        let head = &text[..idx.frame0_end as usize];
+        assert!(head.ends_with("H 0 0.96 0\n"));
+        let a = parse_frame0(head).unwrap();
+        let b = parse_frame0(text).unwrap();
+        assert_eq!(a.positions, b.positions);
+        assert_eq!(a.elements, b.elements);
+    }
+
+    #[test]
+    fn index_drops_a_truncated_last_frame_and_keeps_line_numbers_in_errors() {
+        let text = "2\na\nH 0 0 0\nH 0 0 1\n2\nb\nH 0 0 0\n";
+        let idx = build_index(text).unwrap();
+        assert_eq!(idx.n_extra_frames, 0);
+        let err = build_index("1\nc\nH 0 0 0\n\nnope\n").err().unwrap();
+        assert!(err.contains("line 5"), "{err}");
+        assert!(build_index("\n\n").is_err());
+        // A zero-atom frame is complete after its comment line.
+        let zero = build_index("0\nempty\n0\nagain\n").unwrap();
+        assert_eq!(zero.offsets, vec![8]);
+    }
+
     #[test]
     fn parses_the_jmol_extra_column_form() {
         let text = "\

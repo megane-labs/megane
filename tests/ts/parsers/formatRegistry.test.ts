@@ -33,10 +33,16 @@ interface Registry {
  * WASM-only exports that return a `ParseResult` but are not a format entry:
  * the first-paint helpers that parse frame 0 from part of a file — the
  * bounded-prefix reader for the lazily streamed XYZ / PDB, and the head-and-tail
- * reader for ASE `.traj`. (Python reads whole files, so it has neither.)
+ * reader for ASE `.traj` (Python reads whole files, so it has neither) — and
+ * `parse_structure_bytes`, which dispatches any registry format by extension
+ * from raw bytes so the parse worker never makes a JS string of the file.
  * Everything else returning `ParseResult` must come from the registry.
  */
-const WASM_ONLY_STRUCTURE_EXPORTS = ["parse_structure_prefix", "parse_traj_frame0"];
+const WASM_ONLY_STRUCTURE_EXPORTS = [
+  "parse_structure_bytes",
+  "parse_structure_prefix",
+  "parse_traj_frame0",
+];
 
 let registry: Registry;
 let declarations: string;
@@ -73,6 +79,26 @@ describe("WASM format registry", () => {
   it("returns XtcParseResult exactly from the registry trajectory formats", () => {
     const expected = registry.trajectory.map((f) => f.wasm).sort();
     expect(exportsReturning("XtcParseResult")).toEqual(expected);
+  });
+
+  it("parses raw bytes by extension the same as each text parser", () => {
+    const pdb = readFileSync(resolve(__dirname, "../../fixtures/1crn.pdb"));
+    const viaText = wasm.parse_pdb(pdb.toString("utf8"));
+    const viaBytes = wasm.parse_structure_bytes(".pdb", new Uint8Array(pdb));
+    expect(viaBytes.n_atoms).toBe(viaText.n_atoms);
+    expect(Array.from(viaBytes.positions())).toEqual(Array.from(viaText.positions()));
+    expect(viaBytes.atom_labels).toBe(viaText.atom_labels);
+    // An unknown extension reads as PDB, like the browser's dispatch.
+    expect(wasm.parse_structure_bytes(".unknown", new Uint8Array(pdb)).n_atoms).toBe(
+      viaText.n_atoms,
+    );
+    const gro = readFileSync(resolve(__dirname, "../../fixtures/water.gro"), "utf8");
+    expect(wasm.parse_structure_bytes("gro", new TextEncoder().encode(gro)).n_atoms).toBe(
+      wasm.parse_gro(gro).n_atoms,
+    );
+    expect(() => wasm.parse_structure_bytes(".pdb", new Uint8Array([0xff, 0xfe, 0x41]))).toThrow(
+      /UTF-8/,
+    );
   });
 
   it("declares each parser's argument with the registry encoding", () => {

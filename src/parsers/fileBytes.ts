@@ -22,6 +22,11 @@ export function fileFromBytes(bytes: Uint8Array, name: string, options?: FilePro
   return file;
 }
 
+/** Whether `blob` was built by {@link fileFromBytes} (its bytes are in memory). */
+export function isResident(blob: Blob): boolean {
+  return resident.has(blob);
+}
+
 function residentRange(blob: Blob, start: number, end: number | undefined): Uint8Array | null {
   const bytes = resident.get(blob);
   if (!bytes) return null;

@@ -488,6 +488,11 @@ pub struct XtcIndex {
     pub offsets: Vec<u64>,
     /// Per-frame time (ps).
     pub times: Vec<f32>,
+    /// Frame 0's box (the representative cell `parse_xtc` reports).
+    pub first_box: Option<[f32; 9]>,
+    /// Every frame's box, when it is not the same in all of them (an NPT run);
+    /// `None` for a constant cell, as `parse_xtc` builds no side table then.
+    pub frame_cells: Option<Vec<[f32; 9]>>,
 }
 
 /// Builds an [`XtcIndex`] from consecutive windows of a file instead of the
@@ -500,6 +505,10 @@ pub struct XtcIndex {
 pub struct XtcIndexBuilder {
     n_atoms: usize,
     last_box: Option<[f32; 9]>,
+    first_box: Option<[f32; 9]>,
+    /// Recorded from the first frame whose box differs from frame 0's.
+    cells: Vec<[f32; 9]>,
+    varies_cell: bool,
     offsets: Vec<u64>,
     times: Vec<f32>,
     next: u64,
@@ -546,6 +555,16 @@ impl XtcIndexBuilder {
             self.offsets.push(self.next + pos as u64);
             self.times.push(header.time);
             self.last_box = Some(header.box_matrix);
+            // The per-frame cell table `parse_xtc` builds, the same way.
+            let first = *self.first_box.get_or_insert(header.box_matrix);
+            if !self.varies_cell && first != header.box_matrix {
+                self.varies_cell = true;
+                self.cells
+                    .extend(std::iter::repeat_n(first, self.offsets.len() - 1));
+            }
+            if self.varies_cell {
+                self.cells.push(header.box_matrix);
+            }
             pos += len;
             found += 1;
         }
@@ -574,6 +593,8 @@ impl XtcIndexBuilder {
             box_matrix: self.last_box,
             offsets: self.offsets,
             times: self.times,
+            first_box: self.first_box,
+            frame_cells: self.varies_cell.then_some(self.cells),
         })
     }
 }
@@ -853,6 +874,30 @@ mod tests {
         }
         let last = &data[2 * frame_len..];
         assert_eq!(decode_frame_at(last, 0, 2).expect("decode").len(), 6);
+    }
+
+    #[test]
+    fn a_changing_box_is_indexed_for_every_frame() {
+        let mut data = tiny_xtc(2, 3);
+        let frame_len = FRAME_HEADER_BYTES + 4 + 2 * 3 * 4;
+        // Frames 1 and 2 grow their box's first edge (the box follows the
+        // 16-byte magic / atom count / step / time fields).
+        for (frame, edge) in [(1usize, 4.0f32), (2, 5.0)] {
+            let at = frame * frame_len + 16;
+            data[at..at + 4].copy_from_slice(&edge.to_be_bytes());
+        }
+        let idx = build_index(&data).expect("build index");
+        let first = idx.first_box.expect("frame 0 box");
+        // Boxes are read in nm and kept in Å.
+        assert_eq!(first[0], 30.0);
+        let cells = idx.frame_cells.expect("per-frame cells");
+        assert_eq!(
+            cells.iter().map(|c| c[0]).collect::<Vec<_>>(),
+            [30.0, 40.0, 50.0]
+        );
+        assert_eq!(idx.box_matrix.expect("last box")[0], 50.0);
+        // A box that stays put records no per-frame table.
+        assert!(build_index(&tiny_xtc(2, 3)).unwrap().frame_cells.is_none());
     }
 
     #[test]

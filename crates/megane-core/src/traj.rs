@@ -2,6 +2,10 @@
 ///
 /// The ULM format stores frames as binary array data + JSON metadata.
 /// Each frame contains atomic positions, elements, and optionally cell vectors.
+///
+/// Offsets inside a ULM file are absolute, so every read goes through a
+/// [`FileView`]: the whole file for [`parse_traj`], or just one frame's bytes
+/// for [`TrajIndexBuilder`], which indexes a file that stays on disk.
 use std::collections::HashSet;
 
 use crate::bonds;
@@ -9,15 +13,46 @@ use crate::structure::{FrameChange, HeteroFramesBuilder, ParsedStructure};
 
 const ULM_MAGIC: &[u8; 8] = b"- of Ulm";
 
+/// Length of the ULM header (magic, tag, version, item count, table offset).
+pub const ULM_HEADER_LEN: usize = 48;
+
+/// Bytes of a .traj file from file offset `base` on.
+#[derive(Clone, Copy)]
+struct FileView<'a> {
+    data: &'a [u8],
+    base: u64,
+}
+
+impl<'a> FileView<'a> {
+    fn whole(data: &'a [u8]) -> Self {
+        Self { data, base: 0 }
+    }
+
+    /// The `len` bytes at file offset `pos`, if this view holds all of them.
+    fn get(&self, pos: u64, len: usize) -> Option<&'a [u8]> {
+        let start = usize::try_from(pos.checked_sub(self.base)?).ok()?;
+        self.data.get(start..start.checked_add(len)?)
+    }
+
+    /// File offset just past the bytes held.
+    fn end(&self) -> u64 {
+        self.base + self.data.len() as u64
+    }
+}
+
 // ---------- Binary readers ----------
 
-fn read_bytes<const N: usize>(data: &[u8], pos: usize, type_name: &str) -> Result<[u8; N], String> {
-    data.get(pos..pos + N)
+fn read_bytes<const N: usize>(
+    data: FileView<'_>,
+    pos: u64,
+    type_name: &str,
+) -> Result<[u8; N], String> {
+    data.get(pos, N)
         .and_then(|s| s.try_into().ok())
         .ok_or_else(|| format!("unexpected EOF reading {} at offset {}", type_name, pos))
 }
 
-fn read_i64(data: &[u8], pos: usize, little_endian: bool) -> Result<i64, String> {
+fn read_i64(data: FileView<'_>, pos: u64, little_endian: bool) -> Result<i64, String> {
     let bytes = read_bytes::<8>(data, pos, "i64")?;
     Ok(if little_endian {
         i64::from_le_bytes(bytes)
@@ -26,7 +61,7 @@ fn read_i64(data: &[u8], pos: usize, little_endian: bool) -> Result<i64, String>
     })
 }
 
-fn read_f64(data: &[u8], pos: usize, little_endian: bool) -> Result<f64, String> {
+fn read_f64(data: FileView<'_>, pos: u64, little_endian: bool) -> Result<f64, String> {
     let bytes = read_bytes::<8>(data, pos, "f64")?;
     Ok(if little_endian {
         f64::from_le_bytes(bytes)
@@ -35,7 +70,7 @@ fn read_f64(data: &[u8], pos: usize, little_endian: bool) -> Result<f64, String>
     })
 }
 
-fn read_f32_raw(data: &[u8], pos: usize, little_endian: bool) -> Result<f32, String> {
+fn read_f32_raw(data: FileView<'_>, pos: u64, little_endian: bool) -> Result<f32, String> {
     let bytes = read_bytes::<4>(data, pos, "f32")?;
     Ok(if little_endian {
         f32::from_le_bytes(bytes)
@@ -44,7 +79,7 @@ fn read_f32_raw(data: &[u8], pos: usize, little_endian: bool) -> Result<f32, Str
     })
 }
 
-fn read_i32(data: &[u8], pos: usize, little_endian: bool) -> Result<i32, String> {
+fn read_i32(data: FileView<'_>, pos: u64, little_endian: bool) -> Result<i32, String> {
     let bytes = read_bytes::<4>(data, pos, "i32")?;
     Ok(if little_endian {
         i32::from_le_bytes(bytes)
@@ -55,79 +90,100 @@ fn read_i32(data: &[u8], pos: usize, little_endian: bool) -> Result<i32, String>
 
 // ---------- Array reading helpers ----------
 
-/// Read an ndarray from binary data given shape, dtype, and file offset.
+/// An ndarray reference from a frame's JSON: `{"ndarray": [shape, dtype, offset]}`.
+struct NdArrayRef {
+    shape: Vec<usize>,
+    dtype: String,
+    offset: u64,
+}
+
+impl NdArrayRef {
+    fn len(&self) -> usize {
+        self.shape.iter().product()
+    }
+
+    /// Bytes per element of a dtype this parser reads, if it reads it.
+    fn elem_size(&self) -> Option<usize> {
+        match self.dtype.as_str() {
+            "float64" | "int64" => Some(8),
+            "float32" | "int32" => Some(4),
+            "int16" => Some(2),
+            "uint8" | "int8" => Some(1),
+            _ => None,
+        }
+    }
+
+    /// The array's raw bytes, if `data` holds them.
+    fn bytes<'a>(&self, data: FileView<'a>) -> Option<&'a [u8]> {
+        let len = self.len().checked_mul(self.elem_size()?)?;
+        data.get(self.offset, len)
+    }
+}
+
+/// Read an ndarray from binary data given its reference.
 /// Returns values as Vec<f64> (converted from the source dtype).
 fn read_ndarray_f64(
-    data: &[u8],
-    offset: usize,
-    shape: &[usize],
-    dtype: &str,
+    data: FileView<'_>,
+    array: &NdArrayRef,
     little_endian: bool,
 ) -> Result<Vec<f64>, String> {
-    let n_elements: usize = shape.iter().product();
-    let mut result = Vec::with_capacity(n_elements);
+    let n_elements = array.len();
+    let offset = array.offset;
+    let mut result = Vec::with_capacity(n_elements.min(data.data.len()));
 
-    match dtype {
+    match array.dtype.as_str() {
         "float64" => {
-            for i in 0..n_elements {
+            for i in 0..n_elements as u64 {
                 result.push(read_f64(data, offset + i * 8, little_endian)?);
             }
         }
         "float32" => {
-            for i in 0..n_elements {
+            for i in 0..n_elements as u64 {
                 result.push(read_f32_raw(data, offset + i * 4, little_endian)? as f64);
             }
         }
-        _ => return Err(format!("unsupported float dtype: {}", dtype)),
+        dtype => return Err(format!("unsupported float dtype: {}", dtype)),
     }
     Ok(result)
 }
 
 /// Read an ndarray as integers (for atomic numbers etc.)
 fn read_ndarray_int(
-    data: &[u8],
-    offset: usize,
-    shape: &[usize],
-    dtype: &str,
+    data: FileView<'_>,
+    array: &NdArrayRef,
     little_endian: bool,
 ) -> Result<Vec<i64>, String> {
-    let n_elements: usize = shape.iter().product();
-    let mut result = Vec::with_capacity(n_elements);
+    let n_elements = array.len();
+    let offset = array.offset;
+    let mut result = Vec::with_capacity(n_elements.min(data.data.len()));
 
-    match dtype {
+    match array.dtype.as_str() {
         "int64" => {
-            for i in 0..n_elements {
+            for i in 0..n_elements as u64 {
                 result.push(read_i64(data, offset + i * 8, little_endian)?);
             }
         }
         "int32" => {
-            for i in 0..n_elements {
+            for i in 0..n_elements as u64 {
                 result.push(read_i32(data, offset + i * 4, little_endian)? as i64);
             }
         }
         "uint8" => {
-            for i in 0..n_elements {
-                if offset + i >= data.len() {
-                    return Err("unexpected EOF reading uint8 array".into());
-                }
-                result.push(data[offset + i] as i64);
-            }
+            let bytes = array
+                .bytes(data)
+                .ok_or("unexpected EOF reading uint8 array")?;
+            result.extend(bytes.iter().map(|&b| b as i64));
         }
         "int8" => {
-            for i in 0..n_elements {
-                if offset + i >= data.len() {
-                    return Err("unexpected EOF reading int8 array".into());
-                }
-                result.push(data[offset + i] as i8 as i64);
-            }
+            let bytes = array
+                .bytes(data)
+                .ok_or("unexpected EOF reading int8 array")?;
+            result.extend(bytes.iter().map(|&b| b as i8 as i64));
         }
         "int16" => {
-            for i in 0..n_elements {
-                let pos = offset + i * 2;
-                if pos + 2 > data.len() {
-                    return Err("unexpected EOF reading int16 array".into());
-                }
-                let bytes: [u8; 2] = read_bytes::<2>(data, pos, "i16")?;
+            for i in 0..n_elements as u64 {
+                let bytes: [u8; 2] = read_bytes::<2>(data, offset + i * 2, "i16")
+                    .map_err(|_| "unexpected EOF reading int16 array".to_string())?;
                 let val = if little_endian {
                     i16::from_le_bytes(bytes)
                 } else {
@@ -136,7 +192,7 @@ fn read_ndarray_int(
                 result.push(val as i64);
             }
         }
-        _ => return Err(format!("unsupported integer dtype: {}", dtype)),
+        dtype => return Err(format!("unsupported integer dtype: {}", dtype)),
     }
     Ok(result)
 }
@@ -144,7 +200,7 @@ fn read_ndarray_int(
 // ---------- JSON metadata parsing ----------
 
 /// Extract ndarray info from a JSON value like {"ndarray": [shape, dtype, offset]}
-fn parse_ndarray_ref(value: &serde_json::Value) -> Option<(Vec<usize>, String, usize)> {
+fn parse_ndarray_ref(value: &serde_json::Value) -> Option<NdArrayRef> {
     let obj = value.as_object()?;
     let arr = obj.get("ndarray")?.as_array()?;
     if arr.len() != 3 {
@@ -162,44 +218,61 @@ fn parse_ndarray_ref(value: &serde_json::Value) -> Option<(Vec<usize>, String, u
     };
 
     let dtype = arr[1].as_str()?.to_string();
-    let offset = arr[2].as_u64()? as usize;
+    let offset = arr[2].as_u64()?;
 
-    Some((shape, dtype, offset))
+    Some(NdArrayRef {
+        shape,
+        dtype,
+        offset,
+    })
+}
+
+/// Read the length of the JSON metadata section at file offset `offset`.
+fn read_json_len(data: FileView<'_>, offset: u64, little_endian: bool) -> Result<usize, String> {
+    let len = read_i64(data, offset, little_endian)?;
+    usize::try_from(len).map_err(|_| format!("negative JSON metadata length at offset {}", offset))
 }
 
 /// Read JSON metadata section at the given file offset.
 /// Returns the parsed JSON value.
 fn read_json_metadata(
-    data: &[u8],
-    offset: usize,
+    data: FileView<'_>,
+    offset: u64,
     little_endian: bool,
 ) -> Result<serde_json::Value, String> {
-    let json_len = read_i64(data, offset, little_endian)? as usize;
+    let json_len = read_json_len(data, offset, little_endian)?;
     let json_start = offset + 8;
-    let json_end = json_start + json_len;
-    if json_end > data.len() {
-        return Err(format!(
+    let bytes = data.get(json_start, json_len).ok_or_else(|| {
+        format!(
             "JSON metadata extends past EOF: {}+{} > {}",
             json_start,
             json_len,
-            data.len()
-        ));
-    }
-    let json_str = std::str::from_utf8(&data[json_start..json_end])
-        .map_err(|e| format!("invalid UTF-8 in JSON: {}", e))?;
+            data.end()
+        )
+    })?;
+    let json_str =
+        std::str::from_utf8(bytes).map_err(|e| format!("invalid UTF-8 in JSON: {}", e))?;
     serde_json::from_str(json_str).map_err(|e| format!("JSON parse error: {}", e))
+}
+
+/// The byte order of a frame's arrays (`_little_endian`, which may differ
+/// from the header's).
+fn arrays_little_endian(json: &serde_json::Value) -> bool {
+    json.get("_little_endian")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(true)
 }
 
 /// Extract positions (float array) from a frame's JSON metadata.
 fn extract_positions(
-    data: &[u8],
+    data: FileView<'_>,
     json: &serde_json::Value,
     little_endian: bool,
 ) -> Result<Vec<f32>, String> {
     // Try "positions." key (ndarray reference)
     if let Some(val) = json.get("positions.") {
-        if let Some((shape, dtype, offset)) = parse_ndarray_ref(val) {
-            let raw = read_ndarray_f64(data, offset, &shape, &dtype, little_endian)?;
+        if let Some(array) = parse_ndarray_ref(val) {
+            let raw = read_ndarray_f64(data, &array, little_endian)?;
             return Ok(raw.iter().map(|&v| v as f32).collect());
         }
     }
@@ -224,14 +297,14 @@ fn extract_positions(
 
 /// Extract atomic numbers from a frame's JSON metadata.
 fn extract_numbers(
-    data: &[u8],
+    data: FileView<'_>,
     json: &serde_json::Value,
     little_endian: bool,
 ) -> Result<Vec<u8>, String> {
     // Try "numbers." key (ndarray reference)
     if let Some(val) = json.get("numbers.") {
-        if let Some((shape, dtype, offset)) = parse_ndarray_ref(val) {
-            let raw = read_ndarray_int(data, offset, &shape, &dtype, little_endian)?;
+        if let Some(array) = parse_ndarray_ref(val) {
+            let raw = read_ndarray_int(data, &array, little_endian)?;
             return Ok(raw.iter().map(|&v| v.clamp(0, 255) as u8).collect());
         }
     }
@@ -254,25 +327,24 @@ fn extract_numbers(
 /// frame, so for a uniform trajectory this is the difference between a cheap
 /// `memcmp` and a full per-frame decode. Returns `None` when the frame carries
 /// no `cell.` ndarray reference.
-fn cell_raw_bytes<'a>(data: &'a [u8], json: &serde_json::Value) -> Option<&'a [u8]> {
-    let val = json.get("cell.")?;
-    let (shape, dtype, offset) = parse_ndarray_ref(val)?;
-    let n_elements: usize = shape.iter().product();
-    let elem_size = match dtype.as_str() {
-        "float64" => 8,
-        "float32" => 4,
-        _ => return None,
-    };
-    let len = n_elements.checked_mul(elem_size)?;
-    data.get(offset..offset + len)
+fn cell_raw_bytes<'a>(data: FileView<'a>, json: &serde_json::Value) -> Option<&'a [u8]> {
+    let array = parse_ndarray_ref(json.get("cell.")?)?;
+    match array.dtype.as_str() {
+        "float64" | "float32" => array.bytes(data),
+        _ => None,
+    }
 }
 
 /// Extract cell matrix from a frame's JSON metadata.
-fn extract_cell(data: &[u8], json: &serde_json::Value, little_endian: bool) -> Option<[f32; 9]> {
+fn extract_cell(
+    data: FileView<'_>,
+    json: &serde_json::Value,
+    little_endian: bool,
+) -> Option<[f32; 9]> {
     // Try "cell." key (ndarray reference)
     if let Some(val) = json.get("cell.") {
-        if let Some((shape, dtype, offset)) = parse_ndarray_ref(val) {
-            if let Ok(raw) = read_ndarray_f64(data, offset, &shape, &dtype, little_endian) {
+        if let Some(array) = parse_ndarray_ref(val) {
+            if let Ok(raw) = read_ndarray_f64(data, &array, little_endian) {
                 if raw.len() >= 9 {
                     let mut mat = [0f32; 9];
                     for (i, &v) in raw.iter().take(9).enumerate() {
@@ -310,15 +382,16 @@ fn extract_cell(data: &[u8], json: &serde_json::Value, little_endian: bool) -> O
 }
 
 /// The ULM header fields the parser needs.
+#[derive(Clone, Copy)]
 struct UlmHeader {
     little_endian: bool,
     nitems: usize,
-    pos0: usize,
+    pos0: u64,
 }
 
 /// Validate the magic and read the header (the first 48 bytes).
 fn read_ulm_header(data: &[u8]) -> Result<UlmHeader, String> {
-    if data.len() < 48 {
+    if data.len() < ULM_HEADER_LEN {
         return Err("file too small for ULM header".into());
     }
 
@@ -331,9 +404,10 @@ fn read_ulm_header(data: &[u8]) -> Result<UlmHeader, String> {
     // native byte order.  We try little-endian first (the common case) and
     // fall back to big-endian if the values look unreasonable. Every known
     // version is supported, so the version is only used for this check.
-    let hdr_v = read_bytes::<8>(data, 24, "version")?;
-    let hdr_n = read_bytes::<8>(data, 32, "nitems")?;
-    let hdr_p = read_bytes::<8>(data, 40, "pos0")?;
+    let view = FileView::whole(data);
+    let hdr_v = read_bytes::<8>(view, 24, "version")?;
+    let hdr_n = read_bytes::<8>(view, 32, "nitems")?;
+    let hdr_p = read_bytes::<8>(view, 40, "pos0")?;
 
     let v_le = i64::from_le_bytes(hdr_v);
     let n_le = i64::from_le_bytes(hdr_n);
@@ -343,17 +417,17 @@ fn read_ulm_header(data: &[u8]) -> Result<UlmHeader, String> {
         return Ok(UlmHeader {
             little_endian: true,
             nitems: n_le as usize,
-            pos0: p_le as usize,
+            pos0: p_le as u64,
         });
     }
     let v_be = i64::from_be_bytes(hdr_v);
     let n_be = i64::from_be_bytes(hdr_n);
     let p_be = i64::from_be_bytes(hdr_p);
-    if v_be > 0 && v_be <= 10 && n_be > 0 {
+    if v_be > 0 && v_be <= 10 && n_be > 0 && n_be < 1_000_000_000 && p_be > 0 {
         Ok(UlmHeader {
             little_endian: false,
             nitems: n_be as usize,
-            pos0: p_be as usize,
+            pos0: p_be as u64,
         })
     } else {
         Err(format!(
@@ -361,6 +435,16 @@ fn read_ulm_header(data: &[u8]) -> Result<UlmHeader, String> {
             v_le, v_be
         ))
     }
+}
+
+/// Read the offset table (`nitems` entries at `pos0`): where each frame's JSON sits.
+fn read_offsets(data: FileView<'_>, header: UlmHeader) -> Result<Vec<u64>, String> {
+    let mut offsets = Vec::with_capacity(header.nitems.min(data.data.len() / 8));
+    for i in 0..header.nitems as u64 {
+        let off = read_i64(data, header.pos0 + i * 8, header.little_endian)?;
+        offsets.push(u64::try_from(off).map_err(|_| format!("negative offset for frame {}", i))?);
+    }
+    Ok(offsets)
 }
 
 /// Frame 0's metadata and the topology it defines.
@@ -374,14 +458,13 @@ struct Frame0 {
 }
 
 /// Read frame 0 (its JSON at `offset`, and the elements and cell it carries).
-fn read_frame0(data: &[u8], offset: usize, little_endian_header: bool) -> Result<Frame0, String> {
+fn read_frame0(
+    data: FileView<'_>,
+    offset: u64,
+    little_endian_header: bool,
+) -> Result<Frame0, String> {
     let json = read_json_metadata(data, offset, little_endian_header)?;
-
-    // Check _little_endian flag in JSON (may differ from header endianness)
-    let array_le = json
-        .get("_little_endian")
-        .and_then(|v| v.as_bool())
-        .unwrap_or(true);
+    let array_le = arrays_little_endian(&json);
 
     let elements = extract_numbers(data, &json, array_le)?;
     if elements.is_empty() {
@@ -394,6 +477,80 @@ fn read_frame0(data: &[u8], offset: usize, little_endian_header: bool) -> Result
         elements,
         box_matrix,
     })
+}
+
+/// Frame 0's snapshot: its positions, elements and cell, and bonds inferred
+/// from them (the format carries none).
+fn frame0_structure(data: FileView<'_>, frame0: Frame0) -> Result<ParsedStructure, String> {
+    let Frame0 {
+        json,
+        array_le,
+        elements,
+        box_matrix,
+    } = frame0;
+    let positions = extract_positions(data, &json, array_le)?;
+    if positions.len() % 3 != 0 {
+        return Err(format!(
+            "frame 0 has {} coordinates (not a multiple of 3)",
+            positions.len()
+        ));
+    }
+    let n_atoms = elements.len();
+    let bonds = bonds::infer_bonds(&positions, &elements, n_atoms, &HashSet::new());
+    Ok(ParsedStructure {
+        n_atoms,
+        positions,
+        elements,
+        bonds,
+        n_file_bonds: 0,
+        box_matrix,
+        ..Default::default()
+    })
+}
+
+/// How frame 0 stores its cell, to tell later frames' unchanged cells apart
+/// cheaply. ASE stores the cell either as a `cell.` ndarray reference
+/// (large/aligned data → compare the raw bytes; the JSON itself can't be
+/// compared because the byte offset differs per frame) or inline as a small
+/// `cell` JSON array (→ compare the parsed value).
+struct CellSignature {
+    bytes: Option<Vec<u8>>,
+    inline: Option<serde_json::Value>,
+}
+
+impl CellSignature {
+    fn of(data: FileView<'_>, json: &serde_json::Value) -> Self {
+        Self {
+            bytes: cell_raw_bytes(data, json).map(<[u8]>::to_vec),
+            inline: json.get("cell").cloned(),
+        }
+    }
+
+    /// The cell a later frame carries: `None` when it omits one (the previous
+    /// cell carries forward), else whether it differs from frame 0's and, if
+    /// it does, its value. The value is only decoded when it differs.
+    fn compare(
+        &self,
+        data: FileView<'_>,
+        json: &serde_json::Value,
+        little_endian: bool,
+    ) -> Option<(bool, Option<[f32; 9]>)> {
+        let has_ndarray_cell = json.get("cell.").is_some();
+        if !has_ndarray_cell && json.get("cell").is_none() {
+            return None;
+        }
+        let changed = if has_ndarray_cell {
+            cell_raw_bytes(data, json) != self.bytes.as_deref()
+        } else {
+            json.get("cell") != self.inline.as_ref()
+        };
+        Some((
+            changed,
+            changed
+                .then(|| extract_cell(data, json, little_endian))
+                .flatten(),
+        ))
+    }
 }
 
 // ---------- Public API ----------
@@ -410,18 +567,13 @@ fn read_frame0(data: &[u8], offset: usize, little_endian_header: bool) -> Result
 pub fn parse_traj(data: &[u8]) -> Result<ParsedStructure, String> {
     let header = read_ulm_header(data)?;
     let little_endian_header = header.little_endian;
-    let (nitems, pos0) = (header.nitems, header.pos0);
+    let view = FileView::whole(data);
 
     // Read offset table
-    if pos0 + nitems * 8 > data.len() {
+    if header.pos0 + header.nitems as u64 * 8 > data.len() as u64 {
         return Err("offset table extends past EOF".into());
     }
-    let mut offsets = Vec::with_capacity(nitems);
-    for i in 0..nitems {
-        let off = read_i64(data, pos0 + i * 8, little_endian_header)? as usize;
-        offsets.push(off);
-    }
-
+    let offsets = read_offsets(view, header)?;
     if offsets.is_empty() {
         return Err("no frames in .traj file".into());
     }
@@ -432,7 +584,7 @@ pub fn parse_traj(data: &[u8]) -> Result<ParsedStructure, String> {
         elements,
         box_matrix,
         ..
-    } = read_frame0(data, offsets[0], little_endian_header)?;
+    } = read_frame0(view, offsets[0], little_endian_header)?;
     let n_atoms = elements.len();
 
     // Collect positions: frame 0 into `positions`, the rest flat into
@@ -453,15 +605,9 @@ pub fn parse_traj(data: &[u8]) -> Result<ParsedStructure, String> {
     // therefore allocates no side tables at all.
     let mut cur_numbers: Vec<u8> = elements.clone();
     let mut cur_cell: Option<[f32; 9]> = box_matrix;
-    // Frame-0 cell "signature", used to detect an unchanged cell cheaply on
-    // later frames without decoding. ASE stores the cell either as a `cell.`
-    // ndarray reference (large/aligned data → compare the raw bytes; the JSON
-    // itself can't be compared because the byte offset differs per frame) or
-    // inline as a small `cell` JSON array (→ compare the parsed value).
-    let cell0_bytes: Option<Vec<u8>> = cell_raw_bytes(data, &first_json).map(<[u8]>::to_vec);
-    let cell0_inline: Option<serde_json::Value> = first_json.get("cell").cloned();
+    let cell0 = CellSignature::of(view, &first_json);
 
-    let extra = nitems.saturating_sub(1);
+    let extra = offsets.len().saturating_sub(1);
     let mut positions: Vec<f32> = Vec::new();
     let mut frames = HeteroFramesBuilder::with_capacity(n_atoms, extra);
 
@@ -469,12 +615,9 @@ pub fn parse_traj(data: &[u8]) -> Result<ParsedStructure, String> {
         let json = if i == 0 {
             first_json.clone()
         } else {
-            read_json_metadata(data, off, little_endian_header)?
+            read_json_metadata(view, off, little_endian_header)?
         };
-        let frame_le = json
-            .get("_little_endian")
-            .and_then(|v| v.as_bool())
-            .unwrap_or(true);
+        let frame_le = arrays_little_endian(&json);
 
         // Refresh carry-forward numbers/cell when this frame re-emits them.
         // These are this frame's variation verdicts (a numbers change against
@@ -485,7 +628,7 @@ pub fn parse_traj(data: &[u8]) -> Result<ParsedStructure, String> {
             // `numbers` appears only in header frames (rare), so a single
             // presence check keeps the uniform path a cheap O(1) miss.
             if json.get("numbers.").is_some() || json.get("numbers").is_some() {
-                if let Ok(nums) = extract_numbers(data, &json, frame_le) {
+                if let Ok(nums) = extract_numbers(view, &json, frame_le) {
                     if nums != cur_numbers {
                         change.topology = true;
                     }
@@ -493,27 +636,16 @@ pub fn parse_traj(data: &[u8]) -> Result<ParsedStructure, String> {
                 }
             }
             // `cell` is written every frame. Detect the unchanged (uniform)
-            // case cheaply — a byte compare for ndarray cells, a value compare
-            // for inline cells — and decode only when the cell actually differs.
+            // case cheaply and decode only when the cell actually differs.
             // A frame that omits the cell carries the previous value forward.
-            let has_ndarray_cell = json.get("cell.").is_some();
-            let has_inline_cell = json.get("cell").is_some();
-            if has_ndarray_cell || has_inline_cell {
-                let changed = if has_ndarray_cell {
-                    cell_raw_bytes(data, &json) != cell0_bytes.as_deref()
-                } else {
-                    json.get("cell") != cell0_inline.as_ref()
-                };
-                if changed {
-                    change.cell = true;
-                    cur_cell = extract_cell(data, &json, frame_le);
-                } else {
-                    cur_cell = box_matrix; // byte/value-identical to frame 0
-                }
+            if let Some((changed, cell)) = cell0.compare(view, &json, frame_le) {
+                change.cell = changed;
+                // byte/value-identical to frame 0, or the changed cell
+                cur_cell = if changed { cell } else { box_matrix };
             }
         }
 
-        let pos = extract_positions(data, &json, frame_le)?;
+        let pos = extract_positions(view, &json, frame_le)?;
         if pos.len() % 3 != 0 {
             return Err(format!(
                 "frame {} has {} coordinates (not a multiple of 3)",
@@ -572,44 +704,274 @@ pub fn parse_traj_frame0(
     total_len: usize,
 ) -> Result<ParsedStructure, String> {
     let header = read_ulm_header(head)?;
-    if header.pos0 + header.nitems * 8 > total_len {
+    if header.pos0 + header.nitems as u64 * 8 > total_len as u64 {
         return Err("offset table extends past EOF".into());
     }
     let tail_start = total_len
         .checked_sub(tail.len())
-        .ok_or("tail is longer than the file")?;
-    let offset0 = if header.pos0 + 8 <= head.len() {
+        .ok_or("tail is longer than the file")? as u64;
+    let head = FileView::whole(head);
+    let tail = FileView {
+        data: tail,
+        base: tail_start,
+    };
+    let offset0 = if head.get(header.pos0, 8).is_some() {
         read_i64(head, header.pos0, header.little_endian)?
     } else if header.pos0 >= tail_start {
-        read_i64(tail, header.pos0 - tail_start, header.little_endian)?
+        read_i64(tail, header.pos0, header.little_endian)?
     } else {
         return Err("the frame offset table is in neither the head nor the tail".into());
-    } as usize;
+    };
+    let offset0 = u64::try_from(offset0).map_err(|_| "negative offset for frame 0")?;
+    let frame0 = read_frame0(head, offset0, header.little_endian)?;
+    frame0_structure(head, frame0)
+}
 
-    let Frame0 {
-        json,
-        array_le,
-        elements,
-        box_matrix,
-    } = read_frame0(head, offset0, header.little_endian)?;
-    let positions = extract_positions(head, &json, array_le)?;
-    if positions.len() % 3 != 0 {
-        return Err(format!(
-            "frame 0 has {} coordinates (not a multiple of 3)",
-            positions.len()
-        ));
+/// The index of an ASE .traj that stays in its file, built one frame at a
+/// time from just the bytes each frame takes, so the file is never held
+/// whole: the host reads the header ([`TrajIndexBuilder::new`]), then the
+/// offset table ([`TrajIndexBuilder::set_table`]), then every frame's bytes in
+/// order ([`TrajIndexBuilder::add_frame`]), and afterwards decodes a frame from
+/// its bytes again when it is shown ([`TrajIndexBuilder::decode`]).
+///
+/// A frame's bytes are [`TrajIndexBuilder::frame_range`]: from the end of the
+/// previous frame's JSON (the start of the file for frame 0) to the end of its
+/// own JSON. ASE writes a frame's arrays right before its JSON, so they hold
+/// them; a file whose arrays sit elsewhere is rejected, and the host parses it
+/// whole instead.
+///
+/// The index holds frame 0's topology, each frame's byte range and, when the
+/// cell changes between frames (an NPT run), each frame's cell. A frame whose
+/// atom count or elements differ from frame 0's makes the file
+/// [`heterogeneous`](TrajIndexBuilder::heterogeneous): the per-frame topology
+/// is then the full parse's job.
+pub struct TrajIndexBuilder {
+    header: UlmHeader,
+    file_len: u64,
+    offsets: Vec<u64>,
+    /// End of each added frame's JSON; frame `i`'s bytes start where frame `i - 1`'s end.
+    ends: Vec<u64>,
+    n_atoms: usize,
+    cur_numbers: Vec<u8>,
+    box0: Option<[f32; 9]>,
+    cell0: Option<CellSignature>,
+    cur_cell: Option<[f32; 9]>,
+    /// Every frame's cell, once one differs from frame 0's (the frames before
+    /// it backfilled with frame 0's).
+    cells: Option<Vec<Option<[f32; 9]>>>,
+    heterogeneous: bool,
+    frame0: Option<ParsedStructure>,
+}
+
+impl TrajIndexBuilder {
+    /// Read the header from the file's first bytes (at least
+    /// [`ULM_HEADER_LEN`]) of `file_len`.
+    pub fn new(head: &[u8], file_len: u64) -> Result<Self, String> {
+        let header = read_ulm_header(head)?;
+        if header.pos0 + header.nitems as u64 * 8 > file_len {
+            return Err("offset table extends past EOF".into());
+        }
+        Ok(Self {
+            header,
+            file_len,
+            offsets: Vec::new(),
+            ends: Vec::new(),
+            n_atoms: 0,
+            cur_numbers: Vec::new(),
+            box0: None,
+            cell0: None,
+            cur_cell: None,
+            cells: None,
+            heterogeneous: false,
+            frame0: None,
+        })
     }
-    let n_atoms = elements.len();
-    let bonds = bonds::infer_bonds(&positions, &elements, n_atoms, &HashSet::new());
-    Ok(ParsedStructure {
-        n_atoms,
-        positions,
-        elements,
-        bonds,
-        n_file_bonds: 0,
-        box_matrix,
-        ..Default::default()
-    })
+
+    /// The offset table's byte range, for [`set_table`](Self::set_table).
+    pub fn table_range(&self) -> (u64, u64) {
+        let start = self.header.pos0;
+        (start, start + self.header.nitems as u64 * 8)
+    }
+
+    /// Read the offset table from its bytes ([`table_range`](Self::table_range)).
+    pub fn set_table(&mut self, table: &[u8]) -> Result<(), String> {
+        let view = FileView {
+            data: table,
+            base: self.header.pos0,
+        };
+        let offsets = read_offsets(view, self.header)?;
+        if offsets.is_empty() {
+            return Err("no frames in .traj file".into());
+        }
+        if offsets.iter().any(|&o| o + 8 > self.file_len) {
+            return Err("frame offset past EOF".into());
+        }
+        if offsets.windows(2).any(|w| w[1] <= w[0]) {
+            return Err("frames are not stored in order".into());
+        }
+        self.offsets = offsets;
+        Ok(())
+    }
+
+    /// Frames in the file, frame 0 included.
+    pub fn n_items(&self) -> usize {
+        self.offsets.len()
+    }
+
+    /// Where frame `item`'s JSON sits: its length is the 8 bytes there.
+    pub fn json_offset(&self, item: usize) -> Option<u64> {
+        self.offsets.get(item).copied()
+    }
+
+    /// The length of a frame's JSON, from the 8 bytes at its
+    /// [`json_offset`](Self::json_offset).
+    pub fn json_len(&self, bytes: &[u8]) -> Result<usize, String> {
+        read_json_len(FileView::whole(bytes), 0, self.header.little_endian)
+    }
+
+    /// Where the next frame to add starts: the end of the previous one.
+    pub fn next_start(&self) -> u64 {
+        self.ends.last().copied().unwrap_or(0)
+    }
+
+    /// Add the next frame from its bytes, from [`next_start`](Self::next_start)
+    /// to the end of its JSON.
+    pub fn add_frame(&mut self, bytes: &[u8]) -> Result<(), String> {
+        let item = self.ends.len();
+        let offset = *self
+            .offsets
+            .get(item)
+            .ok_or("every frame is already added")?;
+        let view = FileView {
+            data: bytes,
+            base: self.next_start(),
+        };
+        let json_len = read_json_len(view, offset, self.header.little_endian)?;
+        let json = read_json_metadata(view, offset, self.header.little_endian)?;
+        let frame_le = arrays_little_endian(&json);
+        let n_coords = self.positions_in_view(view, &json, item)?;
+
+        if item == 0 {
+            let frame0 = read_frame0(view, offset, self.header.little_endian)?;
+            self.cell0 = Some(CellSignature::of(view, &frame0.json));
+            self.box0 = frame0.box_matrix;
+            self.cur_cell = frame0.box_matrix;
+            self.cur_numbers = frame0.elements.clone();
+            let structure = frame0_structure(view, frame0)?;
+            self.n_atoms = structure.n_atoms;
+            self.frame0 = Some(structure);
+        } else {
+            // A frame re-emits its numbers only when they change (see
+            // `parse_traj`); the atom count changes with them.
+            if json.get("numbers.").is_some() || json.get("numbers").is_some() {
+                let nums = extract_numbers(view, &json, frame_le)?;
+                if nums != self.cur_numbers {
+                    self.heterogeneous = true;
+                }
+                self.cur_numbers = nums;
+            }
+            let cell0 = self.cell0.as_ref().ok_or("frame 0 is not added yet")?;
+            if let Some((changed, cell)) = cell0.compare(view, &json, frame_le) {
+                self.cur_cell = if changed { cell } else { self.box0 };
+                if changed && self.cells.is_none() {
+                    self.cells = Some(vec![self.box0; item - 1]);
+                }
+            }
+            if let Some(cells) = self.cells.as_mut() {
+                // A frame without a cell after frames with one is per-frame
+                // topology too, for the full parse.
+                if self.cur_cell.is_none() {
+                    self.heterogeneous = true;
+                }
+                cells.push(self.cur_cell);
+            }
+        }
+        if n_coords != self.n_atoms * 3 {
+            self.heterogeneous = true;
+        }
+        self.ends.push(offset + 8 + json_len as u64);
+        Ok(())
+    }
+
+    /// The number of coordinates frame `item` stores, checking that its
+    /// positions array lies in the frame's bytes.
+    fn positions_in_view(
+        &self,
+        view: FileView<'_>,
+        json: &serde_json::Value,
+        item: usize,
+    ) -> Result<usize, String> {
+        if let Some(array) = json.get("positions.").and_then(parse_ndarray_ref) {
+            if array.elem_size().is_none() || array.bytes(view).is_none() {
+                return Err(format!("frame {item}'s positions are not stored with it"));
+            }
+            return Ok(array.len());
+        }
+        let inline = extract_positions(view, json, true)?;
+        Ok(inline.len())
+    }
+
+    /// Frame 0's snapshot, once frame 0 is added (taken: a second call gets `None`).
+    pub fn take_frame0(&mut self) -> Option<ParsedStructure> {
+        self.frame0.take()
+    }
+
+    /// Atoms in frame 0.
+    pub fn n_atoms(&self) -> usize {
+        self.n_atoms
+    }
+
+    /// Frames after frame 0.
+    pub fn n_frames(&self) -> usize {
+        self.offsets.len().saturating_sub(1)
+    }
+
+    /// Whether a frame's atom count or elements differ from frame 0's.
+    pub fn heterogeneous(&self) -> bool {
+        self.heterogeneous
+    }
+
+    /// Whether the cell changes between frames, so each frame carries its own.
+    pub fn varying_cells(&self) -> bool {
+        self.cells.is_some()
+    }
+
+    /// Extra frame `frame`'s cell when the cell varies (0-indexed after frame 0).
+    pub fn frame_cell(&self, frame: usize) -> Option<[f32; 9]> {
+        *self.cells.as_ref()?.get(frame)?
+    }
+
+    /// The byte range holding extra frame `frame` (0-indexed after frame 0).
+    pub fn frame_range(&self, frame: usize) -> Option<(u64, u64)> {
+        let end = *self.ends.get(frame + 1)?;
+        Some((self.ends[frame], end))
+    }
+
+    /// Whether every frame has been added.
+    pub fn is_complete(&self) -> bool {
+        !self.offsets.is_empty() && self.ends.len() == self.offsets.len()
+    }
+
+    /// Decode extra frame `frame`'s positions from its bytes
+    /// ([`frame_range`](Self::frame_range)).
+    pub fn decode(&self, frame: usize, bytes: &[u8]) -> Result<Vec<f32>, String> {
+        let (start, _) = self.frame_range(frame).ok_or("frame index out of range")?;
+        let view = FileView {
+            data: bytes,
+            base: start,
+        };
+        let json = read_json_metadata(view, self.offsets[frame + 1], self.header.little_endian)?;
+        let positions = extract_positions(view, &json, arrays_little_endian(&json))?;
+        if positions.len() != self.n_atoms * 3 {
+            return Err(format!(
+                "frame {} has {} coordinates, expected {}",
+                frame + 1,
+                positions.len(),
+                self.n_atoms * 3
+            ));
+        }
+        Ok(positions)
+    }
 }
 
 #[cfg(test)]
@@ -668,10 +1030,14 @@ mod tests {
             // tail holding the offset table.
             assert_frame0_matches(&data, data.len(), 0);
             let header = read_ulm_header(&data).unwrap();
-            let table_len = data.len() - header.pos0;
-            let frame0_end = read_i64(&data, header.pos0 + 8, header.little_endian)
-                .map(|o| o as usize)
-                .unwrap_or(data.len());
+            let table_len = data.len() - header.pos0 as usize;
+            let frame0_end = read_i64(
+                FileView::whole(&data),
+                header.pos0 + 8,
+                header.little_endian,
+            )
+            .map(|o| o as usize)
+            .unwrap_or(data.len());
             assert_frame0_matches(&data, frame0_end, table_len);
         }
     }
@@ -688,11 +1054,11 @@ mod tests {
             .expect("table in the gap must fail");
         assert!(err.contains("neither the head nor the tail"), "{err}");
         // Frame 0's JSON is past the head: reported as EOF, not read from a gap.
-        let tail = &data[header.pos0..];
+        let tail = &data[header.pos0 as usize..];
         assert!(parse_traj_frame0(&data[..64], tail, data.len()).is_err());
         // A tail longer than the file, a table past EOF, and a non-ULM head.
         assert!(parse_traj_frame0(&data, &data, 10).is_err());
-        assert!(parse_traj_frame0(&data, &[], header.pos0).is_err());
+        assert!(parse_traj_frame0(&data, &[], header.pos0 as usize).is_err());
         assert!(parse_traj_frame0(
             b"not a ulm file at all, but long enough to hold a header....",
             &[],
@@ -776,7 +1142,7 @@ mod tests {
         data.extend((0u8..72).collect::<Vec<u8>>());
         let json: serde_json::Value =
             serde_json::json!({ "cell.": { "ndarray": [[3, 3], "float64", 4] } });
-        let raw = cell_raw_bytes(&data, &json).expect("cell bytes present");
+        let raw = cell_raw_bytes(FileView::whole(&data), &json).expect("cell bytes present");
         assert_eq!(raw.len(), 72); // 9 float64
         assert_eq!(raw[0], 0);
         assert_eq!(raw[71], 71);
@@ -784,14 +1150,178 @@ mod tests {
         // float32 cell → 36 bytes.
         let json32: serde_json::Value =
             serde_json::json!({ "cell.": { "ndarray": [[3, 3], "float32", 4] } });
-        assert_eq!(cell_raw_bytes(&data, &json32).unwrap().len(), 36);
+        assert_eq!(
+            cell_raw_bytes(FileView::whole(&data), &json32)
+                .unwrap()
+                .len(),
+            36
+        );
 
         // Missing `cell.` key → None (inline cells take the value-compare path).
-        assert!(cell_raw_bytes(&data, &serde_json::json!({})).is_none());
+        assert!(cell_raw_bytes(FileView::whole(&data), &serde_json::json!({})).is_none());
         // Unsupported dtype → None.
         let json_bad: serde_json::Value =
             serde_json::json!({ "cell.": { "ndarray": [[3, 3], "int32", 4] } });
-        assert!(cell_raw_bytes(&data, &json_bad).is_none());
+        assert!(cell_raw_bytes(FileView::whole(&data), &json_bad).is_none());
+    }
+
+    /// Index `data` the way a host reading the file frame by frame does.
+    fn index_in_frames(data: &[u8]) -> Result<TrajIndexBuilder, String> {
+        let mut index = TrajIndexBuilder::new(&data[..ULM_HEADER_LEN], data.len() as u64)?;
+        let (start, end) = index.table_range();
+        index.set_table(&data[start as usize..end as usize])?;
+        for item in 0..index.n_items() {
+            let at = index.json_offset(item).unwrap() as usize;
+            let len = index.json_len(&data[at..at + 8])?;
+            index.add_frame(&data[index.next_start() as usize..at + 8 + len])?;
+        }
+        assert!(index.is_complete());
+        Ok(index)
+    }
+
+    /// Decode every extra frame from just its own bytes.
+    fn decode_all(index: &TrajIndexBuilder, data: &[u8]) -> Vec<Vec<f32>> {
+        (0..index.n_frames())
+            .map(|f| {
+                let (start, end) = index.frame_range(f).unwrap();
+                index
+                    .decode(f, &data[start as usize..end as usize])
+                    .unwrap()
+            })
+            .collect()
+    }
+
+    #[test]
+    fn test_index_in_frames_matches_full_parse() {
+        for name in ["water.traj", "bond_change.traj"] {
+            let Some(data) = read_fixture(name) else {
+                continue;
+            };
+            let full = parse_traj(&data).unwrap();
+            let mut index = index_in_frames(&data).unwrap();
+            assert!(!index.heterogeneous(), "{name}");
+            assert!(!index.varying_cells(), "{name}");
+            assert_eq!(index.n_atoms(), full.n_atoms);
+            assert_eq!(index.n_frames(), full.extra_frame_count());
+            let frame0 = index.take_frame0().unwrap();
+            assert!(index.take_frame0().is_none());
+            assert_eq!(frame0.positions, full.positions);
+            assert_eq!(frame0.elements, full.elements);
+            assert_eq!(frame0.bonds, full.bonds);
+            assert_eq!(frame0.box_matrix, full.box_matrix);
+            for (f, positions) in decode_all(&index, &data).iter().enumerate() {
+                assert_eq!(positions.as_slice(), full.frame(f), "{name} frame {f}");
+                assert_eq!(index.frame_cell(f), None);
+            }
+        }
+    }
+
+    #[test]
+    fn test_index_in_frames_carries_a_varying_cell() {
+        let Some(data) = read_fixture("water_var_cell.traj") else {
+            return;
+        };
+        let full = parse_traj(&data).unwrap();
+        let index = index_in_frames(&data).unwrap();
+        assert!(!index.heterogeneous());
+        assert!(index.varying_cells());
+        for (f, positions) in decode_all(&index, &data).iter().enumerate() {
+            assert_eq!(positions.as_slice(), full.frame(f));
+            let want: Option<[f32; 9]> = full.frame_cell(f).map(|c| c.try_into().unwrap());
+            assert_eq!(index.frame_cell(f), want, "frame {f}");
+        }
+    }
+
+    #[test]
+    fn test_index_in_frames_flags_changing_atoms_and_elements() {
+        for name in ["water_var_atoms.traj", "water_var_topology.traj"] {
+            let Some(data) = read_fixture(name) else {
+                continue;
+            };
+            assert!(index_in_frames(&data).unwrap().heterogeneous(), "{name}");
+        }
+    }
+
+    /// A two-frame little-endian ULM file: frame 1's positions sit at
+    /// `frame1_positions_at` (inside frame 1 when it is past frame 0's JSON).
+    fn two_frame_file(frame1_positions_at: Option<u64>) -> Vec<u8> {
+        let mut out = vec![0u8; ULM_HEADER_LEN];
+        out[..8].copy_from_slice(ULM_MAGIC);
+        out[24..32].copy_from_slice(&1i64.to_le_bytes());
+        out[32..40].copy_from_slice(&2i64.to_le_bytes());
+        let mut offsets = Vec::new();
+        for frame in 0..2u64 {
+            let positions_at = out.len() as u64;
+            for v in [frame as f64, 0.0, 0.0] {
+                out.extend(v.to_le_bytes());
+            }
+            let at = match frame {
+                0 => positions_at,
+                _ => frame1_positions_at.unwrap_or(positions_at),
+            };
+            let numbers = if frame == 0 {
+                r#""numbers": [8], "#
+            } else {
+                ""
+            };
+            let json =
+                format!(r#"{{{numbers}"positions.": {{"ndarray": [[1, 3], "float64", {at}]}}}}"#);
+            offsets.push(out.len() as i64);
+            out.extend((json.len() as i64).to_le_bytes());
+            out.extend(json.as_bytes());
+        }
+        let pos0 = out.len() as i64;
+        out[40..48].copy_from_slice(&pos0.to_le_bytes());
+        for o in offsets {
+            out.extend(o.to_le_bytes());
+        }
+        out
+    }
+
+    #[test]
+    fn test_index_rejects_a_frame_whose_arrays_are_elsewhere() {
+        let ok = two_frame_file(None);
+        let index = index_in_frames(&ok).unwrap();
+        assert_eq!(decode_all(&index, &ok), vec![vec![1.0, 0.0, 0.0]]);
+        assert_eq!(parse_traj(&ok).unwrap().frame(0), &[1.0, 0.0, 0.0]);
+
+        // Frame 1 points back at frame 0's positions: fine for the full parse,
+        // but not in frame 1's bytes, so the index refuses the file.
+        let back = two_frame_file(Some(ULM_HEADER_LEN as u64));
+        assert_eq!(parse_traj(&back).unwrap().frame(0), &[0.0, 0.0, 0.0]);
+        let err = index_in_frames(&back).err().unwrap();
+        assert!(err.contains("not stored with it"), "{err}");
+    }
+
+    #[test]
+    fn test_index_rejects_bad_tables_and_misuse() {
+        let data = two_frame_file(None);
+        let mut index = TrajIndexBuilder::new(&data, data.len() as u64).unwrap();
+        let (start, end) = index.table_range();
+        assert_eq!(end - start, 16);
+        // An offset past EOF, frames out of order, and an empty table.
+        let past: Vec<u8> = [8i64, 1 << 40]
+            .iter()
+            .flat_map(|o| o.to_le_bytes())
+            .collect();
+        assert!(index.set_table(&past).unwrap_err().contains("past EOF"));
+        let backwards: Vec<u8> = [100i64, 50].iter().flat_map(|o| o.to_le_bytes()).collect();
+        assert!(index
+            .set_table(&backwards)
+            .unwrap_err()
+            .contains("in order"));
+        assert!(index.set_table(&[0u8; 8]).is_err());
+        // A table past EOF, a negative JSON length, and decoding out of range.
+        assert!(TrajIndexBuilder::new(&data, 60).is_err());
+        assert!(index.json_len(&(-1i64).to_le_bytes()).is_err());
+        assert!(index.decode(0, &data).is_err());
+        assert_eq!(index.frame_range(0), None);
+        assert!(!index.is_complete());
+        // Adding a frame past the last one.
+        let mut full = index_in_frames(&data).unwrap();
+        assert!(full.add_frame(&data).unwrap_err().contains("already added"));
+        // Decoding a frame from bytes that do not hold it.
+        assert!(full.decode(0, &data[..10]).is_err());
     }
 
     #[test]

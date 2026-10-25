@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { inferBondsVdwJS, DEFAULT_VDW_BOND_FACTOR } from "@/parsers/inferBondsJS";
+import { inferBondsVdwJS, DEFAULT_VDW_BOND_FACTOR, maxDenseCells } from "@/parsers/inferBondsJS";
 
 describe("inferBondsVdwJS", () => {
   it("returns empty array for 0 atoms", () => {
@@ -282,5 +282,63 @@ describe("inferBondsVdwJS — periodic boundary conditions (Issue #558)", () => 
 
     expect(withBox).toEqual(new Set(["0-1", "0-2"]));
     expect(withBox).toEqual(withoutBox);
+  });
+});
+
+describe("inferBondsVdwJS — grid size stays bounded", () => {
+  /** Jittered cubic carbon lattice 1.5 Å apart, deterministic. */
+  function lattice(nSide: number): Float32Array {
+    const out = new Float32Array(nSide * nSide * nSide * 3);
+    let seed = 12345;
+    const jitter = (): number => {
+      seed = (seed * 1103515245 + 12345) >>> 0;
+      return (((seed >>> 16) % 1000) / 1000) * 0.2 - 0.1;
+    };
+    let k = 0;
+    for (let x = 0; x < nSide; x++)
+      for (let y = 0; y < nSide; y++)
+        for (let z = 0; z < nSide; z++) {
+          out[k++] = x * 1.5 + jitter();
+          out[k++] = y * 1.5 + jitter();
+          out[k++] = z * 1.5 + jitter();
+        }
+    return out;
+  }
+
+  it("bounds the dense grid by the atom count", () => {
+    expect(maxDenseCells(0)).toBe(4096);
+    expect(maxDenseCells(1000)).toBe(12096);
+  });
+
+  it("finds the same bonds, in the same order, with one far-away atom", () => {
+    // 9999 Å on every axis would be ~1.25e11 dense cells.
+    const base = lattice(8);
+    const n = base.length / 3;
+    const expected = inferBondsVdwJS(base, new Uint8Array(n).fill(6), n);
+    expect(expected.length).toBeGreaterThan(n * 2);
+
+    const withOutlier = new Float32Array(base.length + 3);
+    withOutlier.set(base);
+    withOutlier.set([9999, 9999, 9999], base.length);
+    const elements = new Uint8Array(n + 1).fill(6);
+    const got = inferBondsVdwJS(withOutlier, elements, n + 1);
+    expect(Array.from(got)).toEqual(Array.from(expected));
+  });
+
+  it("still bonds atoms that share a far-away cell", () => {
+    const positions = new Float32Array([0, 0, 0, 5000, 0, 0, 5001.2, 0, 0, 1e30, -1e30, 1e30]);
+    const bonds = inferBondsVdwJS(positions, new Uint8Array([6, 6, 6, 6]), 4);
+    expect(Array.from(bonds)).toEqual([1, 2]);
+  });
+
+  it("coarsens the cells of a huge, mostly empty periodic box", () => {
+    // 4000 Å cube → 2000³ cells at 2 Å; the water must still bond across a face.
+    const L = 4000;
+    const box = new Float32Array([L, 0, 0, 0, L, 0, 0, 0, L]);
+    const positions = new Float32Array([0.1, 0, 0, L - 0.8, 0, 0, 1.0, 0, 0]);
+    const bonds = inferBondsVdwJS(positions, new Uint8Array([8, 1, 1]), 3, undefined, box);
+    const pairs = new Set<string>();
+    for (let i = 0; i < bonds.length; i += 2) pairs.add(`${bonds[i]}-${bonds[i + 1]}`);
+    expect(pairs).toEqual(new Set(["0-1", "0-2"]));
   });
 });

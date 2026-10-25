@@ -13,6 +13,105 @@ const BOND_TOLERANCE: f32 = 1.3;
 const MIN_BOND_DIST: f32 = 0.4;
 const VDW_BOND_FACTOR: f32 = 0.6;
 
+/// 13 half-shell neighbor offsets, so each pair of cells is visited once.
+const HALF_SHELL: [(i8, i8, i8); 13] = [
+    (0, 0, 1),
+    (0, 1, -1),
+    (0, 1, 0),
+    (0, 1, 1),
+    (1, -1, -1),
+    (1, -1, 0),
+    (1, -1, 1),
+    (1, 0, -1),
+    (1, 0, 0),
+    (1, 0, 1),
+    (1, 1, -1),
+    (1, 1, 0),
+    (1, 1, 1),
+];
+
+/// Largest grid kept dense: a few cells per atom (plus a floor for small
+/// systems), so the per-cell table never outgrows the atoms themselves.
+/// `src/parsers/inferBondsJS.ts` uses the same bound.
+pub(crate) fn max_dense_cells(n_atoms: usize) -> usize {
+    n_atoms.saturating_mul(8).saturating_add(4096)
+}
+
+/// The cell-list scan over only the occupied cells. Cells are visited in the
+/// same (x, y, z) order as the dense grid, atoms within a cell by index and
+/// neighbors in half-shell order, so it reports the same bonds in the same
+/// order; neighbor cells are found by binary search instead of by index.
+fn sparse_cell_list_scan<F>(
+    positions: &[f32],
+    n_atoms: usize,
+    cell_size: f32,
+    lo: [f32; 3],
+    dims: [u64; 3],
+    mut check_pair: F,
+) -> Vec<(u32, u32)>
+where
+    F: FnMut(usize, usize) -> Option<(u32, u32)>,
+{
+    // Float-to-int `as` saturates, so even absurd coordinates stay in range.
+    let coord = |i: usize, axis: usize| -> u64 {
+        (((positions[i * 3 + axis] - lo[axis]) / cell_size) as u64).min(dims[axis] - 1)
+    };
+    let mut keyed: Vec<([u64; 3], u32)> = (0..n_atoms)
+        .map(|i| ([coord(i, 0), coord(i, 1), coord(i, 2)], i as u32))
+        .collect();
+    keyed.sort_unstable();
+
+    let mut cells: Vec<[u64; 3]> = Vec::new();
+    let mut starts: Vec<usize> = Vec::new();
+    for (k, (key, _)) in keyed.iter().enumerate() {
+        if cells.last() != Some(key) {
+            cells.push(*key);
+            starts.push(k);
+        }
+    }
+    starts.push(n_atoms);
+    let atoms: Vec<u32> = keyed.iter().map(|&(_, i)| i).collect();
+    drop(keyed);
+
+    let mut bonds = Vec::with_capacity(n_atoms);
+    for (c, key) in cells.iter().enumerate() {
+        let cell = &atoms[starts[c]..starts[c + 1]];
+        // Resolve this cell's neighbors once, not once per atom.
+        let mut neighbors: [Option<usize>; 13] = [None; 13];
+        for (slot, &(dx, dy, dz)) in neighbors.iter_mut().zip(HALF_SHELL.iter()) {
+            let step = |v: u64, d: i8, n: u64| -> Option<u64> {
+                let w = v.checked_add_signed(d as i64)?;
+                (w < n).then_some(w)
+            };
+            let nk = match (
+                step(key[0], dx, dims[0]),
+                step(key[1], dy, dims[1]),
+                step(key[2], dz, dims[2]),
+            ) {
+                (Some(a), Some(b), Some(c)) => [a, b, c],
+                _ => continue,
+            };
+            *slot = cells.binary_search(&nk).ok();
+        }
+        for ii in 0..cell.len() {
+            let i = cell[ii] as usize;
+            for &j in &cell[(ii + 1)..] {
+                if let Some(bond) = check_pair(i, j as usize) {
+                    bonds.push(bond);
+                }
+            }
+            for &n in neighbors.iter().flatten() {
+                for &j in &atoms[starts[n]..starts[n + 1]] {
+                    if let Some(bond) = check_pair(i, j as usize) {
+                        bonds.push(bond);
+                    }
+                }
+            }
+        }
+    }
+    bonds
+}
+
 /// Generic cell-list spatial scan that iterates over all nearby atom pairs
 /// and calls `check_pair(i, j)` for each. The closure returns `Some((a, b))`
 /// if the pair should be recorded as a bond.
@@ -43,9 +142,17 @@ where
         max_z = max_z.max(z);
     }
 
-    let nx = ((max_x - min_x) / cell_size).ceil().max(1.0) as usize;
-    let ny = ((max_y - min_y) / cell_size).ceil().max(1.0) as usize;
-    let nz = ((max_z - min_z) / cell_size).ceil().max(1.0) as usize;
+    let dim = |lo: f32, hi: f32| ((hi - lo) / cell_size).ceil().max(1.0) as f64;
+    let (fx, fy, fz) = (dim(min_x, max_x), dim(min_y, max_y), dim(min_z, max_z));
+    // A dense grid spans the bounding box, so one atom far from the rest (a
+    // 9999 Å placeholder) would make it astronomically large. Past a few cells
+    // per atom only the occupied cells are kept.
+    if fx * fy * fz > max_dense_cells(n_atoms) as f64 {
+        let lo = [min_x, min_y, min_z];
+        let dims = [fx as u64, fy as u64, fz as u64];
+        return sparse_cell_list_scan(positions, n_atoms, cell_size, lo, dims, check_pair);
+    }
+    let (nx, ny, nz) = (fx as usize, fy as usize, fz as usize);
 
     let ncells = nx * ny * nz;
 
@@ -85,22 +192,8 @@ where
     // repeated reallocation of the output vector.
     let mut bonds = Vec::with_capacity(n_atoms);
 
-    // 13 neighbor offsets (half-shell to avoid double-counting)
-    let offsets: [(isize, isize, isize); 13] = [
-        (0, 0, 1),
-        (0, 1, -1),
-        (0, 1, 0),
-        (0, 1, 1),
-        (1, -1, -1),
-        (1, -1, 0),
-        (1, -1, 1),
-        (1, 0, -1),
-        (1, 0, 0),
-        (1, 0, 1),
-        (1, 1, -1),
-        (1, 1, 0),
-        (1, 1, 1),
-    ];
+    // Half-shell neighbor offsets, to avoid double-counting.
+    let offsets = HALF_SHELL.map(|(x, y, z)| (x as isize, y as isize, z as isize));
 
     for cx in 0..nx {
         for cy in 0..ny {
@@ -455,6 +548,84 @@ pub fn default_bond_source(filename: &str) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A jittered cubic lattice of carbon atoms 1.5 Å apart (bonded to its
+    /// axis neighbours), deterministic so dense and sparse scans can be compared.
+    fn lattice(n_side: usize) -> (Vec<f32>, Vec<u8>) {
+        let mut positions = Vec::new();
+        let mut seed: u32 = 12345;
+        let mut jitter = || {
+            seed = seed.wrapping_mul(1_103_515_245).wrapping_add(12_345);
+            ((seed >> 16) % 1000) as f32 / 1000.0 * 0.2 - 0.1
+        };
+        for x in 0..n_side {
+            for y in 0..n_side {
+                for z in 0..n_side {
+                    positions.push(x as f32 * 1.5 + jitter());
+                    positions.push(y as f32 * 1.5 + jitter());
+                    positions.push(z as f32 * 1.5 + jitter());
+                }
+            }
+        }
+        let n = n_side * n_side * n_side;
+        (positions, vec![6; n])
+    }
+
+    #[test]
+    fn sparse_scan_reports_the_dense_scan_bonds_in_the_same_order() {
+        let (positions, elements) = lattice(9);
+        let n = elements.len();
+        let dense = infer_bonds(&positions, &elements, n, &HashSet::new());
+        assert!(dense.len() > n, "the lattice is bonded");
+        let check = |i: usize, j: usize| {
+            let d2 = (0..3)
+                .map(|k| positions[j * 3 + k] - positions[i * 3 + k])
+                .map(|d| d * d)
+                .sum::<f32>();
+            let t = covalent_radius(6) * 2.0 * BOND_TOLERANCE;
+            (d2 > MIN_BOND_DIST * MIN_BOND_DIST && d2 <= t * t)
+                .then(|| (i.min(j) as u32, i.max(j) as u32))
+        };
+        let (mut lo, mut hi) = ([f32::MAX; 3], [f32::MIN; 3]);
+        for i in 0..n {
+            for k in 0..3 {
+                lo[k] = lo[k].min(positions[i * 3 + k]);
+                hi[k] = hi[k].max(positions[i * 3 + k]);
+            }
+        }
+        let dims = [0, 1, 2].map(|k| ((hi[k] - lo[k]) / 2.5).ceil().max(1.0) as u64);
+        let sparse = sparse_cell_list_scan(&positions, n, 2.5, lo, dims, check);
+        assert_eq!(sparse, dense);
+    }
+
+    #[test]
+    fn one_far_away_atom_does_not_blow_up_the_grid() {
+        // 9999 Å on every axis would be ~6e10 dense cells (240 GB of table).
+        let (mut positions, mut elements) = lattice(6);
+        let n0 = elements.len();
+        let base = infer_bonds(&positions, &elements, n0, &HashSet::new());
+        positions.extend_from_slice(&[9999.0, 9999.0, 9999.0]);
+        elements.push(8);
+        let with_outlier = infer_bonds(&positions, &elements, n0 + 1, &HashSet::new());
+        assert_eq!(with_outlier, base);
+        // The vdW variant shares the scan.
+        let vdw = infer_bonds_vdw(&positions, &elements, n0 + 1);
+        assert_eq!(
+            vdw,
+            infer_bonds_vdw(&positions[..n0 * 3], &elements[..n0], n0)
+        );
+        // Absurd and non-finite-looking magnitudes stay in range too.
+        let far = [0.0, 0.0, 0.0, 1.0e30, -1.0e30, 1.0e30, 1.2, 0.0, 0.0];
+        let bonds = infer_bonds(&far, &[6, 6, 6], 3, &HashSet::new());
+        assert_eq!(bonds, vec![(0, 2)]);
+    }
+
+    #[test]
+    fn max_dense_cells_scales_with_atoms() {
+        assert_eq!(max_dense_cells(0), 4096);
+        assert_eq!(max_dense_cells(1000), 12_096);
+        assert_eq!(max_dense_cells(usize::MAX), usize::MAX);
+    }
 
     #[test]
     fn flatten_pairs_interleaves_each_pair() {

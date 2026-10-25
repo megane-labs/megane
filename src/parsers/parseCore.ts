@@ -13,6 +13,7 @@
 
 import type { Snapshot, Frame, TrajectoryMeta, VectorChannel, ScalarChannel } from "../types";
 import { deserializeScalarChannels, deserializeVectorChannels } from "./vectorChannels";
+import { labelsFromText } from "./labels";
 import { perfMark, perfMeasure } from "../perf";
 import type { TrajectoryKind } from "./fileNames";
 
@@ -21,6 +22,9 @@ export interface StructureParseResult {
   frames: Frame[];
   meta: TrajectoryMeta | null;
   labels: string[] | null;
+  /** `labels` joined by newlines, set instead of it while crossing from the
+   *  parse worker (see `./labels`). */
+  labelsText?: string;
   /** Per-atom vector channels embedded in the file (e.g. GRO velocities). */
   vectorChannels: VectorChannel[];
   /** Per-atom scalar channels embedded in the file (charges, flags, ...). */
@@ -148,6 +152,109 @@ interface WasmXtcIndexer {
   free(): void;
 }
 
+/** Windowed text frame indexer (see `TextFrameIndexer` in megane-wasm). */
+interface WasmTextFrameIndexer {
+  readonly next_offset: number;
+  scan(window: Uint8Array, atEof: boolean): number;
+  finish(fileLen: number): void;
+  readonly n_atoms: number;
+  readonly n_frames: number;
+  readonly heterogeneous: boolean;
+  offsets(): Float64Array;
+  frames_end(fileLen: number): number;
+  readonly frame0_end: number;
+  readonly tail_start: number;
+  readonly frame0_needs_whole_file: boolean;
+  readonly timestep_ps: number;
+  readonly has_box: boolean;
+  box_matrix(): Float32Array;
+  box_origin(): Float32Array;
+  readonly vector_channel_names: string;
+  free(): void;
+}
+
+/** One frame from `decode_text_frame`. */
+interface WasmDecodedTextFrame {
+  positions(): Float32Array;
+  vectors(): Float32Array;
+  free(): void;
+}
+
+/** Fixed-layout binary trajectory (see `BinaryFrameLayout` in megane-wasm). */
+interface WasmBinaryFrameLayout {
+  readonly n_atoms: number;
+  readonly n_frames: number;
+  /** NaN when the time step comes from the frames' own time (NetCDF). */
+  readonly timestep_ps: number;
+  readonly has_cell: boolean;
+  frame_start(frame: number): number;
+  readonly frame_len: number;
+  decode(bytes: Uint8Array, frame: number): WasmDecodedBinaryFrame;
+  free(): void;
+}
+
+/** One frame from `BinaryFrameLayout.decode`. */
+interface WasmDecodedBinaryFrame {
+  positions(): Float32Array;
+  /** Empty without a cell. */
+  cell(): Float32Array;
+  /** NaN without a time. */
+  readonly time: number;
+  free(): void;
+}
+
+/** Binary trajectory formats whose frames sit at offsets their header gives. */
+export type BinaryFrameKind = "dcd" | "netcdf";
+
+/**
+ * The index of an ASE `.traj` built from its File one frame at a time
+ * (`TrajFileIndexer`): see {@link indexTrajFileCore}. Offsets are file bytes.
+ */
+interface WasmTrajFileIndexer {
+  readonly table_start: number;
+  readonly table_end: number;
+  set_table(table: Uint8Array): void;
+  /** Frames in the file, frame 0 included. */
+  readonly n_items: number;
+  json_offset(item: number): number;
+  json_len(bytes: Uint8Array): number;
+  readonly next_start: number;
+  add_frame(bytes: Uint8Array): void;
+  frame0(): WasmParseResult;
+  readonly n_atoms: number;
+  /** Frames after frame 0. */
+  readonly n_frames: number;
+  readonly heterogeneous: boolean;
+  readonly varying_cells: boolean;
+  /** Empty unless the cell varies. */
+  frame_cell(frame: number): Float32Array;
+  frame_start(frame: number): number;
+  frame_end(frame: number): number;
+  decode(frame: number, bytes: Uint8Array): Float32Array;
+  free(): void;
+}
+
+/** First bytes read for a `.traj`: its 48-byte header. */
+export const TRAJ_HEADER_BYTES = 48;
+
+/**
+ * First bytes read for a binary trajectory's header; a header longer than
+ * that (a long DCD title, many NetCDF attributes) is read again 4× longer.
+ */
+export const BINARY_HEAD_MIN = 64 * 1024;
+
+/** Multi-frame text formats indexed from windows of their File. */
+export type TextFrameKind = "xyz" | "pdb" | "lammpstrj";
+
+/**
+ * Window the text frame index scan reads at a time. Every line is looked at,
+ * so the window only bounds the worker's memory (each one is copied into
+ * WASM memory, which never shrinks) and the number of reads; a line longer
+ * than it doubles it for that read.
+ */
+export const TEXT_INDEX_WINDOW = 4 * 1024 * 1024;
+const TEXT_INDEX_WINDOW_MAX = 256 * 1024 * 1024;
+
 /**
  * A lazy decoder that leaves the file where it is — on disk for a file the
  * user picked — and reads each frame's bytes when that frame is asked for, so
@@ -156,8 +263,20 @@ interface WasmXtcIndexer {
  */
 export interface FileFrameDecoder {
   readonly n_atoms: number;
-  decodeFrame(frame: number): Promise<Float32Array>;
+  /**
+   * Positions (Å), any embedded vector channels (a LAMMPS dump's) and, for a
+   * trajectory whose frames each carry a cell (DCD, NetCDF, an NPT `.traj`),
+   * this frame's.
+   */
+  decodeFrame(frame: number): Promise<DecodedFileFrame>;
   free(): void;
+}
+
+/** One frame from a {@link FileFrameDecoder}. */
+export interface DecodedFileFrame {
+  positions: Float32Array;
+  vectors: Float32Array;
+  box?: Float32Array;
 }
 
 /** A worker-held lazy decoder: the file in WASM memory, or read from the file per frame. */
@@ -203,10 +322,13 @@ export interface WasmStructureFrameDecoder extends WasmFrameDecoder {
 }
 
 /** Lazy trajectory formats with a persistent per-frame decoder. */
-export type LazyTrajectoryKind = "xtc" | "lammpstrj";
+export type LazyTrajectoryKind = "xtc" | "lammpstrj" | "dcd" | "netcdf";
 
 /** Multi-frame structure formats with lazy extra-frame decode (frame 0 is eager). */
 export type LazyStructureKind = "xyz" | "pdb";
+
+/** Multi-frame structure formats the worker streams from their File: the text ones and ASE `.traj`. */
+export type FileStructureKind = LazyStructureKind | "traj";
 
 /** Lightweight structure-frame index (from `indexStructureCore`) — no bulk coordinates. */
 export interface StructureIndexResult {
@@ -272,10 +394,24 @@ interface WasmModule {
   parse_netcdf_file: TrajBinaryParseFn;
   parse_lammpstrj_file: TrajTextParseFn;
   parse_structure_prefix: (text: string, kind: string, isWholeFile: boolean) => WasmParseResult;
+  parse_structure_bytes: (ext: string, data: Uint8Array) => WasmParseResult;
   parse_traj_frame0: (head: Uint8Array, tail: Uint8Array, totalLen: number) => WasmParseResult;
   decode_trajectory_frame0: (data: Uint8Array, kind: string, nAtoms: number) => Float32Array;
   XtcDecoder: new (data: Uint8Array) => WasmXtcDecoder;
   XtcIndexer: new () => WasmXtcIndexer;
+  TextFrameIndexer: new (kind: TextFrameKind) => WasmTextFrameIndexer;
+  decode_text_frame: (
+    kind: TextFrameKind,
+    data: Uint8Array,
+    nAtoms: number,
+  ) => WasmDecodedTextFrame;
+  BinaryFrameLayout: new (
+    kind: BinaryFrameKind,
+    head: Uint8Array,
+    fileLen: number,
+  ) => WasmBinaryFrameLayout;
+  netcdf_timestep: (nFrames: number, t0: number, t1: number) => number;
+  TrajFileIndexer: new (head: Uint8Array, fileLen: number) => WasmTrajFileIndexer;
   LammpstrjDecoder: new (data: Uint8Array) => WasmLammpstrjDecoder;
   StructureFrameDecoder: new (data: Uint8Array, kind: string) => WasmStructureFrameDecoder;
   infer_bonds_vdw: (positions: Float32Array, elements: Uint8Array, n_atoms: number) => Uint32Array;
@@ -348,10 +484,16 @@ export async function ensureInit(wasmUrl?: string | WebAssembly.Module): Promise
         parse_netcdf_file: wasm.parse_netcdf_file,
         parse_lammpstrj_file: wasm.parse_lammpstrj_file,
         parse_structure_prefix: wasm.parse_structure_prefix,
+        parse_structure_bytes: wasm.parse_structure_bytes,
         parse_traj_frame0: wasm.parse_traj_frame0,
         decode_trajectory_frame0: wasm.decode_trajectory_frame0,
         XtcDecoder: wasm.XtcDecoder,
         XtcIndexer: wasm.XtcIndexer,
+        TextFrameIndexer: wasm.TextFrameIndexer,
+        decode_text_frame: wasm.decode_text_frame,
+        BinaryFrameLayout: wasm.BinaryFrameLayout,
+        netcdf_timestep: wasm.netcdf_timestep,
+        TrajFileIndexer: wasm.TrajFileIndexer,
         LammpstrjDecoder: wasm.LammpstrjDecoder,
         StructureFrameDecoder: wasm.StructureFrameDecoder,
         infer_bonds_vdw: wasm.infer_bonds_vdw,
@@ -485,7 +627,9 @@ export function parseWithFn(parseFn: ParseFn, text: string): StructureParseResul
     ? extractHeteroFrames(result)
     : extractUniformFrames(result);
 
-  const labels: string[] | null = result.has_atom_labels ? result.atom_labels.split("\n") : null;
+  const labels: string[] | null = result.has_atom_labels
+    ? labelsFromText(result.atom_labels)
+    : null;
 
   const vectorChannels = deserializeVectorChannels(result.n_atoms, result.vector_channel_meta, () =>
     result.vector_channel_data(),
@@ -734,6 +878,11 @@ export function parseStructureCore(input: StructureParseInput): StructureParseRe
     const result = wasmModule!.parse_traj(bytes);
     return parseWithFn(() => result, "");
   }
+  if (input.bytes && input.text === undefined) {
+    // Raw bytes of a text format: decoded inside WASM, never as a JS string.
+    const result = wasmModule!.parse_structure_bytes(input.ext, input.bytes);
+    return parseWithFn(() => result, "");
+  }
   const parseFn = getParserForExtension(input.ext);
   return parseWithFn(parseFn, input.text ?? "");
 }
@@ -864,7 +1013,10 @@ export async function indexXtcFileCore(
         if (!(frame >= 0 && frame < nFrames)) throw new Error("frame index out of range");
         const end = frame + 1 < nFrames ? offsets[frame + 1] : file.size;
         const bytes = new Uint8Array(await read(file, offsets[frame], end));
-        return wasm.decode_trajectory_frame0(bytes, "xtc", nAtoms);
+        return {
+          positions: wasm.decode_trajectory_frame0(bytes, "xtc", nAtoms),
+          vectors: new Float32Array(0),
+        };
       },
       free() {
         /* nothing held outside the file itself */
@@ -880,14 +1032,358 @@ export async function indexXtcFileCore(
 export async function decodeLazyFrameCore(
   decoder: LazyFrameDecoder,
   frame: number,
-): Promise<{ positions: Float32Array; vectors: Float32Array }> {
-  if ("decodeFrame" in decoder) {
-    return { positions: await decoder.decodeFrame(frame), vectors: new Float32Array(0) };
-  }
+): Promise<DecodedFileFrame> {
+  if ("decodeFrame" in decoder) return decoder.decodeFrame(frame);
   return {
     positions: decodeFrameCore(decoder, frame),
     vectors: decodeFrameVectorsCore(decoder, frame),
   };
+}
+
+/**
+ * Index a multi-frame text file from windows of it (see
+ * {@link TEXT_INDEX_WINDOW}), never holding it whole. Requires `ensureInit`.
+ */
+async function scanTextFile(
+  file: Blob,
+  kind: TextFrameKind,
+  read: BlobRangeReader,
+  firstWindow: number,
+): Promise<WasmTextFrameIndexer> {
+  const indexer = new wasmModule!.TextFrameIndexer(kind);
+  try {
+    let window = firstWindow;
+    while (indexer.next_offset < file.size) {
+      const start = indexer.next_offset;
+      const end = Math.min(start + window, file.size);
+      const used = indexer.scan(new Uint8Array(await read(file, start, end)), end === file.size);
+      if (used > 0) {
+        window = firstWindow;
+        continue;
+      }
+      // Not one whole line in the window: read a larger one.
+      if (window >= TEXT_INDEX_WINDOW_MAX) throw new Error("line too long to index");
+      window *= 2;
+    }
+    indexer.finish(file.size);
+    return indexer;
+  } catch (err) {
+    indexer.free();
+    throw err;
+  }
+}
+
+/**
+ * How much of a file a frame read brings in at once. Frames are mostly shown
+ * in order, and a read through the Blob API costs a round trip to the
+ * browser, so a frame smaller than this is read together with the frames
+ * after it, and those are then served from the bytes already read.
+ */
+export const FRAME_READ_AHEAD = 4 * 1024 * 1024;
+
+/** One read-ahead span of a file and the read bringing it in. */
+interface ReadSpan {
+  start: number;
+  end: number;
+  bytes: Promise<Uint8Array>;
+}
+
+/**
+ * A range reader over `file` that reads {@link FRAME_READ_AHEAD} at a time
+ * and keeps the last two spans, so frames read in order (and the decodes a
+ * playback prefetch fires at once) share one read. Holds at most two spans.
+ */
+export function readAheadReader(
+  file: Blob,
+  read: BlobRangeReader,
+  span = FRAME_READ_AHEAD,
+): (start: number, end: number) => Promise<Uint8Array> {
+  let spans: ReadSpan[] = [];
+  return async (start, end) => {
+    const hit = spans.find((s) => start >= s.start && end <= s.end);
+    if (hit) return (await hit.bytes).subarray(start - hit.start, end - hit.start);
+    if (end - start >= span) return new Uint8Array(await read(file, start, end));
+    const spanEnd = Math.min(file.size, start + span);
+    const next: ReadSpan = {
+      start,
+      end: spanEnd,
+      bytes: read(file, start, spanEnd).then((b) => new Uint8Array(b)),
+    };
+    spans = [spans[spans.length - 1], next].filter((s): s is ReadSpan => s !== undefined);
+    try {
+      return (await next.bytes).subarray(0, end - start);
+    } catch (err) {
+      spans = spans.filter((s) => s !== next);
+      throw err;
+    }
+  };
+}
+
+/** A decoder reading each indexed frame of a text file from its own bytes. */
+function textFileDecoder(
+  file: Blob,
+  kind: TextFrameKind,
+  indexer: WasmTextFrameIndexer,
+  read: BlobRangeReader,
+): FileFrameDecoder {
+  const wasm = wasmModule!;
+  const offsets = indexer.offsets();
+  const nFrames = offsets.length;
+  const nAtoms = indexer.n_atoms;
+  const framesEnd = indexer.frames_end(file.size);
+  const readFrame = readAheadReader(file, read);
+  return {
+    n_atoms: nAtoms,
+    async decodeFrame(frame) {
+      if (!(frame >= 0 && frame < nFrames)) throw new Error("frame index out of range");
+      const end = frame + 1 < nFrames ? offsets[frame + 1] : framesEnd;
+      const decoded = wasm.decode_text_frame(kind, await readFrame(offsets[frame], end), nAtoms);
+      try {
+        return { positions: decoded.positions(), vectors: decoded.vectors() };
+      } finally {
+        decoded.free();
+      }
+    },
+    free() {
+      /* nothing held outside the file itself */
+    },
+  };
+}
+
+/**
+ * {@link indexStructureCore} for a multi-frame XYZ / PDB that stays in its
+ * File: the extra-frame index comes from windows of the file, frame 0 from
+ * just the bytes that hold it (a PDB's model 0 plus the records after the
+ * last model), and each extra frame is read when it is decoded — the worker
+ * never holds the file. A PDB whose model 0 needs records from between later
+ * models is indexed from the whole file instead. Requires `ensureInit` first.
+ */
+export async function indexStructureFileCore(
+  file: Blob,
+  kind: LazyStructureKind,
+  read: BlobRangeReader = readBlobRange,
+  window = TEXT_INDEX_WINDOW,
+): Promise<{
+  decoder: LazyFrameDecoder;
+  index: StructureIndexResult;
+  frame0: StructureParseResult;
+}> {
+  const indexer = await scanTextFile(file, kind, read, window);
+  try {
+    if (indexer.frame0_needs_whole_file) {
+      return indexStructureCore(new Uint8Array(await read(file, 0, file.size)), kind);
+    }
+    const index: StructureIndexResult = {
+      nAtoms: indexer.n_atoms,
+      nFrames: indexer.n_frames,
+      heterogeneous: indexer.heterogeneous,
+    };
+    const decoder = textFileDecoder(file, kind, indexer, read);
+    const decode = (buf: ArrayBuffer): string => new TextDecoder().decode(buf);
+    let text = decode(await read(file, 0, indexer.frame0_end));
+    // A PDB's records after its last model (CONECT, …) belong to model 0 too.
+    if (kind === "pdb" && indexer.tail_start < file.size) {
+      text += decode(await read(file, indexer.tail_start, file.size));
+    }
+    const frame0 = parseStructurePrefixCore(text, kind, true);
+    return { decoder, index, frame0 };
+  } finally {
+    indexer.free();
+  }
+}
+
+/**
+ * {@link indexStructureFileCore} for an ASE `.traj` (ULM): the header and the
+ * offset table come first, then every frame's bytes in order — read ahead
+ * {@link FRAME_READ_AHEAD} at a time, so the scan reads the file once without
+ * holding it — and each extra frame is read again when it is decoded. A cell
+ * that changes between frames (an NPT run) rides on each decoded frame. A file
+ * whose frames change their atoms makes the index `heterogeneous` (the caller
+ * then parses it whole); one the index cannot read frame by frame throws.
+ * Requires `ensureInit` first.
+ */
+export async function indexTrajFileCore(
+  file: Blob,
+  read: BlobRangeReader = readBlobRange,
+): Promise<{
+  decoder: LazyFrameDecoder;
+  index: StructureIndexResult;
+  frame0: StructureParseResult;
+}> {
+  const head = new Uint8Array(await read(file, 0, Math.min(file.size, TRAJ_HEADER_BYTES)));
+  const indexer = new wasmModule!.TrajFileIndexer(head, file.size);
+  try {
+    indexer.set_table(new Uint8Array(await read(file, indexer.table_start, indexer.table_end)));
+    const readSpan = readAheadReader(file, read);
+    const nItems = indexer.n_items;
+    for (let item = 0; item < nItems; item++) {
+      const start = indexer.next_start;
+      const at = indexer.json_offset(item);
+      // The 8 bytes at the frame's JSON give its length. A small frame's are
+      // read with its arrays (one read-ahead span); a large frame's on their
+      // own, so the arrays are not read twice.
+      const lenBytes =
+        at + 8 - start < FRAME_READ_AHEAD
+          ? (await readSpan(start, at + 8)).subarray(at - start)
+          : new Uint8Array(await read(file, at, at + 8));
+      indexer.add_frame(await readSpan(start, at + 8 + indexer.json_len(lenBytes)));
+    }
+    const frame0 = parseWithFn(() => indexer.frame0(), "");
+    const nFrames = indexer.n_frames;
+    const index: StructureIndexResult = {
+      nAtoms: indexer.n_atoms,
+      nFrames,
+      heterogeneous: indexer.heterogeneous,
+    };
+    const varyingCells = indexer.varying_cells;
+    const readFrame = readAheadReader(file, read);
+    const decoder: FileFrameDecoder = {
+      n_atoms: indexer.n_atoms,
+      async decodeFrame(frame) {
+        if (!(frame >= 0 && frame < nFrames)) throw new Error("frame index out of range");
+        const bytes = await readFrame(indexer.frame_start(frame), indexer.frame_end(frame));
+        const out: DecodedFileFrame = {
+          positions: indexer.decode(frame, bytes),
+          vectors: new Float32Array(0),
+        };
+        if (varyingCells) out.box = indexer.frame_cell(frame);
+        return out;
+      },
+      free() {
+        indexer.free();
+      },
+    };
+    return { decoder, index, frame0 };
+  } catch (err) {
+    indexer.free();
+    throw err;
+  }
+}
+
+/**
+ * {@link indexTrajectoryCore} for a LAMMPS dump that stays in its File: the
+ * frame index comes from windows of it and each frame (with its vector
+ * channels) is read when it is decoded. Requires `ensureInit` first.
+ */
+export async function indexDumpFileCore(
+  file: Blob,
+  expectedNAtoms: number,
+  read: BlobRangeReader = readBlobRange,
+  window = TEXT_INDEX_WINDOW,
+): Promise<{ decoder: FileFrameDecoder; index: TrajectoryIndexResult }> {
+  const indexer = await scanTextFile(file, "lammpstrj", read, window);
+  try {
+    if (indexer.n_atoms !== expectedNAtoms) {
+      throw new Error(
+        `LAMMPS dump atom count (${indexer.n_atoms}) does not match structure (${expectedNAtoms})`,
+      );
+    }
+    const hasBox = indexer.has_box;
+    const origin = indexer.box_origin();
+    const index: TrajectoryIndexResult = {
+      nAtoms: indexer.n_atoms,
+      nFrames: indexer.n_frames,
+      timestepPs: indexer.timestep_ps,
+      hasBox,
+      box: hasBox ? indexer.box_matrix() : null,
+      boxOrigin: hasBox && origin.length === 3 ? origin : null,
+      times: new Float32Array(0),
+      vectorChannelNames: indexer.vector_channel_names.split("\n").filter((n) => n.length > 0),
+      heterogeneous: indexer.heterogeneous,
+    };
+    return { decoder: textFileDecoder(file, "lammpstrj", indexer, read), index };
+  } finally {
+    indexer.free();
+  }
+}
+
+/**
+ * Build a lazy decoder for a DCD or AMBER NetCDF trajectory that stays in its
+ * File: every frame sits at an offset the header gives, so the index is read
+ * from the first bytes alone and each frame from its own bytes. Frames carry
+ * their own cell when the file has one per frame (an NPT run's changing box).
+ * Requires `ensureInit` first.
+ */
+export async function indexBinaryTrajectoryFileCore(
+  file: Blob,
+  kind: BinaryFrameKind,
+  expectedNAtoms: number,
+  read: BlobRangeReader = readBlobRange,
+): Promise<{ decoder: FileFrameDecoder; index: TrajectoryIndexResult }> {
+  const wasm = wasmModule!;
+  let layout: WasmBinaryFrameLayout | null = null;
+  for (let head = BINARY_HEAD_MIN; layout === null; head *= 4) {
+    const end = Math.min(head, file.size);
+    try {
+      layout = new wasm.BinaryFrameLayout(
+        kind,
+        new Uint8Array(await read(file, 0, end)),
+        file.size,
+      );
+    } catch (err) {
+      // Too short for the header: read more, unless this was the whole file.
+      if (end === file.size) throw err;
+    }
+  }
+  const owned = layout;
+  try {
+    const nAtoms = owned.n_atoms;
+    const nFrames = owned.n_frames;
+    if (nAtoms !== expectedNAtoms) {
+      const label = kind === "dcd" ? "DCD" : "AMBER NetCDF";
+      throw new Error(
+        `${label} atom count (${nAtoms}) does not match structure (${expectedNAtoms})`,
+      );
+    }
+    const readFrame = readAheadReader(file, read);
+    const frameLen = owned.frame_len;
+    const decodeAt = async (frame: number) => {
+      const start = owned.frame_start(frame);
+      const bytes = await readFrame(start, Math.min(file.size, start + frameLen));
+      const decoded = owned.decode(bytes, frame);
+      try {
+        return { positions: decoded.positions(), cell: decoded.cell(), time: decoded.time };
+      } finally {
+        decoded.free();
+      }
+    };
+    // Frame 0 checks the layout against a real frame and gives the base cell.
+    const first = await decodeAt(0);
+    let timestepPs = owned.timestep_ps;
+    if (Number.isNaN(timestepPs)) {
+      const t1 = nFrames > 1 ? (await decodeAt(1)).time : NaN;
+      timestepPs = wasm.netcdf_timestep(nFrames, first.time, t1);
+    }
+    const hasBox = owned.has_cell && first.cell.length === 9;
+    const index: TrajectoryIndexResult = {
+      nAtoms,
+      nFrames,
+      timestepPs,
+      hasBox,
+      box: hasBox ? first.cell : null,
+      boxOrigin: null,
+      times: new Float32Array(0),
+      vectorChannelNames: [],
+      heterogeneous: false,
+    };
+    const decoder: FileFrameDecoder = {
+      n_atoms: nAtoms,
+      async decodeFrame(frame) {
+        if (!(frame >= 0 && frame < nFrames)) throw new Error("frame index out of range");
+        const { positions, cell } = await decodeAt(frame);
+        const out: DecodedFileFrame = { positions, vectors: new Float32Array(0) };
+        if (hasBox && cell.length === 9) out.box = cell;
+        return out;
+      },
+      free() {
+        owned.free();
+      },
+    };
+    return { decoder, index };
+  } catch (err) {
+    owned.free();
+    throw err;
+  }
 }
 
 /**
@@ -1001,9 +1497,20 @@ export function collectResultBuffers(result: StructureParseResult | XTCParseResu
     add(s.caResNums);
     add(s.caSsType);
   }
-  for (const frame of result.frames) add(frame.positions);
+  for (const frame of result.frames) {
+    add(frame.positions);
+    add(frame.elements);
+    add(frame.bonds);
+    add(frame.box);
+    add(frame.boxOrigin);
+  }
   for (const channel of result.vectorChannels) {
     for (const vf of channel.frames) add(vf.vectors);
+  }
+  if ("scalarChannels" in result) {
+    for (const channel of result.scalarChannels) {
+      for (const sf of channel.frames) add(sf.values);
+    }
   }
   return [...buffers];
 }

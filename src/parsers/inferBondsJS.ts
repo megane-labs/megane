@@ -44,6 +44,16 @@ const OFFSETS = new Int8Array([
 const N_OFFSETS = 13;
 
 /**
+ * Largest cell grid kept dense: a few cells per atom plus a floor for small
+ * systems (crates/megane-core/src/bonds.rs `max_dense_cells` uses the same).
+ * A dense grid spans the bounding box, so one atom far from the rest (a
+ * 9999 Å placeholder) would otherwise ask for billions of cells.
+ */
+export function maxDenseCells(nAtoms: number): number {
+  return nAtoms * 8 + 4096;
+}
+
+/**
  * Infer bonds based on van der Waals radii.
  * Two atoms are bonded if:
  *   MIN_BOND_DIST < distance <= (vdw_i + vdw_j) * VDW_BOND_FACTOR
@@ -85,6 +95,16 @@ export function inferBondsVdwJS(
     nx = Math.max(1, Math.floor(lx / CELL_SIZE));
     ny = Math.max(1, Math.floor(ly / CELL_SIZE));
     nz = Math.max(1, Math.floor(lz / CELL_SIZE));
+    // A huge, mostly empty box: coarser cells (never finer than the cutoff)
+    // keep the table proportional to the atoms. Wrapped atoms fill the box, so
+    // there is no far-off outlier to make the cells crowded.
+    const cap = maxDenseCells(nAtoms);
+    if (nx * ny * nz > cap) {
+      const shrink = Math.cbrt((nx * ny * nz) / cap);
+      nx = Math.max(1, Math.floor(nx / shrink));
+      ny = Math.max(1, Math.floor(ny / shrink));
+      nz = Math.max(1, Math.floor(nz / shrink));
+    }
   } else {
     let minX = Infinity,
       minY = Infinity,
@@ -109,6 +129,9 @@ export function inferBondsVdwJS(
     nx = Math.max(1, Math.floor((maxX - minX) / CELL_SIZE) + 1);
     ny = Math.max(1, Math.floor((maxY - minY) / CELL_SIZE) + 1);
     nz = Math.max(1, Math.floor((maxZ - minZ) / CELL_SIZE) + 1);
+    if (nx * ny * nz > maxDenseCells(nAtoms)) {
+      return sparseBondsVdw(positions, radii, nAtoms, vdwScale, [minX, minY, minZ], [nx, ny, nz]);
+    }
   }
 
   const nyz = ny * nz;
@@ -463,19 +486,109 @@ export function inferBondsVdwJS(
     }
   }
 
-  console.log(
-    "IBJ-CALLED nAtoms=" +
-      nAtoms +
-      " usePbc=" +
-      usePbc +
-      " nx=" +
-      nx +
-      " ny=" +
-      ny +
-      " nz=" +
-      nz +
-      " bonds=" +
-      outLen / 2,
-  );
   return outBuf.slice(0, outLen);
+}
+
+/**
+ * Non-periodic inference over only the occupied cells, for a grid too large
+ * to hold densely. Cells are visited in the dense grid's (x, y, z) order and
+ * each one's pairs in the same sequence as the dense loop (own pairs, then
+ * each half-shell neighbor), so it finds the same bonds in the same order;
+ * neighbor cells are found by binary search.
+ */
+function sparseBondsVdw(
+  positions: Float32Array,
+  radii: Float32Array,
+  nAtoms: number,
+  vdwScale: number,
+  origin: [number, number, number],
+  dims: [number, number, number],
+): Uint32Array {
+  const keys = new Float64Array(nAtoms * 3);
+  for (let i = 0; i < nAtoms; i++) {
+    for (let k = 0; k < 3; k++) {
+      keys[i * 3 + k] = Math.min(
+        Math.floor((positions[i * 3 + k] - origin[k]) / CELL_SIZE),
+        dims[k] - 1,
+      );
+    }
+  }
+  const cmpKey = (a: number, bx: number, by: number, bz: number): number =>
+    keys[a * 3] - bx || keys[a * 3 + 1] - by || keys[a * 3 + 2] - bz;
+  const order = new Uint32Array(nAtoms);
+  for (let i = 0; i < nAtoms; i++) order[i] = i;
+  order.sort((a, b) => cmpKey(a, keys[b * 3], keys[b * 3 + 1], keys[b * 3 + 2]) || a - b);
+
+  // Occupied cells: the first atom of each run of equal keys.
+  const cellFirst: number[] = [];
+  for (let k = 0; k < nAtoms; k++) {
+    const a = order[k];
+    if (k === 0) {
+      cellFirst.push(0);
+      continue;
+    }
+    const p = order[k - 1];
+    if (cmpKey(a, keys[p * 3], keys[p * 3 + 1], keys[p * 3 + 2]) !== 0) cellFirst.push(k);
+  }
+  const nCells = cellFirst.length;
+  cellFirst.push(nAtoms);
+  const findCell = (x: number, y: number, z: number): number => {
+    let lo = 0;
+    let hi = nCells - 1;
+    while (lo <= hi) {
+      const mid = (lo + hi) >> 1;
+      const c = cmpKey(order[cellFirst[mid]], x, y, z);
+      if (c === 0) return mid;
+      if (c < 0) lo = mid + 1;
+      else hi = mid - 1;
+    }
+    return -1;
+  };
+
+  let out = new Uint32Array(Math.min(nAtoms * 8, 1024));
+  let len = 0;
+  const minDistSq = MIN_BOND_DIST * MIN_BOND_DIST;
+  const tryPair = (i: number, j: number): void => {
+    const dx = positions[j * 3] - positions[i * 3];
+    const dy = positions[j * 3 + 1] - positions[i * 3 + 1];
+    const dz = positions[j * 3 + 2] - positions[i * 3 + 2];
+    const distSq = dx * dx + dy * dy + dz * dz;
+    const th = (radii[i] + radii[j]) * vdwScale;
+    if (distSq <= minDistSq || distSq > th * th) return;
+    if (len + 2 > out.length) {
+      const grown = new Uint32Array(out.length * 2);
+      grown.set(out);
+      out = grown;
+    }
+    out[len++] = Math.min(i, j);
+    out[len++] = Math.max(i, j);
+  };
+
+  const neighbors = new Int32Array(N_OFFSETS);
+  for (let c = 0; c < nCells; c++) {
+    const start = cellFirst[c];
+    const end = cellFirst[c + 1];
+    const first = order[start];
+    const cx = keys[first * 3];
+    const cy = keys[first * 3 + 1];
+    const cz = keys[first * 3 + 2];
+    for (let o = 0; o < N_OFFSETS; o++) {
+      const jx = cx + OFFSETS[o * 3];
+      const jy = cy + OFFSETS[o * 3 + 1];
+      const jz = cz + OFFSETS[o * 3 + 2];
+      const outside = jx < 0 || jx >= dims[0] || jy < 0 || jy >= dims[1] || jz < 0 || jz >= dims[2];
+      neighbors[o] = outside ? -1 : findCell(jx, jy, jz);
+    }
+    for (let a = start; a < end; a++) {
+      for (let b = a + 1; b < end; b++) tryPair(order[a], order[b]);
+    }
+    for (let o = 0; o < N_OFFSETS; o++) {
+      const n = neighbors[o];
+      if (n < 0) continue;
+      for (let a = start; a < end; a++) {
+        for (let b = cellFirst[n]; b < cellFirst[n + 1]; b++) tryPair(order[a], order[b]);
+      }
+    }
+  }
+  return out.slice(0, len);
 }

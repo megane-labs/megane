@@ -547,18 +547,6 @@ fn read_atom_block(
     Ok((positions, types, group_vectors, scalars, i))
 }
 
-/// Byte offset of each line, so the index scan can record where each frame
-/// begins in the raw text (for lazy per-frame decode from that offset).
-fn line_byte_starts(text: &str) -> Vec<usize> {
-    let mut starts = Vec::new();
-    let mut pos = 0usize;
-    for line in text.split('\n') {
-        starts.push(pos);
-        pos += line.len() + 1; // +1 for the '\n' (last line's phantom \n is harmless)
-    }
-    starts
-}
-
 /// Lightweight index over a LAMMPS dump: per-frame byte offsets + channel names,
 /// built without parsing any coordinates. Backs lazy/streaming decode.
 pub struct LammpstrjIndex {
@@ -590,68 +578,137 @@ pub struct DecodedLammpstrjFrame {
 /// Scan a LAMMPS dump and record each frame's byte offset without decoding
 /// coordinates (reads headers, skips atom lines). O(lines) per frame.
 pub fn build_index(text: &str) -> Result<LammpstrjIndex, String> {
-    let lines: Vec<&str> = text.lines().collect();
-    let starts = line_byte_starts(text);
-    let n_lines = lines.len();
+    let mut builder = LammpstrjIndexBuilder::default();
+    crate::lines::for_each_line(text, |line, start, _end| builder.push_line(line, start))?;
+    builder.finish()
+}
 
-    let mut offsets: Vec<usize> = Vec::new();
-    let mut timesteps: Vec<f64> = Vec::new();
-    let mut n_atoms = 0usize;
-    let mut box_matrix: Option<[f32; 9]> = None;
-    let mut box_origin: Option<[f32; 3]> = None;
-    let mut vector_channel_names: Vec<String> = Vec::new();
-    let mut heterogeneous = false;
-    let mut i = 0usize;
+/// Lines in a frame header: TIMESTEP + value, NUMBER OF ATOMS + count,
+/// BOX BOUNDS + 3 rows, and the ATOMS column header.
+const FRAME_HEADER_LINES: usize = 9;
 
-    while i < n_lines {
-        if lines[i].trim() != "ITEM: TIMESTEP" {
-            i += 1;
-            continue;
+/// Where the LAMMPS index scan is.
+#[derive(Default)]
+enum LammpstrjScan {
+    /// Between frames, looking for `ITEM: TIMESTEP`.
+    #[default]
+    Seek,
+    /// Collecting the header of a frame starting at `start`.
+    Header { start: u64, lines: Vec<String> },
+    /// Skipping `remaining` atom lines.
+    Atoms { remaining: usize },
+}
+
+/// The [`build_index`] scan, fed one line at a time (see `crate::lines`), so a
+/// dump can be indexed window by window without being held whole.
+#[derive(Default)]
+pub struct LammpstrjIndexBuilder {
+    scan: LammpstrjScan,
+    offsets: Vec<u64>,
+    timesteps: Vec<f64>,
+    n_atoms: usize,
+    box_matrix: Option<[f32; 9]>,
+    box_origin: Option<[f32; 3]>,
+    vector_channel_names: Vec<String>,
+    heterogeneous: bool,
+}
+
+impl LammpstrjIndexBuilder {
+    /// Take the next line (without its line break), starting at byte `start`.
+    pub fn push_line(&mut self, line: &str, start: u64) -> Result<(), String> {
+        match std::mem::take(&mut self.scan) {
+            LammpstrjScan::Seek => {
+                if line.trim() == "ITEM: TIMESTEP" {
+                    self.scan = LammpstrjScan::Header {
+                        start,
+                        lines: vec![line.to_string()],
+                    };
+                }
+            }
+            LammpstrjScan::Header { start, mut lines } => {
+                lines.push(line.to_string());
+                if lines.len() < FRAME_HEADER_LINES {
+                    self.scan = LammpstrjScan::Header { start, lines };
+                } else {
+                    self.add_frame(start, &lines)?;
+                }
+            }
+            LammpstrjScan::Atoms { remaining } => {
+                if remaining > 1 {
+                    self.scan = LammpstrjScan::Atoms {
+                        remaining: remaining - 1,
+                    };
+                }
+            }
         }
-        let frame_start_line = i;
-        let header = read_frame_header(&lines, i)?;
-        if offsets.is_empty() {
-            n_atoms = header.n_atoms;
-            box_matrix = Some(header.box_matrix);
-            box_origin = Some([header.xlo, header.ylo, header.zlo]);
-            vector_channel_names = header
+        Ok(())
+    }
+
+    fn add_frame(&mut self, start: u64, lines: &[String]) -> Result<(), String> {
+        let refs: Vec<&str> = lines.iter().map(String::as_str).collect();
+        let header = read_frame_header(&refs, 0)?;
+        if self.offsets.is_empty() {
+            self.n_atoms = header.n_atoms;
+            self.box_matrix = Some(header.box_matrix);
+            self.box_origin = Some([header.xlo, header.ylo, header.zlo]);
+            self.vector_channel_names = header
                 .layout
                 .vector_groups
                 .iter()
                 .map(|g| g.name.to_string())
                 .collect();
-        } else if header.n_atoms != n_atoms {
+        } else if header.n_atoms != self.n_atoms {
             // A jagged dump is admitted here (not rejected); the host falls back
             // to an eager parse because the positions-only lazy decoder can't
             // stream frames whose atom count differs from frame 0.
-            heterogeneous = true;
+            self.heterogeneous = true;
         }
-        offsets.push(starts[frame_start_line]);
-        timesteps.push(header.timestep);
+        self.offsets.push(start);
+        // Only the first two time stamps set the time step.
+        if self.timesteps.len() < 2 {
+            self.timesteps.push(header.timestep);
+        }
         // Skip the atom lines without parsing.
-        i = header.atoms_start + header.n_atoms;
+        if header.n_atoms > 0 {
+            self.scan = LammpstrjScan::Atoms {
+                remaining: header.n_atoms,
+            };
+        }
+        Ok(())
     }
 
-    if offsets.is_empty() {
-        return Err("No frames found in file".to_string());
+    /// The index of everything pushed so far.
+    pub fn finish(self) -> Result<LammpstrjIndex, String> {
+        if let LammpstrjScan::Header { lines, .. } = &self.scan {
+            // A header cut off by the end of the file fails exactly as the
+            // whole-text reader does.
+            let refs: Vec<&str> = lines.iter().map(String::as_str).collect();
+            read_frame_header(&refs, 0)?;
+        }
+        if self.offsets.is_empty() {
+            return Err("No frames found in file".to_string());
+        }
+        let timestep_ps = if self.timesteps.len() >= 2 {
+            (self.timesteps[1] - self.timesteps[0]).abs() as f32
+        } else {
+            0.0
+        };
+        Ok(LammpstrjIndex {
+            n_atoms: self.n_atoms,
+            n_frames: self.offsets.len(),
+            timestep_ps,
+            box_matrix: self.box_matrix,
+            box_origin: self.box_origin,
+            offsets: self.offsets.iter().map(|&o| o as usize).collect(),
+            vector_channel_names: self.vector_channel_names,
+            heterogeneous: self.heterogeneous,
+        })
     }
 
-    let timestep_ps = if timesteps.len() >= 2 {
-        (timesteps[1] - timesteps[0]).abs() as f32
-    } else {
-        0.0
-    };
-
-    Ok(LammpstrjIndex {
-        n_atoms,
-        n_frames: offsets.len(),
-        timestep_ps,
-        box_matrix,
-        box_origin,
-        offsets,
-        vector_channel_names,
-        heterogeneous,
-    })
+    /// Byte offset of each frame's `ITEM: TIMESTEP` line, as file offsets.
+    pub fn file_offsets(&self) -> &[u64] {
+        &self.offsets
+    }
 }
 
 /// Decode a single LAMMPS frame's positions (and vector channels) given the
@@ -1352,6 +1409,38 @@ mod tests {
          2 2 4.1 5.1 6.1\n\
          1 1 1.1 2.1 3.1\n\
          3 2 7.1 8.1 9.1\n"
+    }
+
+    #[test]
+    fn windowed_dump_index_matches_the_whole_text_index() {
+        for name in ["water.lammpstrj", "hetero_atoms.lammpstrj"] {
+            let text = std::fs::read_to_string(format!(
+                "{}/../../tests/fixtures/{name}",
+                env!("CARGO_MANIFEST_DIR")
+            ))
+            .unwrap();
+            let whole = build_index(&text).unwrap();
+            for window in [1, 31, 512, text.len()] {
+                let mut b = LammpstrjIndexBuilder::default();
+                crate::lines::feed_in_windows(&text, window, |l, s, _| b.push_line(l, s)).unwrap();
+                let got = b.finish().unwrap();
+                assert_eq!(got.offsets, whole.offsets, "{name} @ {window}");
+                assert_eq!(got.n_atoms, whole.n_atoms);
+                assert_eq!(got.timestep_ps, whole.timestep_ps);
+                assert_eq!(got.box_matrix, whole.box_matrix);
+                assert_eq!(got.box_origin, whole.box_origin);
+                assert_eq!(got.vector_channel_names, whole.vector_channel_names);
+                assert_eq!(got.heterogeneous, whole.heterogeneous);
+            }
+        }
+    }
+
+    #[test]
+    fn a_header_cut_off_at_the_end_fails_like_the_whole_text_scan() {
+        let text = "ITEM: TIMESTEP\n0\nITEM: NUMBER OF ATOMS\n";
+        let err = build_index(text).err().unwrap();
+        assert!(err.contains("NUMBER OF ATOMS"), "{err}");
+        assert!(build_index("nothing here\n").is_err());
     }
 
     #[test]

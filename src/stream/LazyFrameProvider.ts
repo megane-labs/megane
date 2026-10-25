@@ -204,6 +204,8 @@ export class LazyFrameProvider implements FrameProvider {
           nAtoms: this.nAtoms,
           positions: decoded.positions,
         };
+        // A trajectory whose frames each carry a cell (DCD, NetCDF NPT runs).
+        if (decoded.box) frame.box = decoded.box;
         const isNew = !this.cache.has(providerIndex);
         this.cacheFrame(frame);
         if (isNew) {
