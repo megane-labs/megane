@@ -10,6 +10,23 @@ import type { FlowCaseRecord } from "./report";
 import { scoreFlowResponse, type ExecuteFn } from "./scorer";
 import type { FlowBenchCase } from "./types";
 
+/**
+ * The cases a run covers: those named in `ids` (comma-separated, as
+ * `MEGANE_LLM_BENCH_CASES` gives them), or every case when it names none —
+ * an unset variable and the empty string CI passes for "all" alike. Throws on
+ * an id the dataset does not have, so a typo cannot pass as an empty run.
+ */
+export function selectCases(cases: FlowBenchCase[], ids: string | undefined): FlowBenchCase[] {
+  const wanted = (ids ?? "")
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean);
+  if (wanted.length === 0) return cases;
+  const unknown = wanted.filter((id) => !cases.some((c) => c.id === id));
+  if (unknown.length > 0) throw new Error(`Unknown case id(s): ${unknown.join(", ")}`);
+  return cases.filter((c) => wanted.includes(c.id));
+}
+
 /** Produce the assistant's reply to one case in its environment. */
 export type FlowGenerateFn = (c: FlowBenchCase, env: FlowEnvironment) => Promise<string>;
 

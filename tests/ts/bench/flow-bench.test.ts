@@ -23,7 +23,7 @@ import { executeFlow, graphOf, summarize, type ExecutionResult } from "../../../
 import { GOLDEN, replyWith } from "../../../bench/flow/golden";
 import { flowRequest, generateFlowLive } from "../../../bench/flow/providers";
 import { aggregateFlow, flowToJSON, flowToMarkdown } from "../../../bench/flow/report";
-import { runFlowDataset } from "../../../bench/flow/runner";
+import { runFlowDataset, selectCases } from "../../../bench/flow/runner";
 import {
   FLOW_DIMENSION_WEIGHTS,
   scoreFlowResponse,
@@ -311,6 +311,24 @@ describe("Flow scorer", () => {
     const check = called("liquid_box", "anything", () => true);
     expect(check.test({ built: true, error: null, output: null, calls: [] })).toBe(false);
     expect(moleculeArg({ smiles: "O" })).toBeNull();
+  });
+});
+
+describe("selectCases", () => {
+  it("runs every case when no ids are given, the empty string CI passes included", () => {
+    expect(selectCases(FLOW_DATASET, undefined)).toBe(FLOW_DATASET);
+    expect(selectCases(FLOW_DATASET, "")).toBe(FLOW_DATASET);
+    expect(selectCases(FLOW_DATASET, " , ")).toBe(FLOW_DATASET);
+  });
+
+  it("runs the named cases, and refuses an id the dataset does not have", () => {
+    expect(selectCases(FLOW_DATASET, "slab-pt111, crystal-cu-bulk").map((c) => c.id)).toEqual([
+      "crystal-cu-bulk",
+      "slab-pt111",
+    ]);
+    expect(() => selectCases(FLOW_DATASET, "slab-pt111,slab-typo")).toThrow(
+      "Unknown case id(s): slab-typo",
+    );
   });
 });
 

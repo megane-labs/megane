@@ -24,7 +24,7 @@ import { FLOW_DATASET } from "../../../bench/flow/dataset";
 import { executeFlow } from "../../../bench/flow/execute";
 import { generateFlowLive } from "../../../bench/flow/providers";
 import { aggregateFlow, flowToJSON, flowToMarkdown } from "../../../bench/flow/report";
-import { runFlowDataset } from "../../../bench/flow/runner";
+import { runFlowDataset, selectCases } from "../../../bench/flow/runner";
 import { assertConfig, configFromEnv } from "../../../bench/llm/providers";
 
 const ENABLED = process.env.MEGANE_LLM_BENCH === "1";
@@ -33,8 +33,8 @@ describe.skipIf(!ENABLED)("Megane Builder Flow benchmark (live)", () => {
   it("scores the dataset and writes a report", async () => {
     const config = configFromEnv();
     assertConfig(config);
-    const only = process.env.MEGANE_LLM_BENCH_CASES?.split(",").map((s) => s.trim());
-    const cases = only ? FLOW_DATASET.filter((c) => only.includes(c.id)) : FLOW_DATASET;
+    const cases = selectCases(FLOW_DATASET, process.env.MEGANE_LLM_BENCH_CASES);
+    expect(cases.length).toBeGreaterThan(0);
 
     const repairs = new Map<string, number>();
     const records = await runFlowDataset(
