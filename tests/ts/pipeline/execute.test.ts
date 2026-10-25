@@ -544,6 +544,85 @@ describe("executePipeline", () => {
       expect(result.bonds[0].nBonds).toBe(2);
     });
 
+    describe("'structure' source on a file that declares no bonds", () => {
+      // A PDB without CONECT records: the parser found no file bonds
+      // (nFileBonds 0) and inferred the C–C pair itself (nBonds 1).
+      const noConect: Snapshot = {
+        ...makeSnapshot({
+          nAtoms: 3,
+          positions: [0, 0, 0, 1.5, 0, 0, 8, 0, 0],
+          elements: [6, 6, 6],
+          bonds: [0, 1],
+        }),
+        nFileBonds: 0,
+      };
+      const graph = (params: Record<string, unknown>) => ({
+        nodes: [
+          makeNode("ls", "load_structure", {
+            fileName: null,
+            hasTrajectory: false,
+            hasCell: false,
+          }),
+          makeNode("ab", "add_bond", { bondSource: "structure", ...params }),
+          makeNode("vp", "viewport", { perspective: false, cellAxesVisible: true }),
+        ],
+        edges: [makeEdge("ls", "particle", "ab", "particle"), makeEdge("ab", "bond", "vp", "bond")],
+      });
+
+      it("falls back to distance inference instead of drawing nothing", () => {
+        const { nodes, edges } = graph({});
+        const { viewportState, nodeErrors } = executePipeline(nodes, edges, {
+          snapshot: noConect,
+        });
+        expect(nodeErrors.get("ab")).toBeUndefined();
+        expect(viewportState.bonds).toHaveLength(1);
+        expect(viewportState.bonds[0].nBonds).toBe(1);
+        expect(Array.from(viewportState.bonds[0].bondIndices)).toEqual([0, 1]);
+      });
+
+      it("infers with the node's vdwScale, like the 'distance' source", () => {
+        // (1.7 + 1.7) × 0.3 = 1.02 Å < 1.5 Å: too tight for the C–C pair.
+        const { nodes, edges } = graph({ vdwScale: 0.3 });
+        const { viewportState, nodeErrors } = executePipeline(nodes, edges, {
+          snapshot: noConect,
+        });
+        expect(viewportState.bonds).toHaveLength(0);
+        expect(nodeErrors.get("ab")).toEqual([{ message: "No bonds found", severity: "warning" }]);
+      });
+
+      it("finds the same bonds as the 'distance' source on a periodic structure", () => {
+        // H–H across the face of a 3 Å box: 0.7 Å by minimum image.
+        const periodic: Snapshot = {
+          ...makeSnapshot({
+            nAtoms: 2,
+            positions: [0.2, 1.5, 1.5, 2.5, 1.5, 1.5],
+            elements: [1, 1],
+            bonds: [0, 1],
+            box: [3, 0, 0, 0, 3, 0, 0, 0, 3],
+          }),
+          nFileBonds: 0,
+        };
+        const structure = graph({});
+        const distance = graph({ bondSource: "distance" });
+        const a = executePipeline(structure.nodes, structure.edges, { snapshot: periodic });
+        const b = executePipeline(distance.nodes, distance.edges, { snapshot: periodic });
+        expect(a.viewportState.bonds[0].nBonds).toBe(b.viewportState.bonds[0].nBonds);
+        expect(Array.from(a.viewportState.bonds[0].bondIndices)).toEqual(
+          Array.from(b.viewportState.bonds[0].bondIndices),
+        );
+      });
+
+      it("keeps a structure that carries no bonds at all bondless", () => {
+        // Edit ops assert their bond set (nFileBonds = nBonds); deleting every
+        // bond must not bring inferred ones back.
+        const deleted: Snapshot = { ...noConect, nBonds: 0, bonds: new Uint32Array(0) };
+        const { nodes, edges } = graph({});
+        const { viewportState, nodeErrors } = executePipeline(nodes, edges, { snapshot: deleted });
+        expect(viewportState.bonds).toHaveLength(0);
+        expect(nodeErrors.get("ab")).toEqual([{ message: "No bonds found", severity: "warning" }]);
+      });
+    });
+
     it("computes distance-based bonds", () => {
       // Two carbons at 1.5 Å
       const closeAtoms = makeSnapshot({

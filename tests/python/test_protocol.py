@@ -224,6 +224,79 @@ def test_encode_snapshot_no_symmetry_ops_omits_flag():
     assert not (flags & HAS_SYMMETRY_OPS)
 
 
+def test_encode_snapshot_file_bond_count():
+    """The file-declared bond count is flagged and appended as the last u32."""
+    from megane.protocol import HAS_FILE_BOND_COUNT
+
+    s = _make_water_structure(2)
+    s.n_file_bonds = 1
+    data = encode_snapshot(s)
+    flags = struct.unpack("<B", data[5:6])[0]
+    assert flags & HAS_FILE_BOND_COUNT
+    assert struct.unpack("<I", data[-4:])[0] == 1
+    assert len(data) % 4 == 0
+
+
+def test_encode_snapshot_file_bond_count_follows_symmetry_ops():
+    """The count comes after every other optional field, symmetry ops included."""
+    from megane.protocol import HAS_FILE_BOND_COUNT, HAS_SYMMETRY_OPS
+
+    s = _make_water_structure(1)
+    s.symmetry_ops = ["x,y,z"]
+    s.n_file_bonds = 0
+    data = encode_snapshot(s)
+    flags = struct.unpack("<B", data[5:6])[0]
+    assert flags & HAS_SYMMETRY_OPS and flags & HAS_FILE_BOND_COUNT
+    assert struct.unpack("<I", data[-4:])[0] == 0
+    raw = b"x,y,z"
+    padding = (4 - ((4 + len(raw)) % 4)) % 4
+    sym = data[-(4 + 4 + len(raw) + padding) : -4]
+    assert struct.unpack("<I", sym[:4])[0] == len(raw)
+    assert sym[4 : 4 + len(raw)] == raw
+
+
+def test_encode_snapshot_file_bond_count_is_clamped():
+    """A count above the bonds actually sent is clamped to the bond count."""
+    s = _make_water_structure(1)
+    s.n_file_bonds = 99
+    data = encode_snapshot(s)
+    assert struct.unpack("<I", data[-4:])[0] == len(s.bonds)
+
+
+def test_encode_snapshot_unknown_file_bond_count_omits_flag():
+    """A structure that does not know its file bonds keeps the old layout."""
+    from megane.protocol import HAS_FILE_BOND_COUNT
+
+    s = _make_water_structure(1)
+    assert s.n_file_bonds is None
+    data = encode_snapshot(s)
+    flags = struct.unpack("<B", data[5:6])[0]
+    assert not (flags & HAS_FILE_BOND_COUNT)
+
+
+def test_pdb_without_conect_reports_no_file_bonds():
+    """1UBQ has no CONECT records: its bonds are all parser-inferred, and the
+    snapshot says so (the frontend then infers them by distance, as the
+    browser-only hosts do) instead of passing them off as file bonds."""
+    from megane.protocol import HAS_FILE_BOND_COUNT
+
+    s = load_pdb(str(FIXTURES / "1ubq.pdb"))
+    assert len(s.bonds) > 0
+    assert s.n_file_bonds == 0
+    data = encode_snapshot(s)
+    flags = struct.unpack("<B", data[5:6])[0]
+    assert flags & HAS_FILE_BOND_COUNT
+    assert struct.unpack("<I", data[-4:])[0] == 0
+
+
+def test_pdb_with_conect_reports_its_file_bonds():
+    """1CRN declares CONECT records; their count rides along with the bonds."""
+    s = load_pdb(str(FIXTURES / "1crn.pdb"))
+    assert 0 < s.n_file_bonds <= len(s.bonds)
+    data = encode_snapshot(s)
+    assert struct.unpack("<I", data[-4:])[0] == s.n_file_bonds
+
+
 def test_encode_snapshot_100k_atoms():
     """Test that 100k atoms can be encoded and decoded correctly."""
     n_molecules = 33_334  # 100,002 atoms
