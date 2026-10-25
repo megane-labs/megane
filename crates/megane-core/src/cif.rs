@@ -8,7 +8,7 @@ use std::collections::HashSet;
 
 use crate::atomic::element_from_symbol;
 use crate::bonds;
-use crate::cell::cell_params_to_matrix;
+use crate::cell::checked_cell_params_to_matrix;
 use crate::cif_lex::{
     contains_ci, split_line, starts_with_ci, strip_quotes, Block, Document, Item, Loop,
 };
@@ -171,8 +171,10 @@ pub(crate) fn symmetry_ops(text: &str, items: &[Item]) -> Vec<String> {
 }
 
 /// The cell of one data block, when all six parameters are present and the
-/// lengths are positive.
-fn block_cell(block: &Block) -> Option<[f32; 9]> {
+/// lengths are positive. A cell whose parameters describe no cell (zero
+/// angles, ...) is an `Err` carrying the reason, so it can be dropped with a
+/// warning.
+fn block_cell(block: &Block) -> Result<Option<[f32; 9]>, String> {
     let cell = |tag: &str| block.value(tag).and_then(|v| v.as_f32());
     match (
         cell("_cell_length_a"),
@@ -185,9 +187,9 @@ fn block_cell(block: &Block) -> Option<[f32; 9]> {
         (Some(a), Some(b), Some(c), Some(alpha), Some(beta), Some(gamma))
             if a > 0.0 && b > 0.0 && c > 0.0 =>
         {
-            Some(cell_params_to_matrix(a, b, c, alpha, beta, gamma))
+            checked_cell_params_to_matrix(a, b, c, alpha, beta, gamma).map(Some)
         }
-        _ => None,
+        _ => Ok(None),
     }
 }
 
@@ -344,14 +346,29 @@ pub fn parse(text: &str) -> Result<ParsedStructure, String> {
     // of them — the first whose `_atom_site` loop yields atoms — and the cell,
     // atom sites and symmetry operations all come from that same block, so
     // one block's cell is never applied to another block's atoms.
+    //
+    // A cell whose parameters describe no cell is dropped: Cartesian sites
+    // still load (with a warning), fractional-only ones cannot be placed.
     let mut chosen: Option<(usize, Option<[f32; 9]>, AtomSites)> = None;
     let mut unloaded_warnings: Vec<String> = Vec::new();
+    let mut unusable_cell: Option<String> = None;
     for (bi, block) in blocks.iter().enumerate() {
-        let box_matrix = block_cell(block);
-        let sites = read_atom_sites(block, box_matrix.as_ref());
+        let (box_matrix, cell_error) = match block_cell(block) {
+            Ok(cell) => (cell, None),
+            Err(why) => (None, Some(why)),
+        };
+        let mut sites = read_atom_sites(block, box_matrix.as_ref());
         if !sites.elements.is_empty() {
+            if let Some(why) = cell_error {
+                sites
+                    .warnings
+                    .insert(0, format!("{why}; no unit cell shown"));
+            }
             chosen = Some((bi, box_matrix, sites));
             break;
+        }
+        if unusable_cell.is_none() && block_has_atom_sites(block) {
+            unusable_cell = cell_error;
         }
         unloaded_warnings.extend(sites.warnings);
     }
@@ -363,6 +380,11 @@ pub fn parse(text: &str) -> Result<ParsedStructure, String> {
         // of erroring so hosts don't need to sniff the dialect themselves.
         if doc.has_tag_prefix("_atom_site.") {
             return crate::mmcif::parse_document(text, &doc);
+        }
+        if let Some(why) = unusable_cell {
+            return Err(format!(
+                "CIF unit cell is unusable ({why}), so its fractional atom sites cannot be placed"
+            ));
         }
         return Err(match unloaded_warnings.first() {
             Some(w) => format!("CIF file contains no atom sites ({w})"),
@@ -436,6 +458,37 @@ pub fn parse(text: &str) -> Result<ParsedStructure, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn cif_with_angles(angles: &str, coords: &str) -> String {
+        format!(
+            "data_x\n_cell_length_a 10\n_cell_length_b 10\n_cell_length_c 10\n{angles}loop_\n_atom_site_label\n_atom_site_type_symbol\n{coords}"
+        )
+    }
+
+    /// Cell angles of 0 used to make every fractional coordinate NaN. Such a
+    /// cell is no cell: Cartesian sites still load (with a warning), while
+    /// fractional-only sites cannot be placed, and the error says why.
+    #[test]
+    fn a_cell_that_describes_no_cell_is_dropped_with_a_warning() {
+        let zero = "_cell_angle_alpha 0\n_cell_angle_beta 0\n_cell_angle_gamma 0\n";
+        let cart = "_atom_site_Cartn_x\n_atom_site_Cartn_y\n_atom_site_Cartn_z\nC1 C 1 2 3\n";
+        let s = parse(&cif_with_angles(zero, cart)).unwrap();
+        assert!(s.box_matrix.is_none());
+        assert_eq!(s.positions, vec![1.0, 2.0, 3.0]);
+        assert_eq!(s.warnings.len(), 1);
+        assert!(s.warnings[0].contains("angles"), "{:?}", s.warnings);
+
+        let frac = "_atom_site_fract_x\n_atom_site_fract_y\n_atom_site_fract_z\nC1 C 0.1 0.2 0.3\n";
+        let Err(err) = parse(&cif_with_angles(zero, frac)) else {
+            panic!("fractional sites need a cell");
+        };
+        assert!(err.contains("unit cell"), "{err}");
+
+        let right = "_cell_angle_alpha 90\n_cell_angle_beta 90\n_cell_angle_gamma 90\n";
+        let s = parse(&cif_with_angles(right, frac)).unwrap();
+        assert!(s.box_matrix.is_some());
+        assert!(s.warnings.is_empty());
+    }
 
     /// A macromolecular (mmCIF-grammar) file under the `.cif` extension —
     /// exactly what wwPDB serves as `1cbs.cif` — must be delegated to the
@@ -1088,7 +1141,7 @@ H1 ? ? ?
     #[test]
     fn test_fract_to_cart_cubic() {
         // Simple cubic cell: a=b=c=10, alpha=beta=gamma=90
-        let matrix = cell_params_to_matrix(10.0, 10.0, 10.0, 90.0, 90.0, 90.0);
+        let matrix = crate::cell::cell_params_to_matrix(10.0, 10.0, 10.0, 90.0, 90.0, 90.0);
         let (x, y, z) = fract_to_cart(0.5, 0.5, 0.5, &matrix);
         assert!((x - 5.0).abs() < 1e-3);
         assert!((y - 5.0).abs() < 1e-3);

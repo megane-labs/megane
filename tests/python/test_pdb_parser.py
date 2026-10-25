@@ -85,6 +85,22 @@ def test_empty_box_fixture_is_a_cell_without_atoms():
     assert abs(s.box[2, 2] - 10.0) < 1e-4
 
 
+def test_placeholder_and_degenerate_cryst1_are_no_cell():
+    """The NMR/EM unit-cube CRYST1 is no cell; zero angles warn instead of NaN."""
+    from megane import megane_parser
+
+    atom = "ATOM      1  CA  SER A   1       1.000   2.000   3.000  1.00  0.00           C\n"
+    cube = "CRYST1    1.000    1.000    1.000  90.00  90.00  90.00 P 1           1\n"
+    s = megane_parser.parse_pdb(cube + atom)
+    assert not s.box_matrix.any()
+    assert s.warnings == []
+
+    flat = "CRYST1   10.000   10.000   10.000   0.00   0.00   0.00 P 1           1\n"
+    s = megane_parser.parse_pdb(flat + atom)
+    assert np.isfinite(s.box_matrix).all() and not s.box_matrix.any()
+    assert len(s.warnings) == 1
+
+
 def test_non_ascii_text_does_not_panic():
     """A multi-byte character across a fixed column used to panic the parser."""
     from megane import megane_parser
