@@ -22,6 +22,7 @@
 
 import type { Node, Edge } from "@xyflow/react";
 import type { NodeSnapshotData, PipelineNodeData } from "./execute";
+import type { SerializedPipeline } from "./types";
 import type { NodeStreamingData } from "./executors/streaming";
 
 /**
@@ -123,4 +124,30 @@ export function mergeGeneratedGraph(
   }
 
   return { nodes, nodeSnapshots, nodeParseErrors, nodeStreamingData };
+}
+
+/**
+ * `json` with the file-bound params of `merged` (the result of
+ * {@link mergeGeneratedGraph} on its deserialized nodes) written onto the
+ * serialized node of the same id.
+ *
+ * The deserializer derives edges from those params: a loader that holds a
+ * trajectory (`hasTrajectory`) gets its `trajectory → viewport` edge. The model
+ * writes its loaders as the prompt's examples do, with no file and no
+ * trajectory, so deserializing its JSON as-is wires the graph for data that is
+ * not there; deserializing this instead wires it for the data that stays
+ * loaded.
+ */
+export function withFileBoundParams(
+  json: SerializedPipeline,
+  merged: Node<PipelineNodeData>[],
+): SerializedPipeline {
+  const byId = new Map(merged.map((n) => [n.id, n]));
+  return {
+    ...json,
+    nodes: json.nodes.map((node) => {
+      const m = byId.get(node.id);
+      return m ? ({ ...node, ...fileBoundParams(m) } as typeof node) : node;
+    }),
+  };
 }

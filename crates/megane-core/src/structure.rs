@@ -347,8 +347,9 @@ pub struct ParsedStructure {
     pub ca_indices: Vec<u32>,
     /// Per-Cα chain identifier (ASCII byte, e.g. b'A').
     pub ca_chain_ids: Vec<u8>,
-    /// Per-Cα residue sequence number.
-    pub ca_res_nums: Vec<u32>,
+    /// Per-Cα residue sequence number. Signed: PDB/mmCIF author numbering
+    /// puts expression tags below 1 (`-2`, `-1`, `0`).
+    pub ca_res_nums: Vec<i32>,
     /// Per-Cα secondary-structure type: 0 = coil, 1 = helix, 2 = sheet.
     pub ca_ss_type: Vec<u8>,
     /// Crystallographic symmetry operations as raw `x,y,z`-style strings,
@@ -448,15 +449,15 @@ impl ParsedStructure {
 /// range `start..=end` on chain `chain_id`.
 pub(crate) struct SsRange {
     pub(crate) chain_id: u8,
-    pub(crate) start: u32,
-    pub(crate) end: u32,
+    pub(crate) start: i32,
+    pub(crate) end: i32,
     pub(crate) ss_type: u8, // 1 = helix, 2 = sheet
 }
 
 /// Secondary-structure type of the Cα at (`chain_id`, `res_num`): the
 /// `ss_type` of the first range in file order that covers it, or 0 (coil)
 /// when none does.
-pub(crate) fn ss_type_at(ranges: &[SsRange], chain_id: u8, res_num: u32) -> u8 {
+pub(crate) fn ss_type_at(ranges: &[SsRange], chain_id: u8, res_num: i32) -> u8 {
     ranges
         .iter()
         .find(|r| r.chain_id == chain_id && res_num >= r.start && res_num <= r.end)

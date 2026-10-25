@@ -105,9 +105,9 @@ struct PyStructure {
     /// Per-Cα chain identifier as an ASCII byte.
     #[pyo3(get)]
     ca_chain_ids: Py<PyArray1<u8>>,
-    /// Per-Cα residue sequence number.
+    /// Per-Cα residue sequence number (signed: expression tags sit below 1).
     #[pyo3(get)]
-    ca_res_nums: Py<PyArray1<u32>>,
+    ca_res_nums: Py<PyArray1<i32>>,
     /// Per-Cα secondary-structure type: 0 = coil, 1 = helix, 2 = sheet.
     #[pyo3(get)]
     ca_ss_type: Py<PyArray1<u8>>,

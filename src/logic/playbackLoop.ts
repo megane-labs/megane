@@ -21,15 +21,21 @@ export function playbackIntervalMs(fps: number, speed: number): number {
 }
 
 /**
- * The loop range actually in force: `loopEnd` clamped to the last frame and
- * `loopStart` to the first, so a stale range (left over from a longer
- * trajectory) never points past the data.
+ * The loop range actually in force: both ends clamped to the frames that
+ * exist, so a stale range (left over from a longer trajectory) never points
+ * past the data, and put in order. The Timeline's two inputs are edited one
+ * keystroke at a time, so the stored range passes through inverted states
+ * (start typed past end); those play the frames between the two ends instead
+ * of pinning the playhead on the start frame. The stored range is left as
+ * typed, so the inputs never jump under the user's cursor.
  */
 export function effectiveLoopRange(bounds: PlaybackBounds): { start: number; end: number } {
-  return {
-    start: Math.max(bounds.loopStart, 0),
-    end: Math.min(bounds.loopEnd, bounds.totalFrames - 1),
-  };
+  const { loopStart, loopEnd } = clampLoopRange(
+    bounds.loopStart,
+    bounds.loopEnd,
+    bounds.totalFrames,
+  );
+  return { start: Math.min(loopStart, loopEnd), end: Math.max(loopStart, loopEnd) };
 }
 
 /**

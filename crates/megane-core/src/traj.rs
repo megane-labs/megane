@@ -479,6 +479,19 @@ fn read_frame0(
     })
 }
 
+/// Check that frame `frame` stores one position per atom of its `numbers`:
+/// a frame whose arrays disagree is corrupt, and reading it would index past
+/// the shorter one.
+fn check_frame_positions(frame: usize, n_coords: usize, n_atoms: usize) -> Result<(), String> {
+    if Some(n_coords) != n_atoms.checked_mul(3) {
+        return Err(format!(
+            "frame {frame} has {n_coords} coordinates for {n_atoms} atoms (expected {})",
+            n_atoms.saturating_mul(3)
+        ));
+    }
+    Ok(())
+}
+
 /// Frame 0's snapshot: its positions, elements and cell, and bonds inferred
 /// from them (the format carries none).
 fn frame0_structure(data: FileView<'_>, frame0: Frame0) -> Result<ParsedStructure, String> {
@@ -489,12 +502,7 @@ fn frame0_structure(data: FileView<'_>, frame0: Frame0) -> Result<ParsedStructur
         box_matrix,
     } = frame0;
     let positions = extract_positions(data, &json, array_le)?;
-    if positions.len() % 3 != 0 {
-        return Err(format!(
-            "frame 0 has {} coordinates (not a multiple of 3)",
-            positions.len()
-        ));
-    }
+    check_frame_positions(0, positions.len(), elements.len())?;
     let n_atoms = elements.len();
     let bonds = bonds::infer_bonds(&positions, &elements, n_atoms, &HashSet::new());
     Ok(ParsedStructure {
@@ -650,13 +658,8 @@ pub fn parse_traj(data: &[u8]) -> Result<ParsedStructure, String> {
         }
 
         let pos = extract_positions(view, &json, frame_le)?;
-        if pos.len() % 3 != 0 {
-            return Err(format!(
-                "frame {} has {} coordinates (not a multiple of 3)",
-                i,
-                pos.len()
-            ));
-        }
+        // Each frame's positions belong to its (carried-forward) numbers.
+        check_frame_positions(i, pos.len(), cur_numbers.len())?;
         if i == 0 {
             positions = pos;
             continue;
@@ -874,6 +877,7 @@ impl TrajIndexBuilder {
                 }
                 self.cur_numbers = nums;
             }
+            check_frame_positions(item, n_coords, self.cur_numbers.len())?;
             let cell0 = self.cell0.as_ref().ok_or("frame 0 is not added yet")?;
             if let Some((changed, cell)) = cell0.compare(view, &json, frame_le) {
                 self.cur_cell = if changed { cell } else { self.box0 };
@@ -1333,6 +1337,79 @@ mod tests {
             out.extend(o.to_le_bytes());
         }
         out
+    }
+
+    /// A little-endian ULM file of `frames`, each `(numbers, n_positions)`:
+    /// the `numbers` it re-emits (frame 0 must) and how many positions rows
+    /// it stores, written right before its JSON.
+    fn ulm_frames(frames: &[(Option<&[u8]>, usize)]) -> Vec<u8> {
+        let mut out = vec![0u8; ULM_HEADER_LEN];
+        out[..8].copy_from_slice(ULM_MAGIC);
+        out[24..32].copy_from_slice(&1i64.to_le_bytes());
+        out[32..40].copy_from_slice(&(frames.len() as i64).to_le_bytes());
+        let mut offsets = Vec::new();
+        for (numbers, n_positions) in frames {
+            let at = out.len();
+            for i in 0..n_positions * 3 {
+                out.extend((i as f64).to_le_bytes());
+            }
+            let numbers = numbers
+                .map(|n| format!(r#""numbers": {n:?}, "#))
+                .unwrap_or_default();
+            let json = format!(
+                r#"{{{numbers}"positions.": {{"ndarray": [[{n_positions}, 3], "float64", {at}]}}}}"#
+            );
+            offsets.push(out.len() as i64);
+            out.extend((json.len() as i64).to_le_bytes());
+            out.extend(json.as_bytes());
+        }
+        let pos0 = out.len() as i64;
+        out[40..48].copy_from_slice(&pos0.to_le_bytes());
+        for o in offsets {
+            out.extend(o.to_le_bytes());
+        }
+        out
+    }
+
+    #[test]
+    fn frame0_positions_must_match_its_numbers() {
+        // Three atoms but one (or two) positions: reading on would index past
+        // the positions (frame 0's bond inference panicked).
+        for n_positions in [1, 2] {
+            let data = ulm_frames(&[(Some(&[8, 1, 1]), n_positions)]);
+            let want = format!("frame 0 has {} coordinates for 3 atoms", n_positions * 3);
+            let err = parse_traj(&data).err().unwrap();
+            assert!(err.contains(&want), "{err}");
+            let err = parse_traj_frame0(&data, &data, data.len()).err().unwrap();
+            assert!(err.contains(&want), "{err}");
+            let err = index_in_frames(&data).err().unwrap();
+            assert!(err.contains(&want), "{err}");
+        }
+        // More positions than atoms is as corrupt.
+        let data = ulm_frames(&[(Some(&[8]), 2)]);
+        let err = parse_traj(&data).err().unwrap();
+        assert!(err.contains("6 coordinates for 1 atoms"), "{err}");
+    }
+
+    #[test]
+    fn every_frame_positions_must_match_its_numbers() {
+        // Frame 1 keeps frame 0's single atom but stores two positions.
+        let data = ulm_frames(&[(Some(&[8]), 1), (None, 2)]);
+        let err = parse_traj(&data).err().unwrap();
+        assert!(
+            err.contains("frame 1 has 6 coordinates for 1 atoms"),
+            "{err}"
+        );
+        let err = index_in_frames(&data).err().unwrap();
+        assert!(
+            err.contains("frame 1 has 6 coordinates for 1 atoms"),
+            "{err}"
+        );
+        // Re-emitting numbers for the new atom count is a valid change.
+        let data = ulm_frames(&[(Some(&[8]), 1), (Some(&[8, 1]), 2)]);
+        let full = parse_traj(&data).unwrap();
+        assert_eq!(full.frame(0).len(), 6);
+        assert!(index_in_frames(&data).unwrap().heterogeneous());
     }
 
     #[test]

@@ -63,7 +63,8 @@ impl<'a> Reader<'a> {
 
     fn read_string(&mut self) -> Result<String, String> {
         let len = self.read_u32()? as usize;
-        let padded = (len + 3) & !3;
+        // `len + 3` overflows usize on wasm32 for a length near u32::MAX.
+        let padded = padded4(Some(len)).ok_or("NetCDF string length overflows")?;
         if self.remaining() < padded {
             return Err("unexpected EOF reading string".into());
         }
@@ -82,7 +83,8 @@ impl<'a> Reader<'a> {
             6 => 8,
             _ => return Err(format!("unknown nc_type {nc_type} in attribute")),
         };
-        let padded = (nelems * elem_size + 3) & !3;
+        let padded = padded4(nelems.checked_mul(elem_size))
+            .ok_or("NetCDF attribute payload size overflows")?;
         if self.remaining() < padded {
             return Err("unexpected EOF skipping attribute payload".into());
         }
@@ -127,6 +129,12 @@ impl<'a> Reader<'a> {
             b[0], b[1], b[2], b[3], b[4], b[5], b[6], b[7],
         ])))
     }
+}
+
+/// `n` rounded up to the 4-byte XDR boundary, or `None` when `n` is missing
+/// or the rounding overflows `usize` (a size near `u32::MAX` on wasm32).
+fn padded4(n: Option<usize>) -> Option<usize> {
+    n?.checked_add(3).map(|v| v & !3)
 }
 
 // ─── variable descriptor ───────────────────────────────────────────────────
@@ -325,7 +333,11 @@ pub fn read_layout(head: &[u8], file_len: u64) -> Result<NetcdfLayout, String> {
             coord_var.nc_type
         ));
     }
-    let expected_vsize = n_atoms * 3 * 4;
+    // Checked: on wasm32 a huge 'atom' dimension would wrap the product and
+    // let a small vsize pass for it.
+    let expected_vsize = n_atoms
+        .checked_mul(3 * 4)
+        .ok_or_else(|| format!("'atom' dimension {n_atoms} is too large"))?;
     if coord_var.vsize as usize != expected_vsize {
         return Err(format!(
             "'coordinates' vsize {} != {} (n_atoms={n_atoms} × 3 × 4)",
@@ -1126,5 +1138,20 @@ mod tests {
         let result = parse_netcdf(&data).expect("parse water.nc");
         assert_eq!(result.n_atoms, 3, "water has 3 atoms");
         assert!(result.n_frames >= 1, "at least 1 frame");
+    }
+
+    #[test]
+    fn padding_near_the_address_space_does_not_wrap() {
+        // On wasm32 a string length or attribute size near u32::MAX would wrap
+        // `n + 3`; the padding refuses instead.
+        assert_eq!(padded4(Some(5)), Some(8));
+        assert_eq!(padded4(Some(usize::MAX - 2)), None);
+        assert_eq!(padded4(None), None);
+        // A string length past the header is still an EOF error.
+        let mut d = b"CDF\x01".to_vec();
+        for w in [1u32, TAG_DIM, 1, 0xFFFF_FFFE] {
+            d.extend_from_slice(&w.to_be_bytes());
+        }
+        assert!(parse_netcdf(&d).err().unwrap().contains("string"));
     }
 }

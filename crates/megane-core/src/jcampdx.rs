@@ -272,11 +272,15 @@ fn decode_xyy(
             continue;
         }
         // A continued DIF block restates the previous line's last Y as a
-        // checkpoint; drop that duplicate.
+        // checkpoint; drop that duplicate. The line's X is the checkpoint's
+        // ("the abscissa does not advance before the next line", JCAMP-DX
+        // 4.24 §5.8.2), so the values after it start one step further on.
+        let mut first_step = 0usize;
         if uses_dif {
             if let Some(prev) = last_y {
                 if !ys.is_empty() && (line_ys[0] - prev).abs() < 1e-9 {
                     line_ys.remove(0);
+                    first_step = 1;
                 }
             }
         }
@@ -286,7 +290,7 @@ fn decode_xyy(
 
         let dx = delta_x.unwrap_or(0.0);
         for (k, y) in line_ys.iter().enumerate() {
-            xs.push(line_x + dx * k as f64);
+            xs.push(line_x + dx * (k + first_step) as f64);
             ys.push(y * y_factor);
         }
         last_y = line_ys.last().copied();
@@ -730,12 +734,15 @@ mod tests {
 ##DELTAX=1.0
 ##XYDATA=(X++(Y..Y))
 0 A0JJ
-3 A2JJ
+2 A2JJ
+4 A4J
 ##END=
 ";
         let s = parse(text).unwrap();
-        // Line 1: 10, 11, 12. Line 2 restates 12 as a checkpoint, then 13, 14.
-        assert_eq!(s.y, vec![10.0, 11.0, 12.0, 13.0, 14.0]);
+        // Line 1: 10, 11, 12 at X 0..2. Line 2 restates 12 as a checkpoint at
+        // its own X (2, the abscissa does not advance), then 13, 14 at 3, 4.
+        assert_eq!(s.y, vec![10.0, 11.0, 12.0, 13.0, 14.0, 15.0]);
+        assert_eq!(s.x, vec![0.0, 1.0, 2.0, 3.0, 4.0, 5.0]);
     }
 
     /// A flat baseline in an AFFN table legitimately repeats the previous
@@ -1121,9 +1128,11 @@ mod fixture_tests {
             min < 60.0,
             "expected absorption bands, got a minimum of {min}"
         );
-        // The abscissa spans the declared range.
+        // The abscissa spans the declared range, point for point in both
+        // files (the ASDF lines carry their DIF checkpoint's X).
         assert!((affn.x[0] - 400.0).abs() < 1e-6);
         assert!((affn.x[affn.x.len() - 1] - 4000.0).abs() < 1e-6);
+        assert_eq!(asdf.x, affn.x);
     }
 
     /// Jmol's Chromium(III) demo, trimmed to the link block plus the first two

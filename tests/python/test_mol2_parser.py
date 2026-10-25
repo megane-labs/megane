@@ -113,3 +113,27 @@ def test_mol2_crysin_degenerate_cell_is_skipped(tmp_path):
     s = load_mol2(str(p))
     assert s.n_atoms == 8
     assert np.all(s.box == 0)
+
+
+def test_gaff_types_blank_name_and_charges():
+    """GAFF ``ca``/``os`` are C/O (not Ca/Os); a blank name keeps the counts line."""
+    from megane import megane_parser
+
+    text = (
+        "@<TRIPOS>MOLECULE\n"
+        "\n"
+        " 2 1 1 0 0\n"
+        "SMALL\n"
+        "bcc\n"
+        "\n"
+        "@<TRIPOS>ATOM\n"
+        "      1 C1          0.0000    0.0000    0.0000 ca      1  BNZ        -0.1300\n"
+        "      2 O1          1.4300    0.0000    0.0000 os      1  BNZ        -0.1000\n"
+        "@<TRIPOS>BOND\n"
+        "     1     1     2    1\n"
+    )
+    s = megane_parser.parse_mol2(text)
+    assert s.elements.tolist() == [6, 8]
+    [(name, frames)] = s.scalar_channels
+    assert name == "charge"
+    assert frames[0].tolist() == pytest.approx([-0.13, -0.1])
