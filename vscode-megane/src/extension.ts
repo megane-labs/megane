@@ -355,41 +355,51 @@ class MeganePipelineEditorProvider implements vscode.CustomReadonlyEditorProvide
       localResourceRoots: [mediaDir],
     };
 
-    let payload: object;
-    try {
-      // The WASM module is fetched by the webview directly via the
-      // asWebviewUri set in getHtmlForWebview (window.__MEGANE_WASM_URL__), so
-      // we no longer read + serialize the whole .wasm into the message payload.
-      const pipelineData = await vscode.workspace.fs.readFile(document.uri);
-      const pipeline = JSON.parse(
-        new TextDecoder("utf-8").decode(pipelineData),
-      ) as SerializedPipeline;
+    const readPayload = async (): Promise<object> => {
+      try {
+        // The WASM module is fetched by the webview directly via the
+        // asWebviewUri set in getHtmlForWebview (window.__MEGANE_WASM_URL__), so
+        // we no longer read + serialize the whole .wasm into the message payload.
+        const pipelineData = await vscode.workspace.fs.readFile(document.uri);
+        const pipeline = JSON.parse(
+          new TextDecoder("utf-8").decode(pipelineData),
+        ) as SerializedPipeline;
 
-      if (pipeline.version !== 3) {
-        throw new Error(
-          `Not a valid Megane pipeline file (version 3 required, got ${pipeline.version})`,
+        if (pipeline.version !== 3) {
+          throw new Error(
+            `Not a valid Megane pipeline file (version 3 required, got ${pipeline.version})`,
+          );
+        }
+
+        const companionFiles = await readPipelineCompanions(
+          pipeline,
+          path.dirname(document.uri.fsPath),
         );
+
+        return {
+          type: "loadPipeline",
+          pipeline,
+          companionFiles,
+        };
+      } catch (err) {
+        return { type: "error", message: err instanceof Error ? err.message : String(err) };
       }
-
-      const companionFiles = await readPipelineCompanions(
-        pipeline,
-        path.dirname(document.uri.fsPath),
-      );
-
-      payload = {
-        type: "loadPipeline",
-        pipeline,
-        companionFiles,
-      };
-    } catch (err) {
-      payload = { type: "error", message: err instanceof Error ? err.message : String(err) };
-    }
+    };
+    // Read before the HTML is set, so the read overlaps the webview's start-up.
+    let firstPayload: object | null = await readPayload();
 
     const handleStatusMessage = attachViewerPanel(webviewPanel, this.viewers);
 
     webview.onDidReceiveMessage((message) => {
       if (message.type === "ready") {
-        webview.postMessage(payload);
+        // The payload holds every companion file's bytes (trajectories can be
+        // gigabytes), so it is dropped once posted instead of staying resident
+        // in the shared extension host until the tab closes. A webview that
+        // loads again gets the files read afresh.
+        const payload = firstPayload;
+        firstPayload = null;
+        if (payload) void webview.postMessage(payload);
+        else void readPayload().then((p) => webview.postMessage(p));
         return;
       }
       if (handleStatusMessage(message)) return;
@@ -449,10 +459,21 @@ export function attachViewerPanel(
 ): (message: { type?: unknown; [key: string]: unknown }) => boolean {
   const frameStatusBar = createFrameStatusBarItem();
   const selectionStatusBar = createSelectionStatusBarItem();
+  // Whether each item has something to show for this tab. The items are on
+  // screen only while the tab is the active editor, so tabs in the background
+  // do not each add a "Frame N" or stay over other editors.
+  let frameWanted = false;
+  let selectionWanted = false;
+  const place = (item: vscode.StatusBarItem, wanted: boolean): void => {
+    if (wanted && webviewPanel.active) item.show();
+    else item.hide();
+  };
 
   viewers.panel = webviewPanel;
   webviewPanel.onDidChangeViewState(({ webviewPanel: panel }) => {
     if (panel.active) viewers.panel = panel;
+    place(frameStatusBar, frameWanted);
+    place(selectionStatusBar, selectionWanted);
   });
   webviewPanel.onDidDispose(() => {
     if (viewers.panel === webviewPanel) viewers.panel = null;
@@ -464,17 +485,17 @@ export function attachViewerPanel(
     if (message.type === "frameChange") {
       const frame = message.frame as number;
       frameStatusBar.text = `$(megane-frame) Frame ${frame}`;
-      frameStatusBar.show();
+      frameWanted = true;
+      place(frameStatusBar, frameWanted);
       return true;
     }
     if (message.type === "selectionChange") {
       const atoms = (message.selection as { atoms: number[] }).atoms;
-      if (atoms.length === 0) {
-        selectionStatusBar.hide();
-      } else {
+      selectionWanted = atoms.length > 0;
+      if (selectionWanted) {
         selectionStatusBar.text = `$(megane-atom) ${atoms.length} atom${atoms.length === 1 ? "" : "s"} selected`;
-        selectionStatusBar.show();
       }
+      place(selectionStatusBar, selectionWanted);
       return true;
     }
     if (message.type === "measurementChange") {
@@ -483,12 +504,11 @@ export function attachViewerPanel(
         value: number;
         label: string;
       } | null;
-      if (!measurement) {
-        selectionStatusBar.hide();
-      } else {
+      selectionWanted = Boolean(measurement);
+      if (measurement) {
         selectionStatusBar.text = `$(megane-atom) ${measurement.label}`;
-        selectionStatusBar.show();
       }
+      place(selectionStatusBar, selectionWanted);
       return true;
     }
     return false;
@@ -532,48 +552,60 @@ export class MeganeEditorProvider implements vscode.CustomReadonlyEditorProvider
       localResourceRoots: [mediaDir],
     };
 
-    // Prepare the message to send, then register handler, then set HTML.
+    const readPayloads = async (): Promise<object[]> => {
+      try {
+        // Read only the document file. The WASM module is fetched by the webview
+        // directly via the asWebviewUri set in getHtmlForWebview
+        // (window.__MEGANE_WASM_URL__), so we no longer read + serialize the whole
+        // .wasm into the message payload.
+        const fileData = await vscode.workspace.fs.readFile(document.uri);
+        // Send raw bytes (not decoded text) so binary formats like .traj survive
+        // the trip into the webview. The webview builds a File and the shared
+        // parser dispatches by extension to either text() or arrayBuffer().
+        // Transfer the bytes as an ArrayBuffer (structured clone) rather than a
+        // plain number[]; a number[] is JSON-serialized by postMessage and
+        // inflates ~4-6x, which dominated the open latency for large files.
+        const filename = path.basename(document.uri.fsPath);
+        let topBytes: ArrayBuffer | null = null;
+        let topFilename: string | null = null;
+        const topName = siblingTopologyName(filename);
+        if (topName) {
+          const topUri = vscode.Uri.file(path.join(path.dirname(document.uri.fsPath), topName));
+          try {
+            const topData = await vscode.workspace.fs.readFile(topUri);
+            topBytes = toArrayBuffer(topData);
+            topFilename = topName;
+          } catch {
+            // .top file not found — proceed without topology bonds
+          }
+        }
+        return documentMessages(fileData, filename, topBytes, topFilename);
+      } catch (err) {
+        return [{ type: "error", message: err instanceof Error ? err.message : String(err) }];
+      }
+    };
+    // Prepare the messages to send, then register handler, then set HTML.
     // This avoids both: (a) race where "ready" fires before handler, and
     // (b) blank screen if file reading fails before HTML is set.
-    let payloads: object[];
-    try {
-      // Read only the document file. The WASM module is fetched by the webview
-      // directly via the asWebviewUri set in getHtmlForWebview
-      // (window.__MEGANE_WASM_URL__), so we no longer read + serialize the whole
-      // .wasm into the message payload.
-      const fileData = await vscode.workspace.fs.readFile(document.uri);
-      // Send raw bytes (not decoded text) so binary formats like .traj survive
-      // the trip into the webview. The webview builds a File and the shared
-      // parser dispatches by extension to either text() or arrayBuffer().
-      // Transfer the bytes as an ArrayBuffer (structured clone) rather than a
-      // plain number[]; a number[] is JSON-serialized by postMessage and
-      // inflates ~4-6x, which dominated the open latency for large files.
-      const filename = path.basename(document.uri.fsPath);
-      let topBytes: ArrayBuffer | null = null;
-      let topFilename: string | null = null;
-      const topName = siblingTopologyName(filename);
-      if (topName) {
-        const topUri = vscode.Uri.file(path.join(path.dirname(document.uri.fsPath), topName));
-        try {
-          const topData = await vscode.workspace.fs.readFile(topUri);
-          topBytes = toArrayBuffer(topData);
-          topFilename = topName;
-        } catch {
-          // .top file not found — proceed without topology bonds
-        }
-      }
-      payloads = documentMessages(fileData, filename, topBytes, topFilename);
-    } catch (err) {
-      payloads = [{ type: "error", message: err instanceof Error ? err.message : String(err) }];
-    }
+    let firstPayloads: object[] | null = await readPayloads();
+    // Posted in order: the webview draws frame 0 from the first message while
+    // the second is still on its way.
+    const post = (payloads: object[]): void => {
+      for (const payload of payloads) void webview.postMessage(payload);
+    };
 
     const handleStatusMessage = attachViewerPanel(webviewPanel, this.viewers);
 
     webview.onDidReceiveMessage((message) => {
       if (message.type === "ready") {
-        // Posted in order: the webview draws frame 0 from the first message
-        // while the second is still on its way.
-        for (const payload of payloads) void webview.postMessage(payload);
+        // The messages hold the whole document (multi-GB for a trajectory), so
+        // they are dropped once posted instead of staying resident in the
+        // shared extension host until the tab closes. A webview that loads
+        // again gets the file read afresh.
+        const payloads = firstPayloads;
+        firstPayloads = null;
+        if (payloads) post(payloads);
+        else void readPayloads().then(post);
         return;
       }
       if (message.type === "saveFile") {

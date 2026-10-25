@@ -241,6 +241,26 @@ function markStale(runs: Record<string, NodeRun>, ids: Iterable<string>): Record
   return out;
 }
 
+/**
+ * `runs` with each block still marked running put back as it was in `before`
+ * (the runs when that run started), or dropped when it had no run then. Used
+ * when a run is stopped by something that keeps the results, as the engine's
+ * own put-back is ignored once the graph has moved on.
+ */
+function settleRunning(
+  runs: Record<string, NodeRun>,
+  before: Record<string, NodeRun>,
+): Record<string, NodeRun> {
+  let out = runs;
+  for (const [id, run] of Object.entries(runs)) {
+    if (run.status !== "running") continue;
+    if (out === runs) out = { ...runs };
+    if (before[id]) out[id] = before[id];
+    else delete out[id];
+  }
+  return out;
+}
+
 /** `past` with `state` pushed on, at most {@link FLOW_HISTORY_LIMIT} long. */
 function pushed(past: FlowGraphState[], state: FlowGraphState): FlowGraphState[] {
   const out = [...past, state];
@@ -292,6 +312,8 @@ export function parseSerializedFlow(raw: unknown): SerializedFlow {
 export const flowStateCreator: StateCreator<FlowStore> = (set, get) => {
   /** The last checkpoint id `applyGenerated` handed out. */
   let lastCheckpoint = 0;
+  /** The results when the current (or last) run started. */
+  let runStart: Record<string, NodeRun> = {};
 
   /** The history fields of a change: the graph as it is now goes on `past`. */
   const record = (): Pick<FlowStore, "past" | "future" | "editKey"> => {
@@ -309,7 +331,7 @@ export const flowStateCreator: StateCreator<FlowStore> = (set, get) => {
    * takes them from the cache if they come back the same); a block that is
    * gone loses its result.
    */
-  const restore = (target: FlowGraphState): Partial<FlowStore> => {
+  const restore = (target: FlowGraphState, current = get().runs): Partial<FlowStore> => {
     const s = get();
     const now = new Map(s.nodes.map((n) => [n.id, n]));
     const stale = new Set<string>();
@@ -324,7 +346,7 @@ export const flowStateCreator: StateCreator<FlowStore> = (set, get) => {
       }
     }
     const kept = new Set(target.nodes.map((n) => n.id));
-    const runs = { ...markStale(s.runs, stale) };
+    const runs = { ...markStale(current, stale) };
     for (const id of Object.keys(runs)) if (!kept.has(id)) delete runs[id];
     return {
       nodes: target.nodes,
@@ -521,15 +543,24 @@ export const flowStateCreator: StateCreator<FlowStore> = (set, get) => {
       const s = get();
       if (s.running) return "busy";
       const controller = new AbortController();
+      runStart = s.runs;
       set({ running: controller, stopping: false });
+      // Clear, Open and an AI apply stop the run and put another graph in
+      // place; from then on this run writes nothing, even where the new graph
+      // reuses a block id. Stop (`cancel`) keeps the graph, so the run still
+      // puts back what it was running.
+      const current = () => get().running === controller;
       // Manual structure blocks read the document through the pin (`readDocument`).
       const runDeps: FlowDeps = { ...deps, document: () => get().readDocument(deps.document()) };
       try {
         const runs = await runFlow({ nodes: s.nodes, edges: s.edges }, runDeps, s.runs, {
           signal: controller.signal,
           targets,
-          onUpdate: (id, run) => set((cur) => ({ runs: { ...cur.runs, [id]: run } })),
+          onUpdate: (id, run) => {
+            if (current()) set((cur) => ({ runs: { ...cur.runs, [id]: run } }));
+          },
         });
+        if (!current()) return "cancelled";
         // Show the result of the run's last block, unless a block is already shown.
         const order = topoOrder({ nodes: get().nodes, edges: get().edges }) ?? [];
         const last = [...(targets ?? order)].reverse().find((id) => runs[id]?.status === "done");
@@ -539,11 +570,13 @@ export const flowStateCreator: StateCreator<FlowStore> = (set, get) => {
       } catch (err) {
         // Only a loop in the graph rejects; report it on every block.
         const error = err instanceof Error ? err.message : String(err);
-        set((cur) => ({
-          runs: Object.fromEntries(
-            cur.nodes.map((n) => [n.id, { ...IDLE_RUN, status: "error" as const, error }]),
-          ),
-        }));
+        if (current()) {
+          set((cur) => ({
+            runs: Object.fromEntries(
+              cur.nodes.map((n) => [n.id, { ...IDLE_RUN, status: "error" as const, error }]),
+            ),
+          }));
+        }
       } finally {
         set((cur) => (cur.running === controller ? { running: null, stopping: false } : {}));
       }
@@ -633,7 +666,9 @@ export const flowStateCreator: StateCreator<FlowStore> = (set, get) => {
               future: [],
             }
           : {}),
-        ...restore({ nodes, edges }),
+        // The stopped run no longer writes, so a block it was running is put
+        // back here rather than left spinning.
+        ...restore({ nodes, edges }, s.running ? settleRunning(s.runs, runStart) : s.runs),
         running: null,
         stopping: false,
       });

@@ -1,13 +1,12 @@
 import { ReactWidget } from "@jupyterlab/ui-components";
 import type { DocumentRegistry } from "@jupyterlab/docregistry";
 import type { Contents } from "@jupyterlab/services";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { MeganeViewer } from "@megane/components/MeganeViewer";
 import { ErrorBoundary } from "@megane/components/ErrorBoundary";
 import { useMeganeLocal } from "@megane/hooks/useMeganeLocal";
 import { useTemplateData } from "@megane/hooks/useTemplateData";
 import { usePipelineStore } from "@megane/pipeline/store";
-import { capturePipelineStore, type PipelineStoreSnapshot } from "@megane/pipeline/storeSnapshot";
 import { useTour } from "@megane/tour/useTour";
 import "@megane/styles/megane.css";
 import { prewarmParseWorker } from "@megane/parsers/structure";
@@ -16,6 +15,7 @@ import type { SelectionState, Measurement } from "@megane/types";
 import { ensureWasmUrl } from "./wasmLoader";
 import type { ServerRequest } from "./serverFileBytes";
 import { createSubscription, createFrameSubscription } from "./frameSubscription";
+import { TabStoreCache } from "./tabStoreCache";
 import {
   basename,
   dirname,
@@ -23,13 +23,12 @@ import {
   type MinimalSerializedPipeline,
 } from "./pipelineCompanions";
 
-type ActivationSubscribe = (cb: () => void) => () => void;
-
 interface DocBodyProps {
   context: DocumentRegistry.Context;
   contents: Contents.IManager;
   request: ServerRequest;
-  subscribeActivation: ActivationSubscribe;
+  /** This tab's copy of the shared pipeline store (see MeganeDocWidget). */
+  storeCache: TabStoreCache;
   onFrameChange?: (frame: number) => void;
   onSelectionChange?: (selection: SelectionState) => void;
   onMeasurementChange?: (measurement: Measurement | null) => void;
@@ -41,7 +40,7 @@ function DocBody({
   context,
   contents,
   request,
-  subscribeActivation,
+  storeCache,
   onFrameChange,
   onSelectionChange,
   onMeasurementChange,
@@ -51,10 +50,6 @@ function DocBody({
   // The pipeline itself opens through `openFile`; the local loader is only
   // the structure path a template's demo files load through.
   useTemplateData(useMeganeLocal());
-
-  // Cached store state captured after the first parse. Subsequent tab
-  // activations restore from this cache instead of re-parsing.
-  const cachedRef = useRef<PipelineStoreSnapshot | null>(null);
 
   const parseAndLoad = useCallback(
     async (token: { cancelled: boolean }) => {
@@ -71,6 +66,7 @@ function DocBody({
         // from a clean default before deserialize installs the new
         // graph. If JSON.parse below throws, we still want subsequent
         // documents to land in a sane state.
+        storeCache.claim();
         usePipelineStore.getState().reset();
 
         const pipelineText = context.model.toString();
@@ -92,36 +88,31 @@ function DocBody({
         await usePipelineStore.getState().openFile(meganeFile, { companions });
 
         if (token.cancelled) return;
-        cachedRef.current = capturePipelineStore(usePipelineStore.getState());
+        storeCache.capture();
         setState("ready");
       } catch (err) {
         // Reset the store again so a half-deserialized pipeline (e.g.
         // deserialize ran but a companion parse threw) doesn't leak
-        // into the next document the user opens.
+        // into the next document the user opens. Claim the store first so
+        // the tab that held it keeps its state when the failure struck early.
+        storeCache.claim();
         usePipelineStore.getState().reset();
         if (!token.cancelled) {
           setState({ error: err instanceof Error ? err.message : String(err) });
         }
       }
     },
-    [context, contents, request],
+    [context, contents, request, storeCache],
   );
 
   useEffect(() => {
     const activeToken = { cancelled: false };
     void parseAndLoad(activeToken);
-    const unsubscribe = subscribeActivation(() => {
-      const cache = cachedRef.current;
-      if (cache) {
-        usePipelineStore.setState(cache);
-      }
-      // No cache yet: the in-flight parse will populate it on completion.
-    });
     return () => {
       activeToken.cancelled = true;
-      unsubscribe();
+      storeCache.release();
     };
-  }, [parseAndLoad, subscribeActivation]);
+  }, [parseAndLoad, storeCache]);
 
   const handleUploadStructure = useCallback((file: File) => {
     void usePipelineStore.getState().openFile(file, { mode: "merge" });
@@ -170,7 +161,7 @@ function DocBody({
 }
 
 export class MeganePipelineReactView extends ReactWidget {
-  private readonly listeners = new Set<() => void>();
+  private readonly storeCache = new TabStoreCache();
   private readonly _frameSub = createFrameSubscription();
   private readonly _selectionSub = createSubscription<SelectionState>();
   private readonly _measurementSub = createSubscription<Measurement | null>();
@@ -210,23 +201,17 @@ export class MeganePipelineReactView extends ReactWidget {
     this.addClass("megane-jupyter-doc");
   }
 
+  /** The tab became visible: put its state back into the shared store. */
   protected onAfterShow(msg: import("@lumino/messaging").Message): void {
     super.onAfterShow(msg);
-    for (const cb of this.listeners) {
-      try {
-        cb();
-      } catch {
-        /* ignore */
-      }
-    }
+    this.storeCache.restore();
   }
 
-  private subscribeActivation = (cb: () => void): (() => void) => {
-    this.listeners.add(cb);
-    return () => {
-      this.listeners.delete(cb);
-    };
-  };
+  /** The tab is being hidden: keep the edits made in it for its next show. */
+  protected onBeforeHide(msg: import("@lumino/messaging").Message): void {
+    this.storeCache.save();
+    super.onBeforeHide(msg);
+  }
 
   protected render(): JSX.Element {
     return (
@@ -235,7 +220,7 @@ export class MeganePipelineReactView extends ReactWidget {
           context={this.context}
           contents={this.contents}
           request={this.request}
-          subscribeActivation={this.subscribeActivation}
+          storeCache={this.storeCache}
           onFrameChange={this._handleFrameChange}
           onSelectionChange={this._handleSelectionChange}
           onMeasurementChange={this._handleMeasurementChange}

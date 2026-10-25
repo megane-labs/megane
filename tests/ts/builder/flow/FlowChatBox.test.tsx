@@ -250,6 +250,33 @@ describe("FlowChatBox", () => {
     expect(stores.flow.getState().past).toHaveLength(0);
   });
 
+  it("applies a flow the model sent bare or in a ```JSON fence, never showing its JSON", async () => {
+    for (const reply of [
+      `${JSON.stringify(CRYSTAL)}\nRepeats NaCl.`,
+      `\`\`\`JSON\n${JSON.stringify(CRYSTAL)}\n\`\`\`\nRepeats NaCl.`,
+    ]) {
+      stores = createBuilderStores();
+      mockGenerate(async (_c, _m, _ctx, onChunk) => {
+        onChunk(reply);
+        return reply;
+      });
+      renderBox();
+      ask("a 3x3x3 NaCl supercell");
+      await waitFor(() => expect(stores.flow.getState().nodes).toHaveLength(2));
+      await waitFor(() => expect(screen.getByTestId("builder-flow-chat-input")).not.toBeDisabled());
+      expect(screen.queryByText(/"version":1/)).toBeNull();
+      cleanup();
+    }
+  });
+
+  it("reports a reply whose fence never closed instead of showing it as prose", async () => {
+    mockGenerate(async () => '```json\n{"version":1,"nodes":[');
+    renderBox();
+    ask("something");
+    expect(await screen.findByText("Something went wrong. Please try again.")).toBeTruthy();
+    expect(screen.queryByText(/"version":1/)).toBeNull();
+  });
+
   it("reports a reply whose block is not a flow it can hold", async () => {
     mockGenerate(
       async () =>
