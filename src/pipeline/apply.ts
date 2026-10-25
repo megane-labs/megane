@@ -231,19 +231,18 @@ function applyParticleOverrides(
 
   const merged = mergeParticleOverrides(particles);
 
+  // Start from no per-atom scale or opacity, then lay down what the streams
+  // carry now: a Modify node set back to opacity 1 emits no opacity overrides,
+  // and its earlier per-atom alphas must not outlive it while its scale stays.
+  renderer.clearAtomOverrides();
+  renderer.setAtomScale(1.0);
   if (merged.scale) {
-    renderer.setAtomScale(1.0);
     renderer.setAtomScaleOverrides(merged.scale);
-  } else {
-    renderer.clearAtomOverrides();
-    renderer.setAtomScale(1.0);
   }
 
+  renderer.setAtomOpacity(1.0);
   if (merged.opacity) {
-    renderer.setAtomOpacity(1.0);
     renderer.setAtomOpacityOverrides(merged.opacity);
-  } else {
-    renderer.setAtomOpacity(1.0);
   }
 
   renderer.applyAtomColorOverrides(merged.color);
@@ -263,19 +262,16 @@ function applyLayerParticleOverrides(
 ): void {
   const merged = mergeParticleOverrides(particles);
 
+  // As for the primary structure: drop the old per-atom scale / opacity first.
+  layer.clearAtomOverrides();
+  layer.setAtomScale(1.0);
   if (merged.scale) {
-    layer.setAtomScale(1.0);
     layer.setAtomScaleOverrides(merged.scale);
-  } else {
-    layer.clearAtomOverrides();
-    layer.setAtomScale(1.0);
   }
 
+  layer.setAtomOpacity(1.0);
   if (merged.opacity) {
-    layer.setAtomOpacity(1.0);
     layer.setAtomOpacityOverrides(merged.opacity);
-  } else {
-    layer.setAtomOpacity(1.0);
   }
 
   layer.applyAtomColorOverrides(merged.color);
@@ -379,6 +375,7 @@ function applyBondSettings(
       bond.positions,
       bond.elements,
       bond.nAtoms,
+      bond.imageMap ?? null,
     );
   }
 

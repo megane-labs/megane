@@ -64,6 +64,13 @@ export class ArrowRenderer {
     this.headMesh = new THREE.InstancedMesh(headGeo, material(), this.capacity);
     this.shaftMesh.count = 0;
     this.headMesh.count = 0;
+    // Like the atom and bond meshes, never cull: three computes an
+    // InstancedMesh's bounding sphere on its first render and never again, so
+    // after a frame of zero vectors (every instance a zero scale at the
+    // origin) or a reload elsewhere, every later arrow would be culled
+    // whenever that stale sphere is off screen.
+    this.shaftMesh.frustumCulled = false;
+    this.headMesh.frustumCulled = false;
     this.mesh.add(this.shaftMesh);
     this.mesh.add(this.headMesh);
   }

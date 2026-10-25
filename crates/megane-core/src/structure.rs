@@ -40,7 +40,8 @@ pub struct HeteroFrames {
     /// `extra_count + 1` when populated, else empty (topology constant).
     pub bond_offsets: Vec<u32>,
     /// Concatenated per-extra-frame inferred bonds `[a0,b0,a1,b1,…]`, sliced by
-    /// `bond_offsets` (×2). Empty when topology is constant.
+    /// `bond_offsets` (×2). Also empty when topology varies but no extra frame
+    /// has a bond, so test `bond_offsets`, not this, for constant topology.
     pub bonds_flat: Vec<u32>,
     /// Atom count changes between frames.
     pub varies_atoms: bool,
@@ -112,7 +113,9 @@ impl HeteroFramesBuilder {
     }
 
     /// Like [`new`](Self::new), reserving room for `extra_frames` frames of
-    /// `frame0_atoms` atoms each (the uniform case).
+    /// `frame0_atoms` atoms each (the uniform case). The reservation is made
+    /// up front, so a caller whose frame count comes from a header bounds it
+    /// by what its input can actually hold (see `traj::parse_traj`).
     pub fn with_capacity(frame0_atoms: usize, extra_frames: usize) -> Self {
         let mut atom_offsets = Vec::with_capacity(extra_frames + 1);
         atom_offsets.push(0);
@@ -345,8 +348,9 @@ pub struct ParsedStructure {
     pub ca_indices: Vec<u32>,
     /// Per-Cα chain identifier (ASCII byte, e.g. b'A').
     pub ca_chain_ids: Vec<u8>,
-    /// Per-Cα residue sequence number.
-    pub ca_res_nums: Vec<u32>,
+    /// Per-Cα residue sequence number. Signed: PDB/mmCIF author numbering
+    /// puts expression tags below 1 (`-2`, `-1`, `0`).
+    pub ca_res_nums: Vec<i32>,
     /// Per-Cα secondary-structure type: 0 = coil, 1 = helix, 2 = sheet.
     pub ca_ss_type: Vec<u8>,
     /// Crystallographic symmetry operations as raw `x,y,z`-style strings,
@@ -430,9 +434,15 @@ impl ParsedStructure {
 
     /// Inferred bonds `[a,b,…]` for EXTRA frame `i`, or `None` when topology is
     /// constant (reuse frame-0 `bonds`).
+    ///
+    /// Constant topology is told by `bond_offsets` being empty, never by
+    /// `bonds_flat`: when topology varies and the later frames genuinely have
+    /// no bonds, `bonds_flat` is empty too, and each such frame gets an empty
+    /// slice rather than frame 0's bonds (whose indices may not even exist in
+    /// that frame).
     pub fn frame_bonds(&self, i: usize) -> Option<&[u32]> {
         let h = self.hetero.as_ref()?;
-        if h.bonds_flat.is_empty() || h.bond_offsets.is_empty() {
+        if h.bond_offsets.is_empty() {
             return None;
         }
         let a = h.bond_offsets[i] as usize * 2;
@@ -446,15 +456,15 @@ impl ParsedStructure {
 /// range `start..=end` on chain `chain_id`.
 pub(crate) struct SsRange {
     pub(crate) chain_id: u8,
-    pub(crate) start: u32,
-    pub(crate) end: u32,
+    pub(crate) start: i32,
+    pub(crate) end: i32,
     pub(crate) ss_type: u8, // 1 = helix, 2 = sheet
 }
 
 /// Secondary-structure type of the Cα at (`chain_id`, `res_num`): the
 /// `ss_type` of the first range in file order that covers it, or 0 (coil)
 /// when none does.
-pub(crate) fn ss_type_at(ranges: &[SsRange], chain_id: u8, res_num: u32) -> u8 {
+pub(crate) fn ss_type_at(ranges: &[SsRange], chain_id: u8, res_num: i32) -> u8 {
     ranges
         .iter()
         .find(|r| r.chain_id == chain_id && res_num >= r.start && res_num <= r.end)
@@ -653,5 +663,25 @@ mod tests {
             },
         ];
         assert_eq!(ss_type_at(&ranges, b'A', 4), 2);
+    }
+
+    #[test]
+    fn frame_bonds_reports_a_frame_with_no_bonds_as_empty_not_constant() {
+        // Frame 0 is H2 (one bond); frame 1 is three He atoms 5 Å apart, so it
+        // has no bonds at all. Topology varies, so frame 1 must say "no
+        // bonds" rather than fall back to frame 0's H-H bond.
+        let text = "2\nH2\nH 0 0 0\nH 0.74 0 0\n3\nfar\nHe 0 0 0\nHe 5 0 0\nHe 10 0 0\n";
+        let s = crate::xyz::parse(text).unwrap();
+        assert_eq!(s.bonds, vec![(0, 1)]);
+        let h = s.hetero.as_ref().expect("atom count varies");
+        assert_eq!(h.bond_offsets, vec![0, 0]);
+        assert!(h.bonds_flat.is_empty());
+        assert_eq!(s.frame_bonds(0), Some(&[][..]));
+
+        // A uniform trajectory still reports "constant topology".
+        let uniform =
+            crate::xyz::parse("2\na\nH 0 0 0\nH 0.74 0 0\n2\nb\nH 0 0 0\nH 0.75 0 0\n").unwrap();
+        assert!(uniform.hetero.is_none());
+        assert_eq!(uniform.frame_bonds(0), None);
     }
 }

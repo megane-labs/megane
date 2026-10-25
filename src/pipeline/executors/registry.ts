@@ -92,8 +92,9 @@ function noInput(): NodeError {
 }
 
 /**
- * Resolve the atom labels used for selection / coloring (e.g. `resname == "HOH"`,
- * color-by-residue). The user-selected *display* label source wins when set
+ * Resolve the atom labels used for selection / coloring / text labels (e.g.
+ * `resname == "HOH"`, color-by-residue, Label Generator's "resname" source).
+ * The user-selected *display* label source wins when set
  * (`ctx.atomLabels`); otherwise we fall back to the residue labels parsed from
  * the structure file and stored per load_structure node in `ctx.nodeSnapshots`.
  *
@@ -314,7 +315,10 @@ export const NODE_EXECUTORS: NodeExecutorRegistry = {
   },
 
   label_generator: ({ params, inputs, ctx, addError }) => {
-    const outputs = executeLabelGenerator(params, inputs, ctx.atomLabels ?? null);
+    // Same label resolution as Filter / Color, read off the `particle` port.
+    const particle = inputs.get("particle")?.[0] as ParticleData | undefined;
+    const labels = resolveEffectiveLabels(ctx, particle?.sourceNodeId);
+    const outputs = executeLabelGenerator(params, inputs, labels);
     if (!inputs.get("particle")?.length) addError(noInput());
     return { outputs };
   },

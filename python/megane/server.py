@@ -7,15 +7,19 @@ import ipaddress
 import json
 import logging
 import os
+import re
 import tempfile
 import warnings
+from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Optional
+from urllib.parse import urlsplit
 
 from fastapi import FastAPI, HTTPException, Request, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
+from starlette.requests import HTTPConnection
 
 from megane.parsers.common import Structure, encode_trajectory_frame
 from megane.parsers.dispatch import load_structure_file, structure_ext
@@ -25,7 +29,7 @@ from megane.protocol import encode_metadata, encode_snapshot
 if TYPE_CHECKING:
     from megane.parsers.common import Trajectory
 
-__all__ = ["app", "configure", "configure_files"]
+__all__ = ["app", "configure", "configure_files", "configure_hosts"]
 
 logger = logging.getLogger(__name__)
 
@@ -61,15 +65,49 @@ class FilesConfig:
 _files = FilesConfig()
 
 
+@dataclass
+class HostsConfig:
+    """The names browsers may reach the server by (the ``Host`` header)."""
+
+    bind_host: Optional[str] = None
+    allowed: frozenset[str] = frozenset()
+
+
+_hosts = HostsConfig()
+
+# The files the loaded upload reads from (an XTC's frames stay in the file). The
+# folder lives until the next upload replaces it: Windows cannot delete a file
+# that is still open.
+_upload_dir: Optional[tempfile.TemporaryDirectory] = None
+
+
 def configure_files(root: str | os.PathLike[str] | None, any_host: bool = False) -> None:
     """Let the web UI browse and open files under ``root`` (``None`` turns it off).
 
-    Only loopback clients are served unless ``any_host`` is set: ``megane serve``
-    listens on every interface, and an SSH tunnel or a browser on the same
-    machine both arrive from loopback.
+    Only clients on this machine are served unless ``any_host`` is set: a
+    loopback client whose ``Host`` is a loopback name (``localhost``,
+    ``127.0.0.1``, ``[::1]``), which covers a browser on the same machine and an
+    SSH tunnel. Hidden names (dot files and folders) are never served.
     """
     _files.root = Path(root).resolve() if root is not None else None
     _files.any_host = any_host
+
+
+def _normalize_host(name: str) -> str:
+    return name.strip().strip("[]").lower()
+
+
+def configure_hosts(bind_host: str | None = None, allowed_hosts: Iterable[str] = ()) -> None:
+    """Name the address the server listens on and other names it is reached by.
+
+    The file, upload and WebSocket endpoints answer only requests whose ``Host``
+    header names this server: ``localhost`` (and ``*.localhost``), an IP
+    address, ``bind_host`` or one of ``allowed_hosts`` (a reverse proxy's public
+    name, say). Any other name is a web page whose DNS name was pointed at this
+    server (DNS rebinding), and is refused.
+    """
+    _hosts.bind_host = _normalize_host(bind_host) if bind_host else None
+    _hosts.allowed = frozenset(_normalize_host(h) for h in allowed_hosts if h.strip())
 
 
 def configure(
@@ -197,29 +235,40 @@ async def health() -> dict:
 
 @app.post("/api/upload")
 async def upload_file(
+    request: Request,
     pdb: UploadFile,
     xtc: UploadFile | None = None,
 ) -> dict:
     """Upload a structure file (and optional XTC) to load in the viewer.
 
     The ``pdb`` form field takes any structure format; the uploaded file name's
-    extension picks the reader. An unsupported extension is a 400.
+    extension picks the reader. An unsupported extension is a 400. A page on
+    another origin (a form any website can post) is refused with a 403.
     """
-    with tempfile.TemporaryDirectory() as tmpdir:
-        structure_path = Path(tmpdir) / Path(pdb.filename or "upload.pdb").name
+    refusal = _browser_refusal(request)
+    if refusal is not None:
+        raise refusal
+
+    upload_dir = tempfile.TemporaryDirectory(prefix="megane-upload-", ignore_cleanup_errors=True)
+    try:
+        tmpdir = Path(upload_dir.name)
+        structure_path = tmpdir / Path(pdb.filename or "upload.pdb").name
         structure_path.write_bytes(await pdb.read())
 
         # Save XTC if provided
         xtc_path = None
         if xtc is not None:
-            xtc_path_obj = Path(tmpdir) / Path(xtc.filename or "upload.xtc").name
+            xtc_path_obj = tmpdir / Path(xtc.filename or "upload.xtc").name
             xtc_path_obj.write_bytes(await xtc.read())
             xtc_path = str(xtc_path_obj)
 
-        try:
-            configure(str(structure_path), xtc_path)
-        except ValueError as e:
+        configure(str(structure_path), xtc_path)
+    except BaseException as e:
+        upload_dir.cleanup()
+        if isinstance(e, ValueError):
             raise HTTPException(status_code=400, detail=str(e)) from None
+        raise
+    _keep_upload_dir(upload_dir)
 
     # Broadcast to all connected clients
     await _broadcast_snapshot()
@@ -228,6 +277,14 @@ async def upload_file(
         "nAtoms": _state.structure.n_atoms,
         "nBonds": len(_state.structure.bonds),
     }
+
+
+def _keep_upload_dir(upload_dir: tempfile.TemporaryDirectory) -> None:
+    """Keep the loaded upload's folder and delete the one it replaced."""
+    global _upload_dir
+    previous, _upload_dir = _upload_dir, upload_dir
+    if previous is not None:
+        previous.cleanup()
 
 
 def _is_loopback(host: str | None) -> bool:
@@ -241,12 +298,87 @@ def _is_loopback(host: str | None) -> bool:
         return False
 
 
+def _host_name(conn: HTTPConnection) -> str:
+    """The request's ``Host`` header name: lowercased, without port or IPv6 brackets."""
+    try:
+        return urlsplit("//" + conn.headers.get("host", "").strip()).hostname or ""
+    except ValueError:
+        return ""
+
+
+def _is_local_name(name: str) -> bool:
+    """A name only this machine answers to (browsers resolve ``*.localhost`` to loopback)."""
+    return name.endswith(".localhost") or _is_loopback(name)
+
+
+def _host_allowed(name: str) -> bool:
+    if not name:
+        return False
+    if _is_local_name(name) or name == _hosts.bind_host or name in _hosts.allowed:
+        return True
+    try:
+        ipaddress.ip_address(name)
+    except ValueError:
+        return False
+    # No DNS name, so nothing to rebind: a page at this address is this server.
+    return True
+
+
+def _origin_allowed(conn: HTTPConnection) -> bool:
+    """Whether the page that sent this request (if a browser did) is this server's."""
+    origin = conn.headers.get("origin")
+    if origin is None:
+        return True  # not sent by a cross-origin page: curl, Python clients, same-origin GETs
+    try:
+        parts = urlsplit(origin)
+        origin_host = parts.hostname
+    except ValueError:
+        return False
+    if parts.scheme not in ("http", "https") or not origin_host:
+        return False  # "null": sandboxed frames, file:// pages
+    if parts.netloc.lower() == conn.headers.get("host", "").strip().lower():
+        return True
+    # A reverse proxy that rewrites Host still forwards its own pages' Origin.
+    return origin_host in _hosts.allowed
+
+
+def _browser_refusal(conn: HTTPConnection) -> HTTPException | None:
+    """Why a data endpoint refuses this request, or ``None``.
+
+    Refused: a ``Host`` that names some other site (a page whose DNS name was
+    pointed at this server, i.e. DNS rebinding) and a page from another origin
+    (any website can post a form to, or open a WebSocket on, ``localhost``).
+    """
+    name = _host_name(conn)
+    if not _host_allowed(name):
+        return HTTPException(
+            status_code=403,
+            detail=f"Host {name!r} is not a name of this server "
+            f"(restart megane serve with --allowed-host {name or 'NAME'} if it is)",
+        )
+    if not _origin_allowed(conn):
+        return HTTPException(status_code=403, detail="Requests from other sites' pages (cross-origin) are refused")
+    return None
+
+
+def _from_this_machine(conn: HTTPConnection) -> bool:
+    """A loopback client that reached a loopback name: a local browser or an SSH tunnel.
+
+    A reverse proxy on this machine also arrives from loopback, but under its
+    public name, so its clients are not taken for local ones.
+    """
+    client = conn.client.host if conn.client else None
+    return _is_loopback(client) and _is_local_name(_host_name(conn))
+
+
 def _files_refusal(request: Request) -> HTTPException | None:
     """Why file browsing is unavailable to this request, or ``None`` when it is served."""
     if _files.root is None:
         return HTTPException(status_code=404, detail="File browsing is disabled on this server")
-    client = request.client.host if request.client else None
-    if not _files.any_host and not _is_loopback(client):
+    refusal = _browser_refusal(request)
+    if refusal is not None:
+        return refusal
+    if not _files.any_host and not _from_this_machine(request):
         return HTTPException(
             status_code=403,
             detail="File browsing is only served to this machine "
@@ -264,14 +396,30 @@ def _files_root(request: Request) -> Path:
     return _files.root
 
 
+def _is_hidden(parts: Iterable[str]) -> bool:
+    """Whether a path's names include a dot file or folder (``.`` and ``..`` aside)."""
+    return any(p.startswith(".") and p not in (".", "..") for p in parts)
+
+
+_HIDDEN = "Hidden files and folders are not served"
+
+
 def _resolve_under(root: Path, rel: str) -> Path:
-    """``rel`` resolved under ``root``; symlinks and ``..`` may not leave it."""
+    """``rel`` resolved under ``root``; symlinks and ``..`` may not leave it.
+
+    Hidden names are refused both as asked for and where a symlink leads, so
+    ``.ssh/id_rsa`` is not served by name although the listing leaves it out.
+    """
+    if _is_hidden(re.split(r"[\\/]", rel)):
+        raise HTTPException(status_code=403, detail=_HIDDEN)
     try:
         target = (root / rel.lstrip("/")).resolve()
     except (OSError, ValueError):
         raise HTTPException(status_code=400, detail="Invalid path") from None
     if target != root and not target.is_relative_to(root):
         raise HTTPException(status_code=400, detail="Path is outside the served folder")
+    if _is_hidden(target.relative_to(root).parts):
+        raise HTTPException(status_code=403, detail=_HIDDEN)
     return target
 
 
@@ -285,8 +433,9 @@ def _rel(root: Path, path: Path) -> str:
 def list_files(request: Request, path: str = "") -> dict:
     """List a folder under the files root for the web UI's file dialog.
 
-    Hidden entries (dot files) and entries whose real location is outside the
-    root are left out. Folders come first, then files, each sorted by name.
+    Hidden entries (dot files, and symlinks into hidden folders) and entries
+    whose real location is outside the root are left out. Folders come first,
+    then files, each sorted by name.
     """
     root = _files_root(request)
     target = _resolve_under(root, path)
@@ -299,6 +448,8 @@ def list_files(request: Request, path: str = "") -> dict:
         try:
             real = child.resolve()
             if real != root and not real.is_relative_to(root):
+                continue
+            if _is_hidden(real.relative_to(root).parts):
                 continue
             is_dir = real.is_dir()
             size = None if is_dir else real.stat().st_size
@@ -330,7 +481,17 @@ def read_file(request: Request, path: str) -> FileResponse:
 
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket) -> None:
-    """WebSocket endpoint for streaming molecular data."""
+    """WebSocket endpoint for streaming molecular data.
+
+    Browsers open WebSockets across origins without asking, so a connection
+    from another site's page (or under a rebound ``Host``) is closed before it
+    is accepted, which the browser sees as a 403.
+    """
+    refusal = _browser_refusal(websocket)
+    if refusal is not None:
+        logger.warning("Refused a WebSocket connection: %s", refusal.detail)
+        await websocket.close(code=1008)
+        return
     await websocket.accept()
     async with _clients_lock:
         _clients.add(websocket)

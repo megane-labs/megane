@@ -68,7 +68,7 @@ function makeStructureResult(opts: MockStructureOpts) {
       scalar_channel_data: () => opts.scalarChannelData ?? new Float32Array(),
       ca_indices: () => Uint32Array.from({ length: caCount }, (_, i) => i),
       ca_chain_ids: () => Uint8Array.from({ length: caCount }, () => 65),
-      ca_res_nums: () => Uint32Array.from({ length: caCount }, (_, i) => i + 1),
+      ca_res_nums: () => Int32Array.from({ length: caCount }, (_, i) => i + 1),
       ca_ss_type: () => Uint8Array.from({ length: caCount }, () => 1),
       free,
     },
@@ -204,7 +204,7 @@ function makeHeteroResult() {
       vector_channel_data: () => new Float32Array(),
       ca_indices: () => new Uint32Array(),
       ca_chain_ids: () => new Uint8Array(),
-      ca_res_nums: () => new Uint32Array(),
+      ca_res_nums: () => new Int32Array(),
       ca_ss_type: () => new Uint8Array(),
       // Heterogeneous side table.
       heterogeneous: true,
@@ -275,6 +275,21 @@ describe("parseWithFn heterogeneous", () => {
     expect(out.frames[0].bonds).toBeUndefined();
     // Cell still present.
     expect(out.frames[0].box!.length).toBe(9);
+  });
+
+  it("gives bondless frames an empty bond list, not frame 0's bonds", () => {
+    // Topology varies (offsets present) but no extra frame has a bond, so the
+    // flat bond array is empty. Each frame must carry zero bonds; leaving
+    // `bonds` unset made the renderer fall back to frame 0's bonds.
+    const { result } = makeHeteroResult();
+    result.frame_bond_offsets = () => Uint32Array.from([0, 0, 0]);
+    result.frame_bonds = () => new Uint32Array();
+    const out = parseWithFn(() => result as never, "");
+    for (const frame of out.frames) {
+      expect(frame.bonds).toBeDefined();
+      expect(frame.bonds!.length).toBe(0);
+      expect(frame.nBonds).toBe(0);
+    }
   });
 });
 

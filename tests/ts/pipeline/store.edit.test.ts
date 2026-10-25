@@ -186,6 +186,23 @@ describe("usePipelineStore — edit history on the loader", () => {
     expect(renderedAtoms()).toBe(3);
   });
 
+  it("keeps the history when only the file's directory changes", () => {
+    // A pipeline written by Python names the file by its path; a host that
+    // attaches the file beside the pipeline names it by its basename.
+    usePipelineStore.getState().updateNodeParams("loader-1", { fileName: "data/water.xyz" });
+    usePipelineStore.getState().pushEditOp({ op: "delete_atoms", atoms: [0] });
+    usePipelineStore.getState().updateNodeParams("loader-1", { fileName: "water.xyz" });
+    expect(edits()).toHaveLength(1);
+    usePipelineStore.getState().updateNodeParams("loader-1", { fileName: "C:\\runs\\water.xyz" });
+    expect(edits()).toHaveLength(1);
+    // A different file still drops it, a cleared one too.
+    usePipelineStore.getState().updateNodeParams("loader-1", { fileName: "data/other.xyz" });
+    expect(edits()).toEqual([]);
+    usePipelineStore.getState().pushEditOp({ op: "delete_atoms", atoms: [0] });
+    usePipelineStore.getState().updateNodeParams("loader-1", { fileName: null });
+    expect(edits()).toEqual([]);
+  });
+
   it("edits survive a serialize → deserialize round trip on the loader", () => {
     const s = usePipelineStore.getState();
     s.pushEditOp({ op: "add_atom", id: "n1", element: 7, position: [2, 2, 2], bondTo: 0 });

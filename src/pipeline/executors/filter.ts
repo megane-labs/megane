@@ -55,11 +55,19 @@ export function executeFilter(
           bond.atomElements,
           bond.nBonds,
           bond.nAtoms,
+          bond.periodicTopology?.bondIndices,
+          bond.ghostSourceIndices,
         );
         if (selectedSet !== null) {
+          // Narrow an upstream bond selection, as chained atom filters do.
+          let selected = [...selectedSet];
+          if (bond.selectedBondIndices !== null) {
+            const existing = new Set(bond.selectedBondIndices);
+            selected = selected.filter((i) => existing.has(i));
+          }
           outputs.set("out", {
             ...bond,
-            selectedBondIndices: new Uint32Array(selectedSet),
+            selectedBondIndices: new Uint32Array(selected),
           });
           return outputs;
         }

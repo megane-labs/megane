@@ -155,6 +155,16 @@ export function shouldUseLazyStructure(_kind: FileStructureKind, fileSize: numbe
   return shouldUseLazy(fileSize);
 }
 
+/**
+ * The worker answered a request with an error: it rejected the request's input
+ * (a malformed file, an atom-count mismatch). The worker itself is fine, so
+ * this never tears it down; a crash, a timeout or a fatal reply rejects with a
+ * plain `Error` instead.
+ */
+export class WorkerReplyError extends Error {
+  override name = "WorkerReplyError";
+}
+
 /** Reject every in-flight request and drop the worker (used on a fatal error). */
 function tearDown(reason: string): void {
   workerBroken = true;
@@ -170,6 +180,16 @@ function tearDown(reason: string): void {
     worker = null;
   }
   workerHeapBytes = 0;
+}
+
+/**
+ * A worker request failed and its caller is falling back to the main thread:
+ * drop the worker too, unless it only rejected that request's input. Tearing
+ * it down over one malformed file would end lazy streaming (its decoders die
+ * with it) and keep every later parse on the main thread for the session.
+ */
+function tearDownUnlessRejected(err: unknown): void {
+  if (!(err instanceof WorkerReplyError)) tearDown("falling back to synchronous parse");
 }
 
 /** Split the labels a structure result carries as text (see `./labels`). */
@@ -198,10 +218,14 @@ function getWorker(): Worker {
     if (e.data.ok) {
       entry.resolve(unpackResultLabels(e.data.result));
     } else {
-      entry.reject(new Error(e.data.error ?? "worker parse failed"));
+      const message = e.data.error ?? "worker parse failed";
+      entry.reject(e.data.fatal ? new Error(message) : new WorkerReplyError(message));
     }
   };
   w.onerror = () => tearDown("parse worker crashed");
+  // A response that cannot be deserialized would otherwise leave its request
+  // pending until the timeout.
+  w.onmessageerror = () => tearDown("parse worker sent an unreadable message");
   worker = w;
   return w;
 }
@@ -320,8 +344,8 @@ export async function parseStructureFile(file: File): Promise<StructureParseResu
     perfMark(`megane:parse:end:${tag}`);
     perfMeasure(`megane:parse:${tag}`, `megane:parse:start:${tag}`, `megane:parse:end:${tag}`);
     return result;
-  } catch {
-    tearDown("falling back to synchronous parse");
+  } catch (err) {
+    tearDownUnlessRejected(err);
     return sync.parseStructureFile(file);
   }
 }
@@ -336,8 +360,8 @@ export async function parseStructureText(
     const id = nextId++;
     const req: ParseRequest = { id, op: "structure", wasm: resolveWasmUrl(), ext, text };
     return await send<StructureParseResult>(req, []);
-  } catch {
-    tearDown("falling back to synchronous parse");
+  } catch (err) {
+    tearDownUnlessRejected(err);
     return sync.parseStructureText(text, fileName);
   }
 }
@@ -369,8 +393,8 @@ async function parseTrajectoryFile(
       transfer.push(buffer);
     }
     return await send<XTCParseResult>(req, transfer);
-  } catch {
-    tearDown("falling back to synchronous parse");
+  } catch (err) {
+    tearDownUnlessRejected(err);
     return syncFn(file, expectedNAtoms);
   }
 }

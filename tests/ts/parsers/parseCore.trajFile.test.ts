@@ -31,6 +31,50 @@ function recordingReader(bytes: Uint8Array) {
 
 const eagerTraj = (bytes: Uint8Array) => parseStructureCore({ ext: ".traj", bytes });
 
+/**
+ * A little-endian ULM `.traj` of 2-atom frames that each store momenta and a
+ * calculator's forces (frame f's momentum component k is `f + k`, its force
+ * `-k`).
+ */
+function trajWithVectors(nFrames: number): Uint8Array {
+  const out: number[] = new Array(TRAJ_HEADER_BYTES).fill(0);
+  const i64At = (at: number, v: number) => {
+    const b = new Uint8Array(8);
+    new DataView(b.buffer).setBigInt64(0, BigInt(v), true);
+    out.splice(at, 8, ...b);
+  };
+  out.splice(0, 8, ...new TextEncoder().encode("- of Ulm"));
+  i64At(24, 1);
+  i64At(32, nFrames);
+  const array = (values: number[]) => {
+    const at = out.length;
+    const b = new Uint8Array(new Float64Array(values).buffer);
+    out.push(...b);
+    return `{"ndarray": [[2, 3], "float64", ${at}]}`;
+  };
+  const offsets: number[] = [];
+  for (let f = 0; f < nFrames; f++) {
+    const positions = array([0, 0, 0, 0.96, 0, 0]);
+    const momenta = array([0, 1, 2, 3, 4, 5].map((k) => f + k));
+    const forces = array([0, 1, 2, 3, 4, 5].map((k) => -k));
+    const json = new TextEncoder().encode(
+      `{"numbers": [8, 1], "positions.": ${positions}, "momenta.": ${momenta}, ` +
+        `"calculator.": {"name": "emt", "forces.": ${forces}}}`,
+    );
+    offsets.push(out.length);
+    const len = new Uint8Array(8);
+    new DataView(len.buffer).setBigInt64(0, BigInt(json.length), true);
+    out.push(...len, ...json);
+  }
+  i64At(40, out.length);
+  for (const o of offsets) {
+    const b = new Uint8Array(8);
+    new DataView(b.buffer).setBigInt64(0, BigInt(o), true);
+    out.push(...b);
+  }
+  return Uint8Array.from(out);
+}
+
 beforeAll(async () => {
   await ensureInit(
     new WebAssembly.Module(readFileSync(join(ROOT, "crates/megane-wasm/pkg/megane_wasm_bg.wasm"))),
@@ -115,5 +159,17 @@ describe("indexTrajFileCore", () => {
     const pos0 = Number(view.getBigInt64(40, true));
     view.setBigInt64(pos0, 1n << 40n, true);
     await expect(indexTrajFileCore(new Blob([bytes]))).rejects.toThrow(/past EOF/);
+  });
+});
+
+describe("eager .traj vector channels", () => {
+  it("offers momenta and calculator forces as frame-synced channels", () => {
+    const result = eagerTraj(trajWithVectors(3));
+    expect(result.vectorChannels.map((c) => c.name)).toEqual(["momenta", "force"]);
+    const [momenta, force] = result.vectorChannels;
+    expect(momenta.frames.map((f) => f.frame)).toEqual([0, 1, 2]);
+    expect(Array.from(momenta.frames[2].vectors)).toEqual([2, 3, 4, 5, 6, 7]);
+    expect(Array.from(force.frames[1].vectors)).toEqual([-0, -1, -2, -3, -4, -5]);
+    expect(result.warnings).toEqual([]);
   });
 });

@@ -124,6 +124,95 @@ def test_to_ase():
     assert atoms.get_chemical_symbols() == ["O", "H", "H"]
 
 
+# ─── load() replaces the document ──────────────────────────────────────
+
+
+def test_load_drops_the_previous_document(tmp_path):
+    """b.load("b.pdb"); b.save(...) in one cell saves b.pdb, not the document on screen before."""
+    from megane.parsers.pdb import load_pdb
+
+    b = Builder()
+    b._document = _document()  # the front end wrote back the water it shows
+    b.load(FIXTURES / "1crn.pdb")
+    assert b._document == {}
+    assert (b.file_name, b.n_atoms) == ("1crn.pdb", 327)
+    assert b.n_bonds == len(load_pdb(str(FIXTURES / "1crn.pdb")).bonds)
+    saved = load_pdb(str(b.save(tmp_path / "out.pdb")))
+    assert saved.n_atoms == 327
+    assert "THR A   1" in b.text("pdb")  # residue labels and chains, as the front end writes them
+    assert b.text().splitlines()[0] == "327"
+    assert b._shown()["has_cell"] is True  # CRYST1
+    b.load_text(WATER_XYZ, "water.xyz")
+    assert (b.n_atoms, b.n_bonds, b._shown()["has_cell"]) == (3, 2, False)
+    with pytest.raises(ValueError, match="cannot be written as CIF"):
+        b.text("cif")
+
+
+def test_the_front_ends_document_takes_over_after_load():
+    b = Builder(FIXTURES / "1crn.pdb")
+    assert b.n_atoms == 327
+    b._document = _document()
+    assert (b.n_atoms, b.text()) == (3, WATER_XYZ)
+
+
+def test_load_reads_every_format_the_front_end_opens():
+    b = Builder(FIXTURES / "nacl.cif")
+    assert b.n_atoms > 0
+    assert "data_megane" in b.text("cif")
+    assert b.text("poscar")
+    b.load(FIXTURES / "bond_change.traj")
+    assert b.n_atoms > 0 and b.file_name == "bond_change.traj"
+
+
+@pytest.mark.parametrize(("data", "name"), [(b"garbage", "x.pdb"), (b"abc", "notes.unknown")])
+def test_an_unreadable_load_has_no_atoms(data, name):
+    b = Builder()
+    b.load_bytes(data, name)
+    assert b.n_atoms == 0 and b.file_name is None
+    with pytest.raises(RuntimeError, match="no atoms"):
+        b.text()
+
+
+def test_the_loaded_document_is_read_once_per_load():
+    b = Builder(FIXTURES / "1crn.pdb")
+    first = b._shown()
+    assert b._shown() is first
+    b.load_text(WATER_XYZ, "water.xyz")
+    assert b._shown() is not first
+    assert b.n_atoms == 3
+
+
+def test_load_clears_the_document_in_the_same_update():
+    """A re-displayed Builder opens _source only when _document is empty (restoreDocument)."""
+
+    class Comm:
+        kernel = object()
+        comm_id = "builder-test"
+
+        def __init__(self):
+            self.sent = []
+
+        def send(self, data=None, buffers=None, **kwargs):
+            self.sent.append(data)
+
+        def on_msg(self, callback):
+            pass
+
+        def close(self, *args, **kwargs):
+            pass
+
+    b = Builder()
+    b._document = _document()
+    b.comm = Comm()
+    b.comm.sent.clear()
+    b.load_text(WATER_XYZ, "water.xyz")
+    updates = [m for m in b.comm.sent if m and m.get("method") == "update"]
+    assert len(updates) == 1
+    buffers = {path[0] for path in updates[0].get("buffer_paths", [])}
+    assert updates[0]["state"]["_document"] == {}
+    assert {"_source_name", "_source_seq"} <= set(updates[0]["state"]) and "_source" in buffers
+
+
 def test_save_request_writes_into_save_dir_without_overwriting(tmp_path):
     b = Builder(save_dir=tmp_path)
     sent = Sent(b)

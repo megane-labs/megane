@@ -45,8 +45,10 @@ struct Header {
     elements: Vec<u8>,
     /// Per-atom label, only populated for VASP 4 files with no species line.
     placeholder_labels: Option<Vec<String>>,
-    /// Universal scaling factor, needed to scale `Cartesian` coordinates.
-    scale: f32,
+    /// Per-Cartesian-axis scaling factors (x, y, z), needed to scale
+    /// `Cartesian` coordinates. A single (or negative, target-volume) factor
+    /// is stored as three equal values.
+    scale: [f32; 3],
     /// Line index (into `lines`) just past the header.
     next: usize,
 }
@@ -87,8 +89,10 @@ fn parse_header(lines: &[&str], start: usize) -> Result<Header, String> {
     }
 
     // Line 2: universal scaling factor. A single value scales all three
-    // vectors; three values scale each axis independently; a negative single
-    // value is the *target volume* in Å³.
+    // vectors; three values scale the x, y and z *Cartesian components* of
+    // every lattice vector (i.e. the columns of the row-major cell, not the
+    // rows); a negative single value is the *target volume* in Å³. VASP and
+    // ASE (`cell *= scale`) apply the same factors to `Cartesian` positions.
     let scale_vals = floats(lines[i]);
     if scale_vals.is_empty() {
         return Err(format!("VASP: missing scaling factor at line {}", i + 1));
@@ -112,13 +116,20 @@ fn parse_header(lines: &[&str], start: usize) -> Result<Header, String> {
     i += 3;
 
     // Apply the scaling factor to the cell.
-    let uniform_scale = if scale_vals.len() >= 3 {
+    let axis_scale = if scale_vals.len() >= 3 {
+        let axes = [scale_vals[0], scale_vals[1], scale_vals[2]];
+        if axes.iter().any(|&f| f <= 0.0) {
+            return Err(format!(
+                "VASP: three scaling factors must all be positive (line {})",
+                start + 2
+            ));
+        }
         for row in 0..3 {
             for col in 0..3 {
-                cell[row * 3 + col] *= scale_vals[row];
+                cell[row * 3 + col] *= axes[col];
             }
         }
-        1.0
+        axes
     } else {
         let s = scale_vals[0];
         let factor = if s < 0.0 {
@@ -134,7 +145,7 @@ fn parse_header(lines: &[&str], start: usize) -> Result<Header, String> {
         for c in cell.iter_mut() {
             *c *= factor;
         }
-        factor
+        [factor; 3]
     };
 
     // Optional species line (VASP 5+), then the per-species counts.
@@ -197,7 +208,7 @@ fn parse_header(lines: &[&str], start: usize) -> Result<Header, String> {
         cell,
         elements,
         placeholder_labels,
-        scale: uniform_scale,
+        scale: axis_scale,
         next: i,
     })
 }
@@ -283,7 +294,7 @@ fn read_positions(
     n: usize,
     direct: bool,
     cell: &[f32; 9],
-    scale: f32,
+    scale: [f32; 3],
 ) -> Result<Vec<f32>, String> {
     if start + n > lines.len() {
         return Err("VASP: truncated coordinate block".into());
@@ -300,9 +311,9 @@ fn read_positions(
             positions.push(a * cell[1] + b * cell[4] + c * cell[7]);
             positions.push(a * cell[2] + b * cell[5] + c * cell[8]);
         } else {
-            positions.push(a * scale);
-            positions.push(b * scale);
-            positions.push(c * scale);
+            positions.push(a * scale[0]);
+            positions.push(b * scale[1]);
+            positions.push(c * scale[2]);
         }
     }
     Ok(positions)
@@ -524,6 +535,138 @@ Direct
         assert!((cell[0] - 2.0).abs() < 1e-4);
         assert!((cell[4] - 3.0).abs() < 1e-4);
         assert!((cell[8] - 4.0).abs() < 1e-4);
+    }
+
+    #[test]
+    fn three_scaling_factors_scale_cartesian_components_not_rows() {
+        // VASP / ASE: the three factors multiply the x, y, z components of
+        // every lattice vector (`cell *= scale` in ASE's read_vasp), so on a
+        // skewed cell each *column* is scaled, not each row.
+        let text = "\
+skewed
+  1.0 2.0 3.0
+    1.0 1.0 0.0
+    0.0 1.0 1.0
+    1.0 0.0 1.0
+  Si
+  1
+Direct
+  0.0 0.0 0.0
+";
+        let s = parse(text).unwrap();
+        let cell = s.box_matrix.unwrap();
+        let expected = [1.0, 2.0, 0.0, 0.0, 2.0, 3.0, 1.0, 0.0, 3.0];
+        for (got, want) in cell.iter().zip(expected) {
+            assert!((got - want).abs() < 1e-5, "cell {cell:?} != {expected:?}");
+        }
+    }
+
+    #[test]
+    fn three_scaling_factors_also_scale_cartesian_positions() {
+        let text = "\
+Si
+  2.0 2.0 2.0
+    1 0 0
+    0 1 0
+    0 0 1
+  Si
+  2
+Cartesian
+  0 0 0
+  0.5 0.5 0.5
+";
+        let s = parse(text).unwrap();
+        let cell = s.box_matrix.unwrap();
+        assert!((cell[0] - 2.0).abs() < 1e-6);
+        assert_eq!(&s.positions[3..6], &[1.0, 1.0, 1.0]);
+
+        // Anisotropic factors scale each Cartesian component separately.
+        let text = text
+            .replace("  2.0 2.0 2.0\n", "  1.0 2.0 3.0\n")
+            .replace("  0.5 0.5 0.5\n", "  1.0 1.0 1.0\n");
+        let s = parse(&text).unwrap();
+        assert_eq!(&s.positions[3..6], &[1.0, 2.0, 3.0]);
+    }
+
+    #[test]
+    fn rejects_non_positive_three_scaling_factors() {
+        let text = "\
+bad
+  1.0 -2.0 1.0
+    1 0 0
+    0 1 0
+    0 0 1
+  Si
+  1
+Direct
+  0 0 0
+";
+        let err = match parse(text) {
+            Ok(_) => panic!("expected a parse error"),
+            Err(e) => e,
+        };
+        assert!(
+            err.contains("must all be positive"),
+            "unexpected error: {err}"
+        );
+        assert!(err.contains("line 2"), "unexpected error: {err}");
+    }
+
+    #[test]
+    fn negative_scale_target_volume_also_scales_cartesian_positions() {
+        let text = "\
+cube
+  -8.0
+    1.0 0.0 0.0
+    0.0 1.0 0.0
+    0.0 0.0 1.0
+  H
+  1
+Cartesian
+  0.5 0.5 0.5
+";
+        let s = parse(text).unwrap();
+        assert!((s.box_matrix.unwrap()[0] - 2.0).abs() < 1e-4);
+        for k in 0..3 {
+            assert!((s.positions[k] - 1.0).abs() < 1e-4, "{:?}", s.positions);
+        }
+    }
+
+    #[test]
+    fn variable_cell_xdatcar_with_three_scaling_factors() {
+        // A re-emitted header carries its own (per-axis) scale; the frame's
+        // cell must follow the column-wise rule as well.
+        let text = "\
+Si NPT
+   1.0
+     5.0 0.0 0.0
+     0.0 5.0 0.0
+     0.0 0.0 5.0
+   Si
+   1
+Direct configuration=     1
+  0.5 0.5 0.5
+Si NPT
+   1.0 1.0 2.0
+     5.0 0.0 1.0
+     0.0 5.0 0.0
+     0.0 0.0 5.0
+   Si
+   1
+Direct configuration=     2
+  0.5 0.5 0.5
+";
+        let s = parse(text).unwrap();
+        assert_eq!(s.extra_frame_count(), 1);
+        let h = s.hetero.as_ref().expect("variable cell => hetero table");
+        // Row a = (5, 0, 1) with its z component doubled; c = (0, 0, 10).
+        assert!((h.cells_flat[0] - 5.0).abs() < 1e-5);
+        assert!((h.cells_flat[2] - 2.0).abs() < 1e-5);
+        assert!((h.cells_flat[8] - 10.0).abs() < 1e-5);
+        // Direct (0.5, 0.5, 0.5) in that cell.
+        let f = s.frame(0);
+        assert!((f[0] - 2.5).abs() < 1e-5, "{f:?}");
+        assert!((f[2] - 6.0).abs() < 1e-5, "{f:?}");
     }
 
     #[test]

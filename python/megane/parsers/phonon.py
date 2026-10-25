@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 
 from megane import megane_parser
-from megane.parsers.common import InMemoryTrajectory, Structure, structure_and_trajectory_from_result
+from megane.parsers.common import InMemoryTrajectory, Structure, read_text, structure_and_trajectory_from_result
 
 __all__ = ["load_phonon", "InMemoryTrajectory"]
 
@@ -34,8 +34,7 @@ def load_phonon(path: str) -> tuple[Structure, InMemoryTrajectory]:
     """
     logger.debug("Loading CASTEP phonon structure: %s", path)
 
-    with open(path) as f:
-        text = f.read()
+    text = read_text(path)
 
     result = megane_parser.parse_phonon(text)
 

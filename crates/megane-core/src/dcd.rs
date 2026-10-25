@@ -112,13 +112,17 @@ impl<'a> DcdReader<'a> {
     fn read_record(&mut self) -> Result<&'a [u8], String> {
         let size = self.read_u32()? as usize;
         let start = self.pos;
-        let end = start + size;
-        if end + 4 > self.data.len() {
-            return Err(format!(
-                "DCD record ({} bytes) extends beyond file end (pos {})",
-                size, start
-            ));
-        }
+        // Checked: on wasm32 a record size near u32::MAX would wrap past the
+        // end-of-file test and slice backwards.
+        let end = match start.checked_add(size) {
+            Some(end) if end.checked_add(4).is_some_and(|e| e <= self.data.len()) => end,
+            _ => {
+                return Err(format!(
+                    "DCD record ({} bytes) extends beyond file end (pos {})",
+                    size, start
+                ))
+            }
+        };
         self.pos = end;
         let end_marker = self.read_u32()? as usize;
         if size != end_marker {
@@ -260,15 +264,18 @@ fn read_header(data: &[u8]) -> Result<DcdHeader, String> {
             natom_rec.len()
         ));
     }
-    let n_atoms = if le {
+    let natom = if le {
         read_i32_le(natom_rec, 0)
     } else {
         read_i32_be(natom_rec, 0)
-    } as usize;
-
-    if n_atoms == 0 {
-        return Err("DCD file reports zero atoms".into());
-    }
+    };
+    let n_atoms = match usize::try_from(natom) {
+        Ok(0) => return Err("DCD file reports zero atoms".into()),
+        // Every frame reads `n_atoms * 3` four-byte floats (one record of
+        // `n_atoms * 4` bytes per axis): that must not overflow (wasm32).
+        Ok(n) if n.checked_mul(3 * 4).is_some() => n,
+        _ => return Err(format!("DCD file reports an invalid atom count {natom}")),
+    };
 
     Ok(DcdHeader {
         le,
@@ -455,41 +462,34 @@ pub fn parse_dcd(data: &[u8]) -> Result<DcdData, String> {
             }
         }
 
-        // X coordinates
-        let x_rec = match reader.read_record() {
-            Ok(r) => r,
-            Err(_) => break,
-        };
-        if x_rec.len() != expected_coord_bytes {
-            if n_frames == 0 {
-                return Err(format!(
-                    "DCD X-coord record size {} != expected {}",
-                    x_rec.len(),
-                    expected_coord_bytes
-                ));
+        // X, Y and Z coordinate records. A record cut off by the end of the
+        // file (or of the wrong size) after a complete frame ends the
+        // trajectory there, whichever axis it is: the incomplete last frame
+        // is dropped, as the fixed-layout reader (`read_layout`) counts only
+        // whole frames.
+        let mut axes = [&[][..]; 3];
+        let mut complete = true;
+        for (axis, slot) in axes.iter_mut().enumerate() {
+            match reader.read_record() {
+                Ok(rec) if rec.len() == expected_coord_bytes => *slot = rec,
+                Ok(rec) if n_frames == 0 => {
+                    return Err(format!(
+                        "DCD {}-coord record size {} != expected {}",
+                        ["X", "Y", "Z"][axis],
+                        rec.len(),
+                        expected_coord_bytes
+                    ));
+                }
+                _ => {
+                    complete = false;
+                    break;
+                }
             }
+        }
+        if !complete {
             break;
         }
-
-        // Y coordinates
-        let y_rec = reader.read_record()?;
-        if y_rec.len() != expected_coord_bytes {
-            return Err(format!(
-                "DCD Y-coord record size {} != expected {}",
-                y_rec.len(),
-                expected_coord_bytes
-            ));
-        }
-
-        // Z coordinates
-        let z_rec = reader.read_record()?;
-        if z_rec.len() != expected_coord_bytes {
-            return Err(format!(
-                "DCD Z-coord record size {} != expected {}",
-                z_rec.len(),
-                expected_coord_bytes
-            ));
-        }
+        let [x_rec, y_rec, z_rec] = axes;
 
         // Build interleaved [x0,y0,z0, x1,y1,z1, …] straight into the flat buffer.
         if le {
@@ -1108,5 +1108,108 @@ mod tests {
         let err = parse_dcd(&out).err().expect("expected error");
         assert!(err.contains("NAMNF=2"), "got: {err}");
         assert!(err.contains("not supported"), "got: {err}");
+    }
+
+    #[test]
+    fn a_truncated_last_frame_is_dropped_whichever_record_it_cuts() {
+        let data = std::fs::read(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../tests/fixtures/water.dcd"
+        ))
+        .expect("read DCD");
+        let full = parse_dcd(&data).unwrap();
+        assert_eq!(full.n_frames, 5);
+        // water.dcd has 3 atoms: each coordinate record is 4 + 12 + 4 bytes,
+        // so cutting 3 / 20 / 40 / 60 bytes ends the file inside the last
+        // frame's Z, Z, Y and X record.
+        for cut in [3usize, 20, 40, 60] {
+            let t = &data[..data.len() - cut];
+            let eager = parse_dcd(t).unwrap_or_else(|e| panic!("cut {cut}: {e}"));
+            let layout = read_layout(t, t.len() as u64).unwrap();
+            assert_eq!(eager.n_frames, 4, "cut {cut}");
+            assert_eq!(layout.n_frames, eager.n_frames, "cut {cut}");
+            assert_eq!(
+                eager.frame_positions_flat,
+                full.frame_positions_flat[..4 * 9],
+                "cut {cut}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_wrong_sized_first_frame_record_is_still_an_error() {
+        let data = std::fs::read(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../tests/fixtures/water.dcd"
+        ))
+        .expect("read DCD");
+        let header = read_header(&data).unwrap();
+        // The first frame's Y record (after its cell and X records) claims 8 bytes.
+        let x_end = header.frames_start + if header.has_cell { 56 } else { 0 } + 20;
+        let mut d = data[..x_end].to_vec();
+        let size = if header.le {
+            8u32.to_le_bytes()
+        } else {
+            8u32.to_be_bytes()
+        };
+        for _ in 0..2 {
+            d.extend_from_slice(&size);
+            d.extend_from_slice(&[0u8; 8]);
+            d.extend_from_slice(&size);
+        }
+        let err = parse_dcd(&d).err().unwrap();
+        assert!(
+            err.contains("Y-coord record size 8 != expected 12"),
+            "{err}"
+        );
+    }
+
+    /// A little-endian CHARMM DCD whose NATOM block holds `natom`, followed by
+    /// one frame of 4-byte coordinate records.
+    fn dcd_with_natom(natom: i32) -> Vec<u8> {
+        let mut d = Vec::new();
+        let record = |d: &mut Vec<u8>, payload: &[u8]| {
+            d.extend_from_slice(&(payload.len() as u32).to_le_bytes());
+            d.extend_from_slice(payload);
+            d.extend_from_slice(&(payload.len() as u32).to_le_bytes());
+        };
+        let mut hdr = [0u8; 84];
+        hdr[..4].copy_from_slice(b"CORD");
+        hdr[4..8].copy_from_slice(&1i32.to_le_bytes()); // NSET
+        hdr[80..84].copy_from_slice(&24i32.to_le_bytes()); // CHARMM
+        record(&mut d, &hdr);
+        record(&mut d, &0i32.to_le_bytes()); // title
+        record(&mut d, &natom.to_le_bytes());
+        for _ in 0..3 {
+            record(&mut d, &0f32.to_le_bytes());
+        }
+        d
+    }
+
+    #[test]
+    fn a_negative_atom_count_is_an_error() {
+        for natom in [-1, i32::MIN] {
+            let d = dcd_with_natom(natom);
+            let err = parse_dcd(&d).err().expect("negative NATOM");
+            assert!(err.contains("invalid atom count"), "{err}");
+            assert!(read_layout(&d, d.len() as u64).is_err());
+        }
+        assert!(parse_dcd(&dcd_with_natom(0))
+            .err()
+            .unwrap()
+            .contains("zero atoms"));
+        // A sane count still parses.
+        assert_eq!(parse_dcd(&dcd_with_natom(1)).unwrap().n_frames, 1);
+    }
+
+    #[test]
+    fn a_record_running_past_the_file_is_an_error() {
+        let mut d = dcd_with_natom(1);
+        // The title record's size field (after the 92-byte header record).
+        d[92..96].copy_from_slice(&u32::MAX.to_le_bytes());
+        assert!(parse_dcd(&d)
+            .err()
+            .unwrap()
+            .contains("extends beyond file end"));
     }
 }
