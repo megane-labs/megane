@@ -122,3 +122,21 @@ def test_load_sdf_missing_file():
     """load_sdf raises an error for a non-existent file."""
     with pytest.raises((FileNotFoundError, OSError)):
         load_sdf("/nonexistent/missing.sdf")
+
+
+def test_bond_to_a_missing_atom_is_skipped_with_a_warning():
+    """Atom number 0 used to wrap to 4294967295 instead of being rejected."""
+    from megane import megane_parser
+
+    text = (
+        "x\n  test\n\n  2  2  0  0  0  0            999 V2000\n"
+        "    0.0000    0.0000    0.0000 C   0  0  0  0  0  0\n"
+        "    1.5000    0.0000    0.0000 O   0  0  0  0  0  0\n"
+        "  1  2  1  0\n"
+        "  0  2  1  0\n"
+        "M  END\n"
+    )
+    s = megane_parser.parse_mol(text)
+    assert s.bonds.tolist() == [[0, 1]]
+    assert s.n_file_bonds == 1
+    assert len(s.warnings) == 1
