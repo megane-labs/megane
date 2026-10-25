@@ -13,39 +13,94 @@ use std::collections::HashSet;
 
 struct PsfAtom {
     segment: String,
-    res_id: u32,
+    /// Residue id as written, insertion code included (e.g. `52A`).
+    res_id: String,
     res_name: String,
-    element: u8,
+    atom_name: String,
+    mass: Option<f32>,
 }
 
 /// Parse a PSF ATOM section line (whitespace-split; handles both standard and EXT widths).
 ///
 /// Expected fields (1-indexed): serial segid resid resname atomname atomtype charge mass …
+/// The resid is kept as text: CHARMM writes residue insertion codes into it
+/// (`52A`), and negative ids occur as well.
 fn parse_atom_line(line: &str) -> Option<PsfAtom> {
     let mut parts = line.split_whitespace();
     let _serial: u32 = parts.next()?.parse().ok()?;
     let segment = parts.next()?.to_string();
-    let res_id: u32 = parts.next()?.parse().ok()?;
+    let res_id = parts.next()?.to_string();
     let res_name = parts.next()?.to_string();
     let atom_name = parts.next()?.to_string();
     let _atom_type = parts.next();
     let _charge = parts.next();
     let mass: Option<f32> = parts.next().and_then(|s| s.parse().ok());
-    // The mass column is the most authoritative element field a PSF carries
-    // (atom names like "CL"/"FE"/"ZN" are ambiguous). Fall back to the
-    // residue-aware atom-name guess only when the mass is missing,
-    // non-positive, or matches no known element.
-    let element = mass
-        .filter(|&m| m > 0.0)
-        .map(mass_to_atomic_num)
-        .filter(|&z| z != 0)
-        .unwrap_or_else(|| element_from_atom_name_in_residue(&atom_name, &res_name));
     Some(PsfAtom {
         segment,
         res_id,
         res_name,
-        element,
+        atom_name,
+        mass,
     })
+}
+
+/// Mass above which an atom whose name says hydrogen carries a modified
+/// mass: hydrogen mass repartitioning (typically 3.024 amu) or an isotope
+/// (deuterium 2.014).
+const HEAVY_HYDROGEN_MASS: f32 = 1.5;
+
+/// Resolve every atom's element.
+///
+/// The mass column is the most authoritative element field a PSF carries
+/// (atom names like "CL"/"FE"/"ZN" are ambiguous), so it wins, with the
+/// residue-aware atom-name guess as the fallback when the mass is missing,
+/// non-positive, or matches no known element — the same precedence as the
+/// AMBER prmtop reader.
+///
+/// Hydrogen mass repartitioning (HMR) is the exception: it moves mass from
+/// each heavy atom onto the hydrogens bonded to it (N–H 14.007 → 11.991,
+/// which reads as carbon; O–H 15.999 → 13.983, which reads as nitrogen). So
+/// an atom whose name says hydrogen but whose mass exceeds
+/// [`HEAVY_HYDROGEN_MASS`] is hydrogen, and an atom bonded to such a
+/// hydrogen no longer has an identifying mass: it is resolved from its
+/// atom name. Every other atom keeps the mass precedence.
+fn resolve_elements(atoms: &[PsfAtom], bonds: &[(u32, u32)]) -> Vec<u8> {
+    let guesses: Vec<u8> = atoms
+        .iter()
+        .map(|a| element_from_atom_name_in_residue(&a.atom_name, &a.res_name))
+        .collect();
+    let heavy_h: Vec<bool> = atoms
+        .iter()
+        .zip(&guesses)
+        .map(|(a, &g)| g == 1 && a.mass.is_some_and(|m| m > HEAVY_HYDROGEN_MASS))
+        .collect();
+    let mut mass_shifted = vec![false; atoms.len()];
+    for &(a, b) in bonds {
+        let (a, b) = (a as usize, b as usize);
+        if heavy_h[a] {
+            mass_shifted[b] = true;
+        }
+        if heavy_h[b] {
+            mass_shifted[a] = true;
+        }
+    }
+    atoms
+        .iter()
+        .enumerate()
+        .map(|(i, a)| {
+            if heavy_h[i] {
+                return 1;
+            }
+            if mass_shifted[i] && guesses[i] != 0 {
+                return guesses[i];
+            }
+            a.mass
+                .filter(|&m| m > 0.0)
+                .map(mass_to_atomic_num)
+                .filter(|&z| z != 0)
+                .unwrap_or(guesses[i])
+        })
+        .collect()
 }
 
 /// Flush the accumulated bond integer buffer into bond pairs.
@@ -128,10 +183,17 @@ pub fn parse_psf(text: &str) -> Result<ParsedStructure, String> {
 
         match section {
             "atom" if atoms_remaining > 0 => {
-                if let Some(atom) = parse_atom_line(line) {
-                    atoms.push(atom);
-                    atoms_remaining -= 1;
-                }
+                // Every line the NATOM count covers is an atom; dropping one
+                // would shift every later atom and every bond index.
+                let atom = parse_atom_line(line).ok_or_else(|| {
+                    format!(
+                        "PSF: cannot parse atom line {}: {:?}",
+                        atoms.len() + 1,
+                        trimmed
+                    )
+                })?;
+                atoms.push(atom);
+                atoms_remaining -= 1;
             }
             "bond" => {
                 for tok in trimmed.split_whitespace() {
@@ -161,7 +223,6 @@ pub fn parse_psf(text: &str) -> Result<ParsedStructure, String> {
     // PSF carries no coordinates; use zeros so the structure can be loaded
     // and combined with a DCD/XTC trajectory.
     let positions = vec![0.0f32; n_atoms * 3];
-    let elements: Vec<u8> = atoms.iter().map(|a| a.element).collect();
 
     // Atom labels: residue name + residue ID (e.g. "ALA1").
     let atom_labels: Vec<String> = atoms
@@ -184,6 +245,7 @@ pub fn parse_psf(text: &str) -> Result<ParsedStructure, String> {
         }
     }
     let n_file_bonds = unique_bonds.len();
+    let elements = resolve_elements(&atoms, &unique_bonds);
 
     let has_chain = chain_ids.iter().any(|&c| c != b' ' && c != 0);
 
@@ -556,6 +618,112 @@ PSF
         let data = parse_psf(text).expect("parse failed");
         assert_eq!(data.elements[0], 8); // O from "OH2" (mass 0.0 rejected)
         assert_eq!(data.elements[1], 1); // H from "H1" (mass 999.0 unmatched)
+    }
+
+    /// A resid carrying an insertion code (`52A`) is a valid atom line; it
+    /// must not be dropped (which shrank NATOM 4 to 2 atoms and lost bonds).
+    #[test]
+    fn test_resid_with_insertion_code_keeps_the_atom() {
+        let text = "\
+PSF EXT
+
+         1 !NTITLE
+ REMARKS test
+
+         5 !NATOM
+         1 PROA     52       ALA      N        NH1      -0.470000       14.0070           0
+         2 PROA     52A      GLY      N        NH1      -0.470000       14.0070           0
+         3 PROA     52A      GLY      CA       CT2      -0.020000       12.0110           0
+         4 PROA     53       SER      N        NH1      -0.470000       14.0070           0
+         5 PROA     -1       SER      CA       CT1      -0.020000       12.0110           0
+
+         2 !NBOND: bonds
+         2         3         3         4
+";
+        let data = parse_psf(text).expect("parse failed");
+        assert_eq!(data.n_atoms, 5);
+        assert_eq!(data.elements, vec![7, 7, 6, 7, 6]);
+        assert_eq!(data.bonds, vec![(1, 2), (2, 3)]);
+        let labels = data.atom_labels.expect("labels");
+        assert_eq!(labels, vec!["ALA52", "GLY52A", "GLY52A", "SER53", "SER-1"]);
+    }
+
+    /// A line inside the NATOM count that cannot be read is an error, never
+    /// skipped (skipping shifts every later atom).
+    #[test]
+    fn test_unreadable_counted_atom_line_is_an_error() {
+        let text = "\
+PSF
+
+       1 !NTITLE
+ REMARKS broken
+
+       2 !NATOM
+         1 WAT      1 TIP3 OH2  OT    -0.834000       15.9994           0
+         X WAT      1 TIP3 H1   HT     0.417000        1.0080           0
+
+       0 !NBOND: bonds
+";
+        let err = match parse_psf(text) {
+            Ok(_) => panic!("expected an error"),
+            Err(e) => e,
+        };
+        assert!(err.contains("atom line 2"), "{err}");
+    }
+
+    /// Hydrogen mass repartitioning: H carries 3.024 amu and its heavy atom
+    /// lost the difference (N 11.991 reads as C, O 13.983 as N). Hydrogens
+    /// with a raised mass stay hydrogen and their heavy atoms resolve from
+    /// the atom name; atoms not bonded to a repartitioned H keep the mass.
+    #[test]
+    fn test_hydrogen_mass_repartitioning_does_not_change_elements() {
+        let text = "\
+PSF EXT
+
+         1 !NTITLE
+ REMARKS hmr
+
+         8 !NATOM
+         1 PROA     1        SER      N        NH1      -0.470000       11.9910           0
+         2 PROA     1        SER      HN       H        0.310000        3.0240           0
+         3 PROA     1        SER      OG       OH1     -0.660000       13.9830           0
+         4 PROA     1        SER      HG1      H        0.430000        3.0240           0
+         5 PROA     1        SER      C        C        0.510000       12.0110           0
+         6 LIG      2        LIG      CD1      CG2R61  -0.100000       12.0110           0
+         7 LIG      2        LIG      HX       HGR61    0.100000        4.0320           0
+         8 LIG      2        LIG      CX       CG2R61   0.000000        9.9950           0
+
+         4 !NBOND: bonds
+         1         2         3         4         6         8         7         8
+";
+        let data = parse_psf(text).expect("parse failed");
+        // N, H, O, H, C (mass untouched), C (mass wins over the "Cd" name
+        // guess: not bonded to a repartitioned H),
+        // H (4.032 would read as He), C (resolved from its name).
+        assert_eq!(data.elements, vec![7, 1, 8, 1, 6, 6, 1, 6]);
+    }
+
+    /// Without repartitioned hydrogens the mass keeps precedence, including
+    /// for an atom bonded to a normal-mass hydrogen.
+    #[test]
+    fn test_normal_hydrogen_masses_keep_mass_precedence() {
+        let text = "\
+PSF
+
+       1 !NTITLE
+ REMARKS no hmr
+
+       3 !NATOM
+         1 ION      1 LIG  CA   CA     0.000000       12.0110           0
+         2 ION      1 LIG  HA   HA     0.000000        1.0080           0
+         3 ION      1 LIG  X1   X      0.000000       15.9990           0
+
+       1 !NBOND: bonds
+         1         2
+";
+        let data = parse_psf(text).expect("parse failed");
+        // "CA" in a non-standard residue would guess calcium; the mass says C.
+        assert_eq!(data.elements, vec![6, 1, 8]);
     }
 
     #[test]
