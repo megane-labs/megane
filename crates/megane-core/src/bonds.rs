@@ -605,6 +605,12 @@ pub fn infer_bonds(
 /// out of their crystallographic cell. This is the appropriate path for
 /// periodic structures: connectivity may cross a cell face, while structural
 /// coordinates remain exactly as supplied by the file.
+///
+/// Candidate pairs come from a periodic cell list over fractional
+/// coordinates, so the cost grows with the atom count rather than its square.
+/// Every candidate then goes through the same minimum-image test the
+/// all-pairs scan used, and the result is sorted, so the bonds — and their
+/// order — are exactly what checking every pair would give.
 pub fn infer_bonds_periodic(
     positions: &[f32],
     elements: &[u8],
@@ -616,39 +622,197 @@ pub fn infer_bonds_periodic(
         Some(matrix) => matrix,
         None => return infer_bonds(positions, elements, n_atoms, existing_bonds),
     };
+    if n_atoms < 2 {
+        return Vec::new();
+    }
+
+    let grid = PeriodicGrid::new(positions, &elements[..n_atoms], &minv, box_matrix);
     let mut inferred = Vec::with_capacity(n_atoms);
-
-    for i in 0..n_atoms {
-        for j in (i + 1)..n_atoms {
-            let mut dx = positions[j * 3] - positions[i * 3];
-            let mut dy = positions[j * 3 + 1] - positions[i * 3 + 1];
-            let mut dz = positions[j * 3 + 2] - positions[i * 3 + 2];
-
-            let mut fa = dx * minv[0] + dy * minv[3] + dz * minv[6];
-            let mut fb = dx * minv[1] + dy * minv[4] + dz * minv[7];
-            let mut fc = dx * minv[2] + dy * minv[5] + dz * minv[8];
-            fa -= fa.round();
-            fb -= fb.round();
-            fc -= fc.round();
-
-            dx = fa * box_matrix[0] + fb * box_matrix[3] + fc * box_matrix[6];
-            dy = fa * box_matrix[1] + fb * box_matrix[4] + fc * box_matrix[7];
-            dz = fa * box_matrix[2] + fb * box_matrix[5] + fc * box_matrix[8];
-
-            let dist_sq = dx * dx + dy * dy + dz * dz;
-            let threshold =
-                (covalent_radius(elements[i]) + covalent_radius(elements[j])) * BOND_TOLERANCE;
-            let pair = (i as u32, j as u32);
-            if dist_sq > MIN_BOND_DIST * MIN_BOND_DIST
-                && dist_sq <= threshold * threshold
-                && !existing_bonds.contains(&pair)
-            {
-                inferred.push(pair);
+    let mut neighbors: Vec<usize> = Vec::with_capacity(27);
+    for cell in 0..grid.n_cells() {
+        let members = grid.atoms_in(cell);
+        if members.is_empty() {
+            continue;
+        }
+        grid.neighbor_cells(cell, &mut neighbors);
+        for &i in members {
+            let i = i as usize;
+            for &other in &neighbors {
+                for &j in grid.atoms_in(other) {
+                    let j = j as usize;
+                    // Each unordered pair is seen from both atoms (or twice
+                    // from one cell); keep it once, from the lower index.
+                    if j <= i {
+                        continue;
+                    }
+                    let pair = (i as u32, j as u32);
+                    if periodic_pair_bonded(positions, elements, &minv, box_matrix, i, j)
+                        && !existing_bonds.contains(&pair)
+                    {
+                        inferred.push(pair);
+                    }
+                }
             }
         }
     }
-
+    inferred.sort_unstable();
     inferred
+}
+
+/// The covalent test for atoms `i` and `j` of a periodic structure: their
+/// separation, reduced to the nearest image by rounding its fractional
+/// components, lies within `(r_i + r_j) * BOND_TOLERANCE` (and beyond
+/// `MIN_BOND_DIST`).
+fn periodic_pair_bonded(
+    positions: &[f32],
+    elements: &[u8],
+    minv: &[f32; 9],
+    box_matrix: &[f32; 9],
+    i: usize,
+    j: usize,
+) -> bool {
+    let mut dx = positions[j * 3] - positions[i * 3];
+    let mut dy = positions[j * 3 + 1] - positions[i * 3 + 1];
+    let mut dz = positions[j * 3 + 2] - positions[i * 3 + 2];
+
+    let mut fa = dx * minv[0] + dy * minv[3] + dz * minv[6];
+    let mut fb = dx * minv[1] + dy * minv[4] + dz * minv[7];
+    let mut fc = dx * minv[2] + dy * minv[5] + dz * minv[8];
+    fa -= fa.round();
+    fb -= fb.round();
+    fc -= fc.round();
+
+    dx = fa * box_matrix[0] + fb * box_matrix[3] + fc * box_matrix[6];
+    dy = fa * box_matrix[1] + fb * box_matrix[4] + fc * box_matrix[7];
+    dz = fa * box_matrix[2] + fb * box_matrix[5] + fc * box_matrix[8];
+
+    let dist_sq = dx * dx + dy * dy + dz * dz;
+    let threshold = (covalent_radius(elements[i]) + covalent_radius(elements[j])) * BOND_TOLERANCE;
+    dist_sq > MIN_BOND_DIST * MIN_BOND_DIST && dist_sq <= threshold * threshold
+}
+
+/// Atoms bucketed by their wrapped fractional coordinates into
+/// `dims[0] × dims[1] × dims[2]` cells that tile the unit cell.
+///
+/// Each cell is at least as thick as the largest bond cutoff among the atoms,
+/// measured between lattice planes (in a skewed cell that is less than the
+/// vector length), so the nearest image of any bonded partner lies in one of
+/// the 27 cells around an atom's own, wrapping across the cell faces.
+struct PeriodicGrid {
+    dims: [usize; 3],
+    /// `starts[c]..starts[c + 1]` indexes the atoms of cell `c` in `atoms`.
+    starts: Vec<usize>,
+    atoms: Vec<u32>,
+}
+
+impl PeriodicGrid {
+    fn new(positions: &[f32], elements: &[u8], minv: &[f32; 9], box_matrix: &[f32; 9]) -> Self {
+        // The widest cutoff any two atoms present can have, with a little
+        // slack so a pair right at the cutoff cannot round into a cell two
+        // planes away. 2.5 Å stays the floor, as in `infer_bonds`.
+        let max_radius = elements
+            .iter()
+            .map(|&e| covalent_radius(e))
+            .fold(0.0, f32::max);
+        let cell = (2.0 * max_radius * BOND_TOLERANCE * 1.001).max(2.5);
+        let mut dims = plane_spacings(box_matrix).map(|w| ((w / cell) as usize).max(1));
+        // A huge, mostly empty box: coarser cells keep the table proportional
+        // to the atoms (cells only ever grow, so the search stays exact).
+        let cap = max_dense_cells(elements.len()) as f64;
+        while dims.iter().map(|&d| d as f64).product::<f64>() > cap {
+            let k = (0..3).max_by_key(|&k| dims[k]).unwrap_or(0);
+            dims[k] = (dims[k] / 2).max(1);
+        }
+
+        let n = elements.len();
+        let cell_of = |i: usize| -> usize {
+            let (x, y, z) = (positions[i * 3], positions[i * 3 + 1], positions[i * 3 + 2]);
+            let frac = [
+                x * minv[0] + y * minv[3] + z * minv[6],
+                x * minv[1] + y * minv[4] + z * minv[7],
+                x * minv[2] + y * minv[5] + z * minv[8],
+            ];
+            let mut idx = [0usize; 3];
+            for k in 0..3 {
+                let wrapped = frac[k] - frac[k].floor();
+                // `as` saturates (and maps NaN to 0); the `min` absorbs a
+                // wrapped value that rounds up to exactly 1.0.
+                idx[k] = ((wrapped * dims[k] as f32) as usize).min(dims[k] - 1);
+            }
+            (idx[0] * dims[1] + idx[1]) * dims[2] + idx[2]
+        };
+
+        let n_cells = dims[0] * dims[1] * dims[2];
+        let atom_cell: Vec<usize> = (0..n).map(cell_of).collect();
+        let mut starts = vec![0usize; n_cells + 1];
+        for &c in &atom_cell {
+            starts[c + 1] += 1;
+        }
+        for c in 0..n_cells {
+            starts[c + 1] += starts[c];
+        }
+        let mut cursor = starts[..n_cells].to_vec();
+        let mut atoms = vec![0u32; n];
+        for (i, &c) in atom_cell.iter().enumerate() {
+            atoms[cursor[c]] = i as u32;
+            cursor[c] += 1;
+        }
+        PeriodicGrid {
+            dims,
+            starts,
+            atoms,
+        }
+    }
+
+    fn n_cells(&self) -> usize {
+        self.starts.len() - 1
+    }
+
+    fn atoms_in(&self, cell: usize) -> &[u32] {
+        &self.atoms[self.starts[cell]..self.starts[cell + 1]]
+    }
+
+    /// The distinct cells among the 27 around `cell`, wrapping across the
+    /// faces. With fewer than three cells along an axis, several offsets land
+    /// on the same cell; each is listed once so no pair is tested twice.
+    fn neighbor_cells(&self, cell: usize, out: &mut Vec<usize>) {
+        let [na, nb, nc] = self.dims;
+        let (a, b, c) = (cell / (nb * nc), (cell / nc) % nb, cell % nc);
+        let wrap = |v: usize, d: isize, n: usize| (v as isize + d).rem_euclid(n as isize) as usize;
+        out.clear();
+        for da in -1..=1 {
+            for db in -1..=1 {
+                for dc in -1..=1 {
+                    let (x, y, z) = (wrap(a, da, na), wrap(b, db, nb), wrap(c, dc, nc));
+                    out.push((x * nb + y) * nc + z);
+                }
+            }
+        }
+        out.sort_unstable();
+        out.dedup();
+    }
+}
+
+/// The spacing of the lattice planes spanned by each pair of cell vectors:
+/// `volume / |b × c|` along a, and so on. A cell's thickness along an axis is
+/// this, not the vector length, once the cell is skewed.
+fn plane_spacings(m: &[f32; 9]) -> [f32; 3] {
+    let (a, b, c) = ([m[0], m[1], m[2]], [m[3], m[4], m[5]], [m[6], m[7], m[8]]);
+    let cross = |u: [f32; 3], v: [f32; 3]| {
+        [
+            u[1] * v[2] - u[2] * v[1],
+            u[2] * v[0] - u[0] * v[2],
+            u[0] * v[1] - u[1] * v[0],
+        ]
+    };
+    let norm = |v: [f32; 3]| (v[0] * v[0] + v[1] * v[1] + v[2] * v[2]).sqrt();
+    let bc = cross(b, c);
+    let volume = (a[0] * bc[0] + a[1] * bc[1] + a[2] * bc[2]).abs();
+    [
+        volume / norm(bc),
+        volume / norm(cross(c, a)),
+        volume / norm(cross(a, b)),
+    ]
 }
 
 /// Infer bonds using VDW radii: bond if distance <= (vdw_i + vdw_j) * 0.6.
@@ -1132,6 +1296,180 @@ mod tests {
             .collect();
         assert!(!filtered.contains(&some));
         assert_eq!(filtered.len(), reference.len() - 1);
+    }
+
+    /// The all-pairs minimum-image scan `infer_bonds_periodic` used before its
+    /// cell list, kept as the reference the cell list must reproduce exactly.
+    fn periodic_all_pairs(
+        positions: &[f32],
+        elements: &[u8],
+        n_atoms: usize,
+        existing_bonds: &HashSet<(u32, u32)>,
+        box_matrix: &[f32; 9],
+    ) -> Vec<(u32, u32)> {
+        let minv = invert3x3(box_matrix).expect("test cells are invertible");
+        let mut inferred = Vec::new();
+        for i in 0..n_atoms {
+            for j in (i + 1)..n_atoms {
+                let pair = (i as u32, j as u32);
+                if periodic_pair_bonded(positions, elements, &minv, box_matrix, i, j)
+                    && !existing_bonds.contains(&pair)
+                {
+                    inferred.push(pair);
+                }
+            }
+        }
+        inferred
+    }
+
+    /// Fill one unit cell from a fixture's asymmetric unit, then tile it
+    /// `k`³ times so the periodic grid has several cells per axis.
+    fn fixture_supercell(name: &str, k: usize) -> (Vec<f32>, Vec<u8>, [f32; 9]) {
+        let path = format!("{}/../../tests/fixtures/{name}", env!("CARGO_MANIFEST_DIR"));
+        let text = std::fs::read_to_string(&path).unwrap();
+        let s = if name.ends_with(".cif") {
+            crate::cif::parse(&text).unwrap()
+        } else {
+            crate::vasp::parse(&text).unwrap()
+        };
+        let bm = s.box_matrix.expect("fixture has a cell");
+        let (positions, elements) = match crate::crystal::expand_symmetry(
+            &s.positions,
+            &s.elements,
+            &[],
+            None,
+            &bm,
+            &s.symmetry_ops,
+        ) {
+            Some((p, e, _, _)) => (p, e),
+            None => (s.positions.clone(), s.elements.clone()),
+        };
+        let mut tiled_p = Vec::new();
+        let mut tiled_e = Vec::new();
+        for a in 0..k {
+            for b in 0..k {
+                for c in 0..k {
+                    let shift = [0, 1, 2]
+                        .map(|x| a as f32 * bm[x] + b as f32 * bm[3 + x] + c as f32 * bm[6 + x]);
+                    for i in 0..elements.len() {
+                        tiled_p.extend((0..3).map(|x| positions[i * 3 + x] + shift[x]));
+                    }
+                    tiled_e.extend_from_slice(&elements);
+                }
+            }
+        }
+        let kf = k as f32;
+        (tiled_p, tiled_e, bm.map(|v| v * kf))
+    }
+
+    #[test]
+    fn test_infer_bonds_periodic_matches_all_pairs_on_fixtures() {
+        for name in [
+            "alpha_al2o3_aflow.cif",
+            "delta_glycine.cif",
+            "glycine_csd.cif",
+            "nacl.cif",
+            "pbc_bond_split.cif",
+            "POSCAR_si_diamond",
+        ] {
+            for k in [1, 3] {
+                let (p, e, bm) = fixture_supercell(name, k);
+                let n = e.len();
+                let got = infer_bonds_periodic(&p, &e, n, &HashSet::new(), &bm);
+                let want = periodic_all_pairs(&p, &e, n, &HashSet::new(), &bm);
+                assert!(!want.is_empty(), "{name} x{k} has bonds");
+                assert_eq!(got, want, "{name} x{k}");
+            }
+        }
+    }
+
+    /// Deterministic random atoms at fractional coordinates in `[-1, 2)` of
+    /// `box_m` (so many sit outside the home cell), mixing H/C/N/O with K, Na,
+    /// S and Fe so short and long cutoffs meet.
+    fn random_periodic(n: usize, box_m: &[f32; 9], seed: u32) -> (Vec<f32>, Vec<u8>) {
+        let mut state = seed;
+        let mut next = || {
+            state = state.wrapping_mul(1_103_515_245).wrapping_add(12_345);
+            (state >> 8) as f32 / (1u32 << 24) as f32
+        };
+        let palette = [1u8, 1, 6, 6, 7, 8, 8, 19, 11, 16, 26];
+        let mut positions = Vec::with_capacity(n * 3);
+        let mut elements = Vec::with_capacity(n);
+        for i in 0..n {
+            let f = [next() * 3.0 - 1.0, next() * 3.0 - 1.0, next() * 3.0 - 1.0];
+            positions.extend(
+                (0..3).map(|x| f[0] * box_m[x] + f[1] * box_m[3 + x] + f[2] * box_m[6 + x]),
+            );
+            elements.push(palette[i % palette.len()]);
+        }
+        (positions, elements)
+    }
+
+    #[test]
+    fn test_infer_bonds_periodic_matches_all_pairs_on_random_cells() {
+        let cells: [[f32; 9]; 6] = [
+            // Orthorhombic, several cells per axis.
+            [21.0, 0.0, 0.0, 0.0, 18.0, 0.0, 0.0, 0.0, 24.0],
+            // Triclinic.
+            [19.0, 0.0, 0.0, 6.0, 17.0, 0.0, -4.0, 5.0, 20.0],
+            // Strongly sheared: |b| = 25 Å but the a-c planes are 12 Å apart.
+            [20.0, 0.0, 0.0, 22.0, 12.0, 0.0, 3.0, -2.0, 18.0],
+            // Hexagonal (gamma = 120°).
+            [16.0, 0.0, 0.0, -8.0, 13.856, 0.0, 0.0, 0.0, 15.0],
+            // Small: one or two cells per axis, so wrapped neighbours repeat.
+            [4.0, 0.0, 0.0, 0.0, 6.0, 0.0, 0.0, 0.0, 9.0],
+            // Thin slab: one cell along c.
+            [22.0, 0.0, 0.0, 0.0, 22.0, 0.0, 0.0, 0.0, 3.3],
+        ];
+        for (k, bm) in cells.iter().enumerate() {
+            for seed in [1, 2] {
+                let n = if k == 4 { 60 } else { 700 };
+                let (p, e) = random_periodic(n, bm, seed + k as u32 * 10);
+                let got = infer_bonds_periodic(&p, &e, n, &HashSet::new(), bm);
+                let want = periodic_all_pairs(&p, &e, n, &HashSet::new(), bm);
+                assert!(!want.is_empty(), "cell {k} seed {seed} has bonds");
+                assert_eq!(got, want, "cell {k} seed {seed}");
+
+                // Pairs the file already supplies are left out, exactly.
+                let existing: HashSet<(u32, u32)> = want.iter().step_by(3).copied().collect();
+                let got = infer_bonds_periodic(&p, &e, n, &existing, bm);
+                assert_eq!(got, periodic_all_pairs(&p, &e, n, &existing, bm));
+            }
+        }
+    }
+
+    #[test]
+    fn test_infer_bonds_periodic_edge_cases() {
+        let cube = [10.0, 0.0, 0.0, 0.0, 10.0, 0.0, 0.0, 0.0, 10.0];
+        assert!(infer_bonds_periodic(&[], &[], 0, &HashSet::new(), &cube).is_empty());
+        assert!(infer_bonds_periodic(&[1.0, 1.0, 1.0], &[6], 1, &HashSet::new(), &cube).is_empty());
+        // A singular cell falls back to non-periodic inference.
+        let flat = [10.0, 0.0, 0.0, 0.0, 10.0, 0.0, 0.0, 0.0, 0.0];
+        let p = [0.0, 0.0, 0.0, 1.4, 0.0, 0.0];
+        assert_eq!(
+            infer_bonds_periodic(&p, &[6, 6], 2, &HashSet::new(), &flat),
+            vec![(0, 1)]
+        );
+        // A huge, nearly empty box stays bounded and still bonds across a face.
+        let huge = [5000.0, 0.0, 0.0, 0.0, 5000.0, 0.0, 0.0, 0.0, 5000.0];
+        let p = [0.3, 1.0, 1.0, 4999.5, 1.0, 1.0, 2500.0, 2500.0, 2500.0];
+        assert_eq!(
+            infer_bonds_periodic(&p, &[6, 6, 8], 3, &HashSet::new(), &huge),
+            vec![(0, 1)]
+        );
+    }
+
+    #[test]
+    fn test_plane_spacings() {
+        let w = plane_spacings(&[10.0, 0.0, 0.0, 0.0, 20.0, 0.0, 0.0, 0.0, 30.0]);
+        assert_eq!(w, [10.0, 20.0, 30.0]);
+        // Shearing b along a leaves the a-c plane spacing at b's y component.
+        let w = plane_spacings(&[10.0, 0.0, 0.0, 20.0, 15.0, 0.0, 0.0, 0.0, 30.0]);
+        assert!((w[1] - 15.0).abs() < 1e-4, "{w:?}");
+        assert!(
+            w[0] < 10.0,
+            "a's planes are closer than |a| once b is sheared"
+        );
     }
 
     /// Brute-force O(n²) vdW reference, mirroring the scan predicate.
