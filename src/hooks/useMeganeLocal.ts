@@ -29,6 +29,7 @@ import type { TrajectoryLazyHandle, LazyTrajectoryKind } from "../parsers/xtc";
 import { parseTrajectoryByName } from "../parsers/trajectoryDispatch";
 import { trajectoryKindFromFileName } from "../parsers/fileNames";
 import { LazyFrameProvider } from "../stream/LazyFrameProvider";
+import { streamVectorChannels } from "../stream/vectorChannelStream";
 import type { ProgressiveFile } from "../hosts/progressiveFile";
 import { beginBackgroundLoad } from "../renderer/backgroundLoad";
 import { perfMark } from "../perf";
@@ -39,7 +40,7 @@ import {
   ensureStructureLoader,
   type AppliedStructure,
 } from "../pipeline/openFile";
-import type { Snapshot, Frame, TrajectoryMeta, TrajectorySource } from "../types";
+import type { Snapshot, Frame, TrajectoryMeta, TrajectorySource, VectorChannel } from "../types";
 
 /** File extensions eligible for lazy multi-frame structure streaming → decoder kind. */
 const LAZY_STRUCTURE_KIND: Record<string, FileStructureKind> = {
@@ -214,7 +215,12 @@ export function useMeganeLocal(): MeganeLocalState {
   // in the background (Phase 2) so it never blocks first paint. Guarded by a load
   // token so a slow index for an old file cannot clobber a newer load.
   const attachStreamingProvider = useCallback(
-    (handle: StructureLazyHandle, frame0: StructureParseResult, token: number) => {
+    (
+      handle: StructureLazyHandle,
+      frame0: StructureParseResult,
+      token: number,
+      frame0Vectors: VectorChannel[] = frame0.vectorChannels ?? [],
+    ) => {
       const meta: TrajectoryMeta = {
         nFrames: handle.index.nFrames + 1, // + synthetic frame 0 (the eager snapshot)
         timestepPs: 1.0,
@@ -232,6 +238,18 @@ export function useMeganeLocal(): MeganeLocalState {
       provider.setOnFrameReady((f) => playbackApi.getState()._onAsyncFrame(f));
       const store = pipelineApi.getState();
       store.setStructureProvider(provider);
+      // A .traj's momenta / forces stream with its frames: offer them to the
+      // load_vector node UI as the eager parse does, frame 0's first.
+      streamVectorChannels(
+        provider,
+        handle.index.vectorChannelNames ?? [],
+        frame0.snapshot.nAtoms,
+        (channels) => {
+          if (pipelineApi.getState().structureProvider !== provider) return;
+          pipelineApi.getState().setEmbeddedVectorChannels(channels);
+        },
+        frame0Vectors,
+      );
       const loaderNode = store.nodes.find((n) => n.type === "load_structure");
       if (loaderNode) store.updateNodeParams(loaderNode.id, { hasTrajectory: true });
       const trajNode = store.nodes.find((n) => n.type === "load_trajectory");
@@ -311,7 +329,9 @@ export function useMeganeLocal(): MeganeLocalState {
         disposeTrajectoryLazy(indexed.handle.trajectoryId); // single frame — nothing to stream
         return;
       }
-      attachStreamingProvider(indexed.handle, frame0, token);
+      // Frame 0 on screen came from the file's first bytes; the index's own
+      // frame 0 carries its vector channels.
+      attachStreamingProvider(indexed.handle, frame0, token, indexed.frame0.vectorChannels);
     },
     [applyParsedStructure, attachStreamingProvider],
   );
@@ -465,33 +485,15 @@ export function useMeganeLocal(): MeganeLocalState {
       });
       provider.setOnFrameReady((f) => playbackApi.getState()._onAsyncFrame(f));
 
-      // Stream embedded vector channels (LAMMPS velocity/force) as frames
-      // decode, OFFERING them to the load_vector node UI (the first channel,
-      // matching the eager path). The overlay renders only once the user
-      // activates the channel there; updates are batched so we don't re-run
-      // the pipeline per frame.
-      const channelNames = handle.index.vectorChannelNames;
-      if (channelNames.length > 0) {
-        const stride = nAtoms * 3;
-        const accumulated = new Map<number, Float32Array>();
-        let flushScheduled = false;
-        const flush = () => {
-          flushScheduled = false;
-          // Only apply while this provider is still the active trajectory.
-          if (pipelineApi.getState().fileProvider !== provider) return;
-          const frames = [...accumulated.entries()]
-            .sort((a, b) => a[0] - b[0])
-            .map(([frame, vectors]) => ({ frame, vectors }));
-          pipelineApi.getState().setEmbeddedVectorChannels([{ name: channelNames[0], frames }]);
-        };
-        provider.setOnVectors((frameId, vectors) => {
-          accumulated.set(frameId, vectors.slice(0, stride));
-          if (!flushScheduled) {
-            flushScheduled = true;
-            setTimeout(flush, 200);
-          }
-        });
-      }
+      // Stream embedded vector channels (LAMMPS / NetCDF velocity, force) as
+      // frames decode, OFFERING every one to the load_vector node UI as the
+      // eager path does. The overlay renders only once the user activates a
+      // channel there.
+      streamVectorChannels(provider, handle.index.vectorChannelNames, nAtoms, (channels) => {
+        // Only apply while this provider is still the active trajectory.
+        if (pipelineApi.getState().fileProvider !== provider) return;
+        pipelineApi.getState().setEmbeddedVectorChannels(channels);
+      });
 
       // useMeganeLocal's own frame array stays empty — positions render
       // through the pipeline provider + playback store, not fileFramesRef.

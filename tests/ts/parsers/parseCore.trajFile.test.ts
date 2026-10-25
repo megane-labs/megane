@@ -92,6 +92,7 @@ describe("indexTrajFileCore", () => {
         nAtoms: eager.snapshot.nAtoms,
         nFrames: eager.frames.length,
         heterogeneous: false,
+        vectorChannelNames: [],
       });
       expect(frame0.snapshot.positions).toEqual(eager.snapshot.positions);
       expect(frame0.snapshot.elements).toEqual(eager.snapshot.elements);
@@ -171,5 +172,27 @@ describe("eager .traj vector channels", () => {
     expect(Array.from(momenta.frames[2].vectors)).toEqual([2, 3, 4, 5, 6, 7]);
     expect(Array.from(force.frames[1].vectors)).toEqual([-0, -1, -2, -3, -4, -5]);
     expect(result.warnings).toEqual([]);
+  });
+
+  it("streams the same channels when the file is indexed lazily", async () => {
+    const bytes = trajWithVectors(3);
+    const eager = eagerTraj(bytes);
+    const { decoder, index, frame0 } = await indexTrajFileCore(new Blob([bytes]));
+    expect(index.heterogeneous).toBe(false);
+    expect(index.vectorChannelNames).toEqual(["momenta", "force"]);
+    // Frame 0's values come with the frame-0 snapshot ...
+    expect(frame0.vectorChannels.map((c) => c.name)).toEqual(["momenta", "force"]);
+    frame0.vectorChannels.forEach((channel, c) => {
+      expect(channel.frames.map((f) => f.frame)).toEqual([0]);
+      expect(channel.frames[0].vectors).toEqual(eager.vectorChannels[c].frames[0].vectors);
+    });
+    // ... and each extra frame's with the frame, concatenated in channel order.
+    const lazy = decoder as FileFrameDecoder;
+    for (let f = 0; f < index.nFrames; f++) {
+      const got = await lazy.decodeFrame(f);
+      const want = eager.vectorChannels.flatMap((c) => Array.from(c.frames[f + 1].vectors));
+      expect(Array.from(got.vectors)).toEqual(want);
+    }
+    lazy.free();
   });
 });

@@ -1452,11 +1452,20 @@ impl TrajFileIndexer {
         self.inner.n_frames() as u32
     }
 
-    /// A frame's atom count or elements differ from frame 0's: the host
-    /// parses the file whole instead.
+    /// A frame's atom count or elements differ from frame 0's, or a vector
+    /// array is stored in only some frames: the host parses the file whole
+    /// instead.
     #[wasm_bindgen(getter)]
     pub fn heterogeneous(&self) -> bool {
         self.inner.heterogeneous()
+    }
+
+    /// Newline-joined names of the per-atom vector channels every frame
+    /// stores (`momenta`, `force`), in `decode_vectors` order; empty without
+    /// any. Frame 0's values come with `frame0()`.
+    #[wasm_bindgen(getter)]
+    pub fn vector_channel_names(&self) -> String {
+        self.inner.vector_channel_names().join("\n")
     }
 
     /// The cell changes between frames, so each frame carries its own.
@@ -1488,6 +1497,16 @@ impl TrajFileIndexer {
             .decode(frame as usize, bytes)
             .map_err(|e| JsError::new(&e))?;
         Ok(Float32Array::from(&positions[..]))
+    }
+
+    /// Extra frame `frame`'s vector channels from its bytes, concatenated in
+    /// `vector_channel_names` order (`n_atoms * 3` each).
+    pub fn decode_vectors(&self, frame: u32, bytes: &[u8]) -> Result<Float32Array, JsError> {
+        let vectors = self
+            .inner
+            .decode_vectors(frame as usize, bytes)
+            .map_err(|e| JsError::new(&e))?;
+        Ok(Float32Array::from(&vectors[..]))
     }
 }
 
