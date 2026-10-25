@@ -11,6 +11,7 @@ import type {
   PipelineData,
   RepresentationMode,
 } from "../types";
+import { bondEndpointResolver } from "../selection";
 
 export function executeViewport(
   params: ViewportParams,
@@ -110,6 +111,12 @@ function resolveRepresentation(particles: ParticleData[]): {
 
 /**
  * Drop bonds whose atoms are not present in any connected particle stream.
+ * A PBC ghost or Drawing Boundary copy endpoint counts as the atom it copies.
+ *
+ * The per-bond channels (`bondOrders`, `bondOpacityOverrides`,
+ * `selectedBondIndices`) are indexed by bond number, so they are compacted
+ * with the same keep-mask as `bondIndices`; otherwise an override or selection
+ * aimed at a dropped bond would land on whichever bond moved into its slot.
  */
 function filterBondsByParticles(bonds: BondData[], particles: ParticleData[]): BondData[] {
   if (bonds.length === 0 || particles.length === 0) return bonds;
@@ -131,22 +138,40 @@ function filterBondsByParticles(bonds: BondData[], particles: ParticleData[]): B
   if (!allIndices) return bonds;
 
   return bonds.map((bond) => {
+    // A ghost / image endpoint is shown when the atom it copies is.
+    const sourceOf = bondEndpointResolver(bond.nAtoms, bond.ghostSourceIndices);
     const validBondPairs: number[] = [];
     const validOrders: number[] = [];
+    const validOpacities: number[] = [];
+    // Old bond number -> new bond number; -1 for a dropped bond.
+    const newIndex = new Int32Array(bond.nBonds).fill(-1);
     for (let i = 0; i < bond.nBonds; i++) {
       const a = bond.bondIndices[i * 2];
       const b = bond.bondIndices[i * 2 + 1];
-      if (allIndices!.has(a) && allIndices!.has(b)) {
+      if (allIndices!.has(sourceOf(a)) && allIndices!.has(sourceOf(b))) {
+        newIndex[i] = validBondPairs.length / 2;
         validBondPairs.push(a, b);
         if (bond.bondOrders) validOrders.push(bond.bondOrders[i]);
+        if (bond.bondOpacityOverrides) validOpacities.push(bond.bondOpacityOverrides[i]);
       }
     }
     if (validBondPairs.length === bond.nBonds * 2) return bond;
+    let selectedBondIndices: Uint32Array | null = null;
+    if (bond.selectedBondIndices) {
+      const kept: number[] = [];
+      for (const idx of bond.selectedBondIndices) {
+        // An out-of-range index reads `undefined` and is dropped too.
+        if (newIndex[idx] >= 0) kept.push(newIndex[idx]);
+      }
+      selectedBondIndices = new Uint32Array(kept);
+    }
     return {
       ...bond,
       bondIndices: new Uint32Array(validBondPairs),
       bondOrders: bond.bondOrders ? new Uint8Array(validOrders) : null,
       nBonds: validBondPairs.length / 2,
+      selectedBondIndices,
+      bondOpacityOverrides: bond.bondOpacityOverrides ? new Float32Array(validOpacities) : null,
     };
   });
 }

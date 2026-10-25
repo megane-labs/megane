@@ -1006,6 +1006,121 @@ describe("executePipeline", () => {
       // The unfiltered particle stream has indices=null, so no bond filtering
       expect(result.bonds).toHaveLength(1);
     });
+
+    // Regression: ghost / image endpoints (index >= nAtoms) were never in the
+    // set of kept atoms, so any particle filter erased every PBC half-bond and
+    // every Drawing Boundary image bond. They now count as their source atom.
+    describe("periodic copies count as their source atom", () => {
+      // O0–H1 is an ordinary bond; O0–H2 crosses the 4 Å cell and is drawn as
+      // two half-bonds to ghosts: (O0 → ghost H2 = 3) and (H2 → ghost O0 = 4).
+      const wrappedWater = makeSnapshot({
+        nAtoms: 3,
+        positions: [0.5, 2, 2, 1.4, 2, 2, 3.6, 2, 2],
+        elements: [8, 1, 1],
+        bonds: [0, 1, 0, 2],
+        bondOrders: [1, 1],
+        box: [4, 0, 0, 0, 4, 0, 0, 0, 4],
+      });
+
+      // O–H lying on the a = 0 face: Drawing Boundary [0, 1] adds a copy of
+      // both atoms on the a = 1 face (indices 2, 3) and the bond between them.
+      const faceWater = makeSnapshot({
+        nAtoms: 2,
+        positions: [0, 1, 1, 0, 2, 1],
+        elements: [8, 1],
+        bonds: [0, 1],
+        bondOrders: [1],
+        box: [4, 0, 0, 0, 4, 0, 0, 0, 4],
+      });
+
+      function runFiltered(query: string, withBoundary = false): BondData {
+        const nodes = [
+          makeNode("ls", "load_structure", { fileName: null, hasTrajectory: false, hasCell: true }),
+          makeNode("db", "drawing_boundary", {
+            xMin: 0,
+            xMax: 1,
+            yMin: 0,
+            yMax: 1,
+            zMin: 0,
+            zMax: 1,
+          }),
+          makeNode("f", "filter", { query }),
+          makeNode("ab", "add_bond", { bondSource: "structure" }),
+          makeNode("vp", "viewport", { perspective: false, cellAxesVisible: true }),
+        ];
+        const src = withBoundary ? "db" : "ls";
+        const edges = [
+          makeEdge("ls", "particle", "db", "particle"),
+          makeEdge(src, "particle", "f", "in"),
+          makeEdge("f", "out", "vp", "particle"),
+          makeEdge(src, "particle", "ab", "particle"),
+          makeEdge("ab", "bond", "vp", "bond"),
+        ];
+        const snapshot = withBoundary ? faceWater : wrappedWater;
+        return executePipeline(nodes, edges, { snapshot }).viewportState.bonds[0];
+      }
+
+      it("keeps the PBC half-bonds under a filter that keeps every atom", () => {
+        const bond = runFiltered("index >= 0");
+        expect(bond.nBonds).toBe(3);
+        expect(Array.from(bond.bondIndices)).toEqual([0, 1, 0, 3, 2, 4]);
+      });
+
+      it("keeps a crossing bond whose two source atoms are shown", () => {
+        // H1 is filtered out: O0–H1 goes, both halves of O0–H2 stay.
+        const bond = runFiltered("index != 1");
+        expect(Array.from(bond.bondIndices)).toEqual([0, 3, 2, 4]);
+      });
+
+      it("drops both halves when one source atom is filtered out", () => {
+        const bond = runFiltered("index != 2");
+        expect(Array.from(bond.bondIndices)).toEqual([0, 1]);
+      });
+
+      it("keeps Drawing Boundary image bonds under a filter that keeps every atom", () => {
+        expect(Array.from(runFiltered("", true).bondIndices)).toEqual([0, 1, 2, 3]);
+        expect(Array.from(runFiltered("index >= 0", true).bondIndices)).toEqual([0, 1, 2, 3]);
+        // Hiding the H drops the bond and its copy alike.
+        expect(runFiltered('element == "O"', true).nBonds).toBe(0);
+      });
+    });
+
+    // Regression: pruning bonds to the filtered atoms used to keep the bond
+    // filter's selection and modify's per-bond opacity indexed by the old bond
+    // numbers, so a fade aimed at a pruned H–H bond landed on the C–C bond.
+    it("keeps per-bond opacity on the right bond after pruning", () => {
+      const snapshot = makeSnapshot({
+        nAtoms: 4,
+        positions: [0, 0, 0, 1.5, 0, 0, 0, 3, 0, 0.74, 3, 0],
+        elements: [6, 6, 1, 1], // C, C, H, H
+        bonds: [2, 3, 0, 1], // bond 0 = H–H, bond 1 = C–C
+        bondOrders: [1, 1],
+      });
+      const nodes = [
+        makeNode("ls", "load_structure", { fileName: null, hasTrajectory: false, hasCell: false }),
+        makeNode("fa", "filter", { query: 'element == "C"' }),
+        makeNode("ab", "add_bond", { bondSource: "structure" }),
+        makeNode("fb", "filter", { query: "", bond_query: 'both element == "H"' }),
+        makeNode("m", "modify", { scale: 1.0, opacity: 0 }),
+        makeNode("vp", "viewport", { perspective: false, cellAxesVisible: true }),
+      ];
+      const edges = [
+        makeEdge("ls", "particle", "fa", "in"),
+        makeEdge("fa", "out", "vp", "particle"),
+        makeEdge("ls", "particle", "ab", "particle"),
+        makeEdge("ab", "bond", "fb", "in"),
+        makeEdge("fb", "out", "m", "in"),
+        makeEdge("m", "out", "vp", "bond"),
+      ];
+
+      const { viewportState: result } = executePipeline(nodes, edges, { snapshot });
+      const bond = result.bonds[0];
+      expect(bond.nBonds).toBe(1);
+      expect(Array.from(bond.bondIndices)).toEqual([0, 1]);
+      // The C–C bond was never selected, so it stays fully opaque.
+      expect(Array.from(bond.bondOpacityOverrides!)).toEqual([1]);
+      expect(Array.from(bond.selectedBondIndices!)).toEqual([]);
+    });
   });
 
   // Regression: chained bond filters used to replace each other's selection

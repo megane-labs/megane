@@ -55,6 +55,8 @@ export function executeFilter(
           bond.atomElements,
           bond.nBonds,
           bond.nAtoms,
+          bond.periodicTopology?.bondIndices,
+          bond.ghostSourceIndices,
         );
         if (selectedSet !== null) {
           // Narrow an upstream bond selection, as chained atom filters do.

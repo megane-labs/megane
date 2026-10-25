@@ -20,4 +20,14 @@ describe("PipelineViewer", () => {
     expect(queryByText(/Failed to load/)).toBeNull();
     expect(container.firstChild).not.toBeNull();
   });
+
+  it("makes its root focusable so the Timeline's ←/→ shortcut answers after a click", async () => {
+    const pipeline: SerializedPipeline = { version: 3, nodes: [], edges: [] };
+    const { container, queryByText } = render(<PipelineViewer pipeline={pipeline} />);
+    await waitFor(() => expect(queryByText("Loading…")).toBeNull());
+    const root = container.firstChild as HTMLElement;
+    expect(root.getAttribute("tabindex")).toBe("-1");
+    root.focus();
+    expect(document.activeElement).toBe(root);
+  });
 });

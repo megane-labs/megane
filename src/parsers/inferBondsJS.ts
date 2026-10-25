@@ -22,7 +22,92 @@ import { invert3x3 } from "../pipeline/executors/mathUtils";
 
 export const DEFAULT_VDW_BOND_FACTOR = 0.6;
 const MIN_BOND_DIST = 0.4;
-const CELL_SIZE = 2.0;
+/** Smallest cell edge; `planVdwScan` widens it when the cutoffs need it. */
+const BASE_CELL_SIZE = 2.0;
+/** Relative slack on a cutoff-sized cell (bonds.rs `CELL_SLACK`). */
+const CELL_SLACK = 1.001;
+/** At most `1 / WIDE_ATOM_SHARE` of the atoms may be wide (bonds.rs uses the same). */
+const WIDE_ATOM_SHARE = 8;
+
+/**
+ * How the cell-list scan finds every pair within
+ * `(vdw_i + vdw_j) * vdwScale` (bonds.rs `ScanPlan`).
+ *
+ * The half-shell scan only pairs atoms in the same or adjacent cells, so it is
+ * exact only when every cutoff fits in one cell. A fixed 2 Å cell was narrower
+ * than the cutoff of carbon (2.04 Å), of every metal, and of everything once
+ * the tolerance slider passes ~0.6, so such bonds came and went with the grid
+ * origin. The cell is now sized for all but a small minority of *wide* atoms,
+ * which instead search `reach` cells along each axis.
+ */
+export interface VdwScanPlan {
+  cellSize: number;
+  /** Indices of the wide atoms, ascending. */
+  wide: Uint32Array;
+  /** `isWide[i] === 1` for every wide atom (empty when there are none). */
+  isWide: Uint8Array;
+  /** Cells a wide atom searches along each axis. */
+  reach: number;
+}
+
+function vdwRadiusOf(z: number): number {
+  const r = VDW_RADII[z];
+  return r !== undefined ? r : DEFAULT_RADIUS;
+}
+
+/** Plan the scan of `elements[0..nAtoms)` (see {@link VdwScanPlan}). */
+export function planVdwScan(elements: Uint8Array, nAtoms: number, vdwScale: number): VdwScanPlan {
+  const cutoff = (r: number): number => 2 * r * vdwScale * CELL_SLACK;
+  const counts = new Uint32Array(256);
+  for (let i = 0; i < nAtoms; i++) counts[elements[i]]++;
+  // Elements present, widest radius first.
+  const present: [number, number][] = [];
+  for (let z = 0; z < 256; z++) if (counts[z] > 0) present.push([vdwRadiusOf(z), counts[z]]);
+  present.sort((a, b) => b[0] - a[0]);
+
+  // Grow the cell until the atoms it does not fit are a small minority.
+  const budget = Math.floor(nAtoms / WIDE_ATOM_SHARE);
+  let cellSize = BASE_CELL_SIZE;
+  let outside = 0;
+  for (const [r, count] of present) {
+    if (cutoff(r) <= BASE_CELL_SIZE) break;
+    outside += count;
+    if (outside > budget) {
+      cellSize = cutoff(r);
+      break;
+    }
+  }
+
+  const wideElement = new Uint8Array(256);
+  for (let z = 0; z < 256; z++) wideElement[z] = cutoff(vdwRadiusOf(z)) > cellSize ? 1 : 0;
+  let nWide = 0;
+  for (let i = 0; i < nAtoms; i++) nWide += wideElement[elements[i]];
+  const wide = new Uint32Array(nWide);
+  const isWide = new Uint8Array(nWide > 0 ? nAtoms : 0);
+  for (let i = 0, k = 0; i < nAtoms; i++) {
+    if (wideElement[elements[i]] === 1) {
+      wide[k++] = i;
+      isWide[i] = 1;
+    }
+  }
+  const maxCutoff = present.length > 0 ? cutoff(present[0][0]) : 0;
+  return { cellSize, wide, isWide, reach: Math.ceil(maxCutoff / cellSize) };
+}
+
+/**
+ * Cell offsets within `reach` that the half-shell scan does not visit (some
+ * axis two or more cells away), flattened as (dx, dy, dz) triples. Wide atoms
+ * search all of them, so a pair of two wide atoms is seen from both ends and
+ * kept only from the lower index.
+ */
+function farOffsets(reach: number): Int32Array {
+  const out: number[] = [];
+  for (let x = -reach; x <= reach; x++)
+    for (let y = -reach; y <= reach; y++)
+      for (let z = -reach; z <= reach; z++)
+        if (Math.max(Math.abs(x), Math.abs(y), Math.abs(z)) >= 2) out.push(x, y, z);
+  return new Int32Array(out);
+}
 
 // 13 half-shell neighbor offsets (flattened to avoid per-iteration array destructure).
 // prettier-ignore
@@ -77,9 +162,10 @@ export function inferBondsVdwJS(
   // Precompute per-atom VDW radius — replaces the per-pair Record lookup.
   const radii = new Float32Array(nAtoms);
   for (let i = 0; i < nAtoms; i++) {
-    const r = VDW_RADII[elements[i]];
-    radii[i] = r !== undefined ? r : DEFAULT_RADIUS;
+    radii[i] = vdwRadiusOf(elements[i]);
   }
+  const plan = planVdwScan(elements, nAtoms, vdwScale);
+  const cellSize = plan.cellSize;
 
   let nx: number, ny: number, nz: number;
   // originX/Y/Z are subtracted from positions before grid assignment (0 in PBC mode).
@@ -88,13 +174,13 @@ export function inferBondsVdwJS(
     originZ = 0;
 
   if (usePbc) {
-    const b = box!;
-    const lx = Math.sqrt(b[0] * b[0] + b[1] * b[1] + b[2] * b[2]);
-    const ly = Math.sqrt(b[3] * b[3] + b[4] * b[4] + b[5] * b[5]);
-    const lz = Math.sqrt(b[6] * b[6] + b[7] * b[7] + b[8] * b[8]);
-    nx = Math.max(1, Math.floor(lx / CELL_SIZE));
-    ny = Math.max(1, Math.floor(ly / CELL_SIZE));
-    nz = Math.max(1, Math.floor(lz / CELL_SIZE));
+    // Cells split each box vector evenly, so a cell's width along axis a is
+    // the spacing of the lattice planes spanned by the other two vectors
+    // (volume / |b × c|), not |a| — in a skewed cell |a| overstates it.
+    const [wx, wy, wz] = planeSpacings(box!);
+    nx = Math.max(1, Math.floor(wx / cellSize));
+    ny = Math.max(1, Math.floor(wy / cellSize));
+    nz = Math.max(1, Math.floor(wz / cellSize));
     // A huge, mostly empty box: coarser cells (never finer than the cutoff)
     // keep the table proportional to the atoms. Wrapped atoms fill the box, so
     // there is no far-off outlier to make the cells crowded.
@@ -126,11 +212,19 @@ export function inferBondsVdwJS(
     originX = minX;
     originY = minY;
     originZ = minZ;
-    nx = Math.max(1, Math.floor((maxX - minX) / CELL_SIZE) + 1);
-    ny = Math.max(1, Math.floor((maxY - minY) / CELL_SIZE) + 1);
-    nz = Math.max(1, Math.floor((maxZ - minZ) / CELL_SIZE) + 1);
+    nx = Math.max(1, Math.floor((maxX - minX) / cellSize) + 1);
+    ny = Math.max(1, Math.floor((maxY - minY) / cellSize) + 1);
+    nz = Math.max(1, Math.floor((maxZ - minZ) / cellSize) + 1);
     if (nx * ny * nz > maxDenseCells(nAtoms)) {
-      return sparseBondsVdw(positions, radii, nAtoms, vdwScale, [minX, minY, minZ], [nx, ny, nz]);
+      return sparseBondsVdw(
+        positions,
+        radii,
+        nAtoms,
+        vdwScale,
+        plan,
+        [minX, minY, minZ],
+        [nx, ny, nz],
+      );
     }
   }
 
@@ -204,9 +298,9 @@ export function inferBondsVdwJS(
       const px = positions[i * 3] - originX;
       const py = positions[i * 3 + 1] - originY;
       const pz = positions[i * 3 + 2] - originZ;
-      let cx = (px / CELL_SIZE) | 0;
-      let cy = (py / CELL_SIZE) | 0;
-      let cz = (pz / CELL_SIZE) | 0;
+      let cx = (px / cellSize) | 0;
+      let cy = (py / cellSize) | 0;
+      let cz = (pz / cellSize) | 0;
       if (cx >= nx) cx = nx - 1;
       if (cy >= ny) cy = ny - 1;
       if (cz >= nz) cz = nz - 1;
@@ -275,7 +369,10 @@ export function inferBondsVdwJS(
     // image cannot be represented and the min-image distance is wrong (e.g.
     // NaCl's 5.64 Å cube → 2 cells/axis produced spurious bonds). For such
     // small boxes we fall back to the exact per-pair minimum-image transform.
-    if (nx < 3 || ny < 3 || nz < 3) {
+    // Wide atoms search `reach` cells either way, so they need 2·reach + 1
+    // distinct cells per axis for the same reason.
+    const minCells = plan.wide.length > 0 ? 2 * plan.reach + 1 : 3;
+    if (nx < minCells || ny < minCells || nz < minCells) {
       const bi0 = boxInv![0],
         bi1 = boxInv![1],
         bi2 = boxInv![2];
@@ -486,7 +583,78 @@ export function inferBondsVdwJS(
     }
   }
 
+  // Wide atoms: the cells beyond the half shell, within their reach. In PBC
+  // mode a wrapped cell carries the matching box-vector shift; there are at
+  // least 2·reach + 1 cells per axis, so one wrap is all an offset can need.
+  if (plan.wide.length > 0) {
+    const far = farOffsets(plan.reach);
+    const nFar = far.length / 3;
+    const b = usePbc ? box! : null;
+    const isWide = plan.isWide;
+    for (let w = 0; w < plan.wide.length; w++) {
+      const i = plan.wide[w];
+      const c = atomCell[i];
+      const ix = Math.floor(c / nyz);
+      const iy = Math.floor(c / nz) % ny;
+      const iz = c % nz;
+      const pix = pbcPositions[i * 3];
+      const piy = pbcPositions[i * 3 + 1];
+      const piz = pbcPositions[i * 3 + 2];
+      const ri = radii[i];
+      for (let o = 0; o < nFar; o++) {
+        let jx = ix + far[o * 3];
+        let jy = iy + far[o * 3 + 1];
+        let jz = iz + far[o * 3 + 2];
+        let shiftX = 0;
+        let shiftY = 0;
+        let shiftZ = 0;
+        if (b) {
+          const wx = jx < 0 ? -1 : jx >= nx ? 1 : 0;
+          const wy = jy < 0 ? -1 : jy >= ny ? 1 : 0;
+          const wz = jz < 0 ? -1 : jz >= nz ? 1 : 0;
+          jx -= wx * nx;
+          jy -= wy * ny;
+          jz -= wz * nz;
+          shiftX = wx * b[0] + wy * b[3] + wz * b[6];
+          shiftY = wx * b[1] + wy * b[4] + wz * b[7];
+          shiftZ = wx * b[2] + wy * b[5] + wz * b[8];
+        } else if (jx < 0 || jx >= nx || jy < 0 || jy >= ny || jz < 0 || jz >= nz) {
+          continue;
+        }
+        const nbrIdx = jx * nyz + jy * nz + jz;
+        for (let bb = cellStart[nbrIdx]; bb < cellStart[nbrIdx + 1]; bb++) {
+          const j = cellAtoms[bb];
+          if (isWide[j] === 1 && j < i) continue; // checked from j
+          const dx = pbcPositions[j * 3] + shiftX - pix;
+          const dy = pbcPositions[j * 3 + 1] + shiftY - piy;
+          const dz = pbcPositions[j * 3 + 2] + shiftZ - piz;
+          const distSq = dx * dx + dy * dy + dz * dz;
+          const th = (ri + radii[j]) * vdwScale;
+          if (distSq > minDistSq && distSq <= th * th) {
+            if (i < j) pushBond(i, j);
+            else pushBond(j, i);
+          }
+        }
+      }
+    }
+  }
+
   return outBuf.slice(0, outLen);
+}
+
+/**
+ * Width of the cell spanned by `box` (row vectors a, b, c) along each axis:
+ * the spacing of the lattice planes parallel to the other two vectors,
+ * `volume / |b × c|` for a, and so on.
+ */
+function planeSpacings(box: Float32Array): [number, number, number] {
+  const [ax, ay, az, bx, by, bz, cx, cy, cz] = box;
+  const bc = [by * cz - bz * cy, bz * cx - bx * cz, bx * cy - by * cx];
+  const ca = [cy * az - cz * ay, cz * ax - cx * az, cx * ay - cy * ax];
+  const ab = [ay * bz - az * by, az * bx - ax * bz, ax * by - ay * bx];
+  const volume = Math.abs(ax * bc[0] + ay * bc[1] + az * bc[2]);
+  const len = (v: number[]): number => Math.hypot(v[0], v[1], v[2]);
+  return [volume / len(bc), volume / len(ca), volume / len(ab)];
 }
 
 /**
@@ -501,14 +669,20 @@ function sparseBondsVdw(
   radii: Float32Array,
   nAtoms: number,
   vdwScale: number,
+  plan: VdwScanPlan,
   origin: [number, number, number],
-  dims: [number, number, number],
+  gridDims: [number, number, number],
 ): Uint32Array {
+  // Cell keys are doubles: past 2^52 cells `k + 1 === k`, so a neighbour one
+  // cell over would compare as out of range. Clamp like the Rust scan's
+  // saturating integer keys — atoms beyond share the last cell, and the pair
+  // test still measures their true distance.
+  const dims = gridDims.map((d) => Math.min(d, 2 ** 52)) as [number, number, number];
   const keys = new Float64Array(nAtoms * 3);
   for (let i = 0; i < nAtoms; i++) {
     for (let k = 0; k < 3; k++) {
       keys[i * 3 + k] = Math.min(
-        Math.floor((positions[i * 3 + k] - origin[k]) / CELL_SIZE),
+        Math.floor((positions[i * 3 + k] - origin[k]) / plan.cellSize),
         dims[k] - 1,
       );
     }
@@ -587,6 +761,26 @@ function sparseBondsVdw(
       if (n < 0) continue;
       for (let a = start; a < end; a++) {
         for (let b = cellFirst[n]; b < cellFirst[n + 1]; b++) tryPair(order[a], order[b]);
+      }
+    }
+  }
+
+  // Wide atoms: the cells beyond the half shell, within their reach.
+  if (plan.wide.length > 0) {
+    const far = farOffsets(plan.reach);
+    for (let w = 0; w < plan.wide.length; w++) {
+      const i = plan.wide[w];
+      for (let o = 0; o < far.length; o += 3) {
+        const jx = keys[i * 3] + far[o];
+        const jy = keys[i * 3 + 1] + far[o + 1];
+        const jz = keys[i * 3 + 2] + far[o + 2];
+        if (jx < 0 || jx >= dims[0] || jy < 0 || jy >= dims[1] || jz < 0 || jz >= dims[2]) continue;
+        const n = findCell(jx, jy, jz);
+        if (n < 0) continue;
+        for (let b = cellFirst[n]; b < cellFirst[n + 1]; b++) {
+          const j = order[b];
+          if (plan.isWide[j] !== 1 || j > i) tryPair(i, j);
+        }
       }
     }
   }

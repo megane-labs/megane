@@ -30,7 +30,7 @@ function makeSnapshot(
     box: null,
     caIndices: new Uint32Array(caIndices),
     caChainIds: new Uint8Array(caChainIds),
-    caResNums: new Uint32Array(caResNums),
+    caResNums: new Int32Array(caResNums),
     caSsType: new Uint8Array(caSsType),
   };
 }
@@ -85,6 +85,17 @@ describe("extractChainBackbones", () => {
     // After sorting by resNum: residue 1 (atomIndex 20), 2 (atomIndex 30), 3 (atomIndex 10)
     expect(Array.from(chain.atomIndices)).toEqual([20, 30, 10]);
     expect(Array.from(chain.ssTypes)).toEqual([SS_HELIX, SS_SHEET, SS_COIL]);
+  });
+
+  it("orders negative (expression-tag) residue numbers before residue 1", () => {
+    const snap = makeSnapshot(
+      [3, 0, 2, 1],
+      [65, 65, 65, 65],
+      [1, -2, 0, -1],
+      [SS_COIL, SS_COIL, SS_COIL, SS_COIL],
+    );
+    const [chain] = extractChainBackbones(snap);
+    expect(Array.from(chain.atomIndices)).toEqual([0, 1, 2, 3]);
   });
 
   it("preserves SS types in sorted order", () => {
@@ -178,7 +189,7 @@ function makeLinearSnapshot(nCa: number, ssType = SS_COIL): Snapshot {
     box: null,
     caIndices: new Uint32Array(Array.from({ length: nCa }, (_, i) => i)),
     caChainIds: new Uint8Array(nCa).fill(65), // chain 'A'
-    caResNums: new Uint32Array(Array.from({ length: nCa }, (_, i) => i + 1)),
+    caResNums: new Int32Array(Array.from({ length: nCa }, (_, i) => i + 1)),
     caSsType: new Uint8Array(nCa).fill(ssType),
   };
 }

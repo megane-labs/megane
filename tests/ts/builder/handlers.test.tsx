@@ -9,7 +9,7 @@ import { describe, it, expect, beforeEach, vi } from "vitest";
 import { act, renderHook } from "@testing-library/react";
 import type { StoreApi } from "zustand";
 import { useBuilderHandlers, isMenuKey } from "@/builder/useBuilderHandlers";
-import { createBuilderStore, editSteps, type BuilderStore } from "@/builder/store";
+import { createBuilderStore, editSteps, isDirty, type BuilderStore } from "@/builder/store";
 import { describeStep } from "@/builder/placement";
 import type { BuildDragGesture, BuildHandlers } from "@/builder/types";
 import type { Snapshot } from "@/types";
@@ -159,6 +159,35 @@ describe("drag keys", () => {
     act(() => h.dragMove(gesture(10)));
     act(() => h.dragEnd());
     expect(s().result!.snapshot.positions[0]).toBeCloseTo(1);
+  });
+
+  it("Esc cancels a drag without leaving the document unsaved", () => {
+    const h = mount();
+    s().setTool("move");
+    expect(isDirty(s())).toBe(false);
+    const version = s().docVersion;
+    act(() => {
+      h.dragStart(0, NO_MODS);
+    });
+    act(() => h.dragMove(gesture(10)));
+    act(() => h.dragMove(gesture(20)));
+    expect(isDirty(s())).toBe(true);
+    act(() => {
+      window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" }));
+    });
+    expect(s().edits).toHaveLength(0);
+    expect(s().result!.snapshot.positions[0]).toBeCloseTo(0);
+    // Nothing was written: no "Discard unsaved edits?", no unload warning.
+    expect(s().docVersion).toBe(version);
+    expect(isDirty(s())).toBe(false);
+
+    // A drag that is kept still marks the document edited.
+    act(() => {
+      h.dragStart(0, NO_MODS);
+    });
+    act(() => h.dragMove(gesture(10)));
+    act(() => h.dragEnd());
+    expect(isDirty(s())).toBe(true);
   });
 });
 

@@ -1,13 +1,12 @@
 import { ReactWidget } from "@jupyterlab/ui-components";
 import type { DocumentRegistry } from "@jupyterlab/docregistry";
 import type { Contents } from "@jupyterlab/services";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { MeganeViewer } from "@megane/components/MeganeViewer";
 import { ErrorBoundary } from "@megane/components/ErrorBoundary";
 import { useMeganeLocal } from "@megane/hooks/useMeganeLocal";
 import { useTemplateData } from "@megane/hooks/useTemplateData";
 import { usePipelineStore } from "@megane/pipeline/store";
-import { capturePipelineStore, type PipelineStoreSnapshot } from "@megane/pipeline/storeSnapshot";
 import { useTour } from "@megane/tour/useTour";
 import { ThemeSync } from "@megane/components/ThemeSync";
 import { usePlaybackStore } from "@megane/stores/usePlaybackStore";
@@ -19,22 +18,20 @@ import { ensureWasmUrl } from "./wasmLoader";
 import { readServerFileBytes, type ServerRequest } from "./serverFileBytes";
 import { classifyStandaloneFile, siblingTopologyName } from "@megane/hosts/classifyStandaloneFile";
 import { createSubscription, createFrameSubscription } from "./frameSubscription";
+import { TabStoreCache } from "./tabStoreCache";
 import type { SelectionState, Measurement } from "@megane/types";
-
-/**
- * Subscription channel used by `DocBody` to re-load when the host
- * `MeganeReactView` widget becomes visible. Re-loading on activation is
- * required because the pipeline store is a singleton shared across every
- * open document tab — without a re-load on tab switch, the most recently
- * opened tab silently mutates earlier tabs' rendered state.
- */
-type ActivationSubscribe = (cb: () => void) => () => void;
 
 interface DocBodyProps {
   context: DocumentRegistry.Context;
   contents: Contents.IManager;
   request: ServerRequest;
-  subscribeActivation: ActivationSubscribe;
+  /**
+   * This tab's copy of the pipeline store. The store is a singleton shared
+   * across every open document tab, so the host `MeganeReactView` puts this
+   * copy back whenever the tab is shown — instead of re-parsing the file,
+   * which dominates open latency for large structures and trajectories.
+   */
+  storeCache: TabStoreCache;
   onFrameChange?: (frame: number) => void;
   onSelectionChange?: (selection: SelectionState) => void;
   onMeasurementChange?: (measurement: Measurement | null) => void;
@@ -46,7 +43,7 @@ function DocBody({
   context,
   contents,
   request,
-  subscribeActivation,
+  storeCache,
   onFrameChange,
   onSelectionChange,
   onMeasurementChange,
@@ -56,12 +53,6 @@ function DocBody({
   useTour({ host: "jupyterlab" });
   // Applying a template from the editor loads its demo files over this file.
   useTemplateData(local);
-
-  // Cached pipeline-store state captured after the first successful parse.
-  // On subsequent tab activations we restore from this cache instead of
-  // re-parsing the file (which dominates open latency for large structures
-  // and trajectories).
-  const cachedRef = useRef<PipelineStoreSnapshot | null>(null);
 
   const parseAndLoad = useCallback(
     async (token: { cancelled: boolean }) => {
@@ -85,6 +76,7 @@ function DocBody({
         // and useMeganeLocal.applyResult would inject this file's data
         // into a foreign pipeline — or silently no-op if that graph
         // had no load_structure node.
+        storeCache.claim();
         usePipelineStore.getState().reset();
         const filename = context.path.split("/").pop() ?? "structure";
         // Raw bytes for every format: the shared parser dispatches by
@@ -133,7 +125,7 @@ function DocBody({
         }
         perfMark("megane:open:loaded");
         if (token.cancelled) return;
-        cachedRef.current = capturePipelineStore(usePipelineStore.getState());
+        storeCache.capture();
         setState("ready");
       } catch (err) {
         if (!token.cancelled) {
@@ -145,32 +137,17 @@ function DocBody({
     // object on every render, so including it would re-fire this effect
     // on every state update and re-parse the file in a loop.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [context, contents, request],
+    [context, contents, request, storeCache],
   );
 
   useEffect(() => {
     let activeToken = { cancelled: false };
     void parseAndLoad(activeToken);
-    // Re-activate this tab's cached state whenever JupyterLab brings the
-    // widget back into view. We only re-parse when no cache is available
-    // yet (initial onAfterShow racing the in-flight parse) — every later
-    // activation just restores the captured store snapshot, which is
-    // effectively instant and avoids the WASM reparse.
-    const unsubscribe = subscribeActivation(() => {
-      const cache = cachedRef.current;
-      if (cache) {
-        usePipelineStore.setState(cache);
-        return;
-      }
-      // No cache yet: an activation fired before the initial load
-      // completed. The in-flight token will populate the cache as soon
-      // as parsing finishes; nothing to do here.
-    });
     return () => {
       activeToken.cancelled = true;
-      unsubscribe();
+      storeCache.release();
     };
-  }, [parseAndLoad, subscribeActivation]);
+  }, [parseAndLoad, storeCache]);
 
   const handleUploadStructure = useCallback(
     (file: File) => {
@@ -211,7 +188,7 @@ function DocBody({
 }
 
 export class MeganeReactView extends ReactWidget {
-  private readonly listeners = new Set<() => void>();
+  private readonly storeCache = new TabStoreCache();
   private readonly _frameSub = createFrameSubscription();
   private readonly _selectionSub = createSubscription<SelectionState>();
   private readonly _measurementSub = createSubscription<Measurement | null>();
@@ -249,24 +226,17 @@ export class MeganeReactView extends ReactWidget {
     this.addClass("megane-jupyter-doc");
   }
 
-  /** Notify subscribers that this widget has become visible. */
+  /** The tab became visible: put its state back into the shared store. */
   protected onAfterShow(msg: import("@lumino/messaging").Message): void {
     super.onAfterShow(msg);
-    for (const cb of this.listeners) {
-      try {
-        cb();
-      } catch {
-        /* swallow — a noisy listener shouldn't break others */
-      }
-    }
+    this.storeCache.restore();
   }
 
-  private subscribeActivation = (cb: () => void): (() => void) => {
-    this.listeners.add(cb);
-    return () => {
-      this.listeners.delete(cb);
-    };
-  };
+  /** The tab is being hidden: keep the edits made in it for its next show. */
+  protected onBeforeHide(msg: import("@lumino/messaging").Message): void {
+    this.storeCache.save();
+    super.onBeforeHide(msg);
+  }
 
   protected render(): JSX.Element {
     return (
@@ -275,7 +245,7 @@ export class MeganeReactView extends ReactWidget {
           context={this.context}
           contents={this.contents}
           request={this.request}
-          subscribeActivation={this.subscribeActivation}
+          storeCache={this.storeCache}
           onFrameChange={this._handleFrameChange}
           onSelectionChange={this._handleSelectionChange}
           onMeasurementChange={this._handleMeasurementChange}

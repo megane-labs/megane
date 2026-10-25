@@ -51,7 +51,7 @@ async function fetchSnapshot(url: string) {
   if (snap.caIndices) {
     out.caIndices = new Uint32Array(snap.caIndices);
     out.caChainIds = new Uint8Array(snap.caChainIds);
-    out.caResNums = new Uint32Array(snap.caResNums);
+    out.caResNums = new Int32Array(snap.caResNums);
     out.caSsType = new Uint8Array(snap.caSsType);
   }
   return out;

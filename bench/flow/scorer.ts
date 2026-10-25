@@ -24,12 +24,12 @@
  * total, which is renormalised over the rest.
  */
 
-import { hasClosedFence } from "@/ai/generation";
+import { looksLikePayload } from "@/ai/generation";
 import { stableStringify } from "@/builder/flow/engine";
 import {
   collectFlowErrors,
+  extractFlowPayload,
   prepareGeneratedFlow,
-  tryExtractFlow,
   type RawFlow,
 } from "@/builder/flow/ai/check";
 import type { SerializedFlow } from "@/builder/flow/store";
@@ -265,7 +265,11 @@ function fences(response: string): { count: number; unclosed: boolean } {
   return { count: Math.floor(markers / 2), unclosed: markers % 2 !== 0 };
 }
 
-export function scoreFormat(response: string, raw: RawFlow | null): DimensionResult {
+/**
+ * `fenced` says the flow came from a code fence; a bare flow is still applied
+ * (and graded), but fails the fenced-block check.
+ */
+export function scoreFormat(response: string, raw: RawFlow | null, fenced = true): DimensionResult {
   if (!raw) {
     return dimension([{ label: "the reply holds a flow in a fenced block", passed: false }]);
   }
@@ -277,7 +281,7 @@ export function scoreFormat(response: string, raw: RawFlow | null): DimensionRes
     !/\n\s*[-*]\s/.test(explanation) &&
     (explanation.match(/[.!?。！？]/g) ?? []).length <= 2;
   return dimension([
-    { label: "the reply holds a flow in a fenced block", passed: true },
+    { label: "the reply holds a flow in a fenced block", passed: fenced },
     { label: "no unclosed code fence", passed: !unclosed },
     { label: "at most two fenced blocks", passed: count <= 2 },
     { label: "has a trailing explanation", passed: explanation.length > 0 },
@@ -297,7 +301,7 @@ function scoreProse(response: string, rubric: FlowRubric): Pick<FlowCaseScore, "
     format: dimension([
       {
         label: "answers in prose, with no flow",
-        passed: text.length > 0 && !tryExtractFlow(text) && !hasClosedFence(text),
+        passed: text.length > 0 && !looksLikePayload(text),
       },
       {
         label: `is at most ${MAX_PROSE_LENGTH} characters`,
@@ -336,7 +340,8 @@ export async function scoreFlowResponse(
     const dims = { schema: NONE, task, params: NONE, result: NONE, format };
     return { ...dims, total: total(dims), flow: null, findings: [], run: null };
   }
-  const raw = tryExtractFlow(response);
+  const payload = extractFlowPayload(response);
+  const raw = payload?.value ?? null;
   const flow = raw ? prepareGeneratedFlow(raw, env.prompt) : null;
   const findings = raw && flow ? collectFlowErrors(raw, env.prompt) : [];
   const run = flow ? await execute(flow, env) : null;
@@ -345,7 +350,7 @@ export async function scoreFlowResponse(
     task: scoreTask(flow, c.rubric, c.setup.flow),
     params: scoreParams(flow, c.rubric, c.setup.flow),
     result: scoreResult(run, c.rubric),
-    format: scoreFormat(response, raw),
+    format: scoreFormat(response, raw, payload?.fenced ?? false),
   };
   return { ...dims, total: total(dims), flow, findings, run };
 }

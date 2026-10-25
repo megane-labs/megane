@@ -8,6 +8,7 @@
 
 import type { Snapshot } from "../types";
 import { inverse3, mulVec } from "../crystal/cell";
+import { computeDihedral } from "../renderer/Selection";
 
 type Vec3 = [number, number, number];
 
@@ -276,20 +277,10 @@ export function setDihedral(
   const len = norm(bc);
   if (len < 1e-8) return null;
   const axis = scale(bc, 1 / len);
-  const current = dihedral(pos(p, a), pb, pc, pos(p, d));
-  // A right-handed turn about b→c lowers this dihedral, so turn by −Δ.
-  const delta = ((current - target) * Math.PI) / 180;
+  const current = computeDihedral(p, a, b, c, d);
+  // A right-handed turn of the c side about b→c raises the (IUPAC) dihedral.
+  const delta = ((target - current) * Math.PI) / 180;
   return rotateSide(snapshot, movingSide(snapshot, b, c), pc, axis, delta);
-}
-
-function dihedral(a: Vec3, b: Vec3, c: Vec3, d: Vec3): number {
-  const b1 = sub(b, a);
-  const b2 = sub(c, b);
-  const b3 = sub(d, c);
-  const n1 = cross(b1, b2);
-  const n2 = cross(b2, b3);
-  const m1 = cross(n1, scale(b2, 1 / norm(b2)));
-  return (Math.atan2(dot(m1, n2), dot(n1, n2)) * 180) / Math.PI;
 }
 
 function rotateSide(
