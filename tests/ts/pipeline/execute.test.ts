@@ -712,6 +712,45 @@ describe("executePipeline", () => {
       const { viewportState: result } = executePipeline(nodes, edges, { snapshot: waterSnapshot });
       expect(result.labels[0].labels).toEqual(["0", "1", "2"]);
     });
+
+    // Regression: the "resname" source read only `ctx.atomLabels`, which no
+    // host ever sets, so it always produced no labels. It now resolves the
+    // structure's residue labels the way Filter and Color do.
+    describe("resname source", () => {
+      const nodes = [
+        makeNode("ls", "load_structure", { fileName: null, hasTrajectory: false, hasCell: false }),
+        makeNode("lg", "label_generator", { source: "resname" }),
+        makeNode("vp", "viewport", { perspective: false, cellAxesVisible: true }),
+      ];
+      const edges = [
+        makeEdge("ls", "particle", "lg", "particle"),
+        makeEdge("lg", "label", "vp", "label"),
+      ];
+      const labels = ["HOH1", "HOH1", "HOH1"];
+      const nodeSnapshots = {
+        ls: { snapshot: waterSnapshot, frames: null, meta: null, labels },
+      };
+
+      it("labels atoms with the structure's residue labels", () => {
+        const { viewportState: result } = executePipeline(nodes, edges, { nodeSnapshots });
+        expect(result.labels[0].labels).toEqual(["HOH1", "HOH1", "HOH1"]);
+      });
+
+      it("still prefers explicit display labels", () => {
+        const { viewportState: result } = executePipeline(nodes, edges, {
+          nodeSnapshots,
+          atomLabels: ["A", "B", "C"],
+        });
+        expect(result.labels[0].labels).toEqual(["A", "B", "C"]);
+      });
+
+      it("yields no labels when the structure has none", () => {
+        const { viewportState: result } = executePipeline(nodes, edges, {
+          snapshot: waterSnapshot,
+        });
+        expect(result.labels[0].labels).toEqual([]);
+      });
+    });
   });
 
   describe("Viewport node", () => {
