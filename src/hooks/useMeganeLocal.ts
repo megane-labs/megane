@@ -460,6 +460,8 @@ export function useMeganeLocal(): MeganeLocalState {
         decode: decodeTrajectoryFrame,
         dispose: disposeTrajectoryLazy,
         seedFrame0,
+        // Frames that each carry a cell: the seeded frame 0 carries its own too.
+        seedBox0: handle.index.frameCells ? handle.index.box : null,
       });
       provider.setOnFrameReady((f) => playbackApi.getState()._onAsyncFrame(f));
 

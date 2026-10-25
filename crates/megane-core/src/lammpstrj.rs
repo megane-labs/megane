@@ -570,6 +570,11 @@ pub struct LammpstrjIndex {
     pub offsets: Vec<usize>,
     /// Vector channel names (velocity/force) from the first frame's layout.
     pub vector_channel_names: Vec<String>,
+    /// Every frame's box, when it is not the same in all of them (an NPT run);
+    /// `None` for a constant cell, as `parse_lammpstrj` builds no per-frame
+    /// cell table then. Read from the `BOX BOUNDS` headers the scan already
+    /// parses, so a lazy host can give each frame its own cell.
+    pub frame_cells: Option<Vec<[f32; 9]>>,
     /// True when some frame's atom count differs from frame 0. The lazy
     /// positions-only decoder can't represent a jagged trajectory, so the host
     /// reparses the whole dump eagerly (building the `TrajHetero` side table).
@@ -619,6 +624,9 @@ pub struct LammpstrjIndexBuilder {
     box_matrix: Option<[f32; 9]>,
     box_origin: Option<[f32; 3]>,
     vector_channel_names: Vec<String>,
+    /// Recorded from the first frame whose box differs from frame 0's.
+    cells: Vec<[f32; 9]>,
+    varies_cell: bool,
     heterogeneous: bool,
 }
 
@@ -672,6 +680,18 @@ impl LammpstrjIndexBuilder {
             // stream frames whose atom count differs from frame 0.
             self.heterogeneous = true;
         }
+        // The per-frame cell table `parse_lammpstrj` builds, the same way:
+        // backfill frame 0's box the first time a frame's box differs.
+        if !self.varies_cell && self.box_matrix != Some(header.box_matrix) {
+            self.varies_cell = true;
+            self.cells.extend(std::iter::repeat_n(
+                self.box_matrix.unwrap_or(header.box_matrix),
+                self.offsets.len(),
+            ));
+        }
+        if self.varies_cell {
+            self.cells.push(header.box_matrix);
+        }
         self.offsets.push(start);
         // Only the first two time stamps set the time step.
         if self.timesteps.len() < 2 {
@@ -710,6 +730,7 @@ impl LammpstrjIndexBuilder {
             box_origin: self.box_origin,
             offsets: self.offsets.iter().map(|&o| o as usize).collect(),
             vector_channel_names: self.vector_channel_names,
+            frame_cells: self.varies_cell.then_some(self.cells),
             heterogeneous: self.heterogeneous,
         })
     }
@@ -1791,6 +1812,34 @@ mod tests {
         // A uniform dump stays non-heterogeneous.
         let uni = build_index(sample_dump()).unwrap();
         assert!(!uni.heterogeneous);
+    }
+
+    #[test]
+    fn build_index_records_a_changing_cell_like_the_eager_parse() {
+        // Box 10 → 10 → 12 → 14: the index keeps frame 0's box as the
+        // representative cell and every frame's box once one differs.
+        let mut text = String::new();
+        for (f, edge) in [10.0f32, 10.0, 12.0, 14.0].iter().enumerate() {
+            text += &format!(
+                "ITEM: TIMESTEP\n{f}\nITEM: NUMBER OF ATOMS\n1\n\
+                 ITEM: BOX BOUNDS pp pp pp\n0 {edge}\n0 {edge}\n0 {edge}\n\
+                 ITEM: ATOMS id type x y z\n1 1 1 1 1\n"
+            );
+        }
+        let eager = parse_lammpstrj(&text).unwrap();
+        let idx = build_index(&text).unwrap();
+        assert!(!idx.heterogeneous);
+        assert_eq!(idx.box_matrix, eager.box_matrix);
+        let cells = idx.frame_cells.expect("per-frame cells");
+        assert_eq!(
+            cells.iter().map(|c| c[0]).collect::<Vec<_>>(),
+            [10.0, 10.0, 12.0, 14.0]
+        );
+        for (f, cell) in cells.iter().enumerate() {
+            assert_eq!(Some(&cell[..]), eager.frame_cell(f));
+        }
+        // A box that stays put records no per-frame table.
+        assert!(build_index(sample_dump()).unwrap().frame_cells.is_none());
     }
 
     #[test]
