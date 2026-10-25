@@ -27,7 +27,9 @@ export function isSerializedPipeline(value: unknown): value is SerializedPipelin
  * over any earlier template/preamble echo.
  */
 export function findLastValidPipeline(text: string): SerializedPipeline | null {
-  const fenceRe = /```(?:json)?\s*\n?([\s\S]*?)```/g;
+  // Any language label in any case (```json, ```JSON, ```jsonc, none), as in
+  // production's `fencePattern`.
+  const fenceRe = /```[^\S\n]*[\w.+-]*[^\S\n]*\n?([\s\S]*?)```/g;
   let result: SerializedPipeline | null = null;
   let match: RegExpExecArray | null;
   while ((match = fenceRe.exec(text)) !== null) {

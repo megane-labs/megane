@@ -86,47 +86,122 @@ fn parse_include_directive(line: &str) -> Option<String> {
     }
 }
 
-/// Recursively expand `#include` directives in `text`, using `fs` to read
-/// included files.  `include_stack` tracks the current include chain so that
-/// circular includes can be detected.
-///
-/// Missing includes are passed through as-is (silently skipped for bond
-/// parsing), which matches how system forcefield includes work in practice.
-fn expand_includes<F: TopFileSystem>(
-    text: &str,
-    fs: &F,
-    include_stack: &mut Vec<String>,
-) -> Result<String, String> {
-    let mut result = String::with_capacity(text.len());
+// ── Preprocessor ──────────────────────────────────────────────────────────────
 
+/// One open `#ifdef` / `#ifndef` (or unsupported `#if`) group.
+struct CondGroup {
+    /// Whether the enclosing text is active.
+    parent_active: bool,
+    /// Whether the current branch of this group is active.
+    active: bool,
+    /// Whether a branch of this group has already been taken (so `#else`
+    /// must not be).
+    taken: bool,
+}
+
+/// Run the GROMACS preprocessor subset over `text`, appending active lines
+/// to `out`.
+///
+/// grompp feeds topologies through a C-preprocessor-like pass: `#define` /
+/// `#undef` manage symbols, `#ifdef` / `#ifndef` / `#else` / `#endif` select
+/// lines, and `#include` splices in another file. Without it both branches
+/// of a conditional are read — CHARMM36's `tip3p.itp` lists its `[ atoms ]`
+/// twice (`#ifdef HEAVY_H … #else … #endif`), which doubled the molecule's
+/// atom count and shifted every later molecule's bonds.
+///
+/// Symbols are undefined unless the topology itself `#define`s them: the
+/// `define = -D…` options of an `.mdp` file are not available here, so the
+/// result is what grompp produces with no extra defines. `#if` / `#elif`
+/// expressions (which grompp's own preprocessor does not support either) are
+/// treated as false. Directive lines are never emitted.
+///
+/// `#include` is resolved through `fs` only in active text; with no
+/// filesystem the include is dropped. Missing includes (e.g. system
+/// force-field files) are skipped silently. Defines made in an included file
+/// stay in effect afterwards, as with cpp.
+fn preprocess<F: TopFileSystem>(
+    text: &str,
+    fs: Option<&F>,
+    defines: &mut HashSet<String>,
+    include_stack: &mut Vec<String>,
+    out: &mut String,
+) -> Result<(), String> {
+    let mut groups: Vec<CondGroup> = Vec::new();
     for line in text.lines() {
-        if let Some(include_path) = parse_include_directive(line) {
-            if include_stack.contains(&include_path) {
-                return Err(format!(
-                    "Circular include detected: {} -> {}",
-                    include_stack.join(" -> "),
-                    include_path
-                ));
+        let active = groups.last().is_none_or(|g| g.active);
+        let Some(directive) = line.trim_start().strip_prefix('#') else {
+            if active {
+                out.push_str(line);
+                out.push('\n');
             }
-            match fs.read(&include_path) {
-                Some(included_text) => {
-                    include_stack.push(include_path.clone());
-                    let expanded = expand_includes(&included_text, fs, include_stack)?;
+            continue;
+        };
+        let mut words = directive.split_whitespace();
+        let keyword = words.next().unwrap_or("");
+        let symbol = words.next().unwrap_or("");
+        match keyword {
+            "ifdef" | "ifndef" | "if" => {
+                let take = match keyword {
+                    "ifdef" => defines.contains(symbol),
+                    "ifndef" => !defines.contains(symbol),
+                    _ => false,
+                };
+                groups.push(CondGroup {
+                    parent_active: active,
+                    active: active && take,
+                    taken: take,
+                });
+            }
+            "elif" => {
+                if let Some(g) = groups.last_mut() {
+                    g.active = false;
+                }
+            }
+            "else" => {
+                if let Some(g) = groups.last_mut() {
+                    g.active = g.parent_active && !g.taken;
+                    g.taken = true;
+                }
+            }
+            "endif" => {
+                groups.pop();
+            }
+            "define" if active && !symbol.is_empty() => {
+                defines.insert(symbol.to_string());
+            }
+            "undef" if active => {
+                defines.remove(symbol);
+            }
+            "include" if active => {
+                let (Some(fs), Some(include_path)) = (fs, parse_include_directive(line)) else {
+                    continue;
+                };
+                if include_stack.contains(&include_path) {
+                    return Err(format!(
+                        "Circular include detected: {} -> {}",
+                        include_stack.join(" -> "),
+                        include_path
+                    ));
+                }
+                // Missing include (e.g. system forcefield files) — skip silently.
+                if let Some(included_text) = fs.read(&include_path) {
+                    include_stack.push(include_path);
+                    preprocess(&included_text, Some(fs), defines, include_stack, out)?;
                     include_stack.pop();
-                    result.push_str(&expanded);
-                    result.push('\n');
-                }
-                None => {
-                    // Missing include (e.g. system forcefield files) — skip silently.
                 }
             }
-        } else {
-            result.push_str(line);
-            result.push('\n');
+            // Directives in inactive text, and ones without meaning here.
+            _ => {}
         }
     }
+    Ok(())
+}
 
-    Ok(result)
+/// [`preprocess`] a whole topology with a fresh symbol table.
+fn preprocess_top<F: TopFileSystem>(text: &str, fs: Option<&F>) -> Result<String, String> {
+    let mut out = String::with_capacity(text.len());
+    preprocess(text, fs, &mut HashSet::new(), &mut Vec::new(), &mut out)?;
+    Ok(out)
 }
 
 // ── Molecule-type-aware parsing ───────────────────────────────────────────────
@@ -159,13 +234,13 @@ fn finalize_moltype(
     moltypes: &mut HashMap<String, MoleculeType>,
     order: &mut Vec<String>,
     name: Option<String>,
-    atoms_section_count: usize,
+    atoms_max_id: usize,
     max_atom_index: u32,
     bonds: Vec<(u32, u32)>,
 ) {
     let Some(name) = name else { return };
-    let n_atoms = if atoms_section_count > 0 {
-        atoms_section_count
+    let n_atoms = if atoms_max_id > 0 {
+        atoms_max_id
     } else {
         max_atom_index as usize
     };
@@ -211,7 +286,7 @@ fn parse_top_bonds_grouped(text: &str, n_atoms: usize) -> Option<Vec<(u32, u32)>
 
     let mut current_name: Option<String> = None;
     let mut awaiting_name = false;
-    let mut current_atoms_count = 0usize;
+    let mut current_atoms_max_id = 0usize;
     let mut current_max_atom_index = 0u32;
     let mut current_bonds: Vec<(u32, u32)> = Vec::new();
     let mut section = Section::None;
@@ -237,11 +312,11 @@ fn parse_top_bonds_grouped(text: &str, n_atoms: usize) -> Option<Vec<(u32, u32)>
                         &mut moltypes,
                         &mut moltype_order,
                         current_name.take(),
-                        current_atoms_count,
+                        current_atoms_max_id,
                         current_max_atom_index,
                         std::mem::take(&mut current_bonds),
                     );
-                    current_atoms_count = 0;
+                    current_atoms_max_id = 0;
                     current_max_atom_index = 0;
                     awaiting_name = true;
                     found_moleculetype = true;
@@ -252,11 +327,11 @@ fn parse_top_bonds_grouped(text: &str, n_atoms: usize) -> Option<Vec<(u32, u32)>
                         &mut moltypes,
                         &mut moltype_order,
                         current_name.take(),
-                        current_atoms_count,
+                        current_atoms_max_id,
                         current_max_atom_index,
                         std::mem::take(&mut current_bonds),
                     );
-                    current_atoms_count = 0;
+                    current_atoms_max_id = 0;
                     current_max_atom_index = 0;
                     section = Section::Molecules;
                 }
@@ -282,9 +357,16 @@ fn parse_top_bonds_grouped(text: &str, n_atoms: usize) -> Option<Vec<(u32, u32)>
         }
 
         match section {
+            // A molecule's size is its highest `[ atoms ]` id (grompp requires
+            // ids 1..N), not its line count, so a repeated line cannot
+            // inflate it.
             Section::Atoms => {
-                current_atoms_count += 1;
-                if let Some(idx) = data.split_whitespace().next().and_then(|s| s.parse().ok()) {
+                if let Some(idx) = data
+                    .split_whitespace()
+                    .next()
+                    .and_then(|s| s.parse::<u32>().ok())
+                {
+                    current_atoms_max_id = current_atoms_max_id.max(idx as usize);
                     current_max_atom_index = current_max_atom_index.max(idx);
                 }
             }
@@ -314,7 +396,9 @@ fn parse_top_bonds_grouped(text: &str, n_atoms: usize) -> Option<Vec<(u32, u32)>
                     Some(v) => v,
                     None => continue,
                 };
-                if ow == 0 {
+                // Index 0 has no OW; an OW in the top two u32 indices has no
+                // hydrogens that `ow + 2` could name without overflowing.
+                if ow == 0 || ow > u32::MAX - 2 {
                     continue;
                 }
                 current_max_atom_index = current_max_atom_index.max(ow + 2);
@@ -341,7 +425,7 @@ fn parse_top_bonds_grouped(text: &str, n_atoms: usize) -> Option<Vec<(u32, u32)>
         &mut moltypes,
         &mut moltype_order,
         current_name,
-        current_atoms_count,
+        current_atoms_max_id,
         current_max_atom_index,
         current_bonds,
     );
@@ -360,21 +444,30 @@ fn parse_top_bonds_grouped(text: &str, n_atoms: usize) -> Option<Vec<(u32, u32)>
     };
 
     let mut bonds = Vec::new();
-    let mut offset: u32 = 0;
+    // Global index of the next copy's first atom.
+    let mut offset: usize = 0;
     for (name, count) in order {
         let Some(moltype) = moltypes.get(&name) else {
             // Unresolvable molecule type (e.g. missing #include) — stop here
             // rather than guess its atom count and miscompute later offsets.
             break;
         };
-        for _ in 0..count {
+        // A copy that starts at or past the structure's last atom has no bond
+        // inside it, so only the copies starting below `n_atoms` are walked: a
+        // huge `[ molecules ]` count neither loops for ages nor overflows the
+        // offset. A type with no atoms has no bonds and takes no indices.
+        let copies = match moltype.n_atoms {
+            0 => 0,
+            size => count.min(n_atoms.saturating_sub(offset).div_ceil(size)),
+        };
+        for _ in 0..copies {
             for &(a, b) in &moltype.bonds {
-                let (ga, gb) = (offset + a, offset + b);
-                if (gb as usize) < n_atoms {
-                    bonds.push((ga, gb));
+                let gb = offset + b as usize;
+                if gb < n_atoms {
+                    bonds.push(((offset + a as usize) as u32, gb as u32));
                 }
             }
-            offset += moltype.n_atoms as u32;
+            offset += moltype.n_atoms;
         }
     }
 
@@ -437,7 +530,9 @@ fn parse_top_bonds_flat(text: &str, n_atoms: usize) -> Vec<(u32, u32)> {
                 Some(v) => v,
                 None => continue,
             };
-            if ow == 0 {
+            // As in the grouped reader: no OW at 0, and none whose hydrogen
+            // index `ow + 1` would overflow.
+            if ow == 0 || ow == u32::MAX {
                 continue;
             }
             push(ow - 1, ow, &mut bonds);
@@ -485,10 +580,21 @@ fn parse_top_bonds_flat(text: &str, n_atoms: usize) -> Vec<(u32, u32)> {
 /// back to treating listed indices as global 1-based atom indices, matching
 /// historical behaviour.
 ///
+/// The GROMACS preprocessor conditionals (`#define`, `#undef`, `#ifdef`,
+/// `#ifndef`, `#else`, `#endif`) are evaluated first, with every symbol
+/// undefined unless the text `#define`s it (see the `preprocess` helper).
+///
 /// Returns `Vec<(a, b)>` with 0-indexed atom pairs where `a < b`.
 /// `#include` directives are **not** resolved; pass pre-expanded text or use
 /// [`parse_top_bonds_with_fs`] / [`parse_top_bonds_from_path`] instead.
 pub fn parse_top_bonds(text: &str, n_atoms: usize) -> Vec<(u32, u32)> {
+    // Without a filesystem `preprocess` drops `#include`s and so cannot fail.
+    let text = preprocess_top(text, None::<&VirtualTopFileSystem>).unwrap_or_default();
+    parse_preprocessed(&text, n_atoms)
+}
+
+/// Bond extraction over text the preprocessor has already run on.
+fn parse_preprocessed(text: &str, n_atoms: usize) -> Vec<(u32, u32)> {
     match parse_top_bonds_grouped(text, n_atoms) {
         Some(bonds) => bonds,
         None => parse_top_bonds_flat(text, n_atoms),
@@ -504,9 +610,8 @@ pub fn parse_top_bonds_with_fs<F: TopFileSystem>(
     fs: &F,
     n_atoms: usize,
 ) -> Result<Vec<(u32, u32)>, String> {
-    let mut stack = Vec::new();
-    let expanded = expand_includes(top_text, fs, &mut stack)?;
-    Ok(parse_top_bonds(&expanded, n_atoms))
+    let expanded = preprocess_top(top_text, Some(fs))?;
+    Ok(parse_preprocessed(&expanded, n_atoms))
 }
 
 /// Parse a GROMACS `.top` file at `path`, resolving `#include` directives
@@ -969,6 +1074,201 @@ SOL  2
         let bonds = parse_top_bonds_with_fs(top, &vfs, 10).unwrap();
         // d.itp is expanded twice; both occurrences yield the same bond.
         assert!(!bonds.is_empty());
+    }
+
+    /// A `[ molecules ]` count is a claim about the system, not a loop bound:
+    /// copies that start past the structure's last atom contribute no bonds,
+    /// so 1.5·10^9 waters over a 9-atom structure yield the three waters'
+    /// bonds instead of looping until the u32 atom offset overflows.
+    #[test]
+    fn a_huge_molecule_count_stops_at_the_structure_atoms() {
+        let text = "[ moleculetype ]\nSOL 2\n[ atoms ]\n1 OW 1 SOL OW 1 0 16\n\
+                    2 HW 1 SOL HW1 1 0 1\n3 HW 1 SOL HW2 1 0 1\n[ bonds ]\n1 2\n1 3\n\
+                    [ moleculetype ]\nEMPTY 1\n\
+                    [ molecules ]\nEMPTY 4000000000\nSOL 1500000000\n";
+        assert_eq!(
+            parse_top_bonds(text, 9),
+            vec![(0, 1), (0, 2), (3, 4), (3, 5), (6, 7), (6, 8)]
+        );
+        assert!(parse_top_bonds(text, 0).is_empty());
+    }
+
+    /// A settle on the last representable atom index has no hydrogens to
+    /// bond; it is skipped instead of overflowing `ow + 2`.
+    #[test]
+    fn a_settle_at_the_top_of_the_index_range_is_skipped() {
+        let text = format!(
+            "[ moleculetype ]\nSOL 2\n[ atoms ]\n1 OW 1 SOL OW 1 0 16\n\
+             2 HW 1 SOL HW1 1 0 1\n3 HW 1 SOL HW2 1 0 1\n\
+             [ settles ]\n1 1 0.1 0.16\n{} 1 0.1 0.16\n[ molecules ]\nSOL 1\n",
+            u32::MAX
+        );
+        assert_eq!(parse_top_bonds(&text, 3), vec![(0, 1), (0, 2)]);
+        // The flat reader (no `[ moleculetype ]`) skips it the same way.
+        let flat = format!("[ settles ]\n1 1 0.1 0.16\n{} 1 0.1 0.16\n", u32::MAX);
+        assert_eq!(parse_top_bonds(&flat, 3), vec![(0, 1), (0, 2)]);
+    }
+
+    // ── Preprocessor conditionals ─────────────────────────────────────────────
+
+    /// CHARMM36 `tip3p.itp`: `[ atoms ]` is listed twice under
+    /// `#ifdef HEAVY_H … #else … #endif`, and the connectivity is a settle
+    /// unless FLEXIBLE is defined. Only one branch of each may be read, so
+    /// every water is 3 atoms and the bonds stay on their own molecule.
+    #[test]
+    fn test_ifdef_branches_select_one_atoms_list() {
+        let text = "\
+[ moleculetype ]
+SOL 2
+[ atoms ]
+#ifdef HEAVY_H
+1 OWT3 1 SOL OW 1 -0.834 9.95140
+2 HWT3 1 SOL HW1 1 0.417 4.03200
+3 HWT3 1 SOL HW2 1 0.417 4.03200
+#else
+1 OWT3 1 SOL OW 1 -0.834 15.9994
+2 HWT3 1 SOL HW1 1 0.417 1.0080
+3 HWT3 1 SOL HW2 1 0.417 1.0080
+#endif
+#ifndef FLEXIBLE
+[ settles ]
+1 1 0.09572 0.15139
+#else
+[ bonds ]
+1 2 1 0.09572 502416.0
+1 3 1 0.09572 502416.0
+2 3 1 0.15139 502416.0
+#endif
+[ system ]
+water
+[ molecules ]
+SOL 3
+";
+        let bonds = parse_top_bonds(text, 9);
+        assert_eq!(bonds, vec![(0, 1), (0, 2), (3, 4), (3, 5), (6, 7), (6, 8)]);
+
+        // `#define FLEXIBLE` in the file selects the [ bonds ] branch (with
+        // its extra H-H entry) instead of the settle.
+        let flexible = format!("#define FLEXIBLE\n{text}");
+        let bonds = parse_top_bonds(&flexible, 9);
+        assert_eq!(bonds.len(), 9);
+        assert!(bonds.contains(&(1, 2)) && bonds.contains(&(7, 8)));
+    }
+
+    #[test]
+    fn test_define_undef_and_nested_conditionals() {
+        let text = "\
+#define A
+[ bonds ]
+#ifdef A
+1 2 1
+#ifdef B
+9 10 1
+#else
+2 3 1
+#endif
+#else
+1 3 1
+#endif
+#undef A
+#ifdef A
+3 4 1
+#endif
+#ifndef B
+#ifdef A
+5 6 1
+#else
+4 5 1
+#endif
+#endif
+#ifdef UNDEFINED
+#ifndef ALSO_UNDEFINED
+6 7 1
+#else
+7 8 1
+#endif
+#endif
+";
+        // Flat (no moleculetype) path: global indices.
+        let bonds = parse_top_bonds(text, 20);
+        assert_eq!(bonds, vec![(0, 1), (1, 2), (3, 4)]);
+    }
+
+    /// `#if` / `#elif` expressions are not evaluated (grompp's preprocessor
+    /// rejects them as well): they count as false, the `#else` branch is
+    /// taken, and stray `#else` / `#endif` lines are ignored.
+    #[test]
+    fn test_if_expressions_are_false_and_stray_directives_ignored() {
+        let text = "\
+#endif
+#else
+[ bonds ]
+#if defined(X)
+1 2 1
+#elif 1
+1 3 1
+#else
+2 3 1
+#endif
+#define
+#pragma once
+3 4 1
+";
+        let bonds = parse_top_bonds(text, 10);
+        assert_eq!(bonds, vec![(1, 2), (2, 3)]);
+    }
+
+    /// An `#include` in an inactive branch is never read (a POSRES include
+    /// can point at a file that is not there, or would recurse), while a
+    /// `#define` made inside an included file stays in effect afterwards.
+    #[test]
+    fn test_includes_follow_conditionals_and_carry_defines() {
+        let vfs = make_vfs(&[
+            ("self.itp", "#include \"self.itp\"\n"),
+            ("defs.itp", "#define FROM_INCLUDE\n"),
+            ("posre.itp", "[ bonds ]\n8 9 1\n"),
+        ]);
+        let top = "\
+#ifdef POSRES
+#include \"self.itp\"
+#endif
+#include \"defs.itp\"
+[ bonds ]
+#ifdef FROM_INCLUDE
+1 2 1
+#endif
+#ifndef POSRES
+#include \"posre.itp\"
+#endif
+";
+        let bonds = parse_top_bonds_with_fs(top, &vfs, 10).unwrap();
+        assert_eq!(bonds, vec![(0, 1), (7, 8)]);
+
+        // Without a filesystem the include lines are simply dropped.
+        assert!(parse_top_bonds(top, 10).is_empty());
+    }
+
+    /// A molecule's size is its highest `[ atoms ]` id, so a repeated line
+    /// (or one without a numeric id) does not shift later molecules.
+    #[test]
+    fn test_moleculetype_size_is_the_highest_atom_id() {
+        let text = "\
+[ moleculetype ]
+W 2
+[ atoms ]
+1 OW 1 SOL OW 1 0 16
+2 HW 1 SOL HW1 1 0 1
+3 HW 1 SOL HW2 1 0 1
+3 HW 1 SOL HW2 1 0 1
+x junk
+[ bonds ]
+1 2
+1 3
+[ molecules ]
+W 2
+";
+        let bonds = parse_top_bonds(text, 6);
+        assert_eq!(bonds, vec![(0, 1), (0, 2), (3, 4), (3, 5)]);
     }
 
     // ── parse_top_bonds_from_path (native only) ───────────────────────────────

@@ -122,6 +122,26 @@ describe("setting values", () => {
     const same = snap([0, 0, 0, 1, 0, 0, 1, 0, 0, 2, 1, 0], []);
     expect(setDihedral(same, 0, 1, 2, 3, 30)).toBeNull();
   });
+
+  it("sets a signed dihedral: +60 puts d clockwise of a looking down b→c", () => {
+    // a on +x, b at the origin, c on +z, d starting cis to a.
+    const s = snap(
+      [1, 0, 0, 0, 0, 0, 0, 0, 1, 1, 0, 1],
+      [
+        [0, 1],
+        [1, 2],
+        [2, 3],
+      ],
+    );
+    const p = moved(s, setDihedral(s, 0, 1, 2, 3, 60));
+    // Looking along +z, +x → +y is clockwise, so d must land at +y.
+    expect(p[9]).toBeCloseTo(Math.cos(Math.PI / 3), 5);
+    expect(p[10]).toBeCloseTo(Math.sin(Math.PI / 3), 5);
+    expect(p[11]).toBeCloseTo(1, 5);
+    expect(computeDihedral(p, 0, 1, 2, 3)).toBeCloseTo(60, 3);
+    const q = moved(s, setDihedral(s, 0, 1, 2, 3, -60));
+    expect(q[10]).toBeCloseTo(-Math.sin(Math.PI / 3), 5);
+  });
 });
 
 describe("superpose", () => {

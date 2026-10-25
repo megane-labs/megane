@@ -7,6 +7,7 @@
  */
 
 import { describe, it, expect } from "vitest";
+import * as THREE from "three";
 import { MoleculeRenderer } from "@/renderer/MoleculeRenderer";
 import { ImpostorAtomMesh } from "@/renderer/ImpostorAtomMesh";
 import { ImpostorBondMesh } from "@/renderer/ImpostorBondMesh";
@@ -113,5 +114,130 @@ describe("MoleculeRenderer — heterogeneous frame slow path", () => {
 
     // instanceCount unchanged; positions updated in place.
     expect(instanceCount(atom)).toBe(before);
+  });
+});
+
+/**
+ * Picking, box selection and the selection overlays must follow the topology
+ * of the frame on screen, not frame 0's: a heterogeneous frame has its own
+ * atom count and elements, and the renderer's position buffer only grows, so
+ * reading it with frame 0's atom count either misses the frame's extra atoms
+ * or keeps the tail of an earlier, larger frame pickable.
+ */
+describe("MoleculeRenderer — picking on a heterogeneous frame", () => {
+  // 100×100 viewport; the orthographic camera maps x ∈ [-10, 10] to [0, 100] px.
+  const container = {
+    clientWidth: 100,
+    clientHeight: 100,
+    getBoundingClientRect: () => ({ left: 0, top: 0, width: 100, height: 100 }),
+  };
+  /** Screen x (px) of a world x on the y = 0 line. */
+  const sx = (x: number) => (x + 10) * 5;
+
+  function makePickRenderer() {
+    const renderer = new MoleculeRenderer();
+    // Frame 0: four carbons along x.
+    const snapshot = {
+      nAtoms: 4,
+      nBonds: 0,
+      positions: new Float32Array([-6, 0, 0, -2, 0, 0, 2, 0, 0, 6, 0, 0]),
+      elements: new Uint8Array([6, 6, 6, 6]),
+      bonds: new Uint32Array(0),
+      bondOrders: null,
+    } as Snapshot;
+    const atom = new ImpostorAtomMesh(64);
+    atom.loadSnapshot(snapshot);
+    const bond = new ImpostorBondMesh(64);
+    bond.loadSnapshot(snapshot);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const internals = renderer as any;
+    internals.snapshot = snapshot;
+    internals.currentPositions = snapshot.positions;
+    internals.atomRenderer = atom;
+    internals.bondRenderer = bond;
+    internals.scene = { add: () => {}, remove: () => {} };
+    internals.container = container;
+    const camera = new THREE.OrthographicCamera(-10, 10, 10, -10, 0.1, 1000);
+    camera.position.set(0, 0, 50);
+    camera.lookAt(0, 0, 0);
+    camera.updateMatrixWorld(true);
+    camera.updateProjectionMatrix();
+    internals.cameraController.camera = camera;
+    return { renderer, internals, snapshot };
+  }
+
+  function heteroFrame(xs: number[], elements: number[]): Frame {
+    return {
+      frameId: 1,
+      nAtoms: xs.length,
+      positions: new Float32Array(xs.flatMap((x) => [x, 0, 0])),
+      elements: new Uint8Array(elements),
+      bonds: new Uint32Array(0),
+      nBonds: 0,
+    };
+  }
+
+  it("does not pick or box-select the leftover tail of a larger earlier frame", () => {
+    const { renderer } = makePickRenderer();
+    renderer.updateFrame(heteroFrame([-6, -2, 2, 6], [6, 6, 6, 6]));
+    // The next frame has two atoms; the buffer still holds atoms 2 and 3.
+    renderer.updateFrame(heteroFrame([-6, -2], [8, 8]));
+
+    expect(renderer.raycastAtPixel(sx(6), 50)).toBeNull();
+    expect(renderer.selectAtomsInRect({ x0: 0, y0: 0, x1: 100, y1: 100 })).toEqual([0, 1]);
+    expect(renderer.testGetProjectedAtomPositions().map((a) => a.index)).toEqual([0, 1]);
+  });
+
+  it("picks the extra atoms of a frame larger than frame 0", () => {
+    const { renderer } = makePickRenderer();
+    renderer.updateFrame(heteroFrame([-6, -2, 2, 6, 8], [6, 6, 6, 6, 16]));
+
+    const hit = renderer.raycastAtPixel(sx(8), 50);
+    expect(hit).toMatchObject({ kind: "atom", atomIndex: 4, elementSymbol: "S" });
+    expect(renderer.selectAtomsInRect({ x0: sx(7), y0: 0, x1: 100, y1: 100 })).toEqual([4]);
+  });
+
+  it("reports the frame's element in the tooltip and projection", () => {
+    const { renderer } = makePickRenderer();
+    renderer.updateFrame(heteroFrame([-6, -2, 2, 6], [8, 7, 6, 6]));
+
+    expect(renderer.raycastAtPixel(sx(-6), 50)).toMatchObject({
+      kind: "atom",
+      atomIndex: 0,
+      elementSymbol: "O",
+      atomicNumber: 8,
+    });
+    expect(renderer.testGetProjectedAtomPositions().map((a) => a.element)).toEqual([8, 7, 6, 6]);
+  });
+
+  it("drops the highlight of a selected atom the frame does not have", () => {
+    const { renderer, internals } = makePickRenderer();
+    renderer.setSelection([1, 3]);
+    expect(internals.selection.selectionGroup.children.length).toBe(3); // 2 spheres + line
+
+    renderer.updateFrame(heteroFrame([-6, -2], [6, 6]));
+    const spheres = internals.selection.selectionGroup.children.filter(
+      (c: THREE.Object3D) => c instanceof THREE.Mesh,
+    );
+    expect(spheres.length).toBe(1);
+    expect(spheres[0].position.toArray()).toEqual([-2, 0, 0]);
+  });
+
+  it("returns to frame 0's topology on a positions-only frame and on a new snapshot", () => {
+    const { renderer, internals, snapshot } = makePickRenderer();
+    renderer.updateFrame(heteroFrame([-6, -2], [8, 8]));
+    expect(renderer.testGetProjectedAtomPositions()).toHaveLength(2);
+
+    renderer.updateFrame({
+      frameId: 2,
+      nAtoms: 4,
+      positions: new Float32Array([-6, 0, 0, -2, 0, 0, 2, 0, 0, 6, 0, 0]),
+    });
+    expect(renderer.testGetProjectedAtomPositions().map((a) => a.element)).toEqual([6, 6, 6, 6]);
+
+    renderer.updateFrame(heteroFrame([-6, -2], [8, 8]));
+    internals.cameraController.syncExtent = () => {};
+    renderer.loadSnapshot(snapshot, { fit: false });
+    expect(renderer.testGetProjectedAtomPositions()).toHaveLength(4);
   });
 });

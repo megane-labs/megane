@@ -36,7 +36,7 @@ const { wasmMock } = vi.hoisted(() => {
       vector_channel_data: () => new Float32Array(),
       ca_indices: () => new Uint32Array(0),
       ca_chain_ids: () => new Uint8Array(0),
-      ca_res_nums: () => new Uint32Array(0),
+      ca_res_nums: () => new Int32Array(0),
       ca_ss_type: () => new Uint8Array(0),
       free: () => {},
     };
@@ -276,6 +276,7 @@ interface WorkerResponse {
   op: string;
   result?: unknown;
   error?: string;
+  fatal?: boolean;
   wasmBytes?: number;
 }
 
@@ -386,6 +387,51 @@ describe("parse.worker onmessage", () => {
     });
     expect(posts[0].ok).toBe(true);
     expect(posts[0].op).toBe("trajectory");
+  });
+
+  it("marks an ordinary parse error as not fatal", async () => {
+    const { handler, posts } = await loadWorker();
+    await handler({
+      data: {
+        id: 31,
+        op: "trajectory",
+        wasm: undefined,
+        kind: "xtc",
+        bytes: new Uint8Array([1]).buffer,
+        expectedNAtoms: 999,
+      },
+    });
+    expect(posts[0]).toMatchObject({ id: 31, ok: false });
+    expect(posts[0].fatal).toBeUndefined();
+  });
+
+  it("marks a WASM module that will not start as fatal", async () => {
+    const start = wasmMock.default;
+    wasmMock.default = async () => {
+      throw new Error("could not fetch the module");
+    };
+    try {
+      const { handler, posts } = await loadWorker();
+      await handler({ data: { id: 32, op: "structure", wasm: undefined, ext: ".pdb", text: "" } });
+      expect(posts[0]).toMatchObject({ id: 32, ok: false, fatal: true });
+      expect(posts[0].error).toMatch(/could not fetch the module/);
+    } finally {
+      wasmMock.default = start;
+    }
+  });
+
+  it("marks a trap inside the WASM module as fatal", async () => {
+    const parse = wasmMock.parse_pdb;
+    wasmMock.parse_pdb = () => {
+      throw new WebAssembly.RuntimeError("unreachable");
+    };
+    try {
+      const { handler, posts } = await loadWorker();
+      await handler({ data: { id: 33, op: "structure", wasm: undefined, ext: ".pdb", text: "X" } });
+      expect(posts[0]).toMatchObject({ id: 33, ok: false, fatal: true });
+    } finally {
+      wasmMock.parse_pdb = parse;
+    }
   });
 
   it("posts an error response when parsing throws", async () => {

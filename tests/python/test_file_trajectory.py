@@ -103,6 +103,38 @@ def test_keeps_only_a_bounded_number_of_frames() -> None:
         traj.n_atoms_at(-1)
 
 
+def _netcdf_with_far_time(path: Path, time_begin: int) -> None:
+    """A one-frame, three-atom CDF-2 AMBER file whose ``time`` record variable
+    claims to start at ``time_begin``, far past the end of the file."""
+
+    def name(s: str) -> bytes:
+        raw = s.encode()
+        return struct.pack(">I", len(raw)) + raw + b"\0" * (-len(raw) % 4)
+
+    def var(var_name: str, dimids: list[int], vsize: int, begin: int) -> bytes:
+        out = name(var_name) + struct.pack(">I", len(dimids))
+        out += b"".join(struct.pack(">I", d) for d in dimids)
+        return out + struct.pack(">IIIIQ", 0, 0, 5, vsize, begin)  # no attributes, NC_FLOAT
+
+    dims = struct.pack(">II", 10, 3) + name("frame") + struct.pack(">I", 0)
+    dims += name("atom") + struct.pack(">I", 3) + name("spatial") + struct.pack(">I", 3)
+    head_len = 4 + 4 + len(dims) + 8 + 8 + len(var("coordinates", [0, 1, 2], 36, 0)) + len(var("time", [0], 4, 0))
+    header = b"CDF\x02" + struct.pack(">I", 1) + dims + struct.pack(">II", 0, 0) + struct.pack(">II", 11, 2)
+    header += var("coordinates", [0, 1, 2], 36, head_len) + var("time", [0], 4, time_begin)
+    assert len(header) == head_len
+    path.write_bytes(header + np.arange(9, dtype=">f4").tobytes())
+
+
+def test_a_record_span_past_the_file_reserves_only_the_file(tmp_path: Path) -> None:
+    # The record span reaches the far `time` offset (2^60 bytes); opening the
+    # file used to reserve that much up front and abort the interpreter.
+    path = tmp_path / "far_time.nc"
+    _netcdf_with_far_time(path, 1 << 60)
+    traj = open_file_trajectory(str(path), "netcdf")
+    assert (traj.n_frames, traj.n_atoms) == (1, 3)
+    np.testing.assert_array_equal(traj.get_frame(0), np.arange(9, dtype=np.float32).reshape(3, 3))
+
+
 def test_reader_errors() -> None:
     with pytest.raises(ValueError, match="unsupported"):
         megane_parser.TrajectoryFile(str(FIXTURES / "water.dcd"), "trr")
