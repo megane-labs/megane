@@ -276,6 +276,7 @@ interface WorkerResponse {
   op: string;
   result?: unknown;
   error?: string;
+  wasmBytes?: number;
 }
 
 async function loadWorker(): Promise<{ handler: Handler; posts: WorkerResponse[] }> {
@@ -298,6 +299,15 @@ describe("parse.worker onmessage", () => {
     await handler({ data: { id: 7, op: "init", wasm: undefined } });
     expect(posts).toHaveLength(1);
     expect(posts[0]).toMatchObject({ id: 7, ok: true, op: "init" });
+  });
+
+  it("stamps every response with the worker's WASM heap size", async () => {
+    const { handler, posts } = await loadWorker();
+    await handler({ data: { id: 9, op: "init", wasm: undefined } });
+    await handler({ data: { id: 10, op: "decodeFrame", trajectoryId: 404, frame: 0 } });
+    expect(posts).toHaveLength(2);
+    expect(posts[1]).toMatchObject({ id: 10, ok: false });
+    for (const post of posts) expect(post.wasmBytes).toBe(0);
   });
 
   it("parses a .traj's frame 0 from head and tail chunks", async () => {

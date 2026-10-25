@@ -24,6 +24,7 @@ import {
   indexTrajFileCore,
   decodeTrajectoryFrame0Core,
   decodeLazyFrameCore,
+  wasmHeapBytes,
   type LazyFrameDecoder,
 } from "./parseCore";
 import { packLabels } from "./labels";
@@ -35,6 +36,11 @@ interface WorkerSelf {
 }
 
 const ctx = self as unknown as WorkerSelf;
+
+/** Post a response, stamped with the heap size so the main thread can report it. */
+function respond(response: ParseResponse, transfer?: Transferable[]): void {
+  ctx.postMessage({ ...response, wasmBytes: wasmHeapBytes() }, transfer);
+}
 
 // Persistent lazy per-frame decoders (trajectory OR multi-frame structure),
 // keyed by a client-allocated id and freed on `disposeTrajectory`. One indexed
@@ -55,7 +61,7 @@ ctx.onmessage = async (e: MessageEvent<ParseRequest>) => {
         bytes: bytes ? new Uint8Array(bytes) : undefined,
       });
       const transfer = collectResultBuffers(result);
-      ctx.postMessage(
+      respond(
         {
           id: req.id,
           ok: true,
@@ -73,16 +79,13 @@ ctx.onmessage = async (e: MessageEvent<ParseRequest>) => {
         expectedNAtoms: req.expectedNAtoms,
       });
       const transfer = collectResultBuffers(result);
-      ctx.postMessage(
-        { id: req.id, ok: true, op: "trajectory", result } satisfies ParseResponse,
-        transfer,
-      );
+      respond({ id: req.id, ok: true, op: "trajectory", result } satisfies ParseResponse, transfer);
     } else if (req.op === "structurePrefix") {
       await ensureInit(req.wasm);
       // Parse frame 0 from a bounded prefix; throws if frame 0 isn't fully in it.
       const result = parseStructurePrefixCore(req.text, req.kind, req.isWholeFile);
       const transfer = collectResultBuffers(result);
-      ctx.postMessage(
+      respond(
         {
           id: req.id,
           ok: true,
@@ -100,7 +103,7 @@ ctx.onmessage = async (e: MessageEvent<ParseRequest>) => {
         req.totalSize,
       );
       const transfer = collectResultBuffers(result);
-      ctx.postMessage(
+      respond(
         {
           id: req.id,
           ok: true,
@@ -117,7 +120,7 @@ ctx.onmessage = async (e: MessageEvent<ParseRequest>) => {
         req.kind,
         req.expectedNAtoms,
       );
-      ctx.postMessage(
+      respond(
         {
           id: req.id,
           ok: true,
@@ -140,7 +143,7 @@ ctx.onmessage = async (e: MessageEvent<ParseRequest>) => {
       decoders.set(req.trajectoryId, decoder);
       // Transfer frame 0's backing buffers (positions/elements/bonds/…) zero-copy.
       const transfer = collectResultBuffers(frame0);
-      ctx.postMessage(
+      respond(
         {
           id: req.id,
           ok: true,
@@ -161,7 +164,7 @@ ctx.onmessage = async (e: MessageEvent<ParseRequest>) => {
       const transfer: Transferable[] = [index.times.buffer];
       if (index.box) transfer.push(index.box.buffer);
       if (index.boxOrigin) transfer.push(index.boxOrigin.buffer);
-      ctx.postMessage(
+      respond(
         { id: req.id, ok: true, op: "indexTrajectory", result: index } satisfies ParseResponse,
         transfer,
       );
@@ -177,7 +180,7 @@ ctx.onmessage = async (e: MessageEvent<ParseRequest>) => {
       const transfer: Transferable[] = [index.times.buffer];
       if (index.box) transfer.push(index.box.buffer);
       if (index.boxOrigin) transfer.push(index.boxOrigin.buffer);
-      ctx.postMessage(
+      respond(
         { id: req.id, ok: true, op: "indexTrajectoryFile", result: index } satisfies ParseResponse,
         transfer,
       );
@@ -189,7 +192,7 @@ ctx.onmessage = async (e: MessageEvent<ParseRequest>) => {
       const transfer: Transferable[] = [positions.buffer];
       if (vectors.length > 0) transfer.push(vectors.buffer);
       if (box) transfer.push(box.buffer);
-      ctx.postMessage(
+      respond(
         {
           id: req.id,
           ok: true,
@@ -200,14 +203,14 @@ ctx.onmessage = async (e: MessageEvent<ParseRequest>) => {
       );
     } else if (req.op === "init") {
       await ensureInit(req.wasm);
-      ctx.postMessage({ id: req.id, ok: true, op: "init" } satisfies ParseResponse);
+      respond({ id: req.id, ok: true, op: "init" } satisfies ParseResponse);
     } else if (req.op === "disposeTrajectory") {
       decoders.get(req.trajectoryId)?.free();
       decoders.delete(req.trajectoryId);
-      ctx.postMessage({ id: req.id, ok: true, op: "disposeTrajectory" } satisfies ParseResponse);
+      respond({ id: req.id, ok: true, op: "disposeTrajectory" } satisfies ParseResponse);
     }
   } catch (err) {
-    ctx.postMessage({
+    respond({
       id: req.id,
       ok: false,
       op: req.op,

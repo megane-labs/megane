@@ -27,7 +27,7 @@ const { workers, FakeWorker } = vi.hoisted(() => {
             ? { index: { nAtoms: 3, nFrames: 2 }, frame0: { tag: "frame0" } }
             : { tag: "worker" };
       queueMicrotask(() =>
-        this.onmessage?.({ data: { id: req.id, ok: true, op: req.op, result } }),
+        this.onmessage?.({ data: { id: req.id, ok: true, op: req.op, result, wasmBytes: 65536 } }),
       );
     }
     terminate() {
@@ -73,6 +73,15 @@ describe("parse worker idle release", () => {
     expect(workers[0].terminated).toBe(false);
     await vi.advanceTimersByTimeAsync(1);
     expect(workers[0].terminated).toBe(true);
+  });
+
+  it("stops counting the worker's WASM heap once it is released", async () => {
+    const client = await freshClient();
+    await client.parseStructureFile(fakeFile("a.pdb"));
+    expect(client.parserHeapBytes()).toBe(65536);
+    await vi.advanceTimersByTimeAsync(client.WORKER_IDLE_MS);
+    expect(workers[0].terminated).toBe(true);
+    expect(client.parserHeapBytes()).toBe(0);
   });
 
   it("starts a fresh worker for the next request after a release", async () => {

@@ -32,6 +32,7 @@ import { generateDrawingBoundaryImages } from "../logic/cellBoundaryImages";
 import type { MeshData } from "../pipeline/types";
 import type { ClientRect } from "./Picking";
 import { FpsCounter } from "./FpsCounter";
+import { sceneBufferBytes } from "./sceneMemory";
 import { skipFrameForBackgroundLoad } from "./backgroundLoad";
 import { perfMark, perfMeasure, perfPushFrame, perfRendererReady } from "../perf";
 import {
@@ -1445,14 +1446,16 @@ export class MoleculeRenderer {
 
   /**
    * Live rendering stats for the performance HUD: current FPS (updated by the
-   * rAF loop) and the draw-call count of the most recent frame. megane draws
-   * with instanced meshes, so draw calls — not a scene mesh-object count — are
-   * the meaningful GPU-load metric.
+   * rAF loop), the draw-call count of the most recent frame, and the bytes of
+   * geometry and texture data the scene holds. megane draws with instanced
+   * meshes, so draw calls — not a scene mesh-object count — are the meaningful
+   * GPU-load metric.
    */
-  getStats(): { fps: number; drawCalls: number } {
+  getStats(): { fps: number; drawCalls: number; bufferBytes: number } {
     return {
       fps: this.fpsCounter.fps,
       drawCalls: this.renderer?.info.render.calls ?? 0,
+      bufferBytes: this.scene ? sceneBufferBytes(this.scene) : 0,
     };
   }
 

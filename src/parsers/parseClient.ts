@@ -28,6 +28,7 @@ import ParseWorker from "./parse.worker?worker";
 import wasmAssetUrl from "../../crates/megane-wasm/pkg/megane_wasm_bg.wasm?url";
 import { perfMark, perfMeasure } from "../perf";
 import * as sync from "./parseClientSync";
+import { wasmHeapBytes } from "./parseCore";
 import { structureExtFromFileName } from "./fileNames";
 import { isResident, readBlobBuffer, readBlobText } from "./fileBytes";
 import { unpackLabels, type PackedLabels } from "./labels";
@@ -82,6 +83,8 @@ const pending = new Map<number, Pending>();
  */
 export const WORKER_IDLE_MS = 10_000;
 let idleTimer: ReturnType<typeof setTimeout> | null = null;
+/** WASM heap the live worker last reported; 0 once it is terminated. */
+let workerHeapBytes = 0;
 /** Lazy decoders alive in the worker (trajectory ids not yet disposed). */
 const liveDecoders = new Set<number>();
 
@@ -105,8 +108,18 @@ function scheduleIdleRelease(): void {
     if (worker && workerIdle()) {
       worker.terminate();
       worker = null;
+      workerHeapBytes = 0;
     }
   }, WORKER_IDLE_MS);
+}
+
+/**
+ * Bytes of WASM memory the parsers hold: the worker's heap (as of its last
+ * response) plus the main thread's, which the synchronous fallback and the
+ * main-thread helpers (bond inference, labels) use.
+ */
+export function parserHeapBytes(): number {
+  return workerHeapBytes + wasmHeapBytes();
 }
 
 function workerUnavailable(): boolean {
@@ -156,6 +169,7 @@ function tearDown(reason: string): void {
     worker.terminate();
     worker = null;
   }
+  workerHeapBytes = 0;
 }
 
 /** Split the labels a structure result carries as text (see `./labels`). */
@@ -175,6 +189,7 @@ function getWorker(): Worker {
   if (workerBroken) throw new Error("parse worker unavailable");
   const w = new ParseWorker();
   w.onmessage = (e: MessageEvent<ParseResponse>) => {
+    if (e.data.wasmBytes !== undefined) workerHeapBytes = e.data.wasmBytes;
     const entry = pending.get(e.data.id);
     if (!entry) return;
     clearTimeout(entry.timer);

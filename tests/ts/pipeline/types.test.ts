@@ -6,6 +6,8 @@ import {
   NODE_TYPE_LABELS,
   NODE_CATEGORY,
   DATA_TYPE_COLORS,
+  MemoryFrameProvider,
+  frameBytes,
 } from "@/pipeline/types";
 import type { PipelineNodeType } from "@/pipeline/types";
 
@@ -327,5 +329,43 @@ describe("DATA_TYPE_COLORS", () => {
       expect(DATA_TYPE_COLORS[dt]).toBeDefined();
       expect(DATA_TYPE_COLORS[dt]).toMatch(/^#[0-9a-fA-F]{6}$/);
     }
+  });
+});
+
+// ─── frame byte accounting (performance HUD) ────────────────────────
+
+describe("frameBytes", () => {
+  it("counts positions alone for a fixed-topology frame", () => {
+    expect(frameBytes({ frameId: 0, nAtoms: 2, positions: new Float32Array(6) })).toBe(24);
+  });
+
+  it("adds per-frame topology and cell arrays when present", () => {
+    const bytes = frameBytes({
+      frameId: 0,
+      nAtoms: 2,
+      positions: new Float32Array(6),
+      elements: new Uint8Array(2),
+      bonds: new Uint32Array(2),
+      nBonds: 1,
+      box: new Float32Array(9),
+      boxOrigin: new Float32Array(3),
+    });
+    expect(bytes).toBe(24 + 2 + 8 + 36 + 12);
+  });
+});
+
+describe("MemoryFrameProvider.heldBytes", () => {
+  const meta = { nFrames: 3, timestepPs: 1, nAtoms: 2 };
+  const frames = [1, 2].map((id) => ({ frameId: id, nAtoms: 2, positions: new Float32Array(6) }));
+
+  it("sums every frame it holds", () => {
+    expect(new MemoryFrameProvider(frames, meta).heldBytes()).toBe(48);
+  });
+
+  it("includes the base positions served as frame 0", () => {
+    const p = new MemoryFrameProvider(frames, meta, new Float32Array(6));
+    expect(p.heldBytes()).toBe(72);
+    // Frames never change, so the total is computed once.
+    expect(p.heldBytes()).toBe(72);
   });
 });

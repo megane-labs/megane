@@ -18,6 +18,7 @@ import {
   ensureInit,
   parseStructureCore,
   parseTrajectoryCore,
+  wasmHeapBytes,
   type StructureParseResult,
   type XTCParseResult,
 } from "./parseCore";
@@ -30,6 +31,11 @@ export type {
   StructureLazyResult,
   TrajectoryLazyHandle,
 } from "./parseMessages";
+
+/** Bytes of WASM memory the parsers hold (all on the main thread here). */
+export function parserHeapBytes(): number {
+  return wasmHeapBytes();
+}
 
 function extOf(name: string, fallback: string): string {
   return structureExtFromFileName(name, fallback);

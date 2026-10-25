@@ -19,7 +19,7 @@
  */
 
 import type { Frame, TrajectoryMeta } from "../types";
-import type { FrameProvider } from "../pipeline/types";
+import { frameBytes, type FrameProvider } from "../pipeline/types";
 import type { DecodedLazyFrame } from "../parsers/parseClient";
 import { frameCacheCapacity } from "./frameCacheCapacity";
 
@@ -164,6 +164,13 @@ export class LazyFrameProvider implements FrameProvider {
     }
     this.prefetchWindow(index);
     return this.cache.get(index) ?? null;
+  }
+
+  /** Bytes of the decoded frames in the cache. */
+  heldBytes(): number {
+    let bytes = this.basePositions?.byteLength ?? 0;
+    for (const f of this.cache.values()) bytes += frameBytes(f);
+    return bytes;
   }
 
   /** Free the worker decoder and drop the cache. Idempotent. */

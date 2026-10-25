@@ -61,6 +61,14 @@ describe("ensureInit", () => {
     expect(init).toHaveBeenCalledWith({ module_or_path: undefined });
   });
 
+  it("reports no WASM heap before init and the linear memory's size after", async () => {
+    const core = await freshCore();
+    expect(core.wasmHeapBytes()).toBe(0);
+    init.mockResolvedValueOnce({ memory: { buffer: new ArrayBuffer(2 * 65536) } } as never);
+    await core.ensureInit();
+    expect(core.wasmHeapBytes()).toBe(2 * 65536);
+  });
+
   it("initialises once however many callers race", async () => {
     const core = await freshCore();
     await Promise.all([core.ensureInit(), core.ensureInit(), core.ensureInit()]);

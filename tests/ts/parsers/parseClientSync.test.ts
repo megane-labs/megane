@@ -73,7 +73,7 @@ const { calls, wasmMock } = vi.hoisted(() => {
   };
 
   const wasmMock = {
-    default: async () => {},
+    default: async () => ({ memory: { buffer: new ArrayBuffer(65536) } }),
     parse_pdb: structFn("parse_pdb"),
     parse_gro: structFn("parse_gro"),
     parse_xyz: structFn("parse_xyz"),
@@ -196,6 +196,11 @@ function fakeFile(name: string, content = "DATA"): File {
 describe("parseClientSync (main-thread path with mocked wasm)", () => {
   beforeEach(() => {
     calls.length = 0;
+  });
+
+  it("parserHeapBytes reports the main thread's WASM heap", async () => {
+    await sync.parseStructureFile(fakeFile("x.gro"));
+    expect(sync.parserHeapBytes()).toBe(65536);
   });
 
   it("dispatches structure formats by extension", async () => {

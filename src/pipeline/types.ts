@@ -220,6 +220,19 @@ export interface FrameProvider {
   /** Get a frame by index. Returns null if not yet available (streaming). */
   getFrame(index: number): Frame | null;
   readonly meta: TrajectoryMeta;
+  /** Bytes of frame data the provider keeps in memory (for the performance HUD). */
+  heldBytes?(): number;
+}
+
+/** Bytes of the arrays a frame carries. */
+export function frameBytes(frame: Frame): number {
+  return (
+    frame.positions.byteLength +
+    (frame.elements?.byteLength ?? 0) +
+    (frame.bonds?.byteLength ?? 0) +
+    (frame.box?.byteLength ?? 0) +
+    (frame.boxOrigin?.byteLength ?? 0)
+  );
 }
 
 /** In-memory frame provider wrapping a Frame[]. */
@@ -228,11 +241,21 @@ export class MemoryFrameProvider implements FrameProvider {
   readonly meta: TrajectoryMeta;
   private readonly frames: Frame[];
   private readonly basePositions: Float32Array | null;
+  private bytes: number | null = null;
 
   constructor(frames: Frame[], meta: TrajectoryMeta, basePositions?: Float32Array | null) {
     this.frames = frames;
     this.meta = meta;
     this.basePositions = basePositions ?? null;
+  }
+
+  heldBytes(): number {
+    if (this.bytes === null) {
+      let bytes = this.basePositions?.byteLength ?? 0;
+      for (const f of this.frames) bytes += frameBytes(f);
+      this.bytes = bytes;
+    }
+    return this.bytes;
   }
 
   getFrame(index: number): Frame | null {

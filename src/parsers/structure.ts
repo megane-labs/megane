@@ -14,6 +14,7 @@ export {
   indexStructureLazy,
   parseStructureHead,
   parseStructurePrefix,
+  parserHeapBytes,
   prewarmParseWorker,
   shouldUseLazyStructure,
   type StructureLazyHandle,

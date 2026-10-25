@@ -99,7 +99,7 @@ await usePipelineStore.getState().openFile(file);
 | `pipelineEditor` | `true` | Pipeline editor panel on the right, including the viewer's only file-open UI |
 | `resetView` | `true` | "Reset View" button in the top-left corner (re-fits the structure in the standard orientation) |
 | `viewAxes` | `true` | Axis-alignment buttons under Reset View: ±a / ±b / ±c while a cell is loaded, ±x / ±y / ±z always |
-| `perfHud` | `true` | Atoms / Bonds / Draws / FPS readout |
+| `perfHud` | `true` | Atoms / Bonds / Draws / FPS / CPU / Mem readout (see [Performance readout](#performance-readout)) |
 | `timeline` | `true` | Playback timeline along the bottom |
 | `tooltip` | `true` | Hover tooltip over atoms and bonds |
 | `measurement` | `true` | Measurement readout panel and saved-measurement list (selection itself stays active — press <kbd>Esc</kbd> to clear it) |
@@ -110,6 +110,24 @@ pipeline still executes and the renderer still receives every update. The type
 are exported for typed configs. With `pipelineEditor: false` you must drive
 file loading yourself (`usePipelineStore.getState().openFile(file)`), since the
 Load Structure node lives inside the editor.
+
+### Performance readout
+
+The HUD next to Reset View reads, left to right:
+
+| Field | What it measures |
+|-------|------------------|
+| Atoms / Bonds | Size of the loaded structure |
+| Draws | WebGL draw calls in the last frame |
+| FPS | Frames drawn per second. The viewer draws on demand, so an idle view reads 0 |
+| CPU | Share of the page's main thread that was busy over the last second: rendering, React, parsing on the main thread, garbage collection. Estimated from the idle time the browser hands out between frames (`requestIdleCallback`); `--` in browsers without it (Safari) |
+| Mem | Bytes of data Megane holds: the renderer's geometry and texture buffers, the trajectory frames playback keeps in memory, and the WASM heap of the file parsers |
+
+A web page cannot read its own process's CPU or memory use, so CPU and Mem are
+Megane's own measures rather than what the OS task manager shows. CPU leaves
+out the parse worker and the browser's GPU process, and Mem leaves out the
+JavaScript heap of the page itself (the browser only reports that to
+cross-origin-isolated pages).
 
 ### Light / dark theme
 

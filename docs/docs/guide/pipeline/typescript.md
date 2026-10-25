@@ -185,7 +185,7 @@ under the table.
 | `pipelineEditor` | `true` | Pipeline editor panel on the right (toolbar, node graph, share/render dialogs, **and the viewer's only file-open UI**) |
 | `resetView` | `true` | "Reset View" button in the top-left corner |
 | `viewAxes` | `true` | Axis-alignment buttons (±a/±b/±c while a cell is loaded, ±x/±y/±z always) under Reset View |
-| `perfHud` | `true` | Atoms / Bonds / Draws / FPS readout |
+| `perfHud` | `true` | Atoms / Bonds / Draws / FPS / CPU / Mem readout (see [Performance readout](../web.md#performance-readout)) |
 | `timeline` | `true` | Playback timeline along the bottom |
 | `tooltip` | `true` | Hover tooltip over atoms and bonds |
 | `measurement` | `true` | Measurement readout panel and saved-measurement list |
