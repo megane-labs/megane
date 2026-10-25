@@ -1216,6 +1216,50 @@ describe("executePipeline", () => {
         expect.closeTo(0.5),
       ]);
     });
+
+    // Regression: the selective modify seeded the O-H bond with 1.0, so the
+    // global 0.5 an earlier modify set had no effect on it.
+    it("keeps a global opacity on the bonds a later selective modify leaves alone", () => {
+      const bond = run([
+        ["modify", { scale: 1.0, opacity: 0.5 }],
+        ["filter", { query: "", bond_query: 'element == "C"' }],
+        ["modify", { scale: 1.0, opacity: 0 }],
+      ]);
+      expect(Array.from(bond.bondOpacityOverrides!)).toEqual([0.5, 0]);
+    });
+
+    it("composes like the atom path: global then selective, and scale-only after a fade", () => {
+      const atoms = executePipeline(
+        [
+          makeNode("ls", "load_structure", {
+            fileName: null,
+            hasTrajectory: false,
+            hasCell: false,
+          }),
+          makeNode("m0", "modify", { scale: 1.0, opacity: 0.5 }),
+          makeNode("f", "filter", { query: 'element == "C"' }),
+          makeNode("m1", "modify", { scale: 1.0, opacity: 0 }),
+          makeNode("vp", "viewport", { perspective: false, cellAxesVisible: true }),
+        ],
+        [
+          makeEdge("ls", "particle", "m0", "in"),
+          makeEdge("m0", "out", "f", "in"),
+          makeEdge("f", "out", "m1", "in"),
+          makeEdge("m1", "out", "vp", "particle"),
+        ],
+        { snapshot },
+      ).viewportState.particles[0];
+      expect(Array.from(atoms.opacityOverrides!)).toEqual([0.5, 0.5, 0, 0.5]);
+
+      // A scale-only modify after a global fade keeps the fade.
+      const bond = run([
+        ["modify", { scale: 1.0, opacity: 0.4 }],
+        ["modify", { scale: 2.0, opacity: 1.0 }],
+      ]);
+      expect(bond.opacity).toBeCloseTo(0.4);
+      expect(bond.scale).toBe(2);
+      expect(bond.bondOpacityOverrides).toBeNull();
+    });
   });
 
   // Regression: residue labels were looked up per *file* atom, so after a

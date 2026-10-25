@@ -58,13 +58,18 @@ export function executeModify(
     };
     outputs.set("out", modified);
   } else if (inData.type === "bond") {
+    // Bond opacity composes like the atom path above: per-bond values are
+    // the whole story once a selective modify writes them (the stream's
+    // global opacity is folded into them), an unselected modify sets every
+    // bond, and opacity 1 on an unselected modify changes nothing.
     const bond = inData as BondData;
     if (bond.selectedBondIndices !== null) {
-      // Start from the upstream per-bond opacity so bonds outside this
-      // selection keep a fade an earlier modify gave them.
+      // Start from the upstream per-bond opacity, or else the stream's global
+      // one, so bonds outside this selection keep what earlier modifies gave
+      // them.
       const opacityArr = bond.bondOpacityOverrides
         ? new Float32Array(bond.bondOpacityOverrides)
-        : new Float32Array(bond.nBonds).fill(1.0);
+        : new Float32Array(bond.nBonds).fill(bond.opacity);
       for (const idx of bond.selectedBondIndices) {
         opacityArr[idx] = params.opacity;
       }
@@ -73,8 +78,16 @@ export function executeModify(
         scale: params.scale,
         bondOpacityOverrides: opacityArr,
       });
+    } else if (params.opacity !== 1.0) {
+      // Every bond takes this opacity, so per-bond values from upstream go.
+      outputs.set("out", {
+        ...bond,
+        scale: params.scale,
+        opacity: params.opacity,
+        bondOpacityOverrides: null,
+      });
     } else {
-      outputs.set("out", { ...bond, scale: params.scale, opacity: params.opacity });
+      outputs.set("out", { ...bond, scale: params.scale });
     }
   }
 
