@@ -4,6 +4,7 @@ import {
   evaluateBondSelection,
   validateQuery,
   computeMoleculeIds,
+  bondEndpointResolver,
 } from "@/pipeline/selection";
 import type { Snapshot } from "@/types";
 
@@ -265,5 +266,21 @@ describe("evaluateBondSelection: molecule_id field", () => {
   it("falls back to deriving atom count from bondIndices when nAtoms is omitted", () => {
     const result = evaluateBondSelection("molecule_id == 0", bondIndices, bondElements, 4);
     expect(result).toEqual(new Set([0, 1]));
+  });
+});
+
+describe("bondEndpointResolver", () => {
+  it("is the identity without ghost endpoints", () => {
+    const sourceOf = bondEndpointResolver(5, null);
+    expect([0, 4, 9].map(sourceOf)).toEqual([0, 4, 9]);
+    expect([0, 4].map(bondEndpointResolver(0, new Uint32Array()))).toEqual([0, 4]);
+  });
+
+  it("maps endpoints past the structural atoms to the atom they copy", () => {
+    // 3 structural atoms + 2 ghosts (copies of atoms 2 and 0).
+    const sourceOf = bondEndpointResolver(5, new Uint32Array([2, 0]));
+    expect([0, 1, 2, 3, 4].map(sourceOf)).toEqual([0, 1, 2, 2, 0]);
+    // An index past the extended range has no source entry and stays itself.
+    expect(sourceOf(7)).toBe(7);
   });
 });

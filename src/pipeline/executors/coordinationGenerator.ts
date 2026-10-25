@@ -18,6 +18,15 @@ import {
 export function coordinationToBondData(coordination: CoordinationData): BondData {
   const source = coordination.particleRef.source;
   const hasExtendedAtoms = coordination.nAtoms > source.nAtoms;
+  // Extended atoms are the Drawing Boundary copies, then the outside images.
+  let ghostSourceIndices: Uint32Array | null = null;
+  if (hasExtendedAtoms) {
+    const boundarySources = coordination.particleRef.drawingBoundary?.images.sourceIndices ?? [];
+    const outsideSources = coordination.outsideBoundaryImages?.sourceIndices ?? [];
+    ghostSourceIndices = new Uint32Array(boundarySources.length + outsideSources.length);
+    ghostSourceIndices.set(boundarySources);
+    ghostSourceIndices.set(outsideSources, boundarySources.length);
+  }
   return {
     type: "bond",
     sourceNodeId: coordination.sourceNodeId,
@@ -30,6 +39,7 @@ export function coordinationToBondData(coordination: CoordinationData): BondData
     elements: hasExtendedAtoms ? coordination.elements : null,
     nAtoms: hasExtendedAtoms ? coordination.nAtoms : 0,
     atomElements: source.elements,
+    ghostSourceIndices,
     selectedBondIndices: null,
     bondOpacityOverrides: null,
     periodicImages: coordination.outsideBoundaryImages,
