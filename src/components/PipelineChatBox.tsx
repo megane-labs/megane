@@ -33,7 +33,6 @@ interface StructureStateSlice {
   nodes: Array<{ id: string; type?: string; data: { params: unknown } }>;
   nodeSnapshots: Record<string, NodeSnapshotData>;
   snapshot: Snapshot | null;
-  atomLabels: string[] | null;
   structureFrames: Frame[] | null;
   structureMeta: TrajectoryMeta | null;
 }
@@ -51,16 +50,13 @@ interface StructureStateSlice {
  *
  * Every loader's own structure goes along too (`nodeSnapshots`, `loaderIds`),
  * so the self-check runs each generated loader against the structure it will
- * hold, as the store does; `atomLabels` is the store's own display-label
- * override, which the store runs the graph with, so each loader's residue
- * labels come from its own entry.
+ * hold, as the store does, residue labels included.
  */
 export function resolveStructureContext(state: StructureStateSlice): SelfCheckContext {
   const loaderIds = state.nodes.filter((n) => n.type === "load_structure").map((n) => n.id);
   const fallback = loaderIds.length > 0 ? (state.nodeSnapshots[loaderIds[0]] ?? null) : null;
   return {
     snapshot: state.snapshot ?? fallback?.snapshot ?? null,
-    atomLabels: state.atomLabels ?? null,
     structureFrames: state.structureFrames ?? fallback?.frames ?? null,
     structureMeta: state.structureMeta ?? fallback?.meta ?? null,
     nodeSnapshots: state.nodeSnapshots,
@@ -68,10 +64,10 @@ export function resolveStructureContext(state: StructureStateSlice): SelfCheckCo
   };
 }
 
-/** The labels the structure summary describes: the display labels, else the primary loader's. */
+/** The labels the structure summary describes: the primary loader's residue labels. */
 export function summaryLabels(ctx: SelfCheckContext): string[] | null {
   const primary = ctx.loaderIds?.[0];
-  return ctx.atomLabels ?? (primary ? ctx.nodeSnapshots?.[primary]?.labels : null) ?? null;
+  return (primary ? ctx.nodeSnapshots?.[primary]?.labels : null) ?? null;
 }
 
 /** Placeholder for the prompt bar, naming the selected node when there is one. */

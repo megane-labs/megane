@@ -302,7 +302,6 @@ describe("usePipelineStore", () => {
 
       const state = usePipelineStore.getState();
       expect(state.snapshot).toBeNull();
-      expect(state.atomLabels).toBeNull();
       expect(state.structureFrames).toBeNull();
       expect(state.structureMeta).toBeNull();
       expect(state.fileFrames).toBeNull();

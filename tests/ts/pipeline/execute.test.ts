@@ -736,10 +736,9 @@ describe("executePipeline", () => {
         expect(result.labels[0].labels).toEqual(["HOH1", "HOH1", "HOH1"]);
       });
 
-      it("still prefers explicit display labels", () => {
+      it("reads labels a structure carries on its snapshot", () => {
         const { viewportState: result } = executePipeline(nodes, edges, {
-          nodeSnapshots,
-          atomLabels: ["A", "B", "C"],
+          snapshot: { ...waterSnapshot, atomLabels: ["A", "B", "C"] },
         });
         expect(result.labels[0].labels).toEqual(["A", "B", "C"]);
       });
@@ -850,9 +849,8 @@ describe("executePipeline", () => {
   });
 
   // Regression: `resname` selections must work using the structure's parsed
-  // residue labels (stored per load_structure node in ctx.nodeSnapshots) even
-  // when no display label source is active (ctx.atomLabels is null). Before the
-  // fix, `resname == "HOH"` matched nothing and `resname != "HOH"` matched all
+  // residue labels (stored per load_structure node in ctx.nodeSnapshots).
+  // Before the fix, `resname == "HOH"` matched nothing and `resname != "HOH"` matched all
   // atoms, so "make the water semi-transparent" left the water fully opaque.
   describe("resname filter + opacity (regression)", () => {
     // 5 atoms: first three are water (HOH), last two are caffeine (CAF).
@@ -874,8 +872,7 @@ describe("executePipeline", () => {
         makeEdge("m", "out", "vp", "particle"),
       ];
 
-      // Note: ctx.atomLabels is intentionally NOT set — this mirrors the real
-      // default (display label source = "none").
+      // The labels come only from the loader's parse, as on every host.
       const { viewportState: result } = executePipeline(nodes, edges, { nodeSnapshots });
       const p = result.particles[0];
 
@@ -911,7 +908,7 @@ describe("executePipeline", () => {
       expect(p.opacityOverrides![0]).toBeCloseTo(1.0);
     });
 
-    it("explicit ctx.atomLabels (display label source) take priority over structure labels", () => {
+    it("labels already on a structure's snapshot are kept when the loader has none", () => {
       const nodes = [
         makeNode("ls", "load_structure", { fileName: null, hasTrajectory: false, hasCell: false }),
         makeNode("f", "filter", { query: 'resname == "HOH"' }),
@@ -924,12 +921,12 @@ describe("executePipeline", () => {
         makeEdge("m", "out", "vp", "particle"),
       ];
 
-      // Display labels say everything is CAF; with these taking priority,
-      // `resname == "HOH"` should match nothing — proving the structure-label
-      // fallback only kicks in when no display source is active.
+      // The global fallback snapshot (the AI self-check runs a candidate
+      // graph against one) carries its labels itself: everything is CAF, so
+      // `resname == "HOH"` matches nothing.
+      const { snapshot } = nodeSnapshots.ls;
       const { viewportState: result } = executePipeline(nodes, edges, {
-        nodeSnapshots,
-        atomLabels: ["CAF", "CAF", "CAF", "CAF", "CAF"],
+        snapshot: { ...snapshot, atomLabels: ["CAF", "CAF", "CAF", "CAF", "CAF"] },
       });
       const p = result.particles[0];
       expect(Array.from(p.indices!)).toEqual([]);

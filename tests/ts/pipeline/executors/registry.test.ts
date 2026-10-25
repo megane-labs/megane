@@ -149,13 +149,12 @@ describe("getNodeExecutor", () => {
 // ─── Label helpers ───────────────────────────────────────────────────
 
 describe("label helpers", () => {
-  it("resolveEffectiveLabels prefers display labels, then the stream's residue labels", () => {
+  it("resolveEffectiveLabels reads the stream's residue labels", () => {
     const atomLabels = ["HOH"];
     const labelled = particle({ ...snapshot(), atomLabels });
-    expect(resolveEffectiveLabels({ atomLabels: ["A"] }, labelled)).toEqual(["A"]);
-    expect(resolveEffectiveLabels({}, labelled)).toBe(atomLabels);
-    expect(resolveEffectiveLabels({}, particle())).toBeNull();
-    expect(resolveEffectiveLabels({}, undefined)).toBeNull();
+    expect(resolveEffectiveLabels(labelled)).toBe(atomLabels);
+    expect(resolveEffectiveLabels(particle())).toBeNull();
+    expect(resolveEffectiveLabels(undefined)).toBeNull();
   });
 
   it("inputParticle reads only particle streams on the `in` port", () => {

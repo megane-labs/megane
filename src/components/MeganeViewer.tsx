@@ -275,8 +275,12 @@ export function MeganeViewer({
 
   const handleInspectorPick = useCallback(
     (atomIndex: number) => {
-      const { snapshot: snap, atomLabels } = pipelineApi.getState();
+      // The picked index is into the rendered snapshot, whose residue labels
+      // ride on it (the legacy top-level snapshot is for hosts that set it).
+      const state = pipelineApi.getState();
+      const snap = state.viewportState.particles[0]?.source ?? state.snapshot;
       if (!snap) return;
+      const atomLabels = snap.atomLabels;
       const chainCode = snap.atomChainIds?.[atomIndex] ?? 0;
       const molIds = snap.bonds.length > 0 ? computeMoleculeIds(snap.bonds, snap.nAtoms) : null;
       publishPickedAtom({

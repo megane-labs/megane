@@ -44,7 +44,7 @@ import { evaluateSelection } from "../pipeline/selection";
  */
 export type SelfCheckContext = Pick<
   PipelineExecutionContext,
-  "snapshot" | "atomLabels" | "structureFrames" | "structureMeta" | "nodeSnapshots"
+  "snapshot" | "structureFrames" | "structureMeta" | "nodeSnapshots"
 > & {
   /**
    * The `load_structure` node ids of the editor's graph, in graph order; with
@@ -354,7 +354,7 @@ export function collectOverlapErrors(
       // resolves it (`resolveStructureSource`, `resolveEffectiveLabels`).
       const loaded = run.nodeSnapshots?.[a.loaderId];
       const snapshot = loaded?.snapshot ?? run.snapshot ?? null;
-      const atomLabels = run.atomLabels ?? loaded?.labels ?? null;
+      const atomLabels = loaded ? loaded.labels : (snapshot?.atomLabels ?? null);
 
       if (!snapshot) {
         // No data to intersect: only an entirely unfiltered branch is provably

@@ -41,8 +41,8 @@ export interface NodeSnapshotData {
 }
 
 export interface PipelineExecutionContext {
+  /** A structure for loaders without one of their own; its `atomLabels` ride along. */
   snapshot?: Snapshot | null;
-  atomLabels?: string[] | null;
   structureFrames?: Frame[] | null;
   structureMeta?: TrajectoryMeta | null;
   /** Pre-built lazy/streaming provider for a multi-frame structure file (takes precedence over structureFrames). */
