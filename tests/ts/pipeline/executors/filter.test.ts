@@ -124,6 +124,21 @@ describe("executeFilter — bond stream", () => {
     expect(Array.from(result.selectedBondIndices!)).toEqual([0, 1, 2, 3]);
   });
 
+  // Regression: a bond query used to replace an upstream bond selection
+  // instead of narrowing it, unlike chained atom filters.
+  it("intersects with a pre-existing bond selection", () => {
+    const upstream = makeBond({ selectedBondIndices: new Uint32Array([0, 1]) });
+    const out = executeFilter(baseParams({ bond_query: 'element == "O"' }), inputs(upstream), null);
+    expect(Array.from((out.get("out") as BondData).selectedBondIndices!)).toEqual([0, 1]);
+
+    const disjoint = executeFilter(
+      baseParams({ bond_query: "molecule_id == 1" }),
+      inputs(upstream),
+      null,
+    );
+    expect(Array.from((disjoint.get("out") as BondData).selectedBondIndices!)).toEqual([]);
+  });
+
   it("passes through unchanged on an invalid bond_query", () => {
     const bond = makeBond();
     const out = executeFilter(baseParams({ bond_query: "not a valid query" }), inputs(bond), null);

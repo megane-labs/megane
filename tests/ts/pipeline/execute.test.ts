@@ -1007,6 +1007,62 @@ describe("executePipeline", () => {
       expect(result.bonds).toHaveLength(1);
     });
   });
+
+  // Regression: chained bond filters used to replace each other's selection
+  // (atom filters intersect), and a selective modify rebuilt the per-bond
+  // opacity from 1.0, undoing an upstream modify's fade.
+  describe("bond filter / modify chains compose", () => {
+    // Two molecules: bond 0 = O0–H1, bond 1 = C2–H3.
+    const snapshot = makeSnapshot({
+      nAtoms: 4,
+      positions: [0, 0, 0, 0.96, 0, 0, 5, 0, 0, 6.09, 0, 0],
+      elements: [8, 1, 6, 1],
+      bonds: [0, 1, 2, 3],
+      bondOrders: [1, 1],
+    });
+
+    function run(chain: Array<[string, Record<string, unknown>]>): BondData {
+      const nodes = [
+        makeNode("ls", "load_structure", { fileName: null, hasTrajectory: false, hasCell: false }),
+        makeNode("ab", "add_bond", { bondSource: "structure" }),
+        ...chain.map(([type, params], i) => makeNode(`n${i}`, type, params)),
+        makeNode("vp", "viewport", { perspective: false, cellAxesVisible: true }),
+      ];
+      const ids = ["ab", ...chain.map((_, i) => `n${i}`)];
+      const edges = [
+        makeEdge("ls", "particle", "vp", "particle"),
+        makeEdge("ls", "particle", "ab", "particle"),
+        ...ids.slice(1).map((id, i) => makeEdge(ids[i], i === 0 ? "bond" : "out", id, "in")),
+        makeEdge(ids[ids.length - 1], "out", "vp", "bond"),
+      ];
+      return executePipeline(nodes, edges, { snapshot }).viewportState.bonds[0];
+    }
+
+    it("narrows a bond selection through chained filters", () => {
+      const bond = run([
+        ["filter", { query: "", bond_query: 'element == "O"' }],
+        ["filter", { query: "", bond_query: 'element == "C"' }],
+        ["modify", { scale: 1.0, opacity: 0 }],
+      ]);
+      // No bond touches both an O and a C, so nothing is faded.
+      expect(Array.from(bond.selectedBondIndices!)).toEqual([]);
+      expect(Array.from(bond.bondOpacityOverrides!)).toEqual([1, 1]);
+    });
+
+    it("keeps an earlier fade when a later modify narrows the selection", () => {
+      const bond = run([
+        ["filter", { query: "", bond_query: 'element == "H"' }],
+        ["modify", { scale: 1.0, opacity: 0.2 }],
+        ["filter", { query: "", bond_query: 'element == "C"' }],
+        ["modify", { scale: 1.0, opacity: 0.5 }],
+      ]);
+      expect(Array.from(bond.selectedBondIndices!)).toEqual([1]);
+      expect(Array.from(bond.bondOpacityOverrides!)).toEqual([
+        expect.closeTo(0.2),
+        expect.closeTo(0.5),
+      ]);
+    });
+  });
 });
 
 describe("executePipeline isosurface color-by-volume", () => {
