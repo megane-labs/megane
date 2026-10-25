@@ -8,7 +8,7 @@ import type {
   FrameProvider,
 } from "../types";
 import { invert3x3 } from "./mathUtils";
-import { tileArray, tileIndices } from "./tile";
+import { tileArray, tileIndices, tileLabels } from "./tile";
 
 /**
  * Replicate node — OVITO/VESTA-style supercell builder.
@@ -195,6 +195,7 @@ export function executeReplicate(
     boxOrigin: src.boxOrigin,
     atomChainIds,
     atomBFactors,
+    atomLabels: src.atomLabels && tileLabels(src.atomLabels, nAtomsOld, total),
     caIndices,
     caChainIds,
     caResNums,

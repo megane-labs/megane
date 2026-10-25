@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 
 from megane import megane_parser
-from megane.parsers.common import FileTrajectory, open_file_trajectory
+from megane.parsers.common import FileTrajectory, open_file_trajectory, read_text
 
 logger = logging.getLogger(__name__)
 
@@ -52,6 +52,5 @@ def _topology_n_atoms(path: str) -> int:
     from megane.parsers.dispatch import load_structure_file, structure_ext
 
     if structure_ext(path) in ("", ".pdb"):
-        with open(path) as f:
-            return megane_parser.parse_pdb(f.read()).n_atoms
+        return megane_parser.parse_pdb(read_text(path)).n_atoms
     return load_structure_file(path).n_atoms

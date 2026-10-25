@@ -3,7 +3,7 @@ import type { Node } from "@xyflow/react";
 import {
   NODE_EXECUTORS,
   getNodeExecutor,
-  particleSourceNodeId,
+  inputParticle,
   resolveEffectiveLabels,
   type NodeExecutorContext,
   type NodeExecutorResult,
@@ -149,23 +149,20 @@ describe("getNodeExecutor", () => {
 // ─── Label helpers ───────────────────────────────────────────────────
 
 describe("label helpers", () => {
-  it("resolveEffectiveLabels prefers display labels, then per-node residue labels", () => {
-    const labels = ["HOH"];
-    expect(resolveEffectiveLabels({ atomLabels: ["A"] }, "ls")).toEqual(["A"]);
-    expect(
-      resolveEffectiveLabels(
-        { nodeSnapshots: { ls: { snapshot: snapshot(), frames: null, meta: null, labels } } },
-        "ls",
-      ),
-    ).toBe(labels);
-    expect(resolveEffectiveLabels({}, "ls")).toBeNull();
+  it("resolveEffectiveLabels prefers display labels, then the stream's residue labels", () => {
+    const atomLabels = ["HOH"];
+    const labelled = particle({ ...snapshot(), atomLabels });
+    expect(resolveEffectiveLabels({ atomLabels: ["A"] }, labelled)).toEqual(["A"]);
+    expect(resolveEffectiveLabels({}, labelled)).toBe(atomLabels);
+    expect(resolveEffectiveLabels({}, particle())).toBeNull();
     expect(resolveEffectiveLabels({}, undefined)).toBeNull();
   });
 
-  it("particleSourceNodeId reads only particle streams on the `in` port", () => {
-    expect(particleSourceNodeId(new Map([["in", [particle()]]]))).toBe("ls");
-    expect(particleSourceNodeId(new Map([["in", [trajectory]]]))).toBeUndefined();
-    expect(particleSourceNodeId(new Map())).toBeUndefined();
+  it("inputParticle reads only particle streams on the `in` port", () => {
+    const p = particle();
+    expect(inputParticle(new Map([["in", [p]]]))).toBe(p);
+    expect(inputParticle(new Map([["in", [trajectory]]]))).toBeUndefined();
+    expect(inputParticle(new Map())).toBeUndefined();
   });
 });
 
@@ -184,6 +181,25 @@ describe("per-node executors", () => {
     expect((r.result.outputs!.get("particle") as ParticleData).source).toBe(perNode);
     expect(r.errors).toEqual([]);
     expect(messages(run("load_structure"))).toEqual(["No structure data available"]);
+  });
+
+  it("load_structure attaches the node's residue labels to its particle snapshot", () => {
+    const perNode = snapshot({ nAtoms: 2 });
+    const labels = ["HOH1", "NA2"];
+    const source = () =>
+      (
+        run("load_structure", {
+          id: "ls",
+          ctx: { nodeSnapshots: { ls: { snapshot: perNode, frames: null, meta: null, labels } } },
+        }).result.outputs!.get("particle") as ParticleData
+      ).source;
+    const first = source();
+    expect(first.atomLabels).toBe(labels);
+    expect(first.positions).toBe(perNode.positions);
+    // Re-running yields the same labelled snapshot: the renderer keys on identity.
+    expect(source()).toBe(first);
+    // The parsed snapshot itself is never written to.
+    expect(perNode.atomLabels).toBeUndefined();
   });
 
   it("load_structure surfaces edit-op warnings unless edits are bypassed", () => {

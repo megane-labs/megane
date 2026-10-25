@@ -7,9 +7,12 @@ import pytest
 from starlette.testclient import TestClient
 
 from megane.protocol import MAGIC, MSG_SNAPSHOT, MSG_METADATA
-from megane.server import app, configure, _state, ServerState
+from megane.server import app, configure, configure_hosts, _state, ServerState
 
 FIXTURES = Path(__file__).parent.parent / "fixtures"
+BASE_URL = "http://localhost:8765"
+# Starlette's TestClient sends Host: testserver for a relative WebSocket URL.
+WS_URL = "ws://localhost:8765/ws"
 
 
 @pytest.fixture(autouse=True)
@@ -26,11 +29,27 @@ def _reset_state():
     _state.structure_path = ""
     _state.xtc_path = None
     _state.trajectory = None
+    configure_hosts(None)
+
+
+@pytest.fixture(autouse=True)
+def upload_tmp(tmp_path, monkeypatch):
+    """Uploads land in a folder of this test's own, deleted afterwards."""
+    import tempfile
+
+    import megane.server as server
+
+    monkeypatch.setattr(tempfile, "tempdir", str(tmp_path))
+    yield tmp_path
+    _state.trajectory = None
+    if server._upload_dir is not None:
+        server._upload_dir.cleanup()
+        server._upload_dir = None
 
 
 @pytest.fixture
 def client():
-    return TestClient(app)
+    return TestClient(app, base_url=BASE_URL)
 
 
 # ─── Health endpoint ─────────────────────────────────────────────────
@@ -202,7 +221,7 @@ def test_websocket_sends_snapshot_on_connect(client):
     """WebSocket sends snapshot and metadata immediately after connection."""
     configure(str(FIXTURES / "1crn.pdb"))
 
-    with client.websocket_connect("/ws") as ws:
+    with client.websocket_connect(WS_URL) as ws:
         # First message: snapshot
         snapshot_data = ws.receive_bytes()
         assert snapshot_data[:4] == MAGIC
@@ -218,7 +237,7 @@ def test_websocket_sends_snapshot_on_connect(client):
 
 def test_websocket_no_data_without_structure(client):
     """WebSocket connects but sends nothing when no structure is loaded."""
-    with client.websocket_connect("/ws") as ws:
+    with client.websocket_connect(WS_URL) as ws:
         # Send a stop command to verify the connection works
         ws.send_text('{"type": "stop"}')
         # No crash means success - the server handles empty state
@@ -282,7 +301,7 @@ def test_build_metadata_bytes():
 
 def test_websocket_malformed_json(client):
     """Malformed JSON does not crash the WebSocket connection."""
-    with client.websocket_connect("/ws") as ws:
+    with client.websocket_connect(WS_URL) as ws:
         ws.send_text("not valid json {{{")
         # Connection should still be alive; send a valid command
         ws.send_text('{"type": "stop"}')
@@ -291,7 +310,7 @@ def test_websocket_malformed_json(client):
 def test_websocket_request_frame_missing_key(client):
     """request_frame without 'frame' key is silently ignored."""
     configure(str(FIXTURES / "1crn.pdb"))
-    with client.websocket_connect("/ws") as ws:
+    with client.websocket_connect(WS_URL) as ws:
         ws.receive_bytes()  # snapshot
         ws.receive_bytes()  # metadata
         ws.send_text('{"type": "request_frame"}')
@@ -311,3 +330,129 @@ def test_upload_path_traversal(client):
     assert response.status_code == 200
     data = response.json()
     assert data["nAtoms"] == 327
+
+
+# ─── Uploaded files ─────────────────────────────────────────────────
+
+
+def _upload_xtc(client):
+    return client.post(
+        "/api/upload",
+        files={
+            "pdb": ("caffeine_water.pdb", (FIXTURES / "caffeine_water.pdb").read_bytes(), "chemical/x-pdb"),
+            "xtc": ("vib.xtc", (FIXTURES / "caffeine_water_vibration.xtc").read_bytes(), "application/octet-stream"),
+        },
+    )
+
+
+def test_upload_xtc_stays_readable_until_replaced(client):
+    """The trajectory reads frames from the uploaded XTC, so the file outlives the request.
+
+    Deleting it while the trajectory holds it open is what made an XTC upload
+    a 500 on Windows.
+    """
+    from megane.parsers.common import encode_trajectory_frame
+
+    assert _upload_xtc(client).status_code == 200
+    first = Path(_state.xtc_path)
+    assert first.is_file()
+    assert encode_trajectory_frame(_state.trajectory, _state.trajectory.n_frames - 1)[:4] == MAGIC
+
+    assert _upload_xtc(client).status_code == 200
+    second = Path(_state.xtc_path)
+    assert second.parent != first.parent
+    assert second.is_file()
+    assert not first.parent.exists()  # the replaced upload is deleted
+
+
+def test_failed_upload_keeps_the_loaded_one(client, upload_tmp):
+    assert _upload_xtc(client).status_code == 200
+    loaded = Path(_state.xtc_path)
+    response = client.post("/api/upload", files={"pdb": ("notes.txt", b"hello", "text/plain")})
+    assert response.status_code == 400
+    assert Path(_state.xtc_path) == loaded
+    assert loaded.is_file()
+    assert list(upload_tmp.iterdir()) == [loaded.parent]  # the failed upload's folder is gone
+
+
+def test_upload_error_other_than_a_bad_format_deletes_its_folder(client, monkeypatch, upload_tmp):
+    import megane.server as server
+
+    def boom(*args, **kwargs):
+        raise RuntimeError("disk on fire")
+
+    monkeypatch.setattr(server, "configure", boom)
+    with pytest.raises(RuntimeError, match="disk on fire"):
+        client.post("/api/upload", files={"pdb": ("a.pdb", b"ATOM", "chemical/x-pdb")})
+    assert list(upload_tmp.iterdir()) == []
+
+
+# ─── Origin and Host (other sites' pages) ───────────────────────────
+
+
+def test_cross_origin_upload_is_refused(client):
+    """Any website can post a multipart form to localhost; its Origin gives it away."""
+    configure(str(FIXTURES / "1crn.pdb"))
+    before = _state.snapshot_bytes
+    response = client.post(
+        "/api/upload",
+        files={"pdb": ("water.gro", (FIXTURES / "high_precision.gro").read_bytes(), "text/plain")},
+        headers={"origin": "http://evil.example"},
+    )
+    assert response.status_code == 403
+    assert _state.snapshot_bytes == before
+
+
+def test_same_origin_upload_is_served(client):
+    response = client.post(
+        "/api/upload",
+        files={"pdb": ("water.gro", (FIXTURES / "high_precision.gro").read_bytes(), "text/plain")},
+        headers={"origin": BASE_URL},
+    )
+    assert response.status_code == 200
+
+
+def test_upload_under_a_rebound_host_is_refused(client):
+    response = client.post(
+        "/api/upload",
+        files={"pdb": ("water.gro", (FIXTURES / "high_precision.gro").read_bytes(), "text/plain")},
+        headers={"host": "evil.example:8765", "origin": "http://evil.example:8765"},
+    )
+    assert response.status_code == 403
+    assert "--allowed-host" in response.json()["detail"]
+
+
+@pytest.mark.parametrize(
+    "headers",
+    [
+        {"origin": "http://evil.example"},
+        {"origin": "http://localhost:9999"},
+        {"origin": "null"},
+        {"origin": "http://[::1"},
+        {"host": "evil.example:8765", "origin": "http://evil.example:8765"},
+    ],
+)
+def test_websocket_from_another_site_is_refused(client, headers):
+    """A page on any site may open ws://localhost:8765/ws; only this server's own pages get the stream."""
+    from starlette.websockets import WebSocketDisconnect
+
+    configure(str(FIXTURES / "1crn.pdb"))
+    with pytest.raises(WebSocketDisconnect) as exc:
+        with client.websocket_connect(WS_URL, headers=headers):
+            pass
+    assert exc.value.code == 1008
+
+
+def test_websocket_from_this_servers_page_is_served(client):
+    configure(str(FIXTURES / "1crn.pdb"))
+    with client.websocket_connect(WS_URL, headers={"origin": BASE_URL}) as ws:
+        assert ws.receive_bytes()[:4] == MAGIC
+
+
+def test_websocket_through_a_proxy_that_rewrites_host(client):
+    """`--allowed-host`: a reverse proxy forwards Host 127.0.0.1 but its page's Origin."""
+    configure(str(FIXTURES / "1crn.pdb"))
+    configure_hosts("127.0.0.1", ["viewer.example.org"])
+    headers = {"host": "127.0.0.1:8765", "origin": "https://viewer.example.org"}
+    with client.websocket_connect(WS_URL, headers=headers) as ws:
+        assert ws.receive_bytes()[:4] == MAGIC

@@ -215,6 +215,7 @@ export function applyEditOps(src: Snapshot, ops: EditOp[]): EditResult {
   // (Assigned inside `load`, which TypeScript's narrowing does not see.)
   let chain = null as Uint8Array | null;
   let bfac = null as Float32Array | null;
+  let lab = null as string[] | null;
 
   // ── Working bonds by current atom index; a deleted bond is a dead slot. ──
   let bondA: Uint32Array = new Uint32Array(0);
@@ -256,6 +257,8 @@ export function applyEditOps(src: Snapshot, ops: EditOp[]): EditResult {
       bfac = new Float32Array(Math.max(n, 16));
       bfac.set(snap.atomBFactors.subarray(0, n));
     }
+    const labels = snap.atomLabels;
+    lab = labels ? Array.from({ length: n }, (_, i) => labels[i] ?? "") : null;
     const nb = snap.nBonds;
     // A pair the file lists twice keeps its first entry.
     const repeats = uniqueBonds ? null : repeatedBondPairs(snap.bonds, nb, n);
@@ -302,6 +305,7 @@ export function applyEditOps(src: Snapshot, ops: EditOp[]): EditResult {
     elem[i] = clampElement(element);
     if (chain) chain[i] = 0;
     if (bfac) bfac[i] = 0;
+    if (lab) lab[i] = "";
     return true;
   };
 
@@ -412,6 +416,7 @@ export function applyEditOps(src: Snapshot, ops: EditOp[]): EditResult {
       boxOrigin: cellTouched ? null : src.boxOrigin,
       atomChainIds: chain ? chain.slice(0, n) : null,
       atomBFactors: bfac ? bfac.slice(0, n) : null,
+      atomLabels: lab ? lab.slice(0, n) : undefined,
       symmetryOps: symmetryConsumed ? undefined : src.symmetryOps,
     };
   };
@@ -503,6 +508,7 @@ export function applyEditOps(src: Snapshot, ops: EditOp[]): EditResult {
           elem[w] = elem[i];
           if (chain) chain[w] = chain[i];
           if (bfac) bfac[w] = bfac[i];
+          if (lab) lab[w] = lab[i];
           w++;
         }
         // Bonds: drop the ones touching a deleted atom, renumber the rest.
@@ -666,7 +672,7 @@ export function applyEditOps(src: Snapshot, ops: EditOp[]): EditResult {
   // Cα backbone: keep the entries whose atom survived, remapped to new indices.
   let caIndices: Uint32Array | undefined;
   let caChainIds: Uint8Array | undefined;
-  let caResNums: Uint32Array | undefined;
+  let caResNums: Int32Array | undefined;
   let caSsType: Uint8Array | undefined;
   if (src.caIndices) {
     const keep: number[] = [];
@@ -680,7 +686,7 @@ export function applyEditOps(src: Snapshot, ops: EditOp[]): EditResult {
     }
     caIndices = new Uint32Array(mapped);
     if (src.caChainIds) caChainIds = new Uint8Array(keep.map((c) => src.caChainIds![c]));
-    if (src.caResNums) caResNums = new Uint32Array(keep.map((c) => src.caResNums![c]));
+    if (src.caResNums) caResNums = new Int32Array(keep.map((c) => src.caResNums![c]));
     if (src.caSsType) caSsType = new Uint8Array(keep.map((c) => src.caSsType![c]));
   }
 
@@ -698,6 +704,7 @@ export function applyEditOps(src: Snapshot, ops: EditOp[]): EditResult {
     boxOrigin: cellTouched ? null : src.boxOrigin,
     atomChainIds: chain ? chain.slice(0, nAtoms) : null,
     atomBFactors: bfac ? bfac.slice(0, nAtoms) : null,
+    atomLabels: lab ? lab.slice(0, nAtoms) : undefined,
     caIndices,
     caChainIds,
     caResNums,

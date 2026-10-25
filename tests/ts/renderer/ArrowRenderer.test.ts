@@ -86,4 +86,49 @@ describe("ArrowRenderer", () => {
     instancedMeshes(ar)[0].getMatrixAt(0, m);
     expect(new THREE.Vector3().setFromMatrixPosition(m).y).toBeCloseTo(5);
   });
+
+  describe("frustum culling", () => {
+    /** A camera framing x ∈ [15, 25] around (20, 0, 0); the origin is off screen. */
+    function frustumAround20(): THREE.Frustum {
+      const cam = new THREE.OrthographicCamera(-5, 5, 5, -5, 0.1, 100);
+      cam.position.set(20, 0, 50);
+      cam.lookAt(20, 0, 0);
+      cam.updateMatrixWorld(true);
+      cam.updateProjectionMatrix();
+      return new THREE.Frustum().setFromProjectionMatrix(
+        new THREE.Matrix4().multiplyMatrices(cam.projectionMatrix, cam.matrixWorldInverse),
+      );
+    }
+
+    /** WebGLRenderer.projectObject's test: is this object handed to the GPU? */
+    function drawn(mesh: THREE.InstancedMesh, frustum: THREE.Frustum): boolean {
+      return !mesh.frustumCulled || frustum.intersectsObject(mesh);
+    }
+
+    it("still draws arrows whose first frame was all zeros", () => {
+      // A LAMMPS dump with uninitialised velocities: frame 0's vectors are 0,
+      // so every instance matrix is a zero scale at the origin.
+      const ar = new ArrowRenderer();
+      const frustum = frustumAround20();
+      ar.setAtomPositions(new Float32Array([20, 0, 0]), 1);
+      ar.setVectors(new Float32Array([0, 0, 0]));
+      for (const mesh of instancedMeshes(ar)) drawn(mesh, frustum); // first render
+
+      ar.setVectors(new Float32Array([1, 0, 0]));
+      for (const mesh of instancedMeshes(ar)) expect(drawn(mesh, frustum)).toBe(true);
+    });
+
+    it("still draws arrows reloaded at other coordinates", () => {
+      const ar = new ArrowRenderer();
+      const frustum = frustumAround20();
+      ar.setAtomPositions(new Float32Array([0, 0, 0]), 1);
+      ar.setVectors(new Float32Array([1, 0, 0]));
+      for (const mesh of instancedMeshes(ar)) drawn(mesh, frustum); // first render
+
+      // Same size, so the meshes are reused; the arrow is now on screen.
+      ar.setAtomPositions(new Float32Array([20, 0, 0]), 1);
+      ar.setVectors(new Float32Array([0, 1, 0]));
+      for (const mesh of instancedMeshes(ar)) expect(drawn(mesh, frustum)).toBe(true);
+    });
+  });
 });

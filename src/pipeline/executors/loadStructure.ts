@@ -44,6 +44,23 @@ export function buildStructureTrajectory(
   return null;
 }
 
+/** One labelled copy per (snapshot, labels) pair, so re-runs keep the renderer's Snapshot identity. */
+const labelledSnapshots = new WeakMap<Snapshot, { labels: string[]; snapshot: Snapshot }>();
+
+/**
+ * `snapshot` with the file's residue `labels` attached as `atomLabels`, so
+ * nodes and edits that copy or reorder atoms carry each label with its atom.
+ * Without labels the snapshot is returned as is.
+ */
+function withAtomLabels(snapshot: Snapshot, labels: string[] | null | undefined): Snapshot {
+  if (!labels || labels.length === 0 || snapshot.atomLabels === labels) return snapshot;
+  const cached = labelledSnapshots.get(snapshot);
+  if (cached && cached.labels === labels) return cached.snapshot;
+  const labelled: Snapshot = { ...snapshot, atomLabels: labels };
+  labelledSnapshots.set(snapshot, { labels, snapshot: labelled });
+  return labelled;
+}
+
 /**
  * Loader executor. `params.edits` (an edit history in megane Builder's format) is replayed on
  * the loaded snapshot so the `particle` / `cell` outputs carry the *edited*
@@ -51,7 +68,8 @@ export function buildStructureTrajectory(
  * original" preview). Per-op problems go to `opts.warnings` so the
  * dispatcher can surface them on the node. The trajectory output always
  * follows the file: its frames index the atoms as loaded, so an edited atom
- * count could not be played back anyway.
+ * count could not be played back anyway. `opts.labels` (the file's residue
+ * labels) ride on the particle snapshot as `atomLabels`, edits included.
  */
 export function executeLoadStructure(
   params: LoadStructureParams,
@@ -60,15 +78,15 @@ export function executeLoadStructure(
   structureMeta: TrajectoryMeta | null,
   sourceNodeId: string,
   structureProvider: FrameProvider | null = null,
-  opts: { editsBypassed?: boolean; warnings?: string[] } = {},
+  opts: { editsBypassed?: boolean; warnings?: string[]; labels?: string[] | null } = {},
 ): Map<string, PipelineData> {
   const outputs = new Map<string, PipelineData>();
   if (!snapshot) return outputs;
 
   const edits = Array.isArray(params.edits) ? params.edits : [];
-  let shown = snapshot;
+  let shown = withAtomLabels(snapshot, opts.labels);
   if (edits.length > 0 && !opts.editsBypassed) {
-    const result = applyEditOps(snapshot, edits);
+    const result = applyEditOps(shown, edits);
     shown = result.snapshot;
     opts.warnings?.push(...result.warnings);
   }

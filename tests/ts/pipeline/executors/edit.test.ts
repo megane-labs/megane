@@ -20,7 +20,7 @@ function water(extra: Partial<Snapshot> = {}): Snapshot {
     atomBFactors: new Float32Array([1, 2, 3]),
     caIndices: new Uint32Array([0, 2]),
     caChainIds: new Uint8Array([65, 65]),
-    caResNums: new Uint32Array([1, 1]),
+    caResNums: new Int32Array([1, 1]),
     caSsType: new Uint8Array([0, 1]),
     ...extra,
   };
@@ -537,5 +537,73 @@ describe("executeLoadStructure with edits", () => {
       "loader-1",
     );
     expect((out.get("particle") as ParticleData).source).toBe(src);
+  });
+
+  it("replays edits on the labelled structure, so labels stay on their atoms", () => {
+    const src = water();
+    const labels = ["HOH1", "HOH1", "NA2"];
+    const run = (edits: EditOp[] | undefined, editsBypassed = false) =>
+      (
+        executeLoadStructure(loader(edits), src, null, null, "loader-1", null, {
+          labels,
+          editsBypassed,
+        }).get("particle") as ParticleData
+      ).source;
+    expect(run([{ op: "delete_atoms", atoms: [0] }]).atomLabels).toEqual(["HOH1", "NA2"]);
+    expect(run([{ op: "delete_atoms", atoms: [0] }], true).atomLabels).toBe(labels);
+    expect(run(undefined).atomLabels).toBe(labels);
+    // Without labels the parsed snapshot itself flows on.
+    const bare = executeLoadStructure(loader(), src, null, null, "loader-1", null, {
+      labels: null,
+    });
+    expect((bare.get("particle") as ParticleData).source).toBe(src);
+  });
+});
+
+// Regression: residue labels used to stay indexed by the file's atoms while
+// edits deleted, added or rebuilt atoms. They now travel with the atoms.
+describe("applyEditOps — residue labels", () => {
+  const labelled = (extra: Partial<Snapshot> = {}) =>
+    water({ atomLabels: ["HOH1", "HOH1", "HOH2"], ...extra });
+
+  it("keeps labels on their atoms through add and delete", () => {
+    const { snapshot } = applyEditOps(labelled(), [
+      { op: "add_atom", id: "c", element: 6, position: [1, 1, 1] },
+      { op: "delete_atoms", atoms: [1] },
+    ]);
+    // The added atom has no residue; deleting atom 1 shifts the rest down.
+    expect(snapshot.atomLabels).toEqual(["HOH1", "HOH2", ""]);
+    expect(applyEditOps(water(), [{ op: "delete_atoms", atoms: [0] }]).snapshot.atomLabels).toBe(
+      undefined,
+    );
+  });
+
+  it("pads a short label list so every atom has an entry", () => {
+    const { snapshot } = applyEditOps(water({ atomLabels: ["HOH1"] }), []);
+    expect(snapshot.atomLabels).toEqual(["HOH1", "", ""]);
+  });
+
+  it("copies each image's labels from its source atom in whole-structure ops", () => {
+    const supercell = applyEditOps(labelled(), [
+      { op: "supercell", id: "sc", matrix: [2, 0, 0, 0, 1, 0, 0, 0, 1] },
+    ]).snapshot;
+    expect(supercell.atomLabels).toEqual(["HOH1", "HOH1", "HOH2", "HOH1", "HOH1", "HOH2"]);
+
+    const slab = applyEditOps(labelled(), [
+      { op: "slab", id: "sl", miller: [0, 0, 1], layers: 2, vacuum: 5 },
+    ]).snapshot;
+    expect(slab.atomLabels).toHaveLength(slab.nAtoms);
+    expect(new Set(slab.atomLabels)).toEqual(new Set(["HOH1", "HOH2"]));
+
+    const expanded = applyEditOps(
+      labelled({
+        nBonds: 0,
+        nFileBonds: 0,
+        bonds: new Uint32Array(0),
+        symmetryOps: ["x,y,z", "-x,-y,-z"],
+      }),
+      [{ op: "expand_symmetry", id: "ex" }],
+    ).snapshot;
+    expect(expanded.atomLabels).toEqual(["HOH1", "HOH1", "HOH2", "HOH1", "HOH1", "HOH2"]);
   });
 });

@@ -1186,9 +1186,10 @@ class Pipeline:
         Returns:
             A new :class:`Pipeline` instance.
         """
-        import pathlib
+        from megane.parsers.common import read_text
 
-        return cls.from_json(pathlib.Path(path).read_text(encoding="utf-8"))
+        # Decoded as the web app reads a dropped .megane.json (BOM dropped, bad bytes replaced).
+        return cls.from_json(read_text(path))
 
     # ── Internal ────────────────────────────────────────────
 

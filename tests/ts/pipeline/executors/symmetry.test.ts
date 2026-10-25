@@ -240,17 +240,26 @@ describe("executeSymmetry", () => {
       atomBFactors: new Float32Array([1.5, 2.5]),
       caIndices: new Uint32Array([1]),
       caChainIds: new Uint8Array([65]),
-      caResNums: new Uint32Array([7]),
+      caResNums: new Int32Array([7]),
       caSsType: new Uint8Array([2]),
     });
     const out = executeSymmetry(params("expand"), inputs(makeParticle(snapshot)));
     const s = (out.get("particle") as ParticleData).source;
     expect(Array.from(s.atomChainIds!)).toEqual([65, 65, 65, 65]);
     expect(Array.from(s.atomBFactors!)).toEqual([1.5, 2.5, 1.5, 2.5]);
+    // Without residue labels none are invented.
+    expect(s.atomLabels).toBeUndefined();
     expect(Array.from(s.caIndices!)).toEqual([1, 3]);
     expect(Array.from(s.caChainIds!)).toEqual([65, 65]);
     expect(Array.from(s.caResNums!)).toEqual([7, 7]);
     expect(Array.from(s.caSsType!)).toEqual([2, 2]);
+  });
+
+  it("tiles residue labels with the atoms instead of keeping the asymmetric unit's", () => {
+    const snapshot = makeSnapshot(CUBIC(), { atomLabels: ["GLY1", "GLY1"] });
+    const out = executeSymmetry(params("expand"), inputs(makeParticle(snapshot)));
+    const s = (out.get("particle") as ParticleData).source;
+    expect(s.atomLabels).toEqual(["GLY1", "GLY1", "GLY1", "GLY1"]);
   });
 
   it("skips unparsable operations but expands the rest", () => {

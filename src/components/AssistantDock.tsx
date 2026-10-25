@@ -39,6 +39,10 @@ export interface AssistantRequest {
   history: ChatTurn[];
   /** The provider settings to send it with (the free demo or the user's key). */
   config: AIConfig;
+  /**
+   * Aborted on Cancel and when the dock unmounts; the host applies nothing
+   * once it is aborted.
+   */
   signal: AbortSignal;
   /** Model text as it streams in. */
   onChunk: (chunk: string) => void;
@@ -87,6 +91,18 @@ export function replaceTrailingAssistant(
     return [...messages.slice(0, -1), message];
   }
   return [...messages, message];
+}
+
+/**
+ * For a host's `run`: once the request's signal is aborted (Cancel, or the
+ * dock unmounted), throw the AbortError the dock reports as cancelled, so a
+ * reply that still finishes is dropped instead of applied.
+ */
+export function throwIfAborted(signal: AbortSignal): void {
+  if (!signal.aborted) return;
+  const err = new Error("Generation cancelled.");
+  err.name = "AbortError";
+  throw err;
 }
 
 /** The finished user / assistant turns of a transcript, for the edit context. */
@@ -373,6 +389,12 @@ export function AssistantDock({
   useEffect(() => {
     if (showHistory) messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages, showHistory]);
+
+  // A request outlives neither the dock nor its transcript: collapsing the
+  // panel or leaving Flow mode unmounts the dock, and a request still running
+  // would keep a paid stream open and later rewrite the graph with no
+  // transcript or Undo to show for it. Hosts drop what arrives after the abort.
+  useEffect(() => () => abortRef.current?.abort(), []);
 
   const handleSubmit = useCallback(async () => {
     const trimmed = input.trim();

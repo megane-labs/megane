@@ -712,6 +712,45 @@ describe("executePipeline", () => {
       const { viewportState: result } = executePipeline(nodes, edges, { snapshot: waterSnapshot });
       expect(result.labels[0].labels).toEqual(["0", "1", "2"]);
     });
+
+    // Regression: the "resname" source read only `ctx.atomLabels`, which no
+    // host ever sets, so it always produced no labels. It now resolves the
+    // structure's residue labels the way Filter and Color do.
+    describe("resname source", () => {
+      const nodes = [
+        makeNode("ls", "load_structure", { fileName: null, hasTrajectory: false, hasCell: false }),
+        makeNode("lg", "label_generator", { source: "resname" }),
+        makeNode("vp", "viewport", { perspective: false, cellAxesVisible: true }),
+      ];
+      const edges = [
+        makeEdge("ls", "particle", "lg", "particle"),
+        makeEdge("lg", "label", "vp", "label"),
+      ];
+      const labels = ["HOH1", "HOH1", "HOH1"];
+      const nodeSnapshots = {
+        ls: { snapshot: waterSnapshot, frames: null, meta: null, labels },
+      };
+
+      it("labels atoms with the structure's residue labels", () => {
+        const { viewportState: result } = executePipeline(nodes, edges, { nodeSnapshots });
+        expect(result.labels[0].labels).toEqual(["HOH1", "HOH1", "HOH1"]);
+      });
+
+      it("still prefers explicit display labels", () => {
+        const { viewportState: result } = executePipeline(nodes, edges, {
+          nodeSnapshots,
+          atomLabels: ["A", "B", "C"],
+        });
+        expect(result.labels[0].labels).toEqual(["A", "B", "C"]);
+      });
+
+      it("yields no labels when the structure has none", () => {
+        const { viewportState: result } = executePipeline(nodes, edges, {
+          snapshot: waterSnapshot,
+        });
+        expect(result.labels[0].labels).toEqual([]);
+      });
+    });
   });
 
   describe("Viewport node", () => {
@@ -1005,6 +1044,266 @@ describe("executePipeline", () => {
       // Since ab gets unfiltered particle (all), bonds should pass through
       // The unfiltered particle stream has indices=null, so no bond filtering
       expect(result.bonds).toHaveLength(1);
+    });
+
+    // Regression: ghost / image endpoints (index >= nAtoms) were never in the
+    // set of kept atoms, so any particle filter erased every PBC half-bond and
+    // every Drawing Boundary image bond. They now count as their source atom.
+    describe("periodic copies count as their source atom", () => {
+      // O0–H1 is an ordinary bond; O0–H2 crosses the 4 Å cell and is drawn as
+      // two half-bonds to ghosts: (O0 → ghost H2 = 3) and (H2 → ghost O0 = 4).
+      const wrappedWater = makeSnapshot({
+        nAtoms: 3,
+        positions: [0.5, 2, 2, 1.4, 2, 2, 3.6, 2, 2],
+        elements: [8, 1, 1],
+        bonds: [0, 1, 0, 2],
+        bondOrders: [1, 1],
+        box: [4, 0, 0, 0, 4, 0, 0, 0, 4],
+      });
+
+      // O–H lying on the a = 0 face: Drawing Boundary [0, 1] adds a copy of
+      // both atoms on the a = 1 face (indices 2, 3) and the bond between them.
+      const faceWater = makeSnapshot({
+        nAtoms: 2,
+        positions: [0, 1, 1, 0, 2, 1],
+        elements: [8, 1],
+        bonds: [0, 1],
+        bondOrders: [1],
+        box: [4, 0, 0, 0, 4, 0, 0, 0, 4],
+      });
+
+      function runFiltered(query: string, withBoundary = false): BondData {
+        const nodes = [
+          makeNode("ls", "load_structure", { fileName: null, hasTrajectory: false, hasCell: true }),
+          makeNode("db", "drawing_boundary", {
+            xMin: 0,
+            xMax: 1,
+            yMin: 0,
+            yMax: 1,
+            zMin: 0,
+            zMax: 1,
+          }),
+          makeNode("f", "filter", { query }),
+          makeNode("ab", "add_bond", { bondSource: "structure" }),
+          makeNode("vp", "viewport", { perspective: false, cellAxesVisible: true }),
+        ];
+        const src = withBoundary ? "db" : "ls";
+        const edges = [
+          makeEdge("ls", "particle", "db", "particle"),
+          makeEdge(src, "particle", "f", "in"),
+          makeEdge("f", "out", "vp", "particle"),
+          makeEdge(src, "particle", "ab", "particle"),
+          makeEdge("ab", "bond", "vp", "bond"),
+        ];
+        const snapshot = withBoundary ? faceWater : wrappedWater;
+        return executePipeline(nodes, edges, { snapshot }).viewportState.bonds[0];
+      }
+
+      it("keeps the PBC half-bonds under a filter that keeps every atom", () => {
+        const bond = runFiltered("index >= 0");
+        expect(bond.nBonds).toBe(3);
+        expect(Array.from(bond.bondIndices)).toEqual([0, 1, 0, 3, 2, 4]);
+      });
+
+      it("keeps a crossing bond whose two source atoms are shown", () => {
+        // H1 is filtered out: O0–H1 goes, both halves of O0–H2 stay.
+        const bond = runFiltered("index != 1");
+        expect(Array.from(bond.bondIndices)).toEqual([0, 3, 2, 4]);
+      });
+
+      it("drops both halves when one source atom is filtered out", () => {
+        const bond = runFiltered("index != 2");
+        expect(Array.from(bond.bondIndices)).toEqual([0, 1]);
+      });
+
+      it("keeps Drawing Boundary image bonds under a filter that keeps every atom", () => {
+        expect(Array.from(runFiltered("", true).bondIndices)).toEqual([0, 1, 2, 3]);
+        expect(Array.from(runFiltered("index >= 0", true).bondIndices)).toEqual([0, 1, 2, 3]);
+        // Hiding the H drops the bond and its copy alike.
+        expect(runFiltered('element == "O"', true).nBonds).toBe(0);
+      });
+    });
+
+    // Regression: pruning bonds to the filtered atoms used to keep the bond
+    // filter's selection and modify's per-bond opacity indexed by the old bond
+    // numbers, so a fade aimed at a pruned H–H bond landed on the C–C bond.
+    it("keeps per-bond opacity on the right bond after pruning", () => {
+      const snapshot = makeSnapshot({
+        nAtoms: 4,
+        positions: [0, 0, 0, 1.5, 0, 0, 0, 3, 0, 0.74, 3, 0],
+        elements: [6, 6, 1, 1], // C, C, H, H
+        bonds: [2, 3, 0, 1], // bond 0 = H–H, bond 1 = C–C
+        bondOrders: [1, 1],
+      });
+      const nodes = [
+        makeNode("ls", "load_structure", { fileName: null, hasTrajectory: false, hasCell: false }),
+        makeNode("fa", "filter", { query: 'element == "C"' }),
+        makeNode("ab", "add_bond", { bondSource: "structure" }),
+        makeNode("fb", "filter", { query: "", bond_query: 'both element == "H"' }),
+        makeNode("m", "modify", { scale: 1.0, opacity: 0 }),
+        makeNode("vp", "viewport", { perspective: false, cellAxesVisible: true }),
+      ];
+      const edges = [
+        makeEdge("ls", "particle", "fa", "in"),
+        makeEdge("fa", "out", "vp", "particle"),
+        makeEdge("ls", "particle", "ab", "particle"),
+        makeEdge("ab", "bond", "fb", "in"),
+        makeEdge("fb", "out", "m", "in"),
+        makeEdge("m", "out", "vp", "bond"),
+      ];
+
+      const { viewportState: result } = executePipeline(nodes, edges, { snapshot });
+      const bond = result.bonds[0];
+      expect(bond.nBonds).toBe(1);
+      expect(Array.from(bond.bondIndices)).toEqual([0, 1]);
+      // The C–C bond was never selected, so it stays fully opaque.
+      expect(Array.from(bond.bondOpacityOverrides!)).toEqual([1]);
+      expect(Array.from(bond.selectedBondIndices!)).toEqual([]);
+    });
+  });
+
+  // Regression: chained bond filters used to replace each other's selection
+  // (atom filters intersect), and a selective modify rebuilt the per-bond
+  // opacity from 1.0, undoing an upstream modify's fade.
+  describe("bond filter / modify chains compose", () => {
+    // Two molecules: bond 0 = O0–H1, bond 1 = C2–H3.
+    const snapshot = makeSnapshot({
+      nAtoms: 4,
+      positions: [0, 0, 0, 0.96, 0, 0, 5, 0, 0, 6.09, 0, 0],
+      elements: [8, 1, 6, 1],
+      bonds: [0, 1, 2, 3],
+      bondOrders: [1, 1],
+    });
+
+    function run(chain: Array<[string, Record<string, unknown>]>): BondData {
+      const nodes = [
+        makeNode("ls", "load_structure", { fileName: null, hasTrajectory: false, hasCell: false }),
+        makeNode("ab", "add_bond", { bondSource: "structure" }),
+        ...chain.map(([type, params], i) => makeNode(`n${i}`, type, params)),
+        makeNode("vp", "viewport", { perspective: false, cellAxesVisible: true }),
+      ];
+      const ids = ["ab", ...chain.map((_, i) => `n${i}`)];
+      const edges = [
+        makeEdge("ls", "particle", "vp", "particle"),
+        makeEdge("ls", "particle", "ab", "particle"),
+        ...ids.slice(1).map((id, i) => makeEdge(ids[i], i === 0 ? "bond" : "out", id, "in")),
+        makeEdge(ids[ids.length - 1], "out", "vp", "bond"),
+      ];
+      return executePipeline(nodes, edges, { snapshot }).viewportState.bonds[0];
+    }
+
+    it("narrows a bond selection through chained filters", () => {
+      const bond = run([
+        ["filter", { query: "", bond_query: 'element == "O"' }],
+        ["filter", { query: "", bond_query: 'element == "C"' }],
+        ["modify", { scale: 1.0, opacity: 0 }],
+      ]);
+      // No bond touches both an O and a C, so nothing is faded.
+      expect(Array.from(bond.selectedBondIndices!)).toEqual([]);
+      expect(Array.from(bond.bondOpacityOverrides!)).toEqual([1, 1]);
+    });
+
+    it("keeps an earlier fade when a later modify narrows the selection", () => {
+      const bond = run([
+        ["filter", { query: "", bond_query: 'element == "H"' }],
+        ["modify", { scale: 1.0, opacity: 0.2 }],
+        ["filter", { query: "", bond_query: 'element == "C"' }],
+        ["modify", { scale: 1.0, opacity: 0.5 }],
+      ]);
+      expect(Array.from(bond.selectedBondIndices!)).toEqual([1]);
+      expect(Array.from(bond.bondOpacityOverrides!)).toEqual([
+        expect.closeTo(0.2),
+        expect.closeTo(0.5),
+      ]);
+    });
+  });
+
+  // Regression: residue labels were looked up per *file* atom, so after a
+  // node or edit that copies or reorders atoms, `resname` / `resid` and
+  // residue colouring read the wrong atom's label (only the first replicate
+  // image matched `resname == "HOH"`; after a deletion every lookup was off
+  // by one). The labels now travel with the atoms.
+  describe("residue labels follow the atoms through transforms", () => {
+    // A water oxygen (HOH1) and a sodium ion (NA2) in a 4 Å cell.
+    const ionPair = makeSnapshot({
+      nAtoms: 2,
+      positions: [1, 1, 1, 2.5, 1.2, 1.3],
+      elements: [8, 11],
+      box: [4, 0, 0, 0, 4, 0, 0, 0, 4],
+    });
+    const nodeSnapshots = (snapshot: Snapshot) => ({
+      ls: { snapshot, frames: null, meta: null, labels: ["HOH1", "NA2"] },
+    });
+
+    function selected(
+      transform: [string, Record<string, unknown>] | null,
+      query: string,
+      opts: { edits?: unknown[]; snapshot?: Snapshot } = {},
+    ): number[] {
+      const nodes = [
+        makeNode("ls", "load_structure", {
+          fileName: null,
+          hasTrajectory: false,
+          hasCell: true,
+          edits: opts.edits,
+        }),
+        ...(transform ? [makeNode("t", transform[0], transform[1])] : []),
+        makeNode("f", "filter", { query }),
+        makeNode("vp", "viewport", { perspective: false, cellAxesVisible: true }),
+      ];
+      const edges = [
+        ...(transform
+          ? [makeEdge("ls", "particle", "t", "particle"), makeEdge("t", "particle", "f", "in")]
+          : [makeEdge("ls", "particle", "f", "in")]),
+        makeEdge("f", "out", "vp", "particle"),
+      ];
+      const ctx = { nodeSnapshots: nodeSnapshots(opts.snapshot ?? ionPair) };
+      return Array.from(executePipeline(nodes, edges, ctx).viewportState.particles[0].indices!);
+    }
+
+    it("replicate gives every image its labels", () => {
+      const replicate: [string, Record<string, unknown>] = ["replicate", { nx: 3, ny: 1, nz: 1 }];
+      expect(selected(replicate, 'resname == "HOH"')).toEqual([0, 2, 4]);
+      expect(selected(replicate, "resid == 2")).toEqual([1, 3, 5]);
+    });
+
+    it("symmetry expansion gives every image its labels", () => {
+      const withOps = { ...ionPair, symmetryOps: ["x,y,z", "-x,-y,-z"] };
+      const symmetry: [string, Record<string, unknown>] = ["symmetry", { mode: "expand" }];
+      expect(selected(symmetry, 'resname == "NA"', { snapshot: withOps })).toEqual([1, 3]);
+    });
+
+    it("structure edits keep each label on its atom", () => {
+      const deleteWater = [{ op: "delete_atoms", atoms: [0] }];
+      expect(selected(null, 'resname == "NA"', { edits: deleteWater })).toEqual([0]);
+      expect(selected(null, 'resname == "HOH"', { edits: deleteWater })).toEqual([]);
+      // An added atom carries no residue label.
+      const addCarbon = [{ op: "add_atom", id: "c", element: 6, position: [3, 3, 3] }];
+      expect(selected(null, 'resname == "NA"', { edits: addCarbon })).toEqual([1]);
+    });
+
+    it("color byResidue paints every replicated copy", () => {
+      const nodes = [
+        makeNode("ls", "load_structure", { fileName: null, hasTrajectory: false, hasCell: true }),
+        makeNode("t", "replicate", { nx: 2, ny: 1, nz: 1 }),
+        makeNode("c", "color", { mode: "byResidue", uniformColor: "#ffffff" }),
+        makeNode("vp", "viewport", { perspective: false, cellAxesVisible: true }),
+      ];
+      const edges = [
+        makeEdge("ls", "particle", "t", "particle"),
+        makeEdge("t", "particle", "c", "in"),
+        makeEdge("c", "out", "vp", "particle"),
+      ];
+      const ctx = {
+        nodeSnapshots: {
+          ls: { snapshot: ionPair, frames: null, meta: null, labels: ["ALA1", "GLY2"] },
+        },
+      };
+      const co = executePipeline(nodes, edges, ctx).viewportState.particles[0].colorOverrides!;
+      // ALA and GLY shapely colours, in both images.
+      const ala = expect.closeTo(0.78);
+      const gly = expect.closeTo(1.0);
+      expect(Array.from(co)).toEqual([ala, ala, ala, gly, gly, gly, ala, ala, ala, gly, gly, gly]);
     });
   });
 });
