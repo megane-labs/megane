@@ -40,6 +40,33 @@ export class RateLimitError extends Error {
   }
 }
 
+/**
+ * The error a provider reports *inside* a stream that started with HTTP 200
+ * (Anthropic's `event: error`, e.g. `overloaded_error`; an OpenAI or
+ * OpenRouter `{"error": {...}}` chunk or `finish_reason: "error"`), as an
+ * exception. Without it the reply cut short by the error would be returned as
+ * if it had ended normally, and a truncated repair round would leave the
+ * unrepaired pipeline applied with nothing said.
+ */
+export function streamError(payload: unknown): Error {
+  const e = (typeof payload === "object" && payload !== null ? payload : {}) as {
+    type?: unknown;
+    code?: unknown;
+    message?: unknown;
+  };
+  const kind =
+    typeof e.type === "string"
+      ? e.type
+      : typeof e.code === "string" || typeof e.code === "number"
+        ? String(e.code)
+        : null;
+  const message = typeof e.message === "string" ? e.message : null;
+  const detail = [kind, message].filter(Boolean).join(": ");
+  return new Error(
+    `The provider stopped the reply with an error${detail ? ` (${detail})` : ""}. Please try again.`,
+  );
+}
+
 // ─── Types for Anthropic SSE parsing ─────────────────────────────────
 
 interface ToolUseAccumulator {
@@ -185,11 +212,6 @@ export async function runGeneration(
   }
 
   return text;
-}
-
-/** True when `text` contains a closed ```` ``` ```` fence pair. */
-export function hasClosedFence(text: string): boolean {
-  return /```(?:json)?\s*\n?[\s\S]*?```/.test(text);
 }
 
 // ─── Anthropic with tool_use ─────────────────────────────────────────
@@ -344,7 +366,9 @@ async function readAnthropicSSE(
           continue;
         }
 
-        if (currentEvent === "content_block_start") {
+        if (currentEvent === "error" || parsed.type === "error") {
+          throw streamError(parsed.error);
+        } else if (currentEvent === "content_block_start") {
           const block = parsed.content_block as Record<string, unknown> | undefined;
           if (block?.type === "tool_use") {
             activeToolUse = {
@@ -503,8 +527,10 @@ async function readOpenAISSE(
         continue;
       }
 
+      if (parsed.error) throw streamError(parsed.error);
       const choice = (parsed.choices as Array<Record<string, unknown>> | undefined)?.[0];
       if (!choice) continue;
+      if (choice.finish_reason === "error") throw streamError(null);
 
       const delta = choice.delta as Record<string, unknown> | undefined;
       if (typeof delta?.content === "string" && delta.content) {
@@ -601,24 +627,118 @@ export function extractTrailingExplanation(text: string): string {
 }
 
 /**
- * The parsed JSON of the *last* closed ```` ``` ```` fence in `text` that
- * `accept` takes, or null when none does.
- *
- * A less precise model can stream an earlier fence (e.g. echoing a fetched
- * skill template) that also parses, so the last acceptable one — the model's
- * final answer — wins.
+ * A closed code fence: three backticks, an optional language label in any case
+ * (`json`, `JSON`, `jsonc`, or none), the body (group 1), and three backticks.
+ * A new global RegExp each call, so callers never share `lastIndex`.
  */
-export function lastFencedJSON<T>(text: string, accept: (value: unknown) => value is T): T | null {
-  const fenceRe = /```(?:json)?\s*\n?([\s\S]*?)```/g;
+export function fencePattern(): RegExp {
+  return /```[^\S\n]*[\w.+-]*[^\S\n]*\n?([\s\S]*?)```/g;
+}
+
+/** A JSON payload found in a reply by {@link lastJSONPayload}. */
+export interface JSONPayload<T> {
+  value: T;
+  /** It was the body of a closed code fence, not bare text. */
+  fenced: boolean;
+}
+
+/** `JSON.parse(text)` when it is a value `accept` takes, else null. */
+function parseAccepted<T>(text: string, accept: (value: unknown) => value is T): T | null {
+  try {
+    const parsed: unknown = JSON.parse(text.trim());
+    return accept(parsed) ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * The index just past the `}` that closes the object opening at `start`, or
+ * -1 when it does not close before `end`. Braces inside strings don't count.
+ */
+function objectEnd(text: string, start: number, end: number): number {
+  let depth = 0;
+  let inString = false;
+  for (let i = start; i < end; i++) {
+    const c = text[i];
+    if (inString) {
+      if (c === "\\") i++;
+      else if (c === '"') inString = false;
+    } else if (c === '"') inString = true;
+    else if (c === "{") depth++;
+    else if (c === "}" && --depth === 0) return i + 1;
+  }
+  return -1;
+}
+
+/** The last top-level `{…}` object in `text[from, end)` that `accept` takes. */
+function lastBareJSON<T>(
+  text: string,
+  from: number,
+  end: number,
+  accept: (value: unknown) => value is T,
+): T | null {
   let result: T | null = null;
-  let match: RegExpExecArray | null;
-  while ((match = fenceRe.exec(text)) !== null) {
+  let start = text.indexOf("{", from);
+  while (start !== -1 && start < end) {
+    const stop = objectEnd(text, start, end);
+    // An object that has not closed yet (still streaming) holds the rest.
+    if (stop === -1) break;
+    let next = stop;
     try {
-      const parsed: unknown = JSON.parse(match[1].trim());
+      const parsed: unknown = JSON.parse(text.slice(start, stop));
       if (accept(parsed)) result = parsed;
     } catch {
-      // Not JSON — skip this fence.
+      // Not JSON, e.g. braces in prose: an object may still start inside it.
+      next = start + 1;
     }
+    start = text.indexOf("{", next);
   }
   return result;
+}
+
+/**
+ * The *last* JSON payload in a model reply that `accept` takes, or null when
+ * there is none.
+ *
+ * A payload is the body of a closed code fence, with any language label in
+ * any case or none, or a bare top-level `{…}` object outside the closed
+ * fences. The system prompt asks for fenced JSON, but a model does not always
+ * fence it, least of all in a repair round. An object that has not closed yet
+ * is not a payload, so this is safe to call on a buffer that is still
+ * streaming.
+ *
+ * The last payload wins because a less precise model can stream an earlier one
+ * that also parses (e.g. echoing a fetched skill template), and the last one is
+ * the model's final answer.
+ */
+export function lastJSONPayload<T>(
+  text: string,
+  accept: (value: unknown) => value is T,
+): JSONPayload<T> | null {
+  let result: JSONPayload<T> | null = null;
+  const take = (value: T | null, fenced: boolean) => {
+    if (value !== null) result = { value, fenced };
+  };
+  const fenceRe = fencePattern();
+  let from = 0;
+  let match: RegExpExecArray | null;
+  while ((match = fenceRe.exec(text)) !== null) {
+    take(lastBareJSON(text, from, match.index, accept), false);
+    take(parseAccepted(match[1], accept), true);
+    from = fenceRe.lastIndex;
+  }
+  take(lastBareJSON(text, from, text.length, accept), false);
+  return result;
+}
+
+/**
+ * Whether a reply tried to carry a JSON payload: it has a code fence (closed
+ * or not) or a JSON object (`{"`). A reply with neither is prose (the model
+ * asking which file to open, or answering a question) and is shown as written.
+ * A reply that has one but no payload {@link lastJSONPayload} accepts is a
+ * broken payload, not prose.
+ */
+export function looksLikePayload(text: string): boolean {
+  return text.includes("```") || /\{\s*"/.test(text);
 }

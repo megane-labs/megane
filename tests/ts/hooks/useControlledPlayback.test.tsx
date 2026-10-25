@@ -122,6 +122,17 @@ describe("useControlledPlayback", () => {
     expect(p.seeks).toEqual([6, 6, 5, 4, 4]);
   });
 
+  it("keeps playing (and sending frames to the host) when the loop start is past the end", () => {
+    const p = setup(100, 78);
+    // Mid-edit in the Timeline: start typed as 80 while the end is still 20.
+    act(() => p.current.onLoopRangeChange(80, 20));
+    // The inputs keep showing what was typed.
+    expect([p.current.loopStart, p.current.loopEnd]).toEqual([80, 20]);
+    act(() => p.current.onPlayPause());
+    for (let i = 0; i < 4; i++) act(() => vi.advanceTimersByTime(1000 / 30 + 1));
+    expect(p.seeks).toEqual([79, 80, 20, 21]);
+  });
+
   it("resets the loop range when a new trajectory arrives", () => {
     const p = setup(10);
     act(() => p.current.onLoopRangeChange(2, 3));

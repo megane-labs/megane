@@ -57,6 +57,14 @@ def test_write_pdb_round_trips_bonds_cell_and_labels(tmp_path):
     assert parsed.box[0, 0] == pytest.approx(10.0, abs=1e-3)
 
 
+def test_write_pdb_splits_residue_labels_at_the_trailing_number():
+    # The number is the label's trailing -?digits; the name keeps its digits.
+    text = write_structure(_water(), "pdb", atom_labels=["HOH-3", "T3P5", "1PE12"])
+    assert " HOH    -3 " in text
+    assert " T3P     5 " in text
+    assert " 1PE    12 " in text
+
+
 def test_write_mol_keeps_bond_orders():
     s = _water()
     s.bond_orders = np.array([2, 1], dtype=np.uint8)
@@ -91,6 +99,20 @@ def test_format_from_path_knows_crystal_formats():
     assert format_from_path("CONTCAR_relaxed") == "poscar"
     # A real extension wins over the VASP-looking stem.
     assert format_from_path("POSCAR.xyz") == "xyz"
+
+
+@pytest.mark.parametrize(
+    "fmt, x, field",
+    [("pdb", -1234.5, "PDB coordinate x of atom 1"), ("mol", -12345.6, "MOL coordinate x of atom 1")],
+)
+def test_coordinates_past_the_fixed_columns_are_rejected(fmt, x, field):
+    # A wider value would shift the columns after it; the reader then drops
+    # the atom (PDB) or fails (MOL), so the writer refuses instead.
+    s = _water()
+    s.positions = s.positions.copy()
+    s.positions[0, 0] = x
+    with pytest.raises(ValueError, match=field):
+        write_structure(s, fmt)
 
 
 def test_write_structure_rejects_bad_shapes():

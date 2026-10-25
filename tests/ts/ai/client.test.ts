@@ -99,6 +99,12 @@ describe("extractPipelineJSON", () => {
     expect(() => extractPipelineJSON("no json here")).toThrow(/No JSON found/);
   });
 
+  it("reports why bare JSON with no fence is not a pipeline", () => {
+    expect(() => extractPipelineJSON('prefix { "version": 3, } suffix')).toThrow(
+      /Failed to parse JSON/,
+    );
+  });
+
   it("throws when the JSON is malformed", () => {
     expect(() => extractPipelineJSON("```json\n{ not json }\n```")).toThrow(/Failed to parse JSON/);
   });
@@ -270,6 +276,32 @@ describe("generatePipeline (Anthropic)", () => {
       RateLimitError,
     );
   });
+
+  it("throws on an error event inside the stream instead of returning the truncated text", async () => {
+    // HTTP 200, then the provider gives up mid-reply (e.g. overloaded).
+    fetchMock.mockResolvedValueOnce(
+      makeSSEResponse([
+        {
+          event: "content_block_delta",
+          data: { delta: { type: "text_delta", text: '```json\n{ "version": 3, "nod' } },
+        },
+        {
+          event: "error",
+          data: { type: "error", error: { type: "overloaded_error", message: "Overloaded" } },
+        },
+      ]),
+    );
+    await expect(generatePipeline(ANTHROPIC_CONFIG, "msg", () => {})).rejects.toThrow(
+      /overloaded_error: Overloaded/,
+    );
+  });
+
+  it("throws on an error event with no details", async () => {
+    fetchMock.mockResolvedValueOnce(makeSSEResponse([{ event: "error", data: {} }]));
+    await expect(generatePipeline(ANTHROPIC_CONFIG, "msg", () => {})).rejects.toThrow(
+      /stopped the reply with an error/,
+    );
+  });
 });
 
 describe("generatePipeline (OpenAI)", () => {
@@ -298,6 +330,54 @@ describe("generatePipeline (OpenAI)", () => {
     expect(chunks).toEqual(["hi ", "there"]);
     expect(result).toBe("hi there");
     expect(fetchMock.mock.calls[0][0]).toBe("https://api.openai.com/v1/chat/completions");
+  });
+
+  it("throws on an error payload inside the stream", async () => {
+    // OpenAI sends `{"error": {...}}` as a data line after HTTP 200.
+    fetchMock.mockResolvedValueOnce(
+      makeSSEResponse([
+        { event: "", data: { choices: [{ delta: { content: "```json\n{" } }] } },
+        {
+          event: "",
+          data: { error: { type: "server_error", message: "The server had an error" } },
+        },
+      ]),
+    );
+    await expect(generatePipeline(OPENAI_CONFIG, "msg", () => {})).rejects.toThrow(
+      /server_error: The server had an error/,
+    );
+  });
+
+  it("throws on an OpenRouter-style error chunk (finish_reason error)", async () => {
+    fetchMock.mockResolvedValueOnce(
+      makeSSEResponse([
+        { event: "", data: { choices: [{ delta: { content: "```json\n{" } }] } },
+        {
+          event: "",
+          data: {
+            error: { code: 502, message: "Provider disconnected" },
+            choices: [{ index: 0, delta: { content: "" }, finish_reason: "error" }],
+          },
+        },
+        { event: "", data: "[DONE]" },
+      ]),
+    );
+    await expect(generatePipeline(OPENAI_CONFIG, "msg", () => {})).rejects.toThrow(
+      /502: Provider disconnected/,
+    );
+
+    // A finish_reason of "error" alone is an error too.
+    fetchMock.mockResolvedValueOnce(
+      makeSSEResponse([
+        {
+          event: "",
+          data: { choices: [{ delta: { content: "partial" }, finish_reason: "error" }] },
+        },
+      ]),
+    );
+    await expect(generatePipeline(OPENAI_CONFIG, "msg", () => {})).rejects.toThrow(
+      /stopped the reply with an error/,
+    );
   });
 
   it("sets the OpenAI Authorization header and body", async () => {
@@ -761,6 +841,58 @@ describe("generatePipeline — structure summary + query repair", () => {
     expect(result).toContain("Fixed.");
   });
 
+  it("self-checks a first round that answers with bare JSON", async () => {
+    fetchMock.mockResolvedValueOnce(anthropicTextResponse(INVALID_FILTER_PIPELINE + "\nHere."));
+    fetchMock.mockResolvedValueOnce(
+      anthropicTextResponse("```json\n" + VALID_FILTER_PIPELINE + "\n```\nFixed."),
+    );
+
+    const result = await generatePipeline(ANTHROPIC_CONFIG, "show chain A", () => {});
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    const repairBody = JSON.parse((fetchMock.mock.calls[1][1] as RequestInit).body as string);
+    expect(repairBody.messages[2].content).toContain("chain A");
+    expect(tryExtractPipeline(result)).toEqual(JSON.parse(VALID_FILTER_PIPELINE));
+  });
+
+  it("accepts a repair round that answers with bare JSON", async () => {
+    fetchMock.mockResolvedValueOnce(
+      anthropicTextResponse("```json\n" + INVALID_FILTER_PIPELINE + "\n```\nHere."),
+    );
+    fetchMock.mockResolvedValueOnce(
+      anthropicTextResponse(
+        JSON.stringify(JSON.parse(VALID_FILTER_PIPELINE), null, 2) + "\nFixed.",
+      ),
+    );
+
+    const result = await generatePipeline(ANTHROPIC_CONFIG, "show chain A", () => {});
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(tryExtractPipeline(result)).toEqual(JSON.parse(VALID_FILTER_PIPELINE));
+  });
+
+  it("reads a pipeline in a ```JSON or ```jsonc fence instead of repairing it", async () => {
+    for (const label of ["JSON", "jsonc"]) {
+      fetchMock.mockReset();
+      fetchMock.mockResolvedValueOnce(
+        anthropicTextResponse("```" + label + "\n" + VALID_FILTER_PIPELINE + "\n```\nDone."),
+      );
+      const result = await generatePipeline(ANTHROPIC_CONFIG, "show carbons", () => {});
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+      expect(tryExtractPipeline(result)).toEqual(JSON.parse(VALID_FILTER_PIPELINE));
+    }
+  });
+
+  it("asks for the JSON again when a fence never closes", async () => {
+    fetchMock.mockResolvedValueOnce(anthropicTextResponse('```json\n{ "version": 3, "nodes": ['));
+    fetchMock.mockResolvedValueOnce(
+      anthropicTextResponse("```json\n" + VALID_FILTER_PIPELINE + "\n```\nFixed."),
+    );
+
+    await generatePipeline(ANTHROPIC_CONFIG, "show carbons", () => {});
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    const repairBody = JSON.parse((fetchMock.mock.calls[1][1] as RequestInit).body as string);
+    expect(repairBody.messages[2].content).toContain("not a usable pipeline");
+  });
+
   it("stops repairing on the demo proxy before the message budget runs out", async () => {
     fetchMock.mockImplementation(async () =>
       makeJSONResponse(
@@ -866,8 +998,17 @@ describe("tryExtractPipeline", () => {
     expect(tryExtractPipeline('```json\n{ "version": 3, "nodes": [')).toBeNull();
   });
 
-  it("returns null when no fence is present at all", () => {
-    expect(tryExtractPipeline(`prefix ${MINIMAL_PIPELINE_JSON} suffix`)).toBeNull();
+  it("returns a bare pipeline object once it has closed", () => {
+    expect(tryExtractPipeline(`prefix ${MINIMAL_PIPELINE_JSON} suffix`)?.nodes).toHaveLength(1);
+    expect(tryExtractPipeline(`prefix ${MINIMAL_PIPELINE_JSON.slice(0, -1)}`)).toBeNull();
+    expect(tryExtractPipeline("no pipeline here")).toBeNull();
+  });
+
+  it("reads a fence whatever the case of its label", () => {
+    for (const label of ["JSON", "Json", "jsonc"]) {
+      const result = tryExtractPipeline("```" + label + "\n" + MINIMAL_PIPELINE_JSON + "\n```");
+      expect(result?.nodes).toHaveLength(1);
+    }
   });
 
   it("returns the parsed pipeline once a closed fence has arrived", () => {

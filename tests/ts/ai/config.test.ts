@@ -100,6 +100,39 @@ describe("useAIConfigStore", () => {
     expect(persisted.model).toBe("claude-haiku-4-5");
   });
 
+  it("setProvider never carries one provider's API key over to another", async () => {
+    const { useAIConfigStore } = await import("@/ai/config");
+    useAIConfigStore.getState().setProvider("anthropic");
+    useAIConfigStore.getState().setApiKey("sk-ant-secret");
+
+    // Switching to OpenAI must not send the Anthropic secret to api.openai.com.
+    useAIConfigStore.getState().setProvider("openai");
+    expect(useAIConfigStore.getState().apiKey).toBe("");
+
+    useAIConfigStore.getState().setApiKey("sk-openai-secret");
+    expect(useAIConfigStore.getState().apiKey).toBe("sk-openai-secret");
+
+    // Each provider keeps its own key for the session, so switching back
+    // restores the one the user typed for it.
+    useAIConfigStore.getState().setProvider("anthropic");
+    expect(useAIConfigStore.getState().apiKey).toBe("sk-ant-secret");
+    useAIConfigStore.getState().setProvider("openai");
+    expect(useAIConfigStore.getState().apiKey).toBe("sk-openai-secret");
+
+    // Neither key reaches localStorage.
+    const raw = localStorage.getItem(STORAGE_KEY) as string;
+    expect(raw).not.toContain("sk-ant-secret");
+    expect(raw).not.toContain("sk-openai-secret");
+  });
+
+  it("setProvider to the current provider keeps its key", async () => {
+    const { useAIConfigStore } = await import("@/ai/config");
+    useAIConfigStore.getState().setProvider("anthropic");
+    useAIConfigStore.getState().setApiKey("sk-ant-secret");
+    useAIConfigStore.getState().setProvider("anthropic");
+    expect(useAIConfigStore.getState().apiKey).toBe("sk-ant-secret");
+  });
+
   it("setApiKey updates state but does NOT persist the apiKey", async () => {
     const { useAIConfigStore } = await import("@/ai/config");
     useAIConfigStore.getState().setApiKey("sk-secret");
