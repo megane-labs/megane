@@ -44,6 +44,42 @@ pub fn cell_params_to_matrix(
     }
 }
 
+/// [`cell_params_to_matrix`] for parameters read from a file, or why they
+/// describe no cell: every length must be positive and finite, every angle
+/// strictly between 0° and 180°, and the three angles must close into a cell
+/// of positive volume (α = β = γ = 179° cannot). The general conversion
+/// divides by `sin γ`, so a zero angle would otherwise fill the matrix with
+/// NaN. Parsers report the error as a warning and return no cell.
+pub fn checked_cell_params_to_matrix(
+    a: f32,
+    b: f32,
+    c: f32,
+    alpha: f32,
+    beta: f32,
+    gamma: f32,
+) -> Result<[f32; 9], String> {
+    if ![a, b, c].iter().all(|v| v.is_finite() && *v > 0.0) {
+        return Err(format!("cell lengths {a} {b} {c} are not all positive"));
+    }
+    if ![alpha, beta, gamma]
+        .iter()
+        .all(|v| v.is_finite() && *v > 0.0 && *v < 180.0)
+    {
+        return Err(format!(
+            "cell angles {alpha} {beta} {gamma} must lie strictly between 0 and 180 degrees"
+        ));
+    }
+    let m = cell_params_to_matrix(a, b, c, alpha, beta, gamma);
+    // `c_z` is the cell height over the a-b plane; it collapses to 0 when the
+    // angles cannot close.
+    if !(m.iter().all(|v| v.is_finite()) && m[8] > 0.0) {
+        return Err(format!(
+            "cell angles {alpha} {beta} {gamma} do not enclose a positive volume"
+        ));
+    }
+    Ok(m)
+}
+
 /// The general cell-parameter → matrix conversion, with no special cases.
 fn triclinic_matrix(a: f32, b: f32, c: f32, alpha: f32, beta: f32, gamma: f32) -> [f32; 9] {
     let to_rad = std::f32::consts::PI / 180.0;
@@ -116,6 +152,34 @@ pub fn matrix_to_params(m: &[f32; 9]) -> (f32, f32, f32, f32, f32, f32) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Parameters read from a file must describe a cell: `γ = 0` used to
+    /// divide by `sin γ = 0` and fill the matrix (and every fractional
+    /// coordinate) with NaN.
+    #[test]
+    fn checked_conversion_rejects_parameters_that_describe_no_cell() {
+        let ok = checked_cell_params_to_matrix(10.0, 11.0, 12.0, 80.0, 95.0, 110.0).unwrap();
+        assert_eq!(
+            ok,
+            cell_params_to_matrix(10.0, 11.0, 12.0, 80.0, 95.0, 110.0)
+        );
+        for (params, why) in [
+            ((10.0, 10.0, 10.0, 0.0, 0.0, 0.0), "angles"),
+            ((10.0, 10.0, 10.0, 90.0, 90.0, 180.0), "angles"),
+            ((10.0, 10.0, 10.0, 90.0, -90.0, 90.0), "angles"),
+            ((10.0, 10.0, 10.0, 90.0, 90.0, f32::NAN), "angles"),
+            ((0.0, 10.0, 10.0, 90.0, 90.0, 90.0), "lengths"),
+            ((10.0, -1.0, 10.0, 90.0, 90.0, 90.0), "lengths"),
+            ((10.0, 10.0, f32::INFINITY, 90.0, 90.0, 90.0), "lengths"),
+            // Each angle is legal on its own, but they cannot close a cell.
+            ((10.0, 10.0, 10.0, 179.0, 179.0, 179.0), "volume"),
+            ((10.0, 10.0, 10.0, 10.0, 10.0, 170.0), "volume"),
+        ] {
+            let (a, b, c, al, be, ga) = params;
+            let err = checked_cell_params_to_matrix(a, b, c, al, be, ga).unwrap_err();
+            assert!(err.contains(why), "{params:?}: {err}");
+        }
+    }
 
     fn assert_rel_close(got: &[f32; 9], want: &[f32; 9], rel: f32) {
         let scale = want.iter().fold(0.0f32, |m, v| m.max(v.abs()));

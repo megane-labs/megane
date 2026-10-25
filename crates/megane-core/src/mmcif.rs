@@ -11,7 +11,7 @@ use std::collections::{HashMap, HashSet};
 
 use crate::atomic::element_from_symbol;
 use crate::bonds;
-use crate::cell::cell_params_to_matrix;
+use crate::cell::checked_cell_params_to_matrix;
 use crate::cif_lex::{field, starts_with_ci, Document, Value};
 use crate::structure::{ss_type_at, FrameChange, HeteroFramesBuilder, ParsedStructure, SsRange};
 
@@ -282,16 +282,21 @@ pub(crate) fn parse_document(text: &str, doc: &Document) -> Result<ParsedStructu
     let cell_beta = cell("_cell.angle_beta");
     let cell_gamma = cell("_cell.angle_gamma");
 
+    let mut warnings: Vec<String> = Vec::new();
     let box_matrix = match (cell_a, cell_b, cell_c, cell_alpha, cell_beta, cell_gamma) {
+        // wwPDB fills `_cell` of NMR / EM entries with the PDB format's
+        // non-crystallographic placeholder, a 1 Å unit cube (see
+        // `pdb::NON_CRYSTAL_CRYST1`): it is no cell.
+        (Some(1.0), Some(1.0), Some(1.0), Some(90.0), Some(90.0), Some(90.0)) => None,
         (Some(a), Some(b), Some(c), Some(alpha), Some(beta), Some(gamma))
             if a > 0.0 && b > 0.0 && c > 0.0 =>
         {
-            Some(cell_params_to_matrix(a, b, c, alpha, beta, gamma))
+            checked_cell_params_to_matrix(a, b, c, alpha, beta, gamma)
+                .map_err(|why| warnings.push(format!("{why}; no unit cell shown")))
+                .ok()
         }
         _ => None,
     };
-
-    let mut warnings: Vec<String> = Vec::new();
 
     // _struct_conn rows are collected up front so per-atom addressing data is
     // only gathered when the file actually declares connectivity.
@@ -1276,6 +1281,32 @@ TURN_P A 1 3 A 1 3
         assert_eq!(a.positions, b.positions);
         assert_eq!(a.elements, b.elements);
         assert_eq!(a.bonds, b.bonds);
+    }
+
+    fn mmcif_with_cell(cell: &str) -> String {
+        format!(
+            "data_x\n{cell}loop_\n_atom_site.group_PDB\n_atom_site.id\n_atom_site.type_symbol\n_atom_site.label_atom_id\n_atom_site.Cartn_x\n_atom_site.Cartn_y\n_atom_site.Cartn_z\nATOM 1 C CA 1 2 3\n"
+        )
+    }
+
+    /// wwPDB writes the PDB unit-cube placeholder into the `_cell` category
+    /// of NMR and EM entries too; it is no cell. A cell whose angles cannot
+    /// close is dropped with a warning instead of becoming NaN.
+    #[test]
+    fn placeholder_and_degenerate_cells_are_no_cell() {
+        let cube = "_cell.length_a 1.000\n_cell.length_b 1.000\n_cell.length_c 1.000\n_cell.angle_alpha 90.00\n_cell.angle_beta 90.00\n_cell.angle_gamma 90.00\n";
+        let s = parse(&mmcif_with_cell(cube)).unwrap();
+        assert!(s.box_matrix.is_none());
+        assert!(s.warnings.is_empty());
+
+        let flat = "_cell.length_a 10\n_cell.length_b 10\n_cell.length_c 10\n_cell.angle_alpha 90\n_cell.angle_beta 90\n_cell.angle_gamma 0\n";
+        let s = parse(&mmcif_with_cell(flat)).unwrap();
+        assert!(s.box_matrix.is_none());
+        assert_eq!(s.warnings.len(), 1);
+        assert!(s.warnings[0].contains("angles"), "{:?}", s.warnings);
+
+        let real = "_cell.length_a 10\n_cell.length_b 10\n_cell.length_c 10\n_cell.angle_alpha 90\n_cell.angle_beta 90\n_cell.angle_gamma 120\n";
+        assert!(parse(&mmcif_with_cell(real)).unwrap().box_matrix.is_some());
     }
 
     #[test]

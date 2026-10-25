@@ -5,7 +5,7 @@
 use std::collections::{HashMap, HashSet};
 
 use crate::atomic::{capitalize, element_from_atom_name_in_residue, symbol_to_atomic_num};
-use crate::cell::cell_params_to_matrix;
+use crate::cell::checked_cell_params_to_matrix;
 use crate::structure::{ss_type_at, FrameChange, HeteroFramesBuilder, ParsedStructure, SsRange};
 
 /// Parsed atom data from a single ATOM/HETATM line.
@@ -152,8 +152,32 @@ fn parse_atom_line(line: &str) -> Option<(Option<i32>, Atom)> {
     Some((serial, Atom { x, y, z, element }))
 }
 
-/// Parse CRYST1 record and convert cell parameters to a 3x3 matrix.
-fn parse_cryst1(line: &str) -> Option<[f32; 9]> {
+/// The CRYST1 parameters the PDB format prescribes for a structure that was
+/// not determined by crystallography (NMR, EM): "If the structure was not
+/// determined by crystallographic means, CRYST1 simply defines a unit cube"
+/// with a = b = c = 1.0, α = β = γ = 90, space group P 1 and Z = 1 (wwPDB
+/// Atomic Coordinate Entry Format, section 8, CRYST1). It says "no cell".
+const NON_CRYSTAL_CRYST1: [f32; 6] = [1.0, 1.0, 1.0, 90.0, 90.0, 90.0];
+
+/// Parse a CRYST1 record into a cell matrix. `Ok(None)` when the record holds
+/// no cell: an unreadable record, zero lengths (what VMD writes for "no
+/// cell"), or the non-crystallographic unit-cube placeholder. `Err` when the
+/// parameters describe no cell at all (e.g. zero angles), for a warning.
+fn parse_cryst1(line: &str) -> Result<Option<[f32; 9]>, String> {
+    let Some(cell) = read_cryst1(line) else {
+        return Ok(None);
+    };
+    let [a, b, c, alpha, beta, gamma] = cell;
+    if a <= 0.0 || b <= 0.0 || c <= 0.0 || cell == NON_CRYSTAL_CRYST1 {
+        return Ok(None);
+    }
+    checked_cell_params_to_matrix(a, b, c, alpha, beta, gamma)
+        .map(Some)
+        .map_err(|why| format!("CRYST1 {why}; no unit cell shown"))
+}
+
+/// The six numbers of a CRYST1 record, or `None` when they cannot be read.
+fn read_cryst1(line: &str) -> Option<[f32; 6]> {
     if line.len() < 54 {
         return None;
     }
@@ -164,12 +188,7 @@ fn parse_cryst1(line: &str) -> Option<[f32; 9]> {
     let alpha: f32 = line[33..40].trim().parse().ok()?;
     let beta: f32 = line[40..47].trim().parse().ok()?;
     let gamma: f32 = line[47..54].trim().parse().ok()?;
-
-    if a <= 0.0 || b <= 0.0 || c <= 0.0 {
-        return None;
-    }
-
-    Some(cell_params_to_matrix(a, b, c, alpha, beta, gamma))
+    Some([a, b, c, alpha, beta, gamma])
 }
 
 /// Parse CONECT record to extract bond pairs.
@@ -242,6 +261,7 @@ pub fn parse_frame0_prefix(text: &str, is_whole_file: bool) -> Result<ParsedStru
 /// exactly as the full parse does).
 fn parse_impl(text: &str, frame0_only: bool) -> Result<ParsedStructure, String> {
     let mut box_matrix: Option<[f32; 9]> = None;
+    let mut warnings: Vec<String> = Vec::new();
     let mut serial_to_index: HashMap<i32, usize> = HashMap::new();
     let mut conect_bonds: Vec<(u32, u32)> = Vec::new();
 
@@ -295,9 +315,11 @@ fn parse_impl(text: &str, frame0_only: bool) -> Result<ParsedStructure, String> 
                 all_models.push(std::mem::take(&mut current_model));
                 model_count += 1;
             }
-            "CRYST1" if box_matrix.is_none() => {
-                box_matrix = parse_cryst1(line);
-            }
+            "CRYST1" if box_matrix.is_none() => match parse_cryst1(line) {
+                Ok(cell) => box_matrix = cell,
+                Err(why) if !warnings.contains(&why) => warnings.push(why),
+                Err(_) => {}
+            },
             "ATOM" | "HETATM" => {
                 if let Some((serial, atom)) = parse_atom_line(line) {
                     // Build serial→index map from first model only
@@ -474,6 +496,7 @@ fn parse_impl(text: &str, frame0_only: bool) -> Result<ParsedStructure, String> 
         ca_res_nums,
         ca_ss_type,
         hetero,
+        warnings,
         ..Default::default()
     })
 }
@@ -750,6 +773,51 @@ mod tests {
         let idx = build_index(single).unwrap();
         assert_eq!(idx.frame0_end, single.len() as u64);
         assert_eq!(idx.n_extra_frames, 0);
+    }
+
+    fn cryst1(params: &str) -> String {
+        format!(
+            "CRYST1{params} P 1           1\nATOM      1  CA  SER A   1       1.000   2.000   3.000  1.00  0.00           C  \nEND\n"
+        )
+    }
+
+    /// The PDB format fixes `CRYST1 1.000 1.000 1.000 90.00 90.00 90.00 P 1`
+    /// as the record of a structure that was not determined by
+    /// crystallography (NMR, EM): it is not a 1 Å unit cell.
+    #[test]
+    fn the_unit_cube_cryst1_placeholder_is_no_cell() {
+        let s = parse(&cryst1("    1.000    1.000    1.000  90.00  90.00  90.00")).unwrap();
+        assert!(s.box_matrix.is_none());
+        assert!(s.warnings.is_empty());
+        // A real cubic cell is kept, and so is a 1 Å cell that is not the
+        // exact placeholder.
+        let s = parse(&cryst1("    4.000    4.000    4.000  90.00  90.00  90.00")).unwrap();
+        assert!(s.box_matrix.is_some());
+        let s = parse(&cryst1("    1.000    1.000    1.000  90.00  90.00 120.00")).unwrap();
+        assert!(s.box_matrix.is_some());
+    }
+
+    /// CRYST1 angles of 0 used to give a NaN cell; they describe no cell, so
+    /// none is returned and the parser says why. Zero lengths stay the
+    /// silent "no cell" that VMD writes.
+    #[test]
+    fn a_cryst1_that_describes_no_cell_is_dropped_with_a_warning() {
+        let s = parse(&cryst1("   10.000   10.000   10.000   0.00   0.00   0.00")).unwrap();
+        assert!(s.box_matrix.is_none());
+        assert_eq!(s.warnings.len(), 1);
+        assert!(s.warnings[0].contains("CRYST1"), "{:?}", s.warnings);
+        assert!(s.positions.iter().all(|v| v.is_finite()));
+        let s = parse(&cryst1("    0.000    0.000    0.000  90.00  90.00  90.00")).unwrap();
+        assert!(s.box_matrix.is_none());
+        assert!(s.warnings.is_empty());
+        // A later valid CRYST1 is still used; a repeated bad one warns once.
+        let bad = "CRYST1   10.000   10.000   10.000   0.00   0.00   0.00 P 1           1\n";
+        let good = cryst1("    4.000    4.000    4.000  90.00  90.00  90.00");
+        let s = parse(&format!("{bad}{good}")).unwrap();
+        assert!(s.box_matrix.is_some());
+        let s = parse(&format!("{bad}{bad}{good}").replace("4.000", "0.000")).unwrap();
+        assert!(s.box_matrix.is_none());
+        assert_eq!(s.warnings.len(), 1);
     }
 
     #[test]
