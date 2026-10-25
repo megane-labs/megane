@@ -567,7 +567,7 @@ export class MoleculeRenderer {
     // they get every frame (the renderer-owned copy, which stays current).
     this.cartoonRenderer?.updatePositions(this.currentPositions);
     if (this.surfaceRenderer?.mesh.visible) {
-      this.surfaceRenderer.updatePositions(frame.positions);
+      this.surfaceRenderer.loadSnapshot(this.surfaceSnapshot(frame.positions));
     }
     this.lineRenderer?.updatePositions(this.currentPositions);
     if (this.selection.hasSelection) {
@@ -629,6 +629,15 @@ export class MoleculeRenderer {
    */
   private drawnSnapshot(): Snapshot | null {
     return this.frameTopology ?? this.snapshot;
+  }
+
+  /**
+   * What the surface is built from: the drawn topology (a heterogeneous
+   * frame's own atom count and elements, else the snapshot's) at `positions`.
+   * Only called while a snapshot is loaded.
+   */
+  private surfaceSnapshot(positions: Float32Array): Snapshot {
+    return { ...this.drawnSnapshot()!, positions };
   }
 
   /** Redraw the simulation cell for a heterogeneous per-frame cell. */
@@ -1124,11 +1133,9 @@ export class MoleculeRenderer {
     if (this.surfaceRenderer) {
       if (showSurface && this.snapshot) {
         // At the frame on screen: a hidden surface skips trajectory frames
-        // (see updateFrame), and the snapshot holds frame 0's positions.
-        this.surfaceRenderer.loadSnapshot({
-          ...this.snapshot,
-          positions: this.getCurrentPositions(),
-        });
+        // (see updateFrame), and the snapshot holds frame 0's positions and,
+        // for a heterogeneous trajectory, frame 0's atoms.
+        this.surfaceRenderer.loadSnapshot(this.surfaceSnapshot(this.getCurrentPositions()));
       }
       this.surfaceRenderer.setVisible(showSurface);
     }
