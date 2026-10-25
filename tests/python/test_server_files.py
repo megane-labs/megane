@@ -6,13 +6,17 @@ import pytest
 from starlette.testclient import TestClient
 
 from megane import server
-from megane.server import _files, _is_loopback, app, configure_files
+from megane.server import _files, _is_loopback, app, configure_files, configure_hosts
+
+LOCAL_URL = "http://localhost:8765"
+LAN_URL = "http://192.168.1.5:8765"
 
 
 @pytest.fixture(autouse=True)
 def _reset_files():
     yield
     configure_files(None)
+    configure_hosts(None)
 
 
 @pytest.fixture
@@ -32,7 +36,11 @@ def tree(tmp_path):
 
 @pytest.fixture
 def local_client():
-    return TestClient(app, client=("127.0.0.1", 50000))
+    return TestClient(app, base_url=LOCAL_URL, client=("127.0.0.1", 50000))
+
+
+def _remote(ip: str = "192.168.1.20", base_url: str = LAN_URL) -> TestClient:
+    return TestClient(app, base_url=base_url, client=(ip, 50000))
 
 
 def test_disabled_by_default(local_client):
@@ -132,21 +140,20 @@ def test_reads_file_content(tree, local_client):
 def test_only_loopback_clients_by_default(tree):
     root, _ = tree
     configure_files(root)
-    remote = TestClient(app, client=("192.168.1.20", 50000))
+    remote = _remote()
     resp = remote.get("/api/files")
     assert resp.status_code == 403
     assert "--files-any-host" in resp.json()["detail"]
     assert remote.get("/api/files/content", params={"path": "a.pdb"}).status_code == 403
-    assert TestClient(app, client=("::1", 1)).get("/api/files").status_code == 200
-    assert TestClient(app, client=("localhost", 1)).get("/api/files").status_code == 200
+    assert TestClient(app, base_url=LOCAL_URL, client=("::1", 1)).get("/api/files").status_code == 200
+    assert TestClient(app, base_url=LOCAL_URL, client=("localhost", 1)).get("/api/files").status_code == 200
 
 
 def test_any_host_serves_every_client(tree):
     root, _ = tree
     configure_files(root, any_host=True)
     assert _files.any_host is True
-    remote = TestClient(app, client=("192.168.1.20", 50000))
-    assert remote.get("/api/files").status_code == 200
+    assert _remote().get("/api/files").status_code == 200
 
 
 @pytest.mark.parametrize(
@@ -204,7 +211,7 @@ def test_index_is_unmarked_without_file_browsing(static_app, local_client):
 
 def test_index_is_unmarked_for_a_refused_client(tree, static_app):
     root, _ = tree
-    remote = TestClient(app, client=("203.0.113.5", 50000))
+    remote = _remote("203.0.113.5", base_url="http://198.51.100.7:8765")
     configure_files(root)
     assert "megane-server-files" not in remote.get("/").text
     configure_files(root, any_host=True)
@@ -216,3 +223,141 @@ def test_index_without_a_built_app(tmp_path, monkeypatch, local_client):
     resp = local_client.get("/")
     assert resp.status_code == 200
     assert "The web UI is not available." in resp.text
+
+
+# ─── Hidden files ────────────────────────────────────────────────────
+
+
+@pytest.mark.parametrize("path", [".secret", "./.secret", "run/../.secret", ".hidden_dir/x", "run\\..\\.secret"])
+def test_content_refuses_hidden_paths(tree, local_client, path):
+    """Dot files are not listed, so they are not served by name either (~/.ssh/id_rsa)."""
+    root, _ = tree
+    configure_files(root)
+    resp = local_client.get("/api/files/content", params={"path": path})
+    assert resp.status_code == 403, path
+    assert "Hidden" in resp.json()["detail"]
+
+
+def test_listing_refuses_hidden_folders(tree, local_client):
+    root, _ = tree
+    (root / ".hidden_dir" / "id_rsa").write_text("key\n")
+    configure_files(root)
+    for path in [".hidden_dir", "run/../.hidden_dir"]:
+        assert local_client.get("/api/files", params={"path": path}).status_code == 403, path
+
+
+def test_dot_and_dot_dot_still_navigate(tree, local_client):
+    root, _ = tree
+    configure_files(root)
+    assert local_client.get("/api/files", params={"path": "run/.."}).json()["path"] == ""
+    assert local_client.get("/api/files/content", params={"path": "./run/../a.pdb"}).status_code == 200
+
+
+@pytest.mark.skipif(os.name == "nt", reason="symlinks need privileges on Windows")
+def test_symlinks_into_hidden_folders_are_refused(tree, local_client):
+    root, _ = tree
+    (root / ".hidden_dir" / "id_rsa").write_text("key\n")
+    (root / "keys").symlink_to(root / ".hidden_dir")
+    (root / "key.pdb").symlink_to(root / ".hidden_dir" / "id_rsa")
+    configure_files(root)
+    names = [e["name"] for e in local_client.get("/api/files").json()["entries"]]
+    assert "keys" not in names
+    assert "key.pdb" not in names
+    assert local_client.get("/api/files", params={"path": "keys"}).status_code == 403
+    assert local_client.get("/api/files/content", params={"path": "keys/id_rsa"}).status_code == 403
+    assert local_client.get("/api/files/content", params={"path": "key.pdb"}).status_code == 403
+
+
+def test_hidden_root_itself_is_served(tmp_path, local_client):
+    """Only names under the root count: a root inside a dot folder still works."""
+    root = tmp_path / ".cache" / "runs"
+    root.mkdir(parents=True)
+    (root / "a.pdb").write_text("ATOM\n")
+    configure_files(root)
+    assert local_client.get("/api/files/content", params={"path": "a.pdb"}).status_code == 200
+
+
+# ─── Host and Origin (DNS rebinding, cross-site pages) ───────────────
+
+
+@pytest.mark.parametrize("endpoint", ["/api/files", "/api/files/content?path=a.pdb"])
+def test_rebound_host_name_is_refused(tree, local_client, endpoint):
+    """A page whose DNS name was pointed at 127.0.0.1 sends its own name as Host."""
+    root, _ = tree
+    configure_files(root)
+    resp = local_client.get(endpoint, headers={"host": "evil.example:8765"})
+    assert resp.status_code == 403
+    assert "--allowed-host" in resp.json()["detail"]
+    configure_files(root, any_host=True)
+    assert local_client.get(endpoint, headers={"host": "evil.example:8765"}).status_code == 403
+
+
+@pytest.mark.parametrize("host", ["localhost", "127.0.0.1:8765", "[::1]:8765", "LOCALHOST:8765", "megane.localhost"])
+def test_loopback_host_names_are_this_machine(tree, local_client, host):
+    root, _ = tree
+    configure_files(root)
+    assert local_client.get("/api/files", headers={"host": host}).status_code == 200
+
+
+@pytest.mark.parametrize("host", ["", "[::1"])
+def test_missing_or_malformed_host_header_is_refused(tree, local_client, host):
+    root, _ = tree
+    configure_files(root)
+    assert local_client.get("/api/files", headers={"host": host}).status_code == 403
+
+
+def test_index_is_unmarked_for_a_rebound_host(tree, static_app, local_client):
+    root, _ = tree
+    configure_files(root)
+    assert "megane-server-files" not in local_client.get("/", headers={"host": "evil.example:8765"}).text
+
+
+def test_cross_origin_file_request_is_refused(tree, local_client):
+    root, _ = tree
+    configure_files(root)
+    params = {"path": "a.pdb"}
+    resp = local_client.get("/api/files/content", params=params, headers={"origin": "http://evil.example"})
+    assert resp.status_code == 403
+    assert "cross-origin" in resp.json()["detail"]
+    same = local_client.get("/api/files/content", params=params, headers={"origin": LOCAL_URL})
+    assert same.status_code == 200
+
+
+def test_ip_address_host_reaches_any_host_files(tree):
+    """`--host 0.0.0.0 --files-any-host`: other machines browse by IP; Docker's port map arrives as localhost."""
+    root, _ = tree
+    configure_files(root, any_host=True)
+    assert _remote().get("/api/files").status_code == 200
+    assert _remote("172.17.0.1", base_url="http://localhost:8080").get("/api/files").status_code == 200
+    assert _remote(base_url="http://node42:8765").get("/api/files").status_code == 403
+
+
+def test_bind_host_name_is_allowed(tree):
+    """`--host node42` binds that name, so browsers may use it as Host."""
+    root, _ = tree
+    configure_files(root, any_host=True)
+    configure_hosts("Node42")
+    assert _remote(base_url="http://node42:8765").get("/api/files").status_code == 200
+    assert _remote(base_url="http://node43:8765").get("/api/files").status_code == 403
+
+
+def test_allowed_host_behind_a_proxy_is_not_this_machine(tree):
+    """A reverse proxy on this machine arrives from loopback, but its clients are not local."""
+    root, _ = tree
+    configure_files(root)
+    configure_hosts("127.0.0.1", ["viewer.example.org"])
+    proxied = TestClient(app, base_url="https://viewer.example.org", client=("127.0.0.1", 50000))
+    resp = proxied.get("/api/files")
+    assert resp.status_code == 403
+    assert "--files-any-host" in resp.json()["detail"]
+    configure_files(root, any_host=True)
+    assert proxied.get("/api/files").status_code == 200
+
+
+def test_configure_hosts_normalizes_names():
+    configure_hosts("[::1]", ["Viewer.Example.org", " lab "])
+    assert server._hosts.bind_host == "::1"
+    assert server._hosts.allowed == frozenset({"viewer.example.org", "lab"})
+    configure_hosts(None)
+    assert server._hosts.bind_host is None
+    assert server._hosts.allowed == frozenset()

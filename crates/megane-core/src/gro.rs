@@ -105,11 +105,12 @@ fn parse_frame_block(
         .parse()
         .map_err(|_| ctx("cannot parse atom count in GRO".into()))?;
 
-    if lines.len() < start + n_atoms + 3 {
+    // Saturating: the count is read from the file and may be near `usize::MAX`.
+    let needed = start.saturating_add(n_atoms).saturating_add(3);
+    if lines.len() < needed {
         return Err(ctx(format!(
-            "GRO file has {} lines but expected at least {}",
+            "GRO file has {} lines but expected at least {needed}",
             lines.len(),
-            start + n_atoms + 3
         )));
     }
 
@@ -433,6 +434,18 @@ protein + ions
     fn test_parse_gro_too_short() {
         let result = parse("title\n");
         assert!(result.is_err());
+    }
+
+    /// The atom-count line is a claim the line check must survive: adding it
+    /// to the line index overflowed `usize` (4294967295 is enough on wasm32).
+    #[test]
+    fn a_huge_atom_count_is_an_error_not_an_overflow() {
+        let gro = format!(
+            "t\n{}\n    1SOL     OW    1   0.100   0.200   0.300\n   1.0 1.0 1.0\n",
+            usize::MAX
+        );
+        let err = parse(&gro).err().expect("rejected");
+        assert!(err.contains("expected at least"), "{err}");
     }
 
     #[test]

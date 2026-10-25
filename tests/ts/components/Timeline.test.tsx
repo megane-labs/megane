@@ -179,4 +179,123 @@ describe("Timeline", () => {
     fireEvent.keyDown(input, { key: "ArrowLeft", target: input });
     expect(onStepBackward).not.toHaveBeenCalled();
   });
+
+  describe("arrow-key scoping", () => {
+    /** A viewer root (focusable, as every host's is) with a Timeline drawn over it. */
+    function renderViewer(props: Partial<typeof defaultProps> = {}) {
+      const onStepBackward = vi.fn();
+      const onStepForward = vi.fn();
+      const utils = render(
+        <div tabIndex={-1}>
+          <Timeline
+            {...defaultProps}
+            onStepBackward={onStepBackward}
+            onStepForward={onStepForward}
+            {...props}
+          />
+        </div>,
+      );
+      const root = utils.container.firstChild as HTMLElement;
+      return { root, onStepBackward, onStepForward };
+    }
+
+    afterEach(() => {
+      document.body.querySelectorAll("[data-outside]").forEach((n) => n.remove());
+    });
+
+    function outsideEditor(): HTMLElement {
+      // A notebook cell: CodeMirror 6 edits a contenteditable <div>, not a <textarea>.
+      const editor = document.createElement("div");
+      editor.setAttribute("data-outside", "");
+      editor.contentEditable = "true";
+      editor.tabIndex = 0;
+      document.body.appendChild(editor);
+      return editor;
+    }
+
+    it("ignores arrows typed into a contenteditable editor elsewhere on the page", () => {
+      const { onStepBackward, onStepForward } = renderViewer();
+      const editor = outsideEditor();
+      editor.focus();
+      // jsdom does not implement isContentEditable; the browser reports it.
+      Object.defineProperty(editor, "isContentEditable", { value: true });
+      expect(fireEvent.keyDown(editor, { key: "ArrowLeft" })).toBe(true);
+      fireEvent.keyDown(editor, { key: "ArrowRight" });
+      expect(onStepBackward).not.toHaveBeenCalled();
+      expect(onStepForward).not.toHaveBeenCalled();
+    });
+
+    it("ignores arrows typed into a contenteditable field inside the viewer", () => {
+      const { root, onStepForward } = renderViewer();
+      const field = document.createElement("div");
+      field.contentEditable = "true";
+      field.tabIndex = 0;
+      root.appendChild(field);
+      field.focus();
+      Object.defineProperty(field, "isContentEditable", { value: true });
+      expect(fireEvent.keyDown(field, { key: "ArrowRight" })).toBe(true);
+      expect(onStepForward).not.toHaveBeenCalled();
+    });
+
+    it("ignores arrows while focus sits on another element outside the viewer", () => {
+      const { onStepForward } = renderViewer();
+      const outside = document.createElement("button");
+      outside.setAttribute("data-outside", "");
+      document.body.appendChild(outside);
+      outside.focus();
+      // Dispatched on document (not the button) so only the focus check can reject it.
+      expect(fireEvent.keyDown(document, { key: "ArrowRight" })).toBe(true);
+      expect(onStepForward).not.toHaveBeenCalled();
+    });
+
+    it("steps when focus is inside the viewer", () => {
+      const { root, onStepBackward, onStepForward } = renderViewer();
+      root.focus();
+      expect(document.activeElement).toBe(root);
+      expect(fireEvent.keyDown(root, { key: "ArrowRight" })).toBe(false);
+      fireEvent.keyDown(root, { key: "ArrowLeft" });
+      expect(onStepForward).toHaveBeenCalledTimes(1);
+      expect(onStepBackward).toHaveBeenCalledTimes(1);
+    });
+
+    it("steps only the viewer that holds focus when a page hosts two", () => {
+      const a = renderViewer();
+      const b = renderViewer();
+      b.root.focus();
+      fireEvent.keyDown(b.root, { key: "ArrowRight" });
+      expect(b.onStepForward).toHaveBeenCalledTimes(1);
+      expect(a.onStepForward).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      ["altKey", "Alt+← is the browser's Back"],
+      ["ctrlKey", "Ctrl+← moves by word"],
+      ["metaKey", "Cmd+← moves to the line start"],
+      ["shiftKey", "Shift+← extends a selection"],
+    ])("leaves a %s arrow to the browser (%s)", (modifier) => {
+      const { root, onStepBackward } = renderViewer();
+      root.focus();
+      // Not cancelled: the browser still performs its own action.
+      expect(fireEvent.keyDown(root, { key: "ArrowLeft", [modifier]: true })).toBe(true);
+      expect(onStepBackward).not.toHaveBeenCalled();
+    });
+
+    it("ignores an arrow another handler already consumed", () => {
+      const { root, onStepForward } = renderViewer();
+      root.focus();
+      const consume = (e: Event) => e.preventDefault();
+      root.addEventListener("keydown", consume);
+      fireEvent.keyDown(root, { key: "ArrowRight" });
+      root.removeEventListener("keydown", consume);
+      expect(onStepForward).not.toHaveBeenCalled();
+    });
+
+    it("ignores other keys and does not cancel them", () => {
+      const { root, onStepBackward, onStepForward } = renderViewer();
+      root.focus();
+      expect(fireEvent.keyDown(root, { key: "ArrowUp" })).toBe(true);
+      expect(onStepBackward).not.toHaveBeenCalled();
+      expect(onStepForward).not.toHaveBeenCalled();
+    });
+  });
 });

@@ -12,7 +12,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
 const { state, FakeWorker } = vi.hoisted(() => {
   const state = {
-    mode: "ok" as "ok" | "err" | "crash",
+    mode: "ok" as "ok" | "err" | "fatal" | "crash" | "messageerror",
     lastReq: null as { id: number; op: string } | null,
     reqs: [] as { id: number; op: string; wasm?: unknown }[],
     created: 0,
@@ -25,6 +25,7 @@ const { state, FakeWorker } = vi.hoisted(() => {
   class FakeWorker {
     onmessage: ((e: { data: unknown }) => void) | null = null;
     onerror: (() => void) | null = null;
+    onmessageerror: (() => void) | null = null;
     constructor() {
       if (state.throwOnCreate) throw new Error("worker blocked");
       state.created++;
@@ -36,6 +37,12 @@ const { state, FakeWorker } = vi.hoisted(() => {
       queueMicrotask(() => {
         if (state.mode === "crash") {
           this.onerror?.();
+        } else if (state.mode === "messageerror") {
+          this.onmessageerror?.();
+        } else if (state.mode === "fatal") {
+          this.onmessage?.({
+            data: { id: req.id, ok: false, op: req.op, error: "init failed", fatal: true },
+          });
         } else if (state.mode === "ok") {
           this.onmessage?.({
             data: {
@@ -177,6 +184,80 @@ describe("parseClient worker path", () => {
     const out = await client.parseXTCFile(fakeFile("t.xtc"), 4);
     expect(out).toEqual({ tag: "sync" });
     expect(sync.parseXTCFile).toHaveBeenCalled();
+  });
+
+  describe("a request the worker rejects (a malformed file)", () => {
+    it("rejects with a WorkerReplyError carrying the parser's message", async () => {
+      const client = await freshClient();
+      state.mode = "err";
+      const err = await client.decodeTrajectoryFrame(0, 0).catch((e: unknown) => e);
+      expect(err).toBeInstanceOf(client.WorkerReplyError);
+      expect((err as Error).message).toBe("boom");
+    });
+
+    it("keeps the worker for the next structure parse", async () => {
+      const client = await freshClient();
+      const sync = await import("@/parsers/parseClientSync");
+      state.mode = "err";
+      expect(await client.parseStructureFile(fakeFile("broken.pdb"))).toEqual({ tag: "sync" });
+      expect(sync.parseStructureFile).toHaveBeenCalledTimes(1);
+
+      state.mode = "ok";
+      expect(await client.parseStructureFile(fakeFile("good.pdb"))).toEqual({ tag: "worker" });
+      expect(sync.parseStructureFile).toHaveBeenCalledTimes(1);
+      expect(state.created).toBe(1);
+    });
+
+    it("keeps the worker after a structure text or trajectory parse error", async () => {
+      const client = await freshClient();
+      state.mode = "err";
+      expect(await client.parseStructureText("ATOM", "broken.pdb")).toEqual({ tag: "sync" });
+      expect(await client.parseXTCFile(fakeFile("broken.xtc"), 4)).toEqual({ tag: "sync" });
+
+      state.mode = "ok";
+      expect(await client.parseStructureText("ATOM", "good.pdb")).toEqual({ tag: "worker" });
+      expect(await client.parseXTCFile(fakeFile("good.xtc"), 4)).toEqual({ tag: "worker" });
+      expect(state.created).toBe(1);
+    });
+
+    it("keeps lazily streamed trajectories decoding", async () => {
+      const client = await freshClient();
+      const handle = await client.indexTrajectoryLazy(fakeFile("t.xtc"), "xtc", 4);
+      expect(handle).not.toBeNull();
+
+      state.mode = "err";
+      await client.parseStructureFile(fakeFile("broken.pdb"));
+
+      state.mode = "ok";
+      state.result = { positions: new Float32Array(12), vectors: new Float32Array(0) };
+      const frame = await client.decodeTrajectoryFrame(handle!.trajectoryId, 1);
+      expect(frame.positions).toHaveLength(12);
+      expect(state.lastReq?.op).toBe("decodeFrame");
+      expect(client.shouldUseLazyTrajectory("xtc", 64 * 1024 * 1024)).toBe(true);
+    });
+  });
+
+  it("drops the worker after a fatal reply (its WASM module would not start)", async () => {
+    const client = await freshClient();
+    const sync = await import("@/parsers/parseClientSync");
+    state.mode = "fatal";
+    expect(await client.parseStructureFile(fakeFile("a.pdb"))).toEqual({ tag: "sync" });
+
+    state.mode = "ok";
+    expect(await client.parseStructureFile(fakeFile("b.pdb"))).toEqual({ tag: "sync" });
+    expect(sync.parseStructureFile).toHaveBeenCalledTimes(2);
+    expect(state.posted).toBe(1);
+    expect(client.shouldUseLazyTrajectory("xtc", 64 * 1024 * 1024)).toBe(false);
+  });
+
+  it("drops the worker when a response cannot be read", async () => {
+    const client = await freshClient();
+    state.mode = "messageerror";
+    expect(await client.parseStructureFile(fakeFile("a.pdb"))).toEqual({ tag: "sync" });
+
+    state.mode = "ok";
+    expect(await client.parseStructureFile(fakeFile("b.pdb"))).toEqual({ tag: "sync" });
+    expect(state.posted).toBe(1);
   });
 
   it("builds a lazy XTC handle from the File, without reading it on the main thread", async () => {

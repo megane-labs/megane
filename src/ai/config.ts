@@ -1,6 +1,7 @@
 /**
  * AI configuration store with localStorage persistence.
- * Manages provider, model, and API key settings.
+ * Manages provider, model, and API key settings. Provider, model and the
+ * BYOK toggle are persisted; API keys stay in memory, one per provider.
  */
 
 import { create } from "zustand";
@@ -119,6 +120,12 @@ function saveConfig(config: AIPreferences) {
 }
 
 interface AIConfigStore extends AIPreferences {
+  /**
+   * The key the user typed for each provider this session (memory only, like
+   * `apiKey`). `apiKey` is always the current provider's entry, so switching
+   * providers never sends one vendor's secret to another vendor's endpoint.
+   */
+  apiKeys: Partial<Record<AIProvider, string>>;
   setProvider: (provider: AIProvider) => void;
   setModel: (model: string) => void;
   setApiKey: (apiKey: string) => void;
@@ -127,10 +134,13 @@ interface AIConfigStore extends AIPreferences {
 
 export const useAIConfigStore = create<AIConfigStore>((set, get) => ({
   ...loadConfig(),
+  apiKeys: {},
 
   setProvider: (provider) => {
     const defaultModel = PROVIDER_MODELS[provider][0].value;
-    set({ provider, model: defaultModel });
+    const { provider: previous, apiKey, apiKeys } = get();
+    const keys = { ...apiKeys, [previous]: apiKey };
+    set({ provider, model: defaultModel, apiKey: keys[provider] ?? "", apiKeys: keys });
     saveConfig({ ...get(), provider, model: defaultModel });
   },
 
@@ -140,7 +150,7 @@ export const useAIConfigStore = create<AIConfigStore>((set, get) => ({
   },
 
   setApiKey: (apiKey) => {
-    set({ apiKey });
+    set({ apiKey, apiKeys: { ...get().apiKeys, [get().provider]: apiKey } });
     saveConfig({ ...get(), apiKey });
   },
 

@@ -59,7 +59,7 @@ docker run --rm -p 127.0.0.1:8080:8080 -v ./mydata:/data megane \
   megane serve --files-root /data --files-any-host --port 8080 --no-browser
 ```
 
-Then open a file from the Load Structure node's *Open from server…*. The page does not load a file named on the `megane serve` command line, so browse to it instead. Docker's port mapping makes your browser a non-local client of the container, which is why `--files-any-host` is needed; publishing the port on `127.0.0.1` keeps it reachable from your machine only.
+Then open a file from the Load Structure node's *Open from server…*. The page does not load a file named on the `megane serve` command line, so browse to it instead. Docker's port mapping makes your browser a non-local client of the container, which is why `--files-any-host` is needed; publishing the port on `127.0.0.1` keeps it reachable from your machine only. The image sets `MEGANE_HOST=0.0.0.0` so the server listens on the container's interfaces; outside a container `megane serve` listens on `127.0.0.1` (see [Security](/guide/cli#security)).
 
 For running from source, see the [Standalone web app guide](/guide/cli).
 
