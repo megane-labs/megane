@@ -116,10 +116,14 @@ test.describe("webapp: 1crn (no trajectory)", () => {
     // load is sufficient to exercise the contract; this check just
     // confirms drag-drop is the supported path and the Timeline gates on
     // totalFrames > 1.
-    const totalFramesAttr = await page
-      .locator('[data-testid="megane-viewer"]')
-      .getAttribute("data-total-frames");
-    // caffeine demo trajectory has > 1 frame; sanity check.
-    expect(Number(totalFramesAttr)).toBeGreaterThan(1);
+    // caffeine demo trajectory has > 1 frame; sanity check. It loads after
+    // the structure's first frame (which is all waitForReady waits for), so
+    // wait for it rather than reading the attribute once.
+    const viewer = page.locator('[data-testid="megane-viewer"]');
+    await expect
+      .poll(async () => Number(await viewer.getAttribute("data-total-frames")), {
+        timeout: 30_000,
+      })
+      .toBeGreaterThan(1);
   });
 });

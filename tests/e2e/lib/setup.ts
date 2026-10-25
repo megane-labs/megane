@@ -257,19 +257,25 @@ export async function captureFullPage(
  * Take a screenshot of just the viewer-root region. Used as the
  * cross-platform Parity baseline (the same fixed input should produce the
  * same viewer pixels regardless of host UI chrome).
+ *
+ * A viewer that still runs past the viewport once scrolled into view (a VS
+ * Code notebook cell output: the notebook scrolls its own list, not the
+ * webview the outputs are drawn in) is captured with the viewport grown to
+ * fit it. Left to Playwright, the element screenshot grows the viewport for
+ * the capture without waiting for the host to lay out again, and VS Code's
+ * notebook webview catches up asynchronously, so the same view came out up
+ * to 300 px off from one run to the next.
  */
 export async function captureViewerRegion(scope: Page | Frame, outPath: string): Promise<Buffer> {
   if ("evaluate" in scope && typeof (scope as Page).screenshot === "function") {
     await stabilizeUi(scope as Page);
   }
   const target = scope.locator('[data-testid="viewer-root"]').first();
-  // The viewer draws on demand, but a capture of an element that runs past
-  // the viewport needs the viewer's frame to keep presenting while Chromium
-  // grows the viewport for it: in the VS Code notebook (an out-of-process
-  // webview whose layout catches up asynchronously) an idle viewer is
-  // captured from a stale frame, 125 px off. Keep it drawing every
-  // animation frame for the duration of the capture, as it always did before
-  // it drew on demand.
+  await target.scrollIntoViewIfNeeded();
+  const restoreViewport = await growViewportToFit(target);
+  // The viewer draws on demand; keep it presenting frames for the duration
+  // of the capture, as it did before it drew on demand, so the capture never
+  // waits on a frame an idle viewer would not draw.
   await scope.evaluate(() => {
     const w = window as {
       __megane_test?: { requestRender?: () => void };
@@ -281,13 +287,8 @@ export async function captureViewerRegion(scope: Page | Frame, outPath: string):
     };
     tick();
   });
-  let buf: Buffer;
   try {
-    buf = await target.screenshot({
-      path: outPath,
-      animations: "disabled",
-      caret: "hide",
-    });
+    return await target.screenshot({ path: outPath, animations: "disabled", caret: "hide" });
   } finally {
     await scope
       .evaluate(() => {
@@ -296,8 +297,74 @@ export async function captureViewerRegion(scope: Page | Frame, outPath: string):
         w.__meganeCaptureDraw = null;
       })
       .catch(() => {});
+    await restoreViewport();
   }
-  return buf;
+}
+
+type Box = { x: number; y: number; width: number; height: number };
+type Size = { width: number; height: number };
+
+/**
+ * Grow the page's viewport until `target` fits in it, waiting for the host
+ * to lay out again after each step (growing it can move `target` further
+ * down: a notebook scrolled to its last output scrolls back up), and return
+ * how to put it back.
+ */
+async function growViewportToFit(target: Locator): Promise<() => Promise<void>> {
+  const page = target.page();
+  const original = page.viewportSize();
+  let size = original;
+  for (let step = 0; size && step < 4; step++) {
+    const box = await target.boundingBox();
+    const next = box && viewportToFit(box, size, VIEWPORT_SLACK_PX);
+    if (!next) break;
+    size = next;
+    await page.setViewportSize(size);
+    await waitForSettledBox(target);
+  }
+  if (!original || size === original) return async () => {};
+  return async () => {
+    await page.setViewportSize(original);
+    await waitForSettledBox(target).catch(() => {});
+  };
+}
+
+/**
+ * Room left below (or right of) a viewer the viewport is grown for, for host
+ * chrome pinned to the viewport's edge: VS Code's status bar would otherwise
+ * cover the viewer's bottom 22 px.
+ */
+const VIEWPORT_SLACK_PX = 64;
+
+/**
+ * The viewport `box` fits in with `slack` px to spare past each edge it runs
+ * over, or null when it fits a `viewport`-sized one already (or starts above
+ * or left of the page, which a bigger viewport does not help with).
+ */
+function viewportToFit(box: Box, viewport: Size, slack = 0): Size | null {
+  if (box.x < 0 || box.y < 0) return null;
+  const right = Math.ceil(box.x + box.width);
+  const bottom = Math.ceil(box.y + box.height);
+  if (right <= viewport.width && bottom <= viewport.height) return null;
+  return {
+    width: right <= viewport.width ? viewport.width : right + slack,
+    height: bottom <= viewport.height ? viewport.height : bottom + slack,
+  };
+}
+
+/** Wait until `target`'s box reads the same for half a second. */
+async function waitForSettledBox(target: Locator, timeoutMs = 15_000): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  let last = "";
+  let same = 0;
+  while (Date.now() < deadline) {
+    const key = JSON.stringify(await target.boundingBox());
+    same = key === last ? same + 1 : 0;
+    last = key;
+    if (same >= 5) return;
+    await target.page().waitForTimeout(100);
+  }
+  throw new Error(`viewer-root did not stop moving within ${timeoutMs} ms`);
 }
 
 /**
