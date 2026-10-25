@@ -57,6 +57,14 @@ def test_write_pdb_round_trips_bonds_cell_and_labels(tmp_path):
     assert parsed.box[0, 0] == pytest.approx(10.0, abs=1e-3)
 
 
+def test_write_pdb_splits_residue_labels_at_the_trailing_number():
+    # The number is the label's trailing -?digits; the name keeps its digits.
+    text = write_structure(_water(), "pdb", atom_labels=["HOH-3", "T3P5", "1PE12"])
+    assert " HOH    -3 " in text
+    assert " T3P     5 " in text
+    assert " 1PE    12 " in text
+
+
 def test_write_mol_keeps_bond_orders():
     s = _water()
     s.bond_orders = np.array([2, 1], dtype=np.uint8)
