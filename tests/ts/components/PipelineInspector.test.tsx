@@ -21,6 +21,7 @@ function tinySnapshot(): Snapshot {
     boxOrigin: null,
     atomChainIds: new Uint8Array([65, 65, 66]), // A, A, B
     atomBFactors: null,
+    atomLabels: ["ALA1", "ALA1", "HOH2"],
   };
 }
 
@@ -32,14 +33,12 @@ describe("PipelineInspector", () => {
   beforeEach(() => {
     usePipelineStore.getState().setInspectorLayers([]);
     usePipelineStore.getState().setSnapshot(tinySnapshot());
-    usePipelineStore.getState().setAtomLabels(["ALA1", "ALA1", "HOH2"]);
   });
 
   afterEach(() => {
     cleanup();
     usePipelineStore.getState().setInspectorLayers([]);
     usePipelineStore.getState().setSnapshot(null);
-    usePipelineStore.getState().setAtomLabels(null);
   });
 
   it("prompts to load a structure when none is present", () => {
@@ -81,6 +80,29 @@ describe("PipelineInspector", () => {
     expect((filter!.data.params as FilterParams).query).toBe('element == "C"');
     // Live count reflects the single carbon.
     expect(screen.getByTestId("inspector-selected-count").textContent).toContain("1 atom");
+  });
+
+  // Regression: the live count and the residue chips read the store's
+  // `atomLabels`, which no host sets, so for a file opened into a loader
+  // `resname` matched nothing here while the Filter node matched its atoms.
+  it("previews resname selections from the labels of a file opened in a loader", () => {
+    const store = usePipelineStore.getState();
+    store.setSnapshot(null);
+    const loaderId = store.nodes.find((n) => n.type === "load_structure")!.id;
+    store.setNodeSnapshot(loaderId, {
+      snapshot: { ...tinySnapshot(), atomLabels: undefined },
+      frames: null,
+      meta: null,
+      labels: ["ALA1", "ALA1", "HOH2"],
+    });
+    try {
+      render(<PipelineInspector />);
+      fireEvent.click(screen.getByTestId("inspector-add-layer"));
+      fireEvent.click(screen.getByTestId("inspector-chip-resname-ALA"));
+      expect(screen.getByTestId("inspector-selected-count").textContent).toContain("2 atoms");
+    } finally {
+      usePipelineStore.getState().removeNodeSnapshot(loaderId);
+    }
   });
 
   it("editing the raw expression updates the filter query", () => {
@@ -126,7 +148,6 @@ describe("PipelineInspector — 3D interactions", () => {
   beforeEach(() => {
     usePipelineStore.getState().setInspectorLayers([]);
     usePipelineStore.getState().setSnapshot(tinySnapshot());
-    usePipelineStore.getState().setAtomLabels(["ALA1", "ALA1", "HOH2"]);
     usePipelineUIStore.getState().setMode("inspector");
     useInspectorInteractionStore.setState({
       previewIndices: null,
@@ -141,7 +162,6 @@ describe("PipelineInspector — 3D interactions", () => {
     usePipelineUIStore.getState().setMode("editor");
     usePipelineStore.getState().setInspectorLayers([]);
     usePipelineStore.getState().setSnapshot(null);
-    usePipelineStore.getState().setAtomLabels(null);
   });
 
   it("publishes a live preview of the active selection to the 3D bridge", () => {

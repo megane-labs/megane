@@ -93,26 +93,20 @@ function noInput(): NodeError {
 
 /**
  * Resolve the atom labels used for selection / coloring / text labels (e.g.
- * `resname == "HOH"`, color-by-residue, Label Generator's "resname" source).
- * The user-selected *display* label source wins when set (`ctx.atomLabels`);
- * otherwise we use the residue labels parsed from the structure file, which
- * the load_structure node attached to the stream's snapshot
- * (`Snapshot.atomLabels`).
+ * `resname == "HOH"`, color-by-residue, Label Generator's "resname" source):
+ * the residue labels parsed from the structure file, which the load_structure
+ * node attached to the stream's snapshot (`Snapshot.atomLabels`). Hosts and
+ * panels that preview a selection read the same field off the snapshot they
+ * show, so their counts match what the executors select.
  *
- * This keeps `resname` selections and residue coloring working out of the box
- * without forcing the user to switch the display label source — and without
- * turning on on-screen atom text labels, which are driven by a separate path
- * (the label_generator node / `LabelData`), not by these labels.
+ * Resolving them does not turn on on-screen atom text labels, which are driven
+ * by a separate path (the label_generator node / `LabelData`).
  *
  * Reading them off the stream's own snapshot means multi-loader graphs each
  * resolve to their own structure's labels, and labels stay aligned with the
  * atoms after Replicate, Symmetry and structure edits copy or reorder them.
  */
-export function resolveEffectiveLabels(
-  ctx: PipelineExecutionContext,
-  particle: ParticleData | undefined,
-): string[] | null {
-  if (ctx.atomLabels) return ctx.atomLabels;
+export function resolveEffectiveLabels(particle: ParticleData | undefined): string[] | null {
   return particle?.source.atomLabels ?? null;
 }
 
@@ -250,8 +244,8 @@ export const NODE_EXECUTORS: NodeExecutorRegistry = {
     return { outputs };
   },
 
-  filter: ({ params, inputs, ctx, addError }) => {
-    const labels = resolveEffectiveLabels(ctx, inputParticle(inputs));
+  filter: ({ params, inputs, addError }) => {
+    const labels = resolveEffectiveLabels(inputParticle(inputs));
     const outputs = executeFilter(params, inputs, labels);
     const outData = outputs.get("out");
     if (!inputs.get("in")?.length) {
@@ -323,8 +317,8 @@ export const NODE_EXECUTORS: NodeExecutorRegistry = {
     return { outputs };
   },
 
-  color: ({ params, inputs, ctx, addError }) => {
-    const labels = resolveEffectiveLabels(ctx, inputParticle(inputs));
+  color: ({ params, inputs, addError }) => {
+    const labels = resolveEffectiveLabels(inputParticle(inputs));
     const outputs = executeColor(params, inputs, labels);
     if (!inputs.get("in")?.length) addError(noInput());
     return { outputs };
@@ -336,10 +330,10 @@ export const NODE_EXECUTORS: NodeExecutorRegistry = {
     return { outputs };
   },
 
-  label_generator: ({ params, inputs, ctx, addError }) => {
+  label_generator: ({ params, inputs, addError }) => {
     // Same label resolution as Filter / Color, read off the `particle` port.
     const particle = inputs.get("particle")?.[0] as ParticleData | undefined;
-    const labels = resolveEffectiveLabels(ctx, particle);
+    const labels = resolveEffectiveLabels(particle);
     const outputs = executeLabelGenerator(params, inputs, labels);
     if (!inputs.get("particle")?.length) addError(noInput());
     return { outputs };

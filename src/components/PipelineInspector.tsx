@@ -119,7 +119,9 @@ export function PipelineInspector() {
   const snapshot = useScopedPipelineStore(
     (s) => s.viewportState.particles[0]?.source ?? s.snapshot,
   );
-  const atomLabels = useScopedPipelineStore((s) => s.atomLabels);
+  // Residue labels ride on the snapshot (see `resolveEffectiveLabels`), so
+  // the live count and chips match what the Filter node selects.
+  const atomLabels = snapshot?.atomLabels ?? null;
   const setInspectorLayers = useScopedPipelineStore((s) => s.setInspectorLayers);
   const setMode = useScopedPipelineUIStore((s) => s.setMode);
   const isActiveMode = useScopedPipelineUIStore((s) => s.mode === "inspector");

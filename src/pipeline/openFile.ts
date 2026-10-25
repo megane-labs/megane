@@ -220,7 +220,6 @@ export function installMinimalGraph(api: StoreApi<PipelineStore>): void {
     nodeParseErrors: {},
     nodeStreamingData: {},
     snapshot: null,
-    atomLabels: null,
     structureFrames: null,
     structureMeta: null,
     structureProvider: null,

@@ -151,7 +151,10 @@ export function QuickStylePanel({
   const nodes = useStore(store, (s) => s.nodes);
   const edges = useStore(store, (s) => s.edges);
   const hasCell = useStore(store, (s) => s.viewportState.cells.length > 0);
-  const hasResidueLabels = useStore(store, (s) => !!s.atomLabels && s.atomLabels.length > 0);
+  const hasResidueLabels = useStore(
+    store,
+    (s) => (s.viewportState.particles[0]?.source.atomLabels?.length ?? 0) > 0,
+  );
   const setQuickStyle = useStore(store, (s) => s.setQuickStyle);
   const { style, available } = useMemo(() => readQuickStyle(nodes, edges), [nodes, edges]);
 

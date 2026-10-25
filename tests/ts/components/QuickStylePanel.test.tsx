@@ -104,6 +104,22 @@ describe("QuickStylePanel", () => {
     );
   });
 
+  // Regression: the panel read the store's `atomLabels`, which no host sets,
+  // so a file's residue labels never enabled the Residue option.
+  it("offers residue labels when the loaded file has them", () => {
+    const store = createPipelineStore();
+    store.getState().setNodeSnapshot("loader-1", {
+      snapshot: snapshot(),
+      frames: null,
+      meta: null,
+      labels: ["HOH1", "HOH1"],
+    });
+    render(<QuickStylePanel store={store} />);
+    expect((screen.getByTestId("quick-style-labels-resname") as HTMLButtonElement).disabled).toBe(
+      false,
+    );
+  });
+
   it("shows the bond tolerance only for distance-inferred bonds", () => {
     const store = loadedStore();
     render(<QuickStylePanel store={store} />);

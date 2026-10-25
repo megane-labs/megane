@@ -21,7 +21,6 @@ export type PipelineStoreSnapshot = Pick<
   | "edges"
   | "viewportState"
   | "snapshot"
-  | "atomLabels"
   | "structureFrames"
   | "structureMeta"
   | "fileFrames"
@@ -39,7 +38,6 @@ export function capturePipelineStore(state: PipelineStore): PipelineStoreSnapsho
     edges: state.edges,
     viewportState: state.viewportState,
     snapshot: state.snapshot,
-    atomLabels: state.atomLabels,
     structureFrames: state.structureFrames,
     structureMeta: state.structureMeta,
     fileFrames: state.fileFrames,

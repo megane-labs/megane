@@ -56,10 +56,11 @@ describe("createMeganeStores", () => {
     const a = createMeganeStores();
     const b = createMeganeStores();
 
-    a.pipeline.getState().setAtomLabels(["ALA", "GLY"]);
+    const labelled = { ...a.pipeline.getState().snapshot, nAtoms: 0 } as never;
+    a.pipeline.getState().setSnapshot(labelled);
 
-    expect(a.pipeline.getState().atomLabels).toEqual(["ALA", "GLY"]);
-    expect(b.pipeline.getState().atomLabels).toBeNull();
+    expect(a.pipeline.getState().snapshot).toBe(labelled);
+    expect(b.pipeline.getState().snapshot).toBeNull();
   });
 
   it("isolates playback state", () => {

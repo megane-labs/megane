@@ -75,7 +75,6 @@ export interface PipelineStore {
 
   // Molecular data for pipeline execution context
   snapshot: Snapshot | null;
-  atomLabels: string[] | null;
   structureFrames: Frame[] | null;
   structureMeta: TrajectoryMeta | null;
   /** Pre-built lazy/streaming provider for a multi-frame structure file (mutually exclusive with structureFrames). */
@@ -103,7 +102,6 @@ export interface PipelineStore {
   nodeStreamingData: Record<string, NodeStreamingData>;
 
   setSnapshot: (s: Snapshot | null) => void;
-  setAtomLabels: (labels: string[] | null) => void;
   setStructureFrames: (frames: Frame[] | null, meta: TrajectoryMeta | null) => void;
   setStructureProvider: (provider: FrameProvider | null) => void;
   setFileFrames: (frames: Frame[] | null, meta: TrajectoryMeta | null) => void;
@@ -248,7 +246,6 @@ function createInitialGraph(): { nodes: Node<PipelineNodeData>[]; edges: Edge[] 
 
 const CLEARED_EXECUTION_CONTEXT = {
   snapshot: null,
-  atomLabels: null,
   structureFrames: null,
   structureMeta: null,
   structureProvider: null,
@@ -304,7 +301,6 @@ export const pipelineStateCreator: StateCreator<PipelineStore> = (set, get, api)
   nodeErrors: {},
   editRevision: 0,
   snapshot: null,
-  atomLabels: null,
   structureFrames: null,
   structureMeta: null,
   structureProvider: null,
@@ -321,10 +317,6 @@ export const pipelineStateCreator: StateCreator<PipelineStore> = (set, get, api)
 
   setSnapshot: (s) => {
     set({ snapshot: s, ...NO_GENERATED_UNDO });
-    get().execute();
-  },
-  setAtomLabels: (labels) => {
-    set({ atomLabels: labels });
     get().execute();
   },
   setStructureFrames: (frames, meta) => {
@@ -632,7 +624,6 @@ export const pipelineStateCreator: StateCreator<PipelineStore> = (set, get, api)
       nodes,
       edges,
       snapshot,
-      atomLabels,
       structureFrames,
       structureMeta,
       structureProvider,
@@ -646,7 +637,6 @@ export const pipelineStateCreator: StateCreator<PipelineStore> = (set, get, api)
     } = get();
     const ctx: PipelineExecutionContext = {
       snapshot,
-      atomLabels,
       structureFrames,
       structureMeta,
       structureProvider,

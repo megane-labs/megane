@@ -16,7 +16,6 @@ const { storeState, listeners } = vi.hoisted(() => ({
     nodes: [] as StoreNode[],
     nodeSnapshots: {} as Record<string, unknown>,
     snapshot: null,
-    atomLabels: null,
     structureFrames: null,
     structureMeta: null,
     generatedUndoStack: [] as { id: number }[],
@@ -327,7 +326,6 @@ describe("PipelineChatBox — submission", () => {
       // self-check context, empty for the same reason.
       {
         snapshot: null,
-        atomLabels: null,
         structureFrames: null,
         structureMeta: null,
         nodeSnapshots: {},
@@ -341,7 +339,6 @@ describe("PipelineChatBox — submission", () => {
 describe("resolveStructureContext", () => {
   const emptyGlobals = {
     snapshot: null,
-    atomLabels: null,
     structureFrames: null,
     structureMeta: null,
   };
@@ -365,11 +362,10 @@ describe("resolveStructureContext", () => {
       snapshot: globalSnapshot,
     });
     expect(ctx.snapshot).toBe(globalSnapshot);
-    // No display labels: the self-check reads each loader's own, as the store
-    // does, and the summary falls back to the primary loader's.
-    expect(ctx.atomLabels).toBeNull();
+    // The self-check reads each loader's own labels, as the store does, and
+    // the summary describes the primary loader's.
     expect(summaryLabels(ctx)).toEqual(["HOH"]);
-    expect(summaryLabels({ ...ctx, atomLabels: ["SOL"] })).toEqual(["SOL"]);
+    expect(summaryLabels({ ...ctx, loaderIds: [] })).toBeNull();
   });
 
   it("falls back to the load_structure node's snapshot once the globals are cleared", () => {

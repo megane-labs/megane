@@ -226,6 +226,14 @@ describe("collectOverlapErrors", () => {
     expect(collectOverlapErrors(p, { snapshot: makeSnapshot([6, 6, 1]) })).toEqual([]);
   });
 
+  it("resolves resname queries from the labels on the loaded snapshot", () => {
+    const p = twoTreatedBranches('resname == "HOH"', 'resname == "ALA"');
+    const snapshot = { ...makeSnapshot([8, 1, 6]), atomLabels: ["HOH1", "HOH1", "ALA2"] };
+    expect(collectOverlapErrors(p, { snapshot })).toEqual([]);
+    const overlapping = twoTreatedBranches('resname == "HOH"', "index < 2");
+    expect(collectOverlapErrors(overlapping, { snapshot })[0]).toContain("overlap by 2 atom(s)");
+  });
+
   it("does not guess at a branch whose query cannot be parsed", () => {
     const p = twoTreatedBranches("chain A", 'element == "C"');
     expect(collectOverlapErrors(p, { snapshot: makeSnapshot([6, 1]) })).toEqual([]);
