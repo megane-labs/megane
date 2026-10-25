@@ -172,11 +172,11 @@ fn ss_range_from_fields(
     auth_end: Value,
     ss_type: u8,
 ) -> Option<SsRange> {
-    let (chain, beg, end) = match (label_beg.as_u32(), label_end.as_u32()) {
+    let (chain, beg, end) = match (label_beg.as_i32(), label_end.as_i32()) {
         (Some(b), Some(e)) => (label_asym, b, e),
         _ => {
-            let b = auth_beg.as_u32()?;
-            let e = auth_end.as_u32()?;
+            let b = auth_beg.as_i32()?;
+            let e = auth_end.as_i32()?;
             let chain = match auth_asym.get() {
                 Some(a) if !a.is_empty() => auth_asym,
                 _ => label_asym,
@@ -313,7 +313,7 @@ pub(crate) fn parse_document(text: &str, doc: &Document) -> Result<ParsedStructu
     let mut bfactors: Vec<f32> = Vec::new();
     let mut ca_indices: Vec<u32> = Vec::new();
     let mut ca_chain_ids: Vec<u8> = Vec::new();
-    let mut ca_res_nums: Vec<u32> = Vec::new();
+    let mut ca_res_nums: Vec<i32> = Vec::new();
     let mut addr: Vec<AtomAddress> = Vec::new();
 
     // Loop rows are a CIF token stream (see `cif_lex`): quoted atom names
@@ -400,7 +400,11 @@ pub(crate) fn parse_document(text: &str, doc: &Document) -> Result<ParsedStructu
                     let atom_idx = model_elements[0].len() as u32;
                     ca_indices.push(atom_idx);
                     ca_chain_ids.push(chain_byte);
-                    ca_res_nums.push(label_seq.or(auth_seq).unwrap_or(0));
+                    // Signed: author numbering puts expression tags below 1.
+                    let res_num = at(row, cols.label_seq_id)
+                        .and_then(|v| v.as_i32())
+                        .or_else(|| at(row, cols.auth_seq_id).and_then(|v| v.as_i32()));
+                    ca_res_nums.push(res_num.unwrap_or(0));
                 }
 
                 // Residue addressing for _struct_conn partner resolution.
@@ -581,7 +585,7 @@ pub(crate) fn parse_document(text: &str, doc: &Document) -> Result<ParsedStructu
         ca_chain_ids,
         ca_res_nums,
         ca_ss_type,
-        symmetry_ops: crate::cif::symmetry_ops(text, doc),
+        symmetry_ops: crate::cif::symmetry_ops(text, &doc.items),
         warnings,
         hetero,
         ..Default::default()
@@ -1276,6 +1280,43 @@ TURN_P A 1 3 A 1 3
         let s = parse(&text).expect("parse");
         assert_eq!(s.n_atoms, 3);
         assert_eq!(s.ca_ss_type, vec![1, 1, 2]);
+    }
+
+    /// Author numbering puts expression tags below 1. A file that carries only
+    /// `auth_seq_id` keeps those Cα residue numbers signed, and a helix that
+    /// starts in the tag still covers them.
+    #[test]
+    fn negative_auth_residue_numbers_reach_the_backbone() {
+        let text = "data_tag
+loop_
+_atom_site.group_PDB
+_atom_site.id
+_atom_site.type_symbol
+_atom_site.label_atom_id
+_atom_site.label_comp_id
+_atom_site.label_asym_id
+_atom_site.auth_seq_id
+_atom_site.Cartn_x
+_atom_site.Cartn_y
+_atom_site.Cartn_z
+ATOM 1 C CA HIS A -1 0.0 0.0 0.0
+ATOM 2 C CA MET A 0 3.8 0.0 0.0
+ATOM 3 C CA ALA A 1 7.6 0.0 0.0
+#
+loop_
+_struct_conf.conf_type_id
+_struct_conf.beg_label_asym_id
+_struct_conf.beg_label_seq_id
+_struct_conf.end_label_seq_id
+_struct_conf.beg_auth_asym_id
+_struct_conf.beg_auth_seq_id
+_struct_conf.end_auth_seq_id
+HELX_P A . . A -1 0
+#
+";
+        let s = parse(text).expect("parse");
+        assert_eq!(s.ca_res_nums, vec![-1, 0, 1]);
+        assert_eq!(s.ca_ss_type, vec![1, 1, 0]);
     }
 
     /// `cif::parse` hands dotted-tag documents to `parse_document` with the

@@ -233,7 +233,8 @@ pub fn parse(text: &str) -> Result<crate::structure::ParsedStructure, String> {
             .parse()
             .map_err(|_| format!("cannot parse atom count at line {}", offset + 1))?;
 
-        if offset + 2 + n_atoms > lines.len() {
+        // Saturating: the count is read from the file and may be near `usize::MAX`.
+        if (offset + 2).saturating_add(n_atoms) > lines.len() {
             break; // incomplete frame, skip
         }
 
@@ -469,7 +470,7 @@ pub fn parse_frame0(text: &str) -> Result<crate::structure::ParsedStructure, Str
         .trim()
         .parse()
         .map_err(|_| format!("cannot parse atom count at line {}", offset + 1))?;
-    if offset + 2 + n_atoms > lines.len() {
+    if (offset + 2).saturating_add(n_atoms) > lines.len() {
         return Err("XYZ first frame incomplete".into());
     }
 
@@ -1188,6 +1189,18 @@ H 1.0 0.0 0.0 word
         assert!(s.vector_channels.is_empty());
         assert!(s.scalar_channels.is_empty());
         assert!(s.warnings.is_empty());
+    }
+
+    /// The count line is a claim the frame-length check must survive: adding
+    /// it to the line offset overflowed `usize` (4294967295 is enough on
+    /// wasm32).
+    #[test]
+    fn a_huge_atom_count_is_an_error_not_an_overflow() {
+        for n in [usize::MAX, usize::MAX - 1] {
+            let text = format!("{n}\nc\nO 0 0 0\n");
+            assert!(parse(&text).is_err());
+            assert!(parse_frame0(&text).is_err());
+        }
     }
 
     #[test]
