@@ -71,6 +71,10 @@ export class MoleculeRenderer {
   private container: HTMLElement | null = null;
   private renderer!: THREE.WebGLRenderer;
   private scene!: THREE.Scene;
+  /** Watches the container's size from mount() until dispose(). */
+  private resizeObserver: ResizeObserver | null = null;
+  /** Set by dispose(); a disposed renderer ignores late resize notifications. */
+  private disposed = false;
   /**
    * Camera, turntable controls and the camera interactions on top of them
    * (pivot animation, custom pan, wheel zoom, frustum insets, projection
@@ -320,9 +324,9 @@ export class MoleculeRenderer {
     this.pivotMarker = new PivotMarker();
     this.scene.add(this.pivotMarker.group);
 
-    // Resize observer
-    const resizeObserver = new ResizeObserver(() => this.onResize());
-    resizeObserver.observe(container);
+    // Resize observer (disconnected in dispose)
+    this.resizeObserver = new ResizeObserver(() => this.onResize());
+    this.resizeObserver.observe(container);
 
     // Listen for DPR changes (e.g. moving window between displays)
     this.setupDprListener();
@@ -1690,7 +1694,7 @@ export class MoleculeRenderer {
   private onResize(): void {
     // three.js owns the drawing buffer size while a headset presents, and an
     // export owns it until resizeForCapture's restore runs.
-    if (!this.container || this.xr.presenting || this.capturing) return;
+    if (this.disposed || !this.container || this.xr.presenting || this.capturing) return;
     const w = this.container.clientWidth;
     const h = this.container.clientHeight;
     if (w === 0 || h === 0) return;
@@ -1815,6 +1819,12 @@ export class MoleculeRenderer {
 
   /** Clean up all resources. */
   dispose(): void {
+    this.disposed = true;
+    // Under React StrictMode the container outlives this renderer (it is
+    // mounted again at once), so a live observer would keep resizing — and
+    // keep alive — a renderer that is gone.
+    this.resizeObserver?.disconnect();
+    this.resizeObserver = null;
     if (this.animationId !== null) {
       cancelAnimationFrame(this.animationId);
     }
