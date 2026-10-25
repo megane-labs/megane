@@ -369,7 +369,8 @@ impl ParseResult {
     }
 
     /// Concatenated per-extra-frame bonds `[a0,b0,…]`, sliced by
-    /// `frame_bond_offsets` (×2). Empty when topology is constant.
+    /// `frame_bond_offsets` (×2). Also empty when topology varies but no
+    /// extra frame has a bond: test `frame_bond_offsets` for constant topology.
     pub fn frame_bonds(&self) -> Uint32Array {
         Uint32Array::from(&self.frame_bonds[..])
     }
