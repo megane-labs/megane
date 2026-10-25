@@ -48,6 +48,49 @@ describe("decodeHeader", () => {
 });
 
 describe("decodeSnapshot", () => {
+  describe("file-declared bond count", () => {
+    const water = {
+      nAtoms: 3,
+      nBonds: 2,
+      positions: [0, 0, 0, 0.96, 0, 0, -0.96, 0, 0],
+      elements: [8, 1, 1],
+      bonds: [0, 1, 0, 2],
+    };
+
+    it("reads nFileBonds when the flag is set", () => {
+      // A PDB without CONECT records: both bonds were inferred by the parser.
+      const snap = decodeSnapshot(makeSnapshotBuffer({ ...water, nFileBonds: 0 }));
+      expect(snap.nBonds).toBe(2);
+      expect(snap.nFileBonds).toBe(0);
+    });
+
+    it("reads it after the box, origin and symmetry ops", () => {
+      const snap = decodeSnapshot(
+        makeSnapshotBuffer({
+          ...water,
+          bondOrders: [1, 1],
+          box: [10, 0, 0, 0, 10, 0, 0, 0, 10],
+          boxOrigin: [1, 2, 3],
+          symmetryOps: ["x,y,z"],
+          nFileBonds: 1,
+        }),
+      );
+      expect(snap.nFileBonds).toBe(1);
+      expect(Array.from(snap.boxOrigin!)).toEqual([1, 2, 3]);
+      expect(snap.symmetryOps).toEqual(["x,y,z"]);
+    });
+
+    it("never reports more file bonds than bonds", () => {
+      const snap = decodeSnapshot(makeSnapshotBuffer({ ...water, nFileBonds: 7 }));
+      expect(snap.nFileBonds).toBe(2);
+    });
+
+    it("counts every bond as declared for a sender without the field", () => {
+      const snap = decodeSnapshot(makeSnapshotBuffer(water));
+      expect(snap.nFileBonds).toBe(2);
+    });
+  });
+
   it("decodes symmetry ops when the flag is set", () => {
     const buf = makeSnapshotBuffer({
       nAtoms: 1,

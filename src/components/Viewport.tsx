@@ -50,6 +50,10 @@ interface ViewportProps {
   onHover?: (info: HoverInfo) => void;
   /** A right-click on an atom, with the pointer's client position. */
   onAtomRightClick?: (atomIndex: number, clientX: number, clientY: number) => void;
+  /**
+   * The drawn coordinates changed: after every snapshot load and every
+   * trajectory frame, so a measurement panel can follow its atoms.
+   */
   onFrameUpdated?: () => void;
   /** Atom indices to highlight live as the Inspector's current selection. */
   previewIndices?: number[] | null;
@@ -572,8 +576,9 @@ export function Viewport({
       // superseded provider can't be applied to a brand-new structure.
       if (frameRef.current && frameRef.current.nAtoms === snapshot.nAtoms) {
         rendererRef.current.updateFrame(frameRef.current);
-        onFrameUpdatedRef.current?.();
       }
+      // The measured atoms moved (or, in a smaller structure, are gone).
+      onFrameUpdatedRef.current?.();
     }
   }, [snapshot]);
 

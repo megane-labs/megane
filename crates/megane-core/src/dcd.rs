@@ -443,22 +443,36 @@ pub fn parse_dcd(data: &[u8]) -> Result<DcdData, String> {
     // from frame 0 (constant-cell runs allocate nothing and keep parity).
     let mut per_frame_cells: Vec<[f32; 9]> = Vec::new();
     let mut varies_cell = false;
+    // A frame the loop stops at and drops, reported rather than silently lost
+    // (rule #11).
+    let mut warnings: Vec<String> = Vec::new();
 
     loop {
         if reader.remaining() == 0 {
             break;
         }
+        let frame_bytes = reader.remaining();
+        let incomplete = |why: String| {
+            format!(
+                "DCD: frame {} is incomplete ({why}); the last {frame_bytes} bytes of the file were dropped",
+                n_frames + 1
+            )
+        };
 
         // Optional unit-cell record for CHARMM (6 × float64 = 48 bytes).
         let mut cur_box: Option<[f32; 9]> = None;
         if has_cell {
             if reader.remaining() < 8 {
+                warnings.push(incomplete("no room for a cell record".into()));
                 break;
             }
             match reader.read_record() {
                 Ok(cell) if cell.len() == 48 => cur_box = Some(read_cell(cell, le)),
                 Ok(_) => {}
-                Err(_) => break,
+                Err(e) => {
+                    warnings.push(incomplete(e));
+                    break;
+                }
             }
         }
 
@@ -466,21 +480,35 @@ pub fn parse_dcd(data: &[u8]) -> Result<DcdData, String> {
         // file (or of the wrong size) after a complete frame ends the
         // trajectory there, whichever axis it is: the incomplete last frame
         // is dropped, as the fixed-layout reader (`read_layout`) counts only
-        // whole frames.
+        // whole frames, and the drop is reported.
         let mut axes = [&[][..]; 3];
         let mut complete = true;
         for (axis, slot) in axes.iter_mut().enumerate() {
+            let (article, name) = [("an", "X"), ("a", "Y"), ("a", "Z")][axis];
             match reader.read_record() {
                 Ok(rec) if rec.len() == expected_coord_bytes => *slot = rec,
                 Ok(rec) if n_frames == 0 => {
                     return Err(format!(
                         "DCD {}-coord record size {} != expected {}",
-                        ["X", "Y", "Z"][axis],
+                        name,
                         rec.len(),
                         expected_coord_bytes
                     ));
                 }
-                _ => {
+                Ok(rec) => {
+                    warnings.push(format!(
+                        "DCD: frame {} has {article} {name}-coordinate record of {} bytes \
+                         (expected {}); reading stopped there and the last {frame_bytes} \
+                         bytes of the file were dropped",
+                        n_frames + 1,
+                        rec.len(),
+                        expected_coord_bytes
+                    ));
+                    complete = false;
+                    break;
+                }
+                Err(e) => {
+                    warnings.push(incomplete(e));
                     complete = false;
                     break;
                 }
@@ -546,6 +574,7 @@ pub fn parse_dcd(data: &[u8]) -> Result<DcdData, String> {
         frame_positions_flat,
         vector_channels: vec![],
         hetero,
+        warnings,
     })
 }
 
@@ -836,6 +865,83 @@ mod tests {
         let frames_start = read_layout(&blob, blob.len() as u64).unwrap().frames_start;
         assert!(read_layout(&blob, frames_start).is_err());
         assert!(read_layout(&blob[..40], blob.len() as u64).is_err());
+    }
+
+    #[test]
+    fn a_dropped_incomplete_last_frame_is_reported() {
+        // Three frames of 2 atoms: cell (56) + X, Y, Z (16 each) = 104 bytes.
+        let blob = build_multi_frame_cells(true, &[(10.0, 10.0, 10.0); 3]);
+        assert!(parse_dcd(&blob).unwrap().warnings.is_empty());
+        // Cut inside the last frame's cell record (down to under 8 bytes of
+        // it) or X record: the two complete frames are kept, and the drop is
+        // reported instead of passing silently.
+        for cut in [33, 40, 48, 49, 60, 97, 100, 103] {
+            let r = parse_dcd(&blob[..blob.len() - cut]).unwrap();
+            assert_eq!(r.n_frames, 2, "cut {cut}");
+            assert_eq!(r.warnings.len(), 1, "cut {cut}: {:?}", r.warnings);
+            let w = &r.warnings[0];
+            assert!(
+                w.starts_with("DCD: frame 3 is incomplete"),
+                "cut {cut}: {w}"
+            );
+            assert!(
+                w.contains(&format!("{} bytes", 104 - cut)),
+                "cut {cut}: {w}"
+            );
+        }
+        // A file that ends on a frame boundary drops nothing.
+        let r = parse_dcd(&blob[..blob.len() - 104]).unwrap();
+        assert_eq!(r.n_frames, 2);
+        assert!(r.warnings.is_empty(), "{:?}", r.warnings);
+    }
+
+    #[test]
+    fn a_wrong_sized_x_record_after_frame_0_is_reported() {
+        let mut blob = build_multi_frame_cells(true, &[(10.0, 10.0, 10.0); 2]);
+        // Frame 2's X record: 4 bytes instead of 8 (sizes and payload).
+        let x = blob.len() - 48;
+        blob.truncate(x);
+        write_record(&mut blob, &[0u8; 4], true);
+        let r = parse_dcd(&blob).unwrap();
+        assert_eq!(r.n_frames, 1);
+        assert_eq!(r.warnings.len(), 1, "{:?}", r.warnings);
+        assert!(
+            r.warnings[0].starts_with("DCD: frame 2 has an X-coordinate record of 4 bytes"),
+            "{}",
+            r.warnings[0]
+        );
+    }
+
+    #[test]
+    fn a_last_frame_cut_in_its_y_or_z_record_is_reported() {
+        // Cell (56) + X, Y, Z (16 each) = 104 bytes per frame; cuts of up to
+        // 32 bytes end the file inside the last frame's Y or Z record.
+        let blob = build_multi_frame_cells(true, &[(10.0, 10.0, 10.0); 3]);
+        for cut in [3, 16, 20, 31] {
+            let r = parse_dcd(&blob[..blob.len() - cut]).unwrap();
+            assert_eq!(r.n_frames, 2, "cut {cut}");
+            assert_eq!(r.warnings.len(), 1, "cut {cut}: {:?}", r.warnings);
+            let w = &r.warnings[0];
+            assert!(
+                w.starts_with("DCD: frame 3 is incomplete"),
+                "cut {cut}: {w}"
+            );
+            assert!(
+                w.contains(&format!("{} bytes", 104 - cut)),
+                "cut {cut}: {w}"
+            );
+        }
+        // A wrong-sized Y or Z record after frame 0 is named by its axis.
+        for (keep, axis) in [(32, "a Y"), (16, "a Z")] {
+            let mut blob = build_multi_frame_cells(true, &[(10.0, 10.0, 10.0); 2]);
+            blob.truncate(blob.len() - keep);
+            write_record(&mut blob, &[0u8; 4], true);
+            let r = parse_dcd(&blob).unwrap();
+            assert_eq!(r.n_frames, 1, "{axis}");
+            assert_eq!(r.warnings.len(), 1, "{:?}", r.warnings);
+            let want = format!("DCD: frame 2 has {axis}-coordinate record of 4 bytes");
+            assert!(r.warnings[0].starts_with(&want), "{}", r.warnings[0]);
+        }
     }
 
     #[test]

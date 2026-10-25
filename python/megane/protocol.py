@@ -5,7 +5,7 @@ Protocol format:
     magic:    4 bytes "MEGN"
     msg_type: u8 (0=snapshot, 1=frame, 2=metadata)
     flags:    u8 (bit 0: HAS_BOND_ORDERS, bit 1: HAS_BOX, bit 3: HAS_BOX_ORIGIN,
-                  bit 4: HAS_SYMMETRY_OPS)
+                  bit 4: HAS_SYMMETRY_OPS, bit 5: HAS_FILE_BOND_COUNT)
     reserved: 2 bytes
 
   Snapshot payload:
@@ -19,6 +19,11 @@ Protocol format:
     box_origin:   Float32[3]         (xlo,ylo,zlo)     (if HAS_BOX_ORIGIN)
     symmetry_ops: u32 byte length + newline-joined utf-8 `x,y,z` strings
                   + pad to 4 bytes                     (if HAS_SYMMETRY_OPS)
+    n_file_bonds: u32 — how many leading bonds the file itself declares; the
+                  rest were inferred by the parser     (if HAS_FILE_BOND_COUNT)
+
+  A snapshot without HAS_FILE_BOND_COUNT counts every bond as declared by the
+  file, which is how decoders read payloads from before the field existed.
 
   Frame payload:
     frame_id:   u32
@@ -73,6 +78,7 @@ HAS_BOX = 0x02
 HAS_FRAME_ELEMENTS = 0x04
 HAS_BOX_ORIGIN = 0x08
 HAS_SYMMETRY_OPS = 0x10
+HAS_FILE_BOND_COUNT = 0x20
 
 
 @runtime_checkable
@@ -144,6 +150,15 @@ def encode_snapshot(structure: StructureLike) -> bytes:
         sym_padding = (4 - ((4 + len(raw)) % 4)) % 4
         symops_bytes = struct.pack("<I", len(raw)) + raw + b"\x00" * sym_padding
 
+    # File-declared bond count (optional, last): lets the frontend tell the
+    # bonds a file declares from the ones the parser inferred, so a PDB without
+    # CONECT records draws the same bonds here as in the browser-only hosts.
+    file_bond_bytes = b""
+    n_file_bonds = getattr(structure, "n_file_bonds", None)
+    if n_file_bonds is not None:
+        flags |= HAS_FILE_BOND_COUNT
+        file_bond_bytes = struct.pack("<I", min(int(n_file_bonds), n_bonds))
+
     # Header: magic(4) + msg_type(1) + flags(1) + reserved(2) = 8 bytes
     header = MAGIC + struct.pack("<BBH", MSG_SNAPSHOT, flags, 0)
 
@@ -163,6 +178,7 @@ def encode_snapshot(structure: StructureLike) -> bytes:
             box_bytes,
             origin_bytes,
             symops_bytes,
+            file_bond_bytes,
         )
     )
 

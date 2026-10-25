@@ -124,6 +124,11 @@ pub struct TrajectoryData {
     /// case) means uniform: fixed atom count + single cell, fast fixed-stride
     /// path everywhere.
     pub hetero: Option<TrajHetero>,
+    /// Non-fatal parse warnings, e.g. an incomplete last frame the parser
+    /// dropped (the trajectory twin of
+    /// [`crate::structure::ParsedStructure::warnings`]). Empty for a clean
+    /// parse.
+    pub warnings: Vec<String>,
 }
 
 impl TrajectoryData {
@@ -194,6 +199,7 @@ mod tests {
             ],
             vector_channels: vec![],
             hetero: None,
+            warnings: vec![],
         };
         assert_eq!(traj.frame(0), &[0.0, 1.0, 2.0, 3.0, 4.0, 5.0]);
         assert_eq!(traj.frame(1), &[6.0, 7.0, 8.0, 9.0, 10.0, 11.0]);
@@ -240,6 +246,7 @@ mod tests {
                 varies_topology: true,
                 max_atoms: 2,
             }),
+            warnings: vec![],
         };
         assert_eq!(traj.frame_atom_count(0), 2);
         assert_eq!(traj.frame_atom_count(1), 1);

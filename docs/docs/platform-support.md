@@ -105,6 +105,16 @@ placeholder cell such as `0 0 0 90 90 90`, leaves the structure without a box
 and adds a parser warning rather than failing the load. Cell vectors are never
 written as a 3×3 matrix in MOL2, so no vector form is read.
 
+Note: **PDB / CIF / mmCIF unit cell.** A cell is only shown when its
+parameters describe one: positive lengths, angles strictly between 0° and 180°,
+and a positive volume. Anything else (zero angles, for instance) leaves the
+structure without a box and adds a parser warning; a CIF whose sites are
+fractional then fails with that reason, since they cannot be placed. The PDB
+format's placeholder for structures not determined by crystallography (NMR,
+EM), `CRYST1 1.000 1.000 1.000 90.00 90.00 90.00 P 1`, and the same values in
+an mmCIF `_cell`, mean "no cell" and are not shown as a 1 Å cube. A `CRYST1`
+with zero lengths (VMD's way of writing "no cell") is read the same way.
+
 Note: **MOL2 atom types and charges.** Tripos (SYBYL) types start with the
 element symbol (`C.ar`, `N.am`, `Ca`, `Cl`), so the element is read from the
 part before the first dot. Lowercase GAFF / GAFF2 types, which antechamber

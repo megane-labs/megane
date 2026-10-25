@@ -198,7 +198,7 @@ input on the `in` handle and emits the tagged particle stream on `out`.
 
 | Field        | Type     | Description                                                                                                                                                                          |
 | ------------ | -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `bondSource` | `string` | `"structure"` (bonds from the structure file), `"distance"` (VDW inference, the default), `"file"` (a separate topology file), or `"none"`                                        |
+| `bondSource` | `string` | `"structure"` (bonds from the structure file; a file that declares none, such as a PDB without CONECT records, falls back to distance inference), `"distance"` (VDW inference, the default), `"file"` (a separate topology file), or `"none"`                                        |
 | `bondFileName` | `string?` | Optional. Name of the topology file used when `bondSource` is `"file"` (the editor does not serialize the parsed bonds; Python's `AddBonds(top=…)` writes them as `bondFileData`) |
 | `vdwScale`   | `number` | Optional. Threshold scale for `"distance"` mode: atoms bond when their separation is `≤ (vdw_i + vdw_j) * vdwScale`. Higher loosens (more bonds), lower tightens. Defaults to `0.6`. |
 
