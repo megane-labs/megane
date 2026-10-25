@@ -492,6 +492,41 @@ describe("WidgetViewer — per-frame bond recalc", () => {
     expect(mockInferBondsVdwJS).not.toHaveBeenCalled();
   });
 
+  it("steps with ←/→ only the widget the user clicked into, not every viewer in the notebook", () => {
+    const onSeekA = vi.fn();
+    const onSeekB = vi.fn();
+    const { container } = render(
+      <>
+        <WidgetViewer {...defaultProps} totalFrames={6} currentFrame={2} onSeek={onSeekA} />
+        <WidgetViewer {...defaultProps} totalFrames={6} currentFrame={2} onSeek={onSeekB} />
+      </>,
+    );
+    const [rootA, rootB] = container.querySelectorAll<HTMLElement>('[data-testid="megane-viewer"]');
+    // A click on the widget focuses its root (it is focusable), which is what
+    // scopes the Timeline's shortcut to it.
+    rootB.focus();
+    expect(document.activeElement).toBe(rootB);
+    fireEvent.keyDown(rootB, { key: "ArrowRight" });
+    expect(onSeekB).toHaveBeenCalledWith(3);
+    expect(onSeekA).not.toHaveBeenCalled();
+
+    // Focus back on the notebook (a cell node in command mode) steps neither.
+    onSeekB.mockClear();
+    const cell = document.createElement("div");
+    cell.tabIndex = 0;
+    document.body.appendChild(cell);
+    cell.focus();
+    fireEvent.keyDown(cell, { key: "ArrowLeft" });
+    cell.remove();
+    expect(onSeekA).not.toHaveBeenCalled();
+    expect(onSeekB).not.toHaveBeenCalled();
+
+    rootA.focus();
+    fireEvent.keyDown(rootA, { key: "ArrowLeft" });
+    expect(onSeekA).toHaveBeenCalledWith(1);
+    expect(onSeekB).not.toHaveBeenCalled();
+  });
+
   it("two WidgetViewers with separate stores do not stomp on each other (multi-viewport regression)", () => {
     // Repro of the multi-viewport bug: rendering two MolecularViewers in the
     // same notebook used to share a singleton pipeline store, so the second
