@@ -4,6 +4,7 @@ import { StructureLayer } from "@/renderer/StructureLayer";
 import { ImpostorAtomMesh } from "@/renderer/ImpostorAtomMesh";
 import { ImpostorBondMesh } from "@/renderer/ImpostorBondMesh";
 import type { Snapshot } from "@/types";
+import { BYTE_DIGITS, rgbAt } from "./colorBytes";
 
 function makeSnapshot(nBonds = 1): Snapshot {
   return {
@@ -71,13 +72,13 @@ describe("StructureLayer.applyAtomColorOverrides", () => {
     overrides[1] = 0.1;
     overrides[2] = 0.1;
     layer.applyAtomColorOverrides(overrides);
-    expect(atom.getColorBuffer()[0]).toBeCloseTo(0.9, 6);
+    expect(rgbAt(atom.getColorBuffer(), 0)[0]).toBeCloseTo(0.9, BYTE_DIGITS);
 
     const loadSpy = vi.spyOn(atom, "loadSnapshot");
     layer.applyAtomColorOverrides(null);
     expect(loadSpy).toHaveBeenCalledTimes(1);
     // Atom 0 reverted to base CPK (carbon ≠ 0.9 red).
-    expect(atom.getColorBuffer()[0]).not.toBeCloseTo(0.9, 6);
+    expect(rgbAt(atom.getColorBuffer(), 0)[0]).not.toBeCloseTo(0.9, BYTE_DIGITS);
   });
 
   it("re-applies the active overrides on the next loadSnapshot", () => {
@@ -97,7 +98,7 @@ describe("StructureLayer.applyAtomColorOverrides", () => {
     // still reflects the gray override on atom 0.
     layer.loadSnapshot(makeSnapshot());
     const atom = (layer as unknown as { atomRenderer: ImpostorAtomMesh }).atomRenderer;
-    expect(atom.getColorBuffer()[0]).toBeCloseTo(0.5, 6);
+    expect(rgbAt(atom.getColorBuffer(), 0)[0]).toBeCloseTo(0.5, BYTE_DIGITS);
   });
 
   it("syncs bond colors after updateBondsExt when overrides are active", () => {

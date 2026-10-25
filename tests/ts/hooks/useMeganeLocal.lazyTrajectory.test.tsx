@@ -130,6 +130,25 @@ describe("useMeganeLocal — two-phase lazy trajectory", () => {
     expect(result.current.hasFileFrames).toBe(true);
   });
 
+  it.each(["big.dcd", "big.nc"])(
+    "streams %s straight from its header index, with no prefix pass",
+    async (name) => {
+      const { result } = await withStructure();
+      indexTrajMock.mockResolvedValue(trajHandle(3, 12));
+
+      await act(async () => {
+        await result.current.loadXtc(new File(["dummy"], name));
+      });
+
+      expect(frame0Mock).not.toHaveBeenCalled();
+      expect(parseXtcMock).not.toHaveBeenCalled();
+      expect(indexTrajMock.mock.calls[0][1]).toBe(name.endsWith(".dcd") ? "dcd" : "netcdf");
+      const store = usePipelineStore.getState();
+      expect(store.fileProvider).not.toBeNull();
+      expect(store.fileProvider!.meta.nFrames).toBe(12);
+    },
+  );
+
   it("seeds the provider's frame 0 so it serves synchronously after the swap", async () => {
     const { result } = await withStructure();
     const seed = new Float32Array(9).fill(7);

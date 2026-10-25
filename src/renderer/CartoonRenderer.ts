@@ -552,17 +552,29 @@ export class CartoonRenderer {
   private snapshot: Snapshot | null = null;
   private chains: ChainBackbone[] = [];
   private ribbons: ChainRibbon[] = [];
+  /** The topology changed since the ribbons were last built. */
+  private dirty = false;
+  /** Positions of the latest frame, when they differ from the snapshot's. */
+  private latestPositions: Float32Array | null = null;
+  /** A frame arrived while hidden, so the ribbons are out of date. */
+  private positionsStale = false;
 
   constructor() {
     this.mesh = new THREE.Group();
     this.mesh.visible = false;
   }
 
-  /** Load a new snapshot (topology). Re-builds geometry from snapshot positions. */
+  /**
+   * Load a new snapshot (topology). The ribbons are built now if the cartoon is
+   * visible, otherwise when it is next shown: a hidden cartoon costs ~20 KB
+   * per residue that nobody would see.
+   */
   loadSnapshot(snapshot: Snapshot): void {
+    if (snapshot !== this.snapshot) this.latestPositions = null;
     this.snapshot = snapshot;
-    this.chains = extractChainBackbones(snapshot);
-    this._rebuild(snapshot.positions);
+    this.dirty = true;
+    if (this.mesh.visible) this._rebuild();
+    else this.dispose(); // the previous structure's ribbons are stale
   }
 
   /**
@@ -570,10 +582,22 @@ export class CartoonRenderer {
    *
    * Rewrites each ribbon's position/normal attributes in place rather than
    * disposing and reallocating geometry — the index buffer, vertex colors, and
-   * cross-section rings are frame-invariant.
+   * cross-section rings are frame-invariant. While hidden, the frame is only
+   * remembered and applied when the cartoon is shown.
    */
   updatePositions(positions: Float32Array): void {
-    if (!this.snapshot || this.ribbons.length === 0) return;
+    if (!this.snapshot) return;
+    this.latestPositions = positions;
+    if (this.dirty || this.ribbons.length === 0) return;
+    if (!this.mesh.visible) {
+      this.positionsStale = true;
+      return;
+    }
+    this._fillPositions(positions);
+  }
+
+  private _fillPositions(positions: Float32Array): void {
+    this.positionsStale = false;
     perfMark("megane:cartoon:update:start");
     for (const ribbon of this.ribbons) {
       fillRibbonPositionsNormals(ribbon, positions);
@@ -586,10 +610,15 @@ export class CartoonRenderer {
     );
   }
 
-  private _rebuild(positions: Float32Array): void {
+  private _rebuild(): void {
+    const snapshot = this.snapshot!;
+    const positions = this.latestPositions ?? snapshot.positions;
+    this.dirty = false;
+    this.positionsStale = false;
     this._disposeChildren();
     this.mesh.clear();
     this.ribbons = [];
+    this.chains = extractChainBackbones(snapshot);
 
     for (const chain of this.chains) {
       const ribbon = buildChainRibbon(chain, positions);
@@ -600,8 +629,12 @@ export class CartoonRenderer {
     }
   }
 
-  /** Show or hide the cartoon. */
+  /** Show or hide the cartoon, building or refreshing the ribbons on show. */
   setVisible(v: boolean): void {
+    if (v && this.snapshot) {
+      if (this.dirty) this._rebuild();
+      else if (this.positionsStale) this._fillPositions(this.latestPositions!);
+    }
     this.mesh.visible = v;
   }
 

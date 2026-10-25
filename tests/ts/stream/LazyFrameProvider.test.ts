@@ -129,6 +129,20 @@ describe("LazyFrameProvider", () => {
     expect(p.heldBytes()).toBe(base.byteLength);
   });
 
+  it("carries a frame's own cell when the decoder gives one", async () => {
+    const box = new Float32Array([12, 0, 0, 0, 12, 0, 0, 0, 12]);
+    const p = new LazyFrameProvider(makeHandle(), makeMeta(), {
+      decode: async (_t, frame) => ({ ...decoded(frame), ...(frame === 2 && { box }) }),
+      dispose,
+      prefetchAhead: 0,
+    });
+    p.getFrame(2);
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(p.getFrame(2)!.box).toBe(box);
+    expect(p.getFrame(0)!.box).toBeUndefined();
+  });
+
   it("dedups concurrent requests for the same frame", () => {
     const p = make({ prefetchAhead: 0 });
     decode.fn.mockClear();

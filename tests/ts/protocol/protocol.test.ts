@@ -433,6 +433,22 @@ describe("decodeTrajectory", () => {
     expect(traj.getFrame(0.5)).toBeNull();
   });
 
+  it("decodes frames in place inside a larger buffer", () => {
+    const msg = new Uint8Array(
+      trajectoryMessage([frameMessage(0, [1, 2, 3]), frameMessage(1, [4, 5, 6])]),
+    );
+    for (const base of [8, 3]) {
+      const host = new Uint8Array(base + msg.length + 5);
+      host.set(msg, base);
+      const t = decodeTrajectory(host.buffer, base);
+      expect(t.nFrames).toBe(2);
+      const frame = t.getFrame(1)!;
+      expect(Array.from(frame.positions)).toEqual([4, 5, 6]);
+      // Aligned: a view into the host buffer, no copy. Unaligned: a copy.
+      expect(frame.positions.buffer === host.buffer).toBe(base % 4 === 0);
+    }
+  });
+
   it("handles an empty trajectory", () => {
     const empty = decodeTrajectory(trajectoryMessage([]));
     expect(empty.nFrames).toBe(0);

@@ -193,23 +193,84 @@ fn parse_var_list(r: &mut Reader) -> Result<Vec<VarDesc>, String> {
 
 // ─── public API ────────────────────────────────────────────────────────────
 
-/// Parse an AMBER NetCDF trajectory file (`.nc`).
-///
-/// Accepts CDF-1 and CDF-2 classic NetCDF files following the AMBER NCTRAJ
-/// convention.  Returns a `TrajectoryData` with positions in Angstroms.
-pub fn parse_netcdf(data: &[u8]) -> Result<TrajectoryData, String> {
-    if data.len() < 4 {
+/// Where the frames of an AMBER NetCDF trajectory are, from its header. In a
+/// classic NetCDF file every record variable of frame `i` (coordinates, time,
+/// cell) sits in the record `record_start + i * recsize ..+ recsize`, so a host
+/// can index the file from its first bytes and read each frame's record alone.
+pub struct NetcdfLayout {
+    pub n_atoms: usize,
+    pub n_frames: usize,
+    /// Byte offset of frame 0's record (the lowest record-variable `begin`).
+    pub record_start: u64,
+    /// Bytes per record (the padded sizes of all record variables).
+    pub recsize: u64,
+    /// Offsets of the variables within a record.
+    coord_off: u64,
+    time_off: Option<u64>,
+    cell_len_off: Option<u64>,
+    cell_ang_off: Option<u64>,
+}
+
+/// One frame of a [`NetcdfLayout`].
+pub struct NetcdfFrame {
+    /// Positions (Å), `n_atoms * 3`.
+    pub positions: Vec<f32>,
+    /// This frame's cell, when the file carries `cell_lengths`.
+    pub cell: Option<[f32; 9]>,
+    /// This frame's `time` (ps), when the file carries a float one.
+    pub time: Option<f32>,
+}
+
+impl NetcdfLayout {
+    /// The file carries a cell per frame.
+    pub fn has_cell(&self) -> bool {
+        self.cell_len_off.is_some()
+    }
+
+    /// The file carries a float `time` per frame.
+    pub fn has_time(&self) -> bool {
+        self.time_off.is_some()
+    }
+
+    /// Where in a record the cell is (offset from the record start, length).
+    pub fn cell_range(&self) -> Option<(u64, u64)> {
+        let cl = self.cell_len_off?;
+        let lo = self.cell_ang_off.map_or(cl, |ca| ca.min(cl));
+        let hi = self
+            .cell_ang_off
+            .map_or(cl + 24, |ca| (ca + 24).max(cl + 24));
+        Some((lo, hi - lo))
+    }
+
+    /// Bytes from a frame's record start that hold everything decoded from it:
+    /// the record, or more when coordinates are (unusually) not a record
+    /// variable and lie past it.
+    pub fn record_span(&self) -> u64 {
+        let ends = [
+            Some(self.coord_off + self.n_atoms as u64 * 12),
+            self.time_off.map(|o| o + 4),
+            self.cell_len_off.map(|o| o + 24),
+            self.cell_ang_off.map(|o| o + 24),
+        ];
+        ends.into_iter().flatten().fold(self.recsize, u64::max)
+    }
+}
+
+/// The [`NetcdfLayout`] of a `file_len`-byte AMBER NetCDF file; `head` must
+/// hold its whole header (dimensions, attributes and variable list).
+pub fn read_layout(head: &[u8], file_len: u64) -> Result<NetcdfLayout, String> {
+    if head.len() < 4 {
         return Err("file too short to be NetCDF".into());
     }
-    let cdf2 = if &data[..4] == b"CDF\x01" {
+    let cdf2 = if &head[..4] == b"CDF\x01" {
         false
-    } else if &data[..4] == b"CDF\x02" {
+    } else if &head[..4] == b"CDF\x02" {
         true
     } else {
         return Err("not a NetCDF CDF-1 or CDF-2 file (wrong magic bytes)".into());
     };
 
-    let mut r = Reader::new(data, cdf2);
+    let mut r = Reader::new(head, cdf2);
     r.pos = 4;
 
     // numrecs (0xFFFFFFFF = STREAMING)
@@ -222,6 +283,7 @@ pub fn parse_netcdf(data: &[u8]) -> Result<TrajectoryData, String> {
 
     // unlimited dimension id (the "frame" dimension)
     let unlimited_id: Option<u32> = dims.iter().position(|(_, sz)| *sz == 0).map(|i| i as u32);
+    let is_record = |v: &VarDesc| unlimited_id.is_some_and(|uid| v.dimids.first() == Some(&uid));
 
     // required "atom" dimension
     let n_atoms = dims
@@ -238,9 +300,18 @@ pub fn parse_netcdf(data: &[u8]) -> Result<TrajectoryData, String> {
         .iter()
         .find(|v| v.name == "coordinates")
         .ok_or("missing 'coordinates' variable (not an AMBER NCTRAJ file?)")?;
-    let time_var = vars.iter().find(|v| v.name == "time");
-    let cell_len_var = vars.iter().find(|v| v.name == "cell_lengths");
-    let cell_ang_var = vars.iter().find(|v| v.name == "cell_angles");
+    let time_var = vars
+        .iter()
+        .find(|v| v.name == "time")
+        .filter(|tv| tv.nc_type == NC_FLOAT && tv.vsize == 4);
+    let cell_len_var = vars
+        .iter()
+        .find(|v| v.name == "cell_lengths")
+        .filter(|cl| cl.nc_type == NC_DOUBLE && cl.vsize >= 24);
+    let cell_ang_var = vars
+        .iter()
+        .find(|v| v.name == "cell_angles")
+        .filter(|ca| ca.nc_type == NC_DOUBLE && ca.vsize >= 24);
 
     // validate coordinates type
     if coord_var.nc_type != NC_FLOAT {
@@ -258,14 +329,10 @@ pub fn parse_netcdf(data: &[u8]) -> Result<TrajectoryData, String> {
     }
 
     // recsize = sum of padded vsizes of all record variables
-    let recsize: usize = vars
+    let recsize: u64 = vars
         .iter()
-        .filter(|v| {
-            unlimited_id
-                .map(|uid| v.dimids.first() == Some(&uid))
-                .unwrap_or(false)
-        })
-        .map(|v| (v.vsize as usize + 3) & !3)
+        .filter(|v| is_record(v))
+        .map(|v| (v.vsize as u64 + 3) & !3)
         .sum();
 
     // number of frames
@@ -273,9 +340,9 @@ pub fn parse_netcdf(data: &[u8]) -> Result<TrajectoryData, String> {
         if recsize == 0 {
             return Err("streaming numrecs and recsize=0 — cannot determine frame count".into());
         }
-        (data.len() as u64)
+        file_len
             .saturating_sub(coord_var.begin)
-            .checked_div(recsize as u64)
+            .checked_div(recsize)
             .unwrap_or(0) as usize
     } else {
         numrecs_raw as usize
@@ -285,94 +352,175 @@ pub fn parse_netcdf(data: &[u8]) -> Result<TrajectoryData, String> {
         return Err("NetCDF trajectory has 0 frames".into());
     }
 
-    // read per-frame coordinates
-    let n_coords = n_atoms * 3;
-    let coord_begin = coord_var.begin as usize;
-    let mut frame_positions_flat: Vec<f32> = Vec::with_capacity(n_frames * n_coords);
+    // A non-record variable is the same in every frame: read it from frame 0's
+    // record offsets as the eager reader does (`begin + i * recsize`).
+    let record_start = vars
+        .iter()
+        .filter(|v| is_record(v))
+        .map(|v| v.begin)
+        .min()
+        .unwrap_or(coord_var.begin)
+        .min(coord_var.begin);
+    let off = |v: &VarDesc| v.begin.checked_sub(record_start);
+    Ok(NetcdfLayout {
+        n_atoms,
+        n_frames,
+        record_start,
+        recsize,
+        coord_off: off(coord_var).ok_or("'coordinates' precedes the records")?,
+        time_off: time_var.and_then(off),
+        cell_len_off: cell_len_var.and_then(off),
+        cell_ang_off: cell_len_var.and(cell_ang_var).and_then(off),
+    })
+}
+
+/// Decode frame `i` from `data`, whose first byte is file offset `base`: the
+/// frame's record (from [`NetcdfLayout::record_start`] `+ i * recsize`), or
+/// the whole file with `base` 0.
+fn decode_frame(
+    layout: &NetcdfLayout,
+    data: &[u8],
+    base: u64,
+    i: usize,
+) -> Result<NetcdfFrame, String> {
+    let r = Reader::new(data, false);
+    let rec = layout.record_start + i as u64 * layout.recsize;
+    let at = |off: u64| -> Option<usize> { (rec + off).checked_sub(base).map(|o| o as usize) };
+    let n_coords = layout.n_atoms * 3;
+    let coord = at(layout.coord_off).ok_or("record precedes its bytes")?;
+    if coord + n_coords * 4 > data.len() {
+        return Err(format!(
+            "frame {i} coordinates out of bounds (offset {})",
+            rec + layout.coord_off
+        ));
+    }
+    let mut positions = Vec::with_capacity(n_coords);
+    for j in 0..n_coords {
+        positions.push(r.read_f32_at(coord + j * 4)?);
+    }
+    let time = layout
+        .time_off
+        .and_then(at)
+        .and_then(|t| r.read_f32_at(t).ok());
+    let cell = read_cell(layout, data, base, i)?;
+    Ok(NetcdfFrame {
+        positions,
+        cell,
+        time,
+    })
+}
+
+/// Frame `i`'s cell from `data` (whose first byte is file offset `base`), or
+/// `None` when the file has none or `data` does not reach it. Per the AMBER
+/// convention `cell_angles` holds alpha/beta/gamma in degrees; when absent the
+/// cell is orthorhombic.
+fn read_cell(
+    layout: &NetcdfLayout,
+    data: &[u8],
+    base: u64,
+    i: usize,
+) -> Result<Option<[f32; 9]>, String> {
+    let r = Reader::new(data, false);
+    let rec = layout.record_start + i as u64 * layout.recsize;
+    let at = |off: u64| -> Option<usize> { (rec + off).checked_sub(base).map(|o| o as usize) };
+    Ok(match layout.cell_len_off.and_then(at) {
+        Some(cl) if cl + 24 <= data.len() => {
+            let a = r.read_f64_at(cl)? as f32;
+            let b = r.read_f64_at(cl + 8)? as f32;
+            let c = r.read_f64_at(cl + 16)? as f32;
+            let (alpha, beta, gamma) = match layout.cell_ang_off.and_then(at) {
+                Some(ab) if ab + 24 <= data.len() => (
+                    r.read_f64_at(ab)? as f32,
+                    r.read_f64_at(ab + 8)? as f32,
+                    r.read_f64_at(ab + 16)? as f32,
+                ),
+                _ => (90.0, 90.0, 90.0),
+            };
+            Some(cell_params_to_matrix(a, b, c, alpha, beta, gamma))
+        }
+        _ => None,
+    })
+}
+
+/// Decode frame `i`'s cell from just [`NetcdfLayout::cell_range`] of its
+/// record (`bytes` starts that far into the record).
+pub fn decode_layout_cell(
+    layout: &NetcdfLayout,
+    bytes: &[u8],
+    i: usize,
+) -> Result<Option<[f32; 9]>, String> {
+    let Some((lo, _)) = layout.cell_range() else {
+        return Ok(None);
+    };
+    read_cell(
+        layout,
+        bytes,
+        layout.record_start + i as u64 * layout.recsize + lo,
+        i,
+    )
+}
+
+/// Decode frame `i` from just its record's bytes (`record` starts at
+/// `layout.record_start + i * layout.recsize`).
+pub fn decode_layout_record(
+    layout: &NetcdfLayout,
+    record: &[u8],
+    i: usize,
+) -> Result<NetcdfFrame, String> {
+    decode_frame(
+        layout,
+        record,
+        layout.record_start + i as u64 * layout.recsize,
+        i,
+    )
+}
+
+/// Parse an AMBER NetCDF trajectory file (`.nc`).
+///
+/// Accepts CDF-1 and CDF-2 classic NetCDF files following the AMBER NCTRAJ
+/// convention.  Returns a `TrajectoryData` with positions in Angstroms.
+pub fn parse_netcdf(data: &[u8]) -> Result<TrajectoryData, String> {
+    let layout = read_layout(data, data.len() as u64)?;
+    let (n_atoms, n_frames) = (layout.n_atoms, layout.n_frames);
+    let mut frame_positions_flat: Vec<f32> =
+        Vec::with_capacity(n_frames.min(data.len() / (n_atoms * 12).max(1)) * n_atoms * 3);
+
+    // Frame 0's cell is the representative `box_matrix`; a per-frame side
+    // table is built only when the cell actually changes (variable-cell / NPT
+    // runs). Cells past the end of a truncated file stop being read.
+    let mut box_matrix: Option<[f32; 9]> = None;
+    let mut per_frame_cells: Vec<[f32; 9]> = Vec::new();
+    let mut varies_cell = false;
+    let mut cells_ended = false;
+    let mut times = [None, None];
 
     for i in 0..n_frames {
-        let base = coord_begin
-            .checked_add(i.checked_mul(recsize).ok_or("frame offset overflow")?)
-            .ok_or("frame offset overflow")?;
-        if base + expected_vsize > data.len() {
-            return Err(format!(
-                "frame {i} coordinates out of bounds (offset {base})"
-            ));
+        let frame = decode_frame(&layout, data, 0, i)?;
+        frame_positions_flat.extend_from_slice(&frame.positions);
+        if let Some(t) = times.get_mut(i) {
+            *t = frame.time;
         }
-        for j in 0..n_coords {
-            frame_positions_flat.push(r.read_f32_at(base + j * 4)?);
+        if cells_ended || !layout.has_cell() {
+            continue;
+        }
+        let Some(m) = frame.cell else {
+            cells_ended = true;
+            continue;
+        };
+        if i == 0 {
+            box_matrix = Some(m);
+        }
+        if !varies_cell && Some(m) != box_matrix {
+            varies_cell = true;
+            per_frame_cells.extend(std::iter::repeat_n(box_matrix.unwrap_or([0.0; 9]), i));
+        }
+        if varies_cell {
+            per_frame_cells.push(m);
         }
     }
 
     // derive timestep from time variable (frames 0 and 1 difference)
-    let timestep_ps: f32 = if n_frames >= 2 {
-        if let Some(tv) = time_var {
-            if tv.nc_type == NC_FLOAT && tv.vsize == 4 && recsize > 0 {
-                let t0 = r.read_f32_at(tv.begin as usize).unwrap_or(0.0);
-                let t1 = r.read_f32_at(tv.begin as usize + recsize).unwrap_or(1.0);
-                (t1 - t0).max(0.0)
-            } else {
-                1.0
-            }
-        } else {
-            1.0
-        }
-    } else {
-        1.0
-    };
-
-    // Read per-frame cell_lengths and cell_angles. Both are record variables,
-    // so frame `i`'s value lives at `var.begin + i*recsize`. Per the AMBER
-    // convention `cell_angles` holds alpha/beta/gamma in degrees; when absent
-    // the cell is orthorhombic. Frame 0 is the representative `box_matrix`; a
-    // per-frame side table is built only when the cell actually changes
-    // (variable-cell / NPT runs).
-    let mut box_matrix: Option<[f32; 9]> = None;
-    let mut per_frame_cells: Vec<[f32; 9]> = Vec::new();
-    let mut varies_cell = false;
-    if let Some(cl) = cell_len_var {
-        if cl.nc_type == NC_DOUBLE && cl.vsize >= 24 {
-            let cl_begin = cl.begin as usize;
-            let ca_begin = cell_ang_var
-                .filter(|ca| ca.nc_type == NC_DOUBLE && ca.vsize >= 24)
-                .map(|ca| ca.begin as usize);
-            for i in 0..n_frames {
-                let base = cl_begin.saturating_add(i.saturating_mul(recsize));
-                if base + 24 > data.len() {
-                    break;
-                }
-                let a = r.read_f64_at(base)? as f32;
-                let b = r.read_f64_at(base + 8)? as f32;
-                let c = r.read_f64_at(base + 16)? as f32;
-                let (alpha, beta, gamma) = match ca_begin {
-                    Some(cab) => {
-                        let ab = cab.saturating_add(i.saturating_mul(recsize));
-                        if ab + 24 > data.len() {
-                            (90.0, 90.0, 90.0)
-                        } else {
-                            (
-                                r.read_f64_at(ab)? as f32,
-                                r.read_f64_at(ab + 8)? as f32,
-                                r.read_f64_at(ab + 16)? as f32,
-                            )
-                        }
-                    }
-                    None => (90.0, 90.0, 90.0),
-                };
-                let m = cell_params_to_matrix(a, b, c, alpha, beta, gamma);
-                if i == 0 {
-                    box_matrix = Some(m);
-                }
-                if !varies_cell && Some(m) != box_matrix {
-                    varies_cell = true;
-                    per_frame_cells.extend(std::iter::repeat_n(box_matrix.unwrap_or([0.0; 9]), i));
-                }
-                if varies_cell {
-                    per_frame_cells.push(m);
-                }
-            }
-        }
-    }
+    let timestep_ps = netcdf_timestep(n_frames, layout.has_time(), times);
 
     let hetero = crate::trajectory::build_cell_hetero(varies_cell, per_frame_cells, n_atoms);
 
@@ -386,6 +534,17 @@ pub fn parse_netcdf(data: &[u8]) -> Result<TrajectoryData, String> {
         vector_channels: vec![],
         hetero,
     })
+}
+
+/// The time step from frames 0 and 1's `time` (1 ps without it).
+pub fn netcdf_timestep(n_frames: usize, has_time: bool, times: [Option<f32>; 2]) -> f32 {
+    if n_frames >= 2 && has_time {
+        let t0 = times[0].unwrap_or(0.0);
+        let t1 = times[1].unwrap_or(1.0);
+        (t1 - t0).max(0.0)
+    } else {
+        1.0
+    }
 }
 
 // ─── tests ─────────────────────────────────────────────────────────────────
@@ -663,6 +822,79 @@ mod tests {
         );
 
         out
+    }
+
+    #[test]
+    fn layout_records_match_the_eager_parse() {
+        let n_atoms = 2usize;
+        let frames: Vec<Vec<f32>> = (0..4)
+            .map(|i| vec![i as f32, 0.0, 0.0, 1.0 + i as f32, 0.5, 0.25])
+            .collect();
+        let times = vec![0.0f32, 2.0, 4.0, 6.0];
+        let cells: Vec<[f64; 3]> = (0..4).map(|i| [10.0 + i as f64, 11.0, 12.0]).collect();
+        let angles: Vec<[f64; 3]> = vec![[90.0, 90.0, 120.0]; 4];
+        for (cl, ca) in [
+            (None, None),
+            (Some(&cells[..]), None),
+            (Some(&cells[..]), Some(&angles[..])),
+        ] {
+            let data = build_netcdf(n_atoms, &frames, &times, cl, ca);
+            let eager = parse_netcdf(&data).unwrap();
+            // The header fits in the first bytes; the frame count needs the file length.
+            let layout = read_layout(&data[..data.len().min(2048)], data.len() as u64).unwrap();
+            assert_eq!(layout.n_frames, 4);
+            assert_eq!(layout.has_cell(), cl.is_some());
+            let mut t = [None, None];
+            for i in 0..4 {
+                let start = (layout.record_start + i as u64 * layout.recsize) as usize;
+                let end = (start + layout.record_span() as usize).min(data.len());
+                let f = decode_layout_record(&layout, &data[start..end], i).unwrap();
+                assert_eq!(f.positions[..], eager.frame(i)[..]);
+                if let Some(slot) = t.get_mut(i) {
+                    *slot = f.time;
+                }
+                match (f.cell, eager.frame_cell(i)) {
+                    (Some(c), Some(want)) => assert_eq!(&c[..], want),
+                    (Some(c), None) => assert_eq!(Some(c), eager.box_matrix),
+                    (None, _) => assert!(eager.box_matrix.is_none()),
+                }
+            }
+            assert_eq!(netcdf_timestep(4, true, t), eager.timestep_ps);
+        }
+    }
+
+    #[test]
+    fn a_cell_decodes_from_just_its_bytes() {
+        let cells: Vec<[f64; 3]> = vec![[10.0, 11.0, 12.0], [13.0, 14.0, 15.0]];
+        let angles: Vec<[f64; 3]> = vec![[90.0, 90.0, 100.0]; 2];
+        let frames = vec![vec![0.0; 6], vec![1.0; 6]];
+        let data = build_netcdf(2, &frames, &[0.0, 1.0], Some(&cells), Some(&angles));
+        let eager = parse_netcdf(&data).unwrap();
+        let layout = read_layout(&data, data.len() as u64).unwrap();
+        let (lo, len) = layout.cell_range().unwrap();
+        assert_eq!(len, 48);
+        for i in 0..2 {
+            let start = (layout.record_start + i as u64 * layout.recsize + lo) as usize;
+            let cell = decode_layout_cell(&layout, &data[start..start + len as usize], i)
+                .unwrap()
+                .unwrap();
+            assert_eq!(&cell[..], eager.frame_cell(i).unwrap());
+        }
+        let plain = build_netcdf(2, &frames, &[0.0, 1.0], None, None);
+        let layout = read_layout(&plain, plain.len() as u64).unwrap();
+        assert!(layout.cell_range().is_none());
+        assert_eq!(decode_layout_cell(&layout, &[], 0).unwrap(), None);
+    }
+
+    #[test]
+    fn a_record_too_short_for_its_coordinates_is_an_error() {
+        let data = build_netcdf(2, &[vec![0.0; 6]], &[0.0], None, None);
+        let layout = read_layout(&data, data.len() as u64).unwrap();
+        let start = layout.record_start as usize;
+        assert!(decode_layout_record(&layout, &data[start..start + 8], 0).is_err());
+        assert!(read_layout(&data[..3], 3).is_err());
+        assert_eq!(netcdf_timestep(1, true, [Some(5.0), None]), 1.0);
+        assert_eq!(netcdf_timestep(2, false, [Some(5.0), Some(9.0)]), 1.0);
     }
 
     #[test]

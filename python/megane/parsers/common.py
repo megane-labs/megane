@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
+from collections import OrderedDict
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Union
 
 import numpy as np
 
@@ -129,7 +130,91 @@ class InMemoryTrajectory:
         return self.box
 
 
-def encode_trajectory_frame(traj: InMemoryTrajectory, idx: int) -> bytes:
+#: Most bytes of decoded positions a :class:`FileTrajectory` keeps cached
+#: (the same bound as the browser's frame caches); at least two frames.
+FILE_TRAJECTORY_CACHE_BYTES = 32 * 1024 * 1024
+
+
+class FileTrajectory:
+    """A trajectory read from its file one frame at a time.
+
+    The same interface as :class:`InMemoryTrajectory`, but backed by a
+    ``megane_parser.TrajectoryFile``: opening reads only the frame index (and
+    each frame's cell), and :meth:`get_frame` reads and decodes the frame it
+    is asked for, keeping the most recent ones up to
+    :data:`FILE_TRAJECTORY_CACHE_BYTES`. A trajectory of any length therefore
+    costs a few cached frames of memory instead of ``n_frames × n_atoms × 12``
+    bytes. A cell that changes between frames makes it ``heterogeneous`` with
+    per-frame ``cells``, exactly like the in-memory reader.
+    """
+
+    frames_list = None
+    elements_list = None
+
+    def __init__(self, reader: Any, cache_bytes: int = FILE_TRAJECTORY_CACHE_BYTES) -> None:
+        self._reader = reader
+        self.n_frames = int(reader.n_frames)
+        self.n_atoms = int(reader.n_atoms)
+        self.max_atoms = self.n_atoms
+        self.timestep_ps = float(reader.timestep_ps)
+        self.box = np.asarray(reader.box_matrix, dtype=np.float32).reshape(3, 3)
+        cells = reader.frame_cells
+        self.cells = None if cells is None else np.asarray(cells, dtype=np.float32)
+        self.heterogeneous = self.cells is not None
+        self._capacity = max(2, cache_bytes // max(self.n_atoms * 12, 1))
+        self._cache: OrderedDict[int, np.ndarray] = OrderedDict()
+
+    def get_frame(self, index: int) -> np.ndarray:
+        """Positions of frame *index*, an (N, 3) float32 array in Angstroms.
+
+        Raises:
+            ValueError: If *index* is out of range.
+        """
+        if not (0 <= index < self.n_frames):
+            raise ValueError(f"Frame index {index} is out of range for trajectory with {self.n_frames} frames.")
+        frame = self._cache.get(index)
+        if frame is None:
+            frame = self._reader.read_frame(index)
+            frame.flags.writeable = False
+            self._cache[index] = frame
+            while len(self._cache) > self._capacity:
+                self._cache.popitem(last=False)
+        else:
+            self._cache.move_to_end(index)
+        return frame
+
+    def n_atoms_at(self, index: int) -> int:
+        """Atom count of frame *index* (constant for these formats)."""
+        if not (0 <= index < self.n_frames):
+            raise ValueError(f"Frame index {index} is out of range for trajectory with {self.n_frames} frames.")
+        return self.n_atoms
+
+    def get_elements(self, index: int) -> np.ndarray | None:
+        """Always None: these formats carry no per-frame topology."""
+        return None
+
+    def get_cell(self, index: int) -> np.ndarray:
+        """Per-frame (3, 3) unit cell, or the frame-0 cell when it is constant."""
+        if self.cells is not None:
+            if not (0 <= index < self.n_frames):
+                raise ValueError(f"Frame index {index} is out of range for trajectory with {self.n_frames} frames.")
+            return self.cells[index]
+        return self.box
+
+
+def open_file_trajectory(path: str, kind: str) -> FileTrajectory:
+    """Open an XTC (``"xtc"``), DCD (``"dcd"``) or AMBER NetCDF (``"netcdf"``)
+    file as a :class:`FileTrajectory`."""
+    from megane import megane_parser
+
+    return FileTrajectory(megane_parser.TrajectoryFile(path, kind))
+
+
+#: Either trajectory container (they share one interface).
+Trajectory = Union[InMemoryTrajectory, FileTrajectory]
+
+
+def encode_trajectory_frame(traj: Trajectory, idx: int) -> bytes:
     """Encode frame ``idx`` of a trajectory as a binary MSG_FRAME message.
 
     For a *uniform* trajectory this is positions-only and byte-identical to the

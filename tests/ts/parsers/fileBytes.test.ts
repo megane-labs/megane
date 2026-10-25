@@ -65,3 +65,11 @@ describe("reads of any other Blob", () => {
     expect(await readBlobText(part)).toBe("234");
   });
 });
+
+describe("isResident", () => {
+  it("is true only for files built from bytes the host holds", async () => {
+    const { fileFromBytes, isResident } = await import("@/parsers/fileBytes");
+    expect(isResident(fileFromBytes(new Uint8Array([1]), "a.pdb"))).toBe(true);
+    expect(isResident(new File(["x"], "b.pdb"))).toBe(false);
+  });
+});

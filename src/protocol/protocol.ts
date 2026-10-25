@@ -109,8 +109,13 @@ export function decodeSnapshot(buffer: ArrayBuffer): Snapshot {
   };
 }
 
-export function decodeFrame(buffer: ArrayBuffer): Frame {
-  const view = new DataView(buffer);
+/**
+ * Decode a MSG_FRAME message starting `base` bytes into `buffer` (0 for a
+ * buffer holding just the message). The arrays are views into `buffer`, so
+ * `base` must be a multiple of 4.
+ */
+export function decodeFrame(buffer: ArrayBuffer, base = 0): Frame {
+  const view = new DataView(buffer, base);
   const flags = view.getUint8(5);
   let offset = 8; // skip header
 
@@ -119,20 +124,20 @@ export function decodeFrame(buffer: ArrayBuffer): Frame {
   const nAtoms = view.getUint32(offset, true);
   offset += 4;
 
-  const positions = new Float32Array(buffer, offset, nAtoms * 3);
+  const positions = new Float32Array(buffer, base + offset, nAtoms * 3);
   offset += nAtoms * 3 * 4;
 
   // Optional per-frame elements (heterogeneous topology), padded to 4 bytes.
   let elements: Uint8Array | undefined;
   if (flags & HAS_FRAME_ELEMENTS) {
-    elements = new Uint8Array(buffer, offset, nAtoms);
+    elements = new Uint8Array(buffer, base + offset, nAtoms);
     offset += Math.ceil(nAtoms / 4) * 4;
   }
 
   // Optional per-frame unit cell (heterogeneous cell).
   let box: Float32Array | undefined;
   if (flags & HAS_BOX) {
-    box = new Float32Array(buffer, offset, 9);
+    box = new Float32Array(buffer, base + offset, 9);
     offset += 9 * 4;
   }
 
@@ -146,17 +151,23 @@ export interface EmbeddedTrajectory {
   getFrame(index: number): Frame | null;
 }
 
-export function decodeTrajectory(buffer: ArrayBuffer): EmbeddedTrajectory {
-  const view = new DataView(buffer);
+/**
+ * Decode a MSG_TRAJECTORY message starting `base` bytes into `buffer`. Frames
+ * are decoded in place, as views into `buffer` (every frame message is a
+ * multiple of 4 bytes long, so a 4-aligned `base` keeps them aligned); an
+ * unaligned `base` copies each frame out instead.
+ */
+export function decodeTrajectory(buffer: ArrayBuffer, base = 0): EmbeddedTrajectory {
+  const view = new DataView(buffer, base);
   const nFrames = view.getUint32(8, true);
   const offsetAt = (i: number) => view.getUint32(12 + 4 * i, true);
   return {
     nFrames,
     getFrame(index: number): Frame | null {
       if (!Number.isInteger(index) || index < 0 || index >= nFrames) return null;
-      // Each embedded frame is a complete MSG_FRAME message; slicing copies it
-      // into its own buffer so decodeFrame's typed-array views start at 0.
-      return decodeFrame(buffer.slice(offsetAt(index), offsetAt(index + 1)));
+      const start = base + offsetAt(index);
+      if (start % 4 === 0) return decodeFrame(buffer, start);
+      return decodeFrame(buffer.slice(start, base + offsetAt(index + 1)));
     },
   };
 }

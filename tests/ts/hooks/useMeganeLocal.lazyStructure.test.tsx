@@ -120,6 +120,24 @@ describe("useMeganeLocal — two-phase lazy structure", () => {
     expect(parseFileMock).not.toHaveBeenCalled();
   });
 
+  it("streams an ASE .traj: frame 0 from its head and tail, then the frame index", async () => {
+    const f0 = makeFrame0();
+    prefixMock.mockResolvedValue(f0);
+    indexMock.mockResolvedValue(indexed(11, "traj", 3, f0));
+    const file = new File(["dummy"], "md.traj");
+
+    const { result } = renderHook(() => useMeganeLocal());
+    await act(async () => {
+      await result.current.loadFile(file);
+    });
+    expect(prefixMock).toHaveBeenCalledWith(file, "traj");
+    expect(result.current.snapshot).toBe(f0.snapshot);
+    await flushBackground();
+    expect(indexMock).toHaveBeenCalledWith(file, "traj");
+    expect(usePipelineStore.getState().structureProvider!.meta.nFrames).toBe(4);
+    expect(parseFileMock).not.toHaveBeenCalled();
+  });
+
   it("keeps a single-frame file static (no stream attached)", async () => {
     const f0 = makeFrame0();
     prefixMock.mockResolvedValue(f0);

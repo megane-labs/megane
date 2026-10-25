@@ -16,7 +16,7 @@ from megane.parsers.pdb import load_pdb
 from megane.protocol import encode_snapshot, encode_trajectory
 
 if TYPE_CHECKING:
-    from megane.parsers.common import InMemoryTrajectory
+    from megane.parsers.common import Trajectory
     from megane.pipeline import Pipeline
 
 _STATIC_DIR = pathlib.Path(__file__).parent / "static"
@@ -29,7 +29,7 @@ ANYWIDGET_FRONTEND_RANGE = ">=0.9.0"
 EMBED_TRAJECTORY_AUTO_LIMIT = 20 * 1024 * 1024
 
 
-def _encode_embedded_trajectory(traj: InMemoryTrajectory, limit: int | None) -> bytes | None:
+def _encode_embedded_trajectory(traj: Trajectory, limit: int | None) -> bytes | None:
     """Encode every frame of *traj* as one MSG_TRAJECTORY message.
 
     Returns None as soon as the frames exceed *limit* bytes, so an oversized
@@ -237,7 +237,7 @@ class MolecularViewer(anywidget.AnyWidget):
                 )
             from megane.parsers.xtc import load_trajectory
 
-            self._trajectory = load_trajectory(pdb_path, xtc)
+            self._trajectory = load_trajectory(pdb_path, xtc, n_atoms=structure.n_atoms)
             self.total_frames = self._trajectory.n_frames
 
     @traitlets.observe("frame_index")

@@ -159,7 +159,7 @@ export function prewarmParseWorker(): void {
 
 /** Lazy structure decode needs a worker; the sync path never uses it. */
 export function shouldUseLazyStructure(
-  _kind: import("./parseCore").LazyStructureKind,
+  _kind: import("./parseCore").FileStructureKind,
   _fileSize: number,
 ): boolean {
   return false;
@@ -168,7 +168,7 @@ export function shouldUseLazyStructure(
 /** Worker-only; returns `null` so the caller falls back to eager parsing. */
 export async function parseStructurePrefix(
   _file: File,
-  _kind: import("./parseCore").LazyStructureKind,
+  _kind: import("./parseCore").FileStructureKind,
 ): Promise<StructureParseResult | null> {
   return null;
 }
@@ -176,7 +176,7 @@ export async function parseStructurePrefix(
 /** Worker-only; returns `null` so the caller falls back to eager parsing. */
 export async function indexStructureLazy(
   _file: File,
-  _kind: import("./parseCore").LazyStructureKind,
+  _kind: import("./parseCore").FileStructureKind,
 ): Promise<StructureLazyResult | null> {
   return null;
 }

@@ -18,6 +18,7 @@ const { state, FakeWorker } = vi.hoisted(() => {
     created: 0,
     posted: 0,
     throwOnCreate: false,
+    result: null as unknown,
     /** WASM heap size the fake worker stamps on ok responses, when set. */
     wasmBytes: undefined as number | undefined,
   };
@@ -41,7 +42,7 @@ const { state, FakeWorker } = vi.hoisted(() => {
               id: req.id,
               ok: true,
               op: req.op,
-              result: { tag: "worker" },
+              result: state.result ?? { tag: "worker" },
               wasmBytes: state.wasmBytes,
             },
           });
@@ -94,7 +95,28 @@ describe("parseClient worker path", () => {
     state.created = 0;
     state.posted = 0;
     state.throwOnCreate = false;
+    state.result = null;
     vi.clearAllMocks();
+  });
+
+  it("splits the labels a structure result carries as text", async () => {
+    const client = await freshClient();
+    state.result = { labels: null, labelsText: "HOH1\nHOH1\nNA2" };
+    const out = (await client.parseStructureFile(fakeFile("x.pdb"))) as unknown as {
+      labels: string[];
+      labelsText?: string;
+    };
+    expect(out.labels).toEqual(["HOH1", "HOH1", "NA2"]);
+    expect(out.labelsText).toBeUndefined();
+  });
+
+  it("splits the labels of an indexed structure's frame 0", async () => {
+    const client = await freshClient();
+    state.result = { index: { nFrames: 1 }, frame0: { labels: null, labelsText: "A\nB" } };
+    const out = (await client.parseStructureText("ATOM", "x.pdb")) as unknown as {
+      frame0: { labels: string[] };
+    };
+    expect(out.frame0.labels).toEqual(["A", "B"]);
   });
 
   it("resolves a structure parse via the worker", async () => {
@@ -102,6 +124,22 @@ describe("parseClient worker path", () => {
     const out = await client.parseStructureFile(fakeFile("x.pdb"));
     expect(out).toEqual({ tag: "worker" });
     expect(state.lastReq?.op).toBe("structure");
+  });
+
+  it("posts a picked file as itself and a host-held file's bytes", async () => {
+    const client = await freshClient();
+    const { fileFromBytes } = await import("@/parsers/fileBytes");
+    const picked = fakeFile("x.gro");
+    await client.parseStructureFile(picked);
+    const req1 = state.lastReq as unknown as { ext: string; file?: unknown; text?: unknown };
+    expect(req1.ext).toBe(".gro");
+    expect(req1.file).toBe(picked);
+    expect(req1.text).toBeUndefined();
+
+    await client.parseStructureFile(fileFromBytes(new Uint8Array([1, 2, 3]), "y.pdb"));
+    const req2 = state.lastReq as unknown as { bytes?: ArrayBuffer; file?: unknown };
+    expect(new Uint8Array(req2.bytes!)).toEqual(new Uint8Array([1, 2, 3]));
+    expect(req2.file).toBeUndefined();
   });
 
   it("sends .traj bytes through the worker", async () => {
@@ -151,10 +189,12 @@ describe("parseClient worker path", () => {
     expect(typeof res?.trajectoryId).toBe("number");
   });
 
-  it("builds a lazy LAMMPS-dump handle from the file's bytes", async () => {
+  it("builds a lazy LAMMPS-dump handle from the File itself", async () => {
     const client = await freshClient();
-    const res = await client.indexTrajectoryLazy(fakeFile("t.lammpstrj"), "lammpstrj", 4);
-    expect(state.lastReq?.op).toBe("indexTrajectory");
+    const file = fakeFile("t.lammpstrj");
+    const res = await client.indexTrajectoryLazy(file, "lammpstrj", 4);
+    expect(state.lastReq).toMatchObject({ op: "indexTrajectoryFile", kind: "lammpstrj" });
+    expect((state.lastReq as { file?: unknown }).file).toBe(file);
     expect(res?.kind).toBe("lammpstrj");
   });
 
@@ -179,8 +219,11 @@ describe("parseClient worker path", () => {
 
   it("builds a lazy structure handle (with frame 0) via the worker in one round-trip", async () => {
     const client = await freshClient();
-    const res = await client.indexStructureLazy(fakeFile("m.xyz"), "xyz");
+    const file = fakeFile("m.xyz");
+    const res = await client.indexStructureLazy(file, "xyz");
     expect(state.lastReq?.op).toBe("indexStructure");
+    expect((state.lastReq as { file?: unknown; bytes?: unknown }).file).toBe(file);
+    expect((state.lastReq as { bytes?: unknown }).bytes).toBeUndefined();
     expect(res?.handle.kind).toBe("xyz");
     expect(typeof res?.handle.trajectoryId).toBe("number");
   });
@@ -240,6 +283,30 @@ describe("parseClient worker path", () => {
     expect(new Uint8Array(req.tail)).toEqual(tail);
     // The caller's own chunks are copied, never transferred away.
     expect(head.byteLength).toBe(3);
+  });
+
+  it("parses a .traj's frame 0 from its head and the tail holding the offset table", async () => {
+    const client = await freshClient();
+    const MiB = 1024 * 1024;
+    const slice = vi.fn((start: number) => ({
+      arrayBuffer: async () => new Uint8Array([start === 0 ? 1 : 2]).buffer,
+    }));
+    const file = { name: "big.traj", size: 32 * MiB, slice } as unknown as File;
+    expect(await client.parseStructurePrefix(file, "traj")).toEqual({ tag: "worker" });
+    expect(state.lastReq).toMatchObject({ op: "trajFrame0", totalSize: 32 * MiB });
+    expect(slice.mock.calls.map((c) => c[0])).toEqual([0, 31 * MiB]);
+    const req = state.lastReq as unknown as { head: ArrayBuffer; tail: ArrayBuffer };
+    expect(new Uint8Array(req.head)).toEqual(new Uint8Array([1]));
+    expect(new Uint8Array(req.tail)).toEqual(new Uint8Array([2]));
+  });
+
+  it("indexes a .traj in the worker from the File itself", async () => {
+    const client = await freshClient();
+    state.result = { index: { nAtoms: 3, nFrames: 4, heterogeneous: false }, frame0: {} };
+    const file = fakeFile("run.traj", 100);
+    const res = await client.indexStructureLazy(file, "traj");
+    expect(state.lastReq).toMatchObject({ op: "indexStructure", kind: "traj", file });
+    expect(res?.handle).toMatchObject({ kind: "traj", index: { nFrames: 4 } });
   });
 
   it("parseStructureHead stitches a PDB head to its CONECT tail, trimming cut lines", async () => {

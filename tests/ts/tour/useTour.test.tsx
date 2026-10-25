@@ -36,10 +36,12 @@ describe("useTour", () => {
     expect(useTourStore.getState().host).toBe("vscode");
   });
 
-  it("auto-starts on webapp when dontShowAgain=false", () => {
+  it("auto-starts on webapp when dontShowAgain=false", async () => {
     renderHook(() => useTour({ host: "webapp", autoStartDelayMs: 100 }));
     expect(mockStartTour).not.toHaveBeenCalled();
     vi.advanceTimersByTime(100);
+    // The tour controller is loaded on first use.
+    await vi.dynamicImportSettled();
     expect(mockStartTour).toHaveBeenCalledTimes(1);
     expect(useTourStore.getState().autoStartHandled).toBe(true);
   });
@@ -78,19 +80,25 @@ describe("useTour", () => {
     expect(mockStartTour).not.toHaveBeenCalled();
   });
 
-  it("stops the tour on unmount", () => {
-    const { unmount } = renderHook(() => useTour({ host: "webapp", autoStartDelayMs: 100 }));
+  it("stops a running tour on unmount", async () => {
+    const { result, unmount } = renderHook(() =>
+      useTour({ host: "webapp", autoStartDelayMs: 100 }),
+    );
+    result.current.startTour();
+    await vi.dynamicImportSettled();
     unmount();
+    await vi.dynamicImportSettled();
     expect(mockStopTour).toHaveBeenCalled();
   });
 
-  it("returns a startTour callback that triggers the controller immediately", () => {
+  it("returns a startTour callback that triggers the controller", async () => {
     useTourStore.setState({ dontShowAgain: true });
     const { result } = renderHook(() => useTour({ host: "webapp", autoStartDelayMs: 100 }));
     vi.advanceTimersByTime(100);
     expect(mockStartTour).not.toHaveBeenCalled();
 
     result.current.startTour();
+    await vi.dynamicImportSettled();
     expect(mockStartTour).toHaveBeenCalledTimes(1);
   });
 });

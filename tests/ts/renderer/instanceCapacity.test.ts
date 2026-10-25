@@ -47,16 +47,22 @@ describe("nextInstanceCapacity", () => {
     expect(nextInstanceCapacity(10_000, 9_000)).toBeNull();
   });
 
-  it("grows with headroom, never below the minimum", () => {
+  it("gives a count creeping past the buffers headroom", () => {
     expect(nextInstanceCapacity(1024, 1025)).toBe(Math.ceil(1025 * 1.25));
-    expect(nextInstanceCapacity(1024, 100_000)).toBe(125_000);
-    expect(nextInstanceCapacity(1, 3)).toBe(MIN_INSTANCE_CAPACITY);
-    expect(nextInstanceCapacity(1, 3, 1)).toBe(4);
+    expect(nextInstanceCapacity(100_000, 125_000)).toBe(156_250);
+    expect(nextInstanceCapacity(4, 5, 1)).toBe(7);
   });
 
-  it("shrinks only when the buffers are far larger than needed", () => {
+  it("fits a newly loaded, larger structure exactly, never below the minimum", () => {
+    expect(nextInstanceCapacity(1024, 100_000)).toBe(100_000);
+    expect(nextInstanceCapacity(100_000, 125_001)).toBe(125_001);
+    expect(nextInstanceCapacity(1, 3)).toBe(MIN_INSTANCE_CAPACITY);
+    expect(nextInstanceCapacity(1, 3, 1)).toBe(3);
+  });
+
+  it("shrinks only when the buffers are far larger than needed, then fits exactly", () => {
     expect(nextInstanceCapacity(125_000, 40_000)).toBeNull();
-    expect(nextInstanceCapacity(125_000, 30_000)).toBe(37_500);
+    expect(nextInstanceCapacity(125_000, 30_000)).toBe(30_000);
     expect(nextInstanceCapacity(125_000, 10)).toBe(MIN_INSTANCE_CAPACITY);
     // Never shrinks a buffer that is already at (or under) the minimum.
     expect(nextInstanceCapacity(MIN_INSTANCE_CAPACITY, 0)).toBeNull();
@@ -119,8 +125,8 @@ describe("ImpostorAtomMesh capacity", () => {
   it("grows to fit, then shrinks back for a small structure", () => {
     const mesh = new ImpostorAtomMesh();
     mesh.loadSnapshot(chain(5000));
-    expect(internals(mesh).capacity).toBe(6250);
-    expect(attr(mesh, "instanceCenter").count).toBe(6250);
+    expect(internals(mesh).capacity).toBe(5000);
+    expect(attr(mesh, "instanceCenter").count).toBe(5000);
     expect(internals(mesh).geo.instanceCount).toBe(5000);
     expect(mesh.getBaseRadii()).toHaveLength(5000);
 
@@ -143,6 +149,17 @@ describe("ImpostorAtomMesh capacity", () => {
     expect(internals(mesh).geo._maxInstanceCount).toBeUndefined();
   });
 
+  it("keeps headroom for a heterogeneous frame that grows a little", () => {
+    const mesh = new ImpostorAtomMesh();
+    mesh.loadSnapshot(chain(5000));
+    mesh.loadSnapshot(chain(5010));
+    expect(internals(mesh).capacity).toBe(Math.ceil(5010 * 1.25));
+    // The next few frames fit without reallocating.
+    const center = attr(mesh, "instanceCenter");
+    mesh.loadSnapshot(chain(5200));
+    expect(attr(mesh, "instanceCenter")).toBe(center);
+  });
+
   it("uploads only the loaded atoms on updates", () => {
     const mesh = new ImpostorAtomMesh();
     mesh.loadSnapshot(chain(10));
@@ -152,7 +169,7 @@ describe("ImpostorAtomMesh capacity", () => {
     mesh.setOpacityOverrides(new Float32Array(10).fill(0.5));
     expect(attr(mesh, "instanceOpacityOverride").updateRanges).toEqual([{ start: 0, count: 10 }]);
     mesh.applyColorOverrides(new Float32Array(30).fill(NaN));
-    expect(attr(mesh, "instanceColor").updateRanges).toEqual([{ start: 0, count: 30 }]);
+    expect(attr(mesh, "instanceColor").updateRanges).toEqual([{ start: 0, count: 40 }]);
     mesh.clearOverrides();
     expect(attr(mesh, "instanceScaleOverride").updateRanges).toEqual([{ start: 0, count: 10 }]);
   });
@@ -173,7 +190,7 @@ describe("ImpostorBondMesh capacity", () => {
     mesh.loadSnapshot(chain(1501, BOND_DOUBLE));
     expect(internals(mesh).geo.instanceCount).toBe(3000);
     expect(internals(mesh).geo._maxInstanceCount).toBeUndefined();
-    expect(attr(mesh, "instanceAtomA").count).toBe(3750);
+    expect(attr(mesh, "instanceAtomA").count).toBe(3000);
     // Topology written past the old capacity survives: last instance is bond 1499.
     expect(attr(mesh, "instanceAtomA").array[2999]).toBe(1499);
     expect(attr(mesh, "instanceAtomB").array[2999]).toBe(1500);
@@ -182,7 +199,7 @@ describe("ImpostorBondMesh capacity", () => {
   it("shrinks back for a small structure", () => {
     const mesh = new ImpostorBondMesh();
     mesh.loadSnapshot(chain(5000));
-    expect(internals(mesh).capacity).toBe(Math.ceil(4999 * 1.25));
+    expect(internals(mesh).capacity).toBe(4999);
     mesh.loadSnapshot(chain(4));
     expect(internals(mesh).capacity).toBe(MIN_INSTANCE_CAPACITY);
     expect(internals(mesh).geo.instanceCount).toBe(3);
@@ -194,7 +211,7 @@ describe("ImpostorBondMesh capacity", () => {
   it("uploads only the drawn instances on updates", () => {
     const mesh = new ImpostorBondMesh();
     mesh.loadSnapshot(chain(6));
-    expect(attr(mesh, "instanceColorA").updateRanges).toEqual([{ start: 0, count: 15 }]);
+    expect(attr(mesh, "instanceColorA").updateRanges).toEqual([{ start: 0, count: 20 }]);
     expect(attr(mesh, "instanceRadius").updateRanges).toEqual([{ start: 0, count: 5 }]);
 
     mesh.setBondOpacityOverrides(new Float32Array(5).fill(0.25));
@@ -205,7 +222,7 @@ describe("ImpostorBondMesh capacity", () => {
     expect(attr(mesh, "instanceBondOpacity").array[4]).toBe(1);
     expect(attr(mesh, "instanceBondOpacity").updateRanges).toEqual([{ start: 0, count: 5 }]);
 
-    mesh.recomputeColorsFromAtomBuffer(new Float32Array(18).fill(0.5), chain(6));
-    expect(attr(mesh, "instanceColorB").updateRanges).toEqual([{ start: 0, count: 15 }]);
+    mesh.recomputeColorsFromAtomBuffer(new Uint8ClampedArray(24).fill(128), chain(6));
+    expect(attr(mesh, "instanceColorB").updateRanges).toEqual([{ start: 0, count: 20 }]);
   });
 });

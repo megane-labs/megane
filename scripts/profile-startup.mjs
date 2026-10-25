@@ -37,6 +37,11 @@
  * and the longest single main-thread task; the memory figures are then taken
  * with that file loaded.
  *
+ * While a `--file` or `--traj` is being opened, the renderer and whole-tree PSS
+ * are also sampled every 50 ms (Linux only) and the peaks reported: a parse
+ * holds transient copies of the file that are gone by the time the settled
+ * memory is read.
+ *
  * Runs are interleaved across the labelled builds (A, B, A, B, ...) so drift in
  * the machine's load affects every build equally, and the medians are printed
  * as a Markdown table ready to paste into a PR description.
@@ -54,7 +59,9 @@
  *   --path P        page path to open (default "/?test=1")
  *   --file F        after startup, open F via the Load Structure node
  *   --traj F        then open trajectory F via the Load Trajectory node
- *   --scrub N       then show every trajectory frame in order, N passes
+ *   --scrub N       then show every trajectory frame in order, N passes (with
+ *                   --file and no --traj: the frames of a multi-frame file,
+ *                   after timing how long they take to become playable)
  *   --idle MS       after the memory is read, measure idle CPU over MS (default
  *                   0 = skip)
  *   --settle MS     idle time before the memory is read (default 1500); the
@@ -252,6 +259,29 @@ function processMemory() {
   return out;
 }
 
+/**
+ * Sample `processMemory()` every `intervalMs` until the returned function is
+ * called; it returns the peak renderer and whole-tree PSS seen (null off Linux).
+ */
+function startPeakSampler(intervalMs = 50) {
+  const peak = { rendererMB: 0, totalMB: 0 };
+  let seen = false;
+  const sample = () => {
+    const m = processMemory();
+    if (!m) return;
+    seen = true;
+    peak.rendererMB = Math.max(peak.rendererMB, m.rendererMB);
+    peak.totalMB = Math.max(peak.totalMB, m.totalMB);
+  };
+  sample();
+  const timer = setInterval(sample, intervalMs);
+  return () => {
+    clearInterval(timer);
+    sample();
+    return seen ? peak : null;
+  };
+}
+
 /** Linux USER_HZ: /proc reports CPU time in these ticks (100 on every mainstream kernel). */
 const CLOCK_TICKS_PER_SECOND = 100;
 
@@ -441,6 +471,7 @@ async function openFile(page) {
   if (!ready) throw new Error("no load_structure node / test store on the page");
   const input = page.locator('[data-testid="load-structure-input"]').first();
   const t0 = await page.evaluate(() => performance.now());
+  const stopPeak = startPeakSampler();
   await input.setInputFiles(opts.file);
   const shownAt = await page
     .waitForFunction(
@@ -453,16 +484,59 @@ async function openFile(page) {
       { polling: 20, timeout: 300000 },
     )
     .then((h) => h.jsonValue());
+  // A multi-frame file streams its other frames in after frame 0 is shown.
+  let fileFramesMs = null;
+  if (opts.scrub > 0 && !opts.traj) {
+    fileFramesMs =
+      (await page
+        .waitForFunction(
+          () =>
+            window.__megane_test_playback_store.getState().totalFrames > 1
+              ? performance.now()
+              : false,
+          null,
+          { polling: 50, timeout: 300000 },
+        )
+        .then((h) => h.jsonValue())) - t0;
+  }
   await page.waitForTimeout(2000);
+  const peak = stopPeak();
   const tasks = await page.evaluate(
     (from) => window.__longTasks.filter((t) => t.start >= from),
     t0,
   );
+  const fileScrubMs = fileFramesMs === null ? [] : await scrubPasses(page);
   return {
+    fileFramesMs,
+    fileScrubMs,
+    filePeakRendererMB: peak?.rendererMB ?? null,
+    filePeakTotalMB: peak?.totalMB ?? null,
     fileLoadMs: shownAt - t0,
     fileBlockingMs: tasks.reduce((sum, t) => sum + Math.max(0, t.duration - 50), 0),
     fileLongestTaskMs: tasks.reduce((max, t) => Math.max(max, t.duration), 0),
   };
+}
+
+/** Show every frame once, in order, `opts.scrub` times; the time of each pass. */
+async function scrubPasses(page) {
+  const passes = [];
+  for (let pass = 0; pass < opts.scrub; pass++) {
+    passes.push(
+      await page.evaluate(async () => {
+        const playback = window.__megane_test_playback_store;
+        const total = playback.getState().totalFrames;
+        const start = performance.now();
+        for (let i = 0; i < total; i++) {
+          playback.getState().seekFrame(i);
+          while (playback.getState().currentFrameData?.frameId !== i) {
+            await new Promise((r) => setTimeout(r, 1));
+          }
+        }
+        return performance.now() - start;
+      }),
+    );
+  }
+  return passes;
 }
 
 /**
@@ -478,6 +552,7 @@ async function openTrajectory(page) {
   });
   const input = page.locator('[data-testid="load-trajectory-input"]').first();
   const t0 = Date.now();
+  const stopPeak = startPeakSampler();
   await input.setInputFiles(opts.traj);
   await page.waitForFunction(
     () => {
@@ -489,24 +564,14 @@ async function openTrajectory(page) {
     { polling: 50, timeout: 300000 },
   );
   const trajLoadMs = Date.now() - t0;
-  const scrubMs = [];
-  for (let pass = 0; pass < opts.scrub; pass++) {
-    scrubMs.push(
-      await page.evaluate(async () => {
-        const playback = window.__megane_test_playback_store;
-        const total = playback.getState().totalFrames;
-        const start = performance.now();
-        for (let i = 0; i < total; i++) {
-          playback.getState().seekFrame(i);
-          while (playback.getState().currentFrameData?.frameId !== i) {
-            await new Promise((r) => setTimeout(r, 1));
-          }
-        }
-        return performance.now() - start;
-      }),
-    );
-  }
-  return { trajLoadMs, scrubMs };
+  const loadPeak = stopPeak();
+  const scrubMs = await scrubPasses(page);
+  return {
+    trajLoadMs,
+    scrubMs,
+    trajPeakRendererMB: loadPeak?.rendererMB ?? null,
+    trajPeakTotalMB: loadPeak?.totalMB ?? null,
+  };
 }
 
 // ---- Driver ----
@@ -536,7 +601,11 @@ for (let run = 0; run < opts.runs; run++) {
         `total=${r.totalMB?.toFixed(1)}MB` +
         (opts.file
           ? ` file=${r.fileLoadMs?.toFixed(0)}ms blocking=${r.fileBlockingMs?.toFixed(0)}ms ` +
-            `longest=${r.fileLongestTaskMs?.toFixed(0)}ms`
+            `longest=${r.fileLongestTaskMs?.toFixed(0)}ms peak=${r.filePeakRendererMB?.toFixed(1)}MB` +
+            (r.fileFramesMs != null
+              ? ` frames=${r.fileFramesMs.toFixed(0)}ms ` +
+                `scrub=${r.fileScrubMs.map((t) => t.toFixed(0)).join("/")}ms`
+              : "")
           : "") +
         (opts.traj
           ? ` traj=${r.trajLoadMs}ms scrub=${r.scrubMs.map((t) => t.toFixed(0)).join("/")}ms`
@@ -559,10 +628,28 @@ const rows = [
         ["File: time until shown (ms)", (r) => r.fileLoadMs, 0],
         ["File: main-thread blocking (ms)", (r) => r.fileBlockingMs, 0],
         ["File: longest main-thread task (ms)", (r) => r.fileLongestTaskMs, 0],
+        ...(opts.scrub > 0 && !opts.traj
+          ? [
+              ["File: time until its frames play (ms)", (r) => r.fileFramesMs, 0],
+              ...Array.from({ length: opts.scrub }, (_, pass) => [
+                `File: show every frame, pass ${pass + 1} (ms)`,
+                (r) => r.fileScrubMs[pass],
+                0,
+              ]),
+            ]
+          : []),
+        ["File: peak renderer PSS while opening (MB)", (r) => r.filePeakRendererMB, 1],
+        ["File: peak browser tree PSS while opening (MB)", (r) => r.filePeakTotalMB, 1],
       ]
     : []),
-  ...(opts.traj ? [["Trajectory: time until playable (ms)", (r) => r.trajLoadMs, 0]] : []),
-  ...Array.from({ length: opts.scrub }, (_, pass) => [
+  ...(opts.traj
+    ? [
+        ["Trajectory: time until playable (ms)", (r) => r.trajLoadMs, 0],
+        ["Trajectory: peak renderer PSS while opening (MB)", (r) => r.trajPeakRendererMB, 1],
+        ["Trajectory: peak browser tree PSS while opening (MB)", (r) => r.trajPeakTotalMB, 1],
+      ]
+    : []),
+  ...Array.from({ length: opts.traj ? opts.scrub : 0 }, (_, pass) => [
     `Trajectory: show every frame, pass ${pass + 1} (ms)`,
     (r) => r.scrubMs[pass],
     0,

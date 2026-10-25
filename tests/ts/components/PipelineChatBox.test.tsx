@@ -273,7 +273,7 @@ describe("PipelineChatBox — submission", () => {
     expect(generatePipeline).not.toHaveBeenCalled();
   });
 
-  it("does not submit on the Enter that confirms an IME conversion", () => {
+  it("does not submit on the Enter that confirms an IME conversion", async () => {
     vi.stubEnv("VITE_LLM_PROXY_URL", "https://proxy.example.com/chat");
     useAIConfigStore.setState({
       provider: "anthropic",
@@ -287,13 +287,17 @@ describe("PipelineChatBox — submission", () => {
 
     fireEvent.keyDown(textarea, { key: "Enter", isComposing: true });
     fireEvent.keyDown(textarea, { key: "Enter", keyCode: 229 });
+    // The generator loads with the first request: let a submission get that far.
+    await act(async () => {
+      await import("@/ai/client");
+    });
     expect(generatePipeline).not.toHaveBeenCalled();
 
     fireEvent.keyDown(textarea, { key: "Enter", keyCode: 13 });
-    expect(generatePipeline).toHaveBeenCalledTimes(1);
+    await waitFor(() => expect(generatePipeline).toHaveBeenCalledTimes(1));
   });
 
-  it("submits without requiring an API key when using the free demo", () => {
+  it("submits without requiring an API key when using the free demo", async () => {
     vi.stubEnv("VITE_LLM_PROXY_URL", "https://proxy.example.com/chat");
     useAIConfigStore.setState({
       provider: "anthropic",
@@ -309,6 +313,7 @@ describe("PipelineChatBox — submission", () => {
     fireEvent.click(screen.getByText("Generate"));
 
     expect(screen.queryByText("Please set your API key in the AI settings.")).toBeNull();
+    await waitFor(() => expect(generatePipeline).toHaveBeenCalled());
     expect(generatePipeline).toHaveBeenCalledWith(
       expect.objectContaining({ provider: "demo" }),
       "build me a pipeline",

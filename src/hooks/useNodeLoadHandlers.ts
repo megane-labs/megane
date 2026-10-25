@@ -13,7 +13,7 @@ import {
 import { loadVectorFileData } from "../logic/vectorSourceLogic";
 import { parseStructureFile, shouldUseLazyStructure } from "../parsers/structure";
 import { pdbMayHaveModels } from "../parsers/pdbModels";
-import type { StructureParseResult, LazyStructureKind } from "../parsers/structure";
+import type { StructureParseResult, FileStructureKind } from "../parsers/structure";
 import { applyStructureToPipeline } from "../pipeline/openFile";
 import type { Snapshot } from "../types";
 import type {
@@ -58,7 +58,7 @@ export function useNodeLoadHandlers({
     const handler: StructureLoadHandler = (nodeId, file) => {
       const isPrimary = nodeId === primaryNodeIdRef.current;
 
-      // Large multi-frame structure files (XYZ / multi-MODEL PDB), primary node
+      // Large multi-frame structure files (XYZ / multi-MODEL PDB / ASE .traj), primary node
       // only: stream via the lazy path. Delegate to the legacy loader
       // (loadFile → loadStructureLazy), which indexes the extra frames, parses
       // frame 0, sets THIS node's snapshot, and installs the structureProvider —
@@ -67,8 +67,14 @@ export function useNodeLoadHandlers({
       // populates the node snapshot. Non-primary nodes and other formats keep the
       // eager path below.
       const ext = file.name.toLowerCase().match(/\.[^.]+$/)?.[0] ?? "";
-      const lazyKind: LazyStructureKind | null =
-        ext === ".xyz" || ext === ".extxyz" ? "xyz" : ext === ".pdb" ? "pdb" : null;
+      const lazyKind: FileStructureKind | null =
+        ext === ".xyz" || ext === ".extxyz"
+          ? "xyz"
+          : ext === ".pdb"
+            ? "pdb"
+            : ext === ".traj"
+              ? "traj"
+              : null;
       if (isPrimary && lazyKind && shouldUseLazyStructure(lazyKind, file.size)) {
         const streamIt = () => {
           clearNodeParseError(nodeId);

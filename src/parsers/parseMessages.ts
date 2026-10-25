@@ -10,6 +10,7 @@ import type {
   TrajectoryIndexResult,
   LazyTrajectoryKind,
   LazyStructureKind,
+  FileStructureKind,
   StructureIndexResult,
 } from "./parseCore";
 
@@ -28,6 +29,8 @@ export interface StructureParseRequest {
   ext: string;
   text?: string;
   bytes?: ArrayBuffer;
+  /** The file itself, for the worker to read (a page-held copy goes as `bytes`). */
+  file?: Blob;
 }
 
 /** Request: parse a trajectory file's already-read contents. */
@@ -53,32 +56,39 @@ export interface IndexTrajectoryRequest {
 }
 
 /**
- * Request: build a lazy XTC decoder from the File itself — the worker scans
- * the frame index from windows of it and reads each frame when it is decoded,
- * so it never holds the whole file (see `indexXtcFileCore`).
+ * Request: build a lazy XTC / LAMMPS dump decoder from the File itself — the
+ * worker scans the frame index from windows of it and reads each frame when it
+ * is decoded, so it never holds the whole file (see `indexXtcFileCore`,
+ * `indexDumpFileCore`).
  */
 export interface IndexTrajectoryFileRequest {
   id: number;
   op: "indexTrajectoryFile";
   wasm: WasmSource;
+  /** XTC unless given. */
+  kind?: LazyTrajectoryKind;
   trajectoryId: number;
   file: Blob;
   expectedNAtoms: number;
 }
 
 /**
- * Request: build a lazy structure-frame decoder (scans extra frames, holds bytes
- * in the worker) AND parse frame 0 in the same round-trip — one file read yields
- * both the index and the eager snapshot.
+ * Request: build a lazy structure-frame decoder (scans extra frames) AND parse
+ * frame 0 in the same round-trip. Given the File, the worker reads it in
+ * windows and per frame (`indexStructureFileCore`, `indexTrajFileCore`); given
+ * bytes, it holds them (XYZ / PDB only: an ASE .traj needs its File).
  */
 export interface IndexStructureRequest {
   id: number;
   op: "indexStructure";
   wasm: WasmSource;
-  kind: LazyStructureKind;
+  kind: FileStructureKind;
   /** Reuses the trajectory decoder map, so `decodeFrame` / `disposeTrajectory` apply. */
   trajectoryId: number;
-  bytes: ArrayBuffer;
+  /** The file's bytes, held in the worker for its decoder's lifetime… */
+  bytes?: ArrayBuffer;
+  /** …or the file itself, indexed from windows and read per frame. */
+  file?: Blob;
 }
 
 /** Response for `indexStructure`: the extra-frame index plus frame 0's snapshot. */
@@ -176,6 +186,8 @@ export interface DecodeFrameResult {
   vectors: Float32Array;
   /** Number of vector channels packed into `vectors`. */
   vectorChannelCount: number;
+  /** This frame's cell, when the trajectory carries one per frame. */
+  box?: Float32Array;
 }
 
 export interface ParseResponse {
@@ -223,12 +235,14 @@ export interface DecodedLazyFrame {
   /** Concatenated per-atom vector channels for this frame (empty if none). */
   vectors: Float32Array;
   vectorChannelCount: number;
+  /** This frame's cell, when the trajectory carries one per frame. */
+  box?: Float32Array;
 }
 
 /** Handle returned by `indexStructureLazy`, consumed by `LazyFrameProvider`. */
 export interface StructureLazyHandle {
   trajectoryId: number;
-  kind: LazyStructureKind;
+  kind: FileStructureKind;
   index: StructureIndexResult;
 }
 

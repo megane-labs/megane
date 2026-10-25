@@ -34,7 +34,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Literal
 
 if TYPE_CHECKING:
-    from megane.parsers.common import InMemoryTrajectory
+    from megane.parsers.common import Trajectory
     from megane.widget import MolecularViewer
 
 # ─── Port Objects ────────────────────────────────────────────────────
@@ -880,8 +880,12 @@ class Pipeline:
         self._nodes: dict[str, tuple[PipelineNode, dict]] = {}
         self._edges: list[dict] = []
         self._node_data: dict[str, bytes] = {}
-        self._trajectories: dict[str, InMemoryTrajectory] = {}
+        self._trajectories: dict[str, Trajectory] = {}
         self._structures: dict[str, object] = {}
+        # Frames parsed along with a multi-frame structure file, by path, for
+        # the paths a LoadTrajectory is known to read as well.
+        self._file_frames: dict[str, Trajectory] = {}
+        self._frames_wanted: set[str] = set()
         self._counter = 0
 
     # ── Public API ──────────────────────────────────────────
@@ -1325,9 +1329,15 @@ class Pipeline:
 
         if node._id is None:
             raise ValueError("Node must be added to the pipeline before loading data.")
-        structure = _load_structure_file(node.path)
+        from megane.parsers.dispatch import load_structure_file_with_frames
+
+        structure, frames = load_structure_file_with_frames(node.path)
         self._structures[node._id] = structure
         self._node_data[node._id] = encode_snapshot(structure)
+        # A LoadTrajectory announced to read the same file reuses these frames
+        # (kept only then: a structure-only view must not hold every frame).
+        if frames is not None and node.path in self._frames_wanted:
+            self._file_frames[node.path] = frames
 
         # Re-serialize to update hasCell
         self._nodes[node._id] = (node, self._serialize_node(node))
@@ -1343,7 +1353,9 @@ class Pipeline:
         if node.xtc is not None:
             from megane.parsers.xtc import load_trajectory
 
-            trajectory = load_trajectory(source.path, node.xtc)
+            # The topology is usually parsed already: skip reading it again.
+            known = self._structures.get(source._id) if source._id is not None else None
+            trajectory = load_trajectory(source.path, node.xtc, n_atoms=known.n_atoms if known is not None else None)
             self._trajectories[node._id] = trajectory
         elif node.dcd is not None:
             from megane.parsers.dcd import load_dcd
@@ -1363,12 +1375,12 @@ class Pipeline:
         elif node.traj is not None:
             from megane.parsers.traj import load_traj
 
-            _, trajectory = load_traj(node.traj)
+            trajectory = self._file_frames.pop(node.traj, None) or load_traj(node.traj)[1]
             self._trajectories[node._id] = trajectory
         elif node.xyz is not None:
             from megane.parsers.xyz import load_xyz_trajectory
 
-            _, trajectory = load_xyz_trajectory(node.xyz)
+            trajectory = self._file_frames.pop(node.xyz, None) or load_xyz_trajectory(node.xyz)[1]
             self._trajectories[node._id] = trajectory
         else:
             return
@@ -1542,6 +1554,9 @@ def view_traj(
     from megane.widget import MolecularViewer
 
     pipe = Pipeline()
+    # When the trajectory is the structure file itself, parse it once.
+    if path in (traj, xyz):
+        pipe._frames_wanted.add(path)
     s = pipe.add_node(LoadStructure(path))
     t = pipe.add_node(LoadTrajectory(xtc=xtc, traj=traj, xyz=xyz, lammpstrj=lammpstrj))
     # The Symmetry node view() inserts, wired like the hosts' default

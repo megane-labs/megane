@@ -15,7 +15,7 @@ import {
 } from "../parsers/structure";
 import type {
   StructureParseResult,
-  LazyStructureKind,
+  FileStructureKind,
   StructureLazyHandle,
 } from "../parsers/structure";
 import {
@@ -42,10 +42,11 @@ import {
 import type { Snapshot, Frame, TrajectoryMeta, TrajectorySource } from "../types";
 
 /** File extensions eligible for lazy multi-frame structure streaming → decoder kind. */
-const LAZY_STRUCTURE_KIND: Record<string, LazyStructureKind> = {
+const LAZY_STRUCTURE_KIND: Record<string, FileStructureKind> = {
   ".xyz": "xyz",
   ".extxyz": "xyz",
   ".pdb": "pdb",
+  ".traj": "traj",
 };
 
 export interface MeganeLocalState {
@@ -264,25 +265,30 @@ export function useMeganeLocal(): MeganeLocalState {
   const upgradeToStreaming = useCallback(
     async (
       file: File,
-      kind: LazyStructureKind,
+      kind: FileStructureKind,
       frame0: StructureParseResult,
       token: number,
       topFile?: File,
     ) => {
       const indexed = await indexStructureLazy(file, kind);
       perfMark("megane:lazy:indexed");
-      if (!indexed) return; // frame 0 already shown; no streaming available
       // Heterogeneous files can't ride the positions-only lazy path — the
       // per-frame atom count / cell would be lost. Discard the lazy handle
-      // and reparse eagerly so the full HeteroFrames side table is built.
-      if (indexed.handle.index.heterogeneous) {
-        disposeTrajectoryLazy(indexed.handle.trajectoryId);
+      // and reparse eagerly so the full HeteroFrames side table is built. A
+      // .traj the index cannot read frame by frame is parsed whole too, since
+      // its extra frames have no other way in.
+      if (!indexed ? kind === "traj" : indexed.handle.index.heterogeneous) {
+        if (indexed) disposeTrajectoryLazy(indexed.handle.trajectoryId);
         if (token !== loadTokenRef.current) return;
         const result = await parseStructureFile(file);
         if (token !== loadTokenRef.current) return;
-        await applyStructureResult(result, file.name, topFile);
+        // A .traj keeps the frame-0 snapshot already on screen (the same
+        // atoms, cell and bonds) so the camera is not re-fitted under the user.
+        const kept = kind === "traj" ? { ...result, snapshot: frame0.snapshot } : result;
+        await applyStructureResult(kept, file.name, topFile);
         return;
       }
+      if (!indexed) return; // frame 0 already shown; no streaming available
       if (indexed.handle.index.nFrames <= 0) {
         disposeTrajectoryLazy(indexed.handle.trajectoryId); // single frame — nothing to stream
         return;
@@ -304,7 +310,7 @@ export function useMeganeLocal(): MeganeLocalState {
   // the rest) when the prefix can't hold frame 0; returns false only when even
   // that is unavailable (→ caller's eager parse).
   const loadStructureLazy = useCallback(
-    async (file: File, kind: LazyStructureKind, topFile?: File): Promise<boolean> => {
+    async (file: File, kind: FileStructureKind, topFile?: File): Promise<boolean> => {
       const myToken = ++loadTokenRef.current;
 
       // ── Phase 1: instant frame 0 from a bounded prefix ──
@@ -361,12 +367,8 @@ export function useMeganeLocal(): MeganeLocalState {
     async (pf: ProgressiveFile, topFile?: File) => {
       const ext = pf.name.toLowerCase().match(/\.[^.]+$/)?.[0] ?? "";
       const lazyKind = LAZY_STRUCTURE_KIND[ext];
-      const headKind =
-        lazyKind && shouldUseLazyStructure(lazyKind, pf.size)
-          ? lazyKind
-          : ext === ".traj"
-            ? ("traj" as const)
-            : null;
+      const streamKind = lazyKind && shouldUseLazyStructure(lazyKind, pf.size) ? lazyKind : null;
+      const headKind = streamKind ?? (ext === ".traj" ? ("traj" as const) : null);
       if (headKind) {
         const myToken = ++loadTokenRef.current;
         const frame0 = await parseStructureHead(pf.head, pf.tail, pf.size, headKind);
@@ -377,11 +379,11 @@ export function useMeganeLocal(): MeganeLocalState {
           void pf.file
             .then(async (file) => {
               if (myToken !== loadTokenRef.current) return;
-              if (headKind !== "traj") {
-                await upgradeToStreaming(file, headKind, frame0, myToken, topFile);
+              if (streamKind) {
+                await upgradeToStreaming(file, streamKind, frame0, myToken, topFile);
                 return;
               }
-              // An ASE .traj has no lazy decoder: parse it whole, keeping the
+              // A .traj too small to stream is parsed whole, keeping the
               // frame-0 snapshot already on screen (the same atoms, cell and
               // bonds) so the camera is not re-fitted under the user.
               const result = await parseStructureFile(file);
@@ -539,12 +541,17 @@ export function useMeganeLocal(): MeganeLocalState {
       // Small files stay eager (smoother playback, no per-frame worker cost); a
       // null result also falls back to a full read.
       const lazyKind: LazyTrajectoryKind | null =
-        kind === "lammpstrj" || kind === "xtc" ? kind : null;
+        kind === "lammpstrj" || kind === "xtc" || kind === "dcd" || kind === "netcdf" ? kind : null;
       if (lazyKind && shouldUseLazyTrajectory(lazyKind, xtc.size)) {
         const myToken = ++xtcLoadTokenRef.current;
 
         // ── Phase 1: instant frame 0 from a bounded prefix ──
-        const frame0Positions = await decodeTrajectoryFrame0(xtc, lazyKind, nAtoms);
+        // A DCD / NetCDF index is read from the header alone, so it skips
+        // straight to the streaming provider below.
+        const fixedLayout = lazyKind === "dcd" || lazyKind === "netcdf";
+        const frame0Positions = fixedLayout
+          ? null
+          : await decodeTrajectoryFrame0(xtc, lazyKind, nAtoms);
         if (frame0Positions) {
           const frame0: Frame = { frameId: 0, nAtoms, positions: frame0Positions };
           const provisionalMeta: TrajectoryMeta = { nFrames: 1, timestepPs: 1.0, nAtoms };

@@ -2,7 +2,8 @@
  * Tests useMeganeLocal.loadFileProgressive: a host delivers a large file's head
  * and tail first (src/hosts/progressiveFile.ts). Frame 0 is drawn from those,
  * and the rest of the frames come in when the whole file arrives — through the
- * lazy index for XYZ / PDB, through a full parse for ASE .traj.
+ * lazy index (XYZ / PDB / ASE .traj), or through a full parse for a file too
+ * small to stream or one the index cannot read frame by frame.
  */
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { renderHook, act } from "@testing-library/react";
@@ -81,9 +82,10 @@ async function flushBackground() {
 
 describe("useMeganeLocal.loadFileProgressive", () => {
   beforeEach(() => {
+    // Reset the store first: it disposes the previous test's stream.
+    usePipelineStore.getState().reset();
     for (const m of [headMock, prefixMock, indexMock, parseFileMock, disposeMock]) m.mockReset();
     lazyMock.mockReset().mockReturnValue(true);
-    usePipelineStore.getState().reset();
   });
 
   it("draws an XYZ's frame 0 from the head, then streams once the whole file arrives", async () => {
@@ -110,7 +112,55 @@ describe("useMeganeLocal.loadFileProgressive", () => {
     expect(result.current.snapshot).toBe(f0.snapshot);
   });
 
-  it("parses a whole .traj after its head-and-tail frame 0, keeping the frame-0 snapshot", async () => {
+  it("streams a large .traj after its head-and-tail frame 0", async () => {
+    const f0 = makeResult();
+    headMock.mockResolvedValue(f0);
+    indexMock.mockResolvedValue({
+      handle: { trajectoryId: 6, kind: "traj", index: { nAtoms: 3, nFrames: 4 } },
+      frame0: makeResult(),
+    });
+    const { pf, deliver } = progressive("run.traj");
+
+    const { result } = renderHook(() => useMeganeLocal());
+    await act(async () => {
+      await result.current.loadFileProgressive(pf);
+    });
+    expect(headMock).toHaveBeenCalledWith(pf.head, pf.tail, pf.size, "traj");
+    const whole = deliver();
+    await flushBackground();
+    expect(indexMock).toHaveBeenCalledWith(whole, "traj");
+    expect(parseFileMock).not.toHaveBeenCalled();
+    expect(usePipelineStore.getState().structureProvider!.meta.nFrames).toBe(5);
+    expect(result.current.snapshot).toBe(f0.snapshot);
+  });
+
+  it.each([
+    ["cannot be indexed frame by frame", null],
+    [
+      "changes its atoms",
+      { handle: { trajectoryId: 7, kind: "traj", index: { nFrames: 5, heterogeneous: true } } },
+    ],
+  ])("parses a large .traj whole when it %s, keeping frame 0", async (_why, indexed) => {
+    const f0 = makeResult();
+    headMock.mockResolvedValue(f0);
+    indexMock.mockResolvedValue(indexed);
+    parseFileMock.mockResolvedValue(makeResult(5));
+    const { pf, deliver } = progressive("npt.traj");
+
+    const { result } = renderHook(() => useMeganeLocal());
+    await act(async () => {
+      await result.current.loadFileProgressive(pf);
+    });
+    deliver();
+    await flushBackground();
+    expect(disposeMock).toHaveBeenCalledTimes(indexed ? 1 : 0);
+    expect(parseFileMock).toHaveBeenCalledTimes(1);
+    expect(result.current.snapshot).toBe(f0.snapshot);
+    expect(usePipelineStore.getState().structureFrames).toHaveLength(5);
+  });
+
+  it("parses a whole .traj too small to stream, keeping the frame-0 snapshot", async () => {
+    lazyMock.mockReturnValue(false);
     const f0 = makeResult();
     const full = makeResult(5);
     headMock.mockResolvedValue(f0);
@@ -126,6 +176,7 @@ describe("useMeganeLocal.loadFileProgressive", () => {
 
     deliver();
     await flushBackground();
+    expect(indexMock).not.toHaveBeenCalled();
     expect(parseFileMock).toHaveBeenCalledTimes(1);
     // Same snapshot object → the viewer does not re-fit the camera.
     expect(result.current.snapshot).toBe(f0.snapshot);

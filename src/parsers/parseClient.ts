@@ -30,7 +30,8 @@ import { perfMark, perfMeasure } from "../perf";
 import * as sync from "./parseClientSync";
 import { wasmHeapBytes } from "./parseCore";
 import { structureExtFromFileName } from "./fileNames";
-import { readBlobBuffer, readBlobText } from "./fileBytes";
+import { isResident, readBlobBuffer, readBlobText } from "./fileBytes";
+import { unpackLabels, type PackedLabels } from "./labels";
 import type {
   StructureParseResult,
   XTCParseResult,
@@ -38,6 +39,7 @@ import type {
   TrajectoryIndexResult,
   LazyTrajectoryKind,
   LazyStructureKind,
+  FileStructureKind,
 } from "./parseCore";
 import type {
   ParseRequest,
@@ -148,8 +150,8 @@ export function shouldUseLazyTrajectory(_kind: LazyTrajectoryKind, fileSize: num
   return shouldUseLazy(fileSize);
 }
 
-/** Whether to lazily decode a multi-frame structure file's extra frames (XYZ). */
-export function shouldUseLazyStructure(_kind: LazyStructureKind, fileSize: number): boolean {
+/** Whether to lazily decode a multi-frame structure file's extra frames (XYZ / PDB / .traj). */
+export function shouldUseLazyStructure(_kind: FileStructureKind, fileSize: number): boolean {
   return shouldUseLazy(fileSize);
 }
 
@@ -170,6 +172,16 @@ function tearDown(reason: string): void {
   workerHeapBytes = 0;
 }
 
+/** Split the labels a structure result carries as text (see `./labels`). */
+function unpackResultLabels(result: unknown): unknown {
+  if (result && typeof result === "object") {
+    const r = result as { labelsText?: unknown; frame0?: unknown };
+    if (typeof r.labelsText === "string") unpackLabels(result as PackedLabels);
+    if (r.frame0 && typeof r.frame0 === "object") unpackLabels(r.frame0 as PackedLabels);
+  }
+  return result;
+}
+
 function getWorker(): Worker {
   if (worker) return worker;
   // A crashed worker stays down for the session: every caller has already
@@ -184,7 +196,7 @@ function getWorker(): Worker {
     pending.delete(e.data.id);
     scheduleIdleRelease();
     if (e.data.ok) {
-      entry.resolve(e.data.result);
+      entry.resolve(unpackResultLabels(e.data.result));
     } else {
       entry.reject(new Error(e.data.error ?? "worker parse failed"));
     }
@@ -293,13 +305,16 @@ export async function parseStructureFile(file: File): Promise<StructureParseResu
     const id = nextId++;
     let req: ParseRequest;
     const transfer: Transferable[] = [];
-    if (ext === ".traj") {
+    // Text formats travel as bytes too and are decoded inside WASM: a JS string
+    // of the file would sit on this thread and be cloned into the worker.
+    if (isResident(file)) {
+      // The host holds the bytes: hand over a copy rather than make the
+      // worker read them back through the (slow) Blob API.
       const buffer = await readBlobBuffer(file);
       req = { id, op: "structure", wasm: resolveWasmUrl(), ext, bytes: buffer };
       transfer.push(buffer);
     } else {
-      const text = await readBlobText(file);
-      req = { id, op: "structure", wasm: resolveWasmUrl(), ext, text };
+      req = { id, op: "structure", wasm: resolveWasmUrl(), ext, file };
     }
     const result = await send<StructureParseResult>(req, transfer);
     perfMark(`megane:parse:end:${tag}`);
@@ -396,26 +411,12 @@ export async function indexTrajectoryLazy(
     const id = nextId++;
     const trajectoryId = nextTrajId++;
     const wasm = resolveWasmUrl();
-    let index: TrajectoryIndexResult;
-    if (kind === "xtc") {
-      index = await send<TrajectoryIndexResult>(
-        {
-          id,
-          op: "indexTrajectoryFile",
-          wasm,
-          trajectoryId,
-          file,
-          expectedNAtoms,
-        },
-        [],
-      );
-    } else {
-      const buffer = await readBlobBuffer(file);
-      index = await send<TrajectoryIndexResult>(
-        { id, op: "indexTrajectory", wasm, kind, trajectoryId, bytes: buffer, expectedNAtoms },
-        [buffer],
-      );
-    }
+    // The worker indexes the File from windows and reads each frame when it
+    // is shown, so neither thread ever holds the whole trajectory.
+    const index = await send<TrajectoryIndexResult>(
+      { id, op: "indexTrajectoryFile", wasm, kind, trajectoryId, file, expectedNAtoms },
+      [],
+    );
     liveDecoders.add(trajectoryId);
     return { trajectoryId, kind, index };
   } catch {
@@ -470,6 +471,7 @@ export async function decodeTrajectoryFrame(
     positions: result.positions,
     vectors: result.vectors,
     vectorChannelCount: result.vectorChannelCount,
+    ...(result.box && { box: result.box }),
   };
 }
 
@@ -518,6 +520,9 @@ const PREFIX_MAX_BYTES = 256 * 1024 * 1024;
 // Bounded tail read that captures a multi-MODEL PDB's trailing CONECT section
 // (written once after the last ENDMDL) so frame 0 gets explicit bonds.
 const PDB_TAIL_BYTES = 4 * 1024 * 1024;
+// Bounded tail read holding an ASE .traj's offset table, which ASE rewrites at
+// the end of the file as frames are appended: 1 MiB holds ~130k frames' entries.
+const TRAJ_TAIL_BYTES = 1024 * 1024;
 
 /**
  * Run `attempt` on the first {@link PREFIX_INITIAL_BYTES} of `file`, doubling
@@ -555,9 +560,21 @@ async function withGrowingPrefix<T>(
  */
 export async function parseStructurePrefix(
   file: File,
-  kind: LazyStructureKind,
+  kind: FileStructureKind,
 ): Promise<StructureParseResult | null> {
   if (workerUnavailable()) return null;
+  if (kind === "traj") {
+    // Frame 0 follows the header; the offset table locating it is usually in
+    // the last bytes (see `parseStructureHead`).
+    return withGrowingPrefix(file, async (size) => {
+      const tailStart = Math.max(size, file.size - TRAJ_TAIL_BYTES);
+      const [head, tail] = await Promise.all([
+        readBlobBuffer(file, 0, size),
+        readBlobBuffer(file, tailStart),
+      ]);
+      return sendTrajFrame0(head, tail, file.size);
+    });
+  }
   return withGrowingPrefix(file, async (size) => {
     const isWholeFile = size >= file.size;
     // Read the head (frame 0) and — for PDB — the trailing CONECT section in
@@ -612,21 +629,8 @@ export async function parseStructureHead(
 ): Promise<StructureParseResult | null> {
   if (workerUnavailable()) return null;
   try {
-    if (kind === "traj") {
-      const headBuf = head.slice().buffer;
-      const tailBuf = tail.slice().buffer;
-      return await send<StructureParseResult>(
-        {
-          id: nextId++,
-          op: "trajFrame0",
-          wasm: resolveWasmUrl(),
-          head: headBuf,
-          tail: tailBuf,
-          totalSize,
-        },
-        [headBuf, tailBuf],
-      );
-    }
+    if (kind === "traj")
+      return await sendTrajFrame0(head.slice().buffer, tail.slice().buffer, totalSize);
     const isWholeFile = head.length >= totalSize;
     const decoder = new TextDecoder();
     const rawTail = kind === "pdb" && !isWholeFile ? decoder.decode(tail) : "";
@@ -634,6 +638,18 @@ export async function parseStructureHead(
   } catch {
     return null;
   }
+}
+
+/** Parse a `.traj`'s frame 0 in the worker from its head and tail bytes (moved there). */
+function sendTrajFrame0(
+  head: ArrayBuffer,
+  tail: ArrayBuffer,
+  totalSize: number,
+): Promise<StructureParseResult> {
+  return send<StructureParseResult>(
+    { id: nextId++, op: "trajFrame0", wasm: resolveWasmUrl(), head, tail, totalSize },
+    [head, tail],
+  );
 }
 
 /**
@@ -644,16 +660,17 @@ export async function parseStructureHead(
  */
 export async function indexStructureLazy(
   file: File,
-  kind: LazyStructureKind,
+  kind: FileStructureKind,
 ): Promise<StructureLazyResult | null> {
   if (workerUnavailable()) return null;
   try {
     const id = nextId++;
     const trajectoryId = nextTrajId++;
-    const buffer = await readBlobBuffer(file);
+    // The File itself: the worker indexes it from windows and reads frame 0
+    // and each later frame from just their bytes.
     const { index, frame0 } = await send<IndexStructureResult>(
-      { id, op: "indexStructure", wasm: resolveWasmUrl(), kind, trajectoryId, bytes: buffer },
-      [buffer],
+      { id, op: "indexStructure", wasm: resolveWasmUrl(), kind, trajectoryId, file },
+      [],
     );
     liveDecoders.add(trajectoryId);
     return { handle: { trajectoryId, kind, index }, frame0 };

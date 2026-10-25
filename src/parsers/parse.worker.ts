@@ -17,12 +17,17 @@ import {
   collectResultBuffers,
   indexTrajectoryCore,
   indexXtcFileCore,
+  indexDumpFileCore,
+  indexBinaryTrajectoryFileCore,
   indexStructureCore,
+  indexStructureFileCore,
+  indexTrajFileCore,
   decodeTrajectoryFrame0Core,
   decodeLazyFrameCore,
   wasmHeapBytes,
   type LazyFrameDecoder,
 } from "./parseCore";
+import { packLabels } from "./labels";
 import type { ParseRequest, ParseResponse } from "./parseMessages";
 
 interface WorkerSelf {
@@ -38,10 +43,10 @@ function respond(response: ParseResponse, transfer?: Transferable[]): void {
 }
 
 // Persistent lazy per-frame decoders (trajectory OR multi-frame structure),
-// keyed by a client-allocated id. Each holds the whole file in WASM memory for
-// its lifetime so frames can be decoded on demand — except an XTC indexed from
-// its File (`indexTrajectoryFile`), which reads each frame from the file —
-// and is freed on `disposeTrajectory`.
+// keyed by a client-allocated id and freed on `disposeTrajectory`. One indexed
+// from its File (XTC / LAMMPS dump via `indexTrajectoryFile`, XYZ / PDB via
+// `indexStructure` with a file) reads each frame from the file; one built from
+// bytes holds the whole file in WASM memory for its lifetime.
 const decoders = new Map<number, LazyFrameDecoder>();
 
 ctx.onmessage = async (e: MessageEvent<ParseRequest>) => {
@@ -49,13 +54,22 @@ ctx.onmessage = async (e: MessageEvent<ParseRequest>) => {
   try {
     if (req.op === "structure") {
       await ensureInit(req.wasm);
+      const bytes = req.bytes ?? (req.file ? await req.file.arrayBuffer() : undefined);
       const result = parseStructureCore({
         ext: req.ext,
         text: req.text,
-        bytes: req.bytes ? new Uint8Array(req.bytes) : undefined,
+        bytes: bytes ? new Uint8Array(bytes) : undefined,
       });
       const transfer = collectResultBuffers(result);
-      respond({ id: req.id, ok: true, op: "structure", result } satisfies ParseResponse, transfer);
+      respond(
+        {
+          id: req.id,
+          ok: true,
+          op: "structure",
+          result: packLabels(result),
+        } satisfies ParseResponse,
+        transfer,
+      );
     } else if (req.op === "trajectory") {
       await ensureInit(req.wasm);
       const result = parseTrajectoryCore({
@@ -72,7 +86,12 @@ ctx.onmessage = async (e: MessageEvent<ParseRequest>) => {
       const result = parseStructurePrefixCore(req.text, req.kind, req.isWholeFile);
       const transfer = collectResultBuffers(result);
       respond(
-        { id: req.id, ok: true, op: "structurePrefix", result } satisfies ParseResponse,
+        {
+          id: req.id,
+          ok: true,
+          op: "structurePrefix",
+          result: packLabels(result),
+        } satisfies ParseResponse,
         transfer,
       );
     } else if (req.op === "trajFrame0") {
@@ -84,7 +103,15 @@ ctx.onmessage = async (e: MessageEvent<ParseRequest>) => {
         req.totalSize,
       );
       const transfer = collectResultBuffers(result);
-      respond({ id: req.id, ok: true, op: "trajFrame0", result } satisfies ParseResponse, transfer);
+      respond(
+        {
+          id: req.id,
+          ok: true,
+          op: "trajFrame0",
+          result: packLabels(result),
+        } satisfies ParseResponse,
+        transfer,
+      );
     } else if (req.op === "trajectoryFrame0") {
       await ensureInit(req.wasm);
       // Decode frame 0 from a bounded prefix; throws if the prefix is too small.
@@ -104,8 +131,15 @@ ctx.onmessage = async (e: MessageEvent<ParseRequest>) => {
       );
     } else if (req.op === "indexStructure") {
       await ensureInit(req.wasm);
-      // One read: build the persistent decoder (index) AND parse frame 0.
-      const { decoder, index, frame0 } = indexStructureCore(new Uint8Array(req.bytes), req.kind);
+      // One request: build the persistent decoder (index) AND parse frame 0.
+      const { kind, file } = req;
+      if (kind === "traj" && !file) throw new Error("an ASE .traj is indexed from its File");
+      const { decoder, index, frame0 } =
+        kind === "traj"
+          ? await indexTrajFileCore(file!)
+          : file
+            ? await indexStructureFileCore(file, kind)
+            : indexStructureCore(new Uint8Array(req.bytes ?? new ArrayBuffer(0)), kind);
       decoders.set(req.trajectoryId, decoder);
       // Transfer frame 0's backing buffers (positions/elements/bonds/…) zero-copy.
       const transfer = collectResultBuffers(frame0);
@@ -114,7 +148,7 @@ ctx.onmessage = async (e: MessageEvent<ParseRequest>) => {
           id: req.id,
           ok: true,
           op: "indexStructure",
-          result: { index, frame0 },
+          result: { index, frame0: packLabels(frame0) },
         } satisfies ParseResponse,
         transfer,
       );
@@ -136,10 +170,16 @@ ctx.onmessage = async (e: MessageEvent<ParseRequest>) => {
       );
     } else if (req.op === "indexTrajectoryFile") {
       await ensureInit(req.wasm);
-      const { decoder, index } = await indexXtcFileCore(req.file, req.expectedNAtoms);
+      const { decoder, index } =
+        req.kind === "lammpstrj"
+          ? await indexDumpFileCore(req.file, req.expectedNAtoms)
+          : req.kind === "dcd" || req.kind === "netcdf"
+            ? await indexBinaryTrajectoryFileCore(req.file, req.kind, req.expectedNAtoms)
+            : await indexXtcFileCore(req.file, req.expectedNAtoms);
       decoders.set(req.trajectoryId, decoder);
       const transfer: Transferable[] = [index.times.buffer];
       if (index.box) transfer.push(index.box.buffer);
+      if (index.boxOrigin) transfer.push(index.boxOrigin.buffer);
       respond(
         { id: req.id, ok: true, op: "indexTrajectoryFile", result: index } satisfies ParseResponse,
         transfer,
@@ -147,16 +187,17 @@ ctx.onmessage = async (e: MessageEvent<ParseRequest>) => {
     } else if (req.op === "decodeFrame") {
       const decoder = decoders.get(req.trajectoryId);
       if (!decoder) throw new Error(`unknown trajectoryId ${req.trajectoryId}`);
-      const { positions, vectors } = await decodeLazyFrameCore(decoder, req.frame);
+      const { positions, vectors, box } = await decodeLazyFrameCore(decoder, req.frame);
       const vectorChannelCount = vectors.length > 0 ? vectors.length / (decoder.n_atoms * 3) : 0;
       const transfer: Transferable[] = [positions.buffer];
       if (vectors.length > 0) transfer.push(vectors.buffer);
+      if (box) transfer.push(box.buffer);
       respond(
         {
           id: req.id,
           ok: true,
           op: "decodeFrame",
-          result: { frame: req.frame, positions, vectors, vectorChannelCount },
+          result: { frame: req.frame, positions, vectors, vectorChannelCount, box },
         } satisfies ParseResponse,
         transfer,
       );
