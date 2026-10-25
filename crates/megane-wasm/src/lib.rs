@@ -1321,24 +1321,36 @@ impl BinaryFrameLayout {
         }) as f64
     }
 
+    /// Newline-joined names of the per-atom vector channels each frame
+    /// decodes (NetCDF `velocity` / `force`), in `vectors()` order; empty
+    /// for DCD.
+    #[wasm_bindgen(getter)]
+    pub fn vector_channel_names(&self) -> String {
+        match &self.inner {
+            BinaryLayout::Dcd(_) => String::new(),
+            BinaryLayout::Netcdf(l) => l.vector_channel_names().join("\n"),
+        }
+    }
+
     /// Decode frame `i` from its bytes (read from `frame_start(i)`).
     pub fn decode(&self, bytes: &[u8], i: u32) -> Result<DecodedBinaryFrame, JsError> {
-        let (positions, cell, time) = match &self.inner {
+        let (positions, cell, time, vectors) = match &self.inner {
             BinaryLayout::Dcd(l) => {
                 let (positions, cell) =
                     dcd::decode_layout_frame(l, bytes).map_err(|e| JsError::new(&e))?;
-                (positions, cell, None)
+                (positions, cell, None, Vec::new())
             }
             BinaryLayout::Netcdf(l) => {
                 let f = netcdf::decode_layout_record(l, bytes, i as usize)
                     .map_err(|e| JsError::new(&e))?;
-                (f.positions, f.cell, f.time)
+                (f.positions, f.cell, f.time, f.vectors.concat())
             }
         };
         Ok(DecodedBinaryFrame {
             positions,
             cell,
             time,
+            vectors,
         })
     }
 }
@@ -1482,6 +1494,7 @@ pub struct DecodedBinaryFrame {
     positions: Vec<f32>,
     cell: Option<[f32; 9]>,
     time: Option<f32>,
+    vectors: Vec<f32>,
 }
 
 #[wasm_bindgen]
@@ -1503,6 +1516,12 @@ impl DecodedBinaryFrame {
     #[wasm_bindgen(getter)]
     pub fn time(&self) -> f32 {
         self.time.unwrap_or(f32::NAN)
+    }
+
+    /// This frame's per-atom vector channels, concatenated in
+    /// `vector_channel_names` order (`n_atoms * 3` each); empty without any.
+    pub fn vectors(&self) -> Float32Array {
+        Float32Array::from(&self.vectors[..])
     }
 }
 

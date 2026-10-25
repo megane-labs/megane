@@ -207,6 +207,8 @@ interface WasmBinaryFrameLayout {
   /** NaN when the time step comes from the frames' own time (NetCDF). */
   readonly timestep_ps: number;
   readonly has_cell: boolean;
+  /** Newline-joined per-atom vector channel names (NetCDF velocity/force). */
+  readonly vector_channel_names: string;
   frame_start(frame: number): number;
   readonly frame_len: number;
   decode(bytes: Uint8Array, frame: number): WasmDecodedBinaryFrame;
@@ -220,6 +222,8 @@ interface WasmDecodedBinaryFrame {
   cell(): Float32Array;
   /** NaN without a time. */
   readonly time: number;
+  /** The frame's vector channels, concatenated in channel order; empty without any. */
+  vectors(): Float32Array;
   free(): void;
 }
 
@@ -1418,7 +1422,12 @@ export async function indexBinaryTrajectoryFileCore(
       const bytes = await readFrame(start, Math.min(file.size, start + frameLen));
       const decoded = owned.decode(bytes, frame);
       try {
-        return { positions: decoded.positions(), cell: decoded.cell(), time: decoded.time };
+        return {
+          positions: decoded.positions(),
+          cell: decoded.cell(),
+          time: decoded.time,
+          vectors: decoded.vectors(),
+        };
       } finally {
         decoded.free();
       }
@@ -1439,7 +1448,8 @@ export async function indexBinaryTrajectoryFileCore(
       box: hasBox ? first.cell : null,
       boxOrigin: null,
       times: new Float32Array(0),
-      vectorChannelNames: [],
+      // NetCDF velocities / forces stream with each frame, as a dump's do.
+      vectorChannelNames: owned.vector_channel_names.split("\n").filter((n) => n.length > 0),
       heterogeneous: false,
       frameCells: hasBox,
     };
@@ -1447,8 +1457,8 @@ export async function indexBinaryTrajectoryFileCore(
       n_atoms: nAtoms,
       async decodeFrame(frame) {
         if (!(frame >= 0 && frame < nFrames)) throw new Error("frame index out of range");
-        const { positions, cell } = await decodeAt(frame);
-        const out: DecodedFileFrame = { positions, vectors: new Float32Array(0) };
+        const { positions, cell, vectors } = await decodeAt(frame);
+        const out: DecodedFileFrame = { positions, vectors };
         if (hasBox && cell.length === 9) out.box = cell;
         return out;
       },
