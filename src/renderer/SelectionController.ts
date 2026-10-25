@@ -392,6 +392,18 @@ export class SelectionController {
   }
 
   /**
+   * Re-validate the selection after a new snapshot: drop atoms the structure
+   * no longer has, and redraw the markers and line where the rest are now.
+   */
+  syncToSnapshot(): void {
+    const nAtoms = this.view.getSnapshot()?.nAtoms ?? 0;
+    if (this.selectedAtoms.some((i) => i >= nAtoms)) {
+      this.selectedAtoms = this.selectedAtoms.filter((i) => i < nAtoms);
+    }
+    this.refresh();
+  }
+
+  /**
    * Highlight an arbitrary set of atoms as a live "preview" of the Selection
    * Inspector's current selection (green, translucent). Independent of the
    * measurement selection. Pass `null` or `[]` to clear. The set is kept, so

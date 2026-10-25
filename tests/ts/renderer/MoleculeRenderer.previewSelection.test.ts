@@ -68,6 +68,30 @@ describe("MoleculeRenderer — preview selection", () => {
     expect(spheres[0].position.toArray()).toEqual([5, 6, 7]);
   });
 
+  it("re-validates the measurement selection on a new snapshot", () => {
+    const { renderer, internals } = makeRenderer();
+    internals.atomRenderer = new ImpostorAtomMesh(8);
+    internals.bondRenderer = new ImpostorBondMesh(8);
+    internals.scene = { add: () => {}, remove: () => {} };
+    internals.cameraController.syncExtent = () => {};
+    renderer.setSelection([0, 2]);
+    expect(renderer.getSelection()).toEqual({ atoms: [0, 2] });
+
+    // Same structure, atom 2 moved: the marker and the distance follow.
+    const moved = makeSnapshot();
+    moved.positions = new Float32Array([0, 0, 0, 1, 0, 0, 5, 0, 0]);
+    renderer.loadSnapshot(moved, { fit: false });
+    expect(renderer.getMeasurement()?.value).toBeCloseTo(5, 6);
+    expect(internals.selection.selectionGroup.children[1].position.toArray()).toEqual([5, 0, 0]);
+
+    // A smaller structure: atom 2 is gone, and with it the distance.
+    const smaller = { ...makeSnapshot(), nAtoms: 2, positions: new Float32Array(6) };
+    smaller.elements = new Uint8Array([6, 7]);
+    renderer.loadSnapshot(smaller, { fit: false });
+    expect(renderer.getSelection()).toEqual({ atoms: [0] });
+    expect(renderer.getMeasurement()).toBeNull();
+  });
+
   it("follows the atoms through a trajectory frame", () => {
     const { renderer, internals } = makeRenderer();
     internals.atomRenderer = new ImpostorAtomMesh(8);
