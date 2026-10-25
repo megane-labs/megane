@@ -22,7 +22,7 @@ docker run --rm -p 127.0.0.1:8080:8080 -v ./mydata:/data megane \
   megane serve --files-root /data --files-any-host --port 8080 --no-browser
 ```
 
-Then open a file from the Load Structure node's *Open from server…*. The page does not load a file named on the `megane serve` command line, so browse to it instead. Docker's port mapping makes your browser a non-local client of the container, which is why `--files-any-host` is needed; publishing the port on `127.0.0.1` keeps it reachable from your machine only.
+Then open a file from the Load Structure node's *Open from server…*. The page does not load a file named on the `megane serve` command line, so browse to it instead. Docker's port mapping makes your browser a non-local client of the container, which is why `--files-any-host` is needed; publishing the port on `127.0.0.1` keeps it reachable from your machine only. The image sets `MEGANE_HOST=0.0.0.0`, so the server listens on the container's own interfaces without a `--host` option.
 
 ## Running from Source
 
@@ -73,11 +73,13 @@ megane serve [STRUCTURE_FILE] [OPTIONS]
 |--------|---------|-------------|
 | `--xtc PATH` | — | Path to an XTC trajectory file (paired with `STRUCTURE_FILE`, in any structure format, for topology; the atom counts must match) |
 | `--traj PATH` | — | Path to an ASE `.traj` file. Loads both topology and frames from the trajectory; do not pass `STRUCTURE_FILE` when using this. |
-| `--port PORT` | `8765` | Server port. The server listens on all interfaces (`0.0.0.0`). |
+| `--port PORT` | `8765` | Server port |
+| `--host ADDRESS` | `$MEGANE_HOST`, else `127.0.0.1` | Address the server listens on. The default answers this machine only (a browser here, or an SSH tunnel); `0.0.0.0` listens on every interface, for other machines on the network or inside a container. |
+| `--allowed-host NAME` | — | Another name browsers reach the server by — a reverse proxy's public name, or this machine's network name under `--host 0.0.0.0`. `localhost`, IP addresses and the `--host` value are always accepted. Repeatable. See [Security](#security). |
 | `--no-browser` | `false` | Don't automatically open the browser |
 | `--files-root DIR` | current directory | Folder the Load nodes' *Open from server…* dialog browses |
 | `--no-files` | `false` | Turn *Open from server…* off |
-| `--files-any-host` | `false` | Serve *Open from server…* to every client, not only ones on this machine (an SSH tunnel counts as this machine) |
+| `--files-any-host` | `false` | Serve *Open from server…* to every client, not only ones on this machine (an SSH tunnel counts as this machine). Other machines can connect only when `--host` lets them. |
 | `--dev` | `false` | Development mode (use the Vite dev server for the frontend). Implies not opening the browser. |
 
 ## Opening files on a remote machine
@@ -99,11 +101,43 @@ ssh -L 8765:localhost:8765 user@remote
 ```
 
 Only folders under `--files-root` (default: the directory `megane serve` was
-started in) are reachable; hidden files and symlinks that point outside it are
-left out. Because `megane serve` listens on every network interface, file
-browsing is served only to clients on the server's own machine — a browser
-there, or an SSH tunnel like the one above. Pass `--files-any-host` to let other
-machines on the network browse too, or `--no-files` to turn it off.
+started in) are reachable; hidden files and folders (names starting with `.`,
+such as `~/.ssh`) and symlinks that point outside the root or into a hidden
+folder are neither listed nor sent. `megane serve` listens on `127.0.0.1`, so
+only this machine reaches it — a browser there, or an SSH tunnel like the one
+above. To let other machines on the network open the viewer and browse too,
+listen on every interface and lift the file-browsing limit:
+
+```bash
+megane serve --host 0.0.0.0 --files-any-host
+```
+
+Pass `--no-files` to turn file browsing off. Everyone who can log in to the
+machine can also reach a server on `127.0.0.1`, so on a shared login node set
+`--files-root` to the folder you want to show (not your home directory) or pass
+`--no-files`.
+
+## Security
+
+`megane serve` has no login, so it decides who to answer from where a request
+comes from:
+
+- **Listening address.** By default it listens on `127.0.0.1` only. `--host`
+  (or the `MEGANE_HOST` environment variable, which the Docker image sets to
+  `0.0.0.0`) changes that.
+- **Host names.** The file, upload and WebSocket endpoints answer only requests
+  whose `Host` header names this server: `localhost` (and `*.localhost`), an IP
+  address, the `--host` value, or a name passed to `--allowed-host`. A web page
+  whose DNS name was pointed at your machine (DNS rebinding) sends its own name
+  and is refused with a `403`. If you open the viewer by a network name under
+  `--host 0.0.0.0` — `http://node42:8765` — pass `--allowed-host node42`.
+- **Other sites' pages.** Any website can post a form to, or open a WebSocket
+  on, `localhost`. The upload endpoint and `/ws` refuse a request whose
+  `Origin` is not the page's own server (or a name passed to `--allowed-host`).
+- **This machine.** *Open from server…* is served without `--files-any-host`
+  only to a loopback client that reached a loopback name. A reverse proxy on
+  the same machine arrives from loopback too, but under its public name, so its
+  clients are treated as other machines.
 
 ## Examples
 
@@ -157,9 +191,9 @@ In development mode, `megane serve` does not open a browser; start the Vite dev 
 `megane serve` starts the backend — a [FastAPI](https://fastapi.tiangolo.com/) server with:
 
 - **Static file serving** — The built frontend from `megane/static/app/` (the viewer at `/`, Megane Builder at `/builder.html`). Set the `MEGANE_STATIC_DIR` environment variable to serve a different build directory.
-- **WebSocket endpoint** (`/ws`) — Binary protocol streaming for molecular data. On connect it sends the loaded snapshot and metadata; clients can then send `request_frame`, `stream` (`start`, `end`, `stride`, `fps`), and `stop` JSON commands.
-- **Upload endpoint** (`POST /api/upload`) — Accepts a structure file in the `pdb` form field (any structure format; the uploaded file name's extension picks the parser, and an unsupported one is a `400`) plus an optional `xtc`, as multipart form data, loads it, and broadcasts it to every connected WebSocket client.
-- **File browsing** (`GET /api/files?path=…`, `GET /api/files/content?path=…`) — Lists the folders and files under `--files-root` and sends one file, for the Load nodes' *Open from server…* dialog. Hidden entries and paths that leave the root are refused. Both answer `404` under `--no-files` and `403` to clients other than the server's own machine unless `--files-any-host` is given. The viewer page (`/`) carries `<meta name="megane-server-files">` only when these endpoints would answer the browser loading it, and the web app requests them only then.
+- **WebSocket endpoint** (`/ws`) — Binary protocol streaming for molecular data. On connect it sends the loaded snapshot and metadata; clients can then send `request_frame`, `stream` (`start`, `end`, `stride`, `fps`), and `stop` JSON commands. A connection from another site's page or under an unknown `Host` is refused (see [Security](#security)).
+- **Upload endpoint** (`POST /api/upload`) — Accepts a structure file in the `pdb` form field (any structure format; the uploaded file name's extension picks the parser, and an unsupported one is a `400`) plus an optional `xtc`, as multipart form data, loads it, and broadcasts it to every connected WebSocket client. The uploaded files are kept (the trajectory reads its frames from the XTC) until the next upload replaces them. A post from another site's page or under an unknown `Host` is a `403`.
+- **File browsing** (`GET /api/files?path=…`, `GET /api/files/content?path=…`) — Lists the folders and files under `--files-root` and sends one file, for the Load nodes' *Open from server…* dialog. Hidden names are refused (`403`), as are paths that leave the root (`400`). Both answer `404` under `--no-files` and `403` to clients other than the server's own machine unless `--files-any-host` is given, and to an unknown `Host`. The viewer page (`/`) carries `<meta name="megane-server-files">` only when these endpoints would answer the browser loading it, and the web app requests them only then.
 - **Health check** (`GET /health`) — Returns `{"status": "ok"}`, for load balancers and container orchestrators.
 
 Data is encoded using Megane's binary protocol for efficient transfer:

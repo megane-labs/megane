@@ -87,6 +87,29 @@ describe("AssistantDock", () => {
     expect(await screen.findByText("Generation cancelled.")).toBeTruthy();
   });
 
+  it("aborts a request in progress when it is unmounted", async () => {
+    let signal: AbortSignal | undefined;
+    const run = vi.fn(({ signal: s }: { signal: AbortSignal }) => {
+      signal = s;
+      return new Promise<never>(() => {});
+    });
+    render(
+      <AssistantDock
+        run={run}
+        placeholder="Ask…"
+        emptyHint="Nothing yet."
+        latestCheckpointId={null}
+        onUndo={() => true}
+        testId="dock"
+      />,
+    );
+    ask("go");
+    expect(signal?.aborted).toBe(false);
+    // Collapsing the panel (or leaving Flow mode) unmounts the dock.
+    cleanup();
+    expect(signal?.aborted).toBe(true);
+  });
+
   it("shows a rate limit's own message and hides other errors' details", async () => {
     const limited = new Error("Free demo rate limit reached.");
     limited.name = "RateLimitError";

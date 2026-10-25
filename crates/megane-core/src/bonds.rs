@@ -37,6 +37,129 @@ pub(crate) fn max_dense_cells(n_atoms: usize) -> usize {
     n_atoms.saturating_mul(8).saturating_add(4096)
 }
 
+/// Relative slack on a cutoff-sized cell, so a pair sitting exactly at the
+/// cutoff cannot round into a cell one step further away.
+const CELL_SLACK: f32 = 1.001;
+
+/// At most `1 / WIDE_ATOM_SHARE` of the atoms may be "wide" (see [`ScanPlan`]).
+const WIDE_ATOM_SHARE: usize = 8;
+
+/// How a cell-list scan finds every pair within its cutoff
+/// `(radius(e_i) + radius(e_j)) * factor`.
+///
+/// The half-shell scan only pairs atoms in the same or adjacent cells, so it
+/// is exact only when every cutoff fits in one cell. Heavy atoms have cutoffs
+/// wider than the base cell (covalent Na–Na 4.32 Å and K–K 5.28 Å against a
+/// 2.5 Å cell; vdW S–S 2.16 Å against 2.0 Å), and such pairs were found or
+/// missed depending on where the grid origin fell. Widening every cell to the
+/// largest cutoff would be exact but slow — one K⁺ in a water box would make
+/// every cell 5.3 Å wide — so the cell is sized for all but a small minority
+/// of *wide* atoms, which instead search `reach` cells along each axis.
+struct ScanPlan {
+    cell_size: f32,
+    /// Indices of the wide atoms, ascending.
+    wide: Vec<u32>,
+    /// `is_wide[i]` for every atom (empty when no atom is wide).
+    is_wide: Vec<bool>,
+    /// Cells a wide atom searches along each axis (≥ 2 when any atom is wide).
+    reach: i64,
+}
+
+impl ScanPlan {
+    /// Plan a scan of `elements` whose cutoff is `(radius_i + radius_j) * factor`,
+    /// never using cells smaller than `base`.
+    fn new(base: f32, elements: &[u8], radius: fn(u8) -> f32, factor: f32) -> Self {
+        let cutoff = |r: f32| 2.0 * r * factor * CELL_SLACK;
+        let mut counts = [0usize; 256];
+        for &e in elements {
+            counts[e as usize] += 1;
+        }
+        // Elements present, widest radius first.
+        let mut present: Vec<(f32, usize)> = (0..256)
+            .filter(|&z| counts[z] > 0)
+            .map(|z| (radius(z as u8), counts[z]))
+            .collect();
+        present.sort_by(|a, b| b.0.total_cmp(&a.0));
+
+        // Grow the cell until the atoms it does not fit are a small minority.
+        let budget = elements.len() / WIDE_ATOM_SHARE;
+        let mut cell_size = base;
+        let mut outside = 0;
+        for &(r, count) in &present {
+            if cutoff(r) <= base {
+                break;
+            }
+            outside += count;
+            if outside > budget {
+                cell_size = cutoff(r);
+                break;
+            }
+        }
+
+        let max_cutoff = present.first().map_or(0.0, |&(r, _)| cutoff(r));
+        let wide_element: Vec<bool> = (0..=255u8).map(|z| cutoff(radius(z)) > cell_size).collect();
+        let wide: Vec<u32> = (0..elements.len() as u32)
+            .filter(|&i| wide_element[elements[i as usize] as usize])
+            .collect();
+        let is_wide = if wide.is_empty() {
+            Vec::new()
+        } else {
+            elements.iter().map(|&e| wide_element[e as usize]).collect()
+        };
+        ScanPlan {
+            cell_size,
+            reach: (max_cutoff / cell_size).ceil() as i64,
+            wide,
+            is_wide,
+        }
+    }
+
+    /// A plan with fixed cells and no wide atoms.
+    #[cfg(test)]
+    fn uniform(cell_size: f32) -> Self {
+        ScanPlan {
+            cell_size,
+            wide: Vec::new(),
+            is_wide: Vec::new(),
+            reach: 1,
+        }
+    }
+
+    /// Cell offsets within `reach` that the half-shell scan does not visit
+    /// (some axis two or more cells away). Each wide atom searches all of
+    /// them, not half, so a pair of two wide atoms is found from both ends and
+    /// kept only from the lower index (see [`ScanPlan::keeps_far_pair`]).
+    fn far_offsets(&self) -> Vec<[i64; 3]> {
+        if self.wide.is_empty() {
+            return Vec::new();
+        }
+        let r = self.reach;
+        let mut offsets = Vec::new();
+        for x in -r..=r {
+            for y in -r..=r {
+                for z in -r..=r {
+                    if x.abs().max(y.abs()).max(z.abs()) >= 2 {
+                        offsets.push([x, y, z]);
+                    }
+                }
+            }
+        }
+        offsets
+    }
+
+    /// Whether wide atom `i` checks the far pair `(i, j)`: always, unless `j`
+    /// is wide too and will check the pair itself.
+    fn keeps_far_pair(&self, i: usize, j: usize) -> bool {
+        !(self.is_wide[j] && j < i)
+    }
+}
+
+/// `v + d` when it stays inside `0..n`.
+fn step_cell(v: u64, d: i64, n: u64) -> Option<u64> {
+    let w = v.checked_add_signed(d)?;
+    (w < n).then_some(w)
+}
+
 /// The cell-list scan over only the occupied cells. Cells are visited in the
 /// same (x, y, z) order as the dense grid, atoms within a cell by index and
 /// neighbors in half-shell order, so it reports the same bonds in the same
@@ -44,7 +167,7 @@ pub(crate) fn max_dense_cells(n_atoms: usize) -> usize {
 fn sparse_cell_list_scan<F>(
     positions: &[f32],
     n_atoms: usize,
-    cell_size: f32,
+    plan: &ScanPlan,
     lo: [f32; 3],
     dims: [u64; 3],
     mut check_pair: F,
@@ -52,6 +175,7 @@ fn sparse_cell_list_scan<F>(
 where
     F: FnMut(usize, usize) -> Option<(u32, u32)>,
 {
+    let cell_size = plan.cell_size;
     // Float-to-int `as` saturates, so even absurd coordinates stay in range.
     let coord = |i: usize, axis: usize| -> u64 {
         (((positions[i * 3 + axis] - lo[axis]) / cell_size) as u64).min(dims[axis] - 1)
@@ -79,14 +203,10 @@ where
         // Resolve this cell's neighbors once, not once per atom.
         let mut neighbors: [Option<usize>; 13] = [None; 13];
         for (slot, &(dx, dy, dz)) in neighbors.iter_mut().zip(HALF_SHELL.iter()) {
-            let step = |v: u64, d: i8, n: u64| -> Option<u64> {
-                let w = v.checked_add_signed(d as i64)?;
-                (w < n).then_some(w)
-            };
             let nk = match (
-                step(key[0], dx, dims[0]),
-                step(key[1], dy, dims[1]),
-                step(key[2], dz, dims[2]),
+                step_cell(key[0], dx as i64, dims[0]),
+                step_cell(key[1], dy as i64, dims[1]),
+                step_cell(key[2], dz as i64, dims[2]),
             ) {
                 (Some(a), Some(b), Some(c)) => [a, b, c],
                 _ => continue,
@@ -109,6 +229,34 @@ where
             }
         }
     }
+
+    // Wide atoms: the cells beyond the half shell, within their reach.
+    let far = plan.far_offsets();
+    for &i in &plan.wide {
+        let i = i as usize;
+        let key = [coord(i, 0), coord(i, 1), coord(i, 2)];
+        for d in &far {
+            let nk = match (
+                step_cell(key[0], d[0], dims[0]),
+                step_cell(key[1], d[1], dims[1]),
+                step_cell(key[2], d[2], dims[2]),
+            ) {
+                (Some(a), Some(b), Some(c)) => [a, b, c],
+                _ => continue,
+            };
+            let Ok(n) = cells.binary_search(&nk) else {
+                continue;
+            };
+            for &j in &atoms[starts[n]..starts[n + 1]] {
+                let j = j as usize;
+                if plan.keeps_far_pair(i, j) {
+                    if let Some(bond) = check_pair(i, j) {
+                        bonds.push(bond);
+                    }
+                }
+            }
+        }
+    }
     bonds
 }
 
@@ -118,7 +266,7 @@ where
 fn cell_list_scan<F>(
     positions: &[f32],
     n_atoms: usize,
-    cell_size: f32,
+    plan: &ScanPlan,
     mut check_pair: F,
 ) -> Vec<(u32, u32)>
 where
@@ -127,6 +275,7 @@ where
     if n_atoms == 0 {
         return Vec::new();
     }
+    let cell_size = plan.cell_size;
 
     // Bounding box
     let (mut min_x, mut min_y, mut min_z) = (f32::MAX, f32::MAX, f32::MAX);
@@ -150,7 +299,7 @@ where
     if fx * fy * fz > max_dense_cells(n_atoms) as f64 {
         let lo = [min_x, min_y, min_z];
         let dims = [fx as u64, fy as u64, fz as u64];
-        return sparse_cell_list_scan(positions, n_atoms, cell_size, lo, dims, check_pair);
+        return sparse_cell_list_scan(positions, n_atoms, plan, lo, dims, check_pair);
     }
     let (nx, ny, nz) = (fx as usize, fy as usize, fz as usize);
 
@@ -234,6 +383,37 @@ where
                                 bonds.push(bond);
                             }
                         }
+                    }
+                }
+            }
+        }
+    }
+
+    // Wide atoms: the cells beyond the half shell, within their reach.
+    let far = plan.far_offsets();
+    let dims = [nx as u64, ny as u64, nz as u64];
+    for &i in &plan.wide {
+        let i = i as usize;
+        let c = atom_cell[i] as usize;
+        let key = [
+            (c / (ny * nz)) as u64,
+            ((c / nz) % ny) as u64,
+            (c % nz) as u64,
+        ];
+        for d in &far {
+            let (Some(x), Some(y), Some(z)) = (
+                step_cell(key[0], d[0], dims[0]),
+                step_cell(key[1], d[1], dims[1]),
+                step_cell(key[2], d[2], dims[2]),
+            ) else {
+                continue;
+            };
+            let idx = x as usize * ny * nz + y as usize * nz + z as usize;
+            for &j in &cell_atoms[starts[idx] as usize..starts[idx + 1] as usize] {
+                let j = j as usize;
+                if plan.keeps_far_pair(i, j) {
+                    if let Some(bond) = check_pair(i, j) {
+                        bonds.push(bond);
                     }
                 }
             }
@@ -391,9 +571,9 @@ pub fn infer_bonds(
     n_atoms: usize,
     existing_bonds: &HashSet<(u32, u32)>,
 ) -> Vec<(u32, u32)> {
-    let cell_size: f32 = 2.5;
+    let plan = ScanPlan::new(2.5, &elements[..n_atoms], covalent_radius, BOND_TOLERANCE);
 
-    cell_list_scan(positions, n_atoms, cell_size, |i, j| {
+    cell_list_scan(positions, n_atoms, &plan, |i, j| {
         let ri = covalent_radius(elements[i]);
         let rj = covalent_radius(elements[j]);
         let threshold = (ri + rj) * BOND_TOLERANCE;
@@ -473,9 +653,9 @@ pub fn infer_bonds_periodic(
 
 /// Infer bonds using VDW radii: bond if distance <= (vdw_i + vdw_j) * 0.6.
 pub fn infer_bonds_vdw(positions: &[f32], elements: &[u8], n_atoms: usize) -> Vec<(u32, u32)> {
-    let cell_size: f32 = 2.0;
+    let plan = ScanPlan::new(2.0, &elements[..n_atoms], vdw_radius, VDW_BOND_FACTOR);
 
-    cell_list_scan(positions, n_atoms, cell_size, |i, j| {
+    cell_list_scan(positions, n_atoms, &plan, |i, j| {
         let ri = vdw_radius(elements[i]);
         let rj = vdw_radius(elements[j]);
         let threshold = (ri + rj) * VDW_BOND_FACTOR;
@@ -594,7 +774,7 @@ mod tests {
             }
         }
         let dims = [0, 1, 2].map(|k| ((hi[k] - lo[k]) / 2.5).ceil().max(1.0) as u64);
-        let sparse = sparse_cell_list_scan(&positions, n, 2.5, lo, dims, check);
+        let sparse = sparse_cell_list_scan(&positions, n, &ScanPlan::uniform(2.5), lo, dims, check);
         assert_eq!(sparse, dense);
     }
 
@@ -952,5 +1132,197 @@ mod tests {
             .collect();
         assert!(!filtered.contains(&some));
         assert_eq!(filtered.len(), reference.len() - 1);
+    }
+
+    /// Brute-force O(n²) vdW reference, mirroring the scan predicate.
+    fn brute_force_vdw(positions: &[f32], elements: &[u8], n: usize) -> HashSet<(u32, u32)> {
+        let mut set = HashSet::new();
+        for i in 0..n {
+            for j in (i + 1)..n {
+                let d_sq: f32 = (0..3)
+                    .map(|k| positions[j * 3 + k] - positions[i * 3 + k])
+                    .map(|d| d * d)
+                    .sum();
+                let thr = (vdw_radius(elements[i]) + vdw_radius(elements[j])) * VDW_BOND_FACTOR;
+                if d_sq > MIN_BOND_DIST * MIN_BOND_DIST && d_sq <= thr * thr {
+                    set.insert((i as u32, j as u32));
+                }
+            }
+        }
+        set
+    }
+
+    /// Rock-salt lattice (`side`³ sites, a = 5.64 Å) of Na (11) and Cl (17),
+    /// translated by `shift`.
+    fn rock_salt(side: usize, shift: f32) -> (Vec<f32>, Vec<u8>) {
+        let half = 5.64f32 / 2.0;
+        let mut positions = Vec::with_capacity(side * side * side * 3);
+        let mut elements = Vec::with_capacity(side * side * side);
+        for i in 0..side {
+            for j in 0..side {
+                for k in 0..side {
+                    positions.extend([i, j, k].map(|v| v as f32 * half + shift));
+                    elements.push(if (i + j + k) % 2 == 0 { 11 } else { 17 });
+                }
+            }
+        }
+        (positions, elements)
+    }
+
+    fn as_set(bonds: &[(u32, u32)]) -> HashSet<(u32, u32)> {
+        let set: HashSet<(u32, u32)> = bonds.iter().copied().collect();
+        assert_eq!(set.len(), bonds.len(), "bond list must be duplicate-free");
+        set
+    }
+
+    /// The covalent cutoff of heavy atoms exceeds the 2.5 Å base cell (Na–Na
+    /// 4.32 Å, K–K 5.28 Å). Whether such a pair bonds must not depend on where
+    /// unrelated atoms put the grid origin.
+    #[test]
+    fn test_infer_bonds_long_cutoff_ignores_unrelated_atoms() {
+        let na = vec![0.0, 0.0, 0.0, 4.0, 0.0, 0.0];
+        assert_eq!(
+            infer_bonds(&na, &[11, 11], 2, &HashSet::new()),
+            vec![(0, 1)]
+        );
+        // Two far-off H atoms move the grid origin to x = -1.
+        let mut with_h = na.clone();
+        with_h.extend_from_slice(&[-1.0, 20.0, 0.0, 10.0, 20.0, 0.0]);
+        let bonds = infer_bonds(&with_h, &[11, 11, 1, 1], 4, &HashSet::new());
+        assert_eq!(bonds, vec![(0, 1)]);
+        // K–K 5.0 Å (cutoff 5.28 Å) spans three base cells.
+        let k = vec![0.3, 0.0, 0.0, 5.3, 0.0, 0.0];
+        assert_eq!(infer_bonds(&k, &[19, 19], 2, &HashSet::new()), vec![(0, 1)]);
+    }
+
+    #[test]
+    fn test_infer_bonds_rock_salt_matches_brute_force() {
+        // 12³ NaCl: the cell list used to find 7920 of the 9108 bonds.
+        for shift in [0.0, 0.3, -1.7] {
+            let (positions, elements) = rock_salt(12, shift);
+            let n = elements.len();
+            let bonds = infer_bonds(&positions, &elements, n, &HashSet::new());
+            let reference = brute_force_covalent(&positions, &elements, n);
+            assert_eq!(reference.len(), 9108, "shift {shift}");
+            assert_eq!(as_set(&bonds), reference, "shift {shift}");
+        }
+    }
+
+    /// The vdW cutoff of S–S (2.16 Å), Na–Na (2.72 Å) and K–K (3.3 Å) exceeds
+    /// the 2.0 Å base cell.
+    #[test]
+    fn test_infer_bonds_vdw_long_cutoff_matches_brute_force() {
+        // A 2.05 Å S–S pair at two grid offsets, with a C fixing the origin.
+        for x0 in [1.99f32, 1.0] {
+            let p = vec![x0, 0.0, 0.0, x0 + 2.05, 0.0, 0.0, 0.0, 5.0, 0.0];
+            assert_eq!(
+                infer_bonds_vdw(&p, &[16, 16, 6], 3),
+                vec![(0, 1)],
+                "x0 {x0}"
+            );
+        }
+        let (positions, mut elements) = rock_salt(8, 0.4);
+        // Sprinkle K and S over the lattice so several long cutoffs mix.
+        for (i, e) in elements.iter_mut().enumerate() {
+            match i % 7 {
+                0 => *e = 19,
+                3 => *e = 16,
+                _ => {}
+            }
+        }
+        let n = elements.len();
+        let bonds = infer_bonds_vdw(&positions, &elements, n);
+        let reference = brute_force_vdw(&positions, &elements, n);
+        assert!(!reference.is_empty());
+        assert_eq!(as_set(&bonds), reference);
+    }
+
+    #[test]
+    fn test_scan_plan_sizes_cells_for_all_but_a_wide_minority() {
+        // Typical organics keep the base covalent cell, so their bond order is
+        // unchanged.
+        let organic = ScanPlan::new(2.5, &[1, 6, 7, 8], covalent_radius, BOND_TOLERANCE);
+        assert_eq!(organic.cell_size, 2.5);
+        assert!(organic.wide.is_empty() && organic.far_offsets().is_empty());
+        let empty = ScanPlan::new(2.5, &[], covalent_radius, BOND_TOLERANCE);
+        assert_eq!(empty.cell_size, 2.5);
+        assert!(empty.wide.is_empty());
+        assert_eq!(
+            ScanPlan::new(2.0, &[1, 7, 8], vdw_radius, VDW_BOND_FACTOR).cell_size,
+            2.0
+        );
+        // Carbon's own vdW cutoff (2.04 A) is wider than the 2.0 A base, and
+        // carbon is no minority, so the cell grows to fit it.
+        let c = ScanPlan::new(2.0, &[1, 6], vdw_radius, VDW_BOND_FACTOR);
+        assert!(c.cell_size >= 2.0 * vdw_radius(6) * VDW_BOND_FACTOR && c.cell_size < 2.05);
+        assert!(c.wide.is_empty());
+
+        // A K+ among many waters keeps the 2.5 A cell and searches 3 cells out
+        // (K-K 5.28 A) instead of widening every cell.
+        let mut water: Vec<u8> = (0..300).map(|i| if i % 3 == 0 { 8 } else { 1 }).collect();
+        water[10] = 19;
+        water[200] = 19;
+        let ions = ScanPlan::new(2.5, &water, covalent_radius, BOND_TOLERANCE);
+        assert_eq!(ions.cell_size, 2.5);
+        assert_eq!(ions.wide, vec![10, 200]);
+        assert_eq!(ions.reach, 3);
+        assert_eq!(ions.far_offsets().len(), 7 * 7 * 7 - 27);
+        assert!(ions.keeps_far_pair(10, 5)); // water partner: checked by the ion
+        assert!(ions.keeps_far_pair(10, 200)); // ion pair: checked from the lower index
+        assert!(!ions.keeps_far_pair(200, 10));
+
+        // When heavy atoms are no minority (rock salt), the cell grows instead.
+        let (_, salt) = rock_salt(4, 0.0);
+        let salt_plan = ScanPlan::new(2.5, &salt, covalent_radius, BOND_TOLERANCE);
+        assert!(salt_plan.cell_size >= 2.0 * covalent_radius(11) * BOND_TOLERANCE);
+        assert!(salt_plan.wide.is_empty());
+    }
+
+    /// Random atoms in a cube: mostly H/C/N/O with a minority of heavy atoms
+    /// (K, Na, Ca, S, Cl, Fe, I), so the wide-atom search is exercised.
+    fn mixed_box(n: usize, side: f32, seed: u32) -> (Vec<f32>, Vec<u8>) {
+        let mut state = seed;
+        let mut next = || {
+            state = state.wrapping_mul(1_103_515_245).wrapping_add(12_345);
+            (state >> 8) as f32 / (1u32 << 24) as f32
+        };
+        let heavy = [19u8, 11, 20, 16, 17, 26, 53];
+        let light = [1u8, 1, 6, 7, 8];
+        let mut positions = Vec::with_capacity(n * 3);
+        let mut elements = Vec::with_capacity(n);
+        for i in 0..n {
+            positions.extend([next() * side, next() * side, next() * side]);
+            elements.push(if i % 17 == 0 {
+                heavy[(i / 17) % heavy.len()]
+            } else {
+                light[i % light.len()]
+            });
+        }
+        (positions, elements)
+    }
+
+    #[test]
+    fn test_wide_atoms_find_every_long_bond_dense_and_sparse() {
+        for seed in [1, 2, 3] {
+            let (mut positions, mut elements) = mixed_box(1000, 21.0, seed);
+            let n = elements.len();
+            let plan = ScanPlan::new(2.5, &elements, covalent_radius, BOND_TOLERANCE);
+            assert_eq!(plan.cell_size, 2.5, "heavy atoms stay a minority");
+            assert!(!plan.wide.is_empty());
+
+            let cov = infer_bonds(&positions, &elements, n, &HashSet::new());
+            assert_eq!(as_set(&cov), brute_force_covalent(&positions, &elements, n));
+            let vdw = infer_bonds_vdw(&positions, &elements, n);
+            assert_eq!(as_set(&vdw), brute_force_vdw(&positions, &elements, n));
+
+            // A far-off outlier switches both scans to the sparse grid.
+            positions.extend_from_slice(&[9999.0, 9999.0, 9999.0]);
+            elements.push(19);
+            let m = n + 1;
+            let cov = infer_bonds(&positions, &elements, m, &HashSet::new());
+            assert_eq!(as_set(&cov), brute_force_covalent(&positions, &elements, m));
+            let vdw = infer_bonds_vdw(&positions, &elements, m);
+            assert_eq!(as_set(&vdw), brute_force_vdw(&positions, &elements, m));
+        }
     }
 }
