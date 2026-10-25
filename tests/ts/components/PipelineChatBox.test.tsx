@@ -622,6 +622,33 @@ describe("PipelineChatBox — applying a generated pipeline", () => {
     expect(second.endsWith("## Request\n\nmake it bigger")).toBe(true);
   });
 
+  it("aborts the request and applies nothing once the dock is unmounted", async () => {
+    let release!: () => void;
+    const held = new Promise<void>((resolve) => (release = resolve));
+    let seen: AbortSignal | undefined;
+    (generatePipeline as ReturnType<typeof vi.fn>).mockImplementation(
+      async (_config, _msg, onChunk: (c: string) => void, signal: AbortSignal) => {
+        seen = signal;
+        await held;
+        // What a transport could still hand over after the abort.
+        onChunk('```json\n{ "version": 3, "nodes": [] }\n```');
+        return '```json\n{ "version": 3, "nodes": [] }\n```\nDone.';
+      },
+    );
+    const { unmount } = render(<PipelineChatBox />);
+    submit("hide the water");
+    await waitFor(() => expect(seen).toBeDefined());
+
+    // Collapsing the Pipeline panel unmounts the dock mid-request.
+    unmount();
+    expect(seen!.aborted).toBe(true);
+    release();
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 0));
+    });
+    expect(storeState.applyGeneratedPipeline).not.toHaveBeenCalled();
+  });
+
   it("clears the conversation", async () => {
     render(<PipelineChatBox />);
     submit("first");

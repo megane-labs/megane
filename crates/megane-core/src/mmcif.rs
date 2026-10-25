@@ -9,7 +9,7 @@
 /// cartoon rendering.
 use std::collections::{HashMap, HashSet};
 
-use crate::atomic::element_from_symbol;
+use crate::atomic::{element_from_atom_name_in_residue, element_from_symbol};
 use crate::bonds;
 use crate::cell::cell_params_to_matrix;
 use crate::cif_lex::{field, starts_with_ci, Document, Value};
@@ -49,6 +49,7 @@ struct AtomSiteColumns {
     type_symbol: Option<usize>,
     label_atom_id: Option<usize>,
     label_alt_id: Option<usize>,
+    label_comp_id: Option<usize>,
     label_asym_id: Option<usize>,
     auth_asym_id: Option<usize>,
     label_seq_id: Option<usize>,
@@ -67,6 +68,7 @@ impl AtomSiteColumns {
             type_symbol: None,
             label_atom_id: None,
             label_alt_id: None,
+            label_comp_id: None,
             label_asym_id: None,
             auth_asym_id: None,
             label_seq_id: None,
@@ -86,6 +88,7 @@ impl AtomSiteColumns {
             "_atom_site.type_symbol" => self.type_symbol = Some(idx),
             "_atom_site.label_atom_id" => self.label_atom_id = Some(idx),
             "_atom_site.label_alt_id" => self.label_alt_id = Some(idx),
+            "_atom_site.label_comp_id" => self.label_comp_id = Some(idx),
             "_atom_site.label_asym_id" => self.label_asym_id = Some(idx),
             "_atom_site.auth_asym_id" => self.auth_asym_id = Some(idx),
             "_atom_site.label_seq_id" => self.label_seq_id = Some(idx),
@@ -343,11 +346,20 @@ pub(crate) fn parse_document(text: &str, doc: &Document) -> Result<ParsedStructu
                 continue;
             };
 
-            // Element
+            // Element: type_symbol, falling back to the atom name read in
+            // its residue context when the column is absent, null (`?`/`.`)
+            // or unreadable, as the PDB parser does without an element column.
             let elem = at(row, cols.type_symbol)
                 .and_then(|v| v.get())
                 .map(element_from_symbol)
-                .unwrap_or(0);
+                .filter(|&z| z != 0)
+                .unwrap_or_else(|| {
+                    let text_of = |c: Option<usize>| at(row, c).and_then(|v| v.get());
+                    element_from_atom_name_in_residue(
+                        text_of(cols.label_atom_id).unwrap_or(""),
+                        text_of(cols.label_comp_id).unwrap_or(""),
+                    )
+                });
 
             // Model membership: rows are grouped by model number; the
             // first number seen is the base structure.
@@ -582,7 +594,7 @@ pub(crate) fn parse_document(text: &str, doc: &Document) -> Result<ParsedStructu
         ca_chain_ids,
         ca_res_nums,
         ca_ss_type,
-        symmetry_ops: crate::cif::symmetry_ops(text, doc),
+        symmetry_ops: crate::cif::symmetry_ops(text, &doc.items),
         warnings,
         hetero,
         ..Default::default()
@@ -1326,6 +1338,52 @@ HELX_P A . . A -1 0
         assert_eq!(a.positions, b.positions);
         assert_eq!(a.elements, b.elements);
         assert_eq!(a.bonds, b.bonds);
+    }
+
+    /// Without a `type_symbol` (column absent, or a `?`/`.` null) the element
+    /// comes from the atom name read in its residue context, the next field
+    /// in the element precedence, exactly as the PDB parser does.
+    #[test]
+    fn missing_type_symbols_fall_back_to_the_atom_name() {
+        let text = "data_x
+loop_
+_atom_site.group_PDB
+_atom_site.id
+_atom_site.label_atom_id
+_atom_site.label_comp_id
+_atom_site.label_asym_id
+_atom_site.label_seq_id
+_atom_site.Cartn_x
+_atom_site.Cartn_y
+_atom_site.Cartn_z
+ATOM 1 N ALA A 1 0 0 0
+ATOM 2 CA ALA A 1 1.4 0 0
+HETATM 3 CA CA B . 5 0 0
+HETATM 4 OW HOH C . 9 0 0
+";
+        assert_eq!(parse(text).unwrap().elements, vec![7, 6, 20, 8]);
+
+        let with_nulls = "data_x
+loop_
+_atom_site.group_PDB
+_atom_site.id
+_atom_site.type_symbol
+_atom_site.label_atom_id
+_atom_site.label_comp_id
+_atom_site.Cartn_x
+_atom_site.Cartn_y
+_atom_site.Cartn_z
+_atom_site.pdbx_PDB_model_num
+ATOM 1 ? N ALA 0 0 0 1
+ATOM 2 . CA ALA 1.4 0 0 1
+ATOM 3 S SG CYS 3 0 0 1
+ATOM 1 ? N ALA 0 0 1 2
+ATOM 2 . CA ALA 1.4 0 1 2
+ATOM 3 S SG CYS 3 0 1 2
+";
+        let s = parse(with_nulls).unwrap();
+        assert_eq!(s.elements, vec![7, 6, 16]);
+        assert!(s.hetero.is_none(), "later models resolve the same elements");
     }
 
     #[test]

@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import { executeFilter } from "@/pipeline/executors/filter";
 import { executeAddBond } from "@/pipeline/executors/addBond";
 import { evaluateSelection } from "@/pipeline/selection";
+
 import type { FilterParams, ParticleData, BondData, PipelineData } from "@/pipeline/types";
 import type { Snapshot } from "@/types";
 
@@ -126,6 +127,21 @@ describe("executeFilter — bond stream", () => {
     expect(Array.from(result.selectedBondIndices!)).toEqual([0, 1, 2, 3]);
   });
 
+  // Regression: a bond query used to replace an upstream bond selection
+  // instead of narrowing it, unlike chained atom filters.
+  it("intersects with a pre-existing bond selection", () => {
+    const upstream = makeBond({ selectedBondIndices: new Uint32Array([0, 1]) });
+    const out = executeFilter(baseParams({ bond_query: 'element == "O"' }), inputs(upstream), null);
+    expect(Array.from((out.get("out") as BondData).selectedBondIndices!)).toEqual([0, 1]);
+
+    const disjoint = executeFilter(
+      baseParams({ bond_query: "molecule_id == 1" }),
+      inputs(upstream),
+      null,
+    );
+    expect(Array.from((disjoint.get("out") as BondData).selectedBondIndices!)).toEqual([]);
+  });
+
   it("passes through unchanged on an invalid bond_query", () => {
     const bond = makeBond();
     const out = executeFilter(baseParams({ bond_query: "not a valid query" }), inputs(bond), null);
@@ -136,6 +152,59 @@ describe("executeFilter — bond stream", () => {
     const bond = makeBond({ atomElements: null });
     const out = executeFilter(baseParams({ bond_query: "molecule_id == 0" }), inputs(bond), null);
     expect(out.get("out")).toBe(bond);
+  });
+});
+
+// Regression: a bond query used to read ghost / image endpoints (index >=
+// nAtoms) against the structure's own elements, so a boundary-crossing O–H
+// drawn as two half-bonds had an element-0 endpoint and `element == "H"`
+// picked only the H half. Both halves now stand for the same O–H bond.
+describe("executeFilter — bond queries on PBC half-bonds", () => {
+  // O0–H1 is an ordinary bond; O0–H2 crosses the 4 Å cell, drawn as
+  // (O0 → ghost H2 = 3) and (H2 → ghost O0 = 4).
+  function pbcBond(): BondData {
+    const snapshot: Snapshot = {
+      nAtoms: 3,
+      nBonds: 2,
+      nFileBonds: 2,
+      positions: new Float32Array([0.5, 2, 2, 1.4, 2, 2, 3.6, 2, 2]),
+      elements: new Uint8Array([8, 1, 1]),
+      bonds: new Uint32Array([0, 1, 0, 2]),
+      bondOrders: null,
+      box: new Float32Array([4, 0, 0, 0, 4, 0, 0, 0, 4]),
+      boxOrigin: null,
+      atomChainIds: null,
+      atomBFactors: null,
+    };
+    const particle = makeParticle({ source: snapshot });
+    const bond = executeAddBond(
+      { type: "add_bond", bondSource: "structure" },
+      new Map<string, PipelineData[]>([["particle", [particle]]]),
+    ).get("bond") as BondData;
+    expect(Array.from(bond.bondIndices)).toEqual([0, 1, 0, 3, 2, 4]);
+    return bond;
+  }
+
+  function selected(query: string): number[] {
+    const out = executeFilter(baseParams({ bond_query: query }), inputs(pbcBond()), null);
+    return Array.from((out.get("out") as BondData).selectedBondIndices!);
+  }
+
+  it("reads a ghost endpoint's element from its source atom", () => {
+    expect(selected('element == "H"')).toEqual([0, 1, 2]);
+    expect(selected('both element == "H"')).toEqual([]);
+    expect(selected('element == "X"')).toEqual([]);
+  });
+
+  it("reads a ghost endpoint's atom_index as its source atom", () => {
+    // Both halves of O0–H2 name atom 2; the plain O0–H1 bond does not.
+    expect(selected("atom_index == 2")).toEqual([1, 2]);
+    expect(selected("both atom_index <= 2")).toEqual([0, 1, 2]);
+  });
+
+  it("keeps the source mapping inside and / or / not", () => {
+    expect(selected('element == "H" and not atom_index == 1')).toEqual([1, 2]);
+    expect(selected("atom_index == 1 or atom_index == 2")).toEqual([0, 1, 2]);
   });
 });
 

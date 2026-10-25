@@ -26,7 +26,7 @@ export function elementGroups(elements: ArrayLike<number>): { z: number; atoms: 
     .map(([z, atoms]) => ({ z, atoms }));
 }
 
-/** English names of the elements the periodic table shows (Z 1–92). */
+/** English names of the elements the periodic table shows (Z 1–118). */
 // prettier-ignore
 export const ELEMENT_NAMES: readonly string[] = [
   "",
@@ -41,7 +41,11 @@ export const ELEMENT_NAMES: readonly string[] = [
   "Gadolinium", "Terbium", "Dysprosium", "Holmium", "Erbium", "Thulium", "Ytterbium",
   "Lutetium", "Hafnium", "Tantalum", "Tungsten", "Rhenium", "Osmium", "Iridium", "Platinum",
   "Gold", "Mercury", "Thallium", "Lead", "Bismuth", "Polonium", "Astatine", "Radon",
-  "Francium", "Radium", "Actinium", "Thorium", "Protactinium", "Uranium",
+  "Francium", "Radium", "Actinium", "Thorium", "Protactinium", "Uranium", "Neptunium",
+  "Plutonium", "Americium", "Curium", "Berkelium", "Californium", "Einsteinium", "Fermium",
+  "Mendelevium", "Nobelium", "Lawrencium", "Rutherfordium", "Dubnium", "Seaborgium", "Bohrium",
+  "Hassium", "Meitnerium", "Darmstadtium", "Roentgenium", "Copernicium", "Nihonium",
+  "Flerovium", "Moscovium", "Livermorium", "Tennessine", "Oganesson",
 ];
 
 export type ElementFamily =
@@ -76,9 +80,9 @@ assign("alkali", [3, 11, 19, 37, 55, 87]);
 assign("alkaline-earth", [4, 12, 20, 38, 56, 88]);
 assign("metalloid", [5, 14, 32, 33, 51, 52]);
 assign("nonmetal", [1, 6, 7, 8, 15, 16, 34]);
-assign("halogen", [9, 17, 35, 53, 85]);
-assign("noble-gas", [2, 10, 18, 36, 54, 86]);
-assign("post-transition", [13, 31, 49, 50, 81, 82, 83, 84]);
+assign("halogen", [9, 17, 35, 53, 85, 117]);
+assign("noble-gas", [2, 10, 18, 36, 54, 86, 118]);
+assign("post-transition", [13, 31, 49, 50, 81, 82, 83, 84, 113, 114, 115, 116]);
 
 /** The family of element `z` (Z 1–118; the rest of the d block is transition). */
 export function elementFamily(z: number): ElementFamily {

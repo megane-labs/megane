@@ -4,6 +4,7 @@ import {
   evaluateBondSelection,
   validateQuery,
   computeMoleculeIds,
+  bondEndpointResolver,
 } from "@/pipeline/selection";
 import type { Snapshot } from "@/types";
 
@@ -90,6 +91,18 @@ describe("evaluateSelection", () => {
   it("filters by mass > 14 (oxygen=16, nitrogen=14.007)", () => {
     const result = evaluateSelection("mass > 14.5", testSnapshot, null);
     expect(result).toEqual(new Set([2])); // only oxygen (mass 15.999)
+  });
+
+  it("filters elements past uranium by symbol and mass", () => {
+    // U, Np, Pu, Og: the parsers resolve all of them, so queries must too.
+    const heavy = makeSnapshot({
+      nAtoms: 4,
+      positions: [0, 0, 0, 1, 0, 0, 2, 0, 0, 3, 0, 0],
+      elements: [92, 93, 94, 118],
+    });
+    expect(evaluateSelection('element == "Np"', heavy, null)).toEqual(new Set([1]));
+    expect(evaluateSelection('element == "Og"', heavy, null)).toEqual(new Set([3]));
+    expect(evaluateSelection("mass > 240", heavy, null)).toEqual(new Set([2, 3]));
   });
 
   it("filters by resname", () => {
@@ -283,5 +296,35 @@ describe("evaluateBondSelection: molecule_id field", () => {
     expect(query("not molecule_id == 0")).toEqual(new Set([3, 4]));
     expect(query("molecule_id == 0 and bond_index > 0")).toEqual(new Set([1, 2]));
     expect(query("molecule_id == 1 or molecule_id < 0")).toEqual(new Set([3, 4]));
+  });
+
+  it("reads ghost endpoints as their source atoms when the copies are known", () => {
+    // Same drawing as above, with the ghosts' sources known: 5 = H2, 6 = O0,
+    // 7 = O3, 8 = H4. The ghost-to-ghost bond now belongs to O3's molecule.
+    const structural = new Uint32Array([0, 1, 0, 2, 3, 4]);
+    const elements = new Uint8Array([8, 1, 1, 8, 1]);
+    const drawn = new Uint32Array([0, 1, 0, 5, 6, 2, 3, 4, 7, 8]);
+    const ghosts = new Uint32Array([2, 0, 3, 4]);
+    const query = (q: string) =>
+      evaluateBondSelection(q, drawn, elements, 5, 9, structural, ghosts);
+    expect(query("molecule_id == 0")).toEqual(new Set([0, 1, 2]));
+    expect(query("molecule_id == 1")).toEqual(new Set([3, 4]));
+    expect(query("molecule_id < 0")).toEqual(new Set());
+  });
+});
+
+describe("bondEndpointResolver", () => {
+  it("is the identity without ghost endpoints", () => {
+    const sourceOf = bondEndpointResolver(5, null);
+    expect([0, 4, 9].map(sourceOf)).toEqual([0, 4, 9]);
+    expect([0, 4].map(bondEndpointResolver(0, new Uint32Array()))).toEqual([0, 4]);
+  });
+
+  it("maps endpoints past the structural atoms to the atom they copy", () => {
+    // 3 structural atoms + 2 ghosts (copies of atoms 2 and 0).
+    const sourceOf = bondEndpointResolver(5, new Uint32Array([2, 0]));
+    expect([0, 1, 2, 3, 4].map(sourceOf)).toEqual([0, 1, 2, 2, 0]);
+    // An index past the extended range has no source entry and stays itself.
+    expect(sourceOf(7)).toBe(7);
   });
 });

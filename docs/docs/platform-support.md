@@ -200,10 +200,12 @@ format. Every `COORDINATES OF ALL ATOMS ARE` banner block becomes a frame, so a
 geometry optimisation scrubs on the timeline like a multi-frame XYZ and the
 terminal `EQUILIBRIUM GEOMETRY LOCATED` block is simply the last one. The
 banner's `(ANGS)` / `(BOHR)` argument is honoured, and the element comes from
-the nuclear-charge column — rounded, since ECP runs print a fractional valence
-charge, with the atom label as the fallback when the rounded charge is not an
-element. Bonds are inferred by distance because GAMESS output carries no
-connectivity.
+the nuclear-charge column (rounded) for all-electron atoms. An ECP run prints
+the *valence* charge instead (Pt with a 60-electron core shows `18.0`), so when
+the atom label names an element heavier than the charge by exactly an ECP core
+size, the label's element is used; the label is also the fallback when the
+rounded charge is not an element. Bonds are inferred by distance because GAMESS
+output carries no connectivity.
 
 Note: **`.gamess` is the only extension registered for it.** GAMESS logs are
 normally named `.log` or `.out`, and claiming those in the VS Code
