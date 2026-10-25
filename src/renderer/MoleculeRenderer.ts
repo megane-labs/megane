@@ -45,7 +45,8 @@ import {
   type ViewDragGesture,
 } from "./SelectionController";
 import type { ViewAxis } from "./cameraOrientation";
-import { XRSessionController, type MeganeXRState, type XRBridge } from "./xr/XRSessionController";
+import type { MeganeXRState, XRBridge } from "./xr/XRSessionController";
+import { LazyXRSession } from "./xr/LazyXRSession";
 import type { XRPanelControl } from "./xr/XRPanel";
 import { boundingFocus, type XRFocus } from "./xr/xrMath";
 import type { MeganeXRMode } from "./xr/xrSupport";
@@ -129,7 +130,13 @@ export class MoleculeRenderer {
   private renderRequested = true;
   private fpsCounter = new FpsCounter();
   private snapshot: Snapshot | null = null;
+  /**
+   * Positions currently drawn. Until the first trajectory frame this is the
+   * snapshot's own array (read-only here); the first frame swaps in a private
+   * copy that later frames overwrite in place.
+   */
   private currentPositions: Float32Array | null = null;
+  private ownsCurrentPositions = false;
   /**
    * Bonds pushed via updateBondsExt before a snapshot/bondRenderer existed.
    * Replayed inside loadSnapshot. Guards against PipelineViewer's
@@ -171,9 +178,10 @@ export class MoleculeRenderer {
 
   /**
    * Immersive WebXR view (VR / passthrough AR). While a session runs it owns
-   * the frame loop and the scene's transform; see `xr/XRSessionController`.
+   * the frame loop and the scene's transform; see `xr/XRSessionController`,
+   * which is loaded only for a browser that offers a mode (`preloadXR`).
    */
-  private readonly xr = new XRSessionController({
+  private readonly xr = new LazyXRSession({
     getRenderer: () => this.renderer,
     getScene: () => this.scene,
     getViewCamera: () => this.camera,
@@ -322,7 +330,8 @@ export class MoleculeRenderer {
   loadSnapshot(snapshot: Snapshot, opts: { fit?: boolean } = {}): void {
     this.requestRender();
     this.snapshot = snapshot;
-    this.currentPositions = new Float32Array(snapshot.positions);
+    this.currentPositions = snapshot.positions;
+    this.ownsCurrentPositions = false;
     this.cameraController.syncUpAxis(snapshot.box);
 
     const _ready = getTestReady();
@@ -367,9 +376,9 @@ export class MoleculeRenderer {
     // Update label overlay
     this.syncLabelOverlay();
 
-    // Initialize arrow renderer (lazy)
+    // Arrow renderer: its instance meshes are only allocated once vectors arrive.
     if (!this.arrowRenderer) {
-      this.arrowRenderer = new ArrowRenderer(snapshot.nAtoms);
+      this.arrowRenderer = new ArrowRenderer();
       this.scene.add(this.arrowRenderer.mesh);
     }
     this.arrowRenderer.setAtomPositions(snapshot.positions, snapshot.nAtoms);
@@ -380,10 +389,14 @@ export class MoleculeRenderer {
         this.cartoonRenderer = new CartoonRenderer();
         this.scene.add(this.cartoonRenderer.mesh);
       }
+      // Hide first when cartoon is off so the ribbons are not built for nothing.
+      const showCartoon = representationFlags(this.representationType).showCartoon;
+      if (!showCartoon) this.cartoonRenderer.setVisible(false);
       this.cartoonRenderer.loadSnapshot(snapshot);
-      this.cartoonRenderer.setVisible(representationFlags(this.representationType).showCartoon);
+      this.cartoonRenderer.setVisible(showCartoon);
     } else if (this.cartoonRenderer) {
       this.cartoonRenderer.setVisible(false);
+      this.cartoonRenderer.loadSnapshot(snapshot);
     }
 
     // Update surface renderer (lazy init, always available for surface mode)
@@ -403,8 +416,7 @@ export class MoleculeRenderer {
       this.lineRenderer = new LineRenderer();
       this.scene.add(this.lineRenderer.mesh);
     }
-    this.lineRenderer.loadSnapshot(snapshot);
-    this.lineRenderer.setVisible(representationFlags(this.representationType).showLine);
+    this.reloadLines(null, representationFlags(this.representationType).showLine);
 
     // Update simulation cell
     if (snapshot.box) {
@@ -462,8 +474,13 @@ export class MoleculeRenderer {
   updateFrame(frame: Frame): void {
     this.requestRender();
     if (!this.snapshot || !this.atomRenderer || !this.bondRenderer) return;
-    if (!this.currentPositions || this.currentPositions.length < frame.positions.length) {
+    if (
+      !this.currentPositions ||
+      !this.ownsCurrentPositions ||
+      this.currentPositions.length < frame.positions.length
+    ) {
       this.currentPositions = new Float32Array(frame.positions.length);
+      this.ownsCurrentPositions = true;
     }
     this.currentPositions.set(frame.positions);
 
@@ -504,13 +521,13 @@ export class MoleculeRenderer {
       this.syncLabelOverlay();
     }
 
-    this.cartoonRenderer?.updatePositions(frame.positions);
+    // Cartoon and lines skip the work while hidden and catch up when shown, so
+    // they get every frame (the renderer-owned copy, which stays current).
+    this.cartoonRenderer?.updatePositions(this.currentPositions);
     if (this.surfaceRenderer?.mesh.visible) {
       this.surfaceRenderer.updatePositions(frame.positions);
     }
-    if (this.lineRenderer?.mesh.visible) {
-      this.lineRenderer.updatePositions(frame.positions);
-    }
+    this.lineRenderer?.updatePositions(this.currentPositions);
     if (this.selection.hasSelection) {
       this.selection.refresh();
     }
@@ -1060,10 +1077,7 @@ export class MoleculeRenderer {
       this.representationHiddenMask = null;
       this.applyCombinedAtomHiddenMask();
       this.bondRenderer?.setHiddenMask(null);
-      if (this.lineRenderer && this.snapshot) {
-        this.lineRenderer.loadSnapshot(this.snapshot);
-        this.lineRenderer.setVisible(representationFlags(this.representationType).showLine);
-      }
+      this.reloadLines(null, representationFlags(this.representationType).showLine);
       return;
     }
 
@@ -1083,14 +1097,24 @@ export class MoleculeRenderer {
     this.representationHiddenMask = anyLine ? lineMask : null;
     this.applyCombinedAtomHiddenMask();
     this.bondRenderer?.setHiddenMask(anyLine ? lineMask : null);
-    if (this.lineRenderer && this.snapshot) {
-      this.lineRenderer.loadSnapshot(this.snapshot, anyLine ? lineMask : null);
-      // Keep lines visible for the subset even when the base mesh mode isn't
-      // "line"; if no atom is line-mode, defer to the global toggle.
-      this.lineRenderer.setVisible(
-        anyLine || representationFlags(this.representationType).showLine,
-      );
-    }
+    // Keep lines visible for the subset even when the base mesh mode isn't
+    // "line"; if no atom is line-mode, defer to the global toggle.
+    this.reloadLines(
+      anyLine ? lineMask : null,
+      anyLine || representationFlags(this.representationType).showLine,
+    );
+  }
+
+  /**
+   * Hand the line renderer the current topology and visibility. It is hidden
+   * before the load when it ends up hidden, so it never builds geometry that
+   * is not drawn.
+   */
+  private reloadLines(lineMask: Uint8Array | null, visible: boolean): void {
+    if (!this.lineRenderer || !this.snapshot) return;
+    if (!visible) this.lineRenderer.setVisible(false);
+    this.lineRenderer.loadSnapshot(this.snapshot, lineMask);
+    this.lineRenderer.setVisible(visible);
   }
 
   /**
@@ -1306,6 +1330,15 @@ export class MoleculeRenderer {
 
   getXRState(): MeganeXRState {
     return this.xr.getState();
+  }
+
+  /**
+   * Load the immersive view's code ahead of a session, so the session request
+   * can go out within the click that asks for it. The XR buttons call this
+   * once they find a mode the browser supports.
+   */
+  preloadXR(): void {
+    void this.xr.preload().catch(() => {});
   }
 
   /**

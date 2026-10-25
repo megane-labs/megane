@@ -5,8 +5,9 @@
  * each atom is a single screen-aligned quad (2 triangles) with a
  * fragment shader that ray-traces a perfect sphere with correct depth.
  *
- * Memory: 9 floats/atom (x,y,z, r, cr,cg,cb, scale, opacity) vs 100s of
- * vertices; buffers are sized to the loaded structure, not preallocated.
+ * Memory: 6 floats + 4 color bytes per atom (x,y,z, r, scale, opacity, RGBA8)
+ * vs 100s of vertices; buffers are sized to the loaded structure, not
+ * preallocated.
  * Draw calls: 1 (single instanced draw).
  * Scales to 1M+ atoms on mid-range GPUs.
  */
@@ -24,11 +25,13 @@ import {
 import { atomVertexShader, atomFragmentShader } from "./shaders";
 import { type ColorContext, getAtomColorForScheme } from "../colorSchemes";
 import {
+  COLOR_STRIDE,
   MIN_INSTANCE_CAPACITY,
   markInstancesDirty,
   nextInstanceCapacity,
   resetInstanceLimit,
   resizeTypedArray,
+  writeColor,
 } from "./instanceCapacity";
 
 export class ImpostorAtomMesh {
@@ -44,7 +47,8 @@ export class ImpostorAtomMesh {
 
   private centerBuf: Float32Array;
   private radiusBuf: Float32Array;
-  private colorBuf: Float32Array;
+  /** RGBA8 per atom (alpha unused), uploaded as a normalized attribute. */
+  private colorBuf: Uint8ClampedArray;
   private scaleOverrideBuf: Float32Array;
   private opacityOverrideBuf: Float32Array;
   /** Raw per-atom scale overrides before the hidden mask is composited in. */
@@ -87,7 +91,7 @@ export class ImpostorAtomMesh {
     // Instance buffers
     this.centerBuf = new Float32Array(initialCapacity * 3);
     this.radiusBuf = new Float32Array(initialCapacity);
-    this.colorBuf = new Float32Array(initialCapacity * 3);
+    this.colorBuf = new Uint8ClampedArray(initialCapacity * COLOR_STRIDE);
     this.scaleOverrideBuf = new Float32Array(initialCapacity).fill(1.0);
     this.opacityOverrideBuf = new Float32Array(initialCapacity).fill(1.0);
     this.rawScaleBuf = new Float32Array(initialCapacity).fill(1.0);
@@ -95,7 +99,7 @@ export class ImpostorAtomMesh {
 
     this.centerAttr = new THREE.InstancedBufferAttribute(this.centerBuf, 3);
     this.radiusAttr = new THREE.InstancedBufferAttribute(this.radiusBuf, 1);
-    this.colorAttr = new THREE.InstancedBufferAttribute(this.colorBuf, 3);
+    this.colorAttr = new THREE.InstancedBufferAttribute(this.colorBuf, COLOR_STRIDE, true);
     this.scaleOverrideAttr = new THREE.InstancedBufferAttribute(this.scaleOverrideBuf, 1);
     this.opacityOverrideAttr = new THREE.InstancedBufferAttribute(this.opacityOverrideBuf, 1);
 
@@ -160,9 +164,7 @@ export class ImpostorAtomMesh {
       const [r, g, b] = colorCtx
         ? getAtomColorForScheme(i, snapshot, colorCtx)
         : getColor(elements[i]);
-      this.colorBuf[i3] = r;
-      this.colorBuf[i3 + 1] = g;
-      this.colorBuf[i3 + 2] = b;
+      writeColor(this.colorBuf, i, r, g, b);
     }
 
     // Reset overrides on new snapshot
@@ -332,9 +334,7 @@ export class ImpostorAtomMesh {
       const i3 = i * 3;
       const r = overrides[i3];
       if (Number.isNaN(r)) continue;
-      this.colorBuf[i3] = r;
-      this.colorBuf[i3 + 1] = overrides[i3 + 1];
-      this.colorBuf[i3 + 2] = overrides[i3 + 2];
+      writeColor(this.colorBuf, i, r, overrides[i3 + 1], overrides[i3 + 2]);
     }
     markInstancesDirty(this.colorAttr, this.nAtoms);
   }
@@ -387,12 +387,12 @@ export class ImpostorAtomMesh {
   }
 
   /**
-   * Read-only handle on the per-atom RGB buffer (length `nAtoms*3`).
-   * Used by the bond mesh to derive per-bond colors after overrides are
-   * applied; do not mutate the returned subarray.
+   * Read-only handle on the per-atom RGBA8 buffer (length `nAtoms*4`, alpha
+   * unused). Used by the bond mesh to derive per-bond colors after overrides
+   * are applied; do not mutate the returned subarray.
    */
-  getColorBuffer(): Float32Array {
-    return this.colorBuf.subarray(0, this.nAtoms * 3);
+  getColorBuffer(): Uint8ClampedArray {
+    return this.colorBuf.subarray(0, this.nAtoms * COLOR_STRIDE);
   }
 
   /** Reallocate every instance buffer to `capacity` atoms, keeping the data that fits. */
@@ -402,7 +402,7 @@ export class ImpostorAtomMesh {
 
     this.centerBuf = resizeTypedArray(this.centerBuf, capacity * 3);
     this.radiusBuf = resizeTypedArray(this.radiusBuf, capacity);
-    this.colorBuf = resizeTypedArray(this.colorBuf, capacity * 3);
+    this.colorBuf = resizeTypedArray(this.colorBuf, capacity * COLOR_STRIDE);
     this.scaleOverrideBuf = resizeTypedArray(this.scaleOverrideBuf, capacity, 1.0);
     this.opacityOverrideBuf = resizeTypedArray(this.opacityOverrideBuf, capacity, 1.0);
     this.rawScaleBuf = resizeTypedArray(this.rawScaleBuf, capacity, 1.0);
@@ -411,7 +411,7 @@ export class ImpostorAtomMesh {
 
     this.centerAttr = new THREE.InstancedBufferAttribute(this.centerBuf, 3);
     this.radiusAttr = new THREE.InstancedBufferAttribute(this.radiusBuf, 1);
-    this.colorAttr = new THREE.InstancedBufferAttribute(this.colorBuf, 3);
+    this.colorAttr = new THREE.InstancedBufferAttribute(this.colorBuf, COLOR_STRIDE, true);
     this.scaleOverrideAttr = new THREE.InstancedBufferAttribute(this.scaleOverrideBuf, 1);
     this.opacityOverrideAttr = new THREE.InstancedBufferAttribute(this.opacityOverrideBuf, 1);
 

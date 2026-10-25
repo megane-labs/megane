@@ -2,21 +2,30 @@ import { describe, it, expect } from "vitest";
 import { ImpostorBondMesh } from "@/renderer/ImpostorBondMesh";
 import { BOND_DOUBLE, BOND_TRIPLE, BOND_AROMATIC, BOND_SINGLE, getColor } from "@/constants";
 import type { Snapshot } from "@/types";
+import { BYTE_DIGITS, rgbAt, rgba8 } from "./colorBytes";
 
 function makeSnapshot(bondOrder: number = BOND_SINGLE): Snapshot {
   return {
     nAtoms: 2,
     nBonds: 1,
-    positions: new Float32Array([0, 0, 0, 1, 0, 0]),
+    positions: rgba8([0, 0, 0, 1, 0, 0]),
     elements: new Uint8Array([6, 8]),
     bonds: new Uint32Array([0, 1]),
     bondOrders: bondOrder === BOND_SINGLE ? null : new Uint8Array([bondOrder]),
   } as Snapshot;
 }
 
-function buffers(mesh: ImpostorBondMesh): { a: Float32Array; b: Float32Array } {
-  const m = mesh as unknown as { colorABuf: Float32Array; colorBBuf: Float32Array };
-  return { a: m.colorABuf, b: m.colorBBuf };
+/** Endpoint colors of each visual instance, as [0, 1] RGB. */
+function buffers(mesh: ImpostorBondMesh): {
+  a: (i: number) => [number, number, number];
+  b: (i: number) => [number, number, number];
+} {
+  const m = mesh as unknown as { colorABuf: Uint8ClampedArray; colorBBuf: Uint8ClampedArray };
+  return { a: (i) => rgbAt(m.colorABuf, i), b: (i) => rgbAt(m.colorBBuf, i) };
+}
+
+function expectRgb(got: [number, number, number], want: readonly number[]): void {
+  for (let c = 0; c < 3; c++) expect(got[c]).toBeCloseTo(want[c], BYTE_DIGITS);
 }
 
 describe("ImpostorBondMesh.recomputeColorsFromAtomBuffer", () => {
@@ -25,28 +34,27 @@ describe("ImpostorBondMesh.recomputeColorsFromAtomBuffer", () => {
     mesh.loadSnapshot(makeSnapshot(BOND_SINGLE));
 
     // Atom 0 = red, atom 1 = blue
-    const atomColors = new Float32Array([1, 0, 0, 0, 0, 1]);
+    const atomColors = rgba8([1, 0, 0, 0, 0, 1]);
     mesh.recomputeColorsFromAtomBuffer(atomColors, makeSnapshot(BOND_SINGLE));
 
     const { a, b } = buffers(mesh);
     // Single bond → 1 instance. A half = atom 0 (red), B half = atom 1 (blue).
-    expect(Array.from(a.subarray(0, 3))).toEqual([1, 0, 0]);
-    expect(Array.from(b.subarray(0, 3))).toEqual([0, 0, 1]);
+    expect(a(0)).toEqual([1, 0, 0]);
+    expect(b(0)).toEqual([0, 0, 1]);
   });
 
   it("paints all double-bond instances with the same split colors", () => {
     const mesh = new ImpostorBondMesh(16);
     mesh.loadSnapshot(makeSnapshot(BOND_DOUBLE));
 
-    const atomColors = new Float32Array([1, 1, 0, 0, 1, 1]);
+    const atomColors = rgba8([1, 1, 0, 0, 1, 1]);
     mesh.recomputeColorsFromAtomBuffer(atomColors, makeSnapshot(BOND_DOUBLE));
 
     const { a, b } = buffers(mesh);
     // BOND_DOUBLE fans out to 2 visual instances
     for (let inst = 0; inst < 2; inst++) {
-      const i3 = inst * 3;
-      expect(Array.from(a.subarray(i3, i3 + 3))).toEqual([1, 1, 0]);
-      expect(Array.from(b.subarray(i3, i3 + 3))).toEqual([0, 1, 1]);
+      expect(a(inst)).toEqual([1, 1, 0]);
+      expect(b(inst)).toEqual([0, 1, 1]);
     }
   });
 
@@ -54,18 +62,13 @@ describe("ImpostorBondMesh.recomputeColorsFromAtomBuffer", () => {
     const mesh = new ImpostorBondMesh(16);
     mesh.loadSnapshot(makeSnapshot(BOND_TRIPLE));
 
-    const atomColors = new Float32Array([0.2, 0.4, 0.6, 0.8, 0.6, 0.4]);
+    const atomColors = rgba8([0.2, 0.4, 0.6, 0.8, 0.6, 0.4]);
     mesh.recomputeColorsFromAtomBuffer(atomColors, makeSnapshot(BOND_TRIPLE));
 
     const { a, b } = buffers(mesh);
     for (let inst = 0; inst < 3; inst++) {
-      const i3 = inst * 3;
-      expect(a[i3]).toBeCloseTo(0.2, 6);
-      expect(a[i3 + 1]).toBeCloseTo(0.4, 6);
-      expect(a[i3 + 2]).toBeCloseTo(0.6, 6);
-      expect(b[i3]).toBeCloseTo(0.8, 6);
-      expect(b[i3 + 1]).toBeCloseTo(0.6, 6);
-      expect(b[i3 + 2]).toBeCloseTo(0.4, 6);
+      expectRgb(a(inst), [0.2, 0.4, 0.6]);
+      expectRgb(b(inst), [0.8, 0.6, 0.4]);
     }
   });
 
@@ -73,14 +76,13 @@ describe("ImpostorBondMesh.recomputeColorsFromAtomBuffer", () => {
     const mesh = new ImpostorBondMesh(16);
     mesh.loadSnapshot(makeSnapshot(BOND_AROMATIC));
 
-    const atomColors = new Float32Array([1, 0, 0, 0, 1, 0]);
+    const atomColors = rgba8([1, 0, 0, 0, 1, 0]);
     mesh.recomputeColorsFromAtomBuffer(atomColors, makeSnapshot(BOND_AROMATIC));
 
     const { a, b } = buffers(mesh);
     for (let inst = 0; inst < 2; inst++) {
-      const i3 = inst * 3;
-      expect(Array.from(a.subarray(i3, i3 + 3))).toEqual([1, 0, 0]);
-      expect(Array.from(b.subarray(i3, i3 + 3))).toEqual([0, 1, 0]);
+      expect(a(inst)).toEqual([1, 0, 0]);
+      expect(b(inst)).toEqual([0, 1, 0]);
     }
   });
 
@@ -94,7 +96,7 @@ describe("ImpostorBondMesh.recomputeColorsFromAtomBuffer", () => {
     const beforeA = m.colorAAttr.version;
     const beforeB = m.colorBAttr.version;
 
-    const atomColors = new Float32Array([1, 0, 0, 0, 0, 1]);
+    const atomColors = rgba8([1, 0, 0, 0, 0, 1]);
     mesh.recomputeColorsFromAtomBuffer(atomColors, makeSnapshot(BOND_SINGLE));
 
     expect(m.colorAAttr.version).toBeGreaterThan(beforeA);
@@ -107,7 +109,7 @@ describe("ImpostorBondMesh.recomputeColorsFromAtomBuffer", () => {
     const extSnap = {
       nAtoms: 3,
       nBonds: 1,
-      positions: new Float32Array([0, 0, 0, 1, 0, 0, 2, 0, 0]),
+      positions: rgba8([0, 0, 0, 1, 0, 0, 2, 0, 0]),
       elements: new Uint8Array([6, 8, 6]),
       bonds: new Uint32Array([1, 2]),
       bondOrders: null,
@@ -117,18 +119,14 @@ describe("ImpostorBondMesh.recomputeColorsFromAtomBuffer", () => {
     mesh.loadSnapshot(extSnap);
 
     // Atom color buffer only covers the 2 real atoms (no ghost entry).
-    const atomColors = new Float32Array([1, 0, 0, 0, 1, 0]);
+    const atomColors = rgba8([1, 0, 0, 0, 1, 0]);
     mesh.recomputeColorsFromAtomBuffer(atomColors, extSnap);
 
     const { a, b } = buffers(mesh);
     // A half = real atom 1's color from the atom buffer (green).
-    expect(Array.from(a.subarray(0, 3))).toEqual([0, 1, 0]);
-    // B half = ghost (Z=6) element color, not 0/NaN.
-    const carbon = getColor(6);
-    expect(b[0]).toBeCloseTo(carbon[0], 6);
-    expect(b[1]).toBeCloseTo(carbon[1], 6);
-    expect(b[2]).toBeCloseTo(carbon[2], 6);
-    expect(Number.isNaN(b[0])).toBe(false);
+    expect(a(0)).toEqual([0, 1, 0]);
+    // B half = ghost (Z=6) element color, not black.
+    expectRgb(b(0), getColor(6));
   });
 });
 
@@ -139,13 +137,7 @@ describe("ImpostorBondMesh.loadSnapshot split coloring", () => {
     mesh.loadSnapshot(makeSnapshot(BOND_SINGLE));
 
     const { a, b } = buffers(mesh);
-    const carbon = getColor(6);
-    const oxygen = getColor(8);
-    expect(a[0]).toBeCloseTo(carbon[0], 6);
-    expect(a[1]).toBeCloseTo(carbon[1], 6);
-    expect(a[2]).toBeCloseTo(carbon[2], 6);
-    expect(b[0]).toBeCloseTo(oxygen[0], 6);
-    expect(b[1]).toBeCloseTo(oxygen[1], 6);
-    expect(b[2]).toBeCloseTo(oxygen[2], 6);
+    expectRgb(a(0), getColor(6));
+    expectRgb(b(0), getColor(8));
   });
 });

@@ -32,6 +32,13 @@ function makeLoneAtomSnapshot(): Snapshot {
   } as Snapshot;
 }
 
+/** A visible renderer, which builds its geometry as soon as it is loaded. */
+function shownLineRenderer(): LineRenderer {
+  const lr = new LineRenderer();
+  lr.setVisible(true);
+  return lr;
+}
+
 describe("LineRenderer", () => {
   it("constructs a hidden LineSegments with vertex colors", () => {
     const lr = new LineRenderer();
@@ -50,7 +57,7 @@ describe("LineRenderer", () => {
   });
 
   it("splits a bond into two segments (4 vertices) at the midpoint", () => {
-    const lr = new LineRenderer();
+    const lr = shownLineRenderer();
     lr.loadSnapshot(makeBondedSnapshot());
     const pos = lr.mesh.geometry.getAttribute("position");
     expect(pos.count).toBe(4); // 2 segments × 2 endpoints
@@ -65,7 +72,7 @@ describe("LineRenderer", () => {
   });
 
   it("colors each bond half with the color of its nearer atom (two-tone)", () => {
-    const lr = new LineRenderer();
+    const lr = shownLineRenderer();
     lr.loadSnapshot(makeBondedSnapshot());
     const colors = lr.mesh.geometry.getAttribute("color").array as Float32Array;
     const cC = getColor(6);
@@ -84,7 +91,7 @@ describe("LineRenderer", () => {
   });
 
   it("draws a 3-axis cross (6 vertices) for a bondless atom", () => {
-    const lr = new LineRenderer();
+    const lr = shownLineRenderer();
     lr.loadSnapshot(makeLoneAtomSnapshot());
     const pos = lr.mesh.geometry.getAttribute("position");
     expect(pos.count).toBe(6); // 3 segments × 2 endpoints
@@ -100,7 +107,7 @@ describe("LineRenderer", () => {
   });
 
   it("updatePositions moves the bond vertices for a new frame", () => {
-    const lr = new LineRenderer();
+    const lr = shownLineRenderer();
     lr.loadSnapshot(makeBondedSnapshot());
     // Move atom B from x=2 to x=4 → midpoint should become x=2.
     lr.updatePositions(new Float32Array([0, 0, 0, 4, 0, 0]));
@@ -127,7 +134,7 @@ describe("LineRenderer", () => {
       bondOrders: null,
       box: null,
     } as Snapshot;
-    const lr = new LineRenderer();
+    const lr = shownLineRenderer();
     lr.loadSnapshot(snapshot, new Uint8Array([1, 1, 0]));
     // Only the 0-1 bond is fully inside the mask → 1 bond → 2 segments → 4 verts.
     expect(lr.mesh.geometry.getAttribute("position").count).toBe(4);
@@ -145,13 +152,55 @@ describe("LineRenderer", () => {
       bondOrders: null,
       box: null,
     } as Snapshot;
-    const lr = new LineRenderer();
+    const lr = shownLineRenderer();
     lr.loadSnapshot(snapshot, new Uint8Array([1, 0]));
     expect(lr.mesh.geometry.getAttribute("position").count).toBe(6);
   });
 
-  it("dispose frees geometry and material", () => {
+  it("builds nothing while hidden and builds on show", () => {
     const lr = new LineRenderer();
+    lr.loadSnapshot(makeBondedSnapshot());
+    expect(lr.mesh.geometry.getAttribute("position")).toBeUndefined();
+    lr.setVisible(true);
+    expect(lr.mesh.geometry.getAttribute("position").count).toBe(4);
+  });
+
+  it("builds from the latest frame when first shown mid-trajectory", () => {
+    const lr = new LineRenderer();
+    lr.loadSnapshot(makeBondedSnapshot());
+    lr.updatePositions(new Float32Array([0, 0, 0, 4, 0, 0]));
+    lr.setVisible(true);
+    const arr = lr.mesh.geometry.getAttribute("position").array as Float32Array;
+    expect(Array.from(arr.slice(3, 6))).toEqual([2, 0, 0]);
+    expect(Array.from(arr.slice(9, 12))).toEqual([4, 0, 0]);
+  });
+
+  it("catches up on frames that arrived while hidden", () => {
+    const lr = shownLineRenderer();
+    lr.loadSnapshot(makeBondedSnapshot());
+    lr.setVisible(false);
+    lr.updatePositions(new Float32Array([0, 0, 0, 6, 0, 0]));
+    const attr = lr.mesh.geometry.getAttribute("position");
+    // Hidden: untouched.
+    expect(Array.from((attr.array as Float32Array).slice(9, 12))).toEqual([2, 0, 0]);
+    lr.setVisible(true);
+    expect(Array.from((attr.array as Float32Array).slice(9, 12))).toEqual([6, 0, 0]);
+    expect(Array.from((attr.array as Float32Array).slice(3, 6))).toEqual([3, 0, 0]);
+  });
+
+  it("starts from the new snapshot's positions after a reload", () => {
+    const lr = new LineRenderer();
+    lr.loadSnapshot(makeBondedSnapshot());
+    lr.updatePositions(new Float32Array([0, 0, 0, 8, 0, 0]));
+    const next = makeBondedSnapshot();
+    lr.loadSnapshot(next);
+    lr.setVisible(true);
+    const arr = lr.mesh.geometry.getAttribute("position").array as Float32Array;
+    expect(Array.from(arr.slice(9, 12))).toEqual([2, 0, 0]);
+  });
+
+  it("dispose frees geometry and material", () => {
+    const lr = shownLineRenderer();
     lr.loadSnapshot(makeBondedSnapshot());
     expect(() => lr.dispose()).not.toThrow();
   });

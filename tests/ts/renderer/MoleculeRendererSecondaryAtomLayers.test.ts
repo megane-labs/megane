@@ -26,6 +26,7 @@ import {
   getRadius,
 } from "@/constants";
 import type { Snapshot } from "@/types";
+import { rgbAt } from "./colorBytes";
 import type { PeriodicAtomImageData } from "@/pipeline/types";
 
 /** One carbon on the cell origin (so it has boundary copies) and one oxygen inside. */
@@ -258,7 +259,7 @@ describe("MoleculeRenderer — recorded atom appearance outlives the meshes", ()
     const atoms = primaryAtoms(renderer);
     expect(uniforms(atoms).uScaleMultiplier.value).toBe(2);
     expect(uniforms(atoms).uOpacity.value).toBe(0.5);
-    expect(Array.from(atoms.getColorBuffer().slice(0, 3))).toEqual([1, 0, 0]);
+    expect(rgbAt(atoms.getColorBuffer(), 0)).toEqual([1, 0, 0]);
   });
 
   it("keeps scale and colours on a heterogeneous trajectory frame", () => {
@@ -278,7 +279,7 @@ describe("MoleculeRenderer — recorded atom appearance outlives the meshes", ()
 
     const atoms = primaryAtoms(renderer);
     expect(uniforms(atoms).uScaleMultiplier.value).toBe(1.5);
-    expect(Array.from(atoms.getColorBuffer().slice(0, 3))).toEqual([0, 1, 0]);
+    expect(rgbAt(atoms.getColorBuffer(), 0)).toEqual([0, 1, 0]);
   });
 
   it("re-derives the Drawing Boundary copies per frame and keeps them visible", () => {

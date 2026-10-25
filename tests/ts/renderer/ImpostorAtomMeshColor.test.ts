@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { ImpostorAtomMesh } from "@/renderer/ImpostorAtomMesh";
 import type { Snapshot } from "@/types";
+import { BYTE_DIGITS, rgbAt } from "./colorBytes";
 
 function makeSnapshot(): Snapshot {
   // 3 atoms: H, C, O
@@ -26,10 +27,10 @@ describe("ImpostorAtomMesh.applyColorOverrides", () => {
     overrides[5] = 0.25;
 
     mesh.applyColorOverrides(overrides);
-    const buf = mesh.getColorBuffer();
-    expect(buf[3]).toBeCloseTo(1.0, 6);
-    expect(buf[4]).toBeCloseTo(0.5, 6);
-    expect(buf[5]).toBeCloseTo(0.25, 6);
+    const [r, g, b] = rgbAt(mesh.getColorBuffer(), 1);
+    expect(r).toBeCloseTo(1.0, BYTE_DIGITS);
+    expect(g).toBeCloseTo(0.5, BYTE_DIGITS);
+    expect(b).toBeCloseTo(0.25, BYTE_DIGITS);
   });
 
   it("leaves atoms whose r-channel is NaN at their base color", () => {
@@ -65,14 +66,27 @@ describe("ImpostorAtomMesh.applyColorOverrides", () => {
     expect(() => mesh.applyColorOverrides(overrides)).not.toThrow();
     const buf = mesh.getColorBuffer();
     // First 3 atoms are written; nothing past atom 3 should be touched.
-    expect(buf[0]).toBeCloseTo(0.7, 6);
-    expect(buf[8]).toBeCloseTo(0.7, 6);
-    expect(buf.length).toBe(9);
+    expect(rgbAt(buf, 0)[0]).toBeCloseTo(0.7, BYTE_DIGITS);
+    expect(rgbAt(buf, 2)[2]).toBeCloseTo(0.7, BYTE_DIGITS);
+    expect(buf.length).toBe(12);
   });
 
   it("getColorBuffer length tracks the loaded atom count", () => {
     const mesh = new ImpostorAtomMesh(8);
     mesh.loadSnapshot(makeSnapshot());
-    expect(mesh.getColorBuffer().length).toBe(9);
+    expect(mesh.getColorBuffer().length).toBe(12);
+  });
+
+  it("stores colors as normalized RGBA8, clamped to [0, 1]", () => {
+    const mesh = new ImpostorAtomMesh(8);
+    mesh.loadSnapshot(makeSnapshot());
+    mesh.applyColorOverrides(new Float32Array([2, -1, 0.5, NaN, 0, 0, NaN, 0, 0]));
+    const buf = mesh.getColorBuffer();
+    expect(buf).toBeInstanceOf(Uint8ClampedArray);
+    expect(Array.from(buf.subarray(0, 3))).toEqual([255, 0, 128]);
+    const attr = (mesh as unknown as { colorAttr: { itemSize: number; normalized: boolean } })
+      .colorAttr;
+    expect(attr.itemSize).toBe(4);
+    expect(attr.normalized).toBe(true);
   });
 });
