@@ -132,9 +132,17 @@ export class MoleculeRenderer {
   private fpsCounter = new FpsCounter();
   private snapshot: Snapshot | null = null;
   /**
+   * The topology of the trajectory frame on screen when it is not the
+   * snapshot's: a heterogeneous frame's own atom count, elements and bonds.
+   * Null while the snapshot's topology is what is drawn. Picking, box
+   * selection and the selection overlays read it (see `drawnSnapshot`).
+   */
+  private frameTopology: Snapshot | null = null;
+  /**
    * Positions currently drawn. Until the first trajectory frame this is the
    * snapshot's own array (read-only here); the first frame swaps in a private
-   * copy that later frames overwrite in place.
+   * copy that later frames overwrite in place. It only grows, so past the
+   * drawn atom count it can hold an earlier, larger frame's atoms.
    */
   private currentPositions: Float32Array | null = null;
   private ownsCurrentPositions = false;
@@ -215,7 +223,8 @@ export class MoleculeRenderer {
   private readonly selection = new SelectionController({
     getCamera: () => this.camera,
     getContainer: () => this.container,
-    getSnapshot: () => this.snapshot,
+    // What is drawn, so a pick never lands on an atom the frame lacks.
+    getSnapshot: () => this.drawnSnapshot(),
     getCurrentPositions: () => this.getCurrentPositions(),
     getAtomState: () => this.atomLayers.state,
     getDrawingBoundary: () => this.currentDrawingBoundary,
@@ -331,6 +340,7 @@ export class MoleculeRenderer {
   loadSnapshot(snapshot: Snapshot, opts: { fit?: boolean } = {}): void {
     this.requestRender();
     this.snapshot = snapshot;
+    this.frameTopology = null;
     this.currentPositions = snapshot.positions;
     this.ownsCurrentPositions = false;
     this.cameraController.syncUpAxis(snapshot.box);
@@ -490,6 +500,7 @@ export class MoleculeRenderer {
       this.updateFrameTopology(frame);
     } else {
       // Uniform fast path: positions only.
+      this.frameTopology = null;
       this.atomRenderer.updatePositions(frame.positions);
       this.labelOverlay?.setPositions(frame.positions);
       this.arrowRenderer?.setAtomPositions(frame.positions, frame.nAtoms);
@@ -578,6 +589,16 @@ export class MoleculeRenderer {
     // Bonds: prefer the frame's own inferred bonds; fall back to frame 0.
     const bonds = frame.bonds ?? snapshot.bonds;
     this.updateBondsExt(bonds, null, frame.positions, elements, frame.nAtoms);
+    this.frameTopology = { ...synth, bonds, nBonds: bonds.length / 2, bondOrders: null };
+  }
+
+  /**
+   * The structure as drawn: the current heterogeneous frame's own topology,
+   * else the snapshot. Its atom count bounds what may be read from
+   * `currentPositions`.
+   */
+  private drawnSnapshot(): Snapshot | null {
+    return this.frameTopology ?? this.snapshot;
   }
 
   /** Redraw the simulation cell for a heterogeneous per-frame cell. */
