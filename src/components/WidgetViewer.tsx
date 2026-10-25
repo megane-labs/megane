@@ -35,6 +35,7 @@ import {
 import { useViewportStateSync } from "../hooks/useViewportStateSync";
 import { useControlledPlayback } from "../hooks/useControlledPlayback";
 import { createPipelineStore, type PipelineStore } from "../pipeline/store";
+import type { AddBondParams } from "../pipeline/types";
 import { decodeSnapshot, decodeHeader, MSG_SNAPSHOT } from "../protocol/protocol";
 import type { Snapshot, Frame, Measurement, HoverInfo } from "../types";
 import { applyThemeBackground, useRendererThemeBackground } from "../stores/useThemeStore";
@@ -69,6 +70,27 @@ interface WidgetViewerProps {
 
 /** Quick Style edits are written back to Python at most this often while dragging. */
 export const QUICK_STYLE_SYNC_DELAY_MS = 300;
+
+/**
+ * The pipeline JSON Quick Style writes back to `_pipeline_json`.
+ *
+ * `serialize()` leaves out an add_bond node's `bondFileData`, which the editor
+ * hosts read again from the topology file the node names. In the widget the
+ * indices Python parsed for `AddBonds(top=...)` and sent inside the pipeline
+ * JSON are the only copy, so they are written back with the rest.
+ */
+function quickStylePipelineJson(state: PipelineStore): string {
+  const pipeline = state.serialize();
+  const nodes = pipeline.nodes.map((node) => {
+    if (node.type !== "add_bond") return node;
+    const params = state.nodes.find((n) => n.id === node.id)?.data.params as
+      | AddBondParams
+      | undefined;
+    const data = params?.bondFileData;
+    return data ? { ...node, bondFileData: Array.from(data) } : node;
+  });
+  return JSON.stringify({ ...pipeline, nodes });
+}
 
 /** Decode a binary DataView into a Snapshot. */
 function decodeNodeSnapshot(data: DataView): Snapshot | null {
@@ -223,7 +245,7 @@ export function WidgetViewer({
     syncTimerRef.current = null;
     if (!syncPendingRef.current) return;
     syncPendingRef.current = false;
-    const json = JSON.stringify(pipelineStore.getState().serialize());
+    const json = quickStylePipelineJson(pipelineStore.getState());
     prevPipelineJsonRef.current = json;
     echoedPipelineJsonRef.current = json;
     onPipelineChangeRef.current?.(json);

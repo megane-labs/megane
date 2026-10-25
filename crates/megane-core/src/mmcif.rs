@@ -573,7 +573,7 @@ pub(crate) fn parse_document(text: &str, doc: &Document) -> Result<ParsedStructu
         ca_chain_ids,
         ca_res_nums,
         ca_ss_type,
-        symmetry_ops: crate::cif::symmetry_ops(text, doc),
+        symmetry_ops: crate::cif::symmetry_ops(text, &doc.items),
         warnings,
         hetero,
         ..Default::default()

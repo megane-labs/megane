@@ -36,8 +36,22 @@ import { registerTestStores, GLOBAL_BUNDLE_ID } from "../stores/testRegistry";
 
 let nextNodeId = 1;
 
-function generateNodeId(): string {
-  return `node-${nextNodeId++}`;
+/**
+ * A `node-N` id that no node in `state` has and no per-node data is keyed by.
+ * Graphs installed from a saved pipeline, a share link or the assistant carry
+ * ids this counter never issued (the editor saves its own `node-N`s), so the
+ * counter alone would hand one of them out again.
+ */
+function generateNodeId(
+  state: Pick<PipelineStore, "nodes" | "nodeSnapshots" | "nodeParseErrors" | "nodeStreamingData">,
+): string {
+  const taken = new Set(state.nodes.map((n) => n.id));
+  for (const data of [state.nodeSnapshots, state.nodeParseErrors, state.nodeStreamingData]) {
+    for (const id of Object.keys(data)) taken.add(id);
+  }
+  let id = `node-${nextNodeId++}`;
+  while (taken.has(id)) id = `node-${nextNodeId++}`;
+  return id;
 }
 
 export interface PipelineStore {
@@ -505,7 +519,7 @@ export const pipelineStateCreator: StateCreator<PipelineStore> = (set, get, api)
   },
 
   addNode: (type, position) => {
-    const id = generateNodeId();
+    const id = generateNodeId(get());
     let fallbackPosition = { x: 425, y: 50 };
     if (!position) {
       const currentNodes = get().nodes;

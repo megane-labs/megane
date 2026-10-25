@@ -426,16 +426,64 @@ pub enum Item<'a> {
 }
 
 /// A lexed CIF document: every tag/value pair and loop, in file order, across
-/// all data blocks.
+/// all data blocks. [`Document::blocks`] splits the items back into their
+/// `data_` blocks.
 #[derive(Debug)]
 pub struct Document<'a> {
     pub items: Vec<Item<'a>>,
+    /// `(block name, index into items of its first item)` per `data_` header.
+    block_starts: Vec<(&'a str, usize)>,
+}
+
+/// The items of one `data_` block, in file order.
+#[derive(Clone, Copy, Debug)]
+pub struct Block<'d, 'a> {
+    /// The block name (the text after `data_`). Empty for the items of a
+    /// file without any `data_` header, or for items that precede the first
+    /// one.
+    pub name: &'a str,
+    pub items: &'d [Item<'a>],
+}
+
+impl<'d, 'a> Block<'d, 'a> {
+    /// All loops in file order.
+    pub fn loops(&self) -> impl Iterator<Item = &'d Loop<'a>> {
+        self.items.iter().filter_map(|it| match it {
+            Item::Loop(l) => Some(l),
+            Item::Pair { .. } => None,
+        })
+    }
+
+    /// All `_tag value` pairs in file order.
+    pub fn pairs(&self) -> impl Iterator<Item = (&'a str, Value<'a>)> + 'd {
+        self.items.iter().filter_map(|it| match it {
+            Item::Pair { tag, value } => Some((*tag, *value)),
+            Item::Loop(_) => None,
+        })
+    }
+
+    /// The value of the last `tag value` pair named `tag` (case-insensitive).
+    pub fn value(&self, tag: &str) -> Option<Value<'a>> {
+        self.pairs()
+            .filter(|(t, _)| t.eq_ignore_ascii_case(tag))
+            .last()
+            .map(|(_, v)| v)
+    }
+
+    /// `true` when any pair tag or loop tag starts with `prefix`.
+    pub fn has_tag_prefix(&self, prefix: &str) -> bool {
+        self.items.iter().any(|it| match it {
+            Item::Pair { tag, .. } => starts_with_ci(tag, prefix),
+            Item::Loop(l) => l.has_tag_prefix(prefix),
+        })
+    }
 }
 
 impl<'a> Document<'a> {
     pub fn parse(text: &'a str) -> Self {
         let mut lex = Lexer::new(text);
         let mut items = Vec::new();
+        let mut block_starts = Vec::new();
         let mut pending = lex.next_spanned();
         while let Some((_, tok)) = pending {
             pending = lex.next_spanned();
@@ -472,44 +520,74 @@ impl<'a> Document<'a> {
                         }));
                     }
                 }
-                // Block headers, save frames and stray values carry nothing
-                // the structure parsers read.
+                Token::DataBlock(name) => block_starts.push((name, items.len())),
+                // Save frames and stray values carry nothing the structure
+                // parsers read.
                 _ => {}
             }
         }
-        Document { items }
+        Document {
+            items,
+            block_starts,
+        }
+    }
+
+    /// Every item of the document as one block (all data blocks merged).
+    fn all(&self) -> Block<'_, 'a> {
+        Block {
+            name: "",
+            items: &self.items,
+        }
+    }
+
+    /// The document split into its `data_` blocks, in file order. A file
+    /// without any `data_` header is one unnamed block; items that precede
+    /// the first header (malformed, but seen in the wild) form a leading
+    /// unnamed block.
+    pub fn blocks(&self) -> Vec<Block<'_, 'a>> {
+        let first = self
+            .block_starts
+            .first()
+            .map_or(self.items.len(), |&(_, s)| s);
+        let mut out = Vec::with_capacity(self.block_starts.len() + 1);
+        if first > 0 || self.block_starts.is_empty() {
+            out.push(Block {
+                name: "",
+                items: &self.items[..first],
+            });
+        }
+        for (k, &(name, start)) in self.block_starts.iter().enumerate() {
+            let end = self
+                .block_starts
+                .get(k + 1)
+                .map_or(self.items.len(), |&(_, s)| s);
+            out.push(Block {
+                name,
+                items: &self.items[start..end],
+            });
+        }
+        out
     }
 
     /// All loops in file order.
     pub fn loops(&self) -> impl Iterator<Item = &Loop<'a>> {
-        self.items.iter().filter_map(|it| match it {
-            Item::Loop(l) => Some(l),
-            Item::Pair { .. } => None,
-        })
+        self.all().loops()
     }
 
     /// All `_tag value` pairs in file order.
     pub fn pairs(&self) -> impl Iterator<Item = (&'a str, Value<'a>)> + '_ {
-        self.items.iter().filter_map(|it| match it {
-            Item::Pair { tag, value } => Some((*tag, *value)),
-            Item::Loop(_) => None,
-        })
+        self.all().pairs()
     }
 
-    /// The value of the last `tag value` pair named `tag` (case-insensitive).
+    /// The value of the last `tag value` pair named `tag` (case-insensitive),
+    /// across every data block.
     pub fn value(&self, tag: &str) -> Option<Value<'a>> {
-        self.pairs()
-            .filter(|(t, _)| t.eq_ignore_ascii_case(tag))
-            .last()
-            .map(|(_, v)| v)
+        self.all().value(tag)
     }
 
     /// `true` when any pair tag or loop tag starts with `prefix`.
     pub fn has_tag_prefix(&self, prefix: &str) -> bool {
-        self.items.iter().any(|it| match it {
-            Item::Pair { tag, .. } => starts_with_ci(tag, prefix),
-            Item::Loop(l) => l.has_tag_prefix(prefix),
-        })
+        self.all().has_tag_prefix(prefix)
     }
 
     /// The rows of a dotted category (e.g. `_struct_conn.`).
@@ -792,6 +870,42 @@ _y.only
 
         let none = doc.category("_nothing.");
         assert!(none.tags.is_empty() && none.rows.is_empty());
+    }
+
+    #[test]
+    fn document_blocks_split_items_at_data_headers() {
+        // No header at all: one unnamed block holding everything.
+        let doc = Document::parse("_a 1\nloop_ _b.x 2 3\n");
+        let blocks = doc.blocks();
+        assert_eq!(blocks.len(), 1);
+        assert_eq!(blocks[0].name, "");
+        assert_eq!(blocks[0].items.len(), 2);
+
+        // Leading items form an unnamed block; each header starts a block,
+        // and an empty block is kept.
+        let doc = Document::parse(
+            "_pre 0\ndata_one\n_a 1\n_a 2\nloop_\n_x.v\n7 8\ndata_two\ndata_3\n_a 3\n",
+        );
+        let blocks = doc.blocks();
+        let names: Vec<&str> = blocks.iter().map(|b| b.name).collect();
+        assert_eq!(names, vec!["", "one", "two", "3"]);
+        assert_eq!(blocks[0].value("_pre").unwrap().text, "0");
+        // Values are looked up within the block only (last one wins there).
+        assert_eq!(blocks[1].value("_A").unwrap().as_f32(), Some(2.0));
+        assert!(blocks[1].value("_pre").is_none());
+        assert_eq!(blocks[1].loops().count(), 1);
+        assert!(blocks[1].has_tag_prefix("_x."));
+        assert!(!blocks[3].has_tag_prefix("_x."));
+        assert!(blocks[2].items.is_empty());
+        assert_eq!(blocks[3].value("_a").unwrap().as_f32(), Some(3.0));
+        // The whole-document view still spans every block.
+        assert_eq!(doc.value("_a").unwrap().as_f32(), Some(3.0));
+
+        // A header first: no leading unnamed block.
+        let doc = Document::parse("data_only\n_a 1\n");
+        let blocks = doc.blocks();
+        assert_eq!(blocks.len(), 1);
+        assert_eq!(blocks[0].name, "only");
     }
 
     #[test]
