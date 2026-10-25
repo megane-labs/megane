@@ -3,7 +3,7 @@
  * and keyboard shortcut support (ArrowLeft / ArrowRight to step frames).
  */
 
-import { useEffect, useCallback } from "react";
+import { useEffect, useCallback, useRef } from "react";
 
 interface TimelineProps {
   currentFrame: number;
@@ -77,18 +77,33 @@ export function Timeline({
     [onSeek],
   );
 
-  // Keyboard shortcuts: ArrowLeft / ArrowRight step one frame
+  const rootRef = useRef<HTMLDivElement | null>(null);
+
+  // Keyboard shortcuts: ArrowLeft / ArrowRight step one frame.
+  //
+  // The listener sits on `document`, so it is scoped the way MeganeViewer's
+  // Escape handler is: a page can host several viewers, and a notebook host
+  // owns the keyboard for its cells (CodeMirror editors are contenteditable,
+  // not <textarea>s). Only an unmodified arrow counts — Alt+← is the
+  // browser's Back, Shift/Ctrl/Cmd+← move or extend a selection.
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
-      const tag = (e.target as HTMLElement)?.tagName;
-      if (tag === "INPUT" || tag === "SELECT" || tag === "TEXTAREA") return;
-      if (e.key === "ArrowLeft") {
-        e.preventDefault();
-        onStepBackward();
-      } else if (e.key === "ArrowRight") {
-        e.preventDefault();
-        onStepForward();
-      }
+      if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") return;
+      if (e.defaultPrevented || e.altKey || e.ctrlKey || e.metaKey || e.shiftKey) return;
+      const target = e.target as HTMLElement | null;
+      if (target?.isContentEditable) return;
+      if (target && /^(INPUT|TEXTAREA|SELECT)$/.test(target.tagName)) return;
+      // The viewer this Timeline is drawn over. Something outside it holding
+      // focus (a notebook cell, a host dialog, a sibling viewer) means the key
+      // was aimed there; `body` means nothing is focused, which we still
+      // answer to so the shortcut works on a page with a single viewer.
+      const viewer = rootRef.current?.parentElement;
+      if (!viewer) return;
+      const active = document.activeElement;
+      if (active && active !== document.body && !viewer.contains(active)) return;
+      e.preventDefault();
+      if (e.key === "ArrowLeft") onStepBackward();
+      else onStepForward();
     };
     document.addEventListener("keydown", handler);
     return () => document.removeEventListener("keydown", handler);
@@ -108,6 +123,7 @@ export function Timeline({
 
   return (
     <div
+      ref={rootRef}
       data-testid="timeline-root"
       style={{
         position: "absolute",

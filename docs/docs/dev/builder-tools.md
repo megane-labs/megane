@@ -463,7 +463,11 @@ megane-builder-tools` at a commit pinned in Megane (`DEFAULT_SERVER_SOURCE` in
 `megane-builder-tools` replaces it and `null` hides it; the usual confirmation
 still comes first. A stdio server inherits the host's whole environment, not
 the SDK's short list, so uvx's first download sees the proxy and uv settings;
-the VS Code client allows 10 minutes for that first `initialize`.
+both clients allow 10 minutes for that first `initialize` (an HTTP server gets
+60 s) and then stop the server and report the timeout, so a command that starts
+but never speaks MCP does not leave the connection pending. In the Jupyter
+server, closing the last Builder tab waiting for a server that is still
+starting stops it, and shutting Jupyter down stops every server still starting.
 
 **JupyterLab has the bridge in the Jupyter server** (`megane.builder_tools`,
 a server extension enabled by `etc/jupyter/jupyter_server_config.d/megane.json`

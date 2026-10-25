@@ -180,9 +180,37 @@ fn split_label(label: &str) -> (&str, Option<i64>) {
     (&label[..start], label[start..].parse().ok())
 }
 
+/// Append `value` as a fixed-point field of `width` columns with `decimals`
+/// places. A fixed-column format (PDB, MOL) cannot widen a field without
+/// shifting every column after it, which readers then misparse, so a value
+/// that needs more columns is an error naming the field (`what`).
+fn push_fixed(
+    out: &mut String,
+    value: f32,
+    width: usize,
+    decimals: usize,
+    what: impl FnOnce() -> String,
+) -> Result<(), String> {
+    let start = out.len();
+    let _ = write!(out, "{value:width$.decimals$}");
+    if out.len() - start <= width {
+        return Ok(());
+    }
+    let step = 10f64.powi(-(decimals as i32));
+    let max = 10f64.powi((width - decimals - 1) as i32) - step;
+    let min = step - 10f64.powi((width - decimals - 2) as i32);
+    Err(format!(
+        "{} = {value} does not fit its {width}-column field ({min:.decimals$} to {max:.decimals$})",
+        what()
+    ))
+}
+
+const AXES: [char; 3] = ['x', 'y', 'z'];
+
 /// Serialize as PDB: optional `CRYST1`, one `ATOM` per atom, `CONECT` for
 /// every bond, `END`. Atom names are the element symbol; residue name / number
-/// come from `atom_labels` when present (`UNK 1` otherwise).
+/// come from `atom_labels` when present (`UNK 1` otherwise). Coordinates must
+/// fit the 8-column `%8.3f` fields (-999.999 to 9999.999 Å).
 pub fn write_pdb(view: &StructureView<'_>) -> Result<String, String> {
     view.validate()?;
     let n = view.n_atoms();
@@ -194,10 +222,16 @@ pub fn write_pdb(view: &StructureView<'_>) -> Result<String, String> {
     let mut out = String::with_capacity(n * 90 + 128);
     if let Some(m) = &view.box_matrix {
         let (a, b, c, alpha, beta, gamma) = matrix_to_params(m);
+        out.push_str("CRYST1");
+        for (len, name) in [(a, 'a'), (b, 'b'), (c, 'c')] {
+            push_fixed(&mut out, len, 9, 3, || {
+                format!("PDB CRYST1 cell length {name}")
+            })?;
+        }
         let _ = writeln!(
             out,
-            "CRYST1{:9.3}{:9.3}{:9.3}{:7.2}{:7.2}{:7.2} P 1           1",
-            a, b, c, alpha, beta, gamma
+            "{:7.2}{:7.2}{:7.2} P 1           1",
+            alpha, beta, gamma
         );
     }
     for i in 0..n {
@@ -237,19 +271,21 @@ pub fn write_pdb(view: &StructureView<'_>) -> Result<String, String> {
         } else {
             format!("{upper:<4}")
         };
-        let _ = writeln!(
+        let _ = write!(
             out,
-            "ATOM  {:5} {} {:>3} {}{:4}    {:8.3}{:8.3}{:8.3}  1.00  0.00          {:>2}",
+            "ATOM  {:5} {} {:>3} {}{:4}    ",
             i + 1,
             atom_name,
             resname,
             chain,
             resseq,
-            p[0],
-            p[1],
-            p[2],
-            upper
         );
+        for (k, axis) in AXES.iter().enumerate() {
+            push_fixed(&mut out, p[k], 8, 3, || {
+                format!("PDB coordinate {axis} of atom {}", i + 1)
+            })?;
+        }
+        let _ = writeln!(out, "  1.00  0.00          {upper:>2}");
     }
     // CONECT: group partners per atom, emitting both directions like most
     // writers do so readers that only scan one direction still see the bond.
@@ -278,6 +314,8 @@ pub fn write_pdb(view: &StructureView<'_>) -> Result<String, String> {
 
 /// Serialize as an MDL Molfile (V2000). Bond orders default to single; the
 /// aromatic order (4) is written as-is, which is the V2000 convention.
+/// Coordinates must fit the 10-column `%10.4f` fields (-9999.9999 to
+/// 99999.9999 Å).
 pub fn write_mol(view: &StructureView<'_>) -> Result<String, String> {
     view.validate()?;
     let n = view.n_atoms();
@@ -292,12 +330,14 @@ pub fn write_mol(view: &StructureView<'_>) -> Result<String, String> {
     let _ = writeln!(out, "{n:3}{nb:3}  0  0  0  0  0  0  0  0999 V2000");
     for i in 0..n {
         let p = &view.positions[i * 3..i * 3 + 3];
+        for (k, axis) in AXES.iter().enumerate() {
+            push_fixed(&mut out, p[k], 10, 4, || {
+                format!("MOL coordinate {axis} of atom {}", i + 1)
+            })?;
+        }
         let _ = writeln!(
             out,
-            "{:10.4}{:10.4}{:10.4} {:<3} 0  0  0  0  0  0  0  0  0  0  0  0",
-            p[0],
-            p[1],
-            p[2],
+            " {:<3} 0  0  0  0  0  0  0  0  0  0  0  0",
             symbol(view.elements[i])
         );
     }
@@ -666,6 +706,68 @@ mod tests {
             box_origin: None,
         };
         assert!(write_xyz(&view).unwrap().contains("X "));
+    }
+
+    fn one_atom(pos: &[f32]) -> StructureView<'_> {
+        static ELEM: [u8; 1] = [6];
+        StructureView {
+            positions: pos,
+            elements: &ELEM,
+            bonds: &[],
+            bond_orders: None,
+            box_matrix: None,
+            atom_labels: None,
+            chain_ids: None,
+            box_origin: None,
+        }
+    }
+
+    /// PDB coordinates are fixed 8-column `%8.3f` fields (-999.999 to
+    /// 9999.999) and MOL ones 10-column `%10.4f`. A wider value shifted every
+    /// column after it, so reading the file back silently dropped the atom
+    /// (x = -1234.5), found no atoms (12345.678), or failed (MOL -12345.6).
+    #[test]
+    fn coordinates_that_overflow_their_columns_are_an_error() {
+        for (axis, pos) in [
+            ("x", [-1234.5f32, 12.0, 3.0]),
+            ("x", [12345.678, 1.0, 2.0]),
+            ("y", [0.0, -999.9996, 0.0]), // rounds to -1000.000
+            ("z", [0.0, 0.0, 10_000.0]),
+        ] {
+            let err = write_pdb(&one_atom(&pos)).unwrap_err();
+            assert!(err.contains(&format!("coordinate {axis}")), "{err}");
+            assert!(err.contains("atom 1"), "{err}");
+        }
+        // The extremes that do fit are written and read back.
+        let edge = [-999.999f32, 9999.999, 0.0];
+        let parsed = crate::pdb::parse(&write_pdb(&one_atom(&edge)).unwrap()).unwrap();
+        assert_eq!(parsed.n_atoms, 1);
+        assert!((parsed.positions[0] + 999.999).abs() < 1e-3);
+        assert!((parsed.positions[1] - 9999.999).abs() < 1e-3);
+
+        for (axis, pos) in [
+            ("y", [0.0f32, -12345.6, 0.0]),
+            ("x", [100_000.0, 0.0, 0.0]),
+            ("z", [0.0, 0.0, -10_000.0]),
+        ] {
+            let err = write_mol(&one_atom(&pos)).unwrap_err();
+            assert!(err.contains(&format!("coordinate {axis}")), "{err}");
+        }
+        let edge = [-9999.0f32, 99_999.0, 0.0];
+        let parsed = crate::mol::parse(&write_mol(&one_atom(&edge)).unwrap()).unwrap();
+        assert_eq!(parsed.positions, edge.to_vec());
+    }
+
+    /// CRYST1 cell lengths are 9-column `%9.3f` fields too.
+    #[test]
+    fn a_cell_length_that_overflows_cryst1_is_an_error() {
+        let big = [100_000.0, 0.0, 0.0, 0.0, 10.0, 0.0, 0.0, 0.0, 10.0];
+        let err = write_pdb(&water(None, None, Some(big))).unwrap_err();
+        assert!(err.contains("CRYST1"), "{err}");
+        let fits = [99_999.0, 0.0, 0.0, 0.0, 10.0, 0.0, 0.0, 0.0, 10.0];
+        let text = write_pdb(&water(None, None, Some(fits))).unwrap();
+        let m = crate::pdb::parse(&text).unwrap().box_matrix.unwrap();
+        assert!((m[0] - 99_999.0).abs() < 1e-2);
     }
 
     #[test]

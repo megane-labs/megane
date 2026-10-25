@@ -36,36 +36,10 @@ ctx.onmessage = (e: MessageEvent<WorkerRequest>) => {
 
     if (msgType === MSG_SNAPSHOT) {
       const snapshot = decodeSnapshot(buffer);
-      const transfers: ArrayBuffer[] = [
-        snapshot.positions.buffer as ArrayBuffer,
-        snapshot.elements.buffer as ArrayBuffer,
-        snapshot.bonds.buffer as ArrayBuffer,
-      ];
-      if (snapshot.bondOrders) {
-        transfers.push(snapshot.bondOrders.buffer as ArrayBuffer);
-      }
-      if (snapshot.box) {
-        transfers.push(snapshot.box.buffer as ArrayBuffer);
-      }
-      ctx.postMessage(
-        {
-          id,
-          type: "snapshot",
-          data: {
-            nAtoms: snapshot.nAtoms,
-            nBonds: snapshot.nBonds,
-            nFileBonds: snapshot.nFileBonds,
-            positions: snapshot.positions,
-            elements: snapshot.elements,
-            bonds: snapshot.bonds,
-            bondOrders: snapshot.bondOrders,
-            box: snapshot.box,
-            atomChainIds: null,
-            atomBFactors: null,
-          },
-        } satisfies WorkerResponse,
-        transfers,
-      );
+      // Every array of the snapshot is a view into the one message buffer, so
+      // a single transfer of it moves them all. Listing each view's buffer
+      // would name that ArrayBuffer several times, which postMessage rejects.
+      ctx.postMessage({ id, type: "snapshot", data: snapshot } satisfies WorkerResponse, [buffer]);
     } else if (msgType === MSG_FRAME) {
       const frame = decodeFrame(buffer);
       // positions/elements/box are all views into the one message buffer, so a

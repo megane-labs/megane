@@ -22,7 +22,7 @@ export interface Snapshot {
   // Cα backbone data for cartoon rendering (undefined for non-PDB or structures without atom names)
   caIndices?: Uint32Array; // indices of Cα atoms in positions array
   caChainIds?: Uint8Array; // per-Cα chain ID as ASCII byte (e.g. 65 = 'A')
-  caResNums?: Uint32Array; // per-Cα residue sequence number
+  caResNums?: Int32Array; // per-Cα residue sequence number (signed: tags sit below 1)
   caSsType?: Uint8Array; // per-Cα secondary structure: 0=coil, 1=helix, 2=sheet
   /**
    * Crystallographic symmetry operations as raw `x,y,z`-style strings, captured

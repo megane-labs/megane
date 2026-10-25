@@ -154,6 +154,90 @@ def test_set_pipeline_and_clear():
     assert v._node_snapshots_data == {}
 
 
+def _frame_state(v: MolecularViewer) -> tuple:
+    return v._frame_data, v.frame_index, v.total_frames, v._trajectory_data
+
+
+def test_set_pipeline_resets_the_previous_trajectorys_frame():
+    """A second run with the same topology must not show the first run's frame 5."""
+    v = MolecularViewer()
+    v.set_pipeline(_make_trajectory_pipeline())
+    v.frame_index = 5
+    assert v._frame_data != b""
+
+    second = _make_trajectory_pipeline()
+    v.set_pipeline(second)
+    fresh = MolecularViewer()
+    fresh.set_pipeline(second)
+    assert _frame_state(v) == _frame_state(fresh) == (b"", 0, next(iter(second._trajectories.values())).n_frames, b"")
+
+    # Seeking still serves the new pipeline's frames.
+    v.frame_index = 2
+    assert v._frame_data == encode_trajectory_frame(next(iter(second._trajectories.values())), 2)
+
+
+def test_set_pipeline_without_trajectory_hides_the_timeline():
+    v = MolecularViewer()
+    v.set_pipeline(_make_trajectory_pipeline())
+    v.frame_index = 3
+    v.set_pipeline(_make_pdb_pipeline(str(FIXTURES / "1crn.pdb")))
+    assert _frame_state(v) == (b"", 0, 0, b"")
+
+
+def test_set_pipeline_none_resets_frames():
+    v = MolecularViewer()
+    v.set_pipeline(_make_trajectory_pipeline(), embed_trajectory=True)
+    v.frame_index = 4
+    v.set_pipeline(None)
+    assert _frame_state(v) == (b"", 0, 0, b"")
+    assert v._pipeline_ref is None
+
+
+def test_set_pipeline_keeps_a_legacy_load_trajectorys_frame_count():
+    """load(xtc=...) frames are still served after a pipeline without a trajectory."""
+    v = MolecularViewer()
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", DeprecationWarning)
+        v.load(str(FIXTURES / "1crn.pdb"), xtc=str(FIXTURES / "1crn_vibration.xtc"))
+    n_frames = v.total_frames
+    v.frame_index = 3
+    v.set_pipeline(None)
+    assert _frame_state(v) == (b"", 0, n_frames, b"")
+
+
+def test_set_pipeline_resets_frames_in_one_state_update():
+    """The front end gets the new pipeline and the reset frame state in one message."""
+
+    class Comm:
+        kernel = object()
+        comm_id = "test-comm"
+
+        def __init__(self):
+            self.sent = []
+
+        def send(self, data=None, buffers=None, **kwargs):
+            self.sent.append(data)
+
+        def on_msg(self, callback):
+            pass
+
+        def close(self, *args, **kwargs):
+            pass
+
+    v = MolecularViewer()
+    v.set_pipeline(_make_trajectory_pipeline())
+    v.frame_index = 5
+    v.comm = Comm()
+    v.comm.sent.clear()
+    v.set_pipeline(_make_pdb_pipeline(str(FIXTURES / "1crn.pdb")))
+    updates = [m for m in v.comm.sent if m and m.get("method") == "update"]
+    assert len(updates) == 1
+    state = updates[0]["state"]
+    assert state["frame_index"] == 0 and state["total_frames"] == 0
+    buffers = {path[0] for path in updates[0].get("buffer_paths", [])}  # bytes traits travel as buffers
+    assert {"_pipeline_json", "_frame_data"} <= set(state) | buffers
+
+
 def test_deprecated_load_warns():
     """load() emits DeprecationWarning."""
     v = MolecularViewer()

@@ -101,6 +101,20 @@ def test_format_from_path_knows_crystal_formats():
     assert format_from_path("POSCAR.xyz") == "xyz"
 
 
+@pytest.mark.parametrize(
+    "fmt, x, field",
+    [("pdb", -1234.5, "PDB coordinate x of atom 1"), ("mol", -12345.6, "MOL coordinate x of atom 1")],
+)
+def test_coordinates_past_the_fixed_columns_are_rejected(fmt, x, field):
+    # A wider value would shift the columns after it; the reader then drops
+    # the atom (PDB) or fails (MOL), so the writer refuses instead.
+    s = _water()
+    s.positions = s.positions.copy()
+    s.positions[0, 0] = x
+    with pytest.raises(ValueError, match=field):
+        write_structure(s, fmt)
+
+
 def test_write_structure_rejects_bad_shapes():
     with pytest.raises(ValueError):
         megane_parser.write_structure(
