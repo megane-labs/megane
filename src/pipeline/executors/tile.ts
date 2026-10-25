@@ -17,6 +17,18 @@ export function tileIndices(indices: Uint32Array, nAtoms: number, total: number)
   return out;
 }
 
+/**
+ * Tile per-atom labels (`Snapshot.atomLabels`) `total` times, one block of
+ * `nAtoms` per image. An atom without a label gets "".
+ */
+export function tileLabels(labels: string[], nAtoms: number, total: number): string[] {
+  const out = new Array<string>(nAtoms * total);
+  for (let m = 0; m < total; m++) {
+    for (let a = 0; a < nAtoms; a++) out[m * nAtoms + a] = labels[a] ?? "";
+  }
+  return out;
+}
+
 type TileableArray = Float32Array | Uint8Array | Uint32Array;
 
 /** Concatenate `total` copies of `arr` into a new array of the same type. */

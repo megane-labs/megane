@@ -19,6 +19,15 @@ export interface Snapshot {
   atomChainIds: Uint8Array | null;
   /** Per-atom B-factors (temperature factors) in Å². Null for formats without B-factor info. */
   atomBFactors: Float32Array | null;
+  /**
+   * Per-atom residue labels ("HOH42", "ALA7", …) that `resname` / `resid`
+   * selections and residue colouring read. Parsers return them beside the
+   * snapshot (`StructureParseResult.labels`); the load_structure node attaches
+   * them here so every node or edit that copies or reorders atoms (Replicate,
+   * Symmetry, structure edits) carries them with the atoms, like
+   * `atomChainIds`. Undefined when the structure has no labels.
+   */
+  atomLabels?: string[];
   // Cα backbone data for cartoon rendering (undefined for non-PDB or structures without atom names)
   caIndices?: Uint32Array; // indices of Cα atoms in positions array
   caChainIds?: Uint8Array; // per-Cα chain ID as ASCII byte (e.g. 65 = 'A')

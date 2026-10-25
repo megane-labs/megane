@@ -1007,6 +1007,95 @@ describe("executePipeline", () => {
       expect(result.bonds).toHaveLength(1);
     });
   });
+
+  // Regression: residue labels were looked up per *file* atom, so after a
+  // node or edit that copies or reorders atoms, `resname` / `resid` and
+  // residue colouring read the wrong atom's label (only the first replicate
+  // image matched `resname == "HOH"`; after a deletion every lookup was off
+  // by one). The labels now travel with the atoms.
+  describe("residue labels follow the atoms through transforms", () => {
+    // A water oxygen (HOH1) and a sodium ion (NA2) in a 4 Å cell.
+    const ionPair = makeSnapshot({
+      nAtoms: 2,
+      positions: [1, 1, 1, 2.5, 1.2, 1.3],
+      elements: [8, 11],
+      box: [4, 0, 0, 0, 4, 0, 0, 0, 4],
+    });
+    const nodeSnapshots = (snapshot: Snapshot) => ({
+      ls: { snapshot, frames: null, meta: null, labels: ["HOH1", "NA2"] },
+    });
+
+    function selected(
+      transform: [string, Record<string, unknown>] | null,
+      query: string,
+      opts: { edits?: unknown[]; snapshot?: Snapshot } = {},
+    ): number[] {
+      const nodes = [
+        makeNode("ls", "load_structure", {
+          fileName: null,
+          hasTrajectory: false,
+          hasCell: true,
+          edits: opts.edits,
+        }),
+        ...(transform ? [makeNode("t", transform[0], transform[1])] : []),
+        makeNode("f", "filter", { query }),
+        makeNode("vp", "viewport", { perspective: false, cellAxesVisible: true }),
+      ];
+      const edges = [
+        ...(transform
+          ? [makeEdge("ls", "particle", "t", "particle"), makeEdge("t", "particle", "f", "in")]
+          : [makeEdge("ls", "particle", "f", "in")]),
+        makeEdge("f", "out", "vp", "particle"),
+      ];
+      const ctx = { nodeSnapshots: nodeSnapshots(opts.snapshot ?? ionPair) };
+      return Array.from(executePipeline(nodes, edges, ctx).viewportState.particles[0].indices!);
+    }
+
+    it("replicate gives every image its labels", () => {
+      const replicate: [string, Record<string, unknown>] = ["replicate", { nx: 3, ny: 1, nz: 1 }];
+      expect(selected(replicate, 'resname == "HOH"')).toEqual([0, 2, 4]);
+      expect(selected(replicate, "resid == 2")).toEqual([1, 3, 5]);
+    });
+
+    it("symmetry expansion gives every image its labels", () => {
+      const withOps = { ...ionPair, symmetryOps: ["x,y,z", "-x,-y,-z"] };
+      const symmetry: [string, Record<string, unknown>] = ["symmetry", { mode: "expand" }];
+      expect(selected(symmetry, 'resname == "NA"', { snapshot: withOps })).toEqual([1, 3]);
+    });
+
+    it("structure edits keep each label on its atom", () => {
+      const deleteWater = [{ op: "delete_atoms", atoms: [0] }];
+      expect(selected(null, 'resname == "NA"', { edits: deleteWater })).toEqual([0]);
+      expect(selected(null, 'resname == "HOH"', { edits: deleteWater })).toEqual([]);
+      // An added atom carries no residue label.
+      const addCarbon = [{ op: "add_atom", id: "c", element: 6, position: [3, 3, 3] }];
+      expect(selected(null, 'resname == "NA"', { edits: addCarbon })).toEqual([1]);
+    });
+
+    it("color byResidue paints every replicated copy", () => {
+      const nodes = [
+        makeNode("ls", "load_structure", { fileName: null, hasTrajectory: false, hasCell: true }),
+        makeNode("t", "replicate", { nx: 2, ny: 1, nz: 1 }),
+        makeNode("c", "color", { mode: "byResidue", uniformColor: "#ffffff" }),
+        makeNode("vp", "viewport", { perspective: false, cellAxesVisible: true }),
+      ];
+      const edges = [
+        makeEdge("ls", "particle", "t", "particle"),
+        makeEdge("t", "particle", "c", "in"),
+        makeEdge("c", "out", "vp", "particle"),
+      ];
+      const ctx = {
+        nodeSnapshots: {
+          ls: { snapshot: ionPair, frames: null, meta: null, labels: ["ALA1", "GLY2"] },
+        },
+      };
+      const co = executePipeline(nodes, edges, ctx).viewportState.particles[0].colorOverrides!;
+      // ALA and GLY shapely colours, in both images.
+      const ala = expect.closeTo(0.78);
+      const gly = expect.closeTo(1.0);
+      expect(Array.from(co)).toEqual([ala, ala, ala, gly, gly, gly, ala, ala, ala, gly, gly, gly]);
+    });
+  });
 });
 
 describe("executePipeline isosurface color-by-volume", () => {

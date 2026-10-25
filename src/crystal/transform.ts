@@ -497,11 +497,13 @@ function assemble(src: Snapshot, t: Transformed): Snapshot {
   const elements = new Uint8Array(nAtoms);
   const atomChainIds = src.atomChainIds ? new Uint8Array(nAtoms) : null;
   const atomBFactors = src.atomBFactors ? new Float32Array(nAtoms) : null;
+  const atomLabels = src.atomLabels ? new Array<string>(nAtoms) : undefined;
   for (let i = 0; i < nAtoms; i++) {
     const a = t.src[i];
     elements[i] = src.elements[a];
     if (atomChainIds) atomChainIds[i] = src.atomChainIds![a];
     if (atomBFactors) atomBFactors[i] = src.atomBFactors![a];
+    if (atomLabels) atomLabels[i] = src.atomLabels![a] ?? "";
   }
   const { bonds, bondOrders } = retileBonds(src, t);
   return {
@@ -516,6 +518,7 @@ function assemble(src: Snapshot, t: Transformed): Snapshot {
     boxOrigin: null,
     atomChainIds,
     atomBFactors,
+    atomLabels,
     // The cell changed, so the file's space-group operations no longer apply.
     symmetryOps: undefined,
   };

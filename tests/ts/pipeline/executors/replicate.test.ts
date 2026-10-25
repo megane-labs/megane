@@ -154,6 +154,21 @@ describe("executeReplicate", () => {
     expect(Array.from(result.scaleOverrides!)).toEqual([1, 2, 1, 2]);
   });
 
+  it("tiles residue labels with the atoms, and adds none when there are none", () => {
+    const labelled = makeParticle(CUBIC(), {
+      source: { ...makeSnapshot(CUBIC()), atomLabels: ["HOH1", "NA2"] },
+    });
+    const out = executeReplicate(params(2, 1, 1), inputs(labelled, makeCell(CUBIC())));
+    expect((out.get("particle") as ParticleData).source.atomLabels).toEqual([
+      "HOH1",
+      "NA2",
+      "HOH1",
+      "NA2",
+    ]);
+    const bare = executeReplicate(params(2, 1, 1), inputs(makeParticle(CUBIC())));
+    expect((bare.get("particle") as ParticleData).source.atomLabels).toBeUndefined();
+  });
+
   it("replicates Cα backbone arrays for cartoon rendering", () => {
     const snap = makeSnapshot(CUBIC());
     snap.caIndices = new Uint32Array([0]);
