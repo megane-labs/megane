@@ -767,6 +767,11 @@ atoms = b.to_ase()                   # needs ASE
 b.load("other.xyz")                  # open another file in the same widget
 ```
 
+`b.load(...)` replaces the document at once: `save()`, `text()`, `to_ase()`
+and the counts read the new file until the widget has opened it, so
+`b.load("b.pdb"); b.save("out.pdb")` in one cell saves `b.pdb` — and they work
+on a `Builder` that is never displayed.
+
 *File › Save* in the cell writes through the kernel into its working
 directory (the notebook's folder; set `megane.Builder(save_dir=...)` to
 change it) and never overwrites a file — a taken name gets `-1`, `-2`, ….

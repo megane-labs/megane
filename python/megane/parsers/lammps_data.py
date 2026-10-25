@@ -13,8 +13,10 @@ logger = logging.getLogger(__name__)
 def load_lammps_data(path: str) -> Structure:
     """Load a LAMMPS data file using the shared Rust parser (megane-core).
 
-    Supports atom_style: atomic, charge, and full (real).
-    Auto-detects style from comment hint or field count.
+    Supports atom_style: atomic, charge, molecular / bond / angle, and full
+    (real). The style comes from the ``Atoms # <style>`` comment hint; a hint
+    naming an unsupported atom style raises ``ValueError``. Without a hint the
+    style is guessed from the field count (image flags allowed).
     """
     logger.debug("Loading LAMMPS data file: %s", path)
     with open(path) as f:

@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { generateDrawingBoundaryImages } from "@/logic/cellBoundaryImages";
 import { executeCoordinationGenerator } from "@/pipeline/executors/coordinationGenerator";
 import { executePolyhedronGenerator } from "@/pipeline/executors/polyhedronGenerator";
+import { executeViewport } from "@/pipeline/executors/viewport";
 import type {
   BondData,
   CoordinationData,
@@ -175,6 +176,20 @@ describe("Coordination -> Polyhedra responsibility split", () => {
     expect(Array.from(coordination.outsideBoundaryImages!.sourceIndices)).toEqual([1]);
     expect(bonds.periodicImages).toBe(coordination.outsideBoundaryImages);
     expect(bonds.nBonds).toBe(6);
+    // Every extended endpoint names its source atom: the boundary copies,
+    // then the outside image of O1.
+    const boundarySources = Array.from(particle.drawingBoundary.images.sourceIndices);
+    expect(Array.from(bonds.ghostSourceIndices!)).toEqual([...boundarySources, 1]);
+    expect(bonds.nAtoms - bonds.ghostSourceIndices!.length).toBe(7);
+    // So a particle filter that keeps every atom keeps every coordination bond.
+    const kept = executeViewport(
+      { type: "viewport", perspective: false, cellAxesVisible: true },
+      new Map<string, PipelineData[]>([
+        ["particle", [{ ...particle, indices: new Uint32Array([0, 1, 2, 3, 4, 5, 6]) }]],
+        ["bond", [bonds]],
+      ]),
+    );
+    expect(kept.bonds[0].nBonds).toBe(6);
     // This assertion intentionally does not execute Polyhedra: completing
     // outside-boundary neighbors is an independently renderable result.
   });

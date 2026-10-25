@@ -53,4 +53,8 @@ COPY tests/fixtures/caffeine_water_vibration.xtc /data/caffeine_water_vibration.
 
 EXPOSE 8080
 
+# megane serve listens on 127.0.0.1 unless told otherwise; inside the container
+# it must listen on every interface for the published port to reach it.
+ENV MEGANE_HOST=0.0.0.0
+
 CMD ["megane", "serve", "/data/caffeine_water.pdb", "--xtc", "/data/caffeine_water_vibration.xtc", "--port", "8080", "--no-browser", "--no-files"]
