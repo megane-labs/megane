@@ -75,7 +75,7 @@ LoadStructure ──particle──→ AddBond ──bond──→ Viewport
       └──────────particle, cell─────────────→ Viewport
 ```
 
-Use the **Templates** menu on the rail to replace the pipeline with a pre-built one:
+Use the **Templates** menu on the rail to replace the pipeline with a pre-built one. A template brings its own demo files and loads them in place of whatever is open — in the standalone viewer, the JupyterLab viewer and the VS Code viewer alike:
 
 - **Molecule** — Caffeine (`caffeine_water.pdb`) with structure-based bonds and a vibration trajectory (`caffeine_water_vibration.xtc`). Nodes: `LoadStructure → Symmetry → Wrap → AddBond → Viewport`, with `LoadTrajectory` feeding its frames through the same `Symmetry → Wrap` into the Viewport.
 - **Molecular Crystal** — Glycine (`glycine_csd.cif`) with atoms normalized into the home cell and finite molecules completed across its faces. Nodes: `LoadStructure → Symmetry → Wrap`, followed by parallel `AddBond` and `DrawingBoundary` branches that join at `BoundaryCompletion → Viewport`.

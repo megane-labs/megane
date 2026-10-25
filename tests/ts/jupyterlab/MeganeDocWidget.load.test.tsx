@@ -12,6 +12,8 @@ const local = { loadFile, loadXtc };
 
 vi.mock("@megane/components/MeganeViewer", () => ({ MeganeViewer: vi.fn(() => null) }));
 vi.mock("@megane/hooks/useMeganeLocal", () => ({ useMeganeLocal: () => local }));
+const { useTemplateData } = vi.hoisted(() => ({ useTemplateData: vi.fn() }));
+vi.mock("@megane/hooks/useTemplateData", () => ({ useTemplateData }));
 vi.mock("@megane/pipeline/store", () => ({
   usePipelineStore: { getState: vi.fn(() => ({ reset: vi.fn() })), setState: vi.fn() },
 }));
@@ -87,6 +89,12 @@ describe("MeganeDocWidget standalone load path", () => {
     expect(root.getAttribute("data-state")).toBe("error");
     expect(root.textContent).toContain("density.cube is a volumetric grid");
     expect(loadFile).not.toHaveBeenCalled();
+  });
+
+  it("loads applied templates through the same local loader the file opened with", async () => {
+    mount("data/1crn.pdb");
+    await settledState();
+    expect(useTemplateData).toHaveBeenCalledWith(local);
   });
 
   it("loads a trajectory-only file through loadXtc", async () => {

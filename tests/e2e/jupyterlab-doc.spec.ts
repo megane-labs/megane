@@ -8,15 +8,16 @@
  * test will catch a regression where the host context is misreported.
  */
 
-import { existsSync, mkdirSync, copyFileSync, readFileSync } from "fs";
+import { existsSync, mkdirSync, copyFileSync, readFileSync, writeFileSync } from "fs";
 import { join } from "path";
 import { fileURLToPath } from "url";
-import { test, expect } from "playwright/test";
+import { test, expect, type Page } from "playwright/test";
 import {
   assertDomContract,
   defaultViewerContract,
   expectFullPageMatch,
   expectViewerRegionMatch,
+  getReadyState,
 } from "./lib/setup";
 import {
   startJupyterLab,
@@ -54,6 +55,19 @@ const FORMATS: DocFormatFixture[] = [
   { id: "traj-water", file: "water.traj", expectTrajectory: true },
 ];
 
+/** A `.megane.json` that opens 1crn.pdb, for the Pipeline Viewer. */
+const CRN_PIPELINE = "crn.megane.json";
+const CRN_PIPELINE_JSON = {
+  version: 3,
+  nodes: [
+    { id: "load-1", type: "load_structure", fileName: "1crn.pdb", position: { x: 0, y: 0 } },
+    { id: "viewport-1", type: "viewport", position: { x: 400, y: 0 } },
+  ],
+  edges: [
+    { source: "load-1", sourceHandle: "particle", target: "viewport-1", targetHandle: "particle" },
+  ],
+};
+
 let lab: JupyterLabHandle | null = null;
 
 test.describe.configure({ timeout: 180_000 });
@@ -66,6 +80,7 @@ test.beforeAll(async () => {
   for (const f of FORMATS) {
     copyFileSync(join(REPO, "tests", "fixtures", f.file), join(NOTEBOOK_DIR, f.file));
   }
+  writeFileSync(join(NOTEBOOK_DIR, CRN_PIPELINE), JSON.stringify(CRN_PIPELINE_JSON, null, 2));
   lab = await startJupyterLab({
     port: PORT,
     token: TOKEN,
@@ -113,6 +128,57 @@ for (const f of FORMATS) {
     ).toHaveText(f.file);
   });
 }
+
+/** Open the Templates menu and apply the template with this id. */
+async function applyTemplate(page: Page, templateId: string): Promise<void> {
+  await page.locator('[data-testid="pipeline-editor-tab-editor"]').click();
+  await page.locator('[data-testid="pipeline-editor-templates"]').click();
+  await page.locator(`[data-testid="pipeline-template-${templateId}"]`).click();
+}
+
+/**
+ * A template swaps the graph *and* loads its own demo files, as in the webapp.
+ * The DocWidget used to do only the first half: the graph named the
+ * template's fixture while the file the user had opened stayed on screen.
+ * Solid then Molecule: a plain structure, then one with a trajectory (the
+ * XTC is a binary asset the labextension bundle has to emit and fetch).
+ */
+test("applying a template replaces the opened file with the template's scene", async ({ page }) => {
+  await openLabFile(page, { port: PORT, token: TOKEN, file: "1crn.pdb" });
+  await assertDomContract(page, [
+    ...defaultViewerContract({ expectedAtoms: 327, context: "jupyterlab-doc" }),
+  ]);
+  const atomCount = async () => (await getReadyState(page)).atomCount;
+  const loaderFileName = page.locator('[data-testid="load-structure-filename"]').first();
+  const viewer = page.locator('[data-testid="megane-viewer"]');
+
+  await applyTemplate(page, "solid");
+  await expect.poll(atomCount, { timeout: 30_000 }).toBe(135);
+  await expect(loaderFileName).toHaveText("perovskite_srtio3_3x3x3.xyz");
+
+  await applyTemplate(page, "molecule");
+  await expect.poll(atomCount, { timeout: 30_000 }).toBe(3024);
+  await expect(loaderFileName).toHaveText("caffeine_water.pdb");
+  await expect
+    .poll(async () => Number(await viewer.getAttribute("data-total-frames")), { timeout: 30_000 })
+    .toBeGreaterThan(1);
+});
+
+/** The `.megane.json` Pipeline Viewer mounts the same template loading. */
+test("applying a template in the Pipeline Viewer loads the template's scene", async ({ page }) => {
+  await openLabFile(page, { port: PORT, token: TOKEN, file: CRN_PIPELINE });
+  await expect
+    .poll(async () => (await getReadyState(page)).atomCount, { timeout: 30_000 })
+    .toBe(327);
+
+  await applyTemplate(page, "solid");
+  await expect
+    .poll(async () => (await getReadyState(page)).atomCount, { timeout: 30_000 })
+    .toBe(135);
+  await expect(page.locator('[data-testid="load-structure-filename"]').first()).toHaveText(
+    "perovskite_srtio3_3x3x3.xyz",
+  );
+});
 
 /**
  * The structure viewer opens its file with a content-less document model
