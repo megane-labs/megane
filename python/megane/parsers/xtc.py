@@ -5,15 +5,17 @@ from __future__ import annotations
 import logging
 
 from megane import megane_parser
-from megane.parsers.common import InMemoryTrajectory, trajectory_from_traj_result
+from megane.parsers.common import FileTrajectory, open_file_trajectory
 
 logger = logging.getLogger(__name__)
 
 
-def load_trajectory(pdb_path: str, xtc_path: str) -> InMemoryTrajectory:
+def load_trajectory(pdb_path: str, xtc_path: str, n_atoms: int | None = None) -> FileTrajectory:
     """Load a trajectory from a topology file + XTC coordinates.
 
-    Uses the Rust XTC parser (megane-core) instead of MDAnalysis.
+    Uses the Rust XTC reader (megane-core) instead of MDAnalysis. The frames
+    stay in the file: opening it reads only the frame headers, and each frame
+    is decoded when it is asked for.
 
     Args:
         pdb_path: Path to the topology, used for atom count validation. Any
@@ -21,28 +23,25 @@ def load_trajectory(pdb_path: str, xtc_path: str) -> InMemoryTrajectory:
             CIF, ...); an extension-less path is read as PDB. The name is
             kept for backward compatibility.
         xtc_path: Path to XTC file (trajectory).
+        n_atoms: The topology's atom count when the caller has already parsed
+            it; the topology is then not read again.
 
     Returns:
-        InMemoryTrajectory with frame-by-frame access.
+        A trajectory read from the file one frame at a time.
     """
     logger.debug("Loading XTC trajectory: %s (topology: %s)", xtc_path, pdb_path)
 
-    topology_atoms = _topology_n_atoms(pdb_path)
+    topology_atoms = n_atoms if n_atoms is not None else _topology_n_atoms(pdb_path)
+    trajectory = open_file_trajectory(xtc_path, "xtc")
+    if trajectory.n_atoms != topology_atoms:
+        raise ValueError(
+            f"Atom count mismatch: topology has {topology_atoms} atoms, XTC has {trajectory.n_atoms} atoms."
+        )
 
-    # Parse XTC binary
-    with open(xtc_path, "rb") as f:
-        xtc_bytes = f.read()
-    result = megane_parser.parse_xtc(xtc_bytes)
-
-    n_atoms = result.n_atoms
-    if n_atoms != topology_atoms:
-        raise ValueError(f"Atom count mismatch: topology has {topology_atoms} atoms, XTC has {n_atoms} atoms.")
-
-    trajectory = trajectory_from_traj_result(result)
     logger.info(
         "Loaded XTC trajectory: %d frames, %d atoms%s",
         trajectory.n_frames,
-        n_atoms,
+        trajectory.n_atoms,
         " (variable cell)" if trajectory.heterogeneous else "",
     )
     return trajectory

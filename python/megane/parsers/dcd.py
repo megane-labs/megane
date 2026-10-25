@@ -4,15 +4,14 @@ from __future__ import annotations
 
 import logging
 
-from megane import megane_parser
-from megane.parsers.common import InMemoryTrajectory, trajectory_from_traj_result
+from megane.parsers.common import FileTrajectory, open_file_trajectory
 
 __all__ = ["load_dcd"]
 
 logger = logging.getLogger(__name__)
 
 
-def load_dcd(path: str) -> InMemoryTrajectory:
+def load_dcd(path: str) -> FileTrajectory:
     """Load a DCD trajectory file (CHARMM/NAMD/X-PLOR format).
 
     DCD files contain only coordinate frames — topology (elements, bonds)
@@ -23,15 +22,11 @@ def load_dcd(path: str) -> InMemoryTrajectory:
         path: Path to .dcd file.
 
     Returns:
-        InMemoryTrajectory with frame-by-frame access.
+        A trajectory read from the file one frame at a time.
     """
     logger.debug("Loading DCD trajectory: %s", path)
 
-    with open(path, "rb") as f:
-        data = f.read()
-
-    result = megane_parser.parse_dcd(data)
-    trajectory = trajectory_from_traj_result(result)
+    trajectory = open_file_trajectory(path, "dcd")
 
     logger.info(
         "Loaded DCD trajectory: %d frames, %d atoms%s",
