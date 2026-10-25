@@ -475,7 +475,6 @@ impl TrajectoryFile {
                 box_matrix: None,
                 offsets: Vec::new(),
                 times: Vec::new(),
-                first_box: None,
                 frame_cells: None,
             }),
             n_atoms: 0,
@@ -503,7 +502,7 @@ impl TrajectoryFile {
                 this.n_atoms = index.n_atoms;
                 this.n_frames = index.n_frames;
                 this.timestep_ps = index.timestep_ps;
-                this.first_box = index.first_box;
+                this.first_box = index.box_matrix;
                 this.frame_cells = index.frame_cells.clone();
                 this.layout = FrameLayout::Xtc(index);
             }

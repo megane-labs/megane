@@ -132,8 +132,19 @@ export interface WasmTrajectoryDecoder extends WasmFrameDecoder {
   readonly n_frames: number;
   readonly timestep_ps: number;
   readonly has_box: boolean;
+  /** Frame 0's box. */
   box_matrix(): Float32Array;
   box_origin(): Float32Array;
+  /** True when the box changes between frames (an NPT run). */
+  readonly varying_cells: boolean;
+  /** Frame `frame`'s box; empty unless the box changes between frames. */
+  frame_cell(frame: number): Float32Array;
+}
+
+/** The per-frame cell surface shared by the WASM trajectory decoders and indexers. */
+interface WasmFrameCells {
+  readonly varying_cells: boolean;
+  frame_cell(frame: number): Float32Array;
 }
 
 /** Windowed XTC frame indexer (see `XtcIndexer` in megane-wasm). */
@@ -146,7 +157,12 @@ interface WasmXtcIndexer {
   readonly n_frames: number;
   readonly timestep_ps: number;
   readonly has_box: boolean;
+  /** Frame 0's box. */
   box_matrix(): Float32Array;
+  /** True when the box changes between frames (an NPT run). */
+  readonly varying_cells: boolean;
+  /** Frame `frame`'s box; empty unless the box changes between frames. */
+  frame_cell(frame: number): Float32Array;
   offsets(): Float64Array;
   times(): Float32Array;
   free(): void;
@@ -169,6 +185,10 @@ interface WasmTextFrameIndexer {
   readonly has_box: boolean;
   box_matrix(): Float32Array;
   box_origin(): Float32Array;
+  /** Dump only: true when the box changes between frames (an NPT run). */
+  readonly varying_cells: boolean;
+  /** Dump only: frame `frame`'s box; empty unless the box changes between frames. */
+  frame_cell(frame: number): Float32Array;
   readonly vector_channel_names: string;
   free(): void;
 }
@@ -349,9 +369,16 @@ export interface TrajectoryIndexResult {
   nFrames: number;
   timestepPs: number;
   hasBox: boolean;
+  /** Frame 0's box. */
   box: Float32Array | null;
   /** Box origin (length 3); null ⇒ (0,0,0). Set only for LAMMPS dumps. */
   boxOrigin: Float32Array | null;
+  /**
+   * True when every decoded frame carries its own cell (`box`): an XTC / dump
+   * whose box changes between frames (as the eager parse's frames carry one
+   * then), or a DCD / NetCDF that stores a cell per frame.
+   */
+  frameCells: boolean;
   times: Float32Array;
   /** Embedded per-atom vector channel names (LAMMPS velocity/force); empty otherwise. */
   vectorChannelNames: string[];
@@ -935,6 +962,17 @@ export function parseTrajectoryCore(input: TrajectoryParseInput): XTCParseResult
 }
 
 /**
+ * Frame `frame`'s own cell from a WASM decoder / indexer whose box changes
+ * between frames, else `undefined` (the frame keeps the base cell) — the
+ * per-frame `box` the eager parse attaches to the same frame.
+ */
+function frameCellOf(cells: WasmFrameCells, frame: number): Float32Array | undefined {
+  if (!cells.varying_cells) return undefined;
+  const cell = cells.frame_cell(frame);
+  return cell.length === 9 ? cell : undefined;
+}
+
+/**
  * Build a lazy trajectory decoder + its frame index without decoding any
  * coordinates. The returned `decoder` OWNS the file bytes in WASM memory and
  * must be kept alive (and eventually `free()`d) by the caller — unlike the eager
@@ -971,6 +1009,7 @@ export function indexTrajectoryCore(
     times: kind === "xtc" ? (decoder as WasmXtcDecoder).times() : new Float32Array(0),
     vectorChannelNames,
     heterogeneous: kind === "lammpstrj" && (decoder as WasmLammpstrjDecoder).heterogeneous === true,
+    frameCells: decoder.varying_cells,
   };
   return { decoder, index };
 }
@@ -1018,17 +1057,25 @@ export async function indexXtcFileCore(
       times: indexer.times(),
       vectorChannelNames: [],
       heterogeneous: false,
+      frameCells: indexer.varying_cells,
     };
+    // Each frame's own box when the box changes (read before the indexer is freed).
+    const cells = index.frameCells
+      ? Array.from({ length: nFrames }, (_, f) => frameCellOf(indexer, f))
+      : [];
     const decoder: FileFrameDecoder = {
       n_atoms: nAtoms,
       async decodeFrame(frame) {
         if (!(frame >= 0 && frame < nFrames)) throw new Error("frame index out of range");
         const end = frame + 1 < nFrames ? offsets[frame + 1] : file.size;
         const bytes = new Uint8Array(await read(file, offsets[frame], end));
-        return {
+        const out: DecodedFileFrame = {
           positions: wasm.decode_trajectory_frame0(bytes, "xtc", nAtoms),
           vectors: new Float32Array(0),
         };
+        const box = cells[frame];
+        if (box) out.box = box.slice();
+        return out;
       },
       free() {
         /* nothing held outside the file itself */
@@ -1046,10 +1093,16 @@ export async function decodeLazyFrameCore(
   frame: number,
 ): Promise<DecodedFileFrame> {
   if ("decodeFrame" in decoder) return decoder.decodeFrame(frame);
-  return {
+  const out: DecodedFileFrame = {
     positions: decodeFrameCore(decoder, frame),
     vectors: decodeFrameVectorsCore(decoder, frame),
   };
+  // An XTC / dump decoder whose box changes between frames gives each its own.
+  if ("varying_cells" in decoder) {
+    const box = frameCellOf(decoder as WasmTrajectoryDecoder, frame);
+    if (box) out.box = box;
+  }
+  return out;
 }
 
 /**
@@ -1143,6 +1196,10 @@ function textFileDecoder(
   const nFrames = offsets.length;
   const nAtoms = indexer.n_atoms;
   const framesEnd = indexer.frames_end(file.size);
+  // A dump whose box changes gives each frame its own (read before the indexer is freed).
+  const cells = indexer.varying_cells
+    ? Array.from({ length: nFrames }, (_, f) => frameCellOf(indexer, f))
+    : [];
   const readFrame = readAheadReader(file, read);
   return {
     n_atoms: nAtoms,
@@ -1151,7 +1208,13 @@ function textFileDecoder(
       const end = frame + 1 < nFrames ? offsets[frame + 1] : framesEnd;
       const decoded = wasm.decode_text_frame(kind, await readFrame(offsets[frame], end), nAtoms);
       try {
-        return { positions: decoded.positions(), vectors: decoded.vectors() };
+        const out: DecodedFileFrame = {
+          positions: decoded.positions(),
+          vectors: decoded.vectors(),
+        };
+        const box = cells[frame];
+        if (box) out.box = box.slice();
+        return out;
       } finally {
         decoded.free();
       }
@@ -1302,6 +1365,7 @@ export async function indexDumpFileCore(
       times: new Float32Array(0),
       vectorChannelNames: indexer.vector_channel_names.split("\n").filter((n) => n.length > 0),
       heterogeneous: indexer.heterogeneous,
+      frameCells: indexer.varying_cells,
     };
     return { decoder: textFileDecoder(file, "lammpstrj", indexer, read), index };
   } finally {
@@ -1377,6 +1441,7 @@ export async function indexBinaryTrajectoryFileCore(
       times: new Float32Array(0),
       vectorChannelNames: [],
       heterogeneous: false,
+      frameCells: hasBox,
     };
     const decoder: FileFrameDecoder = {
       n_atoms: nAtoms,
