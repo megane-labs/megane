@@ -729,6 +729,7 @@ pub fn parse_xtc(data: &[u8]) -> Result<XtcData, String> {
         frame_positions_flat,
         vector_channels: vec![],
         hetero,
+        warnings: Vec::new(),
     })
 }
 

@@ -318,6 +318,23 @@ describe("extractFrames", () => {
     expect(free).toHaveBeenCalledOnce();
   });
 
+  it("returns and logs the parser's warnings, like a structure parse", () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      const { result } = makeXtcResult(2, 1);
+      expect(extractFrames(result as never, 2, "DCD").warnings).toEqual([]);
+      expect(warn).not.toHaveBeenCalled();
+      const dropped = makeXtcResult(2, 1).result as Record<string, unknown>;
+      dropped.warnings = "DCD: frame 2 is incomplete\nsecond";
+      const out = extractFrames(dropped as never, 2, "DCD");
+      expect(out.warnings).toEqual(["DCD: frame 2 is incomplete", "second"]);
+      expect(warn).toHaveBeenCalledWith("[megane parser] DCD: frame 2 is incomplete");
+      expect(warn).toHaveBeenCalledWith("[megane parser] second");
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
   it("throws and frees on atom-count mismatch", () => {
     const { result, free } = makeXtcResult(2, 1);
     expect(() => extractFrames(result as never, 5, "XTC")).toThrow(/atom count/);

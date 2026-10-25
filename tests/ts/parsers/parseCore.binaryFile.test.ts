@@ -73,6 +73,21 @@ beforeAll(async () => {
   );
 });
 
+describe("parseTrajectoryCore warnings", () => {
+  it("reports a DCD's dropped incomplete last frame, and nothing for a whole file", () => {
+    const whole = fixture("water.dcd");
+    expect(parseTrajectoryCore({ kind: "dcd", bytes: whole, expectedNAtoms: 3 }).warnings).toEqual(
+      [],
+    );
+    // 60 bytes short: the last frame keeps its cell record but loses X, Y, Z.
+    const cut = whole.slice(0, whole.length - 60);
+    const out = parseTrajectoryCore({ kind: "dcd", bytes: cut, expectedNAtoms: 3 });
+    expect(out.frames).toHaveLength(4);
+    expect(out.warnings).toHaveLength(1);
+    expect(out.warnings[0]).toMatch(/^DCD: frame 5 is incomplete .*the last 56 bytes/);
+  });
+});
+
 describe("indexBinaryTrajectoryFileCore", () => {
   it.each([
     ["dcd", "water.dcd"],

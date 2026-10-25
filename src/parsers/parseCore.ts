@@ -38,6 +38,8 @@ export interface XTCParseResult {
   meta: TrajectoryMeta;
   /** Per-atom vector channels embedded in the file (e.g. LAMMPS dump vx/vy/vz). */
   vectorChannels: VectorChannel[];
+  /** Non-fatal parse warnings, e.g. a dropped incomplete last frame (empty when clean). */
+  warnings: string[];
 }
 
 /** Trajectory formats handled by the binary/text trajectory parsers. */
@@ -113,6 +115,8 @@ interface WasmXtcResult {
   frame_atom_offsets(): Uint32Array;
   frame_elements(): Uint8Array;
   frame_cells(): Float32Array;
+  /** Non-fatal parse warnings, newline-delimited (empty for a clean parse). */
+  warnings: string;
   free(): void;
 }
 
@@ -605,6 +609,18 @@ function getParserForExtension(ext: string): ParseFn {
 }
 
 /**
+ * Split a WASM result's newline-delimited warnings and log each one to the
+ * console, which is how parse warnings reach the user.
+ */
+function splitWarnings(text: string | undefined): string[] {
+  const warnings = text ? text.split("\n") : [];
+  for (const w of warnings) {
+    console.warn(`[megane parser] ${w}`);
+  }
+  return warnings;
+}
+
+/**
  * Convert a WASM structure parse result into `Snapshot` + `Frame[]`.
  * Exported for unit testing with a hand-built mock result (no WASM required).
  */
@@ -653,10 +669,7 @@ export function parseWithFn(parseFn: ParseFn, text: string): StructureParseResul
 
   // Surface non-fatal parser warnings (e.g. atoms the file declares that the
   // parser could not represent) instead of letting them vanish silently.
-  const warnings = result.warnings ? result.warnings.split("\n") : [];
-  for (const w of warnings) {
-    console.warn(`[megane parser] ${w}`);
-  }
+  const warnings = splitWarnings(result.warnings);
 
   const heteroMeta = heterogeneous
     ? {
@@ -833,8 +846,12 @@ export function extractFrames(
     result.vector_channel_data(),
   );
 
+  // Surface non-fatal parser warnings (e.g. a dropped incomplete last frame)
+  // the same way structure parses do, instead of letting them vanish.
+  const warnings = splitWarnings(result.warnings);
+
   result.free();
-  return { frames, meta, vectorChannels };
+  return { frames, meta, vectorChannels, warnings };
 }
 
 /**

@@ -1180,6 +1180,7 @@ pub fn parse_lammpstrj(text: &str) -> Result<LammpstrjData, String> {
         frame_positions_flat,
         vector_channels,
         hetero,
+        warnings: Vec::new(),
     })
 }
 
