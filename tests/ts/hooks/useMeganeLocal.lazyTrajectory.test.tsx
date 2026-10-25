@@ -40,6 +40,8 @@ vi.mock("@/parsers/xtc", () => ({
 
 import { useMeganeLocal } from "@/hooks/useMeganeLocal";
 import { usePipelineStore } from "@/pipeline/store";
+import { decodeTrajectoryFrame } from "@/parsers/xtc";
+import { VECTOR_OFFER_DELAY_MS } from "@/stream/vectorChannelStream";
 
 function makeStructure(nAtoms = 3): StructureParseResult {
   return {
@@ -148,6 +150,32 @@ describe("useMeganeLocal — two-phase lazy trajectory", () => {
       expect(store.fileProvider!.meta.nFrames).toBe(12);
     },
   );
+
+  it("offers every vector channel the streamed frames carry, as the eager parse does", async () => {
+    const { result } = await withStructure();
+    const handle = trajHandle(5, 2);
+    handle.index.vectorChannelNames = ["velocity", "force"];
+    indexTrajMock.mockResolvedValue(handle);
+    vi.mocked(decodeTrajectoryFrame).mockImplementation(async (_id, frame) => ({
+      frame,
+      positions: new Float32Array(9),
+      vectors: Float32Array.from({ length: 18 }, (_, i) => (i < 9 ? frame : -frame)),
+      vectorChannelCount: 2,
+    }));
+
+    await act(async () => {
+      await result.current.loadXtc(new File(["dummy"], "run.nc"));
+    });
+    await act(async () => {
+      await new Promise((done) => setTimeout(done, VECTOR_OFFER_DELAY_MS + 50));
+    });
+
+    const channels = usePipelineStore.getState().embeddedVectorChannels;
+    expect(channels?.map((c) => c.name)).toEqual(["velocity", "force"]);
+    expect(channels![0].frames.map((f) => f.frame)).toEqual([0, 1]);
+    expect(Array.from(channels![1].frames[1].vectors)).toEqual(new Array(9).fill(-1));
+    vi.mocked(decodeTrajectoryFrame).mockImplementation(() => new Promise<never>(() => {}));
+  });
 
   it("seeds the provider's frame 0 so it serves synchronously after the swap", async () => {
     const { result } = await withStructure();

@@ -255,6 +255,10 @@ interface WasmTrajFileIndexer {
   frame_start(frame: number): number;
   frame_end(frame: number): number;
   decode(frame: number, bytes: Uint8Array): Float32Array;
+  /** Newline-joined vector channels every frame stores (momenta, force). */
+  readonly vector_channel_names: string;
+  /** A frame's vector channels, concatenated in `vector_channel_names` order. */
+  decode_vectors(frame: number, bytes: Uint8Array): Float32Array;
   free(): void;
 }
 
@@ -365,6 +369,12 @@ export interface StructureIndexResult {
    * discards the decoder and reparses the whole file eagerly.
    */
   heterogeneous: boolean;
+  /**
+   * Per-atom vector channels each decoded frame carries (a `.traj`'s momenta
+   * and forces), in the order its `vectors` concatenate them; frame 0's come
+   * with the frame-0 snapshot. Absent or empty without any.
+   */
+  vectorChannelNames?: string[];
 }
 
 /** Lightweight trajectory index (from `indexTrajectoryCore`) — no bulk coordinates. */
@@ -1313,10 +1323,14 @@ export async function indexTrajFileCore(
     }
     const frame0 = parseWithFn(() => indexer.frame0(), "");
     const nFrames = indexer.n_frames;
+    // Momenta / forces every frame stores stream with each frame, as the
+    // eager parse makes them frame-synced channels.
+    const vectorChannelNames = indexer.vector_channel_names.split("\n").filter((n) => n.length > 0);
     const index: StructureIndexResult = {
       nAtoms: indexer.n_atoms,
       nFrames,
       heterogeneous: indexer.heterogeneous,
+      vectorChannelNames,
     };
     const varyingCells = indexer.varying_cells;
     const readFrame = readAheadReader(file, read);
@@ -1327,7 +1341,10 @@ export async function indexTrajFileCore(
         const bytes = await readFrame(indexer.frame_start(frame), indexer.frame_end(frame));
         const out: DecodedFileFrame = {
           positions: indexer.decode(frame, bytes),
-          vectors: new Float32Array(0),
+          vectors:
+            vectorChannelNames.length > 0
+              ? indexer.decode_vectors(frame, bytes)
+              : new Float32Array(0),
         };
         if (varyingCells) out.box = indexer.frame_cell(frame);
         return out;

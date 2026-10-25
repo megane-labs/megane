@@ -309,8 +309,15 @@ attribute, which AMBER sets to 20.455 so the values come out in Å/ps) and
 when a large file streams lazily. ASE `.traj` `momenta` and the calculator's
 `forces` become `momenta` and `force` channels. Momenta are kept as momenta,
 because converting them to velocities needs masses that most files leave to
-ASE's element table. A large (≥ 8 MB) `.traj` that streams lazily does not offer
-them yet.
+ASE's element table. A large (≥ 8 MB) `.traj` that streams lazily offers the
+same channels: frame 0's come with the first paint and each later frame's as
+the frame is read. A `.traj` that stores one of these arrays in only some frames
+is parsed whole instead, since the eager parse keeps only frame 0's values of
+it, with a warning. A streamed file offers every vector channel it carries, as
+the eager parse does, whether it is a structure (`.traj`) or a trajectory
+(LAMMPS dump, NetCDF). A multi-frame extXYZ whose later frames declare per-atom
+`Properties=` columns is parsed whole rather than streamed, so it has the eager
+parse's channels.
 
 ### Topology formats
 
