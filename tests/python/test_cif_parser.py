@@ -82,3 +82,17 @@ def test_delta_glycine_issue_460():
     normalized = {op.replace(" ", "") for op in s.symmetry_ops}
     assert "x,y,z" in normalized
     assert "-x+1/2,y+1/2,-z" in normalized
+
+
+def test_mmcif_without_type_symbol_uses_the_atom_name():
+    """An mmCIF without ``type_symbol`` reads elements from the atom names."""
+    from megane import megane_parser
+
+    text = (
+        "data_x\nloop_\n_atom_site.group_PDB\n_atom_site.id\n"
+        "_atom_site.label_atom_id\n_atom_site.label_comp_id\n"
+        "_atom_site.Cartn_x\n_atom_site.Cartn_y\n_atom_site.Cartn_z\n"
+        "ATOM 1 N ALA 0 0 0\nATOM 2 CA ALA 1.4 0 0\n"
+    )
+    s = megane_parser.parse_mmcif(text)
+    assert s.elements.tolist() == [7, 6]

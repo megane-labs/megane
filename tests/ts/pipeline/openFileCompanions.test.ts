@@ -26,6 +26,7 @@ import { parseSpectrum } from "@/parsers/spectrum";
 import { parseVolumetric } from "@/pipeline/executors/parseVolumetric";
 import { loadVectorFileData } from "@/logic/vectorSourceLogic";
 import { usePipelineStore } from "@/pipeline/store";
+import { applyStructureToPipeline } from "@/pipeline/openFile";
 import type { Snapshot } from "@/types";
 
 const mockParseStructureFile = vi.mocked(parseStructureFile);
@@ -309,5 +310,37 @@ describe("openFile(.megane.json) — companion matching", () => {
     );
     expect(mockParseVolumetric).not.toHaveBeenCalled();
     expect(mockParseSpectrum).not.toHaveBeenCalled();
+  });
+});
+
+describe("openFile(.megane.json) — a structure named by its path, with edits", () => {
+  // What Python's `LoadStructure("data/water.pdb", edits=[...])` writes: the
+  // node names the file by its path, and the hosts attach it by basename.
+  const edits = [{ op: "delete_atoms", atoms: [0] }];
+  const editedNode = { ...structureNode, fileName: "data/water.pdb", edits };
+  const edges = [structureEdges[1]];
+
+  it("keeps the edit history when the companion is attached (JupyterLab, webapp drop)", async () => {
+    mockParseStructureFile.mockResolvedValueOnce(structureResult());
+    await usePipelineStore.getState().openFile(pipelineFile([editedNode, viewportNode], edges), {
+      companions: [new File(["pdb"], "water.pdb")],
+    });
+
+    expect(params("load-1")).toMatchObject({ fileName: "water.pdb", edits });
+    expect(usePipelineStore.getState().nodeSnapshots["load-1"]?.snapshot.nAtoms).toBe(3);
+    // The edit is applied: one of the three atoms is deleted.
+    expect(usePipelineStore.getState().viewportState.particles[0]?.source.nAtoms).toBe(2);
+  });
+
+  it("keeps it when the host re-applies the structure by basename (VS Code)", async () => {
+    mockParseStructureFile.mockResolvedValueOnce(structureResult());
+    await usePipelineStore.getState().openFile(pipelineFile([editedNode, viewportNode], edges), {
+      companions: [new File(["pdb"], "water.pdb")],
+    });
+    // The VS Code webview then feeds the same companion through
+    // useMeganeLocal.loadFile, which lands in applyStructureToPipeline.
+    applyStructureToPipeline(usePipelineStore, "load-1", structureResult(), "water.pdb");
+
+    expect(params("load-1")).toMatchObject({ fileName: "water.pdb", edits });
   });
 });

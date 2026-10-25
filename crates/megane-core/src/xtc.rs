@@ -326,6 +326,17 @@ fn decompress_coords(xdr: &mut XdrReader, natoms: usize) -> Result<Vec<f32>, Str
     let nbytes = xdr.read_u32()? as usize;
     let bitstream_data = xdr.read_opaque(nbytes)?;
 
+    // `natoms` comes from the frame header, so check it against the bitstream
+    // before sizing buffers from it. Every atom costs at least two bits: an
+    // absolute coordinate (one bit or more) plus its run flag, or a delta of
+    // `smallidx` (>= FIRSTIDX) bits inside a run. The slack covers one run
+    // decoded with an out-of-range `smallidx` before the decoder rejects it.
+    if natoms > nbytes.saturating_mul(4).saturating_add(16) {
+        return Err(format!(
+            "XTC frame claims {natoms} atoms but its {nbytes}-byte bitstream cannot hold them"
+        ));
+    }
+
     let mut bits = BitReader::new(bitstream_data);
 
     // Decompress.
@@ -516,15 +527,13 @@ pub struct XtcIndex {
     pub n_atoms: usize,
     pub n_frames: usize,
     pub timestep_ps: f32,
-    /// Box of the last frame (parity with `parse_xtc`'s single-box output).
+    /// Frame 0's box: the representative cell `parse_xtc` reports.
     pub box_matrix: Option<[f32; 9]>,
     /// Byte offset of each frame's magic header (64-bit: a file indexed in
     /// windows by `XtcIndexBuilder` may be larger than wasm32's address space).
     pub offsets: Vec<u64>,
     /// Per-frame time (ps).
     pub times: Vec<f32>,
-    /// Frame 0's box (the representative cell `parse_xtc` reports).
-    pub first_box: Option<[f32; 9]>,
     /// Every frame's box, when it is not the same in all of them (an NPT run);
     /// `None` for a constant cell, as `parse_xtc` builds no side table then.
     pub frame_cells: Option<Vec<[f32; 9]>>,
@@ -539,7 +548,6 @@ pub struct XtcIndex {
 #[derive(Default)]
 pub struct XtcIndexBuilder {
     n_atoms: usize,
-    last_box: Option<[f32; 9]>,
     first_box: Option<[f32; 9]>,
     /// Recorded from the first frame whose box differs from frame 0's.
     cells: Vec<[f32; 9]>,
@@ -591,7 +599,6 @@ impl XtcIndexBuilder {
             let len = coord_block_len(&mut xdr, self.n_atoms)?.saturating_add(FRAME_HEADER_BYTES);
             self.offsets.push(self.next + pos as u64);
             self.times.push(header.time);
-            self.last_box = Some(header.box_matrix);
             // The per-frame cell table `parse_xtc` builds, the same way.
             let first = *self.first_box.get_or_insert(header.box_matrix);
             if !self.varies_cell && first != header.box_matrix {
@@ -627,10 +634,9 @@ impl XtcIndexBuilder {
             n_atoms: self.n_atoms,
             n_frames,
             timestep_ps,
-            box_matrix: self.last_box,
+            box_matrix: self.first_box,
             offsets: self.offsets,
             times: self.times,
-            first_box: self.first_box,
             frame_cells: self.varies_cell.then_some(self.cells),
         })
     }
@@ -924,15 +930,19 @@ mod tests {
             data[at..at + 4].copy_from_slice(&edge.to_be_bytes());
         }
         let idx = build_index(&data).expect("build index");
-        let first = idx.first_box.expect("frame 0 box");
-        // Boxes are read in nm and kept in Å.
-        assert_eq!(first[0], 30.0);
+        // Frame 0's box is the representative cell, as `parse_xtc` reports it
+        // (boxes are read in nm and kept in Å).
+        let eager = parse_xtc(&data).expect("parse");
+        assert_eq!(idx.box_matrix.expect("frame 0 box")[0], 30.0);
+        assert_eq!(idx.box_matrix, eager.box_matrix);
         let cells = idx.frame_cells.expect("per-frame cells");
         assert_eq!(
             cells.iter().map(|c| c[0]).collect::<Vec<_>>(),
             [30.0, 40.0, 50.0]
         );
-        assert_eq!(idx.box_matrix.expect("last box")[0], 50.0);
+        for (f, cell) in cells.iter().enumerate() {
+            assert_eq!(Some(&cell[..]), eager.frame_cell(f));
+        }
         // A box that stays put records no per-frame table.
         assert!(build_index(&tiny_xtc(2, 3)).unwrap().frame_cells.is_none());
     }
@@ -985,6 +995,40 @@ mod tests {
         .expect("read XTC");
         // An offset that is not a frame boundary must error (bad magic), not panic.
         assert!(decode_frame_at(&data, 3, 327).is_err());
+    }
+
+    /// A compressed frame header claiming 2^30 atoms over an empty bitstream
+    /// is rejected before any buffer is sized from that count (a 92-byte
+    /// file used to reserve ~25 GB and abort the process).
+    #[test]
+    fn an_atom_count_the_bitstream_cannot_hold_is_an_error() {
+        let frame = |natoms: i32, nbytes: u32| {
+            let mut d = Vec::new();
+            d.extend_from_slice(&XTC_MAGIC.to_be_bytes());
+            d.extend_from_slice(&natoms.to_be_bytes());
+            d.extend_from_slice(&0i32.to_be_bytes()); // step
+            d.extend_from_slice(&0f32.to_be_bytes()); // time
+            d.extend_from_slice(&[0u8; 36]); // box
+            d.extend_from_slice(&natoms.to_be_bytes()); // lsize
+            d.extend_from_slice(&1000f32.to_be_bytes()); // precision
+            d.extend_from_slice(&[0u8; 24]); // minint / maxint
+            d.extend_from_slice(&9i32.to_be_bytes()); // smallidx
+            d.extend_from_slice(&nbytes.to_be_bytes());
+            d.extend(std::iter::repeat_n(0u8, (nbytes as usize + 3) & !3));
+            d
+        };
+        let huge = frame(1 << 30, 0);
+        assert_eq!(huge.len(), 92);
+        let err = parse_xtc(&huge).err().expect("rejected");
+        assert!(err.contains("bitstream"), "{err}");
+        assert!(decode_frame_at(&huge, 0, 1 << 30).is_err());
+
+        // A count the stream can hold still decodes (all-zero bits: every
+        // atom at the origin, two bits each).
+        let small = frame(16, 8);
+        let t = parse_xtc(&small).expect("16 atoms fit in 8 bytes");
+        assert_eq!(t.n_atoms, 16);
+        assert!(t.frame(0).iter().all(|&v| v == 0.0));
     }
 
     fn crn_fixture() -> Vec<u8> {

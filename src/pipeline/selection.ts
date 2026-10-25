@@ -648,6 +648,8 @@ export function validateQuery(query: string): { valid: boolean; error?: string }
 //   "bond_index": the 0-based sequential index of the bond
 //   "atom_index": index of an atom endpoint
 //   "element": element symbol of an atom endpoint
+//   For both, a PBC ghost / Drawing Boundary copy endpoint reads as the
+//   structural atom it copies (see `bondEndpointResolver`).
 //   "molecule_id": 0-based ID of the connected component (via bond
 //   connectivity, including this bond) that the bond's endpoints belong to.
 //   Both endpoints of a bond are always in the same component, so
@@ -658,7 +660,9 @@ export function validateQuery(query: string): { valid: boolean; error?: string }
 //   carries its structural topology (`BondData.periodicTopology`), components
 //   are taken over the structural atoms, so a bond crossing the periodic
 //   boundary — drawn as two half-bonds to ghost atoms — does not split its
-//   molecule; a drawn bond with no structural endpoint reads as -1.
+//   molecule; a ghost / image endpoint reads as the atom it copies
+//   (`BondData.ghostSourceIndices`), and a drawn bond with no structural
+//   endpoint to read reads as -1.
 
 const BOND_FIELDS = new Set(["bond_index", "atom_index", "element", "molecule_id"]);
 
@@ -894,12 +898,30 @@ function applyOp(fieldValue: string | number, op: string, value: string | number
   }
 }
 
+/**
+ * Map a bond endpoint to the structural atom it stands for. Endpoints past the
+ * structure's own atoms (PBC half-bond ghosts, Drawing Boundary copies) are
+ * looked up in `ghostSourceIndices`, whose entry `k` is the source of endpoint
+ * `nAtoms - ghostSourceIndices.length + k` (see `BondData`); every other
+ * endpoint is its own source.
+ */
+export function bondEndpointResolver(
+  nAtoms: number,
+  ghostSourceIndices: Uint32Array | null | undefined,
+): (endpoint: number) => number {
+  if (!ghostSourceIndices || ghostSourceIndices.length === 0) return (endpoint) => endpoint;
+  const nBase = nAtoms - ghostSourceIndices.length;
+  return (endpoint) =>
+    endpoint < nBase ? endpoint : (ghostSourceIndices[endpoint - nBase] ?? endpoint);
+}
+
 function compileBondAST(
   ast: BondASTNode,
   bondIndices: Uint32Array,
   elements: Uint8Array,
   nAtoms: number,
   structuralBonds: Uint32Array | null,
+  sourceOf: (endpoint: number) => number,
 ): (bondIdx: number) => boolean {
   switch (ast.kind) {
     case "all":
@@ -907,17 +929,52 @@ function compileBondAST(
     case "none":
       return () => false;
     case "not": {
-      const fn = compileBondAST(ast.operand, bondIndices, elements, nAtoms, structuralBonds);
+      const fn = compileBondAST(
+        ast.operand,
+        bondIndices,
+        elements,
+        nAtoms,
+        structuralBonds,
+        sourceOf,
+      );
       return (i) => !fn(i);
     }
     case "and": {
-      const left = compileBondAST(ast.left, bondIndices, elements, nAtoms, structuralBonds);
-      const right = compileBondAST(ast.right, bondIndices, elements, nAtoms, structuralBonds);
+      const left = compileBondAST(
+        ast.left,
+        bondIndices,
+        elements,
+        nAtoms,
+        structuralBonds,
+        sourceOf,
+      );
+      const right = compileBondAST(
+        ast.right,
+        bondIndices,
+        elements,
+        nAtoms,
+        structuralBonds,
+        sourceOf,
+      );
       return (i) => left(i) && right(i);
     }
     case "or": {
-      const left = compileBondAST(ast.left, bondIndices, elements, nAtoms, structuralBonds);
-      const right = compileBondAST(ast.right, bondIndices, elements, nAtoms, structuralBonds);
+      const left = compileBondAST(
+        ast.left,
+        bondIndices,
+        elements,
+        nAtoms,
+        structuralBonds,
+        sourceOf,
+      );
+      const right = compileBondAST(
+        ast.right,
+        bondIndices,
+        elements,
+        nAtoms,
+        structuralBonds,
+        sourceOf,
+      );
       return (i) => left(i) || right(i);
     }
     case "comparison": {
@@ -929,12 +986,15 @@ function compileBondAST(
         switch (field) {
           case "bond_index":
             return applyOp(i, op, value);
-          case "atom_index":
-            if (both) return applyOp(atomA, op, value) && applyOp(atomB, op, value);
-            return applyOp(atomA, op, value) || applyOp(atomB, op, value);
+          case "atom_index": {
+            const srcA = sourceOf(atomA);
+            const srcB = sourceOf(atomB);
+            if (both) return applyOp(srcA, op, value) && applyOp(srcB, op, value);
+            return applyOp(srcA, op, value) || applyOp(srcB, op, value);
+          }
           case "element": {
-            const elemA = getElementSymbol(elements[atomA] ?? 0);
-            const elemB = getElementSymbol(elements[atomB] ?? 0);
+            const elemA = getElementSymbol(elements[sourceOf(atomA)] ?? 0);
+            const elemB = getElementSymbol(elements[sourceOf(atomB)] ?? 0);
             if (both) return applyOp(elemA, op, value) && applyOp(elemB, op, value);
             return applyOp(elemA, op, value) || applyOp(elemB, op, value);
           }
@@ -943,10 +1003,12 @@ function compileBondAST(
               // Components over the structural atoms, as the atom query does.
               // A bond crossing the periodic boundary is drawn as two
               // half-bonds to ghost atoms (index >= elements.length); each
-              // half keeps one structural endpoint to look the molecule up by.
+              // half keeps one structural endpoint to look the molecule up by,
+              // and a ghost / image endpoint reads as the atom it copies.
               const nStructural = elements.length;
               moleculeIds ??= computeMoleculeIds(structuralBonds, nStructural);
-              const atom = atomA < nStructural ? atomA : atomB;
+              const srcA = sourceOf(atomA);
+              const atom = srcA < nStructural ? srcA : sourceOf(atomB);
               return applyOp(atom < nStructural ? moleculeIds[atom] : -1, op, value);
             }
             if (moleculeIds === null) {
@@ -974,6 +1036,10 @@ function compileBondAST(
  * structure's bond topology (structural atom pairs, `BondData.periodicTopology`)
  * when `bondIndices` is a drawn form of it with ghost endpoints; `molecule_id`
  * is then computed on it rather than on the drawn half-bonds.
+ * `ghostSourceIndices` (see `bondEndpointResolver`) lets `atom_index`,
+ * `element` and `molecule_id` read a ghost or image endpoint as the structural
+ * atom it copies, so both half-bonds of a boundary-crossing bond match the
+ * same queries.
  */
 export function evaluateBondSelection(
   query: string,
@@ -982,6 +1048,7 @@ export function evaluateBondSelection(
   nBonds: number,
   nAtoms?: number,
   structuralBonds?: Uint32Array | null,
+  ghostSourceIndices?: Uint32Array | null,
 ): Set<number> | null {
   const trimmed = query.trim();
   if (trimmed === "" || trimmed === "all") return null;
@@ -993,12 +1060,14 @@ export function evaluateBondSelection(
   if (ast.kind === "all") return null;
   if (ast.kind === "none") return new Set();
 
+  const sourceOf = bondEndpointResolver(nAtoms ?? 0, ghostSourceIndices);
   const predicate = compileBondAST(
     ast,
     bondIndices,
     elements,
     nAtoms ?? 0,
     structuralBonds ?? null,
+    sourceOf,
   );
   const result = new Set<number>();
   for (let i = 0; i < nBonds; i++) {

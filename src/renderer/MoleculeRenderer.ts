@@ -71,6 +71,10 @@ export class MoleculeRenderer {
   private container: HTMLElement | null = null;
   private renderer!: THREE.WebGLRenderer;
   private scene!: THREE.Scene;
+  /** Watches the container's size from mount() until dispose(). */
+  private resizeObserver: ResizeObserver | null = null;
+  /** Set by dispose(); a disposed renderer ignores late resize notifications. */
+  private disposed = false;
   /**
    * Camera, turntable controls and the camera interactions on top of them
    * (pivot animation, custom pan, wheel zoom, frustum insets, projection
@@ -132,9 +136,17 @@ export class MoleculeRenderer {
   private fpsCounter = new FpsCounter();
   private snapshot: Snapshot | null = null;
   /**
+   * The topology of the trajectory frame on screen when it is not the
+   * snapshot's: a heterogeneous frame's own atom count, elements and bonds.
+   * Null while the snapshot's topology is what is drawn. Picking, box
+   * selection and the selection overlays read it (see `drawnSnapshot`).
+   */
+  private frameTopology: Snapshot | null = null;
+  /**
    * Positions currently drawn. Until the first trajectory frame this is the
    * snapshot's own array (read-only here); the first frame swaps in a private
-   * copy that later frames overwrite in place.
+   * copy that later frames overwrite in place. It only grows, so past the
+   * drawn atom count it can hold an earlier, larger frame's atoms.
    */
   private currentPositions: Float32Array | null = null;
   private ownsCurrentPositions = false;
@@ -220,7 +232,8 @@ export class MoleculeRenderer {
   private readonly selection = new SelectionController({
     getCamera: () => this.camera,
     getContainer: () => this.container,
-    getSnapshot: () => this.snapshot,
+    // What is drawn, so a pick never lands on an atom the frame lacks.
+    getSnapshot: () => this.drawnSnapshot(),
     getCurrentPositions: () => this.getCurrentPositions(),
     getAtomState: () => this.atomLayers.state,
     getDrawingBoundary: () => this.currentDrawingBoundary,
@@ -311,9 +324,9 @@ export class MoleculeRenderer {
     this.pivotMarker = new PivotMarker();
     this.scene.add(this.pivotMarker.group);
 
-    // Resize observer
-    const resizeObserver = new ResizeObserver(() => this.onResize());
-    resizeObserver.observe(container);
+    // Resize observer (disconnected in dispose)
+    this.resizeObserver = new ResizeObserver(() => this.onResize());
+    this.resizeObserver.observe(container);
 
     // Listen for DPR changes (e.g. moving window between displays)
     this.setupDprListener();
@@ -336,6 +349,7 @@ export class MoleculeRenderer {
   loadSnapshot(snapshot: Snapshot, opts: { fit?: boolean } = {}): void {
     this.requestRender();
     this.snapshot = snapshot;
+    this.frameTopology = null;
     this.currentPositions = snapshot.positions;
     this.ownsCurrentPositions = false;
     this.cameraController.syncUpAxis(snapshot.box);
@@ -495,6 +509,7 @@ export class MoleculeRenderer {
       this.updateFrameTopology(frame);
     } else {
       // Uniform fast path: positions only.
+      this.frameTopology = null;
       this.atomRenderer.updatePositions(frame.positions);
       this.labelOverlay?.setPositions(frame.positions);
       this.arrowRenderer?.setAtomPositions(frame.positions, frame.nAtoms);
@@ -583,6 +598,16 @@ export class MoleculeRenderer {
     // Bonds: prefer the frame's own inferred bonds; fall back to frame 0.
     const bonds = frame.bonds ?? snapshot.bonds;
     this.updateBondsExt(bonds, null, frame.positions, elements, frame.nAtoms);
+    this.frameTopology = { ...synth, bonds, nBonds: bonds.length / 2, bondOrders: null };
+  }
+
+  /**
+   * The structure as drawn: the current heterogeneous frame's own topology,
+   * else the snapshot. Its atom count bounds what may be read from
+   * `currentPositions`.
+   */
+  private drawnSnapshot(): Snapshot | null {
+    return this.frameTopology ?? this.snapshot;
   }
 
   /** Redraw the simulation cell for a heterogeneous per-frame cell. */
@@ -1046,7 +1071,12 @@ export class MoleculeRenderer {
     }
     if (this.surfaceRenderer) {
       if (showSurface && this.snapshot) {
-        this.surfaceRenderer.loadSnapshot(this.snapshot);
+        // At the frame on screen: a hidden surface skips trajectory frames
+        // (see updateFrame), and the snapshot holds frame 0's positions.
+        this.surfaceRenderer.loadSnapshot({
+          ...this.snapshot,
+          positions: this.getCurrentPositions(),
+        });
       }
       this.surfaceRenderer.setVisible(showSurface);
     }
@@ -1664,7 +1694,7 @@ export class MoleculeRenderer {
   private onResize(): void {
     // three.js owns the drawing buffer size while a headset presents, and an
     // export owns it until resizeForCapture's restore runs.
-    if (!this.container || this.xr.presenting || this.capturing) return;
+    if (this.disposed || !this.container || this.xr.presenting || this.capturing) return;
     const w = this.container.clientWidth;
     const h = this.container.clientHeight;
     if (w === 0 || h === 0) return;
@@ -1789,6 +1819,12 @@ export class MoleculeRenderer {
 
   /** Clean up all resources. */
   dispose(): void {
+    this.disposed = true;
+    // Under React StrictMode the container outlives this renderer (it is
+    // mounted again at once), so a live observer would keep resizing — and
+    // keep alive — a renderer that is gone.
+    this.resizeObserver?.disconnect();
+    this.resizeObserver = null;
     if (this.animationId !== null) {
       cancelAnimationFrame(this.animationId);
     }

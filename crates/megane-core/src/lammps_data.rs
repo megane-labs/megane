@@ -323,6 +323,10 @@ fn parse_atoms_section(
         return Err("Atoms section is empty".into());
     };
 
+    // The `N atoms` header is a claim, so it sizes the buffers only as far as
+    // the lines left can hold atoms (one per line). Ids past the dense table
+    // still resolve through `IdToIndex`'s overflow map.
+    let n_atoms = n_atoms.min(lines.len().saturating_sub(data_start));
     let mut positions = Vec::with_capacity(n_atoms * 3);
     let mut elements = Vec::with_capacity(n_atoms);
     let mut labels = Vec::with_capacity(n_atoms);
@@ -1188,6 +1192,19 @@ Atoms # atomic
             assert_eq!(result.n_atoms, 64);
             assert_eq!(result.n_file_bonds, 0);
             assert_eq!(result.bonds.len(), 0);
+        }
+    }
+
+    /// The `N atoms` header is only a claim: a file declaring 10^11 (or
+    /// `usize::MAX`) atoms over one atom line reads that one atom instead of
+    /// reserving room for every declared one (which aborted the process).
+    #[test]
+    fn a_declared_atom_count_past_the_file_does_not_size_the_buffers() {
+        for declared in ["100000000000", &usize::MAX.to_string()] {
+            let text = format!("x\n\n{declared} atoms\n\nAtoms # atomic\n\n1 1 0.5 1.5 2.5\n");
+            let s = parse(&text).expect("parse");
+            assert_eq!(s.n_atoms, 1);
+            assert_eq!(s.positions, vec![0.5, 1.5, 2.5]);
         }
     }
 

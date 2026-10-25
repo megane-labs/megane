@@ -200,10 +200,12 @@ format. Every `COORDINATES OF ALL ATOMS ARE` banner block becomes a frame, so a
 geometry optimisation scrubs on the timeline like a multi-frame XYZ and the
 terminal `EQUILIBRIUM GEOMETRY LOCATED` block is simply the last one. The
 banner's `(ANGS)` / `(BOHR)` argument is honoured, and the element comes from
-the nuclear-charge column — rounded, since ECP runs print a fractional valence
-charge, with the atom label as the fallback when the rounded charge is not an
-element. Bonds are inferred by distance because GAMESS output carries no
-connectivity.
+the nuclear-charge column (rounded) for all-electron atoms. An ECP run prints
+the *valence* charge instead (Pt with a 60-electron core shows `18.0`), so when
+the atom label names an element heavier than the charge by exactly an ECP core
+size, the label's element is used; the label is also the fallback when the
+rounded charge is not an element. Bonds are inferred by distance because GAMESS
+output carries no connectivity.
 
 Note: **`.gamess` is the only extension registered for it.** GAMESS logs are
 normally named `.log` or `.out`, and claiming those in the VS Code
@@ -298,6 +300,17 @@ path. Large variable-atom LAMMPS dumps that would otherwise stream lazily fall
 back to an eager parse so no frame is dropped. The Jupyter widget,
 whose frames come from the Python kernel, receives the per-frame elements/cell
 over its binary protocol as well.
+
+Note: **Per-atom vectors** stored in a trajectory become vector channels for the
+Vector Overlay node, as a LAMMPS dump's `vx vy vz` / `fx fy fz` columns do.
+AMBER NetCDF `velocities` (multiplied by the variable's `scale_factor`
+attribute, which AMBER sets to 20.455 so the values come out in Å/ps) and
+`forces` become `velocity` and `force` channels, both from the eager parse and
+when a large file streams lazily. ASE `.traj` `momenta` and the calculator's
+`forces` become `momenta` and `force` channels. Momenta are kept as momenta,
+because converting them to velocities needs masses that most files leave to
+ASE's element table. A large (≥ 8 MB) `.traj` that streams lazily does not offer
+them yet.
 
 ### Topology formats
 

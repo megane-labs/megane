@@ -12,6 +12,7 @@ import {
   lastJSONPayload,
   looksLikePayload,
   runGeneration,
+  streamError,
   type GenerationSpec,
 } from "@/ai/generation";
 import type { AIConfig } from "@/ai/config";
@@ -139,5 +140,23 @@ describe("reply helpers", () => {
     expect(looksLikePayload('{ "version": 3, "nodes": [')).toBe(true);
     expect(looksLikePayload("There is no water here, so there is nothing to hide.")).toBe(false);
     expect(looksLikePayload("Use a {curly} brace.")).toBe(false);
+  });
+});
+
+describe("streamError", () => {
+  it("names what the provider reported, however it shaped it", () => {
+    expect(streamError({ type: "overloaded_error", message: "Overloaded" }).message).toBe(
+      "The provider stopped the reply with an error (overloaded_error: Overloaded). Please try again.",
+    );
+    expect(streamError({ code: 502, message: "Provider disconnected" }).message).toContain(
+      "(502: Provider disconnected)",
+    );
+    expect(streamError({ code: "rate_limited" }).message).toContain("(rate_limited)");
+    expect(streamError({ message: "boom" }).message).toContain("(boom)");
+    for (const empty of [null, undefined, "oops", {}]) {
+      expect(streamError(empty).message).toBe(
+        "The provider stopped the reply with an error. Please try again.",
+      );
+    }
   });
 });

@@ -80,6 +80,7 @@ import {
   promptPlaceholder,
   resolveStructureContext,
   replaceTrailingAssistant,
+  summaryLabels,
 } from "@/components/PipelineChatBox";
 import { useAIConfigStore } from "@/ai/config";
 import {
@@ -324,7 +325,14 @@ describe("PipelineChatBox — submission", () => {
       // structureSummary — null here since no structure is loaded in this test.
       null,
       // self-check context, empty for the same reason.
-      { snapshot: null, atomLabels: null, structureFrames: null, structureMeta: null },
+      {
+        snapshot: null,
+        atomLabels: null,
+        structureFrames: null,
+        structureMeta: null,
+        nodeSnapshots: {},
+        loaderIds: [],
+      },
       expect.any(Function),
     );
   });
@@ -339,9 +347,11 @@ describe("resolveStructureContext", () => {
   };
 
   it("returns empty fields when nothing is loaded", () => {
-    expect(resolveStructureContext({ nodes: [], nodeSnapshots: {}, ...emptyGlobals })).toEqual(
-      emptyGlobals,
-    );
+    expect(resolveStructureContext({ nodes: [], nodeSnapshots: {}, ...emptyGlobals })).toEqual({
+      ...emptyGlobals,
+      nodeSnapshots: {},
+      loaderIds: [],
+    });
   });
 
   it("prefers the store's global structure fields", () => {
@@ -355,8 +365,11 @@ describe("resolveStructureContext", () => {
       snapshot: globalSnapshot,
     });
     expect(ctx.snapshot).toBe(globalSnapshot);
-    // labels still come from the node — the global field is null.
-    expect(ctx.atomLabels).toEqual(["HOH"]);
+    // No display labels: the self-check reads each loader's own, as the store
+    // does, and the summary falls back to the primary loader's.
+    expect(ctx.atomLabels).toBeNull();
+    expect(summaryLabels(ctx)).toEqual(["HOH"]);
+    expect(summaryLabels({ ...ctx, atomLabels: ["SOL"] })).toEqual(["SOL"]);
   });
 
   it("falls back to the load_structure node's snapshot once the globals are cleared", () => {
@@ -371,8 +384,95 @@ describe("resolveStructureContext", () => {
       ...emptyGlobals,
     });
     expect(ctx.snapshot).toBe(nodeSnapshot);
-    expect(ctx.atomLabels).toEqual(["ALA"]);
+    expect(summaryLabels(ctx)).toEqual(["ALA"]);
     expect(ctx.structureFrames).toEqual([]);
+  });
+
+  it("hands every loader's structure, in graph order, to the self-check", () => {
+    const water = { snapshot: { nAtoms: 3 }, frames: null, meta: null, labels: null } as never;
+    const methane = { snapshot: { nAtoms: 5 }, frames: null, meta: null, labels: null } as never;
+    const ctx = resolveStructureContext({
+      nodes: [
+        { id: "v1", type: "viewport", data: { params: {} } },
+        { id: "l2", type: "load_structure", data: { params: {} } },
+        { id: "l1", type: "load_structure", data: { params: {} } },
+      ],
+      nodeSnapshots: { l1: water, l2: methane },
+      ...emptyGlobals,
+    });
+    expect(ctx.loaderIds).toEqual(["l2", "l1"]);
+    expect(ctx.nodeSnapshots).toEqual({ l1: water, l2: methane });
+    expect(ctx.snapshot).toEqual({ nAtoms: 5 });
+    expect(summaryLabels({})).toBeNull();
+  });
+
+  it("lets the self-check run a second loader's filters against its own structure", async () => {
+    const { collectPipelineErrors } = await import("@/ai/validatePipeline");
+    const snap = (elements: number[]) =>
+      ({
+        nAtoms: elements.length,
+        nBonds: 0,
+        nFileBonds: 0,
+        positions: new Float32Array(elements.length * 3).map((_, i) => i * 1.7),
+        elements: new Uint8Array(elements),
+        bonds: new Uint32Array(0),
+        bondOrders: null,
+        box: null,
+        boxOrigin: null,
+        atomChainIds: null,
+        atomBFactors: null,
+      }) as never;
+    const water = {
+      snapshot: snap([8, 1, 1]),
+      frames: null,
+      meta: null,
+      labels: ["HOH1", "HOH1", "HOH1"],
+    };
+    const methane = {
+      snapshot: snap([6, 1, 1, 1, 1]),
+      frames: null,
+      meta: null,
+      labels: Array(5).fill("MET2"),
+    };
+    // loader-1 holds water, which is also the global structure; loader-2 methane.
+    const ctx = resolveStructureContext({
+      nodes: [
+        { id: "loader-1", type: "load_structure", data: { params: {} } },
+        { id: "loader-2", type: "load_structure", data: { params: {} } },
+      ],
+      nodeSnapshots: { "loader-1": water, "loader-2": methane },
+      ...emptyGlobals,
+      snapshot: water.snapshot,
+    });
+    for (const query of ['element == "C"', 'resname == "MET"']) {
+      const pipeline = {
+        version: 3,
+        nodes: [
+          { id: "loader-1", type: "load_structure", position: { x: 0, y: 0 }, fileName: null },
+          { id: "loader-2", type: "load_structure", position: { x: 300, y: 0 }, fileName: null },
+          { id: "filter-c", type: "filter", position: { x: 300, y: 200 }, query },
+          { id: "color-c", type: "color", position: { x: 300, y: 400 } },
+          { id: "viewport-1", type: "viewport", position: { x: 0, y: 600 } },
+        ],
+        edges: [
+          {
+            source: "loader-1",
+            sourceHandle: "particle",
+            target: "viewport-1",
+            targetHandle: "particle",
+          },
+          { source: "loader-2", sourceHandle: "particle", target: "filter-c", targetHandle: "in" },
+          { source: "filter-c", sourceHandle: "out", target: "color-c", targetHandle: "in" },
+          {
+            source: "color-c",
+            sourceHandle: "out",
+            target: "viewport-1",
+            targetHandle: "particle",
+          },
+        ],
+      } as never;
+      expect(collectPipelineErrors(pipeline, ctx)).toEqual([]);
+    }
   });
 });
 
@@ -620,6 +720,33 @@ describe("PipelineChatBox — applying a generated pipeline", () => {
     expect(second).toContain("User: first request");
     expect(second).toContain("You: Pipeline applied");
     expect(second.endsWith("## Request\n\nmake it bigger")).toBe(true);
+  });
+
+  it("aborts the request and applies nothing once the dock is unmounted", async () => {
+    let release!: () => void;
+    const held = new Promise<void>((resolve) => (release = resolve));
+    let seen: AbortSignal | undefined;
+    (generatePipeline as ReturnType<typeof vi.fn>).mockImplementation(
+      async (_config, _msg, onChunk: (c: string) => void, signal: AbortSignal) => {
+        seen = signal;
+        await held;
+        // What a transport could still hand over after the abort.
+        onChunk('```json\n{ "version": 3, "nodes": [] }\n```');
+        return '```json\n{ "version": 3, "nodes": [] }\n```\nDone.';
+      },
+    );
+    const { unmount } = render(<PipelineChatBox />);
+    submit("hide the water");
+    await waitFor(() => expect(seen).toBeDefined());
+
+    // Collapsing the Pipeline panel unmounts the dock mid-request.
+    unmount();
+    expect(seen!.aborted).toBe(true);
+    release();
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 0));
+    });
+    expect(storeState.applyGeneratedPipeline).not.toHaveBeenCalled();
   });
 
   it("clears the conversation", async () => {

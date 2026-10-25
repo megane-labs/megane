@@ -153,9 +153,11 @@ pub fn parse_with_modes(text: &str) -> Result<(ParsedStructure, PhononModes), St
             } else {
                 modes.qpoints.push([0.0, 0.0, 0.0]);
             }
-            // Frequencies: `n_branches` lines of `<branch> <freq> [...]`.
-            let mut freqs = Vec::with_capacity(modes.n_branches);
+            // Frequencies: `n_branches` lines of `<branch> <freq> [...]`. The
+            // header's count is reserved only as far as the lines left can
+            // hold it.
             let mut k = i + 1;
+            let mut freqs = Vec::with_capacity(modes.n_branches.min(lines.len() - k));
             while k < lines.len() && freqs.len() < modes.n_branches {
                 let ft: Vec<&str> = lines[k].split_whitespace().collect();
                 if ft.len() < 2 {
@@ -308,6 +310,22 @@ mod tests {
         assert_eq!(modes.qpoints[0], [0.0, 0.0, 0.0]);
         assert_eq!(modes.frequencies[0].len(), 6);
         assert!((modes.frequencies[0][3] - 517.339).abs() < 1e-3);
+    }
+
+    /// `Number of branches` sizes the frequency list only as far as the file
+    /// has lines for it: 2^62 used to panic with a capacity overflow, and
+    /// 10^10 to abort on the allocation.
+    #[test]
+    fn a_huge_branch_count_reads_the_frequencies_that_are_there() {
+        for declared in ["4611686018427387904", "10000000000"] {
+            let text = SI.replace(
+                " Number of branches     6",
+                &format!(" Number of branches     {declared}"),
+            );
+            let (s, modes) = parse_with_modes(&text).expect("parse");
+            assert_eq!(s.n_atoms, 2);
+            assert_eq!(modes.frequencies[0].len(), 6);
+        }
     }
 
     #[test]

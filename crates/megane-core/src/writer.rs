@@ -163,24 +163,21 @@ pub fn write_xyz(view: &StructureView<'_>) -> Result<String, String> {
 }
 
 /// Split a megane residue label (`ALA42`) into `(resname, resid)`.
-fn split_label(label: &str) -> (&str, Option<u32>) {
-    let name_end = label
-        .char_indices()
-        .find(|(_, c)| !c.is_ascii_alphabetic())
-        .map(|(i, _)| i)
-        .unwrap_or(label.len());
-    let name = &label[..name_end];
-    let digits: String = label
-        .chars()
-        .rev()
-        .take_while(|c| c.is_ascii_digit())
-        .collect();
-    let resid = if digits.is_empty() {
-        None
-    } else {
-        digits.chars().rev().collect::<String>().parse().ok()
-    };
-    (name, resid)
+///
+/// Readers build the label as name + number (`HOH-3`, `T3P5`), so the number
+/// is the trailing `-?\d+` and the name is everything before it. Glued labels
+/// are ambiguous only in which part a `-` or digit belongs to (`CL-5`, `ZN27`);
+/// this split writes back the same label either way.
+fn split_label(label: &str) -> (&str, Option<i64>) {
+    let digits = label.bytes().rev().take_while(u8::is_ascii_digit).count();
+    if digits == 0 {
+        return (label, None);
+    }
+    let mut start = label.len() - digits;
+    if label[..start].ends_with('-') {
+        start -= 1;
+    }
+    (&label[..start], label[start..].parse().ok())
 }
 
 /// Append `value` as a fixed-point field of `width` columns with `decimals`
@@ -247,6 +244,18 @@ pub fn write_pdb(view: &StructureView<'_>) -> Result<String, String> {
             }
             None => ("UNK", 1),
         };
+        // The name and number fill 3 and 4 columns: cut the name by characters
+        // (a byte cut could split a UTF-8 sequence) and wrap a number that
+        // needs more columns, a negative one keeping its sign in the field.
+        let resname = resname
+            .char_indices()
+            .nth(3)
+            .map_or(resname, |(end, _)| &resname[..end]);
+        let resseq = if resid < 0 {
+            resid % 1_000
+        } else {
+            resid % 10_000
+        };
         let chain = view
             .chain_ids
             .map(|c| c[i])
@@ -267,9 +276,9 @@ pub fn write_pdb(view: &StructureView<'_>) -> Result<String, String> {
             "ATOM  {:5} {} {:>3} {}{:4}    ",
             i + 1,
             atom_name,
-            &resname[..resname.len().min(3)],
+            resname,
             chain,
-            resid % 10_000,
+            resseq,
         );
         for (k, axis) in AXES.iter().enumerate() {
             push_fixed(&mut out, p[k], 8, 3, || {
@@ -767,6 +776,77 @@ mod tests {
         assert_eq!(split_label("HOH"), ("HOH", None));
         assert_eq!(split_label(""), ("", None));
         assert_eq!(split_label("7"), ("", Some(7)));
+    }
+
+    /// The residue number is the label's trailing `-?\d+`; everything before
+    /// it is the name. Taking only the leading letters as the name turned
+    /// `HOH-3` into `HOH 3` (negative numbers collided with positive ones)
+    /// and `T3P5` into `T 5`.
+    #[test]
+    fn split_label_keeps_signed_numbers_and_digits_in_names() {
+        assert_eq!(split_label("HOH-3"), ("HOH", Some(-3)));
+        assert_eq!(split_label("T3P5"), ("T3P", Some(5)));
+        assert_eq!(split_label("1PE12"), ("1PE", Some(12)));
+        assert_eq!(split_label("-7"), ("", Some(-7)));
+        assert_eq!(split_label("NA+"), ("NA+", None));
+        assert_eq!(split_label("T3P"), ("T3P", None));
+    }
+
+    /// PDB labels survive a write/read round trip, negative residue numbers
+    /// and names with digits included.
+    #[test]
+    fn pdb_residue_labels_round_trip() {
+        let src = "\
+ATOM      1  O   HOH A  -3       1.000   2.000   3.000  1.00  0.00           O
+ATOM      2  O   HOH A   3       2.000   2.000   3.000  1.00  0.00           O
+ATOM      3  O   T3P A   5       4.000   2.000   3.000  1.00  0.00           O
+ATOM      4  P    DA B   7       7.000   2.000   3.000  1.00  0.00           P
+ATOM      5  C   1PE B  12      10.000   2.000   3.000  1.00  0.00           C
+END
+";
+        let s = crate::pdb::parse(src).unwrap();
+        let labels = s.atom_labels.clone().unwrap();
+        assert_eq!(labels, ["HOH-3", "HOH3", "T3P5", "DA7", "1PE12"]);
+        let view = StructureView {
+            positions: &s.positions,
+            elements: &s.elements,
+            bonds: &[],
+            bond_orders: None,
+            box_matrix: None,
+            box_origin: None,
+            atom_labels: Some(&labels),
+            chain_ids: s.chain_ids.as_deref(),
+        };
+        let out = write_pdb(&view).unwrap();
+        assert!(out.contains(" HOH A  -3 "), "{out}");
+        assert!(out.contains(" T3P A   5 "), "{out}");
+        assert_eq!(
+            crate::pdb::parse(&out).unwrap().atom_labels.unwrap(),
+            labels
+        );
+    }
+
+    /// A residue name is cut to the 3-column field by characters, so a
+    /// non-ASCII name cannot split a UTF-8 sequence; a negative number keeps
+    /// its sign inside the 4-column field.
+    #[test]
+    fn residue_fields_stay_in_their_columns() {
+        static POS: [f32; 6] = [0.0; 6];
+        static ELEM: [u8; 2] = [6, 6];
+        let labels = vec!["ÜBERx1".to_string(), "HOH-12345".to_string()];
+        let view = StructureView {
+            positions: &POS,
+            elements: &ELEM,
+            bonds: &[],
+            bond_orders: None,
+            box_matrix: None,
+            box_origin: None,
+            atom_labels: Some(&labels),
+            chain_ids: None,
+        };
+        let out = write_pdb(&view).unwrap();
+        assert!(out.contains(" ÜBE  "), "{out}");
+        assert!(out.contains(" HOH  -345 "), "{out}");
     }
 
     /// A small cell view: atoms `pos` / `elem` in `cell`, optional origin.
