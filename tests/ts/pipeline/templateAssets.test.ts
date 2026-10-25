@@ -4,31 +4,53 @@ import { resolve } from "node:path";
 import {
   loadTemplateVolumetric,
   loadTemplateStructureInto,
-  loadMultiFileTemplate,
+  loadTemplateData,
   type TemplateAssetStore,
-  type TemplateAssetSources,
+  type TemplateDataLoader,
+  type TemplateFixtureUrls,
 } from "@/pipeline/templateAssets";
+import { MemoryFrameProvider } from "@/pipeline/types";
 import type { StructureParseResult } from "@/parsers/structure";
 import type { Snapshot } from "@/types";
 
 vi.mock("@/parsers/structure", () => ({
   parseStructureText: vi.fn(),
 }));
+vi.mock("@/parsers/xtc", () => ({
+  parseXTCFile: vi.fn(),
+}));
 
 const { parseStructureText } = await import("@/parsers/structure");
 const parseStructureTextMock = vi.mocked(parseStructureText);
+const { parseXTCFile } = await import("@/parsers/xtc");
+const parseXTCFileMock = vi.mocked(parseXTCFile);
 
 const CUBE_PATH = resolve(__dirname, "../../fixtures/caffeine_esp.cube");
 
 function makeStore(nodes: { id: string; type?: string }[]): TemplateAssetStore & {
   setNodeSnapshot: ReturnType<typeof vi.fn>;
+  setNodeStreamingData: ReturnType<typeof vi.fn>;
   updateNodeParams: ReturnType<typeof vi.fn>;
 } {
   return {
     nodes,
     setNodeSnapshot: vi.fn(),
+    setNodeStreamingData: vi.fn(),
     updateNodeParams: vi.fn(),
   };
+}
+
+/** A `fetch` stub answering 200 with `body` for every URL. */
+function okFetch(body: string) {
+  return vi.fn(
+    async () =>
+      ({
+        ok: true,
+        status: 200,
+        text: async () => body,
+        blob: async () => new Blob([body]),
+      }) as unknown as Response,
+  );
 }
 
 function makeSnapshot(nAtoms: number, box: Float32Array | null): Snapshot {
@@ -64,10 +86,7 @@ describe("loadTemplateVolumetric", () => {
   const cubeText = readFileSync(CUBE_PATH, "utf8");
 
   beforeEach(() => {
-    vi.stubGlobal(
-      "fetch",
-      vi.fn(async () => ({ text: async () => cubeText }) as unknown as Response),
-    );
+    vi.stubGlobal("fetch", okFetch(cubeText));
   });
 
   afterEach(() => {
@@ -135,10 +154,7 @@ describe("loadTemplateVolumetric", () => {
   });
 
   it("propagates a parse failure instead of writing a broken grid", async () => {
-    vi.stubGlobal(
-      "fetch",
-      vi.fn(async () => ({ text: async () => "not a cube file" }) as unknown as Response),
-    );
+    vi.stubGlobal("fetch", okFetch("not a cube file"));
     const store = makeStore([{ id: "volumetric-1", type: "load_volumetric" }]);
 
     await expect(
@@ -217,28 +233,141 @@ describe("loadTemplateStructureInto", () => {
   });
 });
 
-describe("loadMultiFileTemplate", () => {
+describe("loadTemplateData", () => {
   const cubeText = readFileSync(CUBE_PATH, "utf8");
 
-  const sources: TemplateAssetSources = {
-    caffeineB3lypSdf: "SDF TEXT",
-    caffeineDensityCubeUrl: "/caffeine_b3lyp_density.cube",
-    caffeineEspCubeUrl: "/caffeine_b3lyp_esp.cube",
-    ubiquitinPdb: "AA PDB TEXT",
-    ubiquitinCgPdb: "CG PDB TEXT",
+  const urls: TemplateFixtureUrls = {
+    caffeineWaterPdb: "/caffeine_water.pdb",
+    caffeineWaterXtc: "/caffeine_water_vibration.xtc",
+    perovskiteXyz: "/perovskite_srtio3_3x3x3.xyz",
+    glycineCif: "/glycine_csd.cif",
+    auNanoparticleXyz: "/au_nanoparticle.xyz",
+    proteasePdb: "/1hsg.pdb",
+    caffeineB3lypSdf: "/caffeine_b3lyp.sdf",
+    caffeineDensityCube: "/caffeine_b3lyp_density.cube",
+    caffeineEspCube: "/caffeine_b3lyp_esp.cube",
+    ubiquitinPdb: "/1ubq.pdb",
+    ubiquitinCgPdb: "/1ubq_cg.pdb",
   };
+
+  /** Every URL answers with its own path as the body, the cubes with a real grid. */
+  function fixtureFetch() {
+    return vi.fn(async (url: string) => {
+      const body = url.endsWith(".cube") ? cubeText : `TEXT OF ${url}`;
+      return {
+        ok: true,
+        status: 200,
+        text: async () => body,
+        blob: async () => new Blob([body]),
+      } as unknown as Response;
+    });
+  }
+
+  function makeLoader(nAtoms = 24) {
+    return {
+      loadText: vi.fn(async () => makeParseResult(nAtoms)),
+      loadXtc: vi.fn(async () => undefined),
+    } satisfies TemplateDataLoader;
+  }
 
   beforeEach(() => {
     parseStructureTextMock.mockReset();
     parseStructureTextMock.mockResolvedValue(makeParseResult(76));
-    vi.stubGlobal(
-      "fetch",
-      vi.fn(async () => ({ text: async () => cubeText }) as unknown as Response),
-    );
+    parseXTCFileMock.mockReset();
+    vi.stubGlobal("fetch", fixtureFetch());
   });
 
   afterEach(() => {
     vi.unstubAllGlobals();
+  });
+
+  it.each([
+    ["solid", "/perovskite_srtio3_3x3x3.xyz", "perovskite_srtio3_3x3x3.xyz"],
+    ["molecular_crystal", "/glycine_csd.cif", "glycine_csd.cif"],
+    ["surface_mesh", "/au_nanoparticle.xyz", "au_nanoparticle.xyz"],
+    ["protein", "/1hsg.pdb", "1hsg.pdb"],
+  ])("loads the %s template's one structure through the host loader", async (id, url, name) => {
+    const store = makeStore([{ id: "loader-1", type: "load_structure" }]);
+    const loader = makeLoader();
+
+    expect(await loadTemplateData(id, urls, () => store, loader)).toBe(true);
+
+    expect(fetch).toHaveBeenCalledWith(url);
+    expect(loader.loadText).toHaveBeenCalledWith(`TEXT OF ${url}`, name);
+    expect(loader.loadXtc).not.toHaveBeenCalled();
+    expect(store.setNodeSnapshot).not.toHaveBeenCalled();
+    expect(store.updateNodeParams).not.toHaveBeenCalled();
+  });
+
+  it("loads Molecule's structure and then its trajectory as a named file", async () => {
+    const store = makeStore([{ id: "loader-1", type: "load_structure" }]);
+    const loader = makeLoader();
+
+    expect(await loadTemplateData("molecule", urls, () => store, loader)).toBe(true);
+
+    expect(loader.loadText).toHaveBeenCalledWith(
+      "TEXT OF /caffeine_water.pdb",
+      "caffeine_water.pdb",
+    );
+    expect(loader.loadXtc).toHaveBeenCalledTimes(1);
+    const xtc = (loader.loadXtc.mock.calls[0] as unknown as [File])[0];
+    expect(xtc).toBeInstanceOf(File);
+    expect(xtc.name).toBe("caffeine_water_vibration.xtc");
+    expect(xtc.size).toBe("TEXT OF /caffeine_water_vibration.xtc".length);
+    // Structure first: a trajectory is checked against the loaded atom count.
+    expect(loader.loadText.mock.invocationCallOrder[0]).toBeLessThan(
+      loader.loadXtc.mock.invocationCallOrder[0],
+    );
+  });
+
+  it("feeds Streaming's node a frame provider over the template's own structure", async () => {
+    const store = makeStore([
+      { id: "streaming-1", type: "streaming" },
+      { id: "viewport-1", type: "viewport" },
+    ]);
+    const loader = makeLoader(24);
+    const frames = [{ frameId: 1, nAtoms: 24, positions: new Float32Array(72) }];
+    parseXTCFileMock.mockResolvedValue({
+      frames,
+      meta: { nFrames: 2, nAtoms: 24, timestepPs: 1 },
+    } as never);
+
+    expect(await loadTemplateData("streaming", urls, () => store, loader)).toBe(true);
+
+    expect(loader.loadText).toHaveBeenCalledWith(
+      "TEXT OF /caffeine_water.pdb",
+      "caffeine_water.pdb",
+    );
+    // The frames go to the Streaming node, never through the host's trajectory path.
+    expect(loader.loadXtc).not.toHaveBeenCalled();
+    const [xtc, nAtoms] = parseXTCFileMock.mock.calls[0];
+    expect(xtc.name).toBe("caffeine_water_vibration.xtc");
+    expect(nAtoms).toBe(24);
+    const [nodeId, data] = store.setNodeStreamingData.mock.calls[0];
+    expect(nodeId).toBe("streaming-1");
+    expect(data.snapshot.nAtoms).toBe(24);
+    expect(data.streamProvider).toBeInstanceOf(MemoryFrameProvider);
+    expect(data.streamProvider.meta.nFrames).toBe(2);
+    expect(store.updateNodeParams).toHaveBeenCalledWith("streaming-1", { connected: true });
+  });
+
+  it("gives Streaming no provider when the trajectory has no metadata", async () => {
+    const store = makeStore([{ id: "streaming-1", type: "streaming" }]);
+    parseXTCFileMock.mockResolvedValue({ frames: [], meta: null } as never);
+
+    await loadTemplateData("streaming", urls, () => store, makeLoader());
+
+    expect(store.setNodeStreamingData.mock.calls[0][1].streamProvider).toBeNull();
+  });
+
+  it("writes nothing for Streaming once its node is gone", async () => {
+    const store = makeStore([{ id: "loader-1", type: "load_structure" }]);
+    parseXTCFileMock.mockResolvedValue({ frames: [], meta: null } as never);
+
+    expect(await loadTemplateData("streaming", urls, () => store, makeLoader())).toBe(true);
+
+    expect(store.setNodeStreamingData).not.toHaveBeenCalled();
+    expect(store.updateNodeParams).not.toHaveBeenCalled();
   });
 
   it("loads caffeine through the host, the density and the potential into their own nodes", async () => {
@@ -247,12 +376,14 @@ describe("loadMultiFileTemplate", () => {
       { id: "volumetric-1", type: "load_volumetric" },
       { id: "volumetric-esp", type: "load_volumetric" },
     ]);
-    const loadPrimary = vi.fn(async () => undefined);
+    const loader = makeLoader();
 
-    const handled = await loadMultiFileTemplate("esp", sources, () => store, loadPrimary);
+    expect(await loadTemplateData("esp", urls, () => store, loader)).toBe(true);
 
-    expect(handled).toBe(true);
-    expect(loadPrimary).toHaveBeenCalledWith("SDF TEXT", "caffeine_b3lyp.sdf");
+    expect(loader.loadText).toHaveBeenCalledWith(
+      "TEXT OF /caffeine_b3lyp.sdf",
+      "caffeine_b3lyp.sdf",
+    );
     expect(fetch).toHaveBeenCalledWith("/caffeine_b3lyp_density.cube");
     expect(fetch).toHaveBeenCalledWith("/caffeine_b3lyp_esp.cube");
     const writes = store.updateNodeParams.mock.calls.map(([id, params]) => [id, params.fileName]);
@@ -267,32 +398,37 @@ describe("loadMultiFileTemplate", () => {
       { id: "loader-aa", type: "load_structure" },
       { id: "loader-cg", type: "load_structure" },
     ]);
-    const loadPrimary = vi.fn(async () => undefined);
+    const loader = makeLoader();
 
-    const handled = await loadMultiFileTemplate(
-      "coarse_grained",
-      sources,
-      () => store,
-      loadPrimary,
-    );
+    expect(await loadTemplateData("coarse_grained", urls, () => store, loader)).toBe(true);
 
-    expect(handled).toBe(true);
     // The host fills the first loader; only the second needs addressing by id.
-    expect(loadPrimary).toHaveBeenCalledWith("AA PDB TEXT", "1ubq.pdb");
-    expect(parseStructureTextMock).toHaveBeenCalledWith("CG PDB TEXT", "1ubq_cg.pdb");
+    expect(loader.loadText).toHaveBeenCalledWith("TEXT OF /1ubq.pdb", "1ubq.pdb");
+    expect(parseStructureTextMock).toHaveBeenCalledWith("TEXT OF /1ubq_cg.pdb", "1ubq_cg.pdb");
     expect(store.setNodeSnapshot.mock.calls[0][0]).toBe("loader-cg");
   });
 
-  it("ignores a single-file template and touches nothing", async () => {
+  it("reports an unknown template and touches nothing", async () => {
     const store = makeStore([{ id: "loader-1", type: "load_structure" }]);
-    const loadPrimary = vi.fn(async () => undefined);
+    const loader = makeLoader();
 
-    const handled = await loadMultiFileTemplate("molecule", sources, () => store, loadPrimary);
+    expect(await loadTemplateData("no_such_template", urls, () => store, loader)).toBe(false);
 
-    expect(handled).toBe(false);
-    expect(loadPrimary).not.toHaveBeenCalled();
-    expect(store.setNodeSnapshot).not.toHaveBeenCalled();
-    expect(store.updateNodeParams).not.toHaveBeenCalled();
+    expect(loader.loadText).not.toHaveBeenCalled();
     expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it("fails on a missing fixture instead of parsing the error page", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => ({ ok: false, status: 404 }) as unknown as Response),
+    );
+    const store = makeStore([{ id: "loader-1", type: "load_structure" }]);
+    const loader = makeLoader();
+
+    await expect(loadTemplateData("solid", urls, () => store, loader)).rejects.toThrow(
+      "Failed to fetch /perovskite_srtio3_3x3x3.xyz: HTTP 404",
+    );
+    expect(loader.loadText).not.toHaveBeenCalled();
   });
 });

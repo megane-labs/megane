@@ -74,8 +74,19 @@ declare module "@megane/hooks/useMeganeLocal" {
   export interface MeganeLocalState {
     loadFile: (pdb: File, topFile?: File) => Promise<void>;
     loadXtc: (xtc: File) => Promise<void>;
+    /** Resolves to a `StructureParseResult`, opaque here. */
+    loadText: (text: string, fileName?: string) => Promise<unknown>;
   }
   export function useMeganeLocal(): MeganeLocalState;
+}
+
+declare module "@megane/hooks/useTemplateData" {
+  import type { MeganeLocalState } from "@megane/hooks/useMeganeLocal";
+  /** Mirror of `useTemplateData` (src/hooks/useTemplateData.ts). */
+  export function useTemplateData(
+    loader: Pick<MeganeLocalState, "loadText" | "loadXtc">,
+    onApply?: (templateId: string) => void,
+  ): void;
 }
 
 declare module "@megane/pipeline/store" {

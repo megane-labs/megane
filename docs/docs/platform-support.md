@@ -361,6 +361,7 @@ Sources of truth: `crates/megane-core/src/formats.rs` (the format registry the b
 | Built-in file picker | ✓ | — | host | host | ✓ | n/a |
 | Load Structure / Load Trajectory: open a file on the machine Megane runs on, not the browser's (*Open from server…* / *Open from remote…*)¹¹ | ✓ (`megane serve`) | — | ✓ (Jupyter server's files) | ✓ (VS Code Remote, code-server) | — | n/a |
 | Visual pipeline editor | ✓ | — | ✓ | ✓ | ✓ | n/a |
+| Pipeline *Templates* menu: applying one loads the template's own demo files (structure, trajectory, volumetric grids) in place of whatever was open | ✓ | — | ✓ | ✓ | graph only (the host supplies the files) | n/a |
 | Open a `.megane.json` together with the files its nodes name (Load Structure / Trajectory / Vector / Volumetric / Spectrum, Add Bond topology), sent as raw bytes so binary formats such as ASE `.traj` survive¹³ | ✓ (drop the files together) | — | ✓ (read beside the pipeline file) | ✓ (read beside the pipeline file) | ✓ (`openFile(file, { companions })`) | n/a |
 | Quick Style panel (style, color, atom size / opacity, bond width / opacity, labels, perspective, cell axes) | ✓ (Inspector tab) | ✓¹² (`quick_style=True`) | ✓ (Inspector tab) | ✓ (Inspector tab) | ✓ (Inspector tab) | n/a |
 | Trajectory timeline / scrubbing | ✓ | ✓ | ✓ | ✓ | ✓ | n/a |

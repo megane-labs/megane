@@ -5,6 +5,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { MeganeViewer } from "@megane/components/MeganeViewer";
 import { ErrorBoundary } from "@megane/components/ErrorBoundary";
 import { useMeganeLocal } from "@megane/hooks/useMeganeLocal";
+import { useTemplateData } from "@megane/hooks/useTemplateData";
 import { usePipelineStore } from "@megane/pipeline/store";
 import { capturePipelineStore, type PipelineStoreSnapshot } from "@megane/pipeline/storeSnapshot";
 import { useTour } from "@megane/tour/useTour";
@@ -53,6 +54,8 @@ function DocBody({
   const local = useMeganeLocal();
   const [state, setState] = useState<LoadState>("loading");
   useTour({ host: "jupyterlab" });
+  // Applying a template from the editor loads its demo files over this file.
+  useTemplateData(local);
 
   // Cached pipeline-store state captured after the first successful parse.
   // On subsequent tab activations we restore from this cache instead of

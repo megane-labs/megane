@@ -253,6 +253,42 @@ test("Load Structure opens a workspace file through VS Code's open dialog", asyn
     .not.toBe(327);
 });
 
+/**
+ * A template swaps the graph *and* loads its own demo files, as in the webapp.
+ * The webview used to do only the first half, leaving the opened file on
+ * screen. Solid then Molecule: the fixtures are assets of webview.js, fetched
+ * from the extension's resource origin, and Molecule's XTC is binary.
+ */
+test("applying a template replaces the opened file with the template's scene", async ({ page }) => {
+  const wv = await openVscodeFile(page, { port: PORT, file: "1crn.pdb" });
+  await assertDomContract(wv, [
+    ...defaultViewerContract({ expectedAtoms: 327, context: "vscode" }),
+  ]);
+  const panel = wv.locator('[data-testid="panel-pipeline"]').first();
+  if ((await panel.getAttribute("data-collapsed")) === "true") {
+    await wv.locator('[data-testid="panel-pipeline-toggle"]').first().click();
+  }
+  const applyTemplate = async (templateId: string) => {
+    await wv.locator('[data-testid="pipeline-editor-tab-editor"]').first().click();
+    await wv.locator('[data-testid="pipeline-editor-templates"]').first().click();
+    await wv.locator(`[data-testid="pipeline-template-${templateId}"]`).first().click();
+  };
+  const viewer = wv.locator('[data-testid="megane-viewer"]');
+  const atomCount = async () => Number(await viewer.getAttribute("data-atom-count"));
+  const loaderFileName = wv.locator('[data-testid="load-structure-filename"]').first();
+
+  await applyTemplate("solid");
+  await expect.poll(atomCount, { timeout: 30_000 }).toBe(135);
+  await expect(loaderFileName).toHaveText("perovskite_srtio3_3x3x3.xyz");
+
+  await applyTemplate("molecule");
+  await expect.poll(atomCount, { timeout: 30_000 }).toBe(3024);
+  await expect(loaderFileName).toHaveText("caffeine_water.pdb");
+  await expect
+    .poll(async () => Number(await viewer.getAttribute("data-total-frames")), { timeout: 30_000 })
+    .toBeGreaterThan(1);
+});
+
 test("render export is saved through the extension-host saveFile bridge", async ({ page }) => {
   // In MEGANE_E2E_MODE the extension host skips the native save dialog and
   // writes next to the open document, so the export lands in the workspace.
