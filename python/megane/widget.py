@@ -370,6 +370,10 @@ class MolecularViewer(anywidget.AnyWidget):
         Changes made in the Quick Style panel (:attr:`quick_style`) are part
         of the viewer's pipeline, so applying a pipeline here replaces them.
 
+        The viewer starts over at frame 0: :attr:`frame_index` is reset and
+        :attr:`total_frames` becomes the new pipeline's frame count (0 without
+        a trajectory), so no frame of the previous trajectory is shown.
+
         Args:
             pipeline: A :class:`~megane.pipeline.Pipeline` instance,
                 or ``None`` to clear the pipeline.
@@ -386,37 +390,47 @@ class MolecularViewer(anywidget.AnyWidget):
         if embed_trajectory not in (True, False, "auto"):
             raise ValueError(f"embed_trajectory must be True, False or 'auto'; got {embed_trajectory!r}.")
 
-        self._trajectory_data = b""
-        if pipeline is None:
-            self._pipeline_json = ""
-            self._node_snapshots_data = {}
-            self._pipeline_ref = None
-            return
+        first_traj = next(iter(pipeline._trajectories.values()), None) if pipeline is not None else None
+        trajectory_data = b""
+        if first_traj is not None and embed_trajectory:
+            limit = EMBED_TRAJECTORY_AUTO_LIMIT if embed_trajectory == "auto" else None
+            data = _encode_embedded_trajectory(first_traj, limit)
+            if data is None:
+                warnings.warn(
+                    f"Trajectory exceeds the {EMBED_TRAJECTORY_AUTO_LIMIT // (1024 * 1024)} MB "
+                    "auto-embed limit, so it stays in the kernel and playback needs a running "
+                    "kernel. Pass embed_trajectory=True to embed it anyway.",
+                    UserWarning,
+                    stacklevel=2,
+                )
+            else:
+                trajectory_data = data
 
-        # Send per-node binary snapshot data
-        self._node_snapshots_data = dict(pipeline._node_data)
-
-        # Send pipeline config JSON
-        self._pipeline_json = json.dumps(pipeline.to_dict())
-
-        # Store trajectory refs for lazy loading
-        self._pipeline_ref = pipeline
-        if pipeline._trajectories:
-            first_traj = next(iter(pipeline._trajectories.values()))
-            if embed_trajectory:
-                limit = EMBED_TRAJECTORY_AUTO_LIMIT if embed_trajectory == "auto" else None
-                data = _encode_embedded_trajectory(first_traj, limit)
-                if data is None:
-                    warnings.warn(
-                        f"Trajectory exceeds the {EMBED_TRAJECTORY_AUTO_LIMIT // (1024 * 1024)} MB "
-                        "auto-embed limit, so it stays in the kernel and playback needs a running "
-                        "kernel. Pass embed_trajectory=True to embed it anyway.",
-                        UserWarning,
-                        stacklevel=2,
-                    )
-                else:
-                    self._trajectory_data = data
-            self.total_frames = first_traj.n_frames
+        # One state update, so the front end never pairs the new pipeline with
+        # the previous one's frame: a stale _frame_data (or frame_index) would
+        # be drawn onto a structure with the same atom count, and a stale
+        # total_frames would show a timeline for a static structure.
+        with self.hold_sync():
+            # Store trajectory refs for lazy loading (_on_frame_change reads it)
+            self._pipeline_ref = pipeline
+            self._trajectory_data = trajectory_data
+            if pipeline is None:
+                self._pipeline_json = ""
+                self._node_snapshots_data = {}
+            else:
+                # Send per-node binary snapshot data
+                self._node_snapshots_data = dict(pipeline._node_data)
+                # Send pipeline config JSON
+                self._pipeline_json = json.dumps(pipeline.to_dict())
+            # Back to the state of a viewer given this pipeline first: frame 0,
+            # drawn from the pipeline itself (a frame_index change would send
+            # the new trajectory's frame, so _frame_data is cleared after it).
+            self.frame_index = 0
+            self._frame_data = b""
+            if first_traj is not None:
+                self.total_frames = first_traj.n_frames
+            else:
+                self.total_frames = self._trajectory.n_frames if self._trajectory is not None else 0
 
     def _fire_event(self, event_name: str, data) -> None:
         """Invoke all registered callbacks for an event."""

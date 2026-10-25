@@ -361,12 +361,63 @@ export function applyStructureToPipeline(
   }
 }
 
+/**
+ * The newest load request per store and per target node. Parses can finish out
+ * of order — the worker reads each file in full first, so a small file dropped
+ * right after a big one can be done first — and a load that is no longer the
+ * newest for its node must not overwrite the one that is.
+ */
+const loadGenerations = new WeakMap<StoreApi<PipelineStore>, Map<string, number>>();
+
+/** Register a load into `target`; the result tells whether it is still the newest. */
+function beginLoad(api: StoreApi<PipelineStore>, target: string): () => boolean {
+  let generations = loadGenerations.get(api);
+  if (!generations) {
+    generations = new Map();
+    loadGenerations.set(api, generations);
+  }
+  const generation = (generations.get(target) ?? 0) + 1;
+  generations.set(target, generation);
+  return () => generations.get(target) === generation;
+}
+
+/**
+ * Register a structure load into the `load_structure` node `loaderId`, for a
+ * load path outside `openFile` (the Load Structure node's own file picker).
+ * The result tells whether it is still the newest load into that node, from
+ * either path.
+ */
+export function beginStructureLoad(api: StoreApi<PipelineStore>, loaderId: string): () => boolean {
+  return beginLoad(api, `structure:${loaderId}`);
+}
+
+/**
+ * Await a load's parse. Resolves to null when a newer load into the same node
+ * started meanwhile, whose result (or failure) is the one that counts; a
+ * failure of the newest load still throws.
+ */
+async function parseUnlessSuperseded<T>(
+  isLatest: () => boolean,
+  parse: Promise<T>,
+): Promise<T | null> {
+  try {
+    const result = await parse;
+    return isLatest() ? result : null;
+  } catch (err) {
+    if (!isLatest()) return null;
+    throw err;
+  }
+}
+
 async function openStructure(
   api: StoreApi<PipelineStore>,
   file: File,
   opts: OpenFileOptions,
 ): Promise<void> {
-  const result = await parseStructureFile(file);
+  const target = opts.targetNodeId ?? findNodeId(api, "load_structure") ?? "";
+  const isLatest = beginStructureLoad(api, target);
+  const result = await parseUnlessSuperseded(isLatest, parseStructureFile(file));
+  if (!result) return;
   const loaderId = ensureStructureLoader(api, opts);
   applyStructureToPipeline(api, loaderId, result, file.name);
 }
@@ -379,17 +430,22 @@ async function openTrajectory(
   const state = api.getState();
   const loaderId = findNodeId(api, "load_structure");
   const loaderSnapshot = loaderId ? state.nodeSnapshots[loaderId]?.snapshot : null;
-  if (!loaderSnapshot) {
+  if (!loaderId || !loaderSnapshot) {
     throw new Error(
       `Cannot open ${file.name}: load a structure file first. Trajectory files require a structure to know the atom count and identities.`,
     );
   }
 
-  const { frames, meta } = await parseTrajectoryByName(
-    file,
-    loaderSnapshot.nAtoms,
-    loaderSnapshot.elements,
+  const target = opts.targetNodeId ?? findNodeId(api, "load_trajectory") ?? "";
+  const isLatest = beginLoad(api, `trajectory:${target}`);
+  const parsed = await parseUnlessSuperseded(
+    isLatest,
+    parseTrajectoryByName(file, loaderSnapshot.nAtoms, loaderSnapshot.elements),
   );
+  // The frames were read against `loaderSnapshot`; a structure opened while
+  // they parsed may have other atoms, so they no longer belong to anything.
+  if (!parsed || api.getState().nodeSnapshots[loaderId]?.snapshot !== loaderSnapshot) return;
+  const { frames, meta } = parsed;
 
   state.setFileFrames(frames, meta ?? null);
 

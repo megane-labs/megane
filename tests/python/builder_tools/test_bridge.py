@@ -306,20 +306,117 @@ async def test_dispose_cancels_releases_and_stops_answering():
     assert client.closed and len(pool) == 0 and len(posted) == before
 
 
-async def test_releases_a_connection_that_finishes_starting_after_the_tab_closed():
+async def test_closing_the_tab_stops_a_connection_still_starting():
+    """A server that never finishes starting is stopped, not left running, when its only tab closes."""
     gate = asyncio.Event()
-    late = FakeClient()
+    stopped = []
 
     async def slow():
-        await gate.wait()
-        return late
+        try:
+            await gate.wait()
+        except asyncio.CancelledError:
+            stopped.append(True)
+            raise
+        return FakeClient()
 
     bridge, _, pool, _, _, _, reply, _ = setup(factory=Factory(slow))
     bridge.handle({"type": "tools:connect", "requestId": 1, "server": "tools"})
     await settle()
     bridge.dispose()
-    gate.set()
     await bridge.drain()
     await settle()
     assert reply(1) is None
-    assert late.closed and len(pool) == 0
+    assert stopped == [True] and len(pool) == 0
+
+
+async def test_closing_one_tab_keeps_a_start_another_tab_waits_for():
+    gate = asyncio.Event()
+    client = FakeClient()
+
+    async def slow():
+        await gate.wait()
+        return client
+
+    pool = ToolServerPool(Factory(slow))
+    tabs = []
+    for _ in range(2):
+        posted = []
+        deps = BridgeDeps(servers=lambda: ([STDIO], []), pool=pool, post=posted.append, log=lambda line: None)
+        tabs.append((BuilderToolsBridge(deps), posted))
+    for bridge, _ in tabs:
+        bridge.handle({"type": "tools:connect", "requestId": 1, "server": "tools"})
+    await settle()
+    tabs[0][0].dispose()
+    await settle()
+    gate.set()
+    await tabs[1][0].drain()
+    assert tabs[1][1][0]["ok"] is True
+    assert tabs[0][1] == []
+    assert not client.closed and len(pool) == 1
+
+
+async def test_pool_closes_a_connection_that_started_as_its_last_waiter_left():
+    started = asyncio.get_running_loop().create_future()
+    client = FakeClient()
+
+    async def slow():
+        return await started
+
+    pool = ToolServerPool(Factory(slow))
+    waiter = asyncio.ensure_future(pool.acquire(STDIO))
+    await settle()
+    (entry,) = pool._entries.values()
+    started.set_result(client)
+    while not entry.client.done():
+        await asyncio.sleep(0)
+    waiter.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await waiter
+    await settle()
+    assert client.closed and len(pool) == 0
+
+
+async def test_pool_close_stops_connections_still_starting():
+    """The Jupyter server's shutdown does not wait for a server that never answers."""
+    stopped = []
+
+    async def never():
+        try:
+            await asyncio.Event().wait()
+        except asyncio.CancelledError:
+            stopped.append(True)
+            raise
+
+    pool = ToolServerPool(Factory(never))
+    waiter = asyncio.ensure_future(pool.acquire(STDIO))
+    await settle()
+    await asyncio.wait_for(pool.close(), 5)
+    assert stopped == [True] and len(pool) == 0
+    with pytest.raises(RuntimeError, match="closed while it was starting"):
+        await waiter
+
+
+async def test_pool_close_gives_up_on_a_start_that_ignores_cancellation(monkeypatch):
+    import megane.builder_tools.bridge as bridge_module
+
+    monkeypatch.setattr(bridge_module, "CLOSE_TIMEOUT_S", 0.05)
+    release = asyncio.Event()
+
+    async def stubborn():
+        while True:
+            try:
+                await release.wait()
+                return FakeClient()
+            except asyncio.CancelledError:
+                continue
+
+    pool = ToolServerPool(Factory(stubborn))
+    waiter = asyncio.ensure_future(pool.acquire(STDIO))
+    await settle()
+    await asyncio.wait_for(pool.close(), 5)
+    assert len(pool) == 0
+    release.set()
+    lease = await waiter
+    lease.release()
+    await settle()
+    assert lease.client.closed

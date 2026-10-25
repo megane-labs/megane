@@ -83,3 +83,31 @@ def test_empty_box_fixture_is_a_cell_without_atoms():
     assert abs(s.box[0, 0] - 10.0) < 1e-4
     assert abs(s.box[1, 1] - 10.0) < 1e-4
     assert abs(s.box[2, 2] - 10.0) < 1e-4
+
+
+def test_model_without_endmdl_is_kept():
+    """``MODEL 1 ... END`` without ``ENDMDL`` is a model, not an empty file."""
+    from megane import megane_parser
+
+    atom = "ATOM  {:>5}  O   HOH A   1    {:8.3}   0.000   0.000  1.00  0.00           O\n"
+    text = "MODEL        1\n" + atom.format(1, 0.0) + atom.format(2, 1.0) + "TER\nEND\n"
+    s = megane_parser.parse_pdb(text)
+    assert s.n_atoms == 2
+
+
+def test_negative_residue_numbers_stay_on_the_backbone():
+    """Expression-tag residues numbered below 1 keep their Cα and helix."""
+    from megane import megane_parser
+
+    text = (
+        "HELIX    1   1 HIS A   -1  MET A    0  1                                   2\n"
+        "ATOM      1  CA  HIS A  -1       0.000   0.000   0.000  1.00  0.00           C\n"
+        "ATOM      2  CA  MET A   0       3.800   0.000   0.000  1.00  0.00           C\n"
+        "ATOM      3  CA  ALA A   1       7.600   0.000   0.000  1.00  0.00           C\n"
+        "END\n"
+    )
+    s = megane_parser.parse_pdb(text)
+    assert s.ca_res_nums.dtype == np.int32
+    assert s.ca_res_nums.tolist() == [-1, 0, 1]
+    assert s.ca_indices.tolist() == [0, 1, 2]
+    assert s.ca_ss_type.tolist() == [1, 1, 0]

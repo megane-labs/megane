@@ -105,6 +105,15 @@ placeholder cell such as `0 0 0 90 90 90`, leaves the structure without a box
 and adds a parser warning rather than failing the load. Cell vectors are never
 written as a 3×3 matrix in MOL2, so no vector form is read.
 
+Note: **MOL2 atom types and charges.** Tripos (SYBYL) types start with the
+element symbol (`C.ar`, `N.am`, `Ca`, `Cl`), so the element is read from the
+part before the first dot. Lowercase GAFF / GAFF2 types, which antechamber
+writes (`ca`, `c3`, `os`, `hc`, `nh`), are force-field types rather than
+symbols: their element is their first letter, except `cl` and `br`, so an
+aromatic `ca` is carbon, not calcium. The per-atom partial charge column is kept
+as the `charge` scalar channel when every atom has one and they are not all
+zero.
+
 Note: **VASP** files are the one format Megane dispatches by **filename**, not
 only by extension: `POSCAR`, `CONTCAR`, and `XDATCAR` are conventionally written
 with no extension at all. `src/parsers/fileNames.ts` maps those bare names (and
@@ -191,10 +200,12 @@ format. Every `COORDINATES OF ALL ATOMS ARE` banner block becomes a frame, so a
 geometry optimisation scrubs on the timeline like a multi-frame XYZ and the
 terminal `EQUILIBRIUM GEOMETRY LOCATED` block is simply the last one. The
 banner's `(ANGS)` / `(BOHR)` argument is honoured, and the element comes from
-the nuclear-charge column — rounded, since ECP runs print a fractional valence
-charge, with the atom label as the fallback when the rounded charge is not an
-element. Bonds are inferred by distance because GAMESS output carries no
-connectivity.
+the nuclear-charge column (rounded) for all-electron atoms. An ECP run prints
+the *valence* charge instead (Pt with a 60-electron core shows `18.0`), so when
+the atom label names an element heavier than the charge by exactly an ECP core
+size, the label's element is used; the label is also the fallback when the
+rounded charge is not an element. Bonds are inferred by distance because GAMESS
+output carries no connectivity.
 
 Note: **`.gamess` is the only extension registered for it.** GAMESS logs are
 normally named `.log` or `.out`, and claiming those in the VS Code

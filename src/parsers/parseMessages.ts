@@ -213,6 +213,12 @@ export interface ParseResponse {
     | TrajectoryFrame0Result
     | DecodeFrameResult;
   error?: string;
+  /**
+   * Set with `ok: false` when the failure leaves the worker unusable — its
+   * WASM module would not start, or trapped mid-call — rather than the
+   * request's input being rejected (a malformed file).
+   */
+  fatal?: boolean;
   /** The worker's WASM heap size after handling the request (see `wasmHeapBytes`). */
   wasmBytes?: number;
 }

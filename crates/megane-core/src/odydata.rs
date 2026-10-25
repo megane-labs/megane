@@ -49,6 +49,9 @@
 //!   [`ParsedStructure`] has no formal-charge channel, so they are skipped.
 //! * `.odydata` bond data lives in the `HESSIAN` block behind a preamble of one
 //!   number per atom; those tokens are skipped before the `i j order` triples.
+//! * `.odydata` bonds and `ATOMLABELS` address atoms by their position in the
+//!   coordinate block, so every atom line is kept: a `0` (dummy) atomic number
+//!   is an unknown-element atom, as is an impossible one (with a warning).
 //!
 //! ## Untrusted input
 //!
@@ -332,7 +335,11 @@ fn parse_text(text: &str) -> Result<Raw, String> {
         }
     };
 
-    // Atom lines are `<atomic number> <x> <y> <z>`, closed by ENDCART.
+    // Atom lines are `<atomic number> <x> <y> <z>`, closed by ENDCART. Every
+    // atom line is kept, because HESSIAN bonds and ATOMLABELS address atoms by
+    // their position in this block: a Z = 0 dummy is an unknown-element atom,
+    // and so is an impossible atomic number (counted in a warning).
+    let mut out_of_range_z = 0usize;
     let mut i = start;
     while i < lines.len() {
         let line = lines[i];
@@ -354,14 +361,17 @@ fn parse_text(text: &str) -> Result<Raw, String> {
             i += 1;
             continue;
         };
-        if !(1..=118).contains(&z) {
-            i += 1;
-            continue;
-        }
+        let element = match z {
+            0..=118 => z as u8,
+            _ => {
+                out_of_range_z += 1;
+                0
+            }
+        };
         // Bonds index atoms 1-based, so the id is the position in the block.
         raw.ids.push((raw.elements.len() + 1).to_string());
         raw.labels.push(String::new());
-        raw.elements.push(z as u8);
+        raw.elements.push(element);
         raw.positions.extend_from_slice(&[x, y, zc]);
         i += 1;
     }
@@ -369,6 +379,11 @@ fn parse_text(text: &str) -> Result<Raw, String> {
     let n_atoms = raw.elements.len();
     if n_atoms == 0 {
         return Err("odydata: no atom lines found before ENDCART".into());
+    }
+    if out_of_range_z > 0 {
+        raw.warnings.push(format!(
+            "{out_of_range_z} atom(s) with an out-of-range atomic number were read as an unknown element (Z = 0)"
+        ));
     }
 
     // ATOMLABELS holds one quoted name per atom, in atom order.
@@ -957,7 +972,10 @@ ENDHESS
     }
 
     #[test]
-    fn the_text_flavour_ignores_an_out_of_range_atomic_number() {
+    fn the_text_flavour_keeps_atoms_with_a_zero_or_out_of_range_atomic_number() {
+        // Every atom line is an atom: a Z = 0 dummy stays an unknown-element
+        // atom, and an impossible Z (999) does too, with a warning, so the
+        // positional ids of the atoms after them do not shift.
         let text = "\
  junk
 0 1
@@ -968,8 +986,44 @@ short line
 ENDCART
 ";
         let s = parse(text).unwrap();
-        assert_eq!(s.n_atoms, 1);
-        assert_eq!(s.elements, vec![6]);
+        assert_eq!(s.n_atoms, 3);
+        assert_eq!(s.elements, vec![0, 6, 0]);
+        assert_eq!(s.positions[3], 1.0);
+        assert_eq!(s.warnings.len(), 1, "{:?}", s.warnings);
+        assert!(s.warnings[0].contains("out-of-range atomic number"));
+    }
+
+    #[test]
+    fn a_dummy_atom_does_not_shift_hessian_bonds_or_atom_labels() {
+        let text = "\
+ water with a dummy
+0 1
+0   0.000000  0.000000  1.500000
+8   0.000000  0.000000  0.117000
+1   0.000000  0.757000 -0.469000
+1   0.000000 -0.757000 -0.469000
+ENDCART
+ATOMLABELS
+\"X1\"
+\"O1\"
+\"H1\"
+\"H2\"
+HESSIAN
+ 0.0 0.0 0.0 0.0
+2 3 1
+2 4 1
+ENDHESS
+";
+        let s = parse(text).unwrap();
+        assert_eq!(s.n_atoms, 4);
+        assert_eq!(s.elements, vec![0, 8, 1, 1]);
+        assert_eq!(s.n_file_bonds, 2);
+        assert_eq!(s.bonds, vec![(1, 2), (1, 3)]);
+        assert_eq!(
+            s.atom_labels.unwrap(),
+            vec!["X1".to_string(), "O1".into(), "H1".into(), "H2".into()]
+        );
+        assert!(s.warnings.is_empty(), "{:?}", s.warnings);
     }
 
     #[test]

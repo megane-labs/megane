@@ -3,6 +3,7 @@
 import asyncio
 import builtins
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -85,6 +86,52 @@ async def test_notices_a_server_going_away():
         await asyncio.sleep(0.05)
     assert "[fake] disconnected" in lines
     await client.close()
+
+
+SILENT = "import os, sys, time; open(sys.argv[1], 'w').write(str(os.getpid())); time.sleep(60)"
+
+
+async def _pid_of(pid_file):
+    for _ in range(200):
+        if pid_file.exists() and pid_file.read_text():
+            return int(pid_file.read_text())
+        await asyncio.sleep(0.05)
+    raise AssertionError("the server never started")
+
+
+async def _gone(pid):
+    for _ in range(200):
+        try:
+            os.kill(pid, 0)
+        except ProcessLookupError:
+            return True
+        await asyncio.sleep(0.05)
+    return False
+
+
+async def test_a_server_that_never_answers_initialize_times_out_and_is_stopped(monkeypatch, tmp_path):
+    """A command that starts but never speaks MCP must not leave the connect pending forever."""
+    import megane.builder_tools.sdk_client as sdk_client
+
+    monkeypatch.setattr(sdk_client, "STDIO_START_TIMEOUT_S", 0.5)
+    pid_file = tmp_path / "pid"
+    lines = []
+    with pytest.raises(TimeoutError, match='"silent" did not answer the MCP initialize request within 0.5 s'):
+        await asyncio.wait_for(
+            connect_with_sdk(stdio(id="silent", args=("-c", SILENT, str(pid_file))), lines.append), 20
+        )
+    assert await _gone(await _pid_of(pid_file))
+    assert lines[-1] == "[silent] disconnected"
+
+
+async def test_cancelling_a_connect_stops_the_starting_server(tmp_path):
+    pid_file = tmp_path / "pid"
+    start = asyncio.ensure_future(connect_with_sdk(stdio(args=("-c", SILENT, str(pid_file))), lambda line: None))
+    pid = await _pid_of(pid_file)
+    start.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await asyncio.wait_for(start, 20)
+    assert await _gone(pid)
 
 
 async def test_a_server_that_fails_to_start_raises():

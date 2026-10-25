@@ -16,6 +16,7 @@ import {
   indexTrajectoryCore,
   indexDumpFileCore,
   decodeLazyFrameCore,
+  parseTrajectoryCore,
   TEXT_INDEX_WINDOW,
   readAheadReader,
   type BlobRangeReader,
@@ -182,6 +183,36 @@ describe("indexDumpFileCore", () => {
   it("rejects a dump whose atom count does not match the structure", async () => {
     const file = new Blob([enc.encode(dumpText(2))]);
     await expect(indexDumpFileCore(file, 9)).rejects.toThrow(/atom count \(4\)/);
+  });
+
+  it("gives every frame its own box when the box changes, as the eager parse does", async () => {
+    // Box 10 → 12 → 12: a constant atom count, so the dump stays lazy.
+    let text = "";
+    [10, 12, 12].forEach((edge, f) => {
+      text += `ITEM: TIMESTEP\n${f}\nITEM: NUMBER OF ATOMS\n1\n`;
+      text += `ITEM: BOX BOUNDS pp pp pp\n0 ${edge}\n0 ${edge}\n0 ${edge}\n`;
+      text += `ITEM: ATOMS id type x y z\n1 1 ${f} 1 1\n`;
+    });
+    const bytes = enc.encode(text);
+    const eager = parseTrajectoryCore({ kind: "lammpstrj", text, expectedNAtoms: 1 });
+    expect(eager.frames.map((f) => f.box?.[0])).toEqual([10, 12, 12]);
+    const file = await indexDumpFileCore(new Blob([bytes]), 1, recordingReader(bytes).read, 64);
+    const memory = indexTrajectoryCore(bytes, "lammpstrj", 1);
+    for (const { decoder, index } of [file, memory]) {
+      expect(index.heterogeneous).toBe(false);
+      expect(index.frameCells).toBe(true);
+      expect(index.box?.[0]).toBe(10);
+      for (let f = 0; f < 3; f++) {
+        const got = await decodeLazyFrameCore(decoder, f);
+        expect(got.positions).toEqual(eager.frames[f].positions);
+        expect(got.box).toEqual(eager.frames[f].box);
+      }
+    }
+    memory.decoder.free();
+    // A constant box rides on no frame, in either path.
+    const uniform = await indexDumpFileCore(new Blob([enc.encode(dumpText(2))]), 4);
+    expect(uniform.index.frameCells).toBe(false);
+    expect((await uniform.decoder.decodeFrame(1)).box).toBeUndefined();
   });
 
   it("reports a jagged dump as heterogeneous", async () => {
