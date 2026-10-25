@@ -14,6 +14,7 @@ import re
 from megane.parsers.common import (
     InMemoryTrajectory,
     Structure,
+    read_text,
     structure_and_trajectory_from_result,
     structure_from_result,
 )
@@ -76,8 +77,7 @@ def _parse_structure_result(path: str):
 
     ext = structure_ext(path)
     if ext in TEXT_PARSERS:
-        with open(path) as f:
-            return getattr(megane_parser, TEXT_PARSERS[ext])(f.read())
+        return getattr(megane_parser, TEXT_PARSERS[ext])(read_text(path))
     if ext in BINARY_PARSERS:
         with open(path, "rb") as f:
             return getattr(megane_parser, BINARY_PARSERS[ext])(f.read())

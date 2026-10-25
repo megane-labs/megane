@@ -7,7 +7,7 @@ import logging
 import numpy as np
 
 from megane import megane_parser
-from megane.parsers.common import Structure, structure_from_result
+from megane.parsers.common import Structure, read_text, structure_from_result
 
 logger = logging.getLogger(__name__)
 
@@ -60,8 +60,7 @@ def load_pdb(path: str) -> Structure:
     faster parsing. The same Rust code is used by the WASM frontend.
     """
     logger.debug("Loading PDB file: %s", path)
-    with open(path) as f:
-        text = f.read()
+    text = read_text(path)
 
     result = megane_parser.parse_pdb(text)
     logger.info("Loaded PDB: %d atoms, %d bonds", result.n_atoms, len(result.bonds))
