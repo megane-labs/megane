@@ -40,6 +40,33 @@ export class RateLimitError extends Error {
   }
 }
 
+/**
+ * The error a provider reports *inside* a stream that started with HTTP 200
+ * (Anthropic's `event: error`, e.g. `overloaded_error`; an OpenAI or
+ * OpenRouter `{"error": {...}}` chunk or `finish_reason: "error"`), as an
+ * exception. Without it the reply cut short by the error would be returned as
+ * if it had ended normally, and a truncated repair round would leave the
+ * unrepaired pipeline applied with nothing said.
+ */
+export function streamError(payload: unknown): Error {
+  const e = (typeof payload === "object" && payload !== null ? payload : {}) as {
+    type?: unknown;
+    code?: unknown;
+    message?: unknown;
+  };
+  const kind =
+    typeof e.type === "string"
+      ? e.type
+      : typeof e.code === "string" || typeof e.code === "number"
+        ? String(e.code)
+        : null;
+  const message = typeof e.message === "string" ? e.message : null;
+  const detail = [kind, message].filter(Boolean).join(": ");
+  return new Error(
+    `The provider stopped the reply with an error${detail ? ` (${detail})` : ""}. Please try again.`,
+  );
+}
+
 // ─── Types for Anthropic SSE parsing ─────────────────────────────────
 
 interface ToolUseAccumulator {
@@ -344,7 +371,9 @@ async function readAnthropicSSE(
           continue;
         }
 
-        if (currentEvent === "content_block_start") {
+        if (currentEvent === "error" || parsed.type === "error") {
+          throw streamError(parsed.error);
+        } else if (currentEvent === "content_block_start") {
           const block = parsed.content_block as Record<string, unknown> | undefined;
           if (block?.type === "tool_use") {
             activeToolUse = {
@@ -503,8 +532,10 @@ async function readOpenAISSE(
         continue;
       }
 
+      if (parsed.error) throw streamError(parsed.error);
       const choice = (parsed.choices as Array<Record<string, unknown>> | undefined)?.[0];
       if (!choice) continue;
+      if (choice.finish_reason === "error") throw streamError(null);
 
       const delta = choice.delta as Record<string, unknown> | undefined;
       if (typeof delta?.content === "string" && delta.content) {
