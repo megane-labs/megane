@@ -16,6 +16,7 @@ import { StrictMode, useState, useEffect, useCallback } from "react";
 import { createRoot } from "react-dom/client";
 import { MeganeViewer } from "../../src/components/MeganeViewer";
 import { useMeganeLocal } from "../../src/hooks/useMeganeLocal";
+import { useTemplateData } from "../../src/hooks/useTemplateData";
 import { usePipelineStore } from "../../src/pipeline/store";
 import { usePlaybackStore } from "../../src/stores/usePlaybackStore";
 import type { SerializedPipeline } from "../../src/pipeline/types";
@@ -74,6 +75,8 @@ interface VsCodeState {
 function App() {
   const local = useMeganeLocal();
   useTour({ host: "vscode" });
+  // Applying a template from the editor loads its demo files over this file.
+  useTemplateData(local);
   const [loaded, setLoaded] = useState(false);
   const [error, setError] = useState<string | null>(null);
 

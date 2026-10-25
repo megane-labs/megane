@@ -41,6 +41,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ### Fixed
 
+- **Templates load their scene in the JupyterLab and VS Code viewers.** Picking a template from the pipeline editor's *Templates* menu there replaced the graph but never loaded the template's demo files, so the file the user had opened stayed on screen under a graph that named something else. The webapp's template loading is now shared (`useTemplateData`, `loadTemplateData` in `src/pipeline/templateAssets.ts`) and mounted by the webapp, the JupyterLab structure and Pipeline viewers and the VS Code webview; the fixtures ship as assets of each bundle and are fetched only when a template is applied.
+
 - **The web app no longer requests `/api/files` where the server offers no file browsing.** It asked at every start, so the docs site's app, a static deployment, the Docker image (`--no-files`) and a `megane serve` opened from another machine each logged a 404 or 403 in the browser console. `megane serve` now marks the page it serves (`<meta name="megane-server-files">`) when file browsing is on for that browser, and the app asks only then (or under the Vite dev server, which proxies `/api` to `megane serve`).
 
 ## [0.18.0] - 2026-10-20

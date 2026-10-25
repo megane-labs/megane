@@ -17,24 +17,9 @@ import { usePipelineStore } from "./pipeline/store";
 import { usePlaybackStore } from "./stores/usePlaybackStore";
 import { restorePipelineFromHash } from "./pipeline/shareLink";
 import { useTour } from "./tour/useTour";
-import { parseXTCFile } from "./parsers/xtc";
-import { loadMultiFileTemplate } from "./pipeline/templateAssets";
-import type { TemplateAssetSources } from "./pipeline/templateAssets";
-import { MemoryFrameProvider } from "./pipeline/types";
+import { useTemplateData } from "./hooks/useTemplateData";
 import defaultPDB from "../tests/fixtures/caffeine_water.pdb?raw";
 import defaultXtcUrl from "../tests/fixtures/caffeine_water_vibration.xtc?url";
-import perovskiteXYZ from "../tests/fixtures/perovskite_srtio3_3x3x3.xyz?raw";
-import auNanoparticleXYZ from "../tests/fixtures/au_nanoparticle.xyz?raw";
-import ubiquitinPDB from "../tests/fixtures/1ubq.pdb?raw";
-import ubiquitinCgPDB from "../tests/fixtures/1ubq_cg.pdb?raw";
-import glycineCIF from "../tests/fixtures/glycine_csd.cif?raw";
-import caffeineB3lypSDF from "../tests/fixtures/caffeine_b3lyp.sdf?raw";
-// The larger template files are fetched rather than inlined: a 170 kB PDB entry
-// and two ~460 kB DFT grids belong in emitted assets, not in the entry bundle
-// every visitor downloads.
-import proteasePdbUrl from "../tests/fixtures/1hsg.pdb?url";
-import caffeineDensityCubeUrl from "../tests/fixtures/caffeine_b3lyp_density.cube?url";
-import caffeineEspCubeUrl from "../tests/fixtures/caffeine_b3lyp_esp.cube?url";
 import "./styles/megane.css";
 import { ThemeSync } from "./components/ThemeSync";
 import { ErrorBoundary } from "./components/ErrorBoundary";
@@ -45,15 +30,6 @@ import { detectServerFileSource, shouldProbeServerFiles } from "./remote/serverF
 import type { DataMode } from "./types";
 import type { StructureParseResult } from "./parsers/structure";
 export type { DataMode };
-
-/** Bundled fixtures for the templates that load more than one file. */
-const TEMPLATE_ASSETS: TemplateAssetSources = {
-  caffeineB3lypSdf: caffeineB3lypSDF,
-  caffeineDensityCubeUrl,
-  caffeineEspCubeUrl,
-  ubiquitinPdb: ubiquitinPDB,
-  ubiquitinCgPdb: ubiquitinCgPDB,
-};
 
 function App() {
   const [mode] = useState<DataMode>("local");
@@ -83,61 +59,10 @@ function App() {
     })().catch(() => {});
   }, []);
 
-  // Load data when a pipeline template is applied
-  const pendingTemplateId = usePipelineStore((s) => s.pendingTemplateId);
-  const clearPendingTemplate = usePipelineStore((s) => s.clearPendingTemplate);
-
-  useEffect(() => {
-    if (!pendingTemplateId) return;
-    trackEvent("apply_template", { template_id: pendingTemplateId });
-    (async () => {
-      if (pendingTemplateId === "molecule") {
-        await ds.local.loadText(defaultPDB, "caffeine_water.pdb");
-        const resp = await fetch(defaultXtcUrl);
-        const blob = await resp.blob();
-        const xtcFile = new File([blob], "caffeine_water_vibration.xtc");
-        await ds.local.loadXtc(xtcFile);
-      } else if (pendingTemplateId === "solid") {
-        await ds.local.loadText(perovskiteXYZ, "perovskite_srtio3_3x3x3.xyz");
-      } else if (pendingTemplateId === "molecular_crystal") {
-        await ds.local.loadText(glycineCIF, "glycine_csd.cif");
-      } else if (pendingTemplateId === "surface_mesh") {
-        await ds.local.loadText(auNanoparticleXYZ, "au_nanoparticle.xyz");
-      } else if (pendingTemplateId === "protein") {
-        const proteasePdb = await (await fetch(proteasePdbUrl)).text();
-        await ds.local.loadText(proteasePdb, "1hsg.pdb");
-      } else if (pendingTemplateId === "streaming") {
-        // Load via ds.local so ds.snapshot updates → Viewport.loadSnapshot uses caffeine atoms
-        const result = await ds.local.loadText(defaultPDB, "caffeine_water.pdb");
-        const resp = await fetch(defaultXtcUrl);
-        const blob = await resp.blob();
-        const xtcFile = new File([blob], "caffeine_water_vibration.xtc");
-        const { frames, meta } = await parseXTCFile(xtcFile, result.snapshot.nAtoms);
-        const store = usePipelineStore.getState();
-        const streamNode = store.nodes.find((n) => n.type === "streaming");
-        if (streamNode) {
-          const provider = meta
-            ? new MemoryFrameProvider(frames, meta, result.snapshot.positions)
-            : null;
-          store.setNodeStreamingData(streamNode.id, {
-            snapshot: result.snapshot,
-            streamProvider: provider,
-          });
-          store.updateNodeParams(streamNode.id, { connected: true });
-        }
-      } else {
-        // Templates that need more than one file (a cube for an isosurface, a
-        // second structure to overlay) load through the pipeline-side helper.
-        await loadMultiFileTemplate(
-          pendingTemplateId,
-          TEMPLATE_ASSETS,
-          usePipelineStore.getState,
-          ds.local.loadText,
-        );
-      }
-      clearPendingTemplate();
-    })().catch(() => {});
-  }, [pendingTemplateId]);
+  // Load a pipeline template's demo files when the editor applies one.
+  useTemplateData(ds.local, (templateId) =>
+    trackEvent("apply_template", { template_id: templateId }),
+  );
 
   const handleSeek = useCallback(
     (frameIdx: number) => {

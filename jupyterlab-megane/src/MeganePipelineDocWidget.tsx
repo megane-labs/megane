@@ -4,6 +4,8 @@ import type { Contents } from "@jupyterlab/services";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { MeganeViewer } from "@megane/components/MeganeViewer";
 import { ErrorBoundary } from "@megane/components/ErrorBoundary";
+import { useMeganeLocal } from "@megane/hooks/useMeganeLocal";
+import { useTemplateData } from "@megane/hooks/useTemplateData";
 import { usePipelineStore } from "@megane/pipeline/store";
 import { capturePipelineStore, type PipelineStoreSnapshot } from "@megane/pipeline/storeSnapshot";
 import { useTour } from "@megane/tour/useTour";
@@ -46,6 +48,9 @@ function DocBody({
 }: DocBodyProps): JSX.Element {
   const [state, setState] = useState<LoadState>("loading");
   useTour({ host: "jupyterlab" });
+  // The pipeline itself opens through `openFile`; the local loader is only
+  // the structure path a template's demo files load through.
+  useTemplateData(useMeganeLocal());
 
   // Cached store state captured after the first parse. Subsequent tab
   // activations restore from this cache instead of re-parsing.

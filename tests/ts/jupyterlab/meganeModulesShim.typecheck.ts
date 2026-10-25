@@ -21,6 +21,8 @@ import type {
   MeganeCameraState as ShimCameraState,
 } from "@megane/components/MeganeViewer";
 import type { MeganeLocalState as ShimLocalState } from "@megane/hooks/useMeganeLocal";
+import type { useTemplateData as realUseTemplateData } from "@/hooks/useTemplateData";
+import type { useTemplateData as shimUseTemplateData } from "@megane/hooks/useTemplateData";
 import type {
   SelectionState as ShimSelection,
   Measurement as ShimMeasurement,
@@ -66,6 +68,13 @@ export type MeganeModulesShimChecks = [
   // shim lists is missing from it.
   Assert<Assignable<RealLocalState, ShimLocalState>>,
   Assert<NoExtraKeys<ShimLocalState, RealLocalState>>,
+  // The template hook the DocWidgets mount: the real local loader they pass
+  // satisfies it, and the rest of its signature matches the mirror.
+  Assert<Assignable<RealLocalState, Parameters<typeof realUseTemplateData>[0]>>,
+  Assert<
+    Equal<Parameters<typeof shimUseTemplateData>[1], Parameters<typeof realUseTemplateData>[1]>
+  >,
+  Assert<Equal<ReturnType<typeof shimUseTemplateData>, ReturnType<typeof realUseTemplateData>>>,
   // Helpers the DocWidgets call to read and parse a document fast.
   Assert<Equal<typeof shimDecodeBase64, typeof realDecodeBase64>>,
   Assert<Equal<typeof shimFileFromBytes, typeof realFileFromBytes>>,
