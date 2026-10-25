@@ -36,6 +36,11 @@ import { registerTestStores, GLOBAL_BUNDLE_ID } from "../stores/testRegistry";
 
 let nextNodeId = 1;
 
+/** `record` without the entries keyed by `keys`. */
+function withoutKeys<T>(record: Record<string, T>, keys: ReadonlySet<string>): Record<string, T> {
+  return Object.fromEntries(Object.entries(record).filter(([key]) => !keys.has(key)));
+}
+
 function generateNodeId(): string {
   return `node-${nextNodeId++}`;
 }
@@ -427,8 +432,17 @@ export const pipelineStateCreator: StateCreator<PipelineStore> = (set, get, api)
       return true;
     });
     if (filtered.length === 0) return;
+    const removed = new Set(filtered.flatMap((c) => (c.type === "remove" ? [c.id] : [])));
     set((state) => ({
       nodes: applyNodeChanges(filtered, state.nodes),
+      // A node deleted with the Delete key takes its per-node data with it,
+      // as removeNode does; a stale entry would otherwise be picked up by any
+      // later node given the same id.
+      ...(removed.size > 0 && {
+        nodeSnapshots: withoutKeys(state.nodeSnapshots, removed),
+        nodeParseErrors: withoutKeys(state.nodeParseErrors, removed),
+        nodeStreamingData: withoutKeys(state.nodeStreamingData, removed),
+      }),
     }));
     // Only re-execute pipeline for structural changes (node removal),
     // not for position/dimension/selection changes which don't affect pipeline logic.

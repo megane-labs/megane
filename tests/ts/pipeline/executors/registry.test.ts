@@ -219,6 +219,81 @@ describe("per-node executors", () => {
     expect(noLoader.errors).toEqual([]);
   });
 
+  describe("two loaders in one graph", () => {
+    const loaderNode = (id: string): Node<PipelineNodeData> => ({
+      id,
+      type: "load_structure",
+      position: { x: 0, y: 0 },
+      data: { params: defaultParams("load_structure"), enabled: true },
+    });
+    const nodes = [loaderNode("ls1"), loaderNode("ls2")];
+    const framesOf = (n: number) =>
+      Array.from({ length: n }, (_, i) => ({
+        frameId: i + 1,
+        nAtoms: 1,
+        positions: new Float32Array(3),
+      }));
+    const metaOf = (n: number) =>
+      ({ nFrames: n + 1, timestepPs: 1, nAtoms: 1 }) as TrajectoryData["meta"];
+    const provider = {
+      meta: metaOf(40),
+      getFrame: () => null,
+    } as unknown as TrajectoryData["provider"];
+
+    it("load_trajectory in structure mode plays the loader wired to it", () => {
+      const ctx = {
+        nodeSnapshots: {
+          ls1: { snapshot: snapshot(), frames: framesOf(3), meta: metaOf(3), labels: null },
+          ls2: { snapshot: snapshot(), frames: framesOf(7), meta: metaOf(7), labels: null },
+        },
+      };
+      const wired = { ...particle(), sourceNodeId: "ls2" };
+      const r = run("load_trajectory", {
+        params: { source: "structure" },
+        inputs: { particle: [wired] },
+        nodes,
+        ctx,
+      });
+      expect((r.result.outputs!.get("trajectory") as TrajectoryData).meta.nFrames).toBe(8);
+      // Unwired, it still falls back to the graph's first loader.
+      const unwired = run("load_trajectory", { params: { source: "structure" }, nodes, ctx });
+      expect((unwired.result.outputs!.get("trajectory") as TrajectoryData).meta.nFrames).toBe(4);
+    });
+
+    it("only the first loader takes the global structure frames and provider", () => {
+      const ctx = {
+        nodeSnapshots: {
+          ls1: { snapshot: snapshot(), frames: null, meta: null, labels: null },
+          ls2: { snapshot: snapshot(), frames: null, meta: null, labels: null },
+        },
+        structureProvider: provider,
+        structureFrames: framesOf(5),
+        structureMeta: metaOf(5),
+      };
+      const primary = run("load_structure", { id: "ls1", nodes, ctx });
+      expect((primary.result.outputs!.get("trajectory") as TrajectoryData).provider).toBe(provider);
+
+      const second = run("load_structure", { id: "ls2", nodes, ctx });
+      expect(second.result.outputs!.has("particle")).toBe(true);
+      expect(second.result.outputs!.has("trajectory")).toBe(false);
+      const eagerOnly = run("load_structure", {
+        id: "ls2",
+        nodes,
+        ctx: { ...ctx, structureProvider: null },
+      });
+      expect(eagerOnly.result.outputs!.has("trajectory")).toBe(false);
+    });
+
+    it("a loader without data of its own still falls back to every global channel", () => {
+      const r = run("load_structure", {
+        id: "ls2",
+        nodes,
+        ctx: { snapshot: snapshot(), structureProvider: provider },
+      });
+      expect((r.result.outputs!.get("trajectory") as TrajectoryData).provider).toBe(provider);
+    });
+  });
+
   it("streaming warns until the stream delivers a snapshot", () => {
     expect(messages(run("streaming"))).toEqual(["No streaming data available"]);
     const r = run("streaming", {
