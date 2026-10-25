@@ -112,6 +112,7 @@
     "test:e2e:phase2": "playwright test --grep-invert='@phase0' --project=modify-node__webapp --project=camera__webapp --project=measurement__webapp --project=subsystem-rendering__webapp --project=trajectory-bonds__webapp",
     "test:all": "vitest run && playwright test",
     "bench:llm": "vitest run tests/ts/bench/llm.bench.test.ts",
+    "bench:flow": "vitest run tests/ts/bench/flow.bench.test.ts",
     "lint": "eslint src/",
     "lint:fix": "eslint src/ --fix",
     "format": "prettier --write src/",

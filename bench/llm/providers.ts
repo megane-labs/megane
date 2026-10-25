@@ -73,7 +73,7 @@ const ANTHROPIC_MAX_TOKENS = 16000;
 
 /**
  * Repair rounds the benchmark allows, matching `MAX_REPAIR_ROUNDS` in
- * `src/ai/client.ts`. Kept as its own constant rather than imported so a
+ * `src/ai/generation.ts`. Kept as its own constant rather than imported so a
  * deliberate change to production behaviour shows up as a benchmark diff to
  * review, not a silent shift in what the scores mean.
  */
@@ -145,22 +145,52 @@ export interface GenerationStats {
 }
 
 /**
+ * What one kind of generation brings to {@link generateLive}: the production
+ * `GenerationSpec` (`src/ai/generation.ts`) with the bench's skill shape.
+ */
+export interface LiveSpec {
+  system: string;
+  skills: BenchSkill[];
+  /** The production self-check: null when the reply stands, else the repair prompt. */
+  diagnose: (text: string) => { prompt: string } | null;
+}
+
+/**
  * Generate a pipeline response for one prompt. Returns the full model text
  * (JSON code block + trailing explanation), ready to hand to the scorer.
  */
-export async function generatePipelineLive(
+export function generatePipelineLive(
   config: ProviderConfig,
   userMessage: string,
   fetchImpl: FetchLike = fetch,
   stats?: GenerationStats,
 ): Promise<string> {
-  const system = buildSystemPrompt();
-  const skills = loadSkills();
+  // No structure is loaded in the benchmark, so the self-check runs its static
+  // half (schema, query syntax, edge typing, overlapping branches, graph
+  // wiring) plus the unparsable-JSON retry.
+  const spec: LiveSpec = {
+    system: buildSystemPrompt(),
+    skills: loadSkills(),
+    diagnose: (text) => diagnoseResponse(text, {}),
+  };
+  return generateLive(config, spec, userMessage, fetchImpl, stats);
+}
 
-  // One live conversation, driven the same way production drives it: generate,
-  // check the result, and feed any findings back into the *same* history so the
-  // model repairs its own pipeline. Without this the benchmark would score the
-  // raw first attempt and miss what users actually get.
+/**
+ * Drive one live conversation the way production drives it: generate, run
+ * `spec.diagnose` on the reply, and feed any findings back into the *same*
+ * history so the model repairs its own output, up to `MAX_REPAIR_ROUNDS`.
+ * Without this a benchmark would score the raw first attempt and miss what
+ * users actually get. Shared by the pipeline and the Flow benchmarks.
+ */
+export async function generateLive(
+  config: ProviderConfig,
+  spec: LiveSpec,
+  userMessage: string,
+  fetchImpl: FetchLike = fetch,
+  stats?: GenerationStats,
+): Promise<string> {
+  const { system, skills } = spec;
   const anthropicMessages: Array<{ role: string; content: unknown }> = [];
   const openAIMessages: OpenAIMessage[] = [{ role: "system", content: system }];
   const send = (message: string): Promise<string> => {
@@ -174,10 +204,7 @@ export async function generatePipelineLive(
 
   let text = await send(userMessage);
   for (let round = 0; round < MAX_REPAIR_ROUNDS; round++) {
-    // No structure is loaded in the benchmark, so this runs the static half of
-    // the self-check (schema, query syntax, edge typing, overlapping branches,
-    // graph wiring) plus the unparsable-JSON retry.
-    const findings = diagnoseResponse(text, {});
+    const findings = spec.diagnose(text);
     if (!findings) break;
     if (stats) stats.repairRounds += 1;
     text = await send(findings.prompt);
