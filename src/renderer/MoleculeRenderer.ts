@@ -27,8 +27,13 @@ import { SurfaceRenderer } from "./SurfaceRenderer";
 import { LineRenderer } from "./LineRenderer";
 import { AtomLayerGroup } from "./AtomLayerGroup";
 import { representationFlags, type RepresentationType } from "./representation";
-import type { DrawingBoundaryData, PeriodicAtomImageData } from "../pipeline/types";
+import type {
+  DrawingBoundaryData,
+  PeriodicAtomImageData,
+  PeriodicImageMap,
+} from "../pipeline/types";
 import { generateDrawingBoundaryImages } from "../logic/cellBoundaryImages";
+import { positionsWithPeriodicImages } from "../logic/periodicImages";
 import type { MeshData } from "../pipeline/types";
 import type { ClientRect } from "./Picking";
 import { FpsCounter } from "./FpsCounter";
@@ -150,7 +155,17 @@ export class MoleculeRenderer {
     positions: Float32Array | null;
     elements: Uint8Array | null;
     nAtoms: number;
+    imageMap: PeriodicImageMap | null;
   } | null = null;
+  /**
+   * Periodic ghost endpoints the bond mesh draws after the real atoms (the
+   * half-bonds of bonds that cross the cell), as source atom + lattice shift,
+   * so each trajectory frame can move them with their atoms. Null when the
+   * bond mesh has no ghosts or they cannot be re-derived.
+   */
+  private bondImageMap: PeriodicImageMap | null = null;
+  /** Reused per-frame buffer: frame positions followed by the moved ghosts. */
+  private bondFramePositions: Float32Array | null = null;
   /** Axes-inset drag state */
   private axesDragging = false;
   private axesDragLastX = 0;
@@ -493,7 +508,11 @@ export class MoleculeRenderer {
       this.atomRenderer.updatePositions(frame.positions);
       this.labelOverlay?.setPositions(frame.positions);
       this.arrowRenderer?.setAtomPositions(frame.positions, frame.nAtoms);
-      this.bondRenderer.updatePositions(frame.positions, this.snapshot.bonds, this.snapshot.nBonds);
+      this.bondRenderer.updatePositions(
+        this.bondPositionsForFrame(frame),
+        this.snapshot.bonds,
+        this.snapshot.nBonds,
+      );
     }
 
     // Per-frame unit cell (heterogeneous cell), independent of topology.
@@ -600,12 +619,35 @@ export class MoleculeRenderer {
   }
 
   /**
+   * The bond mesh's positions for a positions-only trajectory frame: the
+   * frame's atoms, then the ghost endpoints of cell-crossing half-bonds moved
+   * with their source atoms (in the frame's cell when it carries one). Without
+   * ghosts this is the frame's own array.
+   */
+  private bondPositionsForFrame(frame: Frame): Float32Array {
+    const images = this.bondImageMap;
+    const box = frame.box ?? this.snapshot?.box;
+    if (!images || !box || !this.snapshot || frame.nAtoms !== this.snapshot.nAtoms) {
+      return frame.positions;
+    }
+    this.bondFramePositions = positionsWithPeriodicImages(
+      frame.positions,
+      frame.nAtoms,
+      images,
+      box,
+      this.bondFramePositions,
+    );
+    return this.bondFramePositions;
+  }
+
+  /**
    * Replace bond data and re-render bonds without resetting the camera.
    * Used for per-frame bond recalculation (e.g. distance-based bonds).
    */
   updateBonds(bonds: Uint32Array, bondOrders: Uint8Array | null): void {
     this.requestRender();
     if (!this.snapshot || !this.bondRenderer) return;
+    this.bondImageMap = null;
     const positions = this.currentPositions ?? this.snapshot.positions;
     const updated: Snapshot = {
       ...this.snapshot,
@@ -625,6 +667,8 @@ export class MoleculeRenderer {
    * Replace bond data with optional extended positions/elements (PBC ghost atoms).
    * When positions/elements are provided, they include ghost atoms appended to
    * the original arrays, and bond indices may reference those ghost atoms.
+   * `imageMap` says which atom and lattice shift each ghost copies, so
+   * trajectory frames move the ghosts too (see `BondData.imageMap`).
    */
   updateBondsExt(
     bonds: Uint32Array,
@@ -632,6 +676,7 @@ export class MoleculeRenderer {
     positions: Float32Array | null,
     elements: Uint8Array | null,
     nAtoms: number,
+    imageMap: PeriodicImageMap | null = null,
   ): void {
     this.requestRender();
     if (!this.snapshot || !this.bondRenderer) {
@@ -639,7 +684,7 @@ export class MoleculeRenderer {
       // parent-before-child effect ordering). Stash the args and replay them
       // in loadSnapshot, since applyViewportState may never call us again
       // (its bondIndices memo guard skips identical references).
-      this.pendingBonds = { bonds, bondOrders, positions, elements, nAtoms };
+      this.pendingBonds = { bonds, bondOrders, positions, elements, nAtoms, imageMap };
       return;
     }
     // Reached the live path — any earlier stash is now superseded.
@@ -647,6 +692,11 @@ export class MoleculeRenderer {
     const pos = positions ?? this.currentPositions ?? this.snapshot.positions;
     const elems = elements ?? this.snapshot.elements;
     const atomCount = nAtoms || this.snapshot.nAtoms;
+    // Keep the map only when it describes exactly the ghosts appended here.
+    this.bondImageMap =
+      positions && imageMap && imageMap.sourceIndices.length === atomCount - this.snapshot.nAtoms
+        ? imageMap
+        : null;
     const extSnap = {
       ...this.snapshot,
       nAtoms: atomCount,
@@ -672,7 +722,7 @@ export class MoleculeRenderer {
     if (!this.pendingBonds) return;
     const p = this.pendingBonds;
     this.pendingBonds = null;
-    this.updateBondsExt(p.bonds, p.bondOrders, p.positions, p.elements, p.nAtoms);
+    this.updateBondsExt(p.bonds, p.bondOrders, p.positions, p.elements, p.nAtoms, p.imageMap);
   }
 
   /** Set per-atom labels for overlay display. */

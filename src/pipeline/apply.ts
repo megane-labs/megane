@@ -379,6 +379,7 @@ function applyBondSettings(
       bond.positions,
       bond.elements,
       bond.nAtoms,
+      bond.imageMap ?? null,
     );
   }
 
