@@ -1067,7 +1067,12 @@ export class MoleculeRenderer {
     }
     if (this.surfaceRenderer) {
       if (showSurface && this.snapshot) {
-        this.surfaceRenderer.loadSnapshot(this.snapshot);
+        // At the frame on screen: a hidden surface skips trajectory frames
+        // (see updateFrame), and the snapshot holds frame 0's positions.
+        this.surfaceRenderer.loadSnapshot({
+          ...this.snapshot,
+          positions: this.getCurrentPositions(),
+        });
       }
       this.surfaceRenderer.setVisible(showSurface);
     }
