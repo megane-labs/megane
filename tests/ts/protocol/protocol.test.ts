@@ -58,15 +58,27 @@ describe("decodeSnapshot", () => {
     box?: number[];
     boxOrigin?: number[];
     symmetryOps?: string[];
+    nFileBonds?: number;
   }): ArrayBuffer {
-    const { nAtoms, nBonds, positions, elements, bonds, bondOrders, box, boxOrigin, symmetryOps } =
-      opts;
+    const {
+      nAtoms,
+      nBonds,
+      positions,
+      elements,
+      bonds,
+      bondOrders,
+      box,
+      boxOrigin,
+      symmetryOps,
+      nFileBonds,
+    } = opts;
 
     let flags = 0;
     if (bondOrders) flags |= 0x01; // HAS_BOND_ORDERS
     if (box) flags |= 0x02; // HAS_BOX
     if (boxOrigin) flags |= 0x08; // HAS_BOX_ORIGIN
     if (symmetryOps) flags |= 0x10; // HAS_SYMMETRY_OPS
+    if (nFileBonds !== undefined) flags |= 0x20; // HAS_FILE_BOND_COUNT
     const symRaw = symmetryOps ? new TextEncoder().encode(symmetryOps.join("\n")) : null;
 
     // Calculate total size
@@ -79,6 +91,7 @@ describe("decodeSnapshot", () => {
     if (box) size += 36;
     if (boxOrigin) size += 12;
     if (symRaw) size += 4 + symRaw.length + ((4 - ((4 + symRaw.length) % 4)) % 4);
+    if (nFileBonds !== undefined) size += 4;
 
     const buf = new ArrayBuffer(size);
     const view = new DataView(buf);
@@ -153,8 +166,57 @@ describe("decodeSnapshot", () => {
       offset += (4 - (offset % 4)) % 4;
     }
 
+    // File-declared bond count (last field)
+    if (nFileBonds !== undefined) {
+      view.setUint32(offset, nFileBonds, true);
+      offset += 4;
+    }
+
     return buf;
   }
+
+  describe("file-declared bond count", () => {
+    const water = {
+      nAtoms: 3,
+      nBonds: 2,
+      positions: [0, 0, 0, 0.96, 0, 0, -0.96, 0, 0],
+      elements: [8, 1, 1],
+      bonds: [0, 1, 0, 2],
+    };
+
+    it("reads nFileBonds when the flag is set", () => {
+      // A PDB without CONECT records: both bonds were inferred by the parser.
+      const snap = decodeSnapshot(makeSnapshotBuffer({ ...water, nFileBonds: 0 }));
+      expect(snap.nBonds).toBe(2);
+      expect(snap.nFileBonds).toBe(0);
+    });
+
+    it("reads it after the box, origin and symmetry ops", () => {
+      const snap = decodeSnapshot(
+        makeSnapshotBuffer({
+          ...water,
+          bondOrders: [1, 1],
+          box: [10, 0, 0, 0, 10, 0, 0, 0, 10],
+          boxOrigin: [1, 2, 3],
+          symmetryOps: ["x,y,z"],
+          nFileBonds: 1,
+        }),
+      );
+      expect(snap.nFileBonds).toBe(1);
+      expect(Array.from(snap.boxOrigin!)).toEqual([1, 2, 3]);
+      expect(snap.symmetryOps).toEqual(["x,y,z"]);
+    });
+
+    it("never reports more file bonds than bonds", () => {
+      const snap = decodeSnapshot(makeSnapshotBuffer({ ...water, nFileBonds: 7 }));
+      expect(snap.nFileBonds).toBe(2);
+    });
+
+    it("counts every bond as declared for a sender without the field", () => {
+      const snap = decodeSnapshot(makeSnapshotBuffer(water));
+      expect(snap.nFileBonds).toBe(2);
+    });
+  });
 
   it("decodes symmetry ops when the flag is set", () => {
     const buf = makeSnapshotBuffer({

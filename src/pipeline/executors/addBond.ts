@@ -488,6 +488,16 @@ export function executeAddBond(
   let topology: PeriodicBondTopologyData | null = null;
   if (params.bondSource === "structure" && snapshot.nFileBonds > 0) {
     topology = topologyFromPairs(snapshot.bonds, snapshot.bondOrders, particleData);
+  } else if (params.bondSource === "structure" && snapshot.nBonds > 0) {
+    // The file declares no bonds (a PDB without CONECT records): every bond
+    // the snapshot carries was inferred by the parser, so infer them here the
+    // way the "distance" source does — with this node's vdwScale and across
+    // periodic boundaries. A structure carrying no bonds at all stays bondless:
+    // edit ops assert their bond set, so deleting every bond must stick.
+    topology = inferDistancePeriodicTopology(
+      particleData,
+      params.vdwScale ?? DEFAULT_VDW_BOND_FACTOR,
+    );
   } else if (params.bondSource === "file") {
     const raw = params.bondFileData;
     if (raw && raw.length >= 2) {

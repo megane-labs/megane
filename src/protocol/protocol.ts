@@ -19,6 +19,7 @@ const HAS_BOX = 0x02;
 const HAS_FRAME_ELEMENTS = 0x04;
 const HAS_BOX_ORIGIN = 0x08;
 const HAS_SYMMETRY_OPS = 0x10;
+const HAS_FILE_BOND_COUNT = 0x20;
 
 export function decodeHeader(buffer: ArrayBuffer): {
   msgType: number;
@@ -93,10 +94,20 @@ export function decodeSnapshot(buffer: ArrayBuffer): Snapshot {
     offset += (4 - (offset % 4)) % 4; // alignment padding
   }
 
+  // How many leading bonds the file itself declares (optional, if
+  // HAS_FILE_BOND_COUNT flag); the rest were inferred by the parser. A sender
+  // that predates the field leaves the flag unset, and every bond it sends
+  // then counts as declared, as before.
+  let nFileBonds = nBonds;
+  if (flags & HAS_FILE_BOND_COUNT) {
+    nFileBonds = Math.min(view.getUint32(offset, true), nBonds);
+    offset += 4;
+  }
+
   return {
     nAtoms,
     nBonds,
-    nFileBonds: nBonds,
+    nFileBonds,
     positions,
     elements,
     bonds,
