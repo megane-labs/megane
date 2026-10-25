@@ -160,8 +160,20 @@ fn dcd_cell_angles(alpha_raw: f64, beta_raw: f64, gamma_raw: f64) -> (f32, f32, 
 
 // ── public API ───────────────────────────────────────────────────────────────
 
-/// Parse a DCD binary trajectory and return all frames.
-pub fn parse_dcd(data: &[u8]) -> Result<DcdData, String> {
+/// What a DCD's header blocks say, and where its frames start.
+struct DcdHeader {
+    le: bool,
+    nset: usize,
+    nsavc: usize,
+    delta_ps: f32,
+    has_cell: bool,
+    n_atoms: usize,
+    /// Byte offset of the first frame (just past the NATOM block).
+    frames_start: usize,
+}
+
+/// Read the header, title and NATOM blocks from the start of `data`.
+fn read_header(data: &[u8]) -> Result<DcdHeader, String> {
     if data.len() < 96 {
         // Minimum: header block(92) + title(8) + natom(12) = 112, but be lenient.
         return Err("DCD file too small".into());
@@ -258,12 +270,163 @@ pub fn parse_dcd(data: &[u8]) -> Result<DcdData, String> {
         return Err("DCD file reports zero atoms".into());
     }
 
+    Ok(DcdHeader {
+        le,
+        nset,
+        nsavc,
+        delta_ps,
+        has_cell,
+        n_atoms,
+        frames_start: reader.pos,
+    })
+}
+
+impl DcdHeader {
+    fn timestep_ps(&self) -> f32 {
+        if self.delta_ps > 0.0 {
+            self.delta_ps * self.nsavc as f32
+        } else {
+            1.0
+        }
+    }
+}
+
+/// Decode a CHARMM unit-cell record (6 × float64: A, gamma, B, beta, alpha, C).
+fn read_cell(cell: &[u8], le: bool) -> [f32; 9] {
+    // CHARMM XTL order: A, gamma, B, beta, alpha, C. Lengths are
+    // Angstroms; angle slots hold cosines (NAMD) or degrees (CHARMM).
+    let f = |off: usize| {
+        if le {
+            read_f64_le(cell, off)
+        } else {
+            read_f64_be(cell, off)
+        }
+    };
+    let (a, b, c) = (f(0) as f32, f(16) as f32, f(40) as f32);
+    let (alpha, beta, gamma) = dcd_cell_angles(f(32), f(24), f(8));
+    cell_params_to_matrix(a, b, c, alpha, beta, gamma)
+}
+
+/// Where the frames of a DCD are, from its header: every frame has the same
+/// size, so frame `i` is the `frame_bytes` from `frames_start + i * frame_bytes`.
+/// Lets a host index a DCD from its first bytes and read each frame on its own.
+pub struct DcdLayout {
+    pub n_atoms: usize,
+    /// NSET when the header sets it, but no more whole frames than the file holds.
+    pub n_frames: usize,
+    pub timestep_ps: f32,
+    pub frames_start: u64,
+    pub frame_bytes: u64,
+    /// Each frame carries a unit cell.
+    pub has_cell: bool,
+    le: bool,
+}
+
+/// The [`DcdLayout`] of a `file_len`-byte DCD from its first bytes (`head`
+/// must hold the header, title and NATOM blocks; a few KB do).
+pub fn read_layout(head: &[u8], file_len: u64) -> Result<DcdLayout, String> {
+    let h = read_header(head)?;
+    let coord_record = 4 + h.n_atoms as u64 * 4 + 4;
+    let frame_bytes = if h.has_cell { 4 + 48 + 4 } else { 0 } + 3 * coord_record;
+    let whole = file_len.saturating_sub(h.frames_start as u64) / frame_bytes;
+    let n_frames = if h.nset > 0 {
+        whole.min(h.nset as u64)
+    } else {
+        whole
+    } as usize;
+    if n_frames == 0 {
+        return Err("no frames found in DCD file".into());
+    }
+    Ok(DcdLayout {
+        n_atoms: h.n_atoms,
+        n_frames,
+        timestep_ps: h.timestep_ps(),
+        frames_start: h.frames_start as u64,
+        frame_bytes,
+        has_cell: h.has_cell,
+        le: h.le,
+    })
+}
+
+/// Decode one frame from its `layout.frame_bytes` bytes: positions (Å) and,
+/// when the file carries cells, this frame's cell.
+pub fn decode_layout_frame(
+    layout: &DcdLayout,
+    bytes: &[u8],
+) -> Result<(Vec<f32>, Option<[f32; 9]>), String> {
+    let mut reader = DcdReader::new(bytes, layout.le);
+    let cell = if layout.has_cell {
+        let rec = reader.read_record()?;
+        if rec.len() != 48 {
+            return Err(format!(
+                "DCD cell record has size {} (expected 48)",
+                rec.len()
+            ));
+        }
+        Some(read_cell(rec, layout.le))
+    } else {
+        None
+    };
+    let expected = layout.n_atoms * 4;
+    let mut axes = [&[][..]; 3];
+    for (axis, slot) in axes.iter_mut().enumerate() {
+        let rec = reader.read_record()?;
+        if rec.len() != expected {
+            return Err(format!(
+                "DCD {}-coord record size {} != expected {}",
+                ["X", "Y", "Z"][axis],
+                rec.len(),
+                expected
+            ));
+        }
+        *slot = rec;
+    }
+    let read = if layout.le { read_f32_le } else { read_f32_be };
+    let mut positions = Vec::with_capacity(layout.n_atoms * 3);
+    for i in 0..layout.n_atoms {
+        for rec in &axes {
+            positions.push(read(rec, i * 4));
+        }
+    }
+    Ok((positions, cell))
+}
+
+/// Decode just the cell of a frame from the first bytes of it (its 56-byte
+/// cell record), for a layout whose frames carry one.
+pub fn decode_layout_cell(layout: &DcdLayout, bytes: &[u8]) -> Result<[f32; 9], String> {
+    let mut reader = DcdReader::new(bytes, layout.le);
+    let rec = reader.read_record()?;
+    if rec.len() != 48 {
+        return Err(format!(
+            "DCD cell record has size {} (expected 48)",
+            rec.len()
+        ));
+    }
+    Ok(read_cell(rec, layout.le))
+}
+
+/// Parse a DCD binary trajectory and return all frames.
+pub fn parse_dcd(data: &[u8]) -> Result<DcdData, String> {
+    let header = read_header(data)?;
+    let DcdHeader {
+        le,
+        nset,
+        has_cell,
+        n_atoms,
+        ..
+    } = header;
+    let mut reader = DcdReader::new(data, le);
+    reader.pos = header.frames_start;
+
     let expected_coord_bytes = n_atoms * 4;
 
     // ── Frames ───────────────────────────────────────────────────────────────
     // Frame-major flat coordinates; reserve up front when the frame count is known.
+    // Never reserve more than the file can hold: NSET comes from the header
+    // and a corrupt one must not ask for gigabytes (or overflow on wasm32).
+    let fit = data.len().saturating_sub(header.frames_start) / (expected_coord_bytes * 3).max(1);
     let mut frame_positions_flat: Vec<f32> = if nset > 0 {
-        Vec::with_capacity(nset * n_atoms * 3)
+        Vec::with_capacity(nset.min(fit).saturating_mul(n_atoms * 3))
     } else {
         Vec::new()
     };
@@ -286,20 +449,7 @@ pub fn parse_dcd(data: &[u8]) -> Result<DcdData, String> {
                 break;
             }
             match reader.read_record() {
-                Ok(cell) if cell.len() == 48 => {
-                    // CHARMM XTL order: A, gamma, B, beta, alpha, C. Lengths are
-                    // Angstroms; angle slots hold cosines (NAMD) or degrees (CHARMM).
-                    let f = |off: usize| {
-                        if le {
-                            read_f64_le(cell, off)
-                        } else {
-                            read_f64_be(cell, off)
-                        }
-                    };
-                    let (a, b, c) = (f(0) as f32, f(16) as f32, f(40) as f32);
-                    let (alpha, beta, gamma) = dcd_cell_angles(f(32), f(24), f(8));
-                    cur_box = Some(cell_params_to_matrix(a, b, c, alpha, beta, gamma));
-                }
+                Ok(cell) if cell.len() == 48 => cur_box = Some(read_cell(cell, le)),
                 Ok(_) => {}
                 Err(_) => break,
             }
@@ -383,11 +533,7 @@ pub fn parse_dcd(data: &[u8]) -> Result<DcdData, String> {
         return Err("no frames found in DCD file".into());
     }
 
-    let timestep_ps = if delta_ps > 0.0 {
-        delta_ps * nsavc as f32
-    } else {
-        1.0
-    };
+    let timestep_ps = header.timestep_ps();
 
     let hetero = crate::trajectory::build_cell_hetero(varies_cell, per_frame_cells, n_atoms);
 
@@ -618,6 +764,88 @@ mod tests {
             write_coord(&mut out, &[f + 4.0, f + 5.0], le); // Z
         }
         out
+    }
+
+    /// One decoded frame: its positions and, when the file has them, its cell.
+    type LayoutFrame = (Vec<f32>, Option<[f32; 9]>);
+
+    /// Decode every frame of `blob` through its layout, one frame's bytes at a time.
+    fn frames_via_layout(blob: &[u8]) -> (DcdLayout, Vec<LayoutFrame>) {
+        let layout = read_layout(&blob[..blob.len().min(4096)], blob.len() as u64).unwrap();
+        let frames = (0..layout.n_frames)
+            .map(|i| {
+                let start = (layout.frames_start + i as u64 * layout.frame_bytes) as usize;
+                let end = start + layout.frame_bytes as usize;
+                decode_layout_frame(&layout, &blob[start..end]).unwrap()
+            })
+            .collect();
+        (layout, frames)
+    }
+
+    #[test]
+    fn layout_frames_match_the_eager_parse() {
+        for le in [true, false] {
+            let blob = build_multi_frame_cells(
+                le,
+                &[(10.0, 10.0, 10.0), (12.0, 11.0, 10.5), (9.0, 9.0, 9.0)],
+            );
+            let eager = parse_dcd(&blob).unwrap();
+            let (layout, frames) = frames_via_layout(&blob);
+            assert_eq!(layout.n_atoms, eager.n_atoms);
+            assert_eq!(layout.n_frames, eager.n_frames);
+            assert_eq!(layout.timestep_ps, eager.timestep_ps);
+            assert!(layout.has_cell);
+            for (i, (positions, cell)) in frames.iter().enumerate() {
+                assert_eq!(
+                    positions[..],
+                    eager.frame_positions_flat[i * 6..(i + 1) * 6]
+                );
+                let box0 = eager.box_matrix.unwrap();
+                let want = eager.frame_cell(i).unwrap_or(&box0[..]);
+                assert_eq!(&cell.unwrap()[..], want);
+            }
+        }
+        // Without cells, and in the X-PLOR variant.
+        for blob in [
+            build_single_frame(true, 24, false),
+            build_single_frame(false, 0, false),
+        ] {
+            let eager = parse_dcd(&blob).unwrap();
+            let (layout, frames) = frames_via_layout(&blob);
+            assert!(!layout.has_cell);
+            assert_eq!(frames.len(), 1);
+            assert_eq!(frames[0].0, eager.frame_positions_flat);
+            assert!(frames[0].1.is_none());
+        }
+    }
+
+    #[test]
+    fn layout_counts_only_whole_frames_and_honours_nset() {
+        let blob = build_multi_frame_cells(true, &[(10.0, 10.0, 10.0), (10.0, 10.0, 10.0)]);
+        // A truncated last frame is not a frame.
+        let cut = &blob[..blob.len() - 3];
+        assert_eq!(read_layout(cut, cut.len() as u64).unwrap().n_frames, 1);
+        // NSET caps the count even when more frames fit.
+        let mut capped = blob.clone();
+        capped[4 + 4..4 + 8].copy_from_slice(&1i32.to_le_bytes());
+        assert_eq!(
+            read_layout(&capped, capped.len() as u64).unwrap().n_frames,
+            1
+        );
+        // No frame at all is an error, as is a head too short for the header.
+        let frames_start = read_layout(&blob, blob.len() as u64).unwrap().frames_start;
+        assert!(read_layout(&blob, frames_start).is_err());
+        assert!(read_layout(&blob[..40], blob.len() as u64).is_err());
+    }
+
+    #[test]
+    fn layout_frame_rejects_bytes_that_are_not_a_frame() {
+        let blob = build_multi_frame_cells(true, &[(10.0, 10.0, 10.0)]);
+        let layout = read_layout(&blob, blob.len() as u64).unwrap();
+        let start = layout.frames_start as usize;
+        // Starting one record late reads coordinates as a cell.
+        assert!(decode_layout_frame(&layout, &blob[start + 56..]).is_err());
+        assert!(decode_layout_frame(&layout, &blob[start..start + 10]).is_err());
     }
 
     #[test]

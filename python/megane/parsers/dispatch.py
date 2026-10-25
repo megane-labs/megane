@@ -11,7 +11,12 @@ from __future__ import annotations
 import pathlib
 import re
 
-from megane.parsers.common import Structure, structure_from_result
+from megane.parsers.common import (
+    InMemoryTrajectory,
+    Structure,
+    structure_and_trajectory_from_result,
+    structure_from_result,
+)
 
 # Extension → ``megane_parser`` function taking the file's text.
 TEXT_PARSERS: dict[str, str] = {
@@ -66,22 +71,39 @@ def structure_ext(path: str) -> str:
     return pathlib.Path(name).suffix
 
 
+def _parse_structure_result(path: str):
+    from megane import megane_parser
+
+    ext = structure_ext(path)
+    if ext in TEXT_PARSERS:
+        with open(path) as f:
+            return getattr(megane_parser, TEXT_PARSERS[ext])(f.read())
+    if ext in BINARY_PARSERS:
+        with open(path, "rb") as f:
+            return getattr(megane_parser, BINARY_PARSERS[ext])(f.read())
+    supported = sorted({*TEXT_PARSERS, *BINARY_PARSERS})
+    raise ValueError(f"Unsupported structure format: {ext!r}.  Supported: {', '.join(supported)}")
+
+
 def load_structure_file(path: str) -> Structure:
     """Read frame 0 of any supported structure file.
 
     Raises:
         ValueError: The file's extension is not a supported structure format.
     """
-    from megane import megane_parser
+    return structure_from_result(_parse_structure_result(path))
 
-    ext = structure_ext(path)
-    if ext in TEXT_PARSERS:
-        with open(path) as f:
-            result = getattr(megane_parser, TEXT_PARSERS[ext])(f.read())
-    elif ext in BINARY_PARSERS:
-        with open(path, "rb") as f:
-            result = getattr(megane_parser, BINARY_PARSERS[ext])(f.read())
-    else:
-        supported = sorted({*TEXT_PARSERS, *BINARY_PARSERS})
-        raise ValueError(f"Unsupported structure format: {ext!r}.  Supported: {', '.join(supported)}")
-    return structure_from_result(result)
+
+def load_structure_file_with_frames(path: str) -> tuple[Structure, InMemoryTrajectory | None]:
+    """Frame 0 of a structure file plus, when the file holds more than one
+    frame (multi-frame XYZ, ASE ``.traj``, …), all of them as a trajectory —
+    from one parse, so a viewer that also plays the file's frames does not
+    read it twice.
+
+    Raises:
+        ValueError: The file's extension is not a supported structure format.
+    """
+    result = _parse_structure_result(path)
+    if int(getattr(result, "n_frames", 0)) == 0:
+        return structure_from_result(result), None
+    return structure_and_trajectory_from_result(result)

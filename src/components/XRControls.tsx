@@ -29,6 +29,8 @@ export interface XRControlsTarget {
   exitXR(): Promise<void>;
   onXRStateChange(listener: (state: MeganeXRState) => void): () => void;
   setXRBridge?(bridge: XRBridge | null): void;
+  /** Load the immersive view ahead of the click that starts it. */
+  preloadXR?(): void;
 }
 
 /** The page's trajectory playback, as its Timeline sees it. */
@@ -141,6 +143,12 @@ export function XRControls({
       unsubscribeRef.current?.();
     };
   }, []);
+
+  // A mode is on offer: bring in the immersive view's code now, so a click
+  // starts the session right away (the request must stay within the click).
+  useEffect(() => {
+    if (modes.length > 0) getTarget()?.preloadXR?.();
+  }, [modes, getTarget]);
 
   if (modes.length === 0) return null;
 

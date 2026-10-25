@@ -87,6 +87,7 @@ const { calls, wasmMock } = vi.hoisted(() => {
     parse_phonon: structFn("parse_phonon"),
     parse_vasp: structFn("parse_vasp"),
     parse_structure_prefix: structFn("parse_structure_prefix"),
+    parse_structure_bytes: structFn("parse_structure_bytes"),
     parse_traj_frame0: structFn("parse_traj_frame0"),
     decode_trajectory_frame0: () => new Float32Array(4 * 3),
     parse_mol: structFn("parse_mol"),
@@ -123,6 +124,11 @@ const { calls, wasmMock } = vi.hoisted(() => {
       return "1\n\nC 0 0 0\n";
     },
     XtcIndexer: class {},
+    TextFrameIndexer: class {},
+    BinaryFrameLayout: class {},
+    TrajFileIndexer: class {},
+    netcdf_timestep: () => 1,
+    decode_text_frame: () => ({}),
     XtcDecoder: class {
       n_atoms = 4;
       n_frames = 2;

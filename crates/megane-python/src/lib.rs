@@ -352,6 +352,269 @@ macro_rules! py_trajectory_parsers {
 
 megane_core::for_each_trajectory_format!(py_trajectory_parsers);
 
+/// Where the frames of a [`TrajectoryFile`] are.
+enum FrameLayout {
+    Xtc(megane_core::xtc::XtcIndex),
+    Dcd(megane_core::dcd::DcdLayout),
+    Netcdf(megane_core::netcdf::NetcdfLayout),
+}
+
+/// A trajectory (XTC, DCD or AMBER NetCDF) read from its file one frame at a
+/// time instead of decoded whole into memory: opening it reads the frame index
+/// (XTC frame headers, a DCD / NetCDF header and each frame's cell) and
+/// `read_frame(i)` reads and decodes just frame `i`. Backs
+/// `megane.parsers.common.FileTrajectory`.
+#[pyclass(module = "megane.megane_parser")]
+struct TrajectoryFile {
+    file: std::sync::Mutex<std::fs::File>,
+    file_len: u64,
+    layout: FrameLayout,
+    #[pyo3(get)]
+    n_atoms: usize,
+    #[pyo3(get)]
+    n_frames: usize,
+    #[pyo3(get)]
+    timestep_ps: f32,
+    first_box: Option<[f32; 9]>,
+    frame_cells: Option<Vec<[f32; 9]>>,
+}
+
+/// Bytes read at a time while scanning an XTC's frame headers.
+const XTC_SCAN_WINDOW: usize = 4 * 1024 * 1024;
+/// First bytes read for a DCD / NetCDF header (read 4x longer while too short).
+const HEAD_BYTES: usize = 64 * 1024;
+
+fn io_err(e: std::io::Error) -> PyErr {
+    pyo3::exceptions::PyOSError::new_err(e.to_string())
+}
+
+fn read_range(file: &mut std::fs::File, start: u64, end: u64) -> std::io::Result<Vec<u8>> {
+    use std::io::{Read, Seek, SeekFrom};
+    file.seek(SeekFrom::Start(start))?;
+    let mut buf = Vec::with_capacity(end.saturating_sub(start) as usize);
+    file.take(end.saturating_sub(start)).read_to_end(&mut buf)?;
+    Ok(buf)
+}
+
+/// Every frame's cell when they are not all the same as frame 0's.
+fn varying_cells(cells: Vec<[f32; 9]>) -> Option<Vec<[f32; 9]>> {
+    let first = *cells.first()?;
+    cells.iter().any(|c| *c != first).then_some(cells)
+}
+
+impl TrajectoryFile {
+    fn read(&self, start: u64, end: u64) -> PyResult<Vec<u8>> {
+        let mut file = self
+            .file
+            .lock()
+            .map_err(|_| PyValueError::new_err("file lock poisoned"))?;
+        read_range(&mut file, start, end.min(self.file_len)).map_err(io_err)
+    }
+
+    /// Decode frame `i`: positions (Å) and the frame's cell, when it has one.
+    fn decode(&self, i: usize) -> PyResult<(Vec<f32>, Option<[f32; 9]>)> {
+        if i >= self.n_frames {
+            return Err(PyValueError::new_err(format!(
+                "frame {i} is out of range for a trajectory of {} frames",
+                self.n_frames
+            )));
+        }
+        let err = |e: String| PyValueError::new_err(e);
+        match &self.layout {
+            FrameLayout::Xtc(index) => {
+                let start = index.offsets[i];
+                let end = index.offsets.get(i + 1).copied().unwrap_or(self.file_len);
+                let bytes = self.read(start, end)?;
+                let positions =
+                    megane_core::xtc::decode_frame_at(&bytes, 0, self.n_atoms).map_err(err)?;
+                Ok((positions, None))
+            }
+            FrameLayout::Dcd(l) => {
+                let start = l.frames_start + i as u64 * l.frame_bytes;
+                let bytes = self.read(start, start + l.frame_bytes)?;
+                megane_core::dcd::decode_layout_frame(l, &bytes).map_err(err)
+            }
+            FrameLayout::Netcdf(l) => {
+                let start = l.record_start + i as u64 * l.recsize;
+                let bytes = self.read(start, start + l.record_span())?;
+                let f = megane_core::netcdf::decode_layout_record(l, &bytes, i).map_err(err)?;
+                Ok((f.positions, f.cell))
+            }
+        }
+    }
+}
+
+#[pymethods]
+impl TrajectoryFile {
+    /// Open `path` as `kind` (`"xtc"`, `"dcd"` or `"netcdf"`) and read its index.
+    #[new]
+    fn new(path: &str, kind: &str) -> PyResult<Self> {
+        let mut file = std::fs::File::open(path).map_err(io_err)?;
+        let file_len = file.metadata().map_err(io_err)?.len();
+        let err = |e: String| PyValueError::new_err(e);
+        let head = |file: &mut std::fs::File,
+                    parse: &mut dyn FnMut(&[u8]) -> Result<(), String>| {
+            let mut size = HEAD_BYTES as u64;
+            loop {
+                let end = size.min(file_len);
+                let bytes = read_range(file, 0, end).map_err(io_err)?;
+                match parse(&bytes) {
+                    Ok(()) => return Ok(()),
+                    Err(e) if end == file_len => return Err(err(e)),
+                    Err(_) => size *= 4,
+                }
+            }
+        };
+        let mut this = TrajectoryFile {
+            file: std::sync::Mutex::new(file.try_clone().map_err(io_err)?),
+            file_len,
+            layout: FrameLayout::Xtc(megane_core::xtc::XtcIndex {
+                n_atoms: 0,
+                n_frames: 0,
+                timestep_ps: 0.0,
+                box_matrix: None,
+                offsets: Vec::new(),
+                times: Vec::new(),
+                first_box: None,
+                frame_cells: None,
+            }),
+            n_atoms: 0,
+            n_frames: 0,
+            timestep_ps: 1.0,
+            first_box: None,
+            frame_cells: None,
+        };
+        match kind {
+            "xtc" => {
+                let mut builder = megane_core::xtc::XtcIndexBuilder::new();
+                while builder.next_offset() < file_len {
+                    let start = builder.next_offset();
+                    let end = (start + XTC_SCAN_WINDOW as u64).min(file_len);
+                    let window = read_range(&mut file, start, end).map_err(io_err)?;
+                    builder.scan(&window, end == file_len).map_err(err)?;
+                    if end == file_len {
+                        break;
+                    }
+                    if builder.next_offset() <= start {
+                        return Err(err("XTC index scan made no progress".into()));
+                    }
+                }
+                let index = builder.finish(file_len).map_err(err)?;
+                this.n_atoms = index.n_atoms;
+                this.n_frames = index.n_frames;
+                this.timestep_ps = index.timestep_ps;
+                this.first_box = index.first_box;
+                this.frame_cells = index.frame_cells.clone();
+                this.layout = FrameLayout::Xtc(index);
+            }
+            "dcd" => {
+                let mut layout = None;
+                head(&mut file, &mut |b| {
+                    layout = Some(megane_core::dcd::read_layout(b, file_len)?);
+                    Ok(())
+                })?;
+                let layout = layout.expect("set by a successful parse");
+                this.n_atoms = layout.n_atoms;
+                this.n_frames = layout.n_frames;
+                this.timestep_ps = layout.timestep_ps;
+                this.layout = FrameLayout::Dcd(layout);
+            }
+            "netcdf" => {
+                let mut layout = None;
+                head(&mut file, &mut |b| {
+                    layout = Some(megane_core::netcdf::read_layout(b, file_len)?);
+                    Ok(())
+                })?;
+                let layout = layout.expect("set by a successful parse");
+                this.n_atoms = layout.n_atoms;
+                this.n_frames = layout.n_frames;
+                this.layout = FrameLayout::Netcdf(layout);
+            }
+            _ => {
+                return Err(PyValueError::new_err(format!(
+                    "unsupported trajectory kind {kind:?}"
+                )))
+            }
+        }
+        // DCD / NetCDF: read each frame's cell (a few bytes per frame) so a
+        // changing cell is known up front, as the whole-file readers know it.
+        match &this.layout {
+            FrameLayout::Dcd(l) if l.has_cell => {
+                let mut cells = Vec::with_capacity(this.n_frames);
+                for i in 0..this.n_frames {
+                    let start = l.frames_start + i as u64 * l.frame_bytes;
+                    let rec = read_range(&mut file, start, start + 56).map_err(io_err)?;
+                    cells.push(megane_core::dcd::decode_layout_cell(l, &rec).map_err(err)?);
+                }
+                this.first_box = cells.first().copied();
+                this.frame_cells = varying_cells(cells);
+            }
+            FrameLayout::Netcdf(l) => {
+                let mut times = [None, None];
+                for (i, t) in times.iter_mut().enumerate().take(this.n_frames) {
+                    let start = l.record_start + i as u64 * l.recsize;
+                    let rec =
+                        read_range(&mut file, start, start + l.record_span()).map_err(io_err)?;
+                    *t = megane_core::netcdf::decode_layout_record(l, &rec, i)
+                        .map_err(err)?
+                        .time;
+                }
+                this.timestep_ps =
+                    megane_core::netcdf::netcdf_timestep(this.n_frames, l.has_time(), times);
+                if let Some((lo, len)) = l.cell_range() {
+                    let mut cells = Vec::with_capacity(this.n_frames);
+                    for i in 0..this.n_frames {
+                        let start = l.record_start + i as u64 * l.recsize + lo;
+                        let rec = read_range(&mut file, start, start + len).map_err(io_err)?;
+                        // Cells past the end of a truncated file stop, as in the eager reader.
+                        match megane_core::netcdf::decode_layout_cell(l, &rec, i).map_err(err)? {
+                            Some(c) => cells.push(c),
+                            None => break,
+                        }
+                    }
+                    this.first_box = cells.first().copied();
+                    this.frame_cells = varying_cells(cells);
+                }
+            }
+            _ => {}
+        }
+        Ok(this)
+    }
+
+    /// Frame 0's cell as a (3, 3) array (zeros without one).
+    #[getter]
+    fn box_matrix(&self, py: Python<'_>) -> Py<PyArray2<f32>> {
+        let m = self.first_box.unwrap_or([0.0; 9]);
+        Array2::from_shape_vec((3, 3), m.to_vec())
+            .expect("3x3")
+            .into_pyarray(py)
+            .unbind()
+    }
+
+    /// Every frame's cell as an (n_frames, 3, 3) array when the cell changes
+    /// between frames, else None.
+    #[getter]
+    fn frame_cells(&self, py: Python<'_>) -> Option<Py<numpy::PyArray3<f32>>> {
+        let cells = self.frame_cells.as_ref()?;
+        let flat: Vec<f32> = cells.iter().flatten().copied().collect();
+        Some(
+            numpy::ndarray::Array3::from_shape_vec((cells.len(), 3, 3), flat)
+                .expect("n x 3 x 3")
+                .into_pyarray(py)
+                .unbind(),
+        )
+    }
+
+    /// Positions of frame `index` as an (n_atoms, 3) float32 array (Å).
+    fn read_frame(&self, py: Python<'_>, index: usize) -> PyResult<Py<PyArray2<f32>>> {
+        let (positions, _cell) = self.decode(index)?;
+        Ok(Array2::from_shape_vec((self.n_atoms, 3), positions)
+            .map_err(|e| PyValueError::new_err(e.to_string()))?
+            .into_pyarray(py)
+            .unbind())
+    }
+}
+
 /// The shared format registry as JSON (`megane_core::formats::registry_json`):
 /// every structure / trajectory format with its exported function names,
 /// encoding, and file extensions. Lets the Python tests check this module's
@@ -693,5 +956,6 @@ fn megane_parser(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(default_bond_source, m)?)?;
     m.add_function(wrap_pyfunction!(infer_bonds_vdw, m)?)?;
     m.add_function(wrap_pyfunction!(write_structure, m)?)?;
+    m.add_class::<TrajectoryFile>()?;
     Ok(())
 }

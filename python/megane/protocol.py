@@ -88,6 +88,11 @@ class StructureLike(Protocol):
     box_origin: np.ndarray  # (3,) float32 — box lower corner; zero if unset
 
 
+def _f32_bytes(values: np.ndarray) -> bytes:
+    """``values`` as little-endian float32 bytes, copied once."""
+    return np.ascontiguousarray(values, dtype="<f4").tobytes()
+
+
 def encode_snapshot(structure: StructureLike) -> bytes:
     """Encode a molecular structure as a binary snapshot message."""
     n_atoms = structure.n_atoms
@@ -95,16 +100,15 @@ def encode_snapshot(structure: StructureLike) -> bytes:
 
     flags = 0
 
-    # Positions: float32 * n_atoms * 3
-    pos_bytes = structure.positions.astype(np.float32).tobytes()
+    # Positions: float32 * n_atoms * 3 (no intermediate copy when already float32)
+    pos_bytes = _f32_bytes(structure.positions)
 
     # Elements: uint8 * n_atoms, padded to 4-byte alignment
-    elem_bytes = structure.elements.astype(np.uint8).tobytes()
-    padding_len = (4 - (len(elem_bytes) % 4)) % 4
-    elem_bytes += b"\x00" * padding_len
+    elem_bytes = np.ascontiguousarray(structure.elements, dtype=np.uint8).tobytes()
+    elem_padding = b"\x00" * ((4 - (len(elem_bytes) % 4)) % 4)
 
     # Bonds: uint32 * n_bonds * 2
-    bond_bytes = structure.bonds.astype(np.uint32).tobytes()
+    bond_bytes = np.ascontiguousarray(structure.bonds, dtype="<u4").tobytes()
 
     # Bond orders (optional)
     bond_order_bytes = b""
@@ -146,16 +150,20 @@ def encode_snapshot(structure: StructureLike) -> bytes:
     # Snapshot header: n_atoms(4) + n_bonds(4) = 8 bytes
     snapshot_header = struct.pack("<II", n_atoms, n_bonds)
 
-    return (
-        header
-        + snapshot_header
-        + pos_bytes
-        + elem_bytes
-        + bond_bytes
-        + bond_order_bytes
-        + box_bytes
-        + origin_bytes
-        + symops_bytes
+    # One join copies each part once; chained `+` re-copies the positions per part.
+    return b"".join(
+        (
+            header,
+            snapshot_header,
+            pos_bytes,
+            elem_bytes,
+            elem_padding,
+            bond_bytes,
+            bond_order_bytes,
+            box_bytes,
+            origin_bytes,
+            symops_bytes,
+        )
     )
 
 
@@ -180,7 +188,7 @@ def encode_frame(
     n_atoms = len(positions)
 
     flags = 0
-    pos_bytes = positions.astype(np.float32).tobytes()
+    pos_bytes = _f32_bytes(positions)
 
     elem_bytes = b""
     if elements is not None:
@@ -197,7 +205,7 @@ def encode_frame(
     header = MAGIC + struct.pack("<BBH", MSG_FRAME, flags, 0)
     frame_header = struct.pack("<II", frame_id, n_atoms)
 
-    return header + frame_header + pos_bytes + elem_bytes + box_bytes
+    return b"".join((header, frame_header, pos_bytes, elem_bytes, box_bytes))
 
 
 def encode_trajectory(frames: Sequence[bytes]) -> bytes:
@@ -219,7 +227,7 @@ def encode_trajectory(frames: Sequence[bytes]) -> bytes:
 
     header = MAGIC + struct.pack("<BBH", MSG_TRAJECTORY, 0, 0)
     table = struct.pack(f"<I{n_frames + 1}I", n_frames, *offsets)
-    return header + table + b"".join(frames)
+    return b"".join((header, table, *frames))
 
 
 def encode_metadata(

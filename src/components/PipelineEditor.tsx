@@ -68,7 +68,7 @@ import { PipelineChatBox } from "./PipelineChatBox";
 import { PipelineInspector } from "./PipelineInspector";
 import { RenderModal } from "./RenderModal";
 import { ShareDialog } from "./ShareDialog";
-import { startTour, startPipelineTutorial } from "../tour/MeganeTour";
+import { startTour, startPipelineTutorial } from "../tour/lazyTour";
 import type { MoleculeRenderer } from "../renderer/MoleculeRenderer";
 import { PipelineRail } from "./PipelineRail";
 import type { PipelinePanelMode } from "../stores/usePipelineUIStore";
@@ -478,8 +478,8 @@ function PipelineEditorInner({
           onExport={handleExport}
           onShare={() => void handleShare()}
           onRender={() => setShowRenderModal(true)}
-          onGuide={() => startTour()}
-          onTutorial={() => startPipelineTutorial()}
+          onGuide={() => void startTour()}
+          onTutorial={() => void startPipelineTutorial()}
         />
       }
       extra={

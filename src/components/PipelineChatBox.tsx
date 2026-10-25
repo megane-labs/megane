@@ -11,13 +11,6 @@
  */
 
 import { useCallback } from "react";
-import {
-  generatePipeline,
-  extractPipelineJSON,
-  tryExtractPipeline,
-  formatActionSummary,
-  extractTrailingExplanation,
-} from "../ai/client";
 import { buildEditRequest } from "../ai/editContext";
 import { summarizeStructure } from "../ai/structureSummary";
 import type { SelfCheckContext } from "../ai/selfCheck";
@@ -126,6 +119,17 @@ export function PipelineChatBox() {
         checkContext.snapshot ?? null,
         checkContext.atomLabels ?? null,
       );
+
+      // The generator (system prompt, skills, self-check) is only needed once
+      // something is asked, so it loads with the first request rather than
+      // with the page; the request itself takes far longer than the import.
+      const {
+        generatePipeline,
+        extractPipelineJSON,
+        tryExtractPipeline,
+        formatActionSummary,
+        extractTrailingExplanation,
+      } = await import("../ai/client");
 
       let streamBuffer = "";
       const fullResponse = await generatePipeline(

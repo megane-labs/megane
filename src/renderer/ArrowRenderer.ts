@@ -27,19 +27,26 @@ const _mat = new THREE.Matrix4();
 
 export class ArrowRenderer {
   readonly mesh: THREE.Group;
-  private shaftMesh: THREE.InstancedMesh;
-  private headMesh: THREE.InstancedMesh;
+  /** Created on the first vectors and grown with the atom count; dropped
+   *  again when the vectors go. Each instance costs 2 × 64 B of matrices, so
+   *  sizing them for every atom up front cost 128 MB at 1M atoms. */
+  private shaftMesh: THREE.InstancedMesh | null = null;
+  private headMesh: THREE.InstancedMesh | null = null;
   private nAtoms = 0;
   private positions: Float32Array | null = null;
   private vectors: Float32Array | null = null;
   private arrowScale = 1.0;
-  private capacity: number;
+  private capacity = 0;
 
-  constructor(maxAtoms = 100_000) {
-    this.capacity = maxAtoms;
+  constructor() {
     this.mesh = new THREE.Group();
     this.mesh.visible = false;
+  }
 
+  /** Make room for `n` arrows, replacing the meshes when they are too small. */
+  private ensureCapacity(n: number): void {
+    if (this.shaftMesh && n <= this.capacity) return;
+    this.disposeMeshes();
     // Shaft geometry: cylinder along Y, bottom at y=0, top at y=1
     const shaftGeo = new THREE.CylinderGeometry(SHAFT_RADIUS, SHAFT_RADIUS, 1, SHAFT_SEGMENTS);
     // Shift so bottom is at origin, top at y=1
@@ -49,24 +56,29 @@ export class ArrowRenderer {
     const headGeo = new THREE.ConeGeometry(HEAD_RADIUS, HEAD_HEIGHT, HEAD_SEGMENTS);
     headGeo.translate(0, HEAD_HEIGHT / 2, 0);
 
-    const shaftMat = new THREE.MeshPhongMaterial({
-      color: ARROW_COLOR,
-      transparent: true,
-      opacity: 0.85,
-    });
-    const headMat = new THREE.MeshPhongMaterial({
-      color: ARROW_COLOR,
-      transparent: true,
-      opacity: 0.85,
-    });
+    const material = (): THREE.MeshPhongMaterial =>
+      new THREE.MeshPhongMaterial({ color: ARROW_COLOR, transparent: true, opacity: 0.85 });
 
-    this.shaftMesh = new THREE.InstancedMesh(shaftGeo, shaftMat, maxAtoms);
-    this.headMesh = new THREE.InstancedMesh(headGeo, headMat, maxAtoms);
+    this.capacity = Math.max(n, 1);
+    this.shaftMesh = new THREE.InstancedMesh(shaftGeo, material(), this.capacity);
+    this.headMesh = new THREE.InstancedMesh(headGeo, material(), this.capacity);
     this.shaftMesh.count = 0;
     this.headMesh.count = 0;
-
     this.mesh.add(this.shaftMesh);
     this.mesh.add(this.headMesh);
+  }
+
+  private disposeMeshes(): void {
+    for (const m of [this.shaftMesh, this.headMesh]) {
+      if (!m) continue;
+      m.geometry.dispose();
+      (m.material as THREE.Material).dispose();
+      m.dispose();
+      this.mesh.remove(m);
+    }
+    this.shaftMesh = null;
+    this.headMesh = null;
+    this.capacity = 0;
   }
 
   setAtomPositions(positions: Float32Array, nAtoms: number): void {
@@ -82,8 +94,7 @@ export class ArrowRenderer {
       this.update();
     } else {
       this.mesh.visible = false;
-      this.shaftMesh.count = 0;
-      this.headMesh.count = 0;
+      this.disposeMeshes();
     }
   }
 
@@ -95,9 +106,13 @@ export class ArrowRenderer {
   private update(): void {
     if (!this.positions || !this.vectors) return;
 
-    const n = Math.min(this.nAtoms, this.capacity);
-    this.shaftMesh.count = n;
-    this.headMesh.count = n;
+    // A vector channel covers the atoms it has values for.
+    const n = Math.min(this.nAtoms, Math.floor(this.vectors.length / 3));
+    this.ensureCapacity(n);
+    const shaftMesh = this.shaftMesh!;
+    const headMesh = this.headMesh!;
+    shaftMesh.count = n;
+    headMesh.count = n;
 
     for (let i = 0; i < n; i++) {
       const ox = this.positions[i * 3];
@@ -113,8 +128,8 @@ export class ArrowRenderer {
       if (mag < EPSILON) {
         // Zero vector: hide this instance by scaling to 0
         _mat.makeScale(0, 0, 0);
-        this.shaftMesh.setMatrixAt(i, _mat);
-        this.headMesh.setMatrixAt(i, _mat);
+        shaftMesh.setMatrixAt(i, _mat);
+        headMesh.setMatrixAt(i, _mat);
         continue;
       }
 
@@ -131,25 +146,20 @@ export class ArrowRenderer {
       _pos.set(ox, oy, oz);
       _scale.set(1, shaftLen, 1);
       _mat.compose(_pos, _quat, _scale);
-      this.shaftMesh.setMatrixAt(i, _mat);
+      shaftMesh.setMatrixAt(i, _mat);
 
       // Head: position at tip of shaft
       _pos.set(ox + _dir.x * shaftLen, oy + _dir.y * shaftLen, oz + _dir.z * shaftLen);
       _scale.set(1, 1, 1);
       _mat.compose(_pos, _quat, _scale);
-      this.headMesh.setMatrixAt(i, _mat);
+      headMesh.setMatrixAt(i, _mat);
     }
 
-    this.shaftMesh.instanceMatrix.needsUpdate = true;
-    this.headMesh.instanceMatrix.needsUpdate = true;
+    shaftMesh.instanceMatrix.needsUpdate = true;
+    headMesh.instanceMatrix.needsUpdate = true;
   }
 
   dispose(): void {
-    this.shaftMesh.geometry.dispose();
-    this.headMesh.geometry.dispose();
-    (this.shaftMesh.material as THREE.Material).dispose();
-    (this.headMesh.material as THREE.Material).dispose();
-    this.mesh.remove(this.shaftMesh);
-    this.mesh.remove(this.headMesh);
+    this.disposeMeshes();
   }
 }

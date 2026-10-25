@@ -32,11 +32,13 @@ import {
 } from "../constants";
 import { bondVertexShader, bondFragmentShader } from "./shaders";
 import {
+  COLOR_STRIDE,
   MIN_INSTANCE_CAPACITY,
   markInstancesDirty,
   nextInstanceCapacity,
   resetInstanceLimit,
   resizeTypedArray,
+  writeColor,
 } from "./instanceCapacity";
 
 const TEX_MAX_WIDTH = 4096;
@@ -53,9 +55,9 @@ export class ImpostorBondMesh {
   private offsetYBuf: Float32Array;
   // Two endpoint colors per visual instance: A = atomA side, B = atomB side.
   // The bond fragment shader splits the cylinder at its midpoint so each half
-  // takes its endpoint atom's color.
-  private colorABuf: Float32Array;
-  private colorBBuf: Float32Array;
+  // takes its endpoint atom's color. RGBA8 (alpha unused), like the atom mesh.
+  private colorABuf: Uint8ClampedArray;
+  private colorBBuf: Uint8ClampedArray;
   private radiusBuf: Float32Array;
   // CPU-only mirror of the per-order default radius for each visual instance.
   // Lets setUniformRadius(null) restore licorice → ball-and-stick without
@@ -125,8 +127,8 @@ export class ImpostorBondMesh {
     this.atomBBuf = new Float32Array(initialCapacity);
     this.offsetXBuf = new Float32Array(initialCapacity);
     this.offsetYBuf = new Float32Array(initialCapacity);
-    this.colorABuf = new Float32Array(initialCapacity * 3);
-    this.colorBBuf = new Float32Array(initialCapacity * 3);
+    this.colorABuf = new Uint8ClampedArray(initialCapacity * COLOR_STRIDE);
+    this.colorBBuf = new Uint8ClampedArray(initialCapacity * COLOR_STRIDE);
     this.radiusBuf = new Float32Array(initialCapacity);
     this.baseRadiusBuf = new Float32Array(initialCapacity);
     this.dashedBuf = new Float32Array(initialCapacity);
@@ -319,8 +321,8 @@ export class ImpostorBondMesh {
   }
 
   /**
-   * Recompute per-instance bond colors from a caller-supplied per-atom RGB
-   * buffer (length === `snapshot.nAtoms * 3`). The fan-out for double / triple
+   * Recompute per-instance bond colors from a caller-supplied per-atom RGBA8
+   * buffer (`ImpostorAtomMesh.getColorBuffer`, length === `nAtoms * 4`). The fan-out for double / triple
    * / aromatic bonds is reproduced exactly as `loadSnapshot` did, so a single
    * call replaces the GPU color buffer in place.
    *
@@ -328,20 +330,28 @@ export class ImpostorBondMesh {
    * — this propagates the updated palette to bonds without re-uploading the
    * topology buffers.
    */
-  recomputeColorsFromAtomBuffer(atomColors: Float32Array, snapshot: Snapshot): void {
+  recomputeColorsFromAtomBuffer(atomColors: Uint8ClampedArray, snapshot: Snapshot): void {
     const { nBonds, bonds, bondOrders, elements } = snapshot;
     // The atom color buffer only covers real atoms. PBC half-bonds reference
     // ghost atoms appended past that range (index >= nRealAtoms); reading them
-    // from `atomColors` yields undefined → NaN → black. Fall back to the ghost
+    // from `atomColors` yields undefined → black. Fall back to the ghost
     // atom's element color, which `processPbcBonds` set on the extended
     // `elements` array, so boundary stubs keep their proper CPK color.
-    const nRealAtoms = atomColors.length / 3;
-    const endpointColor = (idx: number): [number, number, number] => {
-      if (idx < nRealAtoms) {
-        const i3 = idx * 3;
-        return [atomColors[i3], atomColors[i3 + 1], atomColors[i3 + 2]];
+    const nRealAtoms = atomColors.length / COLOR_STRIDE;
+    const ghost = new Uint8ClampedArray(COLOR_STRIDE);
+    const writeEndpoint = (out: Uint8ClampedArray, idx: number, atom: number): void => {
+      let src = atomColors;
+      let from = atom * COLOR_STRIDE;
+      if (atom >= nRealAtoms) {
+        const [r, g, b] = getColor(elements[atom]);
+        writeColor(ghost, 0, r, g, b);
+        src = ghost;
+        from = 0;
       }
-      return getColor(elements[idx]);
+      const o = idx * COLOR_STRIDE;
+      out[o] = src[from];
+      out[o + 1] = src[from + 1];
+      out[o + 2] = src[from + 2];
     };
     let idx = 0;
     for (let i = 0; i < nBonds; i++) {
@@ -349,21 +359,13 @@ export class ImpostorBondMesh {
       const bi = bonds[i * 2 + 1];
       const order = bondOrders ? bondOrders[i] : BOND_SINGLE;
 
-      const [ar, ag, ab] = endpointColor(ai);
-      const [br, bg, bb] = endpointColor(bi);
-
       let perBond = 1;
       if (order === BOND_DOUBLE || order === BOND_AROMATIC) perBond = 2;
       else if (order === BOND_TRIPLE) perBond = 3;
 
       for (let k = 0; k < perBond; k++) {
-        const j3 = idx * 3;
-        this.colorABuf[j3] = ar;
-        this.colorABuf[j3 + 1] = ag;
-        this.colorABuf[j3 + 2] = ab;
-        this.colorBBuf[j3] = br;
-        this.colorBBuf[j3 + 1] = bg;
-        this.colorBBuf[j3 + 2] = bb;
+        writeEndpoint(this.colorABuf, idx, ai);
+        writeEndpoint(this.colorBBuf, idx, bi);
         idx++;
       }
     }
@@ -391,13 +393,8 @@ export class ImpostorBondMesh {
     this.offsetXBuf[idx] = offsetX;
     this.offsetYBuf[idx] = offsetY;
 
-    const i3 = idx * 3;
-    this.colorABuf[i3] = ar;
-    this.colorABuf[i3 + 1] = ag;
-    this.colorABuf[i3 + 2] = ab;
-    this.colorBBuf[i3] = br;
-    this.colorBBuf[i3 + 1] = bg;
-    this.colorBBuf[i3 + 2] = bb;
+    writeColor(this.colorABuf, idx, ar, ag, ab);
+    writeColor(this.colorBBuf, idx, br, bg, bb);
 
     this.baseRadiusBuf[idx] = radius;
     this.radiusBuf[idx] = this.uniformRadius ?? radius;
@@ -521,8 +518,8 @@ export class ImpostorBondMesh {
     this.atomBAttr = new THREE.InstancedBufferAttribute(this.atomBBuf, 1);
     this.offsetXAttr = new THREE.InstancedBufferAttribute(this.offsetXBuf, 1);
     this.offsetYAttr = new THREE.InstancedBufferAttribute(this.offsetYBuf, 1);
-    this.colorAAttr = new THREE.InstancedBufferAttribute(this.colorABuf, 3);
-    this.colorBAttr = new THREE.InstancedBufferAttribute(this.colorBBuf, 3);
+    this.colorAAttr = new THREE.InstancedBufferAttribute(this.colorABuf, COLOR_STRIDE, true);
+    this.colorBAttr = new THREE.InstancedBufferAttribute(this.colorBBuf, COLOR_STRIDE, true);
     this.radiusAttr = new THREE.InstancedBufferAttribute(this.radiusBuf, 1);
     this.dashedAttr = new THREE.InstancedBufferAttribute(this.dashedBuf, 1);
     this.opacityAttr = new THREE.InstancedBufferAttribute(this.opacityBuf, 1);
@@ -588,8 +585,8 @@ export class ImpostorBondMesh {
     this.atomBBuf = resizeTypedArray(this.atomBBuf, capacity);
     this.offsetXBuf = resizeTypedArray(this.offsetXBuf, capacity);
     this.offsetYBuf = resizeTypedArray(this.offsetYBuf, capacity);
-    this.colorABuf = resizeTypedArray(this.colorABuf, capacity * 3);
-    this.colorBBuf = resizeTypedArray(this.colorBBuf, capacity * 3);
+    this.colorABuf = resizeTypedArray(this.colorABuf, capacity * COLOR_STRIDE);
+    this.colorBBuf = resizeTypedArray(this.colorBBuf, capacity * COLOR_STRIDE);
     this.radiusBuf = resizeTypedArray(this.radiusBuf, capacity);
     this.baseRadiusBuf = resizeTypedArray(this.baseRadiusBuf, capacity);
     this.dashedBuf = resizeTypedArray(this.dashedBuf, capacity);

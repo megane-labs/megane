@@ -183,6 +183,75 @@ function makeLinearSnapshot(nCa: number, ssType = SS_COIL): Snapshot {
   };
 }
 
+/** A visible renderer, which builds its ribbons as soon as it is loaded. */
+function shownCartoon(): CartoonRenderer {
+  const cr = new CartoonRenderer();
+  cr.setVisible(true);
+  return cr;
+}
+
+describe("CartoonRenderer (built on demand)", () => {
+  it("builds nothing while hidden and builds on show", () => {
+    const cr = new CartoonRenderer();
+    cr.loadSnapshot(makeLinearSnapshot(5, SS_COIL));
+    expect(cr.mesh.children.length).toBe(0);
+    cr.setVisible(true);
+    expect(cr.mesh.children.length).toBeGreaterThan(0);
+  });
+
+  it("builds from the latest frame when shown mid-trajectory", () => {
+    const snap = makeLinearSnapshot(6, SS_COIL);
+    const shifted = new Float32Array(snap.positions);
+    for (let i = 0; i < 6; i++) shifted[i * 3 + 1] += 50;
+
+    const lazy = new CartoonRenderer();
+    lazy.loadSnapshot(snap);
+    lazy.updatePositions(shifted);
+    lazy.setVisible(true);
+
+    const eager = shownCartoon();
+    eager.loadSnapshot(snap);
+    eager.updatePositions(shifted);
+
+    const pos = (cr: CartoonRenderer): number[] =>
+      Array.from(
+        (
+          (cr.mesh.children[0] as THREE.Mesh).geometry.getAttribute(
+            "position",
+          ) as THREE.BufferAttribute
+        ).array as Float32Array,
+      );
+    expect(pos(lazy)).toEqual(pos(eager));
+  });
+
+  it("applies frames that arrived while hidden when shown again", () => {
+    const snap = makeLinearSnapshot(6, SS_COIL);
+    const cr = shownCartoon();
+    cr.loadSnapshot(snap);
+    const attr = (cr.mesh.children[0] as THREE.Mesh).geometry.getAttribute("position");
+    const before = Array.from(attr.array as Float32Array);
+
+    cr.setVisible(false);
+    const shifted = new Float32Array(snap.positions);
+    for (let i = 0; i < 6; i++) shifted[i * 3 + 2] += 20;
+    cr.updatePositions(shifted);
+    // Hidden: the ribbons are left alone...
+    expect(Array.from(attr.array as Float32Array)).toEqual(before);
+    // ...and catch up on show.
+    cr.setVisible(true);
+    expect(Array.from(attr.array as Float32Array)).not.toEqual(before);
+  });
+
+  it("drops the previous structure's ribbons when a new one loads hidden", () => {
+    const cr = shownCartoon();
+    cr.loadSnapshot(makeLinearSnapshot(5, SS_COIL));
+    expect(cr.mesh.children.length).toBeGreaterThan(0);
+    cr.setVisible(false);
+    cr.loadSnapshot(makeLinearSnapshot(4, SS_HELIX));
+    expect(cr.mesh.children.length).toBe(0);
+  });
+});
+
 describe("CartoonRenderer", () => {
   it("constructor creates a hidden group", () => {
     const cr = new CartoonRenderer();
@@ -215,19 +284,19 @@ describe("CartoonRenderer", () => {
   });
 
   it("loadSnapshot with coil Cα atoms adds mesh children", () => {
-    const cr = new CartoonRenderer();
+    const cr = shownCartoon();
     cr.loadSnapshot(makeLinearSnapshot(5, SS_COIL));
     expect(cr.mesh.children.length).toBeGreaterThan(0);
   });
 
   it("loadSnapshot with helix Cα atoms adds mesh children", () => {
-    const cr = new CartoonRenderer();
+    const cr = shownCartoon();
     cr.loadSnapshot(makeLinearSnapshot(6, SS_HELIX));
     expect(cr.mesh.children.length).toBeGreaterThan(0);
   });
 
   it("loadSnapshot with sheet Cα atoms adds mesh children", () => {
-    const cr = new CartoonRenderer();
+    const cr = shownCartoon();
     cr.loadSnapshot(makeLinearSnapshot(4, SS_SHEET));
     expect(cr.mesh.children.length).toBeGreaterThan(0);
   });
@@ -243,13 +312,13 @@ describe("CartoonRenderer", () => {
     const positions = new Float32Array(6 * 3);
     for (let i = 0; i < 6; i++) positions[i * 3] = i * 3.8;
     const fullSnap = { ...snap, positions };
-    const cr = new CartoonRenderer();
+    const cr = shownCartoon();
     cr.loadSnapshot(fullSnap);
     expect(cr.mesh.children.length).toBeGreaterThan(0);
   });
 
   it("updatePositions rebuilds geometry for a new frame", () => {
-    const cr = new CartoonRenderer();
+    const cr = shownCartoon();
     const snap = makeLinearSnapshot(4, SS_COIL);
     cr.loadSnapshot(snap);
     const before = cr.mesh.children.length;
@@ -267,7 +336,7 @@ describe("CartoonRenderer", () => {
   });
 
   it("updatePositions updates geometry in place without reallocating it", () => {
-    const cr = new CartoonRenderer();
+    const cr = shownCartoon();
     cr.loadSnapshot(makeLinearSnapshot(6, SS_COIL));
     const mesh = cr.mesh.children[0] as THREE.Mesh;
     const geoBefore = mesh.geometry;
@@ -285,7 +354,7 @@ describe("CartoonRenderer", () => {
   });
 
   it("updatePositions moves vertices to reflect new coordinates", () => {
-    const cr = new CartoonRenderer();
+    const cr = shownCartoon();
     cr.loadSnapshot(makeLinearSnapshot(6, SS_COIL));
     const posAttr = (cr.mesh.children[0] as THREE.Mesh).geometry.getAttribute(
       "position",
@@ -321,7 +390,7 @@ describe("CartoonRenderer", () => {
     );
     const positions = new Float32Array(6 * 3);
     for (let i = 0; i < 6; i++) positions[i * 3] = i * 3.8;
-    const cr = new CartoonRenderer();
+    const cr = shownCartoon();
     cr.loadSnapshot({ ...snap, positions });
     const colorAttr = (cr.mesh.children[0] as THREE.Mesh).geometry.getAttribute(
       "color",
@@ -336,7 +405,7 @@ describe("CartoonRenderer", () => {
   });
 
   it("updatePositions refreshes the geometry bounding sphere", () => {
-    const cr = new CartoonRenderer();
+    const cr = shownCartoon();
     cr.loadSnapshot(makeLinearSnapshot(6, SS_COIL));
     const geo = (cr.mesh.children[0] as THREE.Mesh).geometry;
     const centerBefore = geo.boundingSphere!.center.clone();
@@ -351,7 +420,7 @@ describe("CartoonRenderer", () => {
   });
 
   it("dispose clears mesh children and frees geometry", () => {
-    const cr = new CartoonRenderer();
+    const cr = shownCartoon();
     cr.loadSnapshot(makeLinearSnapshot(5, SS_COIL));
     expect(cr.mesh.children.length).toBeGreaterThan(0);
     cr.dispose();
@@ -359,14 +428,14 @@ describe("CartoonRenderer", () => {
   });
 
   it("single Cα atom produces no geometry (need ≥2 pts for curve)", () => {
-    const cr = new CartoonRenderer();
+    const cr = shownCartoon();
     cr.loadSnapshot(makeLinearSnapshot(1, SS_COIL));
     // With only 1 atom, makeCurve returns null → no meshes added
     expect(cr.mesh.children.length).toBe(0);
   });
 
   it("loadSnapshot replaces previous geometry on re-call", () => {
-    const cr = new CartoonRenderer();
+    const cr = shownCartoon();
     cr.loadSnapshot(makeLinearSnapshot(4, SS_COIL));
     const first = cr.mesh.children.length;
     cr.loadSnapshot(makeLinearSnapshot(4, SS_HELIX));
@@ -385,7 +454,7 @@ describe("CartoonRenderer", () => {
     );
     const positions = new Float32Array(6 * 3);
     for (let i = 0; i < 6; i++) positions[i * 3] = i * 3.8;
-    const cr = new CartoonRenderer();
+    const cr = shownCartoon();
     cr.loadSnapshot({ ...snap, positions });
     expect(cr.mesh.children.length).toBe(2);
     // Each child is a single mesh with vertex colors enabled.

@@ -23,7 +23,7 @@ from megane.parsers.pdb import load_pdb
 from megane.protocol import encode_metadata, encode_snapshot
 
 if TYPE_CHECKING:
-    from megane.parsers.common import InMemoryTrajectory
+    from megane.parsers.common import Trajectory
 
 __all__ = ["app", "configure", "configure_files"]
 
@@ -44,7 +44,7 @@ class ServerState:
     snapshot_bytes: bytes = b""
     structure_path: str = ""
     xtc_path: Optional[str] = None
-    trajectory: Optional[InMemoryTrajectory] = None
+    trajectory: Optional[Trajectory] = None
 
 
 _state = ServerState()
@@ -132,7 +132,7 @@ def configure(
     if xtc_path:
         from megane.parsers.xtc import load_trajectory
 
-        traj = load_trajectory(structure_path, xtc_path)
+        traj = load_trajectory(structure_path, xtc_path, n_atoms=structure.n_atoms)
         logger.info(
             "Loaded trajectory: %d frames, %d atoms",
             traj.n_frames,
@@ -152,7 +152,7 @@ def _set_state(
     structure: Structure,
     structure_path: str,
     xtc_path: str | None,
-    trajectory: InMemoryTrajectory | None,
+    trajectory: Trajectory | None,
 ) -> None:
     _state.structure = structure
     _state.snapshot_bytes = encode_snapshot(structure)

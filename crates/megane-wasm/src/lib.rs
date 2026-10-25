@@ -1,9 +1,10 @@
 use js_sys::{Float32Array, Float64Array, Object, Reflect, Uint32Array, Uint8Array};
 use wasm_bindgen::prelude::*;
 
-use megane_core::formats::{self, StructureFormat, TrajectoryFormat};
+use megane_core::formats::{self, FormatInput, StructureFormat, TrajectoryFormat};
 use megane_core::{
-    bonds, gro, jcampdx, lammps_data, lammpstrj, parser, psf, top, writer, xtc, xyz,
+    bonds, dcd, gro, jcampdx, lammps_data, lammpstrj, lines, netcdf, parser, pdb, psf, top, traj,
+    writer, xtc, xyz,
 };
 
 /// Serialize a slice of `VectorChannel`s into two parallel outputs:
@@ -897,6 +898,560 @@ impl Default for XtcIndexer {
     }
 }
 
+/// One of the three line-fed index builders behind [`TextFrameIndexer`].
+enum TextIndexBuilder {
+    Xyz(xyz::XyzIndexBuilder),
+    Pdb(pdb::PdbIndexBuilder),
+    Lammpstrj(lammpstrj::LammpstrjIndexBuilder),
+}
+
+/// The finished index of a [`TextFrameIndexer`].
+enum TextIndex {
+    Xyz(xyz::XyzIndex),
+    Pdb(pdb::PdbIndex),
+    Lammpstrj(lammpstrj::LammpstrjIndex),
+}
+
+/// Builds the frame index of a multi-frame text file — XYZ frames
+/// (`"xyz"`), PDB models (`"pdb"`) or LAMMPS dump frames (`"lammpstrj"`) —
+/// from windows of a file the host never loads whole, the way [`XtcIndexer`]
+/// does for XTC: call `scan` with the file's bytes from `next_offset` on until
+/// `next_offset` reaches the file's length, then `finish`. Each frame is then
+/// decoded from its own bytes (`offsets[i]..offsets[i + 1]`, the last one up
+/// to `frames_end`) with [`decode_text_frame`].
+#[wasm_bindgen]
+pub struct TextFrameIndexer {
+    builder: Option<TextIndexBuilder>,
+    index: Option<TextIndex>,
+    /// File offsets of the frames the index decodes (extra frames for a
+    /// structure, every frame for a dump).
+    offsets: Vec<u64>,
+    next_offset: u64,
+}
+
+#[wasm_bindgen]
+impl TextFrameIndexer {
+    #[wasm_bindgen(constructor)]
+    pub fn new(kind: &str) -> Result<TextFrameIndexer, JsError> {
+        let builder = match kind {
+            "xyz" => TextIndexBuilder::Xyz(Default::default()),
+            "pdb" => TextIndexBuilder::Pdb(Default::default()),
+            "lammpstrj" => TextIndexBuilder::Lammpstrj(Default::default()),
+            _ => return Err(JsError::new("unsupported text index kind")),
+        };
+        Ok(TextFrameIndexer {
+            builder: Some(builder),
+            index: None,
+            offsets: Vec::new(),
+            next_offset: 0,
+        })
+    }
+
+    /// File offset the next window must start at (a byte count, exact below 2^53).
+    #[wasm_bindgen(getter)]
+    pub fn next_offset(&self) -> f64 {
+        self.next_offset as f64
+    }
+
+    /// Index the complete lines in `window`, the file's bytes from
+    /// `next_offset` on; `at_eof` says it runs to the end of the file. Returns
+    /// how many bytes it used: 0 when the window holds no complete line (the
+    /// host then reads a larger one).
+    pub fn scan(&mut self, window: &[u8], at_eof: bool) -> Result<u32, JsError> {
+        let builder = self
+            .builder
+            .as_mut()
+            .ok_or_else(|| JsError::new("TextFrameIndexer already finished"))?;
+        let used =
+            lines::scan_window(
+                window,
+                at_eof,
+                self.next_offset,
+                |line, start, end| match builder {
+                    TextIndexBuilder::Xyz(b) => b.push_line(line, start, end),
+                    TextIndexBuilder::Pdb(b) => {
+                        b.push_line(line, start, end);
+                        Ok(())
+                    }
+                    TextIndexBuilder::Lammpstrj(b) => b.push_line(line, start),
+                },
+            )
+            .map_err(|e| JsError::new(&e))?;
+        self.next_offset += used as u64;
+        Ok(used as u32)
+    }
+
+    /// Close the index of a `file_len`-byte file; the getters below read it.
+    pub fn finish(&mut self, file_len: f64) -> Result<(), JsError> {
+        let builder = self
+            .builder
+            .take()
+            .ok_or_else(|| JsError::new("TextFrameIndexer already finished"))?;
+        let index = match builder {
+            TextIndexBuilder::Xyz(b) => {
+                self.offsets = b.file_offsets().to_vec();
+                b.finish().map(TextIndex::Xyz)
+            }
+            TextIndexBuilder::Pdb(b) => {
+                self.offsets = b.file_offsets().to_vec();
+                b.finish(file_len as u64).map(TextIndex::Pdb)
+            }
+            TextIndexBuilder::Lammpstrj(b) => {
+                self.offsets = b.file_offsets().to_vec();
+                b.finish().map(TextIndex::Lammpstrj)
+            }
+        }
+        .map_err(|e| JsError::new(&e))?;
+        self.index = Some(index);
+        Ok(())
+    }
+
+    fn finished(&self) -> Result<&TextIndex, JsError> {
+        self.index
+            .as_ref()
+            .ok_or_else(|| JsError::new("TextFrameIndexer not finished"))
+    }
+
+    #[wasm_bindgen(getter)]
+    pub fn n_atoms(&self) -> Result<u32, JsError> {
+        Ok(match self.finished()? {
+            TextIndex::Xyz(i) => i.n_atoms,
+            TextIndex::Pdb(i) => i.n_atoms,
+            TextIndex::Lammpstrj(i) => i.n_atoms,
+        } as u32)
+    }
+
+    /// Number of frames in `offsets` (extra frames for XYZ / PDB, every frame
+    /// for a dump).
+    #[wasm_bindgen(getter)]
+    pub fn n_frames(&self) -> Result<u32, JsError> {
+        self.finished()?;
+        Ok(self.offsets.len() as u32)
+    }
+
+    /// True when frames vary in atom count (or, for XYZ, cell / per-frame
+    /// properties): the host reparses such a file eagerly.
+    #[wasm_bindgen(getter)]
+    pub fn heterogeneous(&self) -> Result<bool, JsError> {
+        Ok(match self.finished()? {
+            TextIndex::Xyz(i) => i.heterogeneous,
+            TextIndex::Pdb(i) => i.heterogeneous,
+            TextIndex::Lammpstrj(i) => i.heterogeneous,
+        })
+    }
+
+    /// Byte offset of each indexed frame in the file.
+    pub fn offsets(&self) -> Result<Float64Array, JsError> {
+        self.finished()?;
+        let offsets: Vec<f64> = self.offsets.iter().map(|&o| o as f64).collect();
+        Ok(Float64Array::from(&offsets[..]))
+    }
+
+    /// Where the last frame's bytes end: the start of a PDB's trailing
+    /// records, else the end of the file.
+    pub fn frames_end(&self, file_len: f64) -> Result<f64, JsError> {
+        Ok(match self.finished()? {
+            TextIndex::Pdb(i) if !i.offsets.is_empty() => i.tail_start as f64,
+            _ => file_len,
+        })
+    }
+
+    /// Byte offset just past frame 0 (XYZ / PDB): `file[..frame0_end]` holds it.
+    #[wasm_bindgen(getter)]
+    pub fn frame0_end(&self) -> Result<f64, JsError> {
+        Ok(match self.finished()? {
+            TextIndex::Xyz(i) => i.frame0_end,
+            TextIndex::Pdb(i) => i.frame0_end,
+            TextIndex::Lammpstrj(_) => 0,
+        } as f64)
+    }
+
+    /// PDB only: where the records shared by every model (CONECT, …) start;
+    /// model 0 parses from `file[..frame0_end] + file[tail_start..]`.
+    #[wasm_bindgen(getter)]
+    pub fn tail_start(&self) -> Result<f64, JsError> {
+        Ok(match self.finished()? {
+            TextIndex::Pdb(i) => i.tail_start as f64,
+            _ => 0.0,
+        })
+    }
+
+    /// PDB only: model 0 cannot be parsed from its head and tail (a record it
+    /// reads sits between later models), so the host parses the whole file.
+    #[wasm_bindgen(getter)]
+    pub fn frame0_needs_whole_file(&self) -> Result<bool, JsError> {
+        Ok(matches!(self.finished()?, TextIndex::Pdb(i) if i.frame0_needs_whole_file))
+    }
+
+    #[wasm_bindgen(getter)]
+    pub fn timestep_ps(&self) -> Result<f32, JsError> {
+        Ok(match self.finished()? {
+            TextIndex::Lammpstrj(i) => i.timestep_ps,
+            _ => 1.0,
+        })
+    }
+
+    #[wasm_bindgen(getter)]
+    pub fn has_box(&self) -> Result<bool, JsError> {
+        Ok(matches!(self.finished()?, TextIndex::Lammpstrj(i) if i.box_matrix.is_some()))
+    }
+
+    /// Dump only: frame 0's box (row-major 3×3, Å); empty without one.
+    pub fn box_matrix(&self) -> Result<Float32Array, JsError> {
+        Ok(match self.finished()? {
+            TextIndex::Lammpstrj(lammpstrj::LammpstrjIndex {
+                box_matrix: Some(m),
+                ..
+            }) => Float32Array::from(&m[..]),
+            _ => Float32Array::new_with_length(0),
+        })
+    }
+
+    /// Dump only: frame 0's box origin (3 floats), or empty ⇒ (0,0,0).
+    pub fn box_origin(&self) -> Result<Float32Array, JsError> {
+        Ok(match self.finished()? {
+            TextIndex::Lammpstrj(lammpstrj::LammpstrjIndex {
+                box_origin: Some(o),
+                ..
+            }) => Float32Array::from(&o[..]),
+            _ => Float32Array::new_with_length(0),
+        })
+    }
+
+    /// Dump only: newline-joined vector channel names (velocity/force).
+    #[wasm_bindgen(getter)]
+    pub fn vector_channel_names(&self) -> Result<String, JsError> {
+        Ok(match self.finished()? {
+            TextIndex::Lammpstrj(i) => i.vector_channel_names.join("\n"),
+            _ => String::new(),
+        })
+    }
+}
+
+/// One frame decoded by [`decode_text_frame`].
+#[wasm_bindgen]
+pub struct DecodedTextFrame {
+    positions: Vec<f32>,
+    vectors: Vec<f32>,
+}
+
+#[wasm_bindgen]
+impl DecodedTextFrame {
+    /// Positions (Å), `n_atoms * 3` floats.
+    pub fn positions(&self) -> Float32Array {
+        Float32Array::from(&self.positions[..])
+    }
+
+    /// A dump's vector channels (velocity/force), concatenated in channel
+    /// order; empty for XYZ / PDB.
+    pub fn vectors(&self) -> Float32Array {
+        Float32Array::from(&self.vectors[..])
+    }
+}
+
+/// Decode one frame of a multi-frame text file from just its bytes (from its
+/// offset in a [`TextFrameIndexer`] index): an XYZ frame, a PDB model or a
+/// LAMMPS dump frame of `n_atoms` atoms.
+#[wasm_bindgen]
+pub fn decode_text_frame(
+    kind: &str,
+    data: &[u8],
+    n_atoms: u32,
+) -> Result<DecodedTextFrame, JsError> {
+    let text = std::str::from_utf8(data).map_err(|_| JsError::new("file is not valid UTF-8"))?;
+    let n = n_atoms as usize;
+    let (positions, vectors) = match kind {
+        "xyz" => (xyz::decode_frame_at(text, 0, n), Vec::new()),
+        "pdb" => (pdb::decode_model_at(text, 0, n), Vec::new()),
+        "lammpstrj" => {
+            let frame = lammpstrj::decode_frame_at(text, 0, n).map_err(|e| JsError::new(&e))?;
+            (Ok(frame.positions), frame.vectors.concat())
+        }
+        _ => return Err(JsError::new("unsupported text frame kind")),
+    };
+    Ok(DecodedTextFrame {
+        positions: positions.map_err(|e| JsError::new(&e))?,
+        vectors,
+    })
+}
+
+enum BinaryLayout {
+    Dcd(dcd::DcdLayout),
+    Netcdf(netcdf::NetcdfLayout),
+}
+
+/// Where the frames of a DCD (`"dcd"`) or AMBER NetCDF (`"netcdf"`)
+/// trajectory are, from the file's first bytes: every frame sits at a fixed
+/// offset, so the host reads `frame_len` bytes from `frame_start(i)` and
+/// `decode`s them, without ever holding the file. The constructor fails when
+/// `head` is too short for the header (the host reads a longer head) or the
+/// file is not one of these.
+#[wasm_bindgen]
+pub struct BinaryFrameLayout {
+    inner: BinaryLayout,
+}
+
+#[wasm_bindgen]
+impl BinaryFrameLayout {
+    #[wasm_bindgen(constructor)]
+    pub fn new(kind: &str, head: &[u8], file_len: f64) -> Result<BinaryFrameLayout, JsError> {
+        let len = file_len as u64;
+        let inner = match kind {
+            "dcd" => BinaryLayout::Dcd(dcd::read_layout(head, len).map_err(|e| JsError::new(&e))?),
+            "netcdf" => {
+                BinaryLayout::Netcdf(netcdf::read_layout(head, len).map_err(|e| JsError::new(&e))?)
+            }
+            _ => return Err(JsError::new("unsupported binary trajectory kind")),
+        };
+        Ok(BinaryFrameLayout { inner })
+    }
+
+    #[wasm_bindgen(getter)]
+    pub fn n_atoms(&self) -> u32 {
+        match &self.inner {
+            BinaryLayout::Dcd(l) => l.n_atoms as u32,
+            BinaryLayout::Netcdf(l) => l.n_atoms as u32,
+        }
+    }
+
+    #[wasm_bindgen(getter)]
+    pub fn n_frames(&self) -> u32 {
+        match &self.inner {
+            BinaryLayout::Dcd(l) => l.n_frames as u32,
+            BinaryLayout::Netcdf(l) => l.n_frames as u32,
+        }
+    }
+
+    /// The time step the header gives (DCD); NaN when it comes from the
+    /// frames' own `time` (NetCDF: see `netcdf_timestep`).
+    #[wasm_bindgen(getter)]
+    pub fn timestep_ps(&self) -> f32 {
+        match &self.inner {
+            BinaryLayout::Dcd(l) => l.timestep_ps,
+            BinaryLayout::Netcdf(_) => f32::NAN,
+        }
+    }
+
+    /// Each frame carries a unit cell.
+    #[wasm_bindgen(getter)]
+    pub fn has_cell(&self) -> bool {
+        match &self.inner {
+            BinaryLayout::Dcd(l) => l.has_cell,
+            BinaryLayout::Netcdf(l) => l.has_cell(),
+        }
+    }
+
+    /// File offset of frame `i`'s bytes.
+    pub fn frame_start(&self, i: u32) -> f64 {
+        (match &self.inner {
+            BinaryLayout::Dcd(l) => l.frames_start + i as u64 * l.frame_bytes,
+            BinaryLayout::Netcdf(l) => l.record_start + i as u64 * l.recsize,
+        }) as f64
+    }
+
+    /// How many bytes from `frame_start(i)` a frame's decode reads.
+    #[wasm_bindgen(getter)]
+    pub fn frame_len(&self) -> f64 {
+        (match &self.inner {
+            BinaryLayout::Dcd(l) => l.frame_bytes,
+            BinaryLayout::Netcdf(l) => l.record_span(),
+        }) as f64
+    }
+
+    /// Decode frame `i` from its bytes (read from `frame_start(i)`).
+    pub fn decode(&self, bytes: &[u8], i: u32) -> Result<DecodedBinaryFrame, JsError> {
+        let (positions, cell, time) = match &self.inner {
+            BinaryLayout::Dcd(l) => {
+                let (positions, cell) =
+                    dcd::decode_layout_frame(l, bytes).map_err(|e| JsError::new(&e))?;
+                (positions, cell, None)
+            }
+            BinaryLayout::Netcdf(l) => {
+                let f = netcdf::decode_layout_record(l, bytes, i as usize)
+                    .map_err(|e| JsError::new(&e))?;
+                (f.positions, f.cell, f.time)
+            }
+        };
+        Ok(DecodedBinaryFrame {
+            positions,
+            cell,
+            time,
+        })
+    }
+}
+
+/// The index of an ASE `.traj` that stays in its File, built one frame at a
+/// time (see `megane_core::traj::TrajIndexBuilder`): the host reads the
+/// header, then `table_start..table_end`, then each frame from `next_start`
+/// to the end of its JSON (the 8 bytes at `json_offset(i)` give its length
+/// through `json_len`), and later reads `frame_start(f)..frame_end(f)` to
+/// `decode` extra frame `f`. File offsets cross as f64 so files past 4 GiB
+/// index too.
+#[wasm_bindgen]
+pub struct TrajFileIndexer {
+    inner: traj::TrajIndexBuilder,
+}
+
+#[wasm_bindgen]
+impl TrajFileIndexer {
+    /// `head` is the file's first bytes (at least the 48-byte header).
+    #[wasm_bindgen(constructor)]
+    pub fn new(head: &[u8], file_len: f64) -> Result<TrajFileIndexer, JsError> {
+        let inner =
+            traj::TrajIndexBuilder::new(head, file_len as u64).map_err(|e| JsError::new(&e))?;
+        Ok(TrajFileIndexer { inner })
+    }
+
+    #[wasm_bindgen(getter)]
+    pub fn table_start(&self) -> f64 {
+        self.inner.table_range().0 as f64
+    }
+
+    #[wasm_bindgen(getter)]
+    pub fn table_end(&self) -> f64 {
+        self.inner.table_range().1 as f64
+    }
+
+    pub fn set_table(&mut self, table: &[u8]) -> Result<(), JsError> {
+        self.inner.set_table(table).map_err(|e| JsError::new(&e))
+    }
+
+    /// Frames in the file, frame 0 included.
+    #[wasm_bindgen(getter)]
+    pub fn n_items(&self) -> u32 {
+        self.inner.n_items() as u32
+    }
+
+    pub fn json_offset(&self, item: u32) -> Result<f64, JsError> {
+        self.inner
+            .json_offset(item as usize)
+            .map(|o| o as f64)
+            .ok_or_else(|| JsError::new("frame index out of range"))
+    }
+
+    pub fn json_len(&self, bytes: &[u8]) -> Result<f64, JsError> {
+        self.inner
+            .json_len(bytes)
+            .map(|l| l as f64)
+            .map_err(|e| JsError::new(&e))
+    }
+
+    /// Where the next frame to add starts.
+    #[wasm_bindgen(getter)]
+    pub fn next_start(&self) -> f64 {
+        self.inner.next_start() as f64
+    }
+
+    pub fn add_frame(&mut self, bytes: &[u8]) -> Result<(), JsError> {
+        self.inner.add_frame(bytes).map_err(|e| JsError::new(&e))
+    }
+
+    /// Frame 0's snapshot, once frame 0 is added.
+    pub fn frame0(&mut self) -> Result<ParseResult, JsError> {
+        self.inner
+            .take_frame0()
+            .map(ParseResult::from_parsed)
+            .ok_or_else(|| JsError::new("frame 0 is not indexed"))
+    }
+
+    #[wasm_bindgen(getter)]
+    pub fn n_atoms(&self) -> u32 {
+        self.inner.n_atoms() as u32
+    }
+
+    /// Frames after frame 0.
+    #[wasm_bindgen(getter)]
+    pub fn n_frames(&self) -> u32 {
+        self.inner.n_frames() as u32
+    }
+
+    /// A frame's atom count or elements differ from frame 0's: the host
+    /// parses the file whole instead.
+    #[wasm_bindgen(getter)]
+    pub fn heterogeneous(&self) -> bool {
+        self.inner.heterogeneous()
+    }
+
+    /// The cell changes between frames, so each frame carries its own.
+    #[wasm_bindgen(getter)]
+    pub fn varying_cells(&self) -> bool {
+        self.inner.varying_cells()
+    }
+
+    /// Extra frame `frame`'s cell (row-major 3×3, Å); empty unless cells vary.
+    pub fn frame_cell(&self, frame: u32) -> Float32Array {
+        match self.inner.frame_cell(frame as usize) {
+            Some(m) => Float32Array::from(&m[..]),
+            None => Float32Array::new_with_length(0),
+        }
+    }
+
+    pub fn frame_start(&self, frame: u32) -> Result<f64, JsError> {
+        self.range(frame).map(|r| r.0)
+    }
+
+    pub fn frame_end(&self, frame: u32) -> Result<f64, JsError> {
+        self.range(frame).map(|r| r.1)
+    }
+
+    /// Extra frame `frame`'s positions (Å) from its bytes.
+    pub fn decode(&self, frame: u32, bytes: &[u8]) -> Result<Float32Array, JsError> {
+        let positions = self
+            .inner
+            .decode(frame as usize, bytes)
+            .map_err(|e| JsError::new(&e))?;
+        Ok(Float32Array::from(&positions[..]))
+    }
+}
+
+impl TrajFileIndexer {
+    fn range(&self, frame: u32) -> Result<(f64, f64), JsError> {
+        self.inner
+            .frame_range(frame as usize)
+            .map(|(s, e)| (s as f64, e as f64))
+            .ok_or_else(|| JsError::new("frame index out of range"))
+    }
+}
+
+/// One frame decoded by [`BinaryFrameLayout::decode`].
+#[wasm_bindgen]
+pub struct DecodedBinaryFrame {
+    positions: Vec<f32>,
+    cell: Option<[f32; 9]>,
+    time: Option<f32>,
+}
+
+#[wasm_bindgen]
+impl DecodedBinaryFrame {
+    /// Positions (Å), `n_atoms * 3` floats.
+    pub fn positions(&self) -> Float32Array {
+        Float32Array::from(&self.positions[..])
+    }
+
+    /// This frame's cell (row-major 3×3, Å); empty without one.
+    pub fn cell(&self) -> Float32Array {
+        match &self.cell {
+            Some(m) => Float32Array::from(&m[..]),
+            None => Float32Array::new_with_length(0),
+        }
+    }
+
+    /// This frame's time (ps); NaN without one.
+    #[wasm_bindgen(getter)]
+    pub fn time(&self) -> f32 {
+        self.time.unwrap_or(f32::NAN)
+    }
+}
+
+/// The time step (ps) of an AMBER NetCDF trajectory from its first two
+/// frames' `time` (NaN when a frame has none), as the eager reader computes it.
+#[wasm_bindgen]
+pub fn netcdf_timestep(n_frames: u32, t0: f32, t1: f32) -> f32 {
+    let has_time = !t0.is_nan();
+    let opt = |t: f32| (!t.is_nan()).then_some(t);
+    netcdf::netcdf_timestep(n_frames as usize, has_time, [opt(t0), opt(t1)])
+}
+
 /// Persistent LAMMPS-dump decoder for lazy/streaming playback (text format).
 ///
 /// Owns the dump text and a frame byte-offset index; decodes one frame's
@@ -1179,6 +1734,20 @@ macro_rules! wasm_structure_parsers {
 }
 
 megane_core::for_each_structure_format!(wasm_structure_parsers);
+
+/// Parse a structure file's raw bytes, choosing the format from its extension
+/// (`".pdb"`, `"gro"`, …; an unknown extension reads as PDB, like the browser's
+/// dispatch). Text formats are decoded from UTF-8 inside WASM, so the page can
+/// hand over the bytes it read instead of first making a JS string of the file
+/// (which the worker would then hold a second copy of).
+#[wasm_bindgen]
+pub fn parse_structure_bytes(ext: &str, data: &[u8]) -> Result<ParseResult, JsError> {
+    let format = StructureFormat::from_extension(ext).unwrap_or(StructureFormat::Pdb);
+    let parsed = format
+        .parse(FormatInput::Bytes(data))
+        .map_err(|e| JsError::new(&e))?;
+    Ok(ParseResult::from_parsed(parsed))
+}
 
 /// The shared format registry as JSON (`megane_core::formats::registry_json`):
 /// every structure / trajectory format with its exported function names,

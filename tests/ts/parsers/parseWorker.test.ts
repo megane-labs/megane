@@ -70,6 +70,7 @@ const { wasmMock } = vi.hoisted(() => {
     parse_phonon: () => mockStructResult(3),
     parse_vasp: () => mockStructResult(3),
     parse_structure_prefix: () => mockStructResult(3, 0),
+    parse_structure_bytes: (_ext: string, data: Uint8Array) => mockStructResult(data.length),
     parse_traj_frame0: () => mockStructResult(4, 0),
     decode_trajectory_frame0: () => new Float32Array(4 * 3),
     parse_mol: () => mockStructResult(3),
@@ -107,6 +108,104 @@ const { wasmMock } = vi.hoisted(() => {
       }
       free() {}
     },
+    // Windowed text indexer: every window is used whole; two 10-byte frames
+    // follow a 10-byte frame 0 (n_atoms 3); a dump has one vector channel.
+    TextFrameIndexer: class {
+      next_offset = 0;
+      n_atoms = 3;
+      n_frames = 2;
+      heterogeneous = false;
+      frame0_end = 10;
+      tail_start = 30;
+      frame0_needs_whole_file = false;
+      timestep_ps = 2;
+      has_box = true;
+      vector_channel_names = "velocity";
+      constructor(public kind: string) {}
+      scan(window: Uint8Array) {
+        this.next_offset += window.length;
+        return window.length;
+      }
+      finish() {}
+      offsets() {
+        return new Float64Array([10, 20]);
+      }
+      frames_end(len: number) {
+        return len;
+      }
+      box_matrix() {
+        return new Float32Array(9);
+      }
+      box_origin() {
+        return new Float32Array([1, 2, 3]);
+      }
+      free() {}
+    },
+    // Fixed-layout binary trajectory: 3 atoms, 2 frames of 8 bytes after a
+    // 16-byte header, each with a cell of edge 10 + frame and time 2 × frame.
+    BinaryFrameLayout: class {
+      n_atoms = 3;
+      n_frames = 2;
+      timestep_ps = NaN;
+      has_cell = true;
+      frame_len = 8;
+      frame_start(i: number) {
+        return 16 + i * 8;
+      }
+      decode(_bytes: Uint8Array, i: number) {
+        return {
+          positions: () => new Float32Array(9).fill(i),
+          cell: () => new Float32Array([10 + i, 0, 0, 0, 10 + i, 0, 0, 0, 10 + i]),
+          time: 2 * i,
+          free: () => {},
+        };
+      }
+      free() {}
+    },
+    // An ASE .traj of three 20-byte frames (JSON 2 bytes long, 10 bytes in)
+    // and a 24-byte offset table at 100; 3 atoms; the cell changes.
+    TrajFileIndexer: class {
+      table_start = 100;
+      table_end = 124;
+      n_items = 3;
+      n_atoms = 3;
+      n_frames = 2;
+      heterogeneous = false;
+      varying_cells = true;
+      next_start = 0;
+      set_table() {}
+      json_offset(item: number) {
+        return item * 20 + 10;
+      }
+      json_len() {
+        return 2;
+      }
+      add_frame(bytes: Uint8Array) {
+        this.next_start += bytes.length;
+      }
+      frame0() {
+        return mockStructResult(3);
+      }
+      frame_cell(frame: number) {
+        return new Float32Array(9).fill(10 + frame);
+      }
+      frame_start(frame: number) {
+        return (frame + 1) * 20;
+      }
+      frame_end(frame: number) {
+        return (frame + 2) * 20;
+      }
+      decode(frame: number) {
+        return new Float32Array(9).fill(frame);
+      }
+      free() {}
+    },
+    netcdf_timestep: (_n: number, t0: number, t1: number) => t1 - t0,
+    decode_text_frame: (kind: string, _data: Uint8Array, nAtoms: number) => ({
+      positions: () => new Float32Array(nAtoms * 3),
+      vectors: () => new Float32Array(kind === "lammpstrj" ? nAtoms * 3 : 0),
+      free: () => {},
+    }),
     // Windowed indexer over 8-byte "frames" (n_atoms 4).
     XtcIndexer: class {
       next_offset = 0;
@@ -229,6 +328,40 @@ describe("parse.worker onmessage", () => {
     expect(posts[0].result).toBeDefined();
   });
 
+  it("reads a structure File itself and parses its bytes", async () => {
+    const { handler, posts } = await loadWorker();
+    const spy = vi.spyOn(wasmMock, "parse_structure_bytes");
+    // jsdom's Blob has no arrayBuffer(); the worker only needs that method.
+    const file = { arrayBuffer: async () => new Uint8Array([65, 84, 79, 77, 10]).buffer };
+    await handler({ data: { id: 4, op: "structure", wasm: undefined, ext: ".gro", file } });
+    expect(spy).toHaveBeenCalledWith(".gro", new Uint8Array([65, 84, 79, 77, 10]));
+    expect((posts[0].result as { snapshot: { nAtoms: number } }).snapshot.nAtoms).toBe(5);
+    spy.mockRestore();
+  });
+
+  it("parses structure bytes the page already read", async () => {
+    const { handler, posts } = await loadWorker();
+    const bytes = new Uint8Array([1, 2]).buffer;
+    await handler({ data: { id: 5, op: "structure", wasm: undefined, ext: ".pdb", bytes } });
+    expect((posts[0].result as { snapshot: { nAtoms: number } }).snapshot.nAtoms).toBe(2);
+  });
+
+  it("posts a structure's labels as one string", async () => {
+    const { handler, posts } = await loadWorker();
+    const spy = vi.spyOn(wasmMock, "parse_pdb").mockImplementationOnce(() => ({
+      ...wasmMock.parse_pdb(),
+      has_atom_labels: true,
+      atom_labels: "HOH1\nHOH1\nHOH1",
+    }));
+    await handler({
+      data: { id: 3, op: "structure", wasm: undefined, ext: ".pdb", text: "ATOM" },
+    });
+    const result = posts[0].result as { labels: unknown; labelsText?: string };
+    expect(result.labels).toBeNull();
+    expect(result.labelsText).toBe("HOH1\nHOH1\nHOH1");
+    spy.mockRestore();
+  });
+
   it("parses a trajectory request and posts an ok response", async () => {
     const { handler, posts } = await loadWorker();
     await handler({
@@ -339,6 +472,143 @@ describe("parse.worker onmessage", () => {
     await handler({ data: { id: 22, op: "disposeTrajectory", trajectoryId: 200 } });
     await handler({ data: { id: 23, op: "decodeFrame", trajectoryId: 200, frame: 0 } });
     expect(posts[3].ok).toBe(false);
+  });
+
+  /** A File stand-in (jsdom's Blob cannot be read) recording its reads. */
+  function recordingFile(size: number) {
+    const reads: [number, number][] = [];
+    const file = {
+      size,
+      slice: (start: number, end: number) => {
+        reads.push([start, end]);
+        return { arrayBuffer: async () => new ArrayBuffer(end - start) };
+      },
+    };
+    return { file, reads };
+  }
+
+  it("indexes a multi-frame structure from its File and reads frames from it", async () => {
+    const { handler, posts } = await loadWorker();
+    const { file, reads } = recordingFile(30);
+    await handler({
+      data: { id: 40, op: "indexStructure", wasm: undefined, kind: "xyz", trajectoryId: 400, file },
+    });
+    expect(posts[0].error).toBeUndefined();
+    const { index, frame0 } = posts[0].result as {
+      index: { nFrames: number; nAtoms: number };
+      frame0: { snapshot: { nAtoms: number } };
+    };
+    expect(index).toEqual({ nAtoms: 3, nFrames: 2, heterogeneous: false });
+    expect(frame0.snapshot.nAtoms).toBe(3);
+    expect(reads).toContainEqual([0, 10]); // frame 0's bytes
+
+    await handler({ data: { id: 41, op: "decodeFrame", trajectoryId: 400, frame: 1 } });
+    expect((posts[1].result as { positions: Float32Array }).positions).toHaveLength(9);
+    expect(reads[reads.length - 1]).toEqual([20, 30]);
+  });
+
+  it("indexes an ASE .traj from its File, each frame carrying its cell", async () => {
+    const { handler, posts } = await loadWorker();
+    const { file, reads } = recordingFile(130);
+    await handler({
+      data: {
+        id: 45,
+        op: "indexStructure",
+        wasm: undefined,
+        kind: "traj",
+        trajectoryId: 450,
+        file,
+      },
+    });
+    expect(posts[0].error).toBeUndefined();
+    const { index, frame0 } = posts[0].result as {
+      index: { nFrames: number };
+      frame0: { snapshot: { nAtoms: number } };
+    };
+    expect(index).toEqual({ nAtoms: 3, nFrames: 2, heterogeneous: false });
+    expect(frame0.snapshot.nAtoms).toBe(3);
+    expect(reads.slice(0, 2)).toEqual([
+      [0, 48],
+      [100, 124],
+    ]);
+
+    await handler({ data: { id: 46, op: "decodeFrame", trajectoryId: 450, frame: 1 } });
+    const decoded = posts[1].result as { positions: Float32Array; box: Float32Array };
+    expect(Array.from(decoded.positions)).toEqual(new Array(9).fill(1));
+    expect(decoded.box[0]).toBe(11);
+    await handler({ data: { id: 47, op: "disposeTrajectory", trajectoryId: 450 } });
+    expect(posts[2].ok).toBe(true);
+  });
+
+  it("refuses to index an ASE .traj without its File", async () => {
+    const { handler, posts } = await loadWorker();
+    await handler({
+      data: {
+        id: 48,
+        op: "indexStructure",
+        wasm: undefined,
+        kind: "traj",
+        trajectoryId: 480,
+        bytes: new ArrayBuffer(130),
+      },
+    });
+    expect(posts[0].ok).toBe(false);
+    expect(posts[0].error).toMatch(/from its File/);
+  });
+
+  it("indexes a LAMMPS dump from its File, with its vector channels", async () => {
+    const { handler, posts } = await loadWorker();
+    const { file } = recordingFile(30);
+    await handler({
+      data: {
+        id: 50,
+        op: "indexTrajectoryFile",
+        wasm: undefined,
+        kind: "lammpstrj",
+        trajectoryId: 500,
+        file,
+        expectedNAtoms: 3,
+      },
+    });
+    expect(posts[0].error).toBeUndefined();
+    const index = posts[0].result as {
+      vectorChannelNames: string[];
+      boxOrigin: Float32Array;
+      timestepPs: number;
+    };
+    expect(index.vectorChannelNames).toEqual(["velocity"]);
+    expect(Array.from(index.boxOrigin)).toEqual([1, 2, 3]);
+    expect(index.timestepPs).toBe(2);
+
+    await handler({ data: { id: 51, op: "decodeFrame", trajectoryId: 500, frame: 0 } });
+    expect((posts[1].result as { vectorChannelCount: number }).vectorChannelCount).toBe(1);
+  });
+
+  it("indexes a NetCDF trajectory from its header and sends each frame's cell", async () => {
+    const { handler, posts } = await loadWorker();
+    const { file, reads } = recordingFile(32);
+    await handler({
+      data: {
+        id: 60,
+        op: "indexTrajectoryFile",
+        wasm: undefined,
+        kind: "netcdf",
+        trajectoryId: 600,
+        file,
+        expectedNAtoms: 3,
+      },
+    });
+    expect(posts[0].error).toBeUndefined();
+    const index = posts[0].result as { nFrames: number; timestepPs: number; box: Float32Array };
+    expect(index.nFrames).toBe(2);
+    expect(index.timestepPs).toBe(2);
+    expect(index.box[0]).toBe(10);
+    expect(reads[0]).toEqual([0, 32]); // the head (the whole small file)
+
+    await handler({ data: { id: 61, op: "decodeFrame", trajectoryId: 600, frame: 1 } });
+    const frame = posts[1].result as { positions: Float32Array; box?: Float32Array };
+    expect(frame.positions[0]).toBe(1);
+    expect(frame.box?.[0]).toBe(11);
   });
 
   it("fails an XTC index scan that stops making progress", async () => {

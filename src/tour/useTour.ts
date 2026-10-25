@@ -5,7 +5,7 @@
  */
 import { useCallback, useEffect } from "react";
 import { isE2ETestMode } from "../testMode";
-import { startTour, stopTour } from "./MeganeTour";
+import { startTour, stopTour } from "./lazyTour";
 import { shouldAutoStart, useTourStore, type TourHost } from "./tourStore";
 
 interface UseTourOptions {
@@ -37,7 +37,7 @@ export function useTour({ host, autoStartDelayMs = 600 }: UseTourOptions) {
     }
     const timer = window.setTimeout(() => {
       markAutoStartHandled();
-      startTour();
+      void startTour();
     }, autoStartDelayMs);
     return () => {
       window.clearTimeout(timer);
@@ -51,7 +51,7 @@ export function useTour({ host, autoStartDelayMs = 600 }: UseTourOptions) {
   }, []);
 
   const start = useCallback(() => {
-    startTour();
+    void startTour();
   }, []);
 
   return { startTour: start };

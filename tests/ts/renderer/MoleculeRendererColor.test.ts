@@ -3,6 +3,7 @@ import { MoleculeRenderer } from "@/renderer/MoleculeRenderer";
 import { ImpostorAtomMesh } from "@/renderer/ImpostorAtomMesh";
 import { ImpostorBondMesh } from "@/renderer/ImpostorBondMesh";
 import type { Snapshot } from "@/types";
+import { BYTE_DIGITS, rgbAt } from "./colorBytes";
 
 function makeSnapshot(): Snapshot {
   return {
@@ -58,8 +59,7 @@ describe("MoleculeRenderer.applyAtomColorOverrides", () => {
     expect(recomputeSpy).toHaveBeenCalledTimes(1);
 
     // Atom 0 buffer now reflects the override.
-    const buf = atom.getColorBuffer();
-    expect(buf[0]).toBeCloseTo(0.9, 6);
+    expect(rgbAt(atom.getColorBuffer(), 0)[0]).toBeCloseTo(0.9, BYTE_DIGITS);
   });
 
   it("is a no-op when called with the same override reference twice", () => {
@@ -86,12 +86,12 @@ describe("MoleculeRenderer.applyAtomColorOverrides", () => {
     overrides[1] = 0.1;
     overrides[2] = 0.1;
     renderer.applyAtomColorOverrides(overrides);
-    expect(atom.getColorBuffer()[0]).toBeCloseTo(0.9, 6);
+    expect(rgbAt(atom.getColorBuffer(), 0)[0]).toBeCloseTo(0.9, BYTE_DIGITS);
 
     const loadSpy = vi.spyOn(atom, "loadSnapshot");
     renderer.applyAtomColorOverrides(null);
     expect(loadSpy).toHaveBeenCalledWith(snapshot);
-    expect(atom.getColorBuffer()[0]).toBeCloseTo(baseR, 6);
+    expect(atom.getColorBuffer()[0]).toBe(baseR);
   });
 
   it("skips bond sync when the snapshot has no bonds", () => {
@@ -141,7 +141,7 @@ describe("MoleculeRenderer.applyAtomColorOverrides", () => {
     expect(recomputeSpy).toHaveBeenCalledTimes(1);
     // After the bond rewrite, atom 0's override is still red — bond mesh should
     // see the updated atom color buffer.
-    expect(atom.getColorBuffer()[0]).toBeCloseTo(1, 6);
+    expect(rgbAt(atom.getColorBuffer(), 0)[0]).toBe(1);
   });
 
   it("re-syncs bond colors when updateBonds rewrites topology under active overrides", () => {

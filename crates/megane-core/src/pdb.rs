@@ -16,14 +16,53 @@ pub struct Atom {
     pub element: u8,
 }
 
+/// Decode a fixed-width PDB number field: plain decimal, or hybrid-36 (the
+/// encoding wwPDB tools use once serials pass 99,999 or residue numbers pass
+/// 9,999: `A0000` follows `99999`, and `a0000` follows `ZZZZZ`). Overflow
+/// markers such as `*****` decode to `None`.
+pub(crate) fn hy36_decode(field: &str) -> Option<i32> {
+    let s = field.trim();
+    if s.is_empty() {
+        return None;
+    }
+    let first = s.as_bytes()[0];
+    if first.is_ascii_digit() || first == b'-' || first == b'+' {
+        return s.parse().ok();
+    }
+    let width = field.len() as u32;
+    if s.len() as u32 != width || width == 0 {
+        return None;
+    }
+    let (upper, offset) = if first.is_ascii_uppercase() {
+        (true, 0i64)
+    } else if first.is_ascii_lowercase() {
+        (false, 26 * 36i64.pow(width - 1))
+    } else {
+        return None;
+    };
+    let mut value: i64 = 0;
+    for &c in s.as_bytes() {
+        let d = match c {
+            b'0'..=b'9' => c - b'0',
+            b'A'..=b'Z' if upper => c - b'A' + 10,
+            b'a'..=b'z' if !upper => c - b'a' + 10,
+            _ => return None,
+        };
+        value = value * 36 + d as i64;
+    }
+    // The first letter digit (10) starts the range right after the decimal one.
+    let decoded = value - 10 * 36i64.pow(width - 1) + 10i64.pow(width) + offset;
+    i32::try_from(decoded).ok()
+}
+
 /// Parse a PDB HELIX record and return a secondary-structure range.
 fn parse_helix_range(line: &str) -> Option<SsRange> {
     if line.len() < 37 {
         return None;
     }
     let chain_id = line.as_bytes().get(19).copied().unwrap_or(b' ');
-    let start: u32 = line[21..25].trim().parse().ok()?;
-    let end: u32 = line[33..37].trim().parse().ok()?;
+    let start = u32::try_from(hy36_decode(&line[21..25])?).ok()?;
+    let end = u32::try_from(hy36_decode(&line[33..37])?).ok()?;
     Some(SsRange {
         chain_id,
         start,
@@ -38,8 +77,8 @@ fn parse_sheet_range(line: &str) -> Option<SsRange> {
         return None;
     }
     let chain_id = line.as_bytes().get(21).copied().unwrap_or(b' ');
-    let start: u32 = line[22..26].trim().parse().ok()?;
-    let end: u32 = line[33..37].trim().parse().ok()?;
+    let start = u32::try_from(hy36_decode(&line[22..26])?).ok()?;
+    let end = u32::try_from(hy36_decode(&line[33..37])?).ok()?;
     Some(SsRange {
         chain_id,
         start,
@@ -58,7 +97,7 @@ fn parse_ca_info(line: &str) -> Option<(u8, u32)> {
         return None;
     }
     let chain_id = line.as_bytes().get(21).copied().unwrap_or(b' ');
-    let res_num: u32 = line[22..26].trim().parse().ok()?;
+    let res_num = u32::try_from(hy36_decode(&line[22..26])?).ok()?;
     Some((chain_id, res_num))
 }
 
@@ -96,13 +135,15 @@ fn parse_element(line: &str) -> u8 {
     }
 }
 
-/// Parse an ATOM/HETATM line to extract coordinates and element.
-fn parse_atom_line(line: &str) -> Option<(i32, Atom)> {
+/// Parse an ATOM/HETATM line to extract coordinates and element. The serial is
+/// `None` when the field holds no number (e.g. `*****` past 99,999 atoms): the
+/// atom is still read, only CONECT records cannot point at it.
+fn parse_atom_line(line: &str) -> Option<(Option<i32>, Atom)> {
     if line.len() < 54 {
         return None;
     }
 
-    let serial: i32 = line[6..11].trim().parse().ok()?;
+    let serial = hy36_decode(&line[6..11]);
     let x: f32 = line[30..38].trim().parse().ok()?;
     let y: f32 = line[38..46].trim().parse().ok()?;
     let z: f32 = line[46..54].trim().parse().ok()?;
@@ -135,10 +176,9 @@ fn parse_cryst1(line: &str) -> Option<[f32; 9]> {
 fn parse_conect_line(line: &str, serial_to_index: &HashMap<i32, usize>) -> Vec<(u32, u32)> {
     let mut bonds = Vec::new();
 
-    let source_str = line.get(6..11).unwrap_or("").trim();
-    let source_serial: i32 = match source_str.parse() {
-        Ok(s) => s,
-        Err(_) => return bonds,
+    let source_serial = match line.get(6..11).and_then(hy36_decode) {
+        Some(s) => s,
+        None => return bonds,
     };
     let source_idx = match serial_to_index.get(&source_serial) {
         Some(&idx) => idx,
@@ -150,13 +190,9 @@ fn parse_conect_line(line: &str, serial_to_index: &HashMap<i32, usize>) -> Vec<(
         if col_start + 5 > line.len() {
             break;
         }
-        let target_str = line[col_start..col_start + 5].trim();
-        if target_str.is_empty() {
-            continue;
-        }
-        let target_serial: i32 = match target_str.parse() {
-            Ok(s) => s,
-            Err(_) => continue,
+        let target_serial = match hy36_decode(&line[col_start..col_start + 5]) {
+            Some(s) => s,
+            None => continue,
         };
         let target_idx = match serial_to_index.get(&target_serial) {
             Some(&idx) => idx,
@@ -265,8 +301,10 @@ fn parse_impl(text: &str, frame0_only: bool) -> Result<ParsedStructure, String> 
             "ATOM" | "HETATM" => {
                 if let Some((serial, atom)) = parse_atom_line(line) {
                     // Build serial→index map from first model only
-                    if !has_model_record || model_count == 0 {
-                        serial_to_index.insert(serial, current_model.len());
+                    if let Some(serial) = serial {
+                        if !has_model_record || model_count == 0 {
+                            serial_to_index.insert(serial, current_model.len());
+                        }
                     }
                     // Collect Cα info from first model
                     if !has_model_record || model_count == 0 {
@@ -442,18 +480,6 @@ fn parse_impl(text: &str, frame0_only: bool) -> Result<ParsedStructure, String> 
 
 // ---------- Lazy / streaming support (multi-MODEL PDB) ----------
 
-/// Byte offset of each line, so the index scan can record where each model
-/// begins in the raw text (for lazy per-model decode from that offset).
-fn line_byte_starts(text: &str) -> Vec<usize> {
-    let mut starts = Vec::new();
-    let mut pos = 0usize;
-    for line in text.split('\n') {
-        starts.push(pos);
-        pos += line.len() + 1;
-    }
-    starts
-}
-
 /// Lightweight index over a multi-MODEL PDB: byte offset of each EXTRA model
 /// (models 1..N; model 0 is the eager snapshot), built without retaining
 /// coordinates. Models whose atom count differs from model 0 are skipped,
@@ -469,6 +495,17 @@ pub struct PdbIndex {
     /// host falls back to an eager parse (which builds the `HeteroFrames` side
     /// table). Detected cheaply from ATOM/HETATM counts, no coordinate decode.
     pub heterogeneous: bool,
+    /// Byte offset just past model 0's `ENDMDL` line (the whole text when the
+    /// file has no MODEL records).
+    pub frame0_end: u64,
+    /// Byte offset just past the last `ENDMDL` line: the records after it
+    /// (CONECT, MASTER, END) belong to every model. [`parse_frame0`] of
+    /// `text[..frame0_end] + text[tail_start..]` equals `parse_frame0(text)`
+    /// unless `frame0_needs_whole_file`.
+    pub tail_start: u64,
+    /// A record model 0's parse reads (CONECT, CRYST1, HELIX, SHEET) sits
+    /// between two later models, so model 0 must be parsed from the whole text.
+    pub frame0_needs_whole_file: bool,
 }
 
 /// Cheap per-model atom-count test used only by {@link build_index}: an
@@ -484,68 +521,113 @@ fn is_countable_atom_line(line: &str) -> bool {
 /// retaining coordinates. Models whose atom count differs from model 0 are
 /// dropped, matching the eager parser so extra-model indices line up.
 pub fn build_index(text: &str) -> Result<PdbIndex, String> {
-    let starts = line_byte_starts(text);
-    let mut first_n_atoms: Option<usize> = None;
-    let mut offsets: Vec<usize> = Vec::new();
-    let mut has_model_record = false;
-    let mut current_offset = 0usize; // MODEL line offset of the current model
-    let mut current_count = 0usize;
-    let mut heterogeneous = false;
+    let mut builder = PdbIndexBuilder::default();
+    crate::lines::for_each_line(text, |line, start, end| {
+        builder.push_line(line, start, end);
+        Ok(())
+    })?;
+    builder.finish(text.len() as u64)
+}
 
-    for (i, line) in text.lines().enumerate() {
+/// The [`build_index`] scan, fed one line at a time (see `crate::lines`), so a
+/// file can be indexed window by window without being held whole.
+#[derive(Default)]
+pub struct PdbIndexBuilder {
+    first_n_atoms: Option<usize>,
+    offsets: Vec<u64>,
+    has_model_record: bool,
+    /// `MODEL` line offset of the current model.
+    current_offset: u64,
+    current_count: usize,
+    heterogeneous: bool,
+    frame0_end: u64,
+    last_endmdl_end: u64,
+    /// A model-0-relevant record was seen since the last `ENDMDL` after model 0.
+    record_since_endmdl: bool,
+    frame0_needs_whole_file: bool,
+}
+
+impl PdbIndexBuilder {
+    /// Take the next line (without its line break), spanning bytes `start..end`.
+    pub fn push_line(&mut self, line: &str, start: u64, end: u64) {
         let record = if line.len() >= 6 {
-            line[..6].trim_end()
+            line.get(..6).unwrap_or(line).trim_end()
         } else {
             line.trim_end()
         };
         match record {
             "MODEL" => {
-                has_model_record = true;
-                current_offset = starts[i];
-                current_count = 0;
+                self.has_model_record = true;
+                self.current_offset = start;
+                self.current_count = 0;
+                if self.record_since_endmdl {
+                    self.frame0_needs_whole_file = true;
+                }
             }
             "ENDMDL" => {
-                match first_n_atoms {
-                    None => first_n_atoms = Some(current_count), // model 0 = eager snapshot
+                match self.first_n_atoms {
+                    None => {
+                        // model 0 = eager snapshot
+                        self.first_n_atoms = Some(self.current_count);
+                        self.frame0_end = end;
+                    }
                     Some(n0) => {
-                        if current_count != n0 {
-                            heterogeneous = true;
+                        if self.current_count != n0 {
+                            self.heterogeneous = true;
                         }
-                        offsets.push(current_offset);
+                        self.offsets.push(self.current_offset);
                     }
                 }
-                current_count = 0;
+                self.current_count = 0;
+                self.last_endmdl_end = end;
+                self.record_since_endmdl = false;
             }
             "ATOM" | "HETATM" if is_countable_atom_line(line) => {
-                current_count += 1;
+                self.current_count += 1;
+            }
+            "CONECT" | "CRYST1" | "HELIX" | "SHEET" if self.first_n_atoms.is_some() => {
+                self.record_since_endmdl = true;
             }
             _ => {}
         }
     }
 
-    // No MODEL/ENDMDL: all atoms are a single implicit model, no extra frames.
-    if !has_model_record {
-        if current_count == 0 {
+    /// The index of everything pushed so far, for a `file_len`-byte file.
+    pub fn finish(self, file_len: u64) -> Result<PdbIndex, String> {
+        // No MODEL/ENDMDL: all atoms are a single implicit model, no extra frames.
+        if !self.has_model_record {
+            if self.current_count == 0 {
+                return Err("PDB file contains no ATOM or HETATM records".into());
+            }
+            return Ok(PdbIndex {
+                n_atoms: self.current_count,
+                n_extra_frames: 0,
+                offsets: Vec::new(),
+                heterogeneous: false,
+                frame0_end: file_len,
+                tail_start: file_len,
+                frame0_needs_whole_file: false,
+            });
+        }
+        let n_atoms = self.first_n_atoms.ok_or("PDB file contains no models")?;
+        if n_atoms == 0 {
             return Err("PDB file contains no ATOM or HETATM records".into());
         }
-        return Ok(PdbIndex {
-            n_atoms: current_count,
-            n_extra_frames: 0,
-            offsets: Vec::new(),
-            heterogeneous: false,
-        });
+        Ok(PdbIndex {
+            n_atoms,
+            n_extra_frames: self.offsets.len(),
+            offsets: self.offsets.iter().map(|&o| o as usize).collect(),
+            heterogeneous: self.heterogeneous,
+            frame0_end: self.frame0_end,
+            tail_start: self.last_endmdl_end,
+            frame0_needs_whole_file: self.frame0_needs_whole_file,
+        })
     }
 
-    let n_atoms = first_n_atoms.ok_or("PDB file contains no models")?;
-    if n_atoms == 0 {
-        return Err("PDB file contains no ATOM or HETATM records".into());
+    /// Byte offset of each extra model's `MODEL` line, as file offsets.
+    pub fn file_offsets(&self) -> &[u64] {
+        &self.offsets
     }
-    Ok(PdbIndex {
-        n_atoms,
-        n_extra_frames: offsets.len(),
-        offsets,
-        heterogeneous,
-    })
 }
 
 /// Decode a single PDB model's positions (Å) given its `MODEL`-record byte
@@ -598,6 +680,78 @@ mod tests {
 
     /// The Build panel's "Empty Box" template starts from a PDB that is only a
     /// `CRYST1` record: no atoms, just the cell to build into.
+    fn models(n_models: usize, between: &str) -> String {
+        let mut text = String::from(
+            "HEADER    TEST\nCRYST1   10.000   10.000   10.000  90.00  90.00  90.00 P 1\n",
+        );
+        for m in 0..n_models {
+            text += &format!("MODEL     {:>4}\n", m + 1);
+            for a in 0..3 {
+                text += &format!(
+                    "ATOM  {:>5}  O   HOH A{:>4}    {:8.3}{:8.3}{:8.3}  1.00  0.00           O  \n",
+                    a + 1,
+                    1,
+                    a as f32 * 3.0 + m as f32,
+                    0.0,
+                    0.0
+                );
+            }
+            text += "ENDMDL\n";
+            if m == 0 {
+                text += between;
+            }
+        }
+        text += "CONECT    1    2\nEND\n";
+        text
+    }
+
+    #[test]
+    fn windowed_model_index_matches_the_whole_text_index() {
+        let text = models(5, "");
+        let whole = build_index(&text).unwrap();
+        assert_eq!(whole.n_extra_frames, 4);
+        for window in [1, 13, 100, text.len()] {
+            let mut b = PdbIndexBuilder::default();
+            crate::lines::feed_in_windows(&text, window, |l, s, e| {
+                b.push_line(l, s, e);
+                Ok(())
+            })
+            .unwrap();
+            let got = b.finish(text.len() as u64).unwrap();
+            assert_eq!(got.offsets, whole.offsets);
+            assert_eq!(got.frame0_end, whole.frame0_end);
+            assert_eq!(got.tail_start, whole.tail_start);
+            assert!(!got.frame0_needs_whole_file);
+        }
+    }
+
+    #[test]
+    fn model0_parses_from_its_head_and_the_trailing_records() {
+        let text = models(4, "");
+        let idx = build_index(&text).unwrap();
+        let mut head_tail = text[..idx.frame0_end as usize].to_string();
+        head_tail += &text[idx.tail_start as usize..];
+        assert!(head_tail.contains("CONECT"));
+        let a = parse_frame0(&head_tail).unwrap();
+        let b = parse_frame0(&text).unwrap();
+        assert_eq!(a.positions, b.positions);
+        assert_eq!(a.bonds, b.bonds);
+        assert_eq!(a.n_file_bonds, b.n_file_bonds);
+        assert_eq!(a.box_matrix, b.box_matrix);
+    }
+
+    #[test]
+    fn a_record_between_later_models_needs_the_whole_file_for_model0() {
+        let idx = build_index(&models(3, "CONECT    1    3\n")).unwrap();
+        assert!(idx.frame0_needs_whole_file);
+        // Without MODEL records the whole text is model 0.
+        let single =
+            "ATOM      1  O   HOH A   1       0.000   0.000   0.000  1.00  0.00           O  \n";
+        let idx = build_index(single).unwrap();
+        assert_eq!(idx.frame0_end, single.len() as u64);
+        assert_eq!(idx.n_extra_frames, 0);
+    }
+
     #[test]
     fn parses_a_cryst1_only_file_as_an_empty_cell() {
         let text = "REMARK   empty box\nCRYST1   10.000   10.000   10.000  90.00  90.00  90.00 P 1           1\nEND\n";
@@ -621,6 +775,66 @@ mod tests {
             Err(err) => assert!(err.contains("no ATOM or HETATM"), "{err}"),
             Ok(_) => panic!("a file with neither atoms nor a cell must not parse"),
         }
+    }
+
+    #[test]
+    fn hy36_decodes_decimal_and_hybrid36_fields() {
+        assert_eq!(hy36_decode("    1"), Some(1));
+        assert_eq!(hy36_decode("99999"), Some(99_999));
+        assert_eq!(hy36_decode("A0000"), Some(100_000));
+        assert_eq!(hy36_decode("A0001"), Some(100_001));
+        assert_eq!(hy36_decode("ZZZZZ"), Some(43_770_015));
+        assert_eq!(hy36_decode("a0000"), Some(43_770_016));
+        // 4-wide residue numbers: A000 follows 9999.
+        assert_eq!(hy36_decode("9999"), Some(9_999));
+        assert_eq!(hy36_decode("A000"), Some(10_000));
+        assert_eq!(hy36_decode("  -3"), Some(-3));
+        // Overflow markers, blanks, mixed case and stray characters are not numbers.
+        assert_eq!(hy36_decode("*****"), None);
+        assert_eq!(hy36_decode("     "), None);
+        assert_eq!(hy36_decode("Aa000"), None);
+        assert_eq!(hy36_decode("A00 0"), None);
+        assert_eq!(hy36_decode("A000 "), None);
+    }
+
+    fn atom_line(serial: &str, x: f32) -> String {
+        format!(
+            "HETATM{serial:>5}  O   HOH A   1    {x:8.3}   0.000   0.000  1.00  0.00           O  \n"
+        )
+    }
+
+    #[test]
+    fn keeps_atoms_whose_serial_is_hybrid36_or_an_overflow_marker() {
+        // Files past 99,999 atoms write the serial as hybrid-36 (wwPDB, Phenix,
+        // OpenMM) or as "*****" (VMD); every one of those atoms must survive.
+        let mut pdb = String::new();
+        // 10 Å apart, so no bond is distance-inferred for the unnumbered atom.
+        pdb += &atom_line("99999", 0.0);
+        pdb += &atom_line("A0000", 10.0);
+        pdb += &atom_line("*****", 20.0);
+        pdb += &atom_line("A0001", 30.0);
+        pdb += "CONECT99999A0000\nCONECTA0000A0001\nEND\n";
+        let s = parse(&pdb).unwrap();
+        assert_eq!(s.n_atoms, 4);
+        assert!((s.positions[6] - 20.0).abs() < 1e-4);
+        // Both CONECT records resolve through the hybrid-36 serials.
+        assert_eq!(s.n_file_bonds, 2);
+        let mut bonds = s.bonds.clone();
+        bonds.sort();
+        assert_eq!(bonds, vec![(0, 1), (1, 3)]);
+    }
+
+    #[test]
+    fn reads_hybrid36_residue_numbers_for_the_backbone() {
+        let line = |name: &str, res: &str, x: f32| {
+            format!(
+                "ATOM  {:>5}  {name:<3} ALA A{res:>4}    {x:8.3}   0.000   0.000  1.00  0.00           C  \n",
+                1
+            )
+        };
+        let pdb = line("CA", "9999", 0.0) + &line("CA", "A000", 3.8) + "END\n";
+        let s = parse(&pdb).unwrap();
+        assert_eq!(s.ca_res_nums, vec![9_999, 10_000]);
     }
 
     #[test]

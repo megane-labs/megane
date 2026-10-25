@@ -93,10 +93,11 @@ function render({ model, el }: { model: AnyWidgetModel; el: HTMLElement }) {
   function parseTrajectory(): EmbeddedTrajectory | null {
     const data = model.get("_trajectory_data") as DataView | null;
     if (!data || data.byteLength === 0) return null;
-    const buffer = new ArrayBuffer(data.byteLength);
-    new Uint8Array(buffer).set(new Uint8Array(data.buffer, data.byteOffset, data.byteLength));
-    const { msgType } = decodeHeader(buffer);
-    return msgType === MSG_TRAJECTORY ? decodeTrajectory(buffer) : null;
+    // The whole trajectory is decoded in place, frame by frame, rather than
+    // copied: it can be most of the notebook's payload.
+    const buffer = data.buffer as ArrayBuffer;
+    const { msgType } = decodeHeader(buffer.slice(data.byteOffset, data.byteOffset + 8));
+    return msgType === MSG_TRAJECTORY ? decodeTrajectory(buffer, data.byteOffset) : null;
   }
 
   /** The frame to show: from the embedded trajectory when there is one. */
