@@ -150,7 +150,9 @@ fn parse_dim_list(r: &mut Reader) -> Result<Vec<(String, u32)>, String> {
     if tag != TAG_DIM {
         return Err(format!("expected NC_DIMENSION tag ({TAG_DIM}), got {tag}"));
     }
-    let mut dims = Vec::with_capacity(count as usize);
+    // `count` is a header claim; every entry takes at least 8 bytes (name
+    // length + size), so reserve no more entries than the bytes left can hold.
+    let mut dims = Vec::with_capacity((count as usize).min(r.remaining() / 8));
     for _ in 0..count {
         let name = r.read_string()?;
         let size = r.read_u32()?;
@@ -168,11 +170,14 @@ fn parse_var_list(r: &mut Reader) -> Result<Vec<VarDesc>, String> {
     if tag != TAG_VAR {
         return Err(format!("expected NC_VARIABLE tag ({TAG_VAR}), got {tag}"));
     }
-    let mut vars = Vec::with_capacity(count as usize);
+    // As for dimensions: every variable entry takes at least 28 bytes (name
+    // length, ndims, attribute-list header, type, vsize, begin), and every
+    // dimension id 4.
+    let mut vars = Vec::with_capacity((count as usize).min(r.remaining() / 28));
     for _ in 0..count {
         let name = r.read_string()?;
         let ndims = r.read_u32()? as usize;
-        let mut dimids = Vec::with_capacity(ndims);
+        let mut dimids = Vec::with_capacity(ndims.min(r.remaining() / 4));
         for _ in 0..ndims {
             dimids.push(r.read_u32()?);
         }
@@ -1075,6 +1080,41 @@ mod tests {
     fn test_bad_magic_rejected() {
         let data = b"NOTCDF\x01\x00\x00\x00";
         assert!(parse_netcdf(data).is_err());
+    }
+
+    /// A header whose list counts claim billions of entries must fail on the
+    /// missing bytes instead of reserving memory for every claimed entry
+    /// (a 16-byte file used to ask for ~137 GB and abort the process).
+    #[test]
+    fn huge_header_counts_are_an_error_not_an_allocation() {
+        let be = |v: u32| v.to_be_bytes();
+        // dim_list: NC_DIMENSION tag, count 0xFFFFFFFF, then nothing.
+        let mut dims = b"CDF\x01".to_vec();
+        dims.extend(be(1));
+        dims.extend(be(TAG_DIM));
+        dims.extend(be(u32::MAX));
+        assert_eq!(dims.len(), 16);
+        assert!(parse_netcdf(&dims).is_err());
+
+        // var_list: no dims, no global attributes, NC_VARIABLE count 0xFFFFFFFF.
+        let mut vars = b"CDF\x01".to_vec();
+        vars.extend(be(1));
+        vars.extend([0; 16]);
+        vars.extend(be(TAG_VAR));
+        vars.extend(be(u32::MAX));
+        assert!(parse_netcdf(&vars).is_err());
+
+        // One variable whose dimension-id count claims 0xFFFFFFFF entries.
+        let mut ndims = b"CDF\x01".to_vec();
+        ndims.extend(be(1));
+        ndims.extend([0; 16]);
+        ndims.extend(be(TAG_VAR));
+        ndims.extend(be(1));
+        ndims.extend(be(1));
+        ndims.extend(b"x\0\0\0");
+        ndims.extend(be(u32::MAX));
+        assert!(parse_netcdf(&ndims).is_err());
+        assert!(read_layout(&ndims, ndims.len() as u64).is_err());
     }
 
     #[test]

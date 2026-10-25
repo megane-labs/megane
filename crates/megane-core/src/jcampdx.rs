@@ -184,14 +184,25 @@ fn tokenize(field: &str) -> Vec<Token> {
     out
 }
 
+/// Most points DUP runs may expand a table to when its block declares no
+/// `##NPOINTS` (2^24, far beyond any 1D spectrum).
+const MAX_UNDECLARED_POINTS: usize = 1 << 24;
+
 /// Decode an `(X++(Y..Y))` table: the first token of each line is the X value,
 /// the rest are Y values in AFFN / SQZ / DIF / DUP form.
+///
+/// DUP is the only token that expands, by a count read from the file, so it
+/// may not take the table past `n_points` (the block's `##NPOINTS`) or, when
+/// that is absent, [`MAX_UNDECLARED_POINTS`]. A run that would is an error.
 fn decode_xyy(
     lines: &[&str],
     x_factor: f64,
     y_factor: f64,
     delta_x: Option<f64>,
-) -> (Vec<f64>, Vec<f64>) {
+    n_points: Option<usize>,
+) -> Result<(Vec<f64>, Vec<f64>), String> {
+    let declared = n_points.filter(|&n| n > 0);
+    let max_points = declared.unwrap_or(MAX_UNDECLARED_POINTS);
     let mut xs: Vec<f64> = Vec::new();
     let mut ys: Vec<f64> = Vec::new();
     let mut last_y: Option<f64> = None;
@@ -236,9 +247,23 @@ fn decode_xyy(
                 }
                 Token::Dup(n) => {
                     if let Some(v) = running {
-                        for _ in 0..n {
-                            line_ys.push(v);
+                        // Points so far; a continued line's first value may
+                        // be the DIF checkpoint dropped below, so not counted.
+                        let held = ys.len() + line_ys.len()
+                            - usize::from(!ys.is_empty() && !line_ys.is_empty());
+                        if n > max_points.saturating_sub(held) {
+                            return Err(match declared {
+                                Some(np) => format!(
+                                    "JCAMP-DX: a DUP run of {} takes the data table past ##NPOINTS={np}",
+                                    n + 1
+                                ),
+                                None => format!(
+                                    "JCAMP-DX: a DUP run of {} takes the data table past {max_points} points (no ##NPOINTS declared)",
+                                    n + 1
+                                ),
+                            });
                         }
+                        line_ys.extend(std::iter::repeat_n(v, n));
                     }
                 }
             }
@@ -266,7 +291,7 @@ fn decode_xyy(
         }
         last_y = line_ys.last().copied();
     }
-    (xs, ys)
+    Ok((xs, ys))
 }
 
 /// Decode an `(XY..XY)` peak table: alternating X,Y pairs, AFFN only.
@@ -468,7 +493,7 @@ fn parse_block(lines: &[&str]) -> Result<(Spectrum, TableKind), String> {
 
     let (kind, x, y) = match data_kind {
         Some("xyy") => {
-            let (x, y) = decode_xyy(&data_lines, x_factor, y_factor, delta_x);
+            let (x, y) = decode_xyy(&data_lines, x_factor, y_factor, delta_x, n_points)?;
             (TableKind::Spectrum, x, y)
         }
         Some("xyxy") => {
@@ -486,7 +511,7 @@ fn parse_block(lines: &[&str]) -> Result<(Spectrum, TableKind), String> {
             // Decode Y with its factor; the raw X column is only a point
             // counter in Bruker exports, so discard it and rebuild the
             // abscissa from the declared FIRST/LAST of the X variable.
-            let (_, y) = decode_xyy(&data_lines, 1.0, yf, None);
+            let (_, y) = decode_xyy(&data_lines, 1.0, yf, None, n_points)?;
             let first = nt_firsts.get(x_col).and_then(|f| f.parse::<f64>().ok());
             let last = nt_lasts.get(x_col).and_then(|f| f.parse::<f64>().ok());
             let n = y.len();
@@ -671,6 +696,30 @@ mod tests {
 ";
         let s = parse(text).unwrap();
         assert_eq!(s.y, vec![10.0; 5]);
+    }
+
+    /// DUP is the one ASDF token that expands: `S0000000` in an 80-byte file
+    /// meant ten million points, and a longer count aborted the process. DUP
+    /// runs may not take the table past `##NPOINTS`, or past a fixed ceiling
+    /// when the block declares no point count.
+    #[test]
+    fn a_dup_run_past_the_point_count_is_an_error() {
+        let with_n = "##TITLE=dup\n##JCAMP-DX=4.24\n##DELTAX=1\n##NPOINTS=4\n\
+                      ##XYDATA=(X++(Y..Y))\n0 A0S0000000\n##END=\n";
+        let err = parse(with_n).unwrap_err();
+        assert!(err.contains("NPOINTS=4"), "{err}");
+        // A run that ends exactly at NPOINTS (`V` = 4 occurrences) decodes.
+        let exact = with_n.replace("S0000000", "V");
+        assert_eq!(parse(&exact).unwrap().y, vec![10.0; 4]);
+
+        let no_n = |data: &str| {
+            format!("##TITLE=dup\n##JCAMP-DX=4.24\n##DELTAX=1\n##XYDATA=(X++(Y..Y))\n0 {data}\n##END=\n")
+        };
+        // One run past the ceiling, and two runs that only pass it together.
+        let err = parse(&no_n("A0S99999999999")).unwrap_err();
+        assert!(err.contains("DUP"), "{err}");
+        assert!(parse(&no_n("A0S0000000S0000000")).is_err());
+        assert_eq!(parse(&no_n("A0W")).unwrap().y, vec![10.0; 5]);
     }
 
     #[test]

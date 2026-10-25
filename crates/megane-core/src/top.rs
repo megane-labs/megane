@@ -304,7 +304,9 @@ fn parse_top_bonds_grouped(text: &str, n_atoms: usize) -> Option<Vec<(u32, u32)>
                     Some(v) => v,
                     None => continue,
                 };
-                if ow == 0 {
+                // Index 0 has no OW; an OW in the top two u32 indices has no
+                // hydrogens that `ow + 2` could name without overflowing.
+                if ow == 0 || ow > u32::MAX - 2 {
                     continue;
                 }
                 current_max_atom_index = current_max_atom_index.max(ow + 2);
@@ -350,21 +352,30 @@ fn parse_top_bonds_grouped(text: &str, n_atoms: usize) -> Option<Vec<(u32, u32)>
     };
 
     let mut bonds = Vec::new();
-    let mut offset: u32 = 0;
+    // Global index of the next copy's first atom.
+    let mut offset: usize = 0;
     for (name, count) in order {
         let Some(moltype) = moltypes.get(&name) else {
             // Unresolvable molecule type (e.g. missing #include) — stop here
             // rather than guess its atom count and miscompute later offsets.
             break;
         };
-        for _ in 0..count {
+        // A copy that starts at or past the structure's last atom has no bond
+        // inside it, so only the copies starting below `n_atoms` are walked: a
+        // huge `[ molecules ]` count neither loops for ages nor overflows the
+        // offset. A type with no atoms has no bonds and takes no indices.
+        let copies = match moltype.n_atoms {
+            0 => 0,
+            size => count.min(n_atoms.saturating_sub(offset).div_ceil(size)),
+        };
+        for _ in 0..copies {
             for &(a, b) in &moltype.bonds {
-                let (ga, gb) = (offset + a, offset + b);
-                if (gb as usize) < n_atoms {
-                    bonds.push((ga, gb));
+                let gb = offset + b as usize;
+                if gb < n_atoms {
+                    bonds.push(((offset + a as usize) as u32, gb as u32));
                 }
             }
-            offset += moltype.n_atoms as u32;
+            offset += moltype.n_atoms;
         }
     }
 
@@ -427,7 +438,9 @@ fn parse_top_bonds_flat(text: &str, n_atoms: usize) -> Vec<(u32, u32)> {
                 Some(v) => v,
                 None => continue,
             };
-            if ow == 0 {
+            // As in the grouped reader: no OW at 0, and none whose hydrogen
+            // index `ow + 1` would overflow.
+            if ow == 0 || ow == u32::MAX {
                 continue;
             }
             push(ow - 1, ow, &mut bonds);
@@ -959,6 +972,39 @@ SOL  2
         let bonds = parse_top_bonds_with_fs(top, &vfs, 10).unwrap();
         // d.itp is expanded twice; both occurrences yield the same bond.
         assert!(!bonds.is_empty());
+    }
+
+    /// A `[ molecules ]` count is a claim about the system, not a loop bound:
+    /// copies that start past the structure's last atom contribute no bonds,
+    /// so 1.5·10^9 waters over a 9-atom structure yield the three waters'
+    /// bonds instead of looping until the u32 atom offset overflows.
+    #[test]
+    fn a_huge_molecule_count_stops_at_the_structure_atoms() {
+        let text = "[ moleculetype ]\nSOL 2\n[ atoms ]\n1 OW 1 SOL OW 1 0 16\n\
+                    2 HW 1 SOL HW1 1 0 1\n3 HW 1 SOL HW2 1 0 1\n[ bonds ]\n1 2\n1 3\n\
+                    [ moleculetype ]\nEMPTY 1\n\
+                    [ molecules ]\nEMPTY 4000000000\nSOL 1500000000\n";
+        assert_eq!(
+            parse_top_bonds(text, 9),
+            vec![(0, 1), (0, 2), (3, 4), (3, 5), (6, 7), (6, 8)]
+        );
+        assert!(parse_top_bonds(text, 0).is_empty());
+    }
+
+    /// A settle on the last representable atom index has no hydrogens to
+    /// bond; it is skipped instead of overflowing `ow + 2`.
+    #[test]
+    fn a_settle_at_the_top_of_the_index_range_is_skipped() {
+        let text = format!(
+            "[ moleculetype ]\nSOL 2\n[ atoms ]\n1 OW 1 SOL OW 1 0 16\n\
+             2 HW 1 SOL HW1 1 0 1\n3 HW 1 SOL HW2 1 0 1\n\
+             [ settles ]\n1 1 0.1 0.16\n{} 1 0.1 0.16\n[ molecules ]\nSOL 1\n",
+            u32::MAX
+        );
+        assert_eq!(parse_top_bonds(&text, 3), vec![(0, 1), (0, 2)]);
+        // The flat reader (no `[ moleculetype ]`) skips it the same way.
+        let flat = format!("[ settles ]\n1 1 0.1 0.16\n{} 1 0.1 0.16\n", u32::MAX);
+        assert_eq!(parse_top_bonds(&flat, 3), vec![(0, 1), (0, 2)]);
     }
 
     // ── parse_top_bonds_from_path (native only) ───────────────────────────────

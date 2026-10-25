@@ -241,12 +241,10 @@ fn decompress_coords(xdr: &mut XdrReader, natoms: usize) -> Result<Vec<f32>, Str
         return Err(format!("coord block size {} != natoms {}", lsize, natoms));
     }
 
-    let size3 = natoms * 3;
-
     // Small atom count: plain XDR floats, in nm like the compressed ones
     if natoms <= 9 {
-        let mut coords = Vec::with_capacity(size3);
-        for _ in 0..size3 {
+        let mut coords = Vec::with_capacity(natoms * 3);
+        for _ in 0..natoms * 3 {
             coords.push(xdr.read_f32()?);
         }
         return Ok(nm_to_angstrom(coords));
@@ -299,6 +297,18 @@ fn decompress_coords(xdr: &mut XdrReader, natoms: usize) -> Result<Vec<f32>, Str
     // Read compressed bitstream
     let nbytes = xdr.read_u32()? as usize;
     let bitstream_data = xdr.read_opaque(nbytes)?;
+
+    // `natoms` comes from the frame header, so check it against the bitstream
+    // before sizing buffers from it. Every atom costs at least two bits: an
+    // absolute coordinate (one bit or more) plus its run flag, or a delta of
+    // `smallidx` (>= FIRSTIDX) bits inside a run. The slack covers one run
+    // decoded with an out-of-range `smallidx` before the decoder rejects it.
+    if natoms > nbytes.saturating_mul(4).saturating_add(16) {
+        return Err(format!(
+            "XTC frame claims {natoms} atoms but its {nbytes}-byte bitstream cannot hold them"
+        ));
+    }
+    let size3 = natoms * 3;
 
     let mut bits = BitReader::new(bitstream_data);
 
@@ -952,5 +962,39 @@ mod tests {
         .expect("read XTC");
         // An offset that is not a frame boundary must error (bad magic), not panic.
         assert!(decode_frame_at(&data, 3, 327).is_err());
+    }
+
+    /// A compressed frame header claiming 2^30 atoms over an empty bitstream
+    /// is rejected before any buffer is sized from that count (a 92-byte
+    /// file used to reserve ~25 GB and abort the process).
+    #[test]
+    fn an_atom_count_the_bitstream_cannot_hold_is_an_error() {
+        let frame = |natoms: i32, nbytes: u32| {
+            let mut d = Vec::new();
+            d.extend_from_slice(&XTC_MAGIC.to_be_bytes());
+            d.extend_from_slice(&natoms.to_be_bytes());
+            d.extend_from_slice(&0i32.to_be_bytes()); // step
+            d.extend_from_slice(&0f32.to_be_bytes()); // time
+            d.extend_from_slice(&[0u8; 36]); // box
+            d.extend_from_slice(&natoms.to_be_bytes()); // lsize
+            d.extend_from_slice(&1000f32.to_be_bytes()); // precision
+            d.extend_from_slice(&[0u8; 24]); // minint / maxint
+            d.extend_from_slice(&9i32.to_be_bytes()); // smallidx
+            d.extend_from_slice(&nbytes.to_be_bytes());
+            d.extend(std::iter::repeat_n(0u8, (nbytes as usize + 3) & !3));
+            d
+        };
+        let huge = frame(1 << 30, 0);
+        assert_eq!(huge.len(), 92);
+        let err = parse_xtc(&huge).err().expect("rejected");
+        assert!(err.contains("bitstream"), "{err}");
+        assert!(decode_frame_at(&huge, 0, 1 << 30).is_err());
+
+        // A count the stream can hold still decodes (all-zero bits: every
+        // atom at the origin, two bits each).
+        let small = frame(16, 8);
+        let t = parse_xtc(&small).expect("16 atoms fit in 8 bytes");
+        assert_eq!(t.n_atoms, 16);
+        assert!(t.frame(0).iter().all(|&v| v == 0.0));
     }
 }

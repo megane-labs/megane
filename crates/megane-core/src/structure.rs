@@ -112,7 +112,9 @@ impl HeteroFramesBuilder {
     }
 
     /// Like [`new`](Self::new), reserving room for `extra_frames` frames of
-    /// `frame0_atoms` atoms each (the uniform case).
+    /// `frame0_atoms` atoms each (the uniform case). The reservation is made
+    /// up front, so a caller whose frame count comes from a header bounds it
+    /// by what its input can actually hold (see `traj::parse_traj`).
     pub fn with_capacity(frame0_atoms: usize, extra_frames: usize) -> Self {
         let mut atom_offsets = Vec::with_capacity(extra_frames + 1);
         atom_offsets.push(0);

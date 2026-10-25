@@ -388,10 +388,14 @@ fn io_err(e: std::io::Error) -> PyErr {
     pyo3::exceptions::PyOSError::new_err(e.to_string())
 }
 
+/// Bytes `start..end` of `file`, or fewer where the file ends first. `end`
+/// may come from a header (a NetCDF record span), so the buffer is reserved
+/// only for the bytes the file actually has past `start`.
 fn read_range(file: &mut std::fs::File, start: u64, end: u64) -> std::io::Result<Vec<u8>> {
     use std::io::{Read, Seek, SeekFrom};
+    let available = file.metadata()?.len().saturating_sub(start);
     file.seek(SeekFrom::Start(start))?;
-    let mut buf = Vec::with_capacity(end.saturating_sub(start) as usize);
+    let mut buf = Vec::with_capacity(end.saturating_sub(start).min(available) as usize);
     file.take(end.saturating_sub(start)).read_to_end(&mut buf)?;
     Ok(buf)
 }
