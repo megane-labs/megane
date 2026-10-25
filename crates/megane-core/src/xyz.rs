@@ -1,4 +1,15 @@
 use crate::atomic::symbol_to_atomic_num;
+
+/// Atomic number from an XYZ element column: a symbol (`O`), or an explicit
+/// atomic number (`8`), which some writers emit and which is the most
+/// authoritative element field a file can carry.
+fn element_number(token: &str) -> u8 {
+    match token.parse::<i32>() {
+        Ok(n) if (1..=118).contains(&n) => n as u8,
+        Ok(_) => 0,
+        Err(_) => symbol_to_atomic_num(&crate::atomic::capitalize(token)),
+    }
+}
 use crate::bonds;
 use crate::structure::{FrameChange, HeteroFramesBuilder};
 use crate::trajectory::{ScalarChannel, ScalarFrame, VectorChannel, VectorFrame};
@@ -252,9 +263,8 @@ pub fn parse(text: &str) -> Result<crate::structure::ParsedStructure, String> {
                 return Err(format!("XYZ atom line {} too short", offset + i + 1));
             }
 
-            // Element symbol
-            let sym = crate::atomic::capitalize(parts[0]);
-            elements.push(symbol_to_atomic_num(&sym));
+            // Element symbol (or atomic number)
+            elements.push(element_number(parts[0]));
 
             // Extra fields after x y z as label
             let label = if parts.len() > 4 {
@@ -484,8 +494,7 @@ pub fn parse_frame0(text: &str) -> Result<crate::structure::ParsedStructure, Str
         if parts.len() < 4 {
             return Err(format!("XYZ atom line {} too short", offset + i + 1));
         }
-        let sym = crate::atomic::capitalize(parts[0]);
-        elements.push(symbol_to_atomic_num(&sym));
+        elements.push(element_number(parts[0]));
         let label = if parts.len() > 4 {
             parts[4..].join(" ")
         } else {
@@ -760,6 +769,20 @@ pub fn decode_frame_at(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Some writers put the atomic number in the element column (`8 0 0 0`).
+    /// An explicit atomic number is the most authoritative element field, so
+    /// it is read as Z instead of failing the symbol lookup (Z = 0).
+    #[test]
+    fn an_atomic_number_in_the_element_column_is_the_element() {
+        let text =
+            "3\nwater with atomic numbers\n8 0.0 0.0 0.0\n1 0.96 0.0 0.0\n1 -0.24 0.93 0.0\n";
+        assert_eq!(parse(text).unwrap().elements, vec![8, 1, 1]);
+        assert_eq!(parse_frame0(text).unwrap().elements, vec![8, 1, 1]);
+        // Out-of-range numbers are not elements.
+        let bad = "2\n\n0 0 0 0\n200 1 0 0\n";
+        assert_eq!(parse(bad).unwrap().elements, vec![0, 0]);
+    }
 
     /// Jmol writes plain XYZ under the `.jxyz` extension, with extra per-atom
     /// columns (an atom name and a partial charge) after x/y/z. megane
