@@ -185,6 +185,20 @@ describe("indexDumpFileCore", () => {
     await expect(indexDumpFileCore(file, 9)).rejects.toThrow(/atom count \(4\)/);
   });
 
+  it("drops a last frame cut off in its atom lines, as the eager parse does", async () => {
+    // Three frames of 4 atoms, the last one missing its final atom line.
+    const text = dumpText(3).split("\n").slice(0, -2).join("\n") + "\n";
+    const bytes = enc.encode(text);
+    const eager = parseTrajectoryCore({ kind: "lammpstrj", text, expectedNAtoms: 4 });
+    expect(eager.frames).toHaveLength(2);
+    const { decoder, index } = await indexDumpFileCore(new Blob([bytes]), 4);
+    expect(index.nFrames).toBe(2);
+    for (let f = 0; f < 2; f++) {
+      expect((await decoder.decodeFrame(f)).positions).toEqual(eager.frames[f].positions);
+    }
+    await expect(decoder.decodeFrame(2)).rejects.toThrow(/out of range/);
+  });
+
   it("gives every frame its own box when the box changes, as the eager parse does", async () => {
     // Box 10 → 12 → 12: a constant atom count, so the dump stays lazy.
     let text = "";
