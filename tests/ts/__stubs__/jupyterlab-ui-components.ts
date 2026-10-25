@@ -4,6 +4,9 @@
 
 export class ReactWidget {
   addClass(_className: string): void {}
+  // Lumino visibility hooks; the views override them to swap tab state.
+  protected onAfterShow(_msg: unknown): void {}
+  protected onBeforeHide(_msg: unknown): void {}
   protected render(): null {
     return null;
   }
