@@ -18,14 +18,14 @@ import { Timeline } from "./Timeline";
 import { Tooltip } from "./Tooltip";
 import { MeasurementPanel } from "./MeasurementPanel";
 import { MeasurementListPanel } from "./MeasurementListPanel";
-import { PerfHud } from "./PerfHud";
+import { PerfHud, type PerfHudStats } from "./PerfHud";
 import { ViewAxisControls } from "./ViewAxisControls";
 import { XRControls } from "./XRControls";
 import { overlayButtonStyle } from "./toolbarStyles";
 import { OVERLAY_INSET, PERF_HUD_LEFT_DEFAULT, MEASUREMENT_BOTTOM_DEFAULT } from "./overlayLayout";
 import { MoleculeRenderer, isMeganeTestMode } from "../renderer/MoleculeRenderer";
 import { latticeVectors, type ViewAxis } from "../renderer/cameraOrientation";
-import type { StructureParseResult } from "../parsers/structure";
+import { parserHeapBytes, type StructureParseResult } from "../parsers/structure";
 import {
   useFrameDistanceBonds,
   hasDistanceBondNode,
@@ -38,6 +38,7 @@ import {
   useScopedPipelineUIStore,
   useScopedInspectorStore,
   usePipelineStoreApi,
+  usePlaybackStoreApi,
   useViewStateStoreApi,
 } from "../stores/MeganeProvider";
 import { getElementSymbol } from "../constants";
@@ -535,7 +536,19 @@ export function MeganeViewer({
   // same corner inset every other overlay uses.
   const measurementBottom = timelineVisible ? MEASUREMENT_BOTTOM_DEFAULT : OVERLAY_INSET;
 
-  const getRenderStats = useCallback(() => rendererRef.current?.getStats() ?? null, []);
+  const playbackApi = usePlaybackStoreApi();
+  const getRenderStats = useCallback((): PerfHudStats | null => {
+    const stats = rendererRef.current?.getStats();
+    if (!stats) return null;
+    // Megane's data: what the renderer draws from, the trajectory frames
+    // playback keeps, and the parsers' WASM heap.
+    const frameBytes = playbackApi.getState().provider?.heldBytes?.() ?? 0;
+    return {
+      fps: stats.fps,
+      drawCalls: stats.drawCalls,
+      memoryBytes: stats.bufferBytes + frameBytes + parserHeapBytes(),
+    };
+  }, [playbackApi]);
   const getXRTarget = useCallback(() => rendererRef.current, []);
   // Freeze the live FPS digits under E2E so screenshot baselines stay
   // deterministic; the feature is fully live in production.

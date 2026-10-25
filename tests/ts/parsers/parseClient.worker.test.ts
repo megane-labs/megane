@@ -18,6 +18,8 @@ const { state, FakeWorker } = vi.hoisted(() => {
     created: 0,
     posted: 0,
     throwOnCreate: false,
+    /** WASM heap size the fake worker stamps on ok responses, when set. */
+    wasmBytes: undefined as number | undefined,
   };
   class FakeWorker {
     onmessage: ((e: { data: unknown }) => void) | null = null;
@@ -35,7 +37,13 @@ const { state, FakeWorker } = vi.hoisted(() => {
           this.onerror?.();
         } else if (state.mode === "ok") {
           this.onmessage?.({
-            data: { id: req.id, ok: true, op: req.op, result: { tag: "worker" } },
+            data: {
+              id: req.id,
+              ok: true,
+              op: req.op,
+              result: { tag: "worker" },
+              wasmBytes: state.wasmBytes,
+            },
           });
         } else {
           this.onmessage?.({ data: { id: req.id, ok: false, op: req.op, error: "boom" } });
@@ -301,6 +309,27 @@ describe("parseClient worker path", () => {
     state.throwOnCreate = true;
     expect(() => client.prewarmParseWorker()).not.toThrow();
     expect(state.posted).toBe(0);
+  });
+
+  it("parserHeapBytes reports the heap size the worker last stamped", async () => {
+    const client = await freshClient();
+    expect(client.parserHeapBytes()).toBe(0);
+    state.wasmBytes = 3 * 65536;
+    await client.parseStructureFile(fakeFile("a.pdb"));
+    expect(client.parserHeapBytes()).toBe(3 * 65536);
+    // A response without a stamp leaves the last figure in place.
+    state.wasmBytes = undefined;
+    await client.parseStructureFile(fakeFile("b.pdb"));
+    expect(client.parserHeapBytes()).toBe(3 * 65536);
+  });
+
+  it("parserHeapBytes drops the worker's heap once it crashes", async () => {
+    const client = await freshClient();
+    state.wasmBytes = 65536;
+    await client.parseStructureFile(fakeFile("a.pdb"));
+    state.mode = "crash";
+    await client.parseStructureFile(fakeFile("b.pdb"));
+    expect(client.parserHeapBytes()).toBe(0);
   });
 
   it("prewarmParseWorker does nothing once the worker has crashed", async () => {

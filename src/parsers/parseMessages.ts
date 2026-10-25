@@ -201,6 +201,8 @@ export interface ParseResponse {
     | TrajectoryFrame0Result
     | DecodeFrameResult;
   error?: string;
+  /** The worker's WASM heap size after handling the request (see `wasmHeapBytes`). */
+  wasmBytes?: number;
 }
 
 // ── Lazy decode handles ──────────────────────────────────────────────────

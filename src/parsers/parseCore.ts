@@ -301,6 +301,17 @@ interface WasmModule {
   ) => string;
 }
 
+let wasmMemory: WebAssembly.Memory | null = null;
+
+/**
+ * Bytes of WASM linear memory this realm's module holds (0 before
+ * `ensureInit`). Linear memory only grows, so this is the high-water mark of
+ * every parse the module has run.
+ */
+export function wasmHeapBytes(): number {
+  return wasmMemory?.buffer.byteLength ?? 0;
+}
+
 /**
  * Initialise the WASM module (memoized). `wasmUrl` is resolved on the main
  * thread and passed explicitly so this works inside a Web Worker, whose global
@@ -319,7 +330,8 @@ export async function ensureInit(wasmUrl?: string | WebAssembly.Module): Promise
         ((globalThis as Record<string, unknown>).__MEGANE_WASM_URL__ as string | undefined);
       // wasm-bindgen's init takes an options object; a bare URL still works
       // but logs a deprecation warning (on every page load, from the worker).
-      await wasm.default({ module_or_path: url });
+      const exports = await wasm.default({ module_or_path: url });
+      wasmMemory = exports?.memory ?? null;
       perfMark("megane:wasm:end");
       perfMeasure("megane:wasm-init", "megane:wasm:start", "megane:wasm:end");
       wasmModule = {

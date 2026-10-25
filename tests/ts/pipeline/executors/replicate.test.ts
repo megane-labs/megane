@@ -205,6 +205,15 @@ describe("executeReplicate", () => {
     expect(Array.from(f1.positions.slice(6, 12))).toEqual([16, 1, 1, 17, 2, 2]);
   });
 
+  it("reports the source provider's held bytes (replicated frames are built on demand)", () => {
+    const out = executeReplicate(
+      params(2, 1, 1),
+      inputs(makeParticle(CUBIC()), makeCell(CUBIC()), makeTrajectory()),
+    );
+    const traj = out.get("trajectory") as TrajectoryData;
+    expect(traj.provider.heldBytes?.()).toBe(2 * 6 * 4);
+  });
+
   it("scales trajectory meta nAtoms by the image count, preserving nFrames", () => {
     const particle = makeParticle(CUBIC());
     const out = executeReplicate(

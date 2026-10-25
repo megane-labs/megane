@@ -254,6 +254,10 @@ class MappedFrameProvider implements FrameProvider {
     this.meta = source.meta;
   }
 
+  heldBytes(): number {
+    return this.source.heldBytes?.() ?? 0;
+  }
+
   getFrame(index: number): Frame | null {
     const frame = this.source.getFrame(index);
     if (!frame) return null;

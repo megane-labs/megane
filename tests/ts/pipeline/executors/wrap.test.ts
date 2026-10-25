@@ -191,6 +191,30 @@ describe("executeWrap", () => {
     expect(result.meta).toBe(traj.meta);
   });
 
+  it("reports the wrapped provider's held bytes (it keeps no frames of its own)", () => {
+    const particle = makeParticle(makeSnapshot(CUBIC()));
+    const traj = makeTrajectory([
+      { frameId: 0, nAtoms: 2, positions: new Float32Array(6) },
+      { frameId: 1, nAtoms: 2, positions: new Float32Array(6) },
+    ]);
+    const out = executeWrap(params("wrap"), inputs(particle, traj));
+    const result = out.get("trajectory") as TrajectoryData;
+    expect(result.provider.heldBytes?.()).toBe(2 * 6 * 4);
+  });
+
+  it("reports 0 held bytes over a provider that does not count them", () => {
+    const particle = makeParticle(makeSnapshot(CUBIC()));
+    const meta: TrajectoryMeta = { nFrames: 1, timestepPs: 1, nAtoms: 2 };
+    const traj: TrajectoryData = {
+      type: "trajectory",
+      provider: { kind: "memory", meta, getFrame: () => null },
+      meta,
+      source: "file",
+    };
+    const out = executeWrap(params("wrap"), inputs(particle, traj));
+    expect((out.get("trajectory") as TrajectoryData).provider.heldBytes?.()).toBe(0);
+  });
+
   it("wrap prefers a frame's own cell over the snapshot cell", () => {
     const particle = makeParticle(makeSnapshot(CUBIC()));
     const traj = makeTrajectory([

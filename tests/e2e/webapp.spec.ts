@@ -59,8 +59,18 @@ test.describe("webapp: caffeine_water default", () => {
     // Draw calls come from the renderer once a frame has been drawn (> 0).
     const drawsText = await page.locator('[data-testid="perf-hud-draws"]').textContent();
     expect(Number(drawsText?.replace(/\D/g, ""))).toBeGreaterThan(0);
-    // FPS is frozen to a placeholder under test mode for deterministic baselines.
+    // FPS, CPU and memory are frozen to placeholders under test mode for
+    // deterministic baselines; the live values stay readable from data-*.
     await expect(page.locator('[data-testid="perf-hud-fps"]')).toHaveText("-- FPS");
+    const cpu = page.locator('[data-testid="perf-hud-cpu"]');
+    await expect(cpu).toHaveText("CPU --%");
+    // Chromium has requestIdleCallback, so the main-thread load is measured.
+    await expect(cpu).toHaveAttribute("data-percent", /^\d+$/);
+    expect(Number(await cpu.getAttribute("data-percent"))).toBeLessThanOrEqual(100);
+    const mem = page.locator('[data-testid="perf-hud-mem"]');
+    await expect(mem).toHaveText("Mem -- MB");
+    // The loaded structure's render buffers alone are well over a kilobyte.
+    expect(Number(await mem.getAttribute("data-bytes"))).toBeGreaterThan(1024);
   });
 
   test("frame slider seek advances renderer state", async ({ page }) => {

@@ -10,7 +10,7 @@
  */
 
 import type { Frame, TrajectoryMeta } from "../types";
-import type { FrameProvider } from "../pipeline/types";
+import { frameBytes, type FrameProvider } from "../pipeline/types";
 import type { WebSocketClient } from "./WebSocketClient";
 import { frameCacheCapacity } from "./frameCacheCapacity";
 
@@ -60,6 +60,13 @@ export class StreamFrameProvider implements FrameProvider {
   receiveFrame(frame: Frame): void {
     this.cacheFrame(frame);
     this.onFrameReady?.(frame);
+  }
+
+  /** Bytes of the decoded frames in the cache. */
+  heldBytes(): number {
+    let bytes = 0;
+    for (const f of this.cache.values()) bytes += frameBytes(f);
+    return bytes;
   }
 
   /** Clear the frame cache. */

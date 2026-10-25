@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { render, screen, cleanup, act, fireEvent } from "@testing-library/react";
+import { render, screen, cleanup, act, fireEvent, waitFor } from "@testing-library/react";
 
 // The renderer is stubbed so we can assert the frustum insets MeganeViewer
 // reserves for the pipeline panel — they must collapse to 0 when the panel is
@@ -20,7 +20,7 @@ const {
     resetCamera: vi.fn(),
     alignCameraToAxis: vi.fn(),
     updateBondsExt: vi.fn(),
-    getStats: vi.fn(() => ({ fps: 60, drawCalls: 3 })),
+    getStats: vi.fn(() => ({ fps: 60, drawCalls: 3, bufferBytes: 1000 })),
     getCameraState: vi.fn<() => unknown>(() => null),
     toggleAtomSelection: vi.fn<(i: number) => { atoms: number[] }>(() => ({ atoms: [0] })),
     clearSelection: vi.fn(),
@@ -208,6 +208,25 @@ describe("MeganeViewer ui options", () => {
   it("leaves the perf HUD clear of the Reset View button by default", () => {
     render(<MeganeViewer onUploadStructure={() => {}} />);
     expect(screen.getByTestId("perf-hud")).toHaveStyle({ left: "92px" });
+  });
+
+  it("feeds the perf HUD the renderer's buffers plus the frames playback holds", async () => {
+    usePlaybackStore.setState({
+      provider: {
+        kind: "memory",
+        meta: { nFrames: 100, timestepPs: 1, nAtoms: 1 },
+        getFrame: () => null,
+        heldBytes: () => 500,
+      },
+    });
+    try {
+      render(<MeganeViewer onUploadStructure={() => {}} />);
+      await waitFor(() =>
+        expect(screen.getByTestId("perf-hud-mem")).toHaveAttribute("data-bytes", "1500"),
+      );
+    } finally {
+      usePlaybackStore.setState({ provider: null });
+    }
   });
 
   it("reserves a right inset for the pipeline panel by default", () => {

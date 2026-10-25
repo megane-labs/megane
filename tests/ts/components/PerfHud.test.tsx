@@ -1,6 +1,12 @@
 import { describe, it, expect, vi, afterEach, beforeEach } from "vitest";
 import { render, screen, cleanup, act } from "@testing-library/react";
-import { PerfHud } from "@/components/PerfHud";
+import { PerfHud, formatBytes } from "@/components/PerfHud";
+
+type Deadline = { timeRemaining(): number };
+const idleWindow = window as unknown as {
+  requestIdleCallback?: (cb: (d: Deadline) => void) => number;
+  cancelIdleCallback?: (h: number) => void;
+};
 
 describe("PerfHud", () => {
   beforeEach(() => {
@@ -31,6 +37,89 @@ describe("PerfHud", () => {
       vi.advanceTimersByTime(500);
     });
     expect(getStats.mock.calls.length).toBeGreaterThan(callsAfterMount);
+  });
+
+  it("shows the memory Megane's data takes, with the raw bytes in data-bytes", () => {
+    const getStats = vi.fn(() => ({ fps: 30, drawCalls: 1, memoryBytes: 25 * 1024 * 1024 }));
+    render(<PerfHud atomCount={1} bondCount={0} getStats={getStats} />);
+    const mem = screen.getByTestId("perf-hud-mem");
+    expect(mem).toHaveTextContent("Mem 25.0 MB");
+    expect(mem).toHaveAttribute("data-bytes", String(25 * 1024 * 1024));
+  });
+
+  it("shows a memory placeholder until the stats carry a byte count", () => {
+    render(<PerfHud atomCount={1} bondCount={0} getStats={() => ({ fps: 1, drawCalls: 1 })} />);
+    expect(screen.getByTestId("perf-hud-mem")).toHaveTextContent("Mem -- MB");
+  });
+
+  it("shows CPU as -- where the main-thread load cannot be measured", () => {
+    render(<PerfHud atomCount={1} bondCount={0} getStats={() => null} />);
+    const cpu = screen.getByTestId("perf-hud-cpu");
+    expect(cpu).toHaveTextContent("CPU --%");
+    expect(cpu).not.toHaveAttribute("data-percent");
+  });
+
+  describe("with requestIdleCallback", () => {
+    let pending: ((d: Deadline) => void) | null = null;
+
+    beforeEach(() => {
+      pending = null;
+      idleWindow.requestIdleCallback = vi.fn((cb: (d: Deadline) => void) => {
+        pending = cb;
+        return 1;
+      });
+      idleWindow.cancelIdleCallback = vi.fn(() => {
+        pending = null;
+      });
+    });
+
+    afterEach(() => {
+      delete idleWindow.requestIdleCallback;
+      delete idleWindow.cancelIdleCallback;
+    });
+
+    /** Let 1 s pass with `idleMs` of idle time handed out at its start. */
+    function idleSecond(idleMs: number) {
+      act(() => {
+        pending?.({ timeRemaining: () => idleMs });
+        vi.advanceTimersByTime(1000);
+        pending?.({ timeRemaining: () => 0 });
+      });
+    }
+
+    it("shows the main thread's busy share as CPU %", () => {
+      render(<PerfHud atomCount={1} bondCount={0} getStats={() => null} />);
+      idleSecond(700);
+      // The window closed on the second callback; the next poll picks it up.
+      act(() => {
+        vi.advanceTimersByTime(500);
+      });
+      const cpu = screen.getByTestId("perf-hud-cpu");
+      expect(cpu).toHaveTextContent("CPU 30%");
+      expect(cpu).toHaveAttribute("data-percent", "30");
+    });
+
+    it("stops sampling idle time when the HUD unmounts", () => {
+      const { unmount } = render(<PerfHud atomCount={1} bondCount={0} getStats={() => null} />);
+      expect(idleWindow.requestIdleCallback).toHaveBeenCalled();
+      unmount();
+      expect(idleWindow.cancelIdleCallback).toHaveBeenCalled();
+    });
+
+    it("freezes CPU and memory to placeholders when stable, keeping the live values in data-*", () => {
+      const getStats = () => ({ fps: 42, drawCalls: 3, memoryBytes: 2048 });
+      render(<PerfHud atomCount={5} bondCount={1} getStats={getStats} stable />);
+      idleSecond(500);
+      act(() => {
+        vi.advanceTimersByTime(500);
+      });
+      const cpu = screen.getByTestId("perf-hud-cpu");
+      expect(cpu).toHaveTextContent("CPU --%");
+      expect(cpu).toHaveAttribute("data-percent", "50");
+      const mem = screen.getByTestId("perf-hud-mem");
+      expect(mem).toHaveTextContent("Mem -- MB");
+      expect(mem).toHaveAttribute("data-bytes", "2048");
+    });
   });
 
   it("ignores null stats (renderer not ready)", () => {
@@ -75,5 +164,20 @@ describe("PerfHud", () => {
       vi.advanceTimersByTime(2000);
     });
     expect(getStats.mock.calls.length).toBe(callsBefore);
+  });
+});
+
+describe("formatBytes", () => {
+  it("prints MB with one decimal below 100 MB", () => {
+    expect(formatBytes(0)).toBe("0.0 MB");
+    expect(formatBytes(1.5 * 1024 * 1024)).toBe("1.5 MB");
+  });
+
+  it("prints whole MB from 100 MB", () => {
+    expect(formatBytes(512 * 1024 * 1024)).toBe("512 MB");
+  });
+
+  it("prints GB with two decimals from 1 GB", () => {
+    expect(formatBytes(1.5 * 1024 * 1024 * 1024)).toBe("1.50 GB");
   });
 });

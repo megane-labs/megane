@@ -37,6 +37,16 @@ describe("StreamFrameProvider", () => {
     expect(provider.meta).toEqual(META);
   });
 
+  it("heldBytes sums the cached frames and drops to 0 on clear", () => {
+    const provider = new StreamFrameProvider(client, META);
+    expect(provider.heldBytes()).toBe(0);
+    provider.receiveFrame(makeFrame(0));
+    provider.receiveFrame({ ...makeFrame(1), box: new Float32Array(9) });
+    expect(provider.heldBytes()).toBe(6 * 4 + (6 + 9) * 4);
+    provider.clear();
+    expect(provider.heldBytes()).toBe(0);
+  });
+
   it("getFrame on empty cache returns null and requests via the client", () => {
     const provider = new StreamFrameProvider(client, META);
     const result = provider.getFrame(7);

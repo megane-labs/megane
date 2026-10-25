@@ -105,6 +105,30 @@ describe("LazyFrameProvider", () => {
     expect(frame!.positions[0]).toBe(3);
   });
 
+  it("heldBytes counts the decoded frames in the cache", async () => {
+    const p = make({ prefetchAhead: 0, maxCacheSize: 2 });
+    expect(p.heldBytes()).toBe(0);
+    p.getFrame(3);
+    await decode.flush();
+    expect(p.heldBytes()).toBe(2 * N_ATOMS * 3 * 4); // frame 0 (primed) + frame 3
+    p.getFrame(4);
+    await decode.flush();
+    // The cache holds two frames; the oldest fell out.
+    expect(p.heldBytes()).toBe(2 * N_ATOMS * 3 * 4);
+    p.dispose();
+    expect(p.heldBytes()).toBe(0);
+  });
+
+  it("heldBytes includes a structure's synchronous base frame", () => {
+    const base = new Float32Array(N_ATOMS * 3);
+    const p = new LazyFrameProvider(makeHandle(), makeMeta(), {
+      decode: decode.fn,
+      dispose,
+      basePositions: base,
+    });
+    expect(p.heldBytes()).toBe(base.byteLength);
+  });
+
   it("dedups concurrent requests for the same frame", () => {
     const p = make({ prefetchAhead: 0 });
     decode.fn.mockClear();
