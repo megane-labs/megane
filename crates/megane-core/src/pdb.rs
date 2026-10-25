@@ -14,6 +14,8 @@ pub struct Atom {
     pub y: f32,
     pub z: f32,
     pub element: u8,
+    /// Alternate-location indicator (column 17), `0` when blank.
+    pub altloc: u8,
 }
 
 /// Decode a fixed-width PDB number field: plain decimal, or hybrid-36 (the
@@ -149,8 +151,22 @@ fn parse_atom_line(line: &str) -> Option<(Option<i32>, Atom)> {
     let y: f32 = line[38..46].trim().parse().ok()?;
     let z: f32 = line[46..54].trim().parse().ok()?;
     let element = parse_element(line);
+    // `line.len() >= 54`, so column 17 is always present.
+    let altloc = match line.as_bytes()[16] {
+        b' ' => 0,
+        c => c,
+    };
 
-    Some((serial, Atom { x, y, z, element }))
+    Some((
+        serial,
+        Atom {
+            x,
+            y,
+            z,
+            element,
+            altloc,
+        },
+    ))
 }
 
 /// Parse CRYST1 record and convert cell parameters to a 3x3 matrix.
@@ -394,8 +410,13 @@ fn parse_impl(text: &str, frame0_only: bool) -> Result<ParsedStructure, String> 
     }
     let n_file_bonds = unique_bonds.len();
 
-    // Infer bonds using cell-list spatial search
+    // Infer bonds using cell-list spatial search, except where the file's
+    // own records rule a pair out: atoms whose connectivity CONECT already
+    // declares, and atoms of different alternate conformers.
     let inferred = crate::bonds::infer_bonds(&positions, &elements, n_atoms, &bond_set);
+    let altlocs: Vec<u8> = first_model.iter().map(|a| a.altloc).collect();
+    let inferred =
+        crate::bonds::drop_inferred_ruled_out_by_file(inferred, &unique_bonds, &altlocs, n_atoms);
     unique_bonds.extend(inferred);
 
     // Build flat frame positions from additional models (frame 0 is `positions`).
@@ -1230,5 +1251,70 @@ END
         );
         // A name field that cannot be sliced resolves to unknown, not a panic.
         assert_eq!(parse_element("ATOM      1 ABC\u{e9} ALA A   1"), 0);
+    }
+
+    /// SER with two alternate conformers of its side chain. On main the
+    /// inference also bonded CB A to CB B, CB A to OG B, and OG A to OG B.
+    const SER_ALTLOC_PDB: &str = "\
+ATOM      1  N   SER A   1       0.000   0.000   0.000  1.00  0.00           N
+ATOM      2  CA  SER A   1       1.460   0.000   0.000  1.00  0.00           C
+ATOM      3  CB ASER A   1       2.000   1.400   0.000  0.50  0.00           C
+ATOM      4  CB BSER A   1       2.000   1.200   0.600  0.50  0.00           C
+ATOM      5  OG ASER A   1       3.400   1.500   0.000  0.50  0.00           O
+ATOM      6  OG BSER A   1       3.300   1.000   1.100  0.50  0.00           O
+END
+";
+
+    #[test]
+    fn test_inferred_bonds_never_join_alternate_conformers() {
+        let s = parse(SER_ALTLOC_PDB).unwrap();
+        let mut bonds = s.bonds.clone();
+        bonds.sort_unstable();
+        // N-CA; CA to both CB conformers; each CB to its own OG.
+        assert_eq!(bonds, vec![(0, 1), (1, 2), (1, 3), (2, 4), (3, 5)]);
+        assert_eq!(s.n_file_bonds, 0);
+    }
+
+    /// A disulfide declared by CONECT next to undeclared CB atoms, and a
+    /// ligand whose CONECT records give C1-C2 and C2-O3 but not C1-O3, even
+    /// though C1 and O3 sit within the C-O cutoff.
+    const CONECT_PARTIAL_PDB: &str = "\
+ATOM      1  CB  CYS A   1       0.000   0.000   0.000  1.00  0.00           C
+ATOM      2  SG  CYS A   1       1.810   0.000   0.000  1.00  0.00           S
+ATOM      3  SG  CYS A   2       3.840   0.000   0.000  1.00  0.00           S
+ATOM      4  CB  CYS A   2       5.650   0.000   0.000  1.00  0.00           C
+HETATM    5  C1  LIG B   1      10.000   0.000   0.000  1.00  0.00           C
+HETATM    6  C2  LIG B   1      11.500   0.000   0.000  1.00  0.00           C
+HETATM    7  O3  LIG B   1      10.750   1.300   0.000  1.00  0.00           O
+CONECT    2    3
+CONECT    3    2
+CONECT    5    6
+CONECT    6    5    7
+CONECT    7    6
+END
+";
+
+    #[test]
+    fn test_inference_is_not_layered_on_file_declared_atoms() {
+        let s = parse(CONECT_PARTIAL_PDB).unwrap();
+        assert_eq!(s.n_file_bonds, 3);
+        let (file, inferred) = s.bonds.split_at(s.n_file_bonds);
+        let mut file = file.to_vec();
+        file.sort_unstable();
+        assert_eq!(file, vec![(1, 2), (4, 5), (5, 6)]);
+        // SG-CB is still inferred: only one of the two atoms has file bonds.
+        let mut inferred = inferred.to_vec();
+        inferred.sort_unstable();
+        assert_eq!(inferred, vec![(0, 1), (2, 3)]);
+        // C1-O3: both atoms' connectivity is declared, so nothing is added.
+        assert!(!s.bonds.contains(&(4, 6)));
+    }
+
+    #[test]
+    fn test_parse_atom_line_reads_altloc() {
+        let (_, a) = parse_atom_line(SER_ALTLOC_PDB.lines().nth(2).unwrap()).unwrap();
+        assert_eq!(a.altloc, b'A');
+        let (_, a) = parse_atom_line(SER_ALTLOC_PDB.lines().next().unwrap()).unwrap();
+        assert_eq!(a.altloc, 0);
     }
 }

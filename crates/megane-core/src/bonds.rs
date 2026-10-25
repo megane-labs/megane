@@ -545,6 +545,44 @@ pub fn default_bond_source(filename: &str) -> &'static str {
     }
 }
 
+/// Drop the distance-inferred bonds that a macromolecular file's own records
+/// rule out (PDB `CONECT` / mmCIF `_struct_conn`, plus alternate locations):
+///
+/// * **Both atoms already carry file-declared bonds.** The file has stated
+///   their connectivity, and inference never layers on top of it (CRITICAL
+///   RULE #11c). A pair where only one atom is declared is kept: `CONECT`
+///   and `_struct_conn` cover ligands, links and disulfides, not the polymer,
+///   so a disulfide SG still needs its inferred SG–CB bond.
+/// * **The atoms sit in different alternate conformers**: both carry a
+///   non-blank alternate-location id (`altlocs[i] != 0`) and the ids differ.
+///   Atoms without an id (blank, or `altlocs` shorter than the atom list)
+///   bond to every conformer.
+pub(crate) fn drop_inferred_ruled_out_by_file(
+    inferred: Vec<(u32, u32)>,
+    file_bonds: &[(u32, u32)],
+    altlocs: &[u8],
+    n_atoms: usize,
+) -> Vec<(u32, u32)> {
+    let mut declared = vec![false; n_atoms];
+    for &(a, b) in file_bonds {
+        for i in [a, b] {
+            if let Some(d) = declared.get_mut(i as usize) {
+                *d = true;
+            }
+        }
+    }
+    let altloc = |i: u32| altlocs.get(i as usize).copied().unwrap_or(0);
+    inferred
+        .into_iter()
+        .filter(|&(a, b)| {
+            let both_declared = declared[a as usize] && declared[b as usize];
+            let (la, lb) = (altloc(a), altloc(b));
+            let other_conformer = la != 0 && lb != 0 && la != lb;
+            !both_declared && !other_conformer
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
