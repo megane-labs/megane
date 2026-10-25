@@ -36,7 +36,7 @@ const { wasmMock } = vi.hoisted(() => {
       vector_channel_data: () => new Float32Array(),
       ca_indices: () => new Uint32Array(0),
       ca_chain_ids: () => new Uint8Array(0),
-      ca_res_nums: () => new Uint32Array(0),
+      ca_res_nums: () => new Int32Array(0),
       ca_ss_type: () => new Uint8Array(0),
       free: () => {},
     };

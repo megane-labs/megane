@@ -1006,6 +1006,43 @@ describe("executePipeline", () => {
       // The unfiltered particle stream has indices=null, so no bond filtering
       expect(result.bonds).toHaveLength(1);
     });
+
+    // Regression: pruning bonds to the filtered atoms used to keep the bond
+    // filter's selection and modify's per-bond opacity indexed by the old bond
+    // numbers, so a fade aimed at a pruned H–H bond landed on the C–C bond.
+    it("keeps per-bond opacity on the right bond after pruning", () => {
+      const snapshot = makeSnapshot({
+        nAtoms: 4,
+        positions: [0, 0, 0, 1.5, 0, 0, 0, 3, 0, 0.74, 3, 0],
+        elements: [6, 6, 1, 1], // C, C, H, H
+        bonds: [2, 3, 0, 1], // bond 0 = H–H, bond 1 = C–C
+        bondOrders: [1, 1],
+      });
+      const nodes = [
+        makeNode("ls", "load_structure", { fileName: null, hasTrajectory: false, hasCell: false }),
+        makeNode("fa", "filter", { query: 'element == "C"' }),
+        makeNode("ab", "add_bond", { bondSource: "structure" }),
+        makeNode("fb", "filter", { query: "", bond_query: 'both element == "H"' }),
+        makeNode("m", "modify", { scale: 1.0, opacity: 0 }),
+        makeNode("vp", "viewport", { perspective: false, cellAxesVisible: true }),
+      ];
+      const edges = [
+        makeEdge("ls", "particle", "fa", "in"),
+        makeEdge("fa", "out", "vp", "particle"),
+        makeEdge("ls", "particle", "ab", "particle"),
+        makeEdge("ab", "bond", "fb", "in"),
+        makeEdge("fb", "out", "m", "in"),
+        makeEdge("m", "out", "vp", "bond"),
+      ];
+
+      const { viewportState: result } = executePipeline(nodes, edges, { snapshot });
+      const bond = result.bonds[0];
+      expect(bond.nBonds).toBe(1);
+      expect(Array.from(bond.bondIndices)).toEqual([0, 1]);
+      // The C–C bond was never selected, so it stays fully opaque.
+      expect(Array.from(bond.bondOpacityOverrides!)).toEqual([1]);
+      expect(Array.from(bond.selectedBondIndices!)).toEqual([]);
+    });
   });
 });
 

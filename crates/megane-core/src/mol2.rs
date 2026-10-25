@@ -20,14 +20,47 @@
 /// Multi-molecule streams are supported; only the first molecule is returned,
 /// with a warning counting the records that were skipped.
 /// Atom types use Tripos notation (e.g. "C.3", "C.ar", "N.am") — the element
-/// is derived from the prefix before the first dot.
-use crate::atomic::symbol_to_atomic_num;
+/// is derived from the prefix before the first dot. Lowercase GAFF types
+/// ("ca", "os", "c3"), which antechamber writes, are read by their GAFF
+/// element instead (see [`element_from_mol2_type`]).
+///
+/// The per-atom partial charge column is kept as the `charge` scalar channel.
+use crate::atomic::{element_from_atom_name, symbol_to_atomic_num};
+use crate::trajectory::{ScalarChannel, ScalarFrame};
 
-/// Extract the element symbol from a MOL2 atom type string.
-/// "C.3" → "C", "N.am" → "N", "O.co2" → "O", "Fe" → "Fe".
-fn element_from_mol2_type(atom_type: &str) -> String {
+/// Atomic number of a MOL2 atom.
+///
+/// Tripos (SYBYL) types start with the capitalized element symbol, so the
+/// part before the first dot is the symbol: "C.3" → C, "N.am" → N, "Ca" →
+/// calcium, "Cl" → chlorine. A type that starts with a lowercase letter is a
+/// GAFF / GAFF2 force-field type, not a symbol: its element is its first
+/// letter ("ca" aromatic carbon, "os" ether oxygen, "hc", "nh", "p5"), except
+/// the halogens "cl" and "br". Matching "ca" against the symbol table would
+/// make every aromatic carbon calcium. A lowercase type with no GAFF element
+/// falls back to the atom name, the next field in the element precedence.
+fn element_from_mol2_type(atom_type: &str, atom_name: &str) -> u8 {
     let base = atom_type.split('.').next().unwrap_or(atom_type);
-    crate::atomic::capitalize(base)
+    if !base.starts_with(|c: char| c.is_ascii_lowercase()) {
+        return symbol_to_atomic_num(&crate::atomic::capitalize(base));
+    }
+    let symbol = if base.starts_with("cl") {
+        "Cl"
+    } else if base.starts_with("br") {
+        "Br"
+    } else {
+        match base.as_bytes()[0] {
+            b'c' => "C",
+            b'h' => "H",
+            b'n' => "N",
+            b'o' => "O",
+            b's' => "S",
+            b'p' => "P",
+            b'f' => "F",
+            b'i' => "I",
+            _ => return element_from_atom_name(atom_name),
+        }
+    };
+    symbol_to_atomic_num(symbol)
 }
 
 /// Convert a MOL2 bond type token to a numeric bond order.
@@ -127,6 +160,8 @@ fn parse_first_molecule(text: &str) -> Result<crate::structure::ParsedStructure,
     let mut positions: Vec<f32> = Vec::new();
     let mut elements: Vec<u8> = Vec::new();
     let mut atom_labels: Vec<String> = Vec::new();
+    // Partial charge per atom (column 9), `None` once an atom lacks one.
+    let mut charges: Option<Vec<f32>> = Some(Vec::new());
     let mut bonds: Vec<(u32, u32)> = Vec::new();
     let mut bond_orders: Vec<u8> = Vec::new();
 
@@ -144,8 +179,16 @@ fn parse_first_molecule(text: &str) -> Result<crate::structure::ParsedStructure,
     for line in text.lines() {
         let trimmed = line.trim();
 
-        // Skip blank lines and comments
-        if trimmed.is_empty() || trimmed.starts_with('#') || trimmed.starts_with("//") {
+        // Skip blank lines and comments. The molecule name, the first line of
+        // a MOLECULE section, may itself be blank: it still counts as a line,
+        // or the counts line would be read from the line after it.
+        if trimmed.is_empty() {
+            if section == Section::Molecule && mol_line == 0 {
+                mol_line = 1;
+            }
+            continue;
+        }
+        if trimmed.starts_with('#') || trimmed.starts_with("//") {
             continue;
         }
 
@@ -228,8 +271,12 @@ fn parse_first_molecule(text: &str) -> Result<crate::structure::ParsedStructure,
                     .map_err(|_| format!("MOL2: bad z for atom {}", atom_id))?;
                 let atom_type = parts[5];
 
-                let elem_sym = element_from_mol2_type(atom_type);
-                let atomic_num = symbol_to_atomic_num(&elem_sym);
+                let atomic_num = element_from_mol2_type(atom_type, atom_name);
+                let charge = parts.get(8).and_then(|c| c.parse::<f32>().ok());
+                charges = charges.zip(charge).map(|(mut all, c)| {
+                    all.push(c);
+                    all
+                });
 
                 let idx = positions.len() / 3;
                 atom_id_to_idx.insert(atom_id, idx as u32);
@@ -309,6 +356,17 @@ fn parse_first_molecule(text: &str) -> Result<crate::structure::ParsedStructure,
 
     let n_file_bonds = bonds.len();
 
+    // Charges are kept when every atom carries one; all zeros (the
+    // NO_CHARGES placeholder) carry nothing.
+    let scalar_channels: Vec<ScalarChannel> = charges
+        .filter(|values| values.iter().any(|&v| v != 0.0))
+        .map(|values| ScalarChannel {
+            name: "charge".into(),
+            frames: vec![ScalarFrame { frame: 0, values }],
+        })
+        .into_iter()
+        .collect();
+
     let mut warnings = Vec::new();
     let mut box_matrix = None;
     if crysin_sections > 0 {
@@ -341,6 +399,7 @@ fn parse_first_molecule(text: &str) -> Result<crate::structure::ParsedStructure,
         bond_orders: Some(bond_orders),
         box_matrix,
         atom_labels: Some(atom_labels),
+        scalar_channels,
         warnings,
         ..Default::default()
     })
@@ -410,6 +469,73 @@ GASTEIGER
     11     5    11    1
     12     6    12    1
 ";
+
+    /// The molecule name is the first line of the MOLECULE section even when
+    /// it is blank; skipping it made the counts line come from `SMALL`.
+    #[test]
+    fn a_blank_molecule_name_keeps_the_counts_line() {
+        let text = METHANOL_MOL2.replacen("methanol\n", "\n", 1);
+        let s = parse(&text).unwrap();
+        assert_eq!(s.n_atoms, 6);
+        assert_eq!(s.n_file_bonds, 5);
+        // A blank line after the name is still tolerated.
+        let spaced = METHANOL_MOL2.replacen("methanol\n", "methanol\n\n", 1);
+        assert_eq!(parse(&spaced).unwrap().n_atoms, 6);
+    }
+
+    /// GAFF / GAFF2 types (written by antechamber) are lowercase force-field
+    /// types, not element symbols: `ca` is an aromatic carbon, `os` an ether
+    /// oxygen, `cl` chlorine. Tripos types keep their element prefix, so
+    /// `Ca` is still calcium.
+    #[test]
+    fn lowercase_gaff_types_resolve_to_their_element() {
+        for (ty, z) in [
+            ("ca", 6),
+            ("c3", 6),
+            ("cu", 6),
+            ("os", 8),
+            ("oh", 8),
+            ("na", 7),
+            ("nh", 7),
+            ("hc", 1),
+            ("ha", 1),
+            ("ss", 16),
+            ("p5", 15),
+            ("f", 9),
+            ("cl", 17),
+            ("br", 35),
+            ("i", 53),
+            ("Ca", 20),
+            ("C.ar", 6),
+            ("Cl", 17),
+            ("Du", 0),
+        ] {
+            assert_eq!(element_from_mol2_type(ty, "X1"), z, "{ty}");
+        }
+        // A lowercase type with no GAFF element falls back to the atom name.
+        assert_eq!(element_from_mol2_type("lp", "N1"), 7);
+        assert_eq!(element_from_mol2_type("lp", "LP1"), 0);
+    }
+
+    /// MOL2 carries a partial charge per atom (column 9); it is kept as the
+    /// `charge` scalar channel rather than discarded.
+    #[test]
+    fn partial_charges_become_a_scalar_channel() {
+        let s = parse(METHANOL_MOL2).unwrap();
+        assert_eq!(s.scalar_channels.len(), 1);
+        let charge = &s.scalar_channels[0];
+        assert_eq!(charge.name, "charge");
+        assert_eq!(charge.frames.len(), 1);
+        assert_eq!(
+            charge.frames[0].values,
+            vec![0.0, -0.394, 0.0, 0.0, 0.0, 0.264]
+        );
+        // All-zero charges (NO_CHARGES) and a missing charge column carry
+        // nothing to keep.
+        assert!(parse(BENZENE_MOL2).unwrap().scalar_channels.is_empty());
+        let no_column = "@<TRIPOS>MOLECULE\nm\n 2 1\nSMALL\nNO_CHARGES\n@<TRIPOS>ATOM\n 1 C1 0 0 0 C.3 1 LIG 0.5\n 2 O1 1.4 0 0 O.3\n@<TRIPOS>BOND\n 1 1 2 1\n";
+        assert!(parse(no_column).unwrap().scalar_channels.is_empty());
+    }
 
     #[test]
     fn parse_methanol() {
@@ -609,12 +735,12 @@ SMALL
 
     #[test]
     fn atom_type_element_extraction() {
-        assert_eq!(element_from_mol2_type("C.3"), "C");
-        assert_eq!(element_from_mol2_type("C.ar"), "C");
-        assert_eq!(element_from_mol2_type("N.am"), "N");
-        assert_eq!(element_from_mol2_type("O.co2"), "O");
-        assert_eq!(element_from_mol2_type("Fe"), "Fe");
-        assert_eq!(element_from_mol2_type("S.o2"), "S");
+        assert_eq!(element_from_mol2_type("C.3", "C1"), 6);
+        assert_eq!(element_from_mol2_type("C.ar", "C1"), 6);
+        assert_eq!(element_from_mol2_type("N.am", "N1"), 7);
+        assert_eq!(element_from_mol2_type("O.co2", "O1"), 8);
+        assert_eq!(element_from_mol2_type("Fe", "FE1"), 26);
+        assert_eq!(element_from_mol2_type("S.o2", "S1"), 16);
     }
 
     #[test]

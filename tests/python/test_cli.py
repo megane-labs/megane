@@ -9,6 +9,15 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 
+@pytest.fixture(autouse=True)
+def _reset_hosts(monkeypatch):
+    monkeypatch.delenv("MEGANE_HOST", raising=False)
+    yield
+    from megane.server import configure_hosts
+
+    configure_hosts(None)
+
+
 # ---------------------------------------------------------------------------
 # Original argparse-only tests
 # ---------------------------------------------------------------------------
@@ -305,3 +314,85 @@ def test_main_serve_no_files(mock_files, mock_webbrowser, mock_uvicorn_run):
         main()
 
     mock_files.assert_called_once_with(None)
+
+
+# ---------------------------------------------------------------------------
+# Listening address (--host, $MEGANE_HOST) and accepted Host names
+# ---------------------------------------------------------------------------
+
+
+@patch("uvicorn.run")
+@patch("megane.cli.webbrowser")
+def test_main_serve_listens_on_loopback_by_default(mock_webbrowser, mock_uvicorn_run):
+    """Other machines (and other sites through them) cannot reach a default server."""
+    from megane import server
+    from megane.cli import main
+
+    with patch("sys.argv", ["megane", "serve", "--no-browser", "--no-files"]):
+        main()
+
+    assert mock_uvicorn_run.call_args[1]["host"] == "127.0.0.1"
+    assert server._hosts.bind_host == "127.0.0.1"
+    assert server._hosts.allowed == frozenset()
+
+
+@patch("uvicorn.run")
+@patch("megane.cli.webbrowser")
+def test_main_serve_host_and_allowed_hosts(mock_webbrowser, mock_uvicorn_run):
+    from megane import server
+    from megane.cli import main
+
+    argv = ["megane", "serve", "--no-browser", "--no-files", "--host", "0.0.0.0"]
+    argv += ["--allowed-host", "node42", "--allowed-host", "viewer.example.org"]
+    with patch("sys.argv", argv):
+        main()
+
+    assert mock_uvicorn_run.call_args[1]["host"] == "0.0.0.0"
+    assert server._hosts.allowed == frozenset({"node42", "viewer.example.org"})
+
+
+@patch("uvicorn.run")
+@patch("megane.cli.webbrowser")
+def test_main_serve_host_from_environment(mock_webbrowser, mock_uvicorn_run, monkeypatch):
+    """The Docker image sets MEGANE_HOST=0.0.0.0; --host still wins."""
+    from megane.cli import main
+
+    monkeypatch.setenv("MEGANE_HOST", " 0.0.0.0 ")
+    with patch("sys.argv", ["megane", "serve", "--no-browser", "--no-files"]):
+        main()
+    assert mock_uvicorn_run.call_args[1]["host"] == "0.0.0.0"
+
+    with patch("sys.argv", ["megane", "serve", "--no-browser", "--no-files", "--host", "127.0.0.1"]):
+        main()
+    assert mock_uvicorn_run.call_args[1]["host"] == "127.0.0.1"
+
+
+@patch("uvicorn.run")
+@patch("megane.cli.Timer")
+def test_main_serve_opens_the_bound_address(mock_timer, mock_uvicorn_run):
+    from megane.cli import main
+
+    with patch("sys.argv", ["megane", "serve", "--no-files", "--host", "192.168.1.5"]):
+        with patch("megane.cli.webbrowser") as mock_webbrowser:
+            main()
+            mock_timer.call_args[0][1]()
+    mock_webbrowser.open.assert_called_once_with("http://192.168.1.5:8765")
+
+
+@pytest.mark.parametrize(
+    ("host", "url"),
+    [
+        ("127.0.0.1", "http://localhost:8765"),
+        ("0.0.0.0", "http://localhost:8765"),
+        ("::", "http://localhost:8765"),
+        ("[::1]", "http://localhost:8765"),
+        ("localhost", "http://localhost:8765"),
+        ("192.168.1.5", "http://192.168.1.5:8765"),
+        ("fe80::1", "http://[fe80::1]:8765"),
+        ("node42", "http://node42:8765"),
+    ],
+)
+def test_browser_url(host, url):
+    from megane.cli import _browser_url
+
+    assert _browser_url(host, 8765) == url
