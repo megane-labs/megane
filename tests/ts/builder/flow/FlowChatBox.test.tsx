@@ -225,6 +225,31 @@ describe("FlowChatBox", () => {
     expect(screen.queryByTestId("builder-flow-chat-undo")).toBeNull();
   });
 
+  it("aborts the request and leaves the graph alone once the dock is unmounted", async () => {
+    let release!: () => void;
+    const held = new Promise<void>((resolve) => (release = resolve));
+    let seen: AbortSignal | undefined;
+    mockGenerate(async (_c, _m, _ctx, onChunk, signal) => {
+      seen = signal;
+      await held;
+      onChunk(fence(CRYSTAL));
+      return `${fence(CRYSTAL)}\nRepeats NaCl.`;
+    });
+    const { unmount } = renderBox();
+    ask("a 3x3x3 NaCl supercell");
+    await waitFor(() => expect(seen).toBeDefined());
+
+    // Switching the Builder to Manual mode unmounts Flow's dock mid-request.
+    unmount();
+    expect(seen!.aborted).toBe(true);
+    release();
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 0));
+    });
+    expect(stores.flow.getState().nodes).toHaveLength(0);
+    expect(stores.flow.getState().past).toHaveLength(0);
+  });
+
   it("reports a reply whose block is not a flow it can hold", async () => {
     mockGenerate(
       async () =>

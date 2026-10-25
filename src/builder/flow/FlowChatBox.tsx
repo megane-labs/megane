@@ -21,6 +21,7 @@ import { useReactFlow } from "@xyflow/react";
 import { extractTrailingExplanation, hasClosedFence } from "../../ai/generation";
 import {
   AssistantDock,
+  throwIfAborted,
   type AssistantReply,
   type AssistantRequest,
 } from "../../components/AssistantDock";
@@ -93,6 +94,9 @@ export function FlowChatBox({ deps, hasTools }: FlowChatBoxProps) {
       let appliedJSON: string | null = null;
       let appliedCount = 0;
       const apply = (raw: RawFlow) => {
+        // Nothing lands once the request was cancelled or the dock went away:
+        // applying would also stop a run started since.
+        if (signal.aborted) return;
         const flow = prepareGeneratedFlow(raw, ctx);
         if (!flow) return;
         const json = JSON.stringify(flow);
@@ -130,6 +134,7 @@ export function FlowChatBox({ deps, hasTools }: FlowChatBoxProps) {
           onRestart();
         },
       );
+      throwIfAborted(signal);
       const last = tryExtractFlow(full);
       if (last) apply(last);
 

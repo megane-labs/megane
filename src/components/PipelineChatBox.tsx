@@ -19,7 +19,12 @@ import type { PipelineNodeType, SerializedPipeline } from "../pipeline/types";
 import { NODE_TYPE_LABELS } from "../pipeline/types";
 import type { Frame, Snapshot, TrajectoryMeta } from "../types";
 import { useScopedPipelineStore, usePipelineStoreApi } from "../stores/MeganeProvider";
-import { AssistantDock, type AssistantRequest, type AssistantReply } from "./AssistantDock";
+import {
+  AssistantDock,
+  throwIfAborted,
+  type AssistantRequest,
+  type AssistantReply,
+} from "./AssistantDock";
 
 export { chatHistory, replaceTrailingAssistant, type ChatMessage } from "./AssistantDock";
 
@@ -103,6 +108,8 @@ export function PipelineChatBox() {
       let appliedNodeCount = -1;
       let appliedJSON: string | null = null;
       const applyPipeline = (pipeline: SerializedPipeline) => {
+        // Nothing lands once the request was cancelled or the dock went away.
+        if (signal.aborted) return;
         const id = pipelineApi
           .getState()
           .applyGeneratedPipeline(pipeline, { checkpoint: appliedJSON === null });
@@ -161,6 +168,8 @@ export function PipelineChatBox() {
           onRestart();
         },
       );
+
+      throwIfAborted(signal);
 
       // Fallback: the JSON may only have closed in the final, non-streamed text
       // (or arrived after a tool round trip), so apply it now if we haven't yet.
