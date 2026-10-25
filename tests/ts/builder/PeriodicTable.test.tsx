@@ -55,8 +55,10 @@ describe("PeriodicTable", () => {
   it("shows every element with a symbol, the current one pressed", () => {
     let picked = 0;
     render(<PeriodicTable value={26} onPick={(z) => (picked = z)} onClose={() => {}} />);
-    expect(TABLE_MAX_Z).toBe(92);
+    expect(TABLE_MAX_Z).toBe(118);
     expect(screen.getByTestId("builder-periodic-U")).toBeTruthy();
+    expect(screen.getByTestId("builder-periodic-Np")).toBeTruthy();
+    expect(screen.getByTestId("builder-periodic-Og")).toBeTruthy();
     expect(screen.getByTestId("builder-periodic-Fe").getAttribute("aria-pressed")).toBe("true");
     expect(screen.getByTestId("builder-periodic-Cu").getAttribute("aria-pressed")).toBe("false");
     fireEvent.click(screen.getByTestId("builder-periodic-Cu"));
@@ -208,8 +210,15 @@ describe("PeriodicTable — keyboard", () => {
   });
 
   it("starts from H for an element the table does not show", () => {
-    const { anchor } = open(110);
+    const { anchor } = open(0);
     expect(document.activeElement).toBe(cell("H"));
+    anchor.remove();
+  });
+
+  it("starts from a superheavy element, which the table shows too", () => {
+    const { anchor } = open(110);
+    expect(document.activeElement).toBe(cell("Ds"));
+    expect(screen.getByTestId("builder-periodic-info-name").textContent).toBe("Darmstadtium");
     anchor.remove();
   });
 

@@ -240,7 +240,7 @@ describe("executeSymmetry", () => {
       atomBFactors: new Float32Array([1.5, 2.5]),
       caIndices: new Uint32Array([1]),
       caChainIds: new Uint8Array([65]),
-      caResNums: new Uint32Array([7]),
+      caResNums: new Int32Array([7]),
       caSsType: new Uint8Array([2]),
     });
     const out = executeSymmetry(params("expand"), inputs(makeParticle(snapshot)));

@@ -233,6 +233,7 @@ export function executeBoundaryCompletion(
     positions: rendered.positions,
     elements: rendered.elements,
     nAtoms: rendered.nAtoms,
+    ghostSourceIndices: rendered.ghostSourceIndices,
     selectedBondIndices: null,
     bondOpacityOverrides: null,
     periodicImages: null,

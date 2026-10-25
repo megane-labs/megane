@@ -125,4 +125,22 @@ describe("executeModify — bond scale & opacity", () => {
     expect(result.bondOpacityOverrides).not.toBeNull();
     expect(Array.from(result.bondOpacityOverrides!)).toEqual([1.0, 0.25]);
   });
+
+  // Regression: a selective modify used to rebuild the per-bond opacity from
+  // 1.0, so it undid a fade an upstream modify had put on other bonds.
+  it("keeps upstream per-bond opacity on bonds outside its selection", () => {
+    const upstream = new Float32Array([0.2, 1.0]);
+    const bond = makeBond({
+      selectedBondIndices: new Uint32Array([1]),
+      bondOpacityOverrides: upstream,
+    });
+    const out = executeModify(baseParams({ opacity: 0.5 }), inputs(bond));
+    const result = out.get("out") as BondData;
+    expect(Array.from(result.bondOpacityOverrides!)).toEqual([
+      expect.closeTo(0.2),
+      expect.closeTo(0.5),
+    ]);
+    // The upstream array is not written to.
+    expect(Array.from(upstream)).toEqual([expect.closeTo(0.2), 1.0]);
+  });
 });

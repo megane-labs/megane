@@ -7,6 +7,7 @@ import {
   buildUnparsableFlowPrompt,
   collectFlowErrors,
   diagnoseFlowResponse,
+  extractFlowPayload,
   normalizeParams,
   prepareGeneratedFlow,
   tryExtractFlow,
@@ -54,11 +55,26 @@ describe("tryExtractFlow", () => {
     expect((tryExtractFlow(text)!.nodes[0] as Node).id).toBe("w");
   });
 
-  it("ignores a viewer pipeline, broken JSON and an open fence", () => {
+  it("ignores a viewer pipeline, broken JSON and an object still streaming", () => {
     expect(tryExtractFlow('```json\n{"version":3,"nodes":[],"edges":[]}\n```')).toBeNull();
     expect(tryExtractFlow('```json\n{"version":1,"nodes":[\n```')).toBeNull();
-    expect(tryExtractFlow('```json\n{"version":1,"nodes":[],"edges":[]}')).toBeNull();
+    expect(tryExtractFlow('```json\n{"version":1,"nodes":[],"edges":[')).toBeNull();
     expect(tryExtractFlow("plain words")).toBeNull();
+  });
+
+  it("reads a flow in a fence of any label, or bare", () => {
+    const json = JSON.stringify(flow([water()]));
+    for (const text of [
+      `\`\`\`JSON\n${json}\n\`\`\``,
+      `\`\`\`jsonc\n${json}\n\`\`\``,
+      `${json}\nAdds water.`,
+      // A fence the model never closed.
+      `\`\`\`json\n${json}\nAdds water.`,
+    ]) {
+      expect((tryExtractFlow(text)!.nodes[0] as Node).id).toBe("w");
+    }
+    expect(extractFlowPayload(`${json}\nAdds water.`)!.fenced).toBe(false);
+    expect(extractFlowPayload(`\`\`\`JSON\n${json}\n\`\`\``)!.fenced).toBe(true);
   });
 });
 
@@ -576,5 +592,12 @@ describe("diagnoseFlowResponse", () => {
     const result = diagnoseFlowResponse('```json\n{"version": 1, "nodes": [}\n```', ctx)!;
     expect(result.prompt).toBe(buildUnparsableFlowPrompt());
     expect(result.errors).toEqual(["the fenced block is not valid, complete flow JSON"]);
+  });
+
+  it("checks a bare flow, and asks again for a fence that never closes", () => {
+    expect(diagnoseFlowResponse(`${good}\nBuilds Pt.`, ctx)).toBeNull();
+    expect(diagnoseFlowResponse(`${bad}\nBuilds a slab.`, ctx)!.errors).toHaveLength(1);
+    const open = diagnoseFlowResponse('```json\n{"version": 1, "nodes": [', ctx)!;
+    expect(open.prompt).toBe(buildUnparsableFlowPrompt());
   });
 });

@@ -338,6 +338,18 @@ describe("LazyFrameProvider", () => {
     expect(decode.fn).toHaveBeenCalledExactlyOnceWith(7, 5);
   });
 
+  it("gives the seeded frame 0 its own cell when frames carry one", () => {
+    const seed = new Float32Array(N_ATOMS * 3).fill(1);
+    const box0 = new Float32Array([30, 0, 0, 0, 30, 0, 0, 0, 30]);
+    const meta = { nFrames: 4, timestepPs: 2, nAtoms: N_ATOMS };
+    const opts = { decode: decode.fn, dispose, prefetchAhead: 0, seedFrame0: seed };
+    const withCell = new LazyFrameProvider(makeHandle(4), meta, { ...opts, seedBox0: box0 });
+    expect(withCell.getFrame(0)!.box).toBe(box0);
+    // Without one (a constant cell), frame 0 keeps the base cell like every frame.
+    const without = new LazyFrameProvider(makeHandle(4), meta, opts);
+    expect(without.getFrame(0)!.box).toBeUndefined();
+  });
+
   it("ignores seedFrame0 when basePositions is set (structure convention wins)", () => {
     const seed = new Float32Array(N_ATOMS * 3).fill(1);
     const basePositions = new Float32Array(N_ATOMS * 3).fill(2);

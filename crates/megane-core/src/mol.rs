@@ -16,6 +16,8 @@
 ///   M  V30 BEGIN BOND / bond lines / M  V30 END BOND
 ///   M  V30 END CTAB
 ///   M  END
+use std::collections::HashMap;
+
 use crate::atomic::symbol_to_atomic_num;
 use crate::trajectory::{ScalarChannel, ScalarFrame};
 
@@ -70,6 +72,10 @@ fn parse_v3000_ctab(lines: &[&str]) -> Result<crate::structure::ParsedStructure,
     let mut isotopes: Vec<f32> = Vec::new();
     // Pending content from a continuation line (trailing ` -`).
     let mut pending: Option<String> = None;
+    // Atom index field -> position in the atom block. Bonds name atoms by
+    // this field, which need not run 1, 2, 3, ...
+    let mut atom_ids: HashMap<u32, u32> = HashMap::new();
+    let mut skipped_bonds = 0usize;
 
     for &line in lines {
         let trimmed = line.trim_end();
@@ -82,7 +88,7 @@ fn parse_v3000_ctab(lines: &[&str]) -> Result<crate::structure::ParsedStructure,
         }
 
         // Content after the 7-char prefix "M  V30 "; empty for bare "M  V30".
-        let content = if trimmed.len() > 7 { &trimmed[7..] } else { "" };
+        let content = trimmed.get(7..).unwrap_or("");
 
         // Merge with any pending continuation prefix.
         let mut full = match pending.take() {
@@ -162,6 +168,9 @@ fn parse_v3000_ctab(lines: &[&str]) -> Result<crate::structure::ParsedStructure,
             let z: f32 = parts[4]
                 .parse()
                 .map_err(|_| "bad z coord in V3000 atom block")?;
+            if let Ok(id) = parts[0].parse::<u32>() {
+                atom_ids.entry(id).or_insert(elements.len() as u32);
+            }
             positions.push(x);
             positions.push(y);
             positions.push(z);
@@ -185,15 +194,18 @@ fn parse_v3000_ctab(lines: &[&str]) -> Result<crate::structure::ParsedStructure,
             }
             let order: u8 = parts[1].parse().unwrap_or(1);
             let a: u32 = parts[2]
-                .parse::<u32>()
-                .map_err(|_| "bad bond atom1 in V3000 bond block")?
-                - 1;
+                .parse()
+                .map_err(|_| "bad bond atom1 in V3000 bond block")?;
             let b: u32 = parts[3]
-                .parse::<u32>()
-                .map_err(|_| "bad bond atom2 in V3000 bond block")?
-                - 1;
-            bonds.push((a.min(b), a.max(b)));
-            bond_orders.push(order);
+                .parse()
+                .map_err(|_| "bad bond atom2 in V3000 bond block")?;
+            match (atom_ids.get(&a), atom_ids.get(&b)) {
+                (Some(&a), Some(&b)) => {
+                    bonds.push((a.min(b), a.max(b)));
+                    bond_orders.push(order);
+                }
+                _ => skipped_bonds += 1,
+            }
         }
     }
 
@@ -220,8 +232,17 @@ fn parse_v3000_ctab(lines: &[&str]) -> Result<crate::structure::ParsedStructure,
         n_file_bonds,
         bond_orders: Some(bond_orders),
         scalar_channels,
+        warnings: skipped_bonds_warning(skipped_bonds, "atom id not in the atom block")
+            .into_iter()
+            .collect(),
         ..Default::default()
     })
+}
+
+/// One aggregated warning for the bonds skipped because an end names no atom
+/// of the file (`reason` says why), or `None` when none were.
+fn skipped_bonds_warning(skipped: usize, reason: &str) -> Option<String> {
+    (skipped > 0).then(|| format!("{skipped} bond(s) skipped: {reason}"))
 }
 
 /// Count the SDF records that follow the first one: a `$$$$` separator line
@@ -332,19 +353,17 @@ pub fn parse(text: &str) -> Result<crate::structure::ParsedStructure, String> {
             mass_deltas.push(dd as f32);
             formal_charges.push(decode_v2000_charge(ccc));
         } else {
-            let x: f32 = line[0..10]
-                .trim()
-                .parse()
-                .map_err(|_| format!("bad x at atom {}", i + 1))?;
-            let y: f32 = line[10..20]
-                .trim()
-                .parse()
-                .map_err(|_| format!("bad y at atom {}", i + 1))?;
-            let z: f32 = line[20..30]
-                .trim()
-                .parse()
-                .map_err(|_| format!("bad z at atom {}", i + 1))?;
-            let sym = crate::atomic::capitalize(line[31..34].trim());
+            // Byte columns: a field a multi-byte character straddles is
+            // unreadable rather than sliced mid-character.
+            let coord = |start: usize, axis: &str| -> Result<f32, String> {
+                line.get(start..start + 10)
+                    .and_then(|f| f.trim().parse().ok())
+                    .ok_or_else(|| format!("bad {} at atom {}", axis, i + 1))
+            };
+            let x = coord(0, "x")?;
+            let y = coord(10, "y")?;
+            let z = coord(20, "z")?;
+            let sym = crate::atomic::capitalize(line.get(31..34).unwrap_or("").trim());
             positions.push(x);
             positions.push(y);
             positions.push(z);
@@ -358,32 +377,38 @@ pub fn parse(text: &str) -> Result<crate::structure::ParsedStructure, String> {
     // Parse bond block
     let mut bonds = Vec::with_capacity(n_bonds);
     let mut bond_orders = Vec::with_capacity(n_bonds);
+    let mut skipped_bonds = 0usize;
+    // 1-based atom number -> 0-based index, `None` outside the atom block.
+    let atom_index = |n: usize| (1..=n_atoms).contains(&n).then(|| (n - 1) as u32);
 
     for i in 0..n_bonds {
         let line = lines[bond_start + i];
         // V2000 bond line: atom1(3) atom2(3) bond_type(3) ...
-        if line.len() < 9 {
+        let (a, b, order) = if line.len() < 9 {
             let parts: Vec<&str> = line.split_whitespace().collect();
             if parts.len() < 3 {
                 return Err(format!("MOL bond line {} too short", i + 1));
             }
-            let a: u32 = parts[0]
-                .parse::<u32>()
-                .map_err(|_| format!("bad bond atom1 at bond {}", i + 1))?
-                - 1;
-            let b: u32 = parts[1]
-                .parse::<u32>()
-                .map_err(|_| format!("bad bond atom2 at bond {}", i + 1))?
-                - 1;
+            let a: usize = parts[0]
+                .parse()
+                .map_err(|_| format!("bad bond atom1 at bond {}", i + 1))?;
+            let b: usize = parts[1]
+                .parse()
+                .map_err(|_| format!("bad bond atom2 at bond {}", i + 1))?;
             let order: u8 = parts[2].parse().unwrap_or(1);
-            bonds.push((a.min(b), a.max(b)));
-            bond_orders.push(order);
+            (a, b, order)
         } else {
-            let a = parse_mol_int(line, 0, 3)? as u32 - 1;
-            let b = parse_mol_int(line, 3, 6)? as u32 - 1;
+            let a = parse_mol_int(line, 0, 3)?;
+            let b = parse_mol_int(line, 3, 6)?;
             let order = parse_mol_int(line, 6, 9).unwrap_or(1) as u8;
-            bonds.push((a.min(b), a.max(b)));
-            bond_orders.push(order);
+            (a, b, order)
+        };
+        match (atom_index(a), atom_index(b)) {
+            (Some(a), Some(b)) => {
+                bonds.push((a.min(b), a.max(b)));
+                bond_orders.push(order);
+            }
+            _ => skipped_bonds += 1,
         }
     }
 
@@ -434,14 +459,18 @@ pub fn parse(text: &str) -> Result<crate::structure::ParsedStructure, String> {
     scalar_channels.extend(nonzero_channel("formal_charge", formal_charges));
     scalar_channels.extend(nonzero_channel("isotope_mass_delta", mass_deltas));
 
-    let warnings: Vec<String> = extra_records_warning(extra_records).into_iter().collect();
+    let warnings: Vec<String> =
+        skipped_bonds_warning(skipped_bonds, &format!("atom number outside 1..={n_atoms}"))
+            .into_iter()
+            .chain(extra_records_warning(extra_records))
+            .collect();
 
     Ok(crate::structure::ParsedStructure {
         n_atoms,
         positions,
         elements,
+        n_file_bonds: bonds.len(),
         bonds,
-        n_file_bonds: n_bonds,
         bond_orders: Some(bond_orders),
         scalar_channels,
         warnings,
@@ -456,7 +485,7 @@ fn parse_mol_int_signed(line: &str, start: usize, end: usize) -> Option<i64> {
     if start >= end {
         return None;
     }
-    line[start..end].trim().parse().ok()
+    line.get(start..end)?.trim().parse().ok()
 }
 
 /// Parse an integer from a fixed-width field in a MOL file line.
@@ -465,15 +494,94 @@ pub(crate) fn parse_mol_int(line: &str, start: usize, end: usize) -> Result<usiz
     if start >= end {
         return Err(format!("field {}..{} out of range", start, end));
     }
-    line[start..end]
+    let field = line
+        .get(start..end)
+        .ok_or_else(|| format!("field {}..{} splits a character", start, end))?;
+    field
         .trim()
         .parse()
-        .map_err(|_| format!("cannot parse integer from '{}'", &line[start..end]))
+        .map_err(|_| format!("cannot parse integer from '{}'", field))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A multi-byte UTF-8 character that straddles a fixed column makes that
+    /// field unreadable (an error for a required one) instead of panicking.
+    #[test]
+    fn non_ascii_columns_cannot_panic_the_reader() {
+        // `é` straddles byte 10, the end of the V2000 x field.
+        let atom = "x\n  test\n\n  1  0  0  0  0  0            999 V2000\n    0.000\u{e9}    0.0000    0.0000 C   0  0  0  0  0  0\nM  END\n";
+        assert!(parse(atom).is_err_and(|e| e.contains("bad x")));
+        // `é` straddles byte 3, the end of the counts line's atom count.
+        let counts = "x\n  test\n\n  \u{e9}  0  0  0  0  0            999 V2000\nM  END\n";
+        assert!(parse(counts).is_err());
+        // `é` straddles byte 7, the end of a V3000 line's `M  V30 ` prefix.
+        let v3000 = VALID_V3000.replace("M  V30 BEGIN ATOM\n", "M  V30 BEGIN ATOM\nM  V30\u{e9}\n");
+        assert_eq!(parse(&v3000).unwrap().n_atoms, 3);
+    }
+
+    fn v2000_with_bonds(bond_lines: &str) -> String {
+        let n_bonds = bond_lines.lines().count();
+        format!(
+            "x\n  test\n\n  2{n_bonds:>3}  0  0  0  0            999 V2000\n    0.0000    0.0000    0.0000 C   0  0  0  0  0  0\n    1.5000    0.0000    0.0000 O   0  0  0  0  0  0\n{bond_lines}M  END\n"
+        )
+    }
+
+    /// A V2000 bond that names atom 0 or an atom past the atom block points at
+    /// nothing: it is skipped with a warning instead of becoming a bond to a
+    /// wrapped-around (`u32::MAX`) or non-existent index.
+    #[test]
+    fn v2000_bonds_to_missing_atoms_are_skipped_with_a_warning() {
+        for bond in ["  1  5  1  0\n", "  0  2  1  0\n", "1 5 1\n", "0 2 1\n"] {
+            let mol = v2000_with_bonds(&format!("  1  2  2  0\n{bond}"));
+            let s = parse(&mol).unwrap();
+            assert_eq!(s.bonds, vec![(0, 1)], "{bond:?}");
+            assert_eq!(s.bond_orders, Some(vec![2]));
+            assert_eq!(s.n_file_bonds, 1);
+            assert_eq!(s.warnings.len(), 1, "{bond:?}");
+            assert!(s.warnings[0].contains("1 bond"), "{:?}", s.warnings);
+        }
+        assert!(parse(&v2000_with_bonds("  1  2  1  0\n"))
+            .unwrap()
+            .warnings
+            .is_empty());
+    }
+
+    const V3000_IDS: &str = "\
+x
+  test
+
+  0  0  0  0  0  0            999 V3000
+M  V30 BEGIN CTAB
+M  V30 COUNTS 3 3 0 0 0
+M  V30 BEGIN ATOM
+M  V30 10 C 0 0 0 0
+M  V30 20 O 1.2 0 0 0
+M  V30 30 N 2.4 0 0 0
+M  V30 END ATOM
+M  V30 BEGIN BOND
+M  V30 1 2 10 20
+M  V30 2 1 30 20
+M  V30 3 1 30 0
+M  V30 END BOND
+M  V30 END CTAB
+M  END
+";
+
+    /// V3000 bonds name atoms by their index field, which need not count
+    /// 1, 2, 3: ids are resolved through the atom block, and a bond to an id
+    /// the block does not define is skipped with a warning.
+    #[test]
+    fn v3000_bonds_resolve_atom_ids_and_skip_unknown_ones() {
+        let s = parse(V3000_IDS).unwrap();
+        assert_eq!(s.bonds, vec![(0, 1), (1, 2)]);
+        assert_eq!(s.bond_orders, Some(vec![2, 1]));
+        assert_eq!(s.n_file_bonds, 2);
+        assert_eq!(s.warnings.len(), 1);
+        assert!(s.warnings[0].contains("1 bond"), "{:?}", s.warnings);
+    }
 
     // ── V3000 tests ──────────────────────────────────────────────────────────
 

@@ -37,6 +37,8 @@ vi.mock("@/ai/client", () => ({
       ? { version: 3, nodes: [{ id: "a" }, { id: "b" }], edges: [] }
       : null,
   ),
+  // Mirrors the real helper: a fence (closed or not) or a JSON object.
+  looksLikePayload: (text: string) => text.includes("```") || /\{\s*"/.test(text),
   formatActionSummary: (n: number) =>
     `Pipeline applied — ${n} ${n === 1 ? "node" : "nodes"} added to the editor.`,
   // Mirrors the real helper: only the text after the *last* closed fence,
@@ -620,6 +622,33 @@ describe("PipelineChatBox — applying a generated pipeline", () => {
     expect(second.endsWith("## Request\n\nmake it bigger")).toBe(true);
   });
 
+  it("aborts the request and applies nothing once the dock is unmounted", async () => {
+    let release!: () => void;
+    const held = new Promise<void>((resolve) => (release = resolve));
+    let seen: AbortSignal | undefined;
+    (generatePipeline as ReturnType<typeof vi.fn>).mockImplementation(
+      async (_config, _msg, onChunk: (c: string) => void, signal: AbortSignal) => {
+        seen = signal;
+        await held;
+        // What a transport could still hand over after the abort.
+        onChunk('```json\n{ "version": 3, "nodes": [] }\n```');
+        return '```json\n{ "version": 3, "nodes": [] }\n```\nDone.';
+      },
+    );
+    const { unmount } = render(<PipelineChatBox />);
+    submit("hide the water");
+    await waitFor(() => expect(seen).toBeDefined());
+
+    // Collapsing the Pipeline panel unmounts the dock mid-request.
+    unmount();
+    expect(seen!.aborted).toBe(true);
+    release();
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 0));
+    });
+    expect(storeState.applyGeneratedPipeline).not.toHaveBeenCalled();
+  });
+
   it("clears the conversation", async () => {
     render(<PipelineChatBox />);
     submit("first");
@@ -639,6 +668,56 @@ describe("PipelineChatBox — applying a generated pipeline", () => {
     expect(await screen.findByText("Something went wrong. Please try again.")).toBeTruthy();
     // The underlying error detail must never leak into the transcript.
     expect(screen.queryByText(/429/)).toBeNull();
+  });
+
+  it("shows a reply in prose as the answer and changes nothing", async () => {
+    (generatePipeline as ReturnType<typeof vi.fn>).mockResolvedValueOnce(
+      "  This file holds a water box: 648 atoms of O and H.  ",
+    );
+    render(<PipelineChatBox />);
+    submit("what is in this file?");
+
+    expect(
+      await screen.findByText("This file holds a water box: 648 atoms of O and H."),
+    ).toBeTruthy();
+    expect(screen.queryByText("Something went wrong. Please try again.")).toBeNull();
+    expect(storeState.applyGeneratedPipeline).not.toHaveBeenCalled();
+  });
+
+  it("reports a reply whose JSON holds no pipeline instead of showing it as prose", async () => {
+    // An unclosed fence: the model tried to send a pipeline and failed.
+    (generatePipeline as ReturnType<typeof vi.fn>).mockResolvedValueOnce(
+      '```json\n{ "version": 3, "nodes": [',
+    );
+    render(<PipelineChatBox />);
+    submit("build me a pipeline");
+
+    expect(await screen.findByText("Something went wrong. Please try again.")).toBeTruthy();
+    expect(screen.queryByText(/"version": 3/)).toBeNull();
+    expect(storeState.applyGeneratedPipeline).not.toHaveBeenCalled();
+  });
+
+  it("applies the final round's pipeline when streaming applied an earlier one", async () => {
+    const first = { version: 3, nodes: [{ id: "a" }], edges: [] };
+    const second = { version: 3, nodes: [{ id: "a" }, { id: "b" }, { id: "c" }], edges: [] };
+    (tryExtractPipeline as ReturnType<typeof vi.fn>).mockImplementation((text: string) =>
+      text.includes("FINAL") ? second : text.includes("```") ? first : null,
+    );
+    (generatePipeline as ReturnType<typeof vi.fn>).mockImplementation(
+      async (_config, _msg, onChunk: (c: string) => void) => {
+        onChunk("```json\n{}\n```");
+        // The final text holds a pipeline the stream never showed.
+        return "```json\n{}\n```FINAL";
+      },
+    );
+    render(<PipelineChatBox />);
+    submit("show it");
+
+    expect(await screen.findByText("FINAL")).toBeTruthy();
+    expect(storeState.applyGeneratedPipeline).toHaveBeenCalledTimes(2);
+    expect(storeState.applyGeneratedPipeline).toHaveBeenLastCalledWith(second, {
+      checkpoint: false,
+    });
   });
 
   it("surfaces the rate-limit message verbatim when the free demo is rate limited", async () => {

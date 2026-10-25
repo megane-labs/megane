@@ -225,6 +225,58 @@ describe("FlowChatBox", () => {
     expect(screen.queryByTestId("builder-flow-chat-undo")).toBeNull();
   });
 
+  it("aborts the request and leaves the graph alone once the dock is unmounted", async () => {
+    let release!: () => void;
+    const held = new Promise<void>((resolve) => (release = resolve));
+    let seen: AbortSignal | undefined;
+    mockGenerate(async (_c, _m, _ctx, onChunk, signal) => {
+      seen = signal;
+      await held;
+      onChunk(fence(CRYSTAL));
+      return `${fence(CRYSTAL)}\nRepeats NaCl.`;
+    });
+    const { unmount } = renderBox();
+    ask("a 3x3x3 NaCl supercell");
+    await waitFor(() => expect(seen).toBeDefined());
+
+    // Switching the Builder to Manual mode unmounts Flow's dock mid-request.
+    unmount();
+    expect(seen!.aborted).toBe(true);
+    release();
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 0));
+    });
+    expect(stores.flow.getState().nodes).toHaveLength(0);
+    expect(stores.flow.getState().past).toHaveLength(0);
+  });
+
+  it("applies a flow the model sent bare or in a ```JSON fence, never showing its JSON", async () => {
+    for (const reply of [
+      `${JSON.stringify(CRYSTAL)}\nRepeats NaCl.`,
+      `\`\`\`JSON\n${JSON.stringify(CRYSTAL)}\n\`\`\`\nRepeats NaCl.`,
+    ]) {
+      stores = createBuilderStores();
+      mockGenerate(async (_c, _m, _ctx, onChunk) => {
+        onChunk(reply);
+        return reply;
+      });
+      renderBox();
+      ask("a 3x3x3 NaCl supercell");
+      await waitFor(() => expect(stores.flow.getState().nodes).toHaveLength(2));
+      await waitFor(() => expect(screen.getByTestId("builder-flow-chat-input")).not.toBeDisabled());
+      expect(screen.queryByText(/"version":1/)).toBeNull();
+      cleanup();
+    }
+  });
+
+  it("reports a reply whose fence never closed instead of showing it as prose", async () => {
+    mockGenerate(async () => '```json\n{"version":1,"nodes":[');
+    renderBox();
+    ask("something");
+    expect(await screen.findByText("Something went wrong. Please try again.")).toBeTruthy();
+    expect(screen.queryByText(/"version":1/)).toBeNull();
+  });
+
   it("reports a reply whose block is not a flow it can hold", async () => {
     mockGenerate(
       async () =>

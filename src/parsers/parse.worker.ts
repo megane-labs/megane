@@ -28,7 +28,7 @@ import {
   type LazyFrameDecoder,
 } from "./parseCore";
 import { packLabels } from "./labels";
-import type { ParseRequest, ParseResponse } from "./parseMessages";
+import type { ParseRequest, ParseResponse, WasmSource } from "./parseMessages";
 
 interface WorkerSelf {
   onmessage: ((e: MessageEvent) => void) | null;
@@ -49,11 +49,31 @@ function respond(response: ParseResponse, transfer?: Transferable[]): void {
 // bytes holds the whole file in WASM memory for its lifetime.
 const decoders = new Map<number, LazyFrameDecoder>();
 
+/** The WASM module would not start: no request can succeed in this worker. */
+class WorkerInitError extends Error {}
+
+async function init(wasm: WasmSource): Promise<void> {
+  try {
+    await ensureInit(wasm);
+  } catch (err) {
+    throw new WorkerInitError(err instanceof Error ? err.message : String(err));
+  }
+}
+
+/**
+ * Whether `err` leaves this worker unusable, as opposed to the request's input
+ * being rejected: the module failed to start, or a call trapped, which can
+ * leave the module's memory inconsistent. Ordinary parser errors are not.
+ */
+function isFatal(err: unknown): boolean {
+  return err instanceof WorkerInitError || err instanceof WebAssembly.RuntimeError;
+}
+
 ctx.onmessage = async (e: MessageEvent<ParseRequest>) => {
   const req = e.data;
   try {
     if (req.op === "structure") {
-      await ensureInit(req.wasm);
+      await init(req.wasm);
       const bytes = req.bytes ?? (req.file ? await req.file.arrayBuffer() : undefined);
       const result = parseStructureCore({
         ext: req.ext,
@@ -71,7 +91,7 @@ ctx.onmessage = async (e: MessageEvent<ParseRequest>) => {
         transfer,
       );
     } else if (req.op === "trajectory") {
-      await ensureInit(req.wasm);
+      await init(req.wasm);
       const result = parseTrajectoryCore({
         kind: req.kind,
         text: req.text,
@@ -81,7 +101,7 @@ ctx.onmessage = async (e: MessageEvent<ParseRequest>) => {
       const transfer = collectResultBuffers(result);
       respond({ id: req.id, ok: true, op: "trajectory", result } satisfies ParseResponse, transfer);
     } else if (req.op === "structurePrefix") {
-      await ensureInit(req.wasm);
+      await init(req.wasm);
       // Parse frame 0 from a bounded prefix; throws if frame 0 isn't fully in it.
       const result = parseStructurePrefixCore(req.text, req.kind, req.isWholeFile);
       const transfer = collectResultBuffers(result);
@@ -95,7 +115,7 @@ ctx.onmessage = async (e: MessageEvent<ParseRequest>) => {
         transfer,
       );
     } else if (req.op === "trajFrame0") {
-      await ensureInit(req.wasm);
+      await init(req.wasm);
       // Frame 0 of a .traj from its head + tail; throws if they don't hold it.
       const result = parseTrajFrame0Core(
         new Uint8Array(req.head),
@@ -113,7 +133,7 @@ ctx.onmessage = async (e: MessageEvent<ParseRequest>) => {
         transfer,
       );
     } else if (req.op === "trajectoryFrame0") {
-      await ensureInit(req.wasm);
+      await init(req.wasm);
       // Decode frame 0 from a bounded prefix; throws if the prefix is too small.
       const positions = decodeTrajectoryFrame0Core(
         new Uint8Array(req.bytes),
@@ -130,7 +150,7 @@ ctx.onmessage = async (e: MessageEvent<ParseRequest>) => {
         [positions.buffer],
       );
     } else if (req.op === "indexStructure") {
-      await ensureInit(req.wasm);
+      await init(req.wasm);
       // One request: build the persistent decoder (index) AND parse frame 0.
       const { kind, file } = req;
       if (kind === "traj" && !file) throw new Error("an ASE .traj is indexed from its File");
@@ -153,7 +173,7 @@ ctx.onmessage = async (e: MessageEvent<ParseRequest>) => {
         transfer,
       );
     } else if (req.op === "indexTrajectory") {
-      await ensureInit(req.wasm);
+      await init(req.wasm);
       const { decoder, index } = indexTrajectoryCore(
         new Uint8Array(req.bytes),
         req.kind,
@@ -169,7 +189,7 @@ ctx.onmessage = async (e: MessageEvent<ParseRequest>) => {
         transfer,
       );
     } else if (req.op === "indexTrajectoryFile") {
-      await ensureInit(req.wasm);
+      await init(req.wasm);
       const { decoder, index } =
         req.kind === "lammpstrj"
           ? await indexDumpFileCore(req.file, req.expectedNAtoms)
@@ -202,7 +222,7 @@ ctx.onmessage = async (e: MessageEvent<ParseRequest>) => {
         transfer,
       );
     } else if (req.op === "init") {
-      await ensureInit(req.wasm);
+      await init(req.wasm);
       respond({ id: req.id, ok: true, op: "init" } satisfies ParseResponse);
     } else if (req.op === "disposeTrajectory") {
       decoders.get(req.trajectoryId)?.free();
@@ -215,6 +235,7 @@ ctx.onmessage = async (e: MessageEvent<ParseRequest>) => {
       ok: false,
       op: req.op,
       error: err instanceof Error ? err.message : String(err),
+      ...(isFatal(err) && { fatal: true }),
     } satisfies ParseResponse);
   }
 };

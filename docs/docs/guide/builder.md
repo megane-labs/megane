@@ -138,7 +138,7 @@ always adds and removes H to keep valences filled, even on a skeleton, and
 
 The Details panel shows **only the settings the current tool uses**: the
 element (one-click buttons for the common ones; **Periodic table** opens a
-table of every element up to U beside the panel — cells tinted by family,
+table of every element (H to Og) beside the panel — cells tinted by family,
 and pointing at one shows its name, atomic number, mass, family and the
 colour the view draws it in; or any atomic number in the *Z* field) for
 *Add atom* and *Element*, the bond order (single, double, triple, aromatic)
@@ -766,6 +766,11 @@ b.save("POSCAR")                     # VASP names and .cif / .vasp need a cell
 atoms = b.to_ase()                   # needs ASE
 b.load("other.xyz")                  # open another file in the same widget
 ```
+
+`b.load(...)` replaces the document at once: `save()`, `text()`, `to_ase()`
+and the counts read the new file until the widget has opened it, so
+`b.load("b.pdb"); b.save("out.pdb")` in one cell saves `b.pdb` — and they work
+on a `Builder` that is never displayed.
 
 *File › Save* in the cell writes through the kernel into its working
 directory (the notebook's folder; set `megane.Builder(save_dir=...)` to
