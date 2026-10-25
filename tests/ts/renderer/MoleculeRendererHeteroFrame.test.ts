@@ -6,9 +6,10 @@
  * positions must stay on the allocation-free fast path.
  */
 
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import * as THREE from "three";
 import { MoleculeRenderer } from "@/renderer/MoleculeRenderer";
+import { SurfaceRenderer } from "@/renderer/SurfaceRenderer";
 import { ImpostorAtomMesh } from "@/renderer/ImpostorAtomMesh";
 import { ImpostorBondMesh } from "@/renderer/ImpostorBondMesh";
 import type { Snapshot, Frame } from "@/types";
@@ -239,5 +240,103 @@ describe("MoleculeRenderer — picking on a heterogeneous frame", () => {
     internals.cameraController.syncExtent = () => {};
     renderer.loadSnapshot(snapshot, { fit: false });
     expect(renderer.testGetProjectedAtomPositions()).toHaveLength(4);
+  });
+});
+
+/**
+ * The surface must be built from the topology of the frame on screen: a
+ * heterogeneous frame carries its own atom count and elements, and pairing its
+ * positions with frame 0's atom count either drops the frame's extra atoms,
+ * reads past the end of a smaller frame's positions, or keeps the leftover
+ * tail of an earlier, larger frame in the surface.
+ */
+describe("MoleculeRenderer — surface on a heterogeneous frame", () => {
+  function heteroFrame(xs: number[], elements: number[]): Frame {
+    return {
+      frameId: 1,
+      nAtoms: xs.length,
+      positions: new Float32Array(xs.flatMap((x) => [x, 0, 0])),
+      elements: new Uint8Array(elements),
+      bonds: new Uint32Array(0),
+      nBonds: 0,
+    };
+  }
+
+  function makeSurfaceRenderer() {
+    const { renderer, internals } = makeRenderer();
+    internals.currentPositions = internals.snapshot.positions;
+    const surface = new SurfaceRenderer();
+    internals.surfaceRenderer = surface;
+    const load = vi.spyOn(surface, "loadSnapshot");
+    return { renderer, surface, load };
+  }
+
+  function surfaceBounds(surface: SurfaceRenderer): THREE.Box3 {
+    const geometry = (surface.mesh.children[0] as THREE.Mesh).geometry;
+    geometry.computeBoundingBox();
+    return geometry.boundingBox!;
+  }
+
+  it("covers a grown frame's extra atoms with that frame's elements", () => {
+    const { renderer, surface, load } = makeSurfaceRenderer();
+    renderer.setRepresentationType("atoms");
+    renderer.updateFrame(heteroFrame([0, 1, 20], [6, 7, 16]));
+    renderer.setRepresentationType("surface");
+
+    const built = load.mock.lastCall![0];
+    expect(built.nAtoms).toBe(3);
+    expect(Array.from(built.elements)).toEqual([6, 7, 16]);
+    expect(Array.from(built.positions.subarray(0, 9))).toEqual([0, 0, 0, 1, 0, 0, 20, 0, 0]);
+    // The sulfur at x = 20 is inside the surface.
+    expect(surfaceBounds(surface).max.x).toBeGreaterThan(20);
+  });
+
+  it("builds a shrunk frame's surface from that frame's atoms only", () => {
+    const { renderer, surface, load } = makeSurfaceRenderer();
+    renderer.setRepresentationType("atoms");
+    renderer.updateFrame(heteroFrame([0, 1, 20], [6, 7, 16]));
+    // The next frame has one atom; the position buffer still holds the tail.
+    renderer.updateFrame(heteroFrame([0], [8]));
+    renderer.setRepresentationType("surface");
+
+    const built = load.mock.lastCall![0];
+    expect(built.nAtoms).toBe(1);
+    expect(Array.from(built.elements)).toEqual([8]);
+    const box = surfaceBounds(surface);
+    expect(Number.isFinite(box.max.x)).toBe(true);
+    // Neither the leftover nitrogen at x = 1 nor the sulfur at x = 20.
+    expect(box.max.x).toBeLessThan(5);
+  });
+
+  it("rebuilds a shown surface with each heterogeneous frame's topology", () => {
+    const { renderer, surface, load } = makeSurfaceRenderer();
+    renderer.setRepresentationType("surface");
+    renderer.updateFrame(heteroFrame([0, 1, 20], [6, 7, 16]));
+
+    const built = load.mock.lastCall![0];
+    expect(built.nAtoms).toBe(3);
+    expect(Array.from(built.elements)).toEqual([6, 7, 16]);
+    expect(surfaceBounds(surface).max.x).toBeGreaterThan(20);
+
+    renderer.updateFrame(heteroFrame([0], [8]));
+    expect(load.mock.lastCall![0].nAtoms).toBe(1);
+    expect(surfaceBounds(surface).max.x).toBeLessThan(5);
+  });
+
+  it("returns to the snapshot's topology on a positions-only frame", () => {
+    const { renderer, surface, load } = makeSurfaceRenderer();
+    renderer.setRepresentationType("surface");
+    renderer.updateFrame(heteroFrame([0, 1, 20], [6, 7, 16]));
+    renderer.updateFrame({
+      frameId: 2,
+      nAtoms: 2,
+      positions: new Float32Array([30, 0, 0, 31, 0, 0]),
+    });
+
+    const built = load.mock.lastCall![0];
+    expect(built.nAtoms).toBe(2);
+    expect(Array.from(built.elements)).toEqual([6, 8]);
+    expect(Array.from(built.positions)).toEqual([30, 0, 0, 31, 0, 0]);
+    expect(surfaceBounds(surface).min.x).toBeGreaterThan(25);
   });
 });
