@@ -276,6 +276,32 @@ describe("generatePipeline (Anthropic)", () => {
       RateLimitError,
     );
   });
+
+  it("throws on an error event inside the stream instead of returning the truncated text", async () => {
+    // HTTP 200, then the provider gives up mid-reply (e.g. overloaded).
+    fetchMock.mockResolvedValueOnce(
+      makeSSEResponse([
+        {
+          event: "content_block_delta",
+          data: { delta: { type: "text_delta", text: '```json\n{ "version": 3, "nod' } },
+        },
+        {
+          event: "error",
+          data: { type: "error", error: { type: "overloaded_error", message: "Overloaded" } },
+        },
+      ]),
+    );
+    await expect(generatePipeline(ANTHROPIC_CONFIG, "msg", () => {})).rejects.toThrow(
+      /overloaded_error: Overloaded/,
+    );
+  });
+
+  it("throws on an error event with no details", async () => {
+    fetchMock.mockResolvedValueOnce(makeSSEResponse([{ event: "error", data: {} }]));
+    await expect(generatePipeline(ANTHROPIC_CONFIG, "msg", () => {})).rejects.toThrow(
+      /stopped the reply with an error/,
+    );
+  });
 });
 
 describe("generatePipeline (OpenAI)", () => {
@@ -304,6 +330,54 @@ describe("generatePipeline (OpenAI)", () => {
     expect(chunks).toEqual(["hi ", "there"]);
     expect(result).toBe("hi there");
     expect(fetchMock.mock.calls[0][0]).toBe("https://api.openai.com/v1/chat/completions");
+  });
+
+  it("throws on an error payload inside the stream", async () => {
+    // OpenAI sends `{"error": {...}}` as a data line after HTTP 200.
+    fetchMock.mockResolvedValueOnce(
+      makeSSEResponse([
+        { event: "", data: { choices: [{ delta: { content: "```json\n{" } }] } },
+        {
+          event: "",
+          data: { error: { type: "server_error", message: "The server had an error" } },
+        },
+      ]),
+    );
+    await expect(generatePipeline(OPENAI_CONFIG, "msg", () => {})).rejects.toThrow(
+      /server_error: The server had an error/,
+    );
+  });
+
+  it("throws on an OpenRouter-style error chunk (finish_reason error)", async () => {
+    fetchMock.mockResolvedValueOnce(
+      makeSSEResponse([
+        { event: "", data: { choices: [{ delta: { content: "```json\n{" } }] } },
+        {
+          event: "",
+          data: {
+            error: { code: 502, message: "Provider disconnected" },
+            choices: [{ index: 0, delta: { content: "" }, finish_reason: "error" }],
+          },
+        },
+        { event: "", data: "[DONE]" },
+      ]),
+    );
+    await expect(generatePipeline(OPENAI_CONFIG, "msg", () => {})).rejects.toThrow(
+      /502: Provider disconnected/,
+    );
+
+    // A finish_reason of "error" alone is an error too.
+    fetchMock.mockResolvedValueOnce(
+      makeSSEResponse([
+        {
+          event: "",
+          data: { choices: [{ delta: { content: "partial" }, finish_reason: "error" }] },
+        },
+      ]),
+    );
+    await expect(generatePipeline(OPENAI_CONFIG, "msg", () => {})).rejects.toThrow(
+      /stopped the reply with an error/,
+    );
   });
 
   it("sets the OpenAI Authorization header and body", async () => {
