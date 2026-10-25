@@ -67,6 +67,101 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 - **XTC trajectories of nine atoms or fewer are no longer drawn ten times too small.** XTC stores such frames as plain floats instead of compressing them, and the reader skipped the nanometre-to-Å conversion for that layout (the box was still converted, so the atoms sat shrunk in one corner of their cell). Both layouts now go through the same conversion, in the web app, the Jupyter widget, JupyterLab, VS Code and the Python API.
 - **The web app no longer requests `/api/files` where the server offers no file browsing.** It asked at every start, so the docs site's app, a static deployment, the Docker image (`--no-files`) and a `megane serve` opened from another machine each logged a 404 or 403 in the browser console. `megane serve` now marks the page it serves (`<meta name="megane-server-files">`) when file browsing is on for that browser, and the app asks only then (or under the Vite dev server, which proxies `/api` to `megane serve`).
 
+The fixes below come from a bug audit of the parsers, pipeline, renderer and hosts.
+
+#### Changes you may notice
+
+- **PDB files without `CONECT` records now draw bonds.** Most RCSB entries and MD-written PDBs (1UBQ, for example) declare no bonds, and *Add Bond*'s "structure" source, the default for PDB, drew none while the HUD counted them. A structure file that declares no bonds now falls back to distance inference, with the node's `vdwScale` and across periodic boundaries. The Jupyter widget and `megane serve` now receive the file's declared-bond count, so every host draws the same bonds. `si_diamond.cml` draws its Si–Si bonds too. (#888)
+- **Dihedral angles follow the IUPAC sign, so their sign is flipped compared with earlier releases.** The measurement panel, the Jupyter widget's `measurement` traitlet, `onMeasurementChange` and the Builder Inspector reported −φ. They now agree with MDAnalysis, MDTraj and the `dihedral_deg` helper in the docs. Distances and angles are unchanged, and the Builder's *Set dihedral* still lands on the value typed. (#862)
+- **Security: `megane serve` listens on `127.0.0.1` by default and checks where requests come from.** It bound `0.0.0.0`, and a page from another site open in the same browser could reach its files, its WebSocket and its uploads.
+  - **New default bind.** Pass `--host 0.0.0.0` (or set `$MEGANE_HOST`) to reach it from other machines. The Docker image sets `MEGANE_HOST=0.0.0.0`, so the documented `docker run` commands work unchanged.
+  - **Host and Origin checks.** `/api/files*`, `/api/upload` and `/ws` require a `Host` that names this server (`localhost`, an IP address, the `--host` value, or a name given with the new repeatable `--allowed-host NAME`, e.g. a reverse proxy's public name), and a browser `Origin` from the same origin. This blocks DNS rebinding, cross-site WebSockets (closed with code 1008) and cross-site uploads.
+  - **Hidden files.** Dot files and folders (`.ssh/id_rsa`, also through a symlink) are refused with 403.
+  - **"This machine".** File browsing without `--files-any-host` needs a loopback client and a loopback `Host`, so a reverse proxy on the same machine no longer makes every client local. SSH tunnels are unaffected.
+  - Uploading an XTC no longer fails on Windows. See the new Security section of [the CLI guide](docs/docs/guide/cli.md). (#861)
+- **Every element from H to Og is recognised.** About 40 elements (Nb, Tc, Pr, Pm, Tm, Po–Ac, Pa, Np–Og) were missing from the parsers' symbol table: exact-symbol readers gave them Z = 0, and CIF and PDB fell back to the first letter, so LiNbO₃, PrNiO₃ and PuO₂ were drawn as nitrogen and phosphorus compounds. `D` now reads as hydrogen. Elements from masses (AMBER, PSF, LAMMPS data) resolve through Lr, except Po and Bk, whose masses coincide with Bi's and Cm's. The viewer's symbols, masses, radii and colours (Jmol's for Np–Mt) and the Builder's periodic table now cover all 118 elements, so `element == "Np"` selects. Guessing elements from atom names is unchanged on purpose: heme `NB` stays nitrogen. (#863, #928)
+
+#### File formats, bonds and elements
+
+- **VASP: three scaling factors scale the x, y and z components**, as in VASP and ASE, instead of each lattice vector, and they now scale `Cartesian` positions too. A non-positive factor in the three-value form is an error. (#857)
+- **AMBER `.inpcrd` / `.rst7` are read as fixed-width fields.** A restart with velocities keeps its box, full-width values no longer merge with their neighbour (which shifted every later coordinate), and velocities become a `velocity` channel in Å/ps. Python `parse_amber` only. (#859)
+- **PDB and mmCIF: negative residue numbers stay on the backbone.** Expression tags numbered below 1 lost their Cα atoms (a gap in the cartoon) and their HELIX / SHEET ranges. (#865)
+- **A CIF with several `data_` blocks is read from one block.** The cell, atom sites and symmetry operations came from different blocks; the first block with atoms is now used and the others are named in a warning. Atom sites with missing (`?` / `.`) coordinates are skipped with a warning instead of placed at the origin. (#867)
+- **PDB models without `ENDMDL` are kept.** A single `MODEL` with no `ENDMDL` failed to load, a truncated last model was dropped, and back-to-back `MODEL` records ran together. (#873)
+- **GROMACS `.top`: `#ifdef` / `#else` / `#define` / `#include` are evaluated.** Both branches were read, so CHARMM36's `tip3p.itp` counted each water as 6 atoms and every later molecule's bonds landed on the wrong atoms. (#875)
+- **Malformed files fail with an error instead of crashing the parser.** A tiny file declaring billions of atoms (NetCDF, XTC, LAMMPS data and dump, ASE `.traj`, CASTEP phonon, JCAMP-DX, GRO, XYZ, GROMACS `[ molecules ]`) could abort the Jupyter kernel or trap the browser's parse worker, and a non-ASCII character in a PDB, GRO or MOL column panicked. (#871, #883)
+- **PSF: atoms with insertion-code or negative residue ids are kept**, and hydrogen mass repartitioning no longer turns N into C, O into N and H into He. An unreadable atom line is an error instead of a silently missing atom. (#884)
+- **LAMMPS data: `Atoms # molecular` (and `bond`, `angle`) is supported.** Those files were read with the wrong column layout (positions taken from y, z and an image flag). A hint for an unsupported style is an error instead of a guess, and an `atomic` file with image flags no longer fails with `bad type`. (#894)
+- **MOL / SDF: bonds to atoms that do not exist are skipped with a warning**, and V3000 bonds resolve atom ids instead of positions. (#896)
+- **Unit cells that describe no cell are dropped.** Zero or impossible angles in PDB, CIF and mmCIF gave NaN cells and positions; they are now dropped with a warning. The PDB placeholder `CRYST1 1 1 1 90 90 90 P 1` of NMR and EM entries means no cell. (#904)
+- **MOL2: lowercase GAFF atom types give the right element** (`ca` is aromatic carbon, not calcium; `os` oxygen, not osmium; `na` nitrogen, not sodium). A blank molecule name no longer breaks the counts line, and partial charges become a `charge` channel. (#908)
+- **mmCIF files without `type_symbol` resolve elements from the atom name** in its residue (they were all Z = 0), and an XYZ element column holding atomic numbers is read as such. (#912)
+- **GAMESS: atoms with an effective core potential get the labelled element**, not the one matching their valence charge (Pt was drawn as Ar, I as Mn). (#926)
+- **Odyssey `.odydata`: dummy (Z = 0) atoms are kept**, so `HESSIAN` bonds and atom labels stay on the right atoms. (#927)
+- **JCAMP-DX: DIF-compressed spectra are no longer shifted.** Every point after a line's checkpoint was placed one step back. (#890)
+- **Distance bond inference finds every bond within its cutoff.** Pairs whose cutoff is wider than the search grid's cell (Na–Na, K–K, S–S, or any element at a high tolerance) were found or missed depending on where the grid fell: a NaCl crystal lost 15 % of its bonds. (#915)
+- **Bond inference in periodic cells is much faster** (a 21,952-atom CIF cell: 3.9 s → 26 ms), with identical bonds. (#923)
+- **Inferred bonds no longer join alternate conformers**, or two atoms whose bonds the file already declares (`CONECT`, `_struct_conn`). (#924)
+- **PDB / MOL export refuses values that overflow their fixed columns** instead of writing a file that reads back wrong, and keeps residue names with digits (`T3P`, `1PE`) and negative residue numbers. (#879, #881)
+
+#### Trajectories
+
+- **LAMMPS dump: triclinic boxes are decoded per the LAMMPS bounds rule.** The cell lengths, scaled coordinates (`xs ys zs`), origin and image-flag unwrapping were wrong for tilted boxes. (#858)
+- **Large (≥ 8 MB) XTC and LAMMPS dump files give each frame its own cell** when streamed, as when parsed whole; an NPT run showed one box for every frame. (#877)
+- **Corrupt XTC, DCD and NetCDF headers are errors, not crashes** (a trap in the browser, a panic in Python). (#889)
+- **NetCDF files in streaming mode keep their last frame** when a record variable such as `time` comes before `coordinates`. (#909)
+- **A truncated last frame is dropped and reported.** A DCD cut inside its Y or Z record failed to load, and a LAMMPS dump cut inside its atom lines failed or indexed a frame it could not decode. The incomplete frame is now dropped everywhere, and DCD reports it as a parser warning. (#914, #918, #929)
+- **ASE `.traj`: positions that do not match the atom count are an error** instead of a crash or atoms of element 0. (#899)
+- **NetCDF velocities and forces, and ASE `.traj` momenta and forces, are read as vector channels**, also when a large file is streamed; a streamed trajectory offers every channel, not just the first. (#919, #931)
+- **A frame without bonds in a trajectory whose atoms change draws no bonds**, instead of frame 0's bonds between unrelated atoms. (#925)
+- **Bonds across the periodic boundary stay visible during playback.** They disappeared from the first frame played. (#892)
+- **Load Trajectory in "structure" mode plays the loader it is wired to**, not the first one, and a second loader no longer plays the first loader's frames. (#921)
+- **A loop range whose start is past its end plays the frames between them** instead of freezing on one frame. (#897)
+
+#### Pipeline and selections
+
+- **Per-bond opacity stays on the right bond** when the viewport drops bonds of atoms that are not shown. (#856)
+- **Bonds across the periodic boundary act like the atoms they copy**: they survive particle filters, and `element`, `atom_index` and `molecule_id` bond queries match both halves and number molecules like the atom query. (#886, #902)
+- **Bond filters and Modify nodes compose like atom ones.** Chained bond filters intersect, a selective Modify keeps upstream per-bond and whole-stream opacity, a Modify at opacity 1 keeps an upstream fade, and what is drawn no longer depends on the order of earlier edits. (#891, #930)
+- **Setting a Modify's opacity back to 1 restores the atoms**, which stayed washed out (and unpickable at 0) while a scale was set. (#905)
+- **Residue labels follow the atoms.** The Label Generator's *Resname* source drew nothing, `resname` / `resid` filters and *By residue* colouring were wrong after Replicate, Symmetry and structure edits, and the Inspector's residue chips and match count, Quick Style's *Residue* labels and the Inspector pick showed nothing. (#907, #917, #932)
+- **A new node never reuses the id of a node in a loaded, shared or generated pipeline.** (#903)
+- **Structure edits survive re-opening a `.megane.json` with its files**, which attaches them by file name without the folder. (#920)
+- **The file opened last is the one shown.** Opening a large file and then a small one could leave the large one on screen, or attach its frames to the small one. (#913, #922)
+- **One malformed file no longer stops the parse worker for the rest of the session**, which had stopped every streamed trajectory and moved later parses to the main thread. (#898)
+
+#### Rendering and measurement
+
+- **The surface is built at the frame on screen**, with that frame's atoms when the trajectory's atoms change. (#887, #933)
+- **Picking and box selection follow the frame on screen** when a trajectory's atom count changes. (#874)
+- **Vector arrows no longer vanish** when the origin leaves the view. (#880)
+- **GIF and video exports render at the export size**, not stretched up from the viewport. (#869)
+- **The measurement follows a reloaded structure.** Its markers and value stayed at the old positions, or read `NaN Å` after a smaller file was opened. (#910)
+- **The ← / → frame keys only move the viewer that has focus**, and ignore notebook cells being edited and modified keys such as Alt+← (Back). (#864)
+- **A disposed viewer no longer keeps its resize observer**, which leaked the renderer and kept resizing it. (#900)
+
+#### AI assistant and Megane Builder
+
+- **Security: an API key is only sent to the provider it was typed for.** Switching providers kept the key, so an Anthropic key could be sent to OpenAI and the other way round. (#855)
+- **Replies are read the same way everywhere.** Bare JSON and fences labelled `JSON` or `jsonc` are applied and self-checked, and a plain-prose answer is shown instead of "Something went wrong". (#878)
+- **A provider error during a stream fails the request** instead of counting the truncated reply as done. (#906)
+- **Collapsing the panel or leaving Flow mode cancels the request**, and a late reply is not applied. (#885)
+- **A loaded trajectory keeps playing after an AI edit.** (#893)
+- **The self-check runs each loader against its own structure**, so a correct filter on a second structure is not sent back for a paid repair. (#901)
+- **Flow: a run cancelled by Clear, Open or an AI edit no longer writes into the new flow**, and a block left running settles. (#911)
+- **Builder: pressing Esc during a drag no longer marks the document unsaved.** (#916)
+
+#### Python, JupyterLab and VS Code
+
+- **Python reads text files the way the browser does**: UTF-8, with a leading BOM dropped and invalid bytes replaced. A Latin-1 character in a REMARK failed with `UnicodeDecodeError`, and Windows decoded files with the system code page. (#895)
+- **`MolecularViewer.set_pipeline()` resets the frame and the timeline**, which showed the previous run's frame or a timeline for a static structure. (#876)
+- **`megane.Builder.load()` replaces the document Python reads**, so `save()`, `n_atoms`, `text()` and `to_ase()` in the same cell see the loaded file. (#882)
+- **Quick Style edits keep topology bonds** from `AddBonds(top=...)` when the widget is shown again. (#866)
+- **Builder tool servers that never answer time out** (10 min for stdio, 60 s for HTTP), closing the tab stops a server still starting, and Jupyter's shutdown no longer hangs on one. (#870)
+- **JupyterLab: edits in a Megane tab survive switching to another tab and back.** (#860)
+- **VS Code: an open file's bytes are released once the viewer has them**, and the frame and selection status items show only for the active tab. (#872)
+- **npm library: `WorkerPool.decode()` decodes snapshots again.** Every snapshot came back as an error. (#868)
+
 ## [0.18.0] - 2026-10-20
 
 ### Added
