@@ -63,7 +63,8 @@ impl<'a> Reader<'a> {
 
     fn read_string(&mut self) -> Result<String, String> {
         let len = self.read_u32()? as usize;
-        let padded = (len + 3) & !3;
+        // `len + 3` overflows usize on wasm32 for a length near u32::MAX.
+        let padded = padded4(Some(len)).ok_or("NetCDF string length overflows")?;
         if self.remaining() < padded {
             return Err("unexpected EOF reading string".into());
         }
@@ -82,7 +83,8 @@ impl<'a> Reader<'a> {
             6 => 8,
             _ => return Err(format!("unknown nc_type {nc_type} in attribute")),
         };
-        let padded = (nelems * elem_size + 3) & !3;
+        let padded = padded4(nelems.checked_mul(elem_size))
+            .ok_or("NetCDF attribute payload size overflows")?;
         if self.remaining() < padded {
             return Err("unexpected EOF skipping attribute payload".into());
         }
@@ -129,6 +131,12 @@ impl<'a> Reader<'a> {
     }
 }
 
+/// `n` rounded up to the 4-byte XDR boundary, or `None` when `n` is missing
+/// or the rounding overflows `usize` (a size near `u32::MAX` on wasm32).
+fn padded4(n: Option<usize>) -> Option<usize> {
+    n?.checked_add(3).map(|v| v & !3)
+}
+
 // ─── variable descriptor ───────────────────────────────────────────────────
 
 struct VarDesc {
@@ -150,7 +158,9 @@ fn parse_dim_list(r: &mut Reader) -> Result<Vec<(String, u32)>, String> {
     if tag != TAG_DIM {
         return Err(format!("expected NC_DIMENSION tag ({TAG_DIM}), got {tag}"));
     }
-    let mut dims = Vec::with_capacity(count as usize);
+    // `count` is a header claim; every entry takes at least 8 bytes (name
+    // length + size), so reserve no more entries than the bytes left can hold.
+    let mut dims = Vec::with_capacity((count as usize).min(r.remaining() / 8));
     for _ in 0..count {
         let name = r.read_string()?;
         let size = r.read_u32()?;
@@ -168,11 +178,14 @@ fn parse_var_list(r: &mut Reader) -> Result<Vec<VarDesc>, String> {
     if tag != TAG_VAR {
         return Err(format!("expected NC_VARIABLE tag ({TAG_VAR}), got {tag}"));
     }
-    let mut vars = Vec::with_capacity(count as usize);
+    // As for dimensions: every variable entry takes at least 28 bytes (name
+    // length, ndims, attribute-list header, type, vsize, begin), and every
+    // dimension id 4.
+    let mut vars = Vec::with_capacity((count as usize).min(r.remaining() / 28));
     for _ in 0..count {
         let name = r.read_string()?;
         let ndims = r.read_u32()? as usize;
-        let mut dimids = Vec::with_capacity(ndims);
+        let mut dimids = Vec::with_capacity(ndims.min(r.remaining() / 4));
         for _ in 0..ndims {
             dimids.push(r.read_u32()?);
         }
@@ -320,7 +333,11 @@ pub fn read_layout(head: &[u8], file_len: u64) -> Result<NetcdfLayout, String> {
             coord_var.nc_type
         ));
     }
-    let expected_vsize = n_atoms * 3 * 4;
+    // Checked: on wasm32 a huge 'atom' dimension would wrap the product and
+    // let a small vsize pass for it.
+    let expected_vsize = n_atoms
+        .checked_mul(3 * 4)
+        .ok_or_else(|| format!("'atom' dimension {n_atoms} is too large"))?;
     if coord_var.vsize as usize != expected_vsize {
         return Err(format!(
             "'coordinates' vsize {} != {} (n_atoms={n_atoms} × 3 × 4)",
@@ -1080,6 +1097,41 @@ mod tests {
         assert!(parse_netcdf(data).is_err());
     }
 
+    /// A header whose list counts claim billions of entries must fail on the
+    /// missing bytes instead of reserving memory for every claimed entry
+    /// (a 16-byte file used to ask for ~137 GB and abort the process).
+    #[test]
+    fn huge_header_counts_are_an_error_not_an_allocation() {
+        let be = |v: u32| v.to_be_bytes();
+        // dim_list: NC_DIMENSION tag, count 0xFFFFFFFF, then nothing.
+        let mut dims = b"CDF\x01".to_vec();
+        dims.extend(be(1));
+        dims.extend(be(TAG_DIM));
+        dims.extend(be(u32::MAX));
+        assert_eq!(dims.len(), 16);
+        assert!(parse_netcdf(&dims).is_err());
+
+        // var_list: no dims, no global attributes, NC_VARIABLE count 0xFFFFFFFF.
+        let mut vars = b"CDF\x01".to_vec();
+        vars.extend(be(1));
+        vars.extend([0; 16]);
+        vars.extend(be(TAG_VAR));
+        vars.extend(be(u32::MAX));
+        assert!(parse_netcdf(&vars).is_err());
+
+        // One variable whose dimension-id count claims 0xFFFFFFFF entries.
+        let mut ndims = b"CDF\x01".to_vec();
+        ndims.extend(be(1));
+        ndims.extend([0; 16]);
+        ndims.extend(be(TAG_VAR));
+        ndims.extend(be(1));
+        ndims.extend(be(1));
+        ndims.extend(b"x\0\0\0");
+        ndims.extend(be(u32::MAX));
+        assert!(parse_netcdf(&ndims).is_err());
+        assert!(read_layout(&ndims, ndims.len() as u64).is_err());
+    }
+
     #[test]
     fn test_parse_fixture() {
         let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../../tests/fixtures/water.nc");
@@ -1165,5 +1217,20 @@ mod tests {
         let cut = &streaming[..streaming.len() - 1];
         assert_eq!(read_layout(cut, cut.len() as u64).unwrap().n_frames, 4);
         assert_eq!(parse_netcdf(cut).unwrap().n_frames, 4);
+    }
+
+    #[test]
+    fn padding_near_the_address_space_does_not_wrap() {
+        // On wasm32 a string length or attribute size near u32::MAX would wrap
+        // `n + 3`; the padding refuses instead.
+        assert_eq!(padded4(Some(5)), Some(8));
+        assert_eq!(padded4(Some(usize::MAX - 2)), None);
+        assert_eq!(padded4(None), None);
+        // A string length past the header is still an EOF error.
+        let mut d = b"CDF\x01".to_vec();
+        for w in [1u32, TAG_DIM, 1, 0xFFFF_FFFE] {
+            d.extend_from_slice(&w.to_be_bytes());
+        }
+        assert!(parse_netcdf(&d).err().unwrap().contains("string"));
     }
 }

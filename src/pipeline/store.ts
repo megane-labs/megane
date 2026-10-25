@@ -31,7 +31,7 @@ import { performOpenFile, type OpenFileOptions } from "./openFile";
 import { reconcileInspectorLayers, isInspectorLayerId, type InspectorLayer } from "./inspectorSync";
 import { applyQuickStyle, type QuickStyle } from "./quickStyle";
 import { findPrimaryLoader, loaderEdits } from "./editHistory";
-import { mergeGeneratedGraph, type GraphCheckpoint } from "./generatedApply";
+import { mergeGeneratedGraph, withFileBoundParams, type GraphCheckpoint } from "./generatedApply";
 import { registerTestStores, GLOBAL_BUNDLE_ID } from "../stores/testRegistry";
 
 let nextNodeId = 1;
@@ -694,8 +694,13 @@ export const pipelineStateCreator: StateCreator<PipelineStore> = (set, get, api)
   },
 
   applyGeneratedPipeline: (json, opts) => {
-    const generated = deserializePipeline(json);
     const prev = get();
+    // Carry the loaded files' params into the JSON before the graph is built
+    // from it: the edges the deserializer derives depend on them (a loader
+    // with a trajectory feeds the viewport's trajectory port), and the model's
+    // loaders say no file and no trajectory.
+    const draft = mergeGeneratedGraph(prev, deserializePipeline(json).nodes);
+    const generated = deserializePipeline(withFileBoundParams(json, draft.nodes));
     const merged = mergeGeneratedGraph(prev, generated.nodes);
     let checkpointId: number | null = null;
     let stack = prev.generatedUndoStack;
