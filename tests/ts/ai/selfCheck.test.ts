@@ -386,3 +386,92 @@ describe("collectSelfCheckErrors", () => {
     expect(errors.some((e) => e.includes("which change wins is unspecified"))).toBe(true);
   });
 });
+
+describe("collectSelfCheckErrors — one structure per loader", () => {
+  const water = makeSnapshot([8, 1, 1]);
+  const methane = makeSnapshot([6, 1, 1, 1, 1]);
+  /** The editor: loader-1 holds water (also the primary structure), loader-2 methane. */
+  const ctx: SelfCheckContext = {
+    snapshot: water,
+    nodeSnapshots: {
+      "loader-1": { snapshot: water, frames: null, meta: null, labels: ["HOH", "HOH", "HOH"] },
+      "loader-2": { snapshot: methane, frames: null, meta: null, labels: Array(5).fill("MET1") },
+    },
+    loaderIds: ["loader-1", "loader-2"],
+  };
+  const loader = (id: string, x = 0): Node =>
+    ({ id, type: "load_structure", position: { x, y: 0 } }) as Node;
+
+  /** Both loaders drawn; `branch` hangs off loader-2. */
+  function twoLoaders(branch: Node[], branchEdges: Edge[]): SerializedPipeline {
+    return pipeline(
+      [loader("loader-1"), loader("loader-2", 300), ...branch, VIEWPORT],
+      [edge("loader-1", "particle", "v1", "particle"), ...branchEdges],
+    );
+  }
+
+  it("runs a kept loader's filter against that loader's own structure", () => {
+    for (const query of ['element == "C"', 'resname == "MET"']) {
+      const p = twoLoaders(
+        [filterNode("f1", query), modifyNode("m1", 0.5)],
+        [
+          edge("loader-2", "particle", "f1", "in"),
+          edge("f1", "out", "m1", "in"),
+          edge("m1", "out", "v1", "particle"),
+        ],
+      );
+      expect(collectSelfCheckErrors(p, ctx)).toEqual([]);
+    }
+    // A query that is wrong for methane is still reported.
+    const wrong = twoLoaders(
+      [filterNode("f1", 'element == "O"')],
+      [edge("loader-2", "particle", "f1", "in"), edge("f1", "out", "v1", "particle")],
+    );
+    expect(collectSelfCheckErrors(wrong, ctx).join("\n")).toContain("Filter returned 0 atoms");
+  });
+
+  it("evaluates a loader's overlapping branches against its own structure", () => {
+    // On methane, O selects nothing, so the two treatments share no atom; on
+    // water (the primary structure) they would share atom 0.
+    const p = twoLoaders(
+      [
+        filterNode("fa", 'element == "O"'),
+        modifyNode("ma", 0.5),
+        filterNode("fb", "index == 0"),
+        modifyNode("mb", 0),
+      ],
+      [
+        edge("loader-2", "particle", "fa", "in"),
+        edge("fa", "out", "ma", "in"),
+        edge("ma", "out", "v1", "particle"),
+        edge("loader-2", "particle", "fb", "in"),
+        edge("fb", "out", "mb", "in"),
+        edge("mb", "out", "v1", "particle"),
+      ],
+    );
+    const errors = collectOverlapErrors(p, ctx);
+    expect(errors).toEqual([]);
+  });
+
+  it("keys the structures by loader without a graph order, and survives a pipeline it cannot load", () => {
+    const p = twoLoaders(
+      [filterNode("f1", 'element == "C"'), modifyNode("m1", 0.5)],
+      [
+        edge("loader-2", "particle", "f1", "in"),
+        edge("f1", "out", "m1", "in"),
+        edge("m1", "out", "v1", "particle"),
+      ],
+    );
+    expect(collectSelfCheckErrors(p, { ...ctx, loaderIds: undefined })).toEqual([]);
+    const broken = pipeline([{ id: "x", type: "warp", position: { x: 0, y: 0 } } as Node], []);
+    expect(collectOverlapErrors(broken, ctx)).toEqual([]);
+  });
+
+  it("gives a rebuilt graph's first new loader the primary structure, as applying it would", () => {
+    const p = pipeline(
+      [loader("fresh"), filterNode("f1", 'resname == "HOH"'), VIEWPORT],
+      [edge("fresh", "particle", "f1", "in"), edge("f1", "out", "v1", "particle")],
+    );
+    expect(collectSelfCheckErrors(p, ctx)).toEqual([]);
+  });
+});

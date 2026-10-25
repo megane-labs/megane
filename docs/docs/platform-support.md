@@ -115,6 +115,15 @@ EM), `CRYST1 1.000 1.000 1.000 90.00 90.00 90.00 P 1`, and the same values in
 an mmCIF `_cell`, mean "no cell" and are not shown as a 1 Å cube. A `CRYST1`
 with zero lengths (VMD's way of writing "no cell") is read the same way.
 
+Note: **MOL2 atom types and charges.** Tripos (SYBYL) types start with the
+element symbol (`C.ar`, `N.am`, `Ca`, `Cl`), so the element is read from the
+part before the first dot. Lowercase GAFF / GAFF2 types, which antechamber
+writes (`ca`, `c3`, `os`, `hc`, `nh`), are force-field types rather than
+symbols: their element is their first letter, except `cl` and `br`, so an
+aromatic `ca` is carbon, not calcium. The per-atom partial charge column is kept
+as the `charge` scalar channel when every atom has one and they are not all
+zero.
+
 Note: **VASP** files are the one format Megane dispatches by **filename**, not
 only by extension: `POSCAR`, `CONTCAR`, and `XDATCAR` are conventionally written
 with no extension at all. `src/parsers/fileNames.ts` maps those bare names (and
@@ -201,10 +210,12 @@ format. Every `COORDINATES OF ALL ATOMS ARE` banner block becomes a frame, so a
 geometry optimisation scrubs on the timeline like a multi-frame XYZ and the
 terminal `EQUILIBRIUM GEOMETRY LOCATED` block is simply the last one. The
 banner's `(ANGS)` / `(BOHR)` argument is honoured, and the element comes from
-the nuclear-charge column — rounded, since ECP runs print a fractional valence
-charge, with the atom label as the fallback when the rounded charge is not an
-element. Bonds are inferred by distance because GAMESS output carries no
-connectivity.
+the nuclear-charge column (rounded) for all-electron atoms. An ECP run prints
+the *valence* charge instead (Pt with a 60-electron core shows `18.0`), so when
+the atom label names an element heavier than the charge by exactly an ECP core
+size, the label's element is used; the label is also the fallback when the
+rounded charge is not an element. Bonds are inferred by distance because GAMESS
+output carries no connectivity.
 
 Note: **`.gamess` is the only extension registered for it.** GAMESS logs are
 normally named `.log` or `.out`, and claiming those in the VS Code
@@ -299,6 +310,17 @@ path. Large variable-atom LAMMPS dumps that would otherwise stream lazily fall
 back to an eager parse so no frame is dropped. The Jupyter widget,
 whose frames come from the Python kernel, receives the per-frame elements/cell
 over its binary protocol as well.
+
+Note: **Per-atom vectors** stored in a trajectory become vector channels for the
+Vector Overlay node, as a LAMMPS dump's `vx vy vz` / `fx fy fz` columns do.
+AMBER NetCDF `velocities` (multiplied by the variable's `scale_factor`
+attribute, which AMBER sets to 20.455 so the values come out in Å/ps) and
+`forces` become `velocity` and `force` channels, both from the eager parse and
+when a large file streams lazily. ASE `.traj` `momenta` and the calculator's
+`forces` become `momenta` and `force` channels. Momenta are kept as momenta,
+because converting them to velocities needs masses that most files leave to
+ASE's element table. A large (≥ 8 MB) `.traj` that streams lazily does not offer
+them yet.
 
 ### Topology formats
 

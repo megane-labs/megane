@@ -14,6 +14,8 @@ pub struct Atom {
     pub y: f32,
     pub z: f32,
     pub element: u8,
+    /// Alternate-location indicator (column 17), `0` when blank.
+    pub altloc: u8,
 }
 
 /// Decode a fixed-width PDB number field: plain decimal, or hybrid-36 (the
@@ -55,14 +57,27 @@ pub(crate) fn hy36_decode(field: &str) -> Option<i32> {
     i32::try_from(decoded).ok()
 }
 
+/// Columns `start..end` (0-based byte columns) of a fixed-column record line.
+/// `None` when the line is shorter, or when a multi-byte UTF-8 character
+/// straddles a field boundary: PDB is ASCII by spec, so such a field is
+/// unreadable, and slicing it with `line[start..end]` would panic.
+fn col(line: &str, start: usize, end: usize) -> Option<&str> {
+    line.get(start..end)
+}
+
+/// The record name (columns 1-6) of a PDB line, trailing blanks removed.
+fn record_name(line: &str) -> &str {
+    line.get(..6).unwrap_or(line).trim_end()
+}
+
 /// Parse a PDB HELIX record and return a secondary-structure range.
 fn parse_helix_range(line: &str) -> Option<SsRange> {
     if line.len() < 37 {
         return None;
     }
     let chain_id = line.as_bytes().get(19).copied().unwrap_or(b' ');
-    let start = u32::try_from(hy36_decode(&line[21..25])?).ok()?;
-    let end = u32::try_from(hy36_decode(&line[33..37])?).ok()?;
+    let start = hy36_decode(col(line, 21, 25)?)?;
+    let end = hy36_decode(col(line, 33, 37)?)?;
     Some(SsRange {
         chain_id,
         start,
@@ -77,8 +92,8 @@ fn parse_sheet_range(line: &str) -> Option<SsRange> {
         return None;
     }
     let chain_id = line.as_bytes().get(21).copied().unwrap_or(b' ');
-    let start = u32::try_from(hy36_decode(&line[22..26])?).ok()?;
-    let end = u32::try_from(hy36_decode(&line[33..37])?).ok()?;
+    let start = hy36_decode(col(line, 22, 26)?)?;
+    let end = hy36_decode(col(line, 33, 37)?)?;
     Some(SsRange {
         chain_id,
         start,
@@ -88,16 +103,17 @@ fn parse_sheet_range(line: &str) -> Option<SsRange> {
 }
 
 /// If `line` is an ATOM record for a Cα atom, return (chain_id, res_num).
-fn parse_ca_info(line: &str) -> Option<(u8, u32)> {
+/// Residue numbers are signed: expression tags are commonly numbered below 1.
+fn parse_ca_info(line: &str) -> Option<(u8, i32)> {
     if line.len() < 27 {
         return None;
     }
-    let atom_name = line[12..16].trim();
+    let atom_name = col(line, 12, 16)?.trim();
     if atom_name != "CA" {
         return None;
     }
     let chain_id = line.as_bytes().get(21).copied().unwrap_or(b' ');
-    let res_num = u32::try_from(hy36_decode(&line[22..26])?).ok()?;
+    let res_num = hy36_decode(col(line, 22, 26)?)?;
     Some((chain_id, res_num))
 }
 
@@ -108,11 +124,8 @@ fn parse_ca_info(line: &str) -> Option<(u8, u32)> {
 /// context of the residue name (columns 18-21), so a protein Cα "CA" is
 /// carbon while a calcium ion residue "CA" is calcium.
 fn parse_element(line: &str) -> u8 {
-    let bytes = line.as_bytes();
-
     // Try element symbol field (columns 77-78, 0-indexed: 76-77)
-    if bytes.len() >= 78 {
-        let elem_str = line[76..78].trim();
+    if let Some(elem_str) = col(line, 76, 78).map(str::trim) {
         if !elem_str.is_empty() {
             // Capitalize: first char uppercase, rest lowercase
             let capitalized = capitalize(elem_str);
@@ -126,9 +139,9 @@ fn parse_element(line: &str) -> u8 {
     // Fallback: derive from atom name (columns 13-16, 0-indexed: 12-15).
     // The residue name spans columns 18-20, with CHARMM-style 4-letter names
     // ("TIP3") spilling into column 21.
-    match line.get(12..16) {
+    match col(line, 12, 16) {
         Some(atom_name) => {
-            let res_name = line.get(17..21).unwrap_or("");
+            let res_name = col(line, 17, 21).unwrap_or("");
             element_from_atom_name_in_residue(atom_name, res_name)
         }
         None => 0, // unknown
@@ -143,13 +156,27 @@ fn parse_atom_line(line: &str) -> Option<(Option<i32>, Atom)> {
         return None;
     }
 
-    let serial = hy36_decode(&line[6..11]);
-    let x: f32 = line[30..38].trim().parse().ok()?;
-    let y: f32 = line[38..46].trim().parse().ok()?;
-    let z: f32 = line[46..54].trim().parse().ok()?;
+    let serial = col(line, 6, 11).and_then(hy36_decode);
+    let x: f32 = col(line, 30, 38)?.trim().parse().ok()?;
+    let y: f32 = col(line, 38, 46)?.trim().parse().ok()?;
+    let z: f32 = col(line, 46, 54)?.trim().parse().ok()?;
     let element = parse_element(line);
+    // `line.len() >= 54`, so column 17 is always present.
+    let altloc = match line.as_bytes()[16] {
+        b' ' => 0,
+        c => c,
+    };
 
-    Some((serial, Atom { x, y, z, element }))
+    Some((
+        serial,
+        Atom {
+            x,
+            y,
+            z,
+            element,
+            altloc,
+        },
+    ))
 }
 
 /// The CRYST1 parameters the PDB format prescribes for a structure that was
@@ -182,12 +209,12 @@ fn read_cryst1(line: &str) -> Option<[f32; 6]> {
         return None;
     }
 
-    let a: f32 = line[6..15].trim().parse().ok()?;
-    let b: f32 = line[15..24].trim().parse().ok()?;
-    let c: f32 = line[24..33].trim().parse().ok()?;
-    let alpha: f32 = line[33..40].trim().parse().ok()?;
-    let beta: f32 = line[40..47].trim().parse().ok()?;
-    let gamma: f32 = line[47..54].trim().parse().ok()?;
+    let a: f32 = col(line, 6, 15)?.trim().parse().ok()?;
+    let b: f32 = col(line, 15, 24)?.trim().parse().ok()?;
+    let c: f32 = col(line, 24, 33)?.trim().parse().ok()?;
+    let alpha: f32 = col(line, 33, 40)?.trim().parse().ok()?;
+    let beta: f32 = col(line, 40, 47)?.trim().parse().ok()?;
+    let gamma: f32 = col(line, 47, 54)?.trim().parse().ok()?;
     Some([a, b, c, alpha, beta, gamma])
 }
 
@@ -195,7 +222,7 @@ fn read_cryst1(line: &str) -> Option<[f32; 6]> {
 fn parse_conect_line(line: &str, serial_to_index: &HashMap<i32, usize>) -> Vec<(u32, u32)> {
     let mut bonds = Vec::new();
 
-    let source_serial = match line.get(6..11).and_then(hy36_decode) {
+    let source_serial = match col(line, 6, 11).and_then(hy36_decode) {
         Some(s) => s,
         None => return bonds,
     };
@@ -209,7 +236,7 @@ fn parse_conect_line(line: &str, serial_to_index: &HashMap<i32, usize>) -> Vec<(
         if col_start + 5 > line.len() {
             break;
         }
-        let target_serial = match hy36_decode(&line[col_start..col_start + 5]) {
+        let target_serial = match col(line, col_start, col_start + 5).and_then(hy36_decode) {
             Some(s) => s,
             None => continue,
         };
@@ -274,19 +301,29 @@ fn parse_impl(text: &str, frame0_only: bool) -> Result<ParsedStructure, String> 
     let mut first_model_chain_ids: Vec<u8> = Vec::new();
     let mut first_model_bfactors: Vec<f32> = Vec::new();
     let mut has_model_record = false;
-    let mut model_count: usize = 0;
+    // A `MODEL` record was seen and its `ENDMDL` has not been yet.
+    let mut model_open = false;
 
     // Secondary-structure ranges from HELIX/SHEET records.
     let mut ss_ranges: Vec<SsRange> = Vec::new();
     // Backbone Cα data collected from the first model only.
-    let mut raw_ca: Vec<(usize, u8, u32)> = Vec::new(); // (atom_index, chain_id, res_num)
+    let mut raw_ca: Vec<(usize, u8, i32)> = Vec::new(); // (atom_index, chain_id, res_num)
+
+    // Close the current model: model 0 also hands over its per-atom metadata.
+    // `all_models.len()` counts the models closed so far.
+    macro_rules! close_model {
+        () => {{
+            if all_models.is_empty() {
+                first_model_labels = std::mem::take(&mut current_labels);
+                first_model_chain_ids = std::mem::take(&mut current_chain_ids);
+                first_model_bfactors = std::mem::take(&mut current_bfactors);
+            }
+            all_models.push(std::mem::take(&mut current_model));
+        }};
+    }
 
     for line in text.lines() {
-        let record = if line.len() >= 6 {
-            line[..6].trim_end()
-        } else {
-            line.trim_end()
-        };
+        let record = record_name(line);
 
         match record {
             "HELIX" => {
@@ -300,20 +337,20 @@ fn parse_impl(text: &str, frame0_only: bool) -> Result<ParsedStructure, String> 
                 }
             }
             "MODEL" => {
+                // A new MODEL ends one left without its ENDMDL.
+                if model_open && !current_model.is_empty() {
+                    close_model!();
+                }
                 has_model_record = true;
+                model_open = true;
                 current_model = Vec::new();
                 current_labels = Vec::new();
                 current_chain_ids = Vec::new();
                 current_bfactors = Vec::new();
             }
             "ENDMDL" => {
-                if model_count == 0 {
-                    first_model_labels = std::mem::take(&mut current_labels);
-                    first_model_chain_ids = std::mem::take(&mut current_chain_ids);
-                    first_model_bfactors = std::mem::take(&mut current_bfactors);
-                }
-                all_models.push(std::mem::take(&mut current_model));
-                model_count += 1;
+                close_model!();
+                model_open = false;
             }
             "CRYST1" if box_matrix.is_none() => match parse_cryst1(line) {
                 Ok(cell) => box_matrix = cell,
@@ -324,41 +361,31 @@ fn parse_impl(text: &str, frame0_only: bool) -> Result<ParsedStructure, String> 
                 if let Some((serial, atom)) = parse_atom_line(line) {
                     // Build serial→index map from first model only
                     if let Some(serial) = serial {
-                        if !has_model_record || model_count == 0 {
+                        if !has_model_record || all_models.is_empty() {
                             serial_to_index.insert(serial, current_model.len());
                         }
                     }
                     // Collect Cα info from first model
-                    if !has_model_record || model_count == 0 {
+                    if !has_model_record || all_models.is_empty() {
                         if let Some((chain_id, res_num)) = parse_ca_info(line) {
                             raw_ca.push((current_model.len(), chain_id, res_num));
                         }
                     }
                     // Frame-0-only parse: don't retain extra models' coordinates
                     // or per-atom metadata (they are decoded lazily on demand).
-                    if frame0_only && model_count >= 1 {
+                    if frame0_only && !all_models.is_empty() {
                         continue;
                     }
                     // Extract residue label: resName (cols 17-20) + resSeq (cols 22-26)
-                    let res_name = if line.len() >= 20 {
-                        line[17..20].trim()
-                    } else {
-                        ""
-                    };
-                    let res_seq = if line.len() >= 26 {
-                        line[22..26].trim()
-                    } else {
-                        ""
-                    };
+                    let res_name = col(line, 17, 20).map_or("", str::trim);
+                    let res_seq = col(line, 22, 26).map_or("", str::trim);
                     current_labels.push(format!("{}{}", res_name, res_seq));
                     // parse_atom_line guarantees line.len() >= 54, so col 21 is always safe
                     current_chain_ids.push(line.as_bytes()[21]);
                     // Extract B-factor (cols 60-66, 0-indexed); absent in truncated lines
-                    let bfactor = if line.len() >= 66 {
-                        line[60..66].trim().parse::<f32>().unwrap_or(0.0)
-                    } else {
-                        0.0
-                    };
+                    let bfactor = col(line, 60, 66)
+                        .and_then(|f| f.trim().parse::<f32>().ok())
+                        .unwrap_or(0.0);
                     current_bfactors.push(bfactor);
                     current_model.push(atom);
                 }
@@ -369,6 +396,12 @@ fn parse_impl(text: &str, frame0_only: bool) -> Result<ParsedStructure, String> 
             }
             _ => {}
         }
+    }
+
+    // A model still open at the end of the file (`MODEL 1 … END` with no
+    // ENDMDL, or a truncated last model) is kept like a terminated one.
+    if model_open && !current_model.is_empty() {
+        close_model!();
     }
 
     // If no MODEL/ENDMDL, treat all atoms as a single model
@@ -415,8 +448,13 @@ fn parse_impl(text: &str, frame0_only: bool) -> Result<ParsedStructure, String> 
     }
     let n_file_bonds = unique_bonds.len();
 
-    // Infer bonds using cell-list spatial search
+    // Infer bonds using cell-list spatial search, except where the file's
+    // own records rule a pair out: atoms whose connectivity CONECT already
+    // declares, and atoms of different alternate conformers.
     let inferred = crate::bonds::infer_bonds(&positions, &elements, n_atoms, &bond_set);
+    let altlocs: Vec<u8> = first_model.iter().map(|a| a.altloc).collect();
+    let inferred =
+        crate::bonds::drop_inferred_ruled_out_by_file(inferred, &unique_bonds, &altlocs, n_atoms);
     unique_bonds.extend(inferred);
 
     // Build flat frame positions from additional models (frame 0 is `positions`).
@@ -559,9 +597,16 @@ pub struct PdbIndexBuilder {
     first_n_atoms: Option<usize>,
     offsets: Vec<u64>,
     has_model_record: bool,
+    /// A `MODEL` record was seen and its `ENDMDL` has not been yet.
+    model_open: bool,
     /// `MODEL` line offset of the current model.
     current_offset: u64,
     current_count: usize,
+    /// Byte offset just past the current model's last ATOM/HETATM line.
+    last_atom_end: u64,
+    /// A model-0-relevant record sits inside the current (later) model,
+    /// before its last atom.
+    record_before_last_atom: bool,
     heterogeneous: bool,
     frame0_end: u64,
     last_endmdl_end: u64,
@@ -573,40 +618,30 @@ pub struct PdbIndexBuilder {
 impl PdbIndexBuilder {
     /// Take the next line (without its line break), spanning bytes `start..end`.
     pub fn push_line(&mut self, line: &str, start: u64, end: u64) {
-        let record = if line.len() >= 6 {
-            line.get(..6).unwrap_or(line).trim_end()
-        } else {
-            line.trim_end()
-        };
+        let record = record_name(line);
         match record {
             "MODEL" => {
-                self.has_model_record = true;
-                self.current_offset = start;
-                self.current_count = 0;
                 if self.record_since_endmdl {
                     self.frame0_needs_whole_file = true;
                 }
-            }
-            "ENDMDL" => {
-                match self.first_n_atoms {
-                    None => {
-                        // model 0 = eager snapshot
-                        self.first_n_atoms = Some(self.current_count);
-                        self.frame0_end = end;
-                    }
-                    Some(n0) => {
-                        if self.current_count != n0 {
-                            self.heterogeneous = true;
-                        }
-                        self.offsets.push(self.current_offset);
-                    }
+                // A new MODEL ends one left without its ENDMDL, as in the
+                // eager parser.
+                if self.model_open && self.current_count > 0 {
+                    self.close_model(start);
                 }
+                self.has_model_record = true;
+                self.model_open = true;
+                self.current_offset = start;
                 self.current_count = 0;
-                self.last_endmdl_end = end;
-                self.record_since_endmdl = false;
+                self.record_before_last_atom = false;
             }
+            "ENDMDL" => self.close_model(end),
             "ATOM" | "HETATM" if is_countable_atom_line(line) => {
                 self.current_count += 1;
+                self.last_atom_end = end;
+                if self.record_since_endmdl {
+                    self.record_before_last_atom = true;
+                }
             }
             "CONECT" | "CRYST1" | "HELIX" | "SHEET" if self.first_n_atoms.is_some() => {
                 self.record_since_endmdl = true;
@@ -615,8 +650,38 @@ impl PdbIndexBuilder {
         }
     }
 
+    /// End the current model at byte `end` (just past its `ENDMDL`, or where
+    /// an unterminated model stops).
+    fn close_model(&mut self, end: u64) {
+        match self.first_n_atoms {
+            None => {
+                // model 0 = eager snapshot
+                self.first_n_atoms = Some(self.current_count);
+                self.frame0_end = end;
+            }
+            Some(n0) => {
+                if self.current_count != n0 {
+                    self.heterogeneous = true;
+                }
+                self.offsets.push(self.current_offset);
+            }
+        }
+        self.current_count = 0;
+        self.last_endmdl_end = end;
+        self.record_since_endmdl = false;
+        self.model_open = false;
+    }
+
     /// The index of everything pushed so far, for a `file_len`-byte file.
-    pub fn finish(self, file_len: u64) -> Result<PdbIndex, String> {
+    pub fn finish(mut self, file_len: u64) -> Result<PdbIndex, String> {
+        // A model still open at the end of the file ends after its last atom,
+        // so the records that follow (CONECT, END) stay the shared tail.
+        if self.model_open && self.current_count > 0 {
+            if self.record_before_last_atom {
+                self.frame0_needs_whole_file = true;
+            }
+            self.close_model(self.last_atom_end);
+        }
         // No MODEL/ENDMDL: all atoms are a single implicit model, no extra frames.
         if !self.has_model_record {
             if self.current_count == 0 {
@@ -655,25 +720,23 @@ impl PdbIndexBuilder {
 
 /// Decode a single PDB model's positions (Å) given its `MODEL`-record byte
 /// offset. Reads ATOM/HETATM lines (matching the eager parser's acceptance)
-/// until `ENDMDL` or `expected_n_atoms` atoms have been collected.
+/// until `ENDMDL`, the next `MODEL` record (a model left without its `ENDMDL`)
+/// or `expected_n_atoms` atoms have been collected.
 pub fn decode_model_at(
     text: &str,
     byte_offset: usize,
     expected_n_atoms: usize,
 ) -> Result<Vec<f32>, String> {
-    if byte_offset > text.len() {
-        return Err("model offset past end of data".into());
-    }
-    let slice = &text[byte_offset..];
+    let Some(slice) = text.get(byte_offset..) else {
+        return Err("model offset past end of data or inside a character".into());
+    };
     let mut positions = Vec::with_capacity(expected_n_atoms * 3);
-    for line in slice.lines() {
-        let record = if line.len() >= 6 {
-            line[..6].trim_end()
-        } else {
-            line.trim_end()
-        };
+    for (i, line) in slice.lines().enumerate() {
+        let record = record_name(line);
         match record {
             "ENDMDL" => break,
+            // The next model starts: this one had no ENDMDL.
+            "MODEL" if i > 0 => break,
             "ATOM" | "HETATM" => {
                 if let Some((_serial, atom)) = parse_atom_line(line) {
                     positions.push(atom.x);
@@ -700,6 +763,54 @@ pub fn decode_model_at(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Fixed-column records are read by byte column, so a multi-byte UTF-8
+    /// character that straddles a field boundary leaves that field unread
+    /// instead of panicking the parser (and with it the WASM worker).
+    #[test]
+    fn non_ascii_text_cannot_panic_the_column_reader() {
+        // Byte 6, the end of the record name, falls inside `Ü`.
+        let comment = "#\u{c4}\u{d6}\u{dc} note";
+        // `é` straddles byte 21 / 22, the start of initSeqNum.
+        let helix =
+            "HELIX    1   1 ALA A\u{e9}   1  ALA A    1  1                                   1";
+        let sheet = "SHEET    1   A 1 ALA \u{e9}   1  ALA A   1  0";
+        // `é` straddles byte 15, the end of the cell length a.
+        let cryst = "CRYST1   10.00\u{e9}   10.000   10.000  90.00  90.00  90.00 P 1           1";
+        let atom =
+            "ATOM      1  N   ALA A   1      17.047  14.099   3.625  1.00 13.79           N  ";
+        // `é` straddles byte 76, the start of the element field: the element
+        // then comes from the atom name.
+        let segid =
+            "ATOM      2  CA  ALA A   1      18.047  14.099   3.625  1.00 13.79      PRO\u{e9} C  ";
+        // `é` straddles byte 66, the end of the B-factor field.
+        let bfactor =
+            "ATOM      3  C   ALA A   1      19.047  14.099   3.625  1.00 13.7\u{e9}           C  ";
+        // `é` straddles byte 16, the end of the first bonded-atom field.
+        let conect = "CONECT    1    \u{e9}   2";
+        let text = [
+            comment, helix, sheet, cryst, atom, segid, bfactor, conect, "END",
+        ]
+        .join("\n");
+        let s = parse(&text).unwrap();
+        assert_eq!(s.n_atoms, 3);
+        assert_eq!(s.elements, vec![7, 6, 6]);
+        assert!(s.box_matrix.is_none());
+        assert_eq!(s.n_file_bonds, 0);
+        assert_eq!(s.ca_ss_type, vec![0]);
+        assert_eq!(s.bfactors, Some(vec![13.79, 13.79, 0.0]));
+
+        // The lazy multi-MODEL readers see the same lines.
+        let models = format!(
+            "MODEL        1\n{atom}\n{segid}\n{bfactor}\nENDMDL\nMODEL        2\n{comment}\n{atom}\n{segid}\n{bfactor}\nENDMDL\n"
+        );
+        let idx = build_index(&models).unwrap();
+        assert_eq!(idx.n_extra_frames, 1);
+        let frame = decode_model_at(&models, idx.offsets[0], 3).unwrap();
+        assert_eq!(frame[0], 17.047);
+        // An offset that is not a character boundary is an error, not a panic.
+        assert!(decode_model_at(&models, models.find('\u{e9}').unwrap() + 1, 3).is_err());
+    }
 
     /// The Build panel's "Empty Box" template starts from a PDB that is only a
     /// `CRYST1` record: no atoms, just the cell to build into.
@@ -905,6 +1016,30 @@ mod tests {
         assert_eq!(s.ca_res_nums, vec![9_999, 10_000]);
     }
 
+    /// Expression tags are numbered below 1 (`HIS A  -2`, `MET A   0`). Their
+    /// Cα atoms belong to the backbone like any other, and a HELIX/SHEET that
+    /// starts in the tag still covers them.
+    #[test]
+    fn keeps_negative_residue_numbers_on_the_backbone_and_in_ss_ranges() {
+        let pdb = "\
+HELIX    1   1 HIS A   -2  MET A    1  1                                   4
+SHEET    1   A 1 GLY B  -5  GLY B  -4  0
+ATOM      1  CA  HIS A  -2       0.000   0.000   0.000  1.00  0.00           C
+ATOM      2  CA  HIS A  -1       3.800   0.000   0.000  1.00  0.00           C
+ATOM      3  CA  MET A   0       7.600   0.000   0.000  1.00  0.00           C
+ATOM      4  CA  MET A   1      11.400   0.000   0.000  1.00  0.00           C
+ATOM      5  CA  GLY B  -5       0.000   9.000   0.000  1.00  0.00           C
+ATOM      6  CA  GLY B  -4       3.800   9.000   0.000  1.00  0.00           C
+ATOM      7  CA  GLY B  -3       7.600   9.000   0.000  1.00  0.00           C
+END
+";
+        let s = parse(pdb).unwrap();
+        assert_eq!(s.ca_indices, vec![0, 1, 2, 3, 4, 5, 6]);
+        assert_eq!(s.ca_res_nums, vec![-2, -1, 0, 1, -5, -4, -3]);
+        assert_eq!(s.ca_chain_ids, b"AAAABBB".to_vec());
+        assert_eq!(s.ca_ss_type, vec![1, 1, 1, 1, 2, 2, 0]);
+    }
+
     #[test]
     fn test_parse_minimal_pdb() {
         let pdb = "CRYST1   40.960   18.650   22.520  90.00  90.77  90.00 P 21          4\nATOM      1  N   THR A   1      17.047  14.099   3.625  1.00 13.79           N  \nATOM      2  CA  THR A   1      16.967  12.784   4.338  1.00 10.80           C  \nATOM      3  C   THR A   1      15.685  12.755   5.133  1.00  9.19           C  \nEND\n";
@@ -957,6 +1092,161 @@ mod tests {
         assert!((extra[0] - 4.0).abs() < 0.01);
         assert!((extra[1] - 5.0).abs() < 0.01);
         assert!((extra[2] - 6.0).abs() < 0.01);
+    }
+
+    fn hoh(serial: usize, x: f32) -> String {
+        format!(
+            "ATOM  {serial:>5}  O   HOH A   1    {x:8.3}   0.000   0.000  1.00  0.00           O  \n"
+        )
+    }
+
+    /// Asserts that the lazy index of `text` agrees with the eager parse: the
+    /// same extra models, model 0 rebuilt from its head and tail, and every
+    /// extra model decoded from its offset.
+    fn assert_index_matches_eager(text: &str) {
+        let eager = parse(text).unwrap();
+        let idx = build_index(text).unwrap();
+        assert_eq!(idx.n_atoms, eager.n_atoms);
+        assert_eq!(idx.n_extra_frames, eager.extra_frame_count());
+        let model0 = if idx.frame0_needs_whole_file {
+            parse_frame0(text).unwrap()
+        } else {
+            let mut head_tail = text[..idx.frame0_end as usize].to_string();
+            head_tail += &text[idx.tail_start as usize..];
+            parse_frame0(&head_tail).unwrap()
+        };
+        assert_eq!(model0.positions, eager.positions);
+        assert_eq!(model0.bonds, eager.bonds);
+        assert_eq!(model0.n_file_bonds, eager.n_file_bonds);
+        if !idx.heterogeneous {
+            for k in 0..idx.n_extra_frames {
+                let p = decode_model_at(text, idx.offsets[k], idx.n_atoms).unwrap();
+                assert_eq!(p, eager.frame(k).to_vec(), "extra model {k}");
+            }
+        }
+    }
+
+    /// `MODEL 1 … TER END` with no `ENDMDL` is a single model, not an empty file.
+    #[test]
+    fn a_model_without_endmdl_is_kept() {
+        let text = format!("MODEL        1\n{}{}TER\nEND\n", hoh(1, 0.0), hoh(2, 1.0));
+        let s = parse(&text).expect("an unterminated model still holds atoms");
+        assert_eq!(s.n_atoms, 2);
+        assert_eq!(s.extra_frame_count(), 0);
+        assert_eq!(build_index(&text).unwrap().n_atoms, 2);
+        assert_index_matches_eager(&text);
+        let s0 = parse_frame0(&text).unwrap();
+        assert_eq!(s0.positions, s.positions);
+    }
+
+    /// A last model cut off before its `ENDMDL` (a truncated download) is
+    /// still a model; it used to vanish without a trace.
+    #[test]
+    fn an_unterminated_last_model_is_kept() {
+        let text = format!(
+            "MODEL        1\n{}{}ENDMDL\nMODEL        2\n{}{}CONECT    1    2\nEND\n",
+            hoh(1, 0.0),
+            hoh(2, 1.0),
+            hoh(1, 5.0),
+            hoh(2, 6.0)
+        );
+        let s = parse(&text).unwrap();
+        assert_eq!(s.extra_frame_count(), 1);
+        assert!((s.frame(0)[0] - 5.0).abs() < 1e-5);
+        assert_index_matches_eager(&text);
+        // A truncated last model with fewer atoms is a heterogeneous frame.
+        let short = format!(
+            "MODEL        1\n{}{}ENDMDL\nMODEL        2\n{}",
+            hoh(1, 0.0),
+            hoh(2, 1.0),
+            hoh(1, 5.0)
+        );
+        let s = parse(&short).unwrap();
+        assert_eq!(s.extra_frame_count(), 1);
+        assert_eq!(s.frame_atom_count(0), 1);
+        assert!(build_index(&short).unwrap().heterogeneous);
+        assert_index_matches_eager(&short);
+        // An unterminated trailing MODEL record with no atoms adds no frame.
+        let empty = format!(
+            "MODEL        1\n{}ENDMDL\nMODEL        2\nEND\n",
+            hoh(1, 0.0)
+        );
+        assert_eq!(parse(&empty).unwrap().extra_frame_count(), 0);
+        assert_index_matches_eager(&empty);
+        // A CONECT between the open last model's atoms is not in the tail
+        // after its last atom, so model 0 is parsed from the whole file.
+        let inside = format!(
+            "MODEL        1\n{}{}ENDMDL\nMODEL        2\n{}CONECT    1    2\n{}END\n",
+            hoh(1, 0.0),
+            hoh(2, 1.0),
+            hoh(1, 5.0),
+            hoh(2, 6.0)
+        );
+        assert!(build_index(&inside).unwrap().frame0_needs_whole_file);
+        assert_index_matches_eager(&inside);
+    }
+
+    /// `MODEL` records with no `ENDMDL` at all: each new `MODEL` closes the
+    /// one before it, so the models do not run into each other.
+    #[test]
+    fn a_new_model_record_closes_the_unterminated_one() {
+        let text = format!(
+            "MODEL        1\n{}{}MODEL        2\n{}{}MODEL        3\n{}{}END\n",
+            hoh(1, 0.0),
+            hoh(2, 1.0),
+            hoh(1, 5.0),
+            hoh(2, 6.0),
+            hoh(1, 9.0),
+            hoh(2, 10.0)
+        );
+        let s = parse(&text).unwrap();
+        assert_eq!(s.n_atoms, 2);
+        assert_eq!(s.positions[0], 0.0);
+        assert_eq!(s.extra_frame_count(), 2);
+        assert!((s.frame(1)[0] - 9.0).abs() < 1e-5);
+        assert_eq!(s.atom_labels.as_ref().unwrap().len(), 2);
+        assert_index_matches_eager(&text);
+        // The same file, read window by window, indexes identically.
+        let whole = build_index(&text).unwrap();
+        let mut b = PdbIndexBuilder::default();
+        crate::lines::feed_in_windows(&text, 7, |l, st, e| {
+            b.push_line(l, st, e);
+            Ok(())
+        })
+        .unwrap();
+        let got = b.finish(text.len() as u64).unwrap();
+        assert_eq!(got.offsets, whole.offsets);
+        assert_eq!(got.frame0_end, whole.frame0_end);
+        assert_eq!(got.tail_start, whole.tail_start);
+        // A record between two unterminated later models sends model 0 to
+        // the whole-file parse, exactly as it does between terminated ones.
+        let between = format!(
+            "MODEL        1\n{}{}MODEL        2\n{}{}CONECT    1    2\nMODEL        3\n{}{}END\n",
+            hoh(1, 0.0),
+            hoh(2, 1.0),
+            hoh(1, 5.0),
+            hoh(2, 6.0),
+            hoh(1, 9.0),
+            hoh(2, 10.0)
+        );
+        assert!(build_index(&between).unwrap().frame0_needs_whole_file);
+        assert_index_matches_eager(&between);
+        // A short unterminated model stops at the next MODEL record instead
+        // of borrowing that model's atoms.
+        let short = format!(
+            "MODEL        1\n{}{}MODEL        2\n{}MODEL        3\n{}{}END\n",
+            hoh(1, 0.0),
+            hoh(2, 1.0),
+            hoh(1, 5.0),
+            hoh(1, 9.0),
+            hoh(2, 10.0)
+        );
+        let idx = build_index(&short).unwrap();
+        assert!(idx.heterogeneous);
+        assert_eq!(idx.n_extra_frames, 2);
+        assert!(decode_model_at(&short, idx.offsets[0], 2).is_err());
+        assert_eq!(decode_model_at(&short, idx.offsets[0], 1).unwrap()[0], 5.0);
+        assert_eq!(parse(&short).unwrap().frame_atom_count(0), 1);
     }
 
     #[test]
@@ -1273,5 +1563,70 @@ END
         );
         // A name field that cannot be sliced resolves to unknown, not a panic.
         assert_eq!(parse_element("ATOM      1 ABC\u{e9} ALA A   1"), 0);
+    }
+
+    /// SER with two alternate conformers of its side chain. On main the
+    /// inference also bonded CB A to CB B, CB A to OG B, and OG A to OG B.
+    const SER_ALTLOC_PDB: &str = "\
+ATOM      1  N   SER A   1       0.000   0.000   0.000  1.00  0.00           N
+ATOM      2  CA  SER A   1       1.460   0.000   0.000  1.00  0.00           C
+ATOM      3  CB ASER A   1       2.000   1.400   0.000  0.50  0.00           C
+ATOM      4  CB BSER A   1       2.000   1.200   0.600  0.50  0.00           C
+ATOM      5  OG ASER A   1       3.400   1.500   0.000  0.50  0.00           O
+ATOM      6  OG BSER A   1       3.300   1.000   1.100  0.50  0.00           O
+END
+";
+
+    #[test]
+    fn test_inferred_bonds_never_join_alternate_conformers() {
+        let s = parse(SER_ALTLOC_PDB).unwrap();
+        let mut bonds = s.bonds.clone();
+        bonds.sort_unstable();
+        // N-CA; CA to both CB conformers; each CB to its own OG.
+        assert_eq!(bonds, vec![(0, 1), (1, 2), (1, 3), (2, 4), (3, 5)]);
+        assert_eq!(s.n_file_bonds, 0);
+    }
+
+    /// A disulfide declared by CONECT next to undeclared CB atoms, and a
+    /// ligand whose CONECT records give C1-C2 and C2-O3 but not C1-O3, even
+    /// though C1 and O3 sit within the C-O cutoff.
+    const CONECT_PARTIAL_PDB: &str = "\
+ATOM      1  CB  CYS A   1       0.000   0.000   0.000  1.00  0.00           C
+ATOM      2  SG  CYS A   1       1.810   0.000   0.000  1.00  0.00           S
+ATOM      3  SG  CYS A   2       3.840   0.000   0.000  1.00  0.00           S
+ATOM      4  CB  CYS A   2       5.650   0.000   0.000  1.00  0.00           C
+HETATM    5  C1  LIG B   1      10.000   0.000   0.000  1.00  0.00           C
+HETATM    6  C2  LIG B   1      11.500   0.000   0.000  1.00  0.00           C
+HETATM    7  O3  LIG B   1      10.750   1.300   0.000  1.00  0.00           O
+CONECT    2    3
+CONECT    3    2
+CONECT    5    6
+CONECT    6    5    7
+CONECT    7    6
+END
+";
+
+    #[test]
+    fn test_inference_is_not_layered_on_file_declared_atoms() {
+        let s = parse(CONECT_PARTIAL_PDB).unwrap();
+        assert_eq!(s.n_file_bonds, 3);
+        let (file, inferred) = s.bonds.split_at(s.n_file_bonds);
+        let mut file = file.to_vec();
+        file.sort_unstable();
+        assert_eq!(file, vec![(1, 2), (4, 5), (5, 6)]);
+        // SG-CB is still inferred: only one of the two atoms has file bonds.
+        let mut inferred = inferred.to_vec();
+        inferred.sort_unstable();
+        assert_eq!(inferred, vec![(0, 1), (2, 3)]);
+        // C1-O3: both atoms' connectivity is declared, so nothing is added.
+        assert!(!s.bonds.contains(&(4, 6)));
+    }
+
+    #[test]
+    fn test_parse_atom_line_reads_altloc() {
+        let (_, a) = parse_atom_line(SER_ALTLOC_PDB.lines().nth(2).unwrap()).unwrap();
+        assert_eq!(a.altloc, b'A');
+        let (_, a) = parse_atom_line(SER_ALTLOC_PDB.lines().next().unwrap()).unwrap();
+        assert_eq!(a.altloc, 0);
     }
 }

@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 
 from megane import megane_parser
-from megane.parsers.common import InMemoryTrajectory, Structure, structure_and_trajectory_from_result
+from megane.parsers.common import InMemoryTrajectory, Structure, read_text, structure_and_trajectory_from_result
 
 __all__ = ["load_c3xml", "InMemoryTrajectory"]
 
@@ -36,8 +36,7 @@ def load_c3xml(path: str) -> tuple[Structure, InMemoryTrajectory]:
     """
     logger.debug("Loading Chem3D XML structure: %s", path)
 
-    with open(path) as f:
-        text = f.read()
+    text = read_text(path)
 
     result = megane_parser.parse_c3xml(text)
 

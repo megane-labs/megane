@@ -67,6 +67,12 @@ export interface LazyFrameProviderOptions {
    * synchronous frame 0).
    */
   seedFrame0?: Float32Array | null;
+  /**
+   * Frame 0's own cell, for a trajectory whose frames each carry one (an NPT
+   * run): rides on the seeded frame 0 like `box` on every decoded frame, so
+   * returning to frame 0 shows its cell rather than the last one shown.
+   */
+  seedBox0?: Float32Array | null;
 }
 
 export class LazyFrameProvider implements FrameProvider {
@@ -124,7 +130,9 @@ export class LazyFrameProvider implements FrameProvider {
     // synchronously — the phase-1 partial-read result carries over the swap with
     // no re-decode and no flicker.
     if (opts.seedFrame0 && !this.basePositions) {
-      this.cacheFrame({ frameId: 0, nAtoms: this.nAtoms, positions: opts.seedFrame0 });
+      const seeded: Frame = { frameId: 0, nAtoms: this.nAtoms, positions: opts.seedFrame0 };
+      if (opts.seedBox0) seeded.box = opts.seedBox0;
+      this.cacheFrame(seeded);
       this.decodedCountHW = 1;
     }
     // Prime frame 0 (and its window) so first paint is fast.

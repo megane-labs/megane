@@ -1,6 +1,6 @@
 /**
  * The periodic table the tool settings open for choosing an element: every
- * element megane has a symbol for (Z 1–92) at its place in the 18-column
+ * element megane has a symbol for (Z 1–118) at its place in the 18-column
  * table, the lanthanides and actinides in the two rows below.
  *
  * It opens as a popover beside the Details panel, over the view, so the cells
@@ -8,8 +8,8 @@
  * number, and the current element is filled. The empty bay at the top of the
  * table (columns 3–12, periods 1–3) describes the element under the pointer —
  * or the current one — as printed tables do: name, Z, mass, family and the
- * colour the view draws it in. The Z field beside the button still reaches any
- * Z up to 118. Escape, a click outside or a pick closes it.
+ * colour the view draws it in. The Z field beside the button takes any Z up
+ * to 118 as well. Escape, a click outside or a pick closes it.
  *
  * It works from the keyboard too: it opens with the current element focused,
  * the arrow keys move across the grid (Home / End to the ends of a row),

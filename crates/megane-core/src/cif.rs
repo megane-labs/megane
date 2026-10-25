@@ -2,12 +2,16 @@
 ///
 /// Parses cell parameters (_cell_length_a/b/c, _cell_angle_alpha/beta/gamma)
 /// and atom sites (_atom_site loop) with fractional or Cartesian coordinates.
+/// Everything is read from one `data_` block: the first whose atom-site loop
+/// yields atoms. Other blocks with atom sites are named in a warning.
 use std::collections::HashSet;
 
 use crate::atomic::element_from_symbol;
 use crate::bonds;
 use crate::cell::checked_cell_params_to_matrix;
-use crate::cif_lex::{contains_ci, split_line, starts_with_ci, strip_quotes, Document, Item};
+use crate::cif_lex::{
+    contains_ci, split_line, starts_with_ci, strip_quotes, Block, Document, Item, Loop,
+};
 use crate::structure::ParsedStructure;
 
 /// Determine column indices from the loop_ header tags.
@@ -120,18 +124,19 @@ pub fn extract_symmetry_ops(text: &str) -> Vec<String> {
     if !contains_ci(text, "xyz") {
         return Vec::new();
     }
-    symmetry_ops(text, &Document::parse(text))
+    symmetry_ops(text, &Document::parse(text).items)
 }
 
-/// [`extract_symmetry_ops`] over an already-lexed document.
+/// [`extract_symmetry_ops`] over already-lexed items (a whole document, or
+/// one data block of it).
 ///
 /// Symmetry loops are read line by line on purpose: unlike atom-site rows,
 /// symop rows are conventionally one per line, and real files write unquoted
 /// operations containing spaces (`x, y, z`) that a strict token stream would
 /// split into three values.
-pub(crate) fn symmetry_ops(text: &str, doc: &Document) -> Vec<String> {
+pub(crate) fn symmetry_ops(text: &str, items: &[Item]) -> Vec<String> {
     let mut ops: Vec<String> = Vec::new();
-    for item in &doc.items {
+    for item in items {
         match item {
             Item::Loop(lp) => {
                 let Some(col) = lp.tags.iter().position(|t| is_symop_tag(t)) else {
@@ -165,106 +170,159 @@ pub(crate) fn symmetry_ops(text: &str, doc: &Document) -> Vec<String> {
     ops
 }
 
-pub fn parse(text: &str) -> Result<ParsedStructure, String> {
-    let doc = Document::parse(text);
-
-    // --- Cell parameters (last occurrence wins) ---
-    let cell = |tag: &str| doc.value(tag).and_then(|v| v.as_f32());
-    let cell_a = cell("_cell_length_a");
-    let cell_b = cell("_cell_length_b");
-    let cell_c = cell("_cell_length_c");
-    let cell_alpha = cell("_cell_angle_alpha");
-    let cell_beta = cell("_cell_angle_beta");
-    let cell_gamma = cell("_cell_angle_gamma");
-
-    // A cell whose parameters describe no cell (zero angles, ...) is
-    // dropped with a warning; `cell_error` keeps the reason for the error
-    // when fractional sites then cannot be placed.
-    let mut cell_error: Option<String> = None;
-    let box_matrix = match (cell_a, cell_b, cell_c, cell_alpha, cell_beta, cell_gamma) {
+/// The cell of one data block, when all six parameters are present and the
+/// lengths are positive. A cell whose parameters describe no cell (zero
+/// angles, ...) is an `Err` carrying the reason, so it can be dropped with a
+/// warning.
+fn block_cell(block: &Block) -> Result<Option<[f32; 9]>, String> {
+    let cell = |tag: &str| block.value(tag).and_then(|v| v.as_f32());
+    match (
+        cell("_cell_length_a"),
+        cell("_cell_length_b"),
+        cell("_cell_length_c"),
+        cell("_cell_angle_alpha"),
+        cell("_cell_angle_beta"),
+        cell("_cell_angle_gamma"),
+    ) {
         (Some(a), Some(b), Some(c), Some(alpha), Some(beta), Some(gamma))
             if a > 0.0 && b > 0.0 && c > 0.0 =>
         {
-            checked_cell_params_to_matrix(a, b, c, alpha, beta, gamma)
-                .map_err(|why| cell_error = Some(why))
-                .ok()
+            checked_cell_params_to_matrix(a, b, c, alpha, beta, gamma).map(Some)
         }
-        _ => None,
-    };
-
-    // --- Parse atom_site loop ---
-    let mut positions: Vec<f32> = Vec::new();
-    let mut elements: Vec<u8> = Vec::new();
-    let mut atom_labels: Vec<String> = Vec::new();
-    let mut warnings: Vec<String> = Vec::new();
-    if let Some(why) = &cell_error {
-        warnings.push(format!("{why}; no unit cell shown"));
+        _ => Ok(None),
     }
+}
+
+/// Column layout of an `_atom_site` loop.
+fn atom_site_columns(lp: &Loop) -> AtomSiteColumns {
+    let mut cols = AtomSiteColumns::new();
+    for (idx, tag) in lp.tags.iter().enumerate() {
+        if starts_with_ci(tag, "_atom_site") {
+            cols.assign(idx, tag);
+        }
+    }
+    cols
+}
+
+/// `true` when a block holds an `_atom_site` loop with a coordinate triple,
+/// i.e. a structure the parser could load.
+fn block_has_atom_sites(block: &Block) -> bool {
+    block.loops().any(|lp| {
+        let cols = atom_site_columns(lp);
+        cols.has_fractional() || cols.has_cartesian()
+    })
+}
+
+/// How a block is named in warnings.
+fn block_display_name(name: &str) -> String {
+    if name.is_empty() {
+        "(unnamed block)".to_string()
+    } else {
+        format!("data_{name}")
+    }
+}
+
+/// Atom sites read from one data block.
+#[derive(Default)]
+struct AtomSites {
+    positions: Vec<f32>,
+    elements: Vec<u8>,
+    atom_labels: Vec<String>,
+    warnings: Vec<String>,
+}
+
+/// Read the first `_atom_site` loop of `block` that yields atoms.
+///
+/// A row whose coordinates are missing (`?` / `.`) or not numbers has no
+/// position the file asserts, so it is skipped and reported in a warning
+/// instead of being placed at the origin. Fractional coordinates are used
+/// when the block has a cell; a row whose fractional triple is missing falls
+/// back to its Cartesian triple when the loop carries one.
+fn read_atom_sites(block: &Block, box_matrix: Option<&[f32; 9]>) -> AtomSites {
+    let mut out = AtomSites::default();
 
     // Loop rows are a CIF token stream (see `cif_lex`): a row may wrap lines,
     // quoted values may contain spaces, and blank/comment lines inside the
     // loop body are ignored (Issue #458).
-    for lp in doc.loops() {
+    for lp in block.loops() {
         if !lp.has_tag_prefix("_atom_site") {
             continue;
         }
-        let mut cols = AtomSiteColumns::new();
-        for (idx, tag) in lp.tags.iter().enumerate() {
-            if starts_with_ci(tag, "_atom_site") {
-                cols.assign(idx, tag);
-            }
-        }
+        let cols = atom_site_columns(lp);
 
-        let use_fractional = cols.has_fractional() && box_matrix.is_some();
-        let use_cartesian = cols.has_cartesian();
-        if !use_fractional && !use_cartesian {
+        let fractional = match (cols.fract_x, cols.fract_y, cols.fract_z, box_matrix) {
+            (Some(x), Some(y), Some(z), Some(bm)) => Some((x, y, z, bm)),
+            _ => None,
+        };
+        let cartesian = match (cols.cartn_x, cols.cartn_y, cols.cartn_z) {
+            (Some(x), Some(y), Some(z)) => Some((x, y, z)),
+            _ => None,
+        };
+        if fractional.is_none() && cartesian.is_none() {
             continue;
         }
 
+        let mut skipped: Vec<String> = Vec::new();
         let mut rows = lp.cursor();
+        let mut row_no = 0usize;
         while let Some(row) = rows.next_row() {
-            let num = |c: usize| row[c].as_f32().unwrap_or(0.0);
+            row_no += 1;
+            let triple = |x: usize, y: usize, z: usize| -> Option<(f32, f32, f32)> {
+                Some((row[x].as_f32()?, row[y].as_f32()?, row[z].as_f32()?))
+            };
             // Extract coordinates first to avoid desyncing
-            // elements/atom_labels from positions on missing coords
-            let coords = if let (true, Some(fx_col), Some(fy_col), Some(fz_col), Some(bm)) = (
-                use_fractional,
-                cols.fract_x,
-                cols.fract_y,
-                cols.fract_z,
-                box_matrix.as_ref(),
-            ) {
-                Some(fract_to_cart(num(fx_col), num(fy_col), num(fz_col), bm))
-            } else if let (Some(cx), Some(cy), Some(cz)) =
-                (cols.cartn_x, cols.cartn_y, cols.cartn_z)
-            {
-                Some((num(cx), num(cy), num(cz)))
-            } else {
-                None
-            };
-
-            let Some((x, y, z)) = coords else {
-                continue;
-            };
+            // elements/atom_labels from positions on missing coords.
+            let coords = fractional
+                .and_then(|(x, y, z, bm)| {
+                    triple(x, y, z).map(|(fx, fy, fz)| fract_to_cart(fx, fy, fz, bm))
+                })
+                .or_else(|| cartesian.and_then(|(x, y, z)| triple(x, y, z)));
 
             // Element: type_symbol, falling back to the label when the type
             // symbol column is absent or holds a `?`/`.` null.
             let label = cols.label.and_then(|c| row[c].get());
+
+            let Some((x, y, z)) = coords else {
+                skipped.push(match label {
+                    Some(l) => l.to_string(),
+                    None => format!("row {row_no}"),
+                });
+                continue;
+            };
+
             let elem = cols
                 .type_symbol
                 .and_then(|c| row[c].get())
                 .or(label)
                 .map(element_from_symbol)
                 .unwrap_or(0);
-            elements.push(elem);
-            atom_labels.push(label.unwrap_or_default().to_string());
+            out.elements.push(elem);
+            out.atom_labels.push(label.unwrap_or_default().to_string());
 
-            positions.push(x);
-            positions.push(y);
-            positions.push(z);
+            out.positions.push(x);
+            out.positions.push(y);
+            out.positions.push(z);
+        }
+
+        if !skipped.is_empty() {
+            const SHOWN: usize = 10;
+            let mut list = skipped
+                .iter()
+                .take(SHOWN)
+                .cloned()
+                .collect::<Vec<_>>()
+                .join(", ");
+            if skipped.len() > SHOWN {
+                list.push_str(", …");
+            }
+            out.warnings.push(format!(
+                "{} _atom_site row(s) with missing or non-numeric coordinates were skipped: {list}",
+                skipped.len()
+            ));
         }
 
         if lp.partial_row_len() > 0 {
-            warnings.push(format!(
+            out.warnings.push(format!(
                 "_atom_site loop ends with an incomplete row ({} of {} values); it was skipped",
                 lp.partial_row_len(),
                 lp.tags.len()
@@ -272,13 +330,50 @@ pub fn parse(text: &str) -> Result<ParsedStructure, String> {
         }
 
         // Only parse the first atom_site loop
-        if !elements.is_empty() {
+        if !out.elements.is_empty() {
             break;
         }
     }
+    out
+}
 
-    let n_atoms = elements.len();
-    if n_atoms == 0 {
+pub fn parse(text: &str) -> Result<ParsedStructure, String> {
+    let doc = Document::parse(text);
+    let blocks = doc.blocks();
+
+    // A CIF may hold several `data_` blocks (multi-structure SI deposits,
+    // multi-temperature CSD entries). The structure is read from exactly one
+    // of them — the first whose `_atom_site` loop yields atoms — and the cell,
+    // atom sites and symmetry operations all come from that same block, so
+    // one block's cell is never applied to another block's atoms.
+    //
+    // A cell whose parameters describe no cell is dropped: Cartesian sites
+    // still load (with a warning), fractional-only ones cannot be placed.
+    let mut chosen: Option<(usize, Option<[f32; 9]>, AtomSites)> = None;
+    let mut unloaded_warnings: Vec<String> = Vec::new();
+    let mut unusable_cell: Option<String> = None;
+    for (bi, block) in blocks.iter().enumerate() {
+        let (box_matrix, cell_error) = match block_cell(block) {
+            Ok(cell) => (cell, None),
+            Err(why) => (None, Some(why)),
+        };
+        let mut sites = read_atom_sites(block, box_matrix.as_ref());
+        if !sites.elements.is_empty() {
+            if let Some(why) = cell_error {
+                sites
+                    .warnings
+                    .insert(0, format!("{why}; no unit cell shown"));
+            }
+            chosen = Some((bi, box_matrix, sites));
+            break;
+        }
+        if unusable_cell.is_none() && block_has_atom_sites(block) {
+            unusable_cell = cell_error;
+        }
+        unloaded_warnings.extend(sites.warnings);
+    }
+
+    let Some((bi, box_matrix, sites)) = chosen else {
         // Macromolecular CIFs use dotted `_atom_site.` tags (mmCIF grammar)
         // rather than the small-molecule `_atom_site_` ones, yet ship under
         // the same `.cif` extension (e.g. wwPDB downloads). Delegate instead
@@ -286,13 +381,42 @@ pub fn parse(text: &str) -> Result<ParsedStructure, String> {
         if doc.has_tag_prefix("_atom_site.") {
             return crate::mmcif::parse_document(text, &doc);
         }
-        if let Some(why) = cell_error {
+        if let Some(why) = unusable_cell {
             return Err(format!(
                 "CIF unit cell is unusable ({why}), so its fractional atom sites cannot be placed"
             ));
         }
-        return Err("CIF file contains no atom sites".to_string());
+        return Err(match unloaded_warnings.first() {
+            Some(w) => format!("CIF file contains no atom sites ({w})"),
+            None => "CIF file contains no atom sites".to_string(),
+        });
+    };
+    let block = &blocks[bi];
+    let AtomSites {
+        positions,
+        elements,
+        atom_labels,
+        mut warnings,
+    } = sites;
+
+    // Name the other structures the file carries, so a multi-block file is
+    // never silently reduced to its first block.
+    let others: Vec<String> = blocks
+        .iter()
+        .enumerate()
+        .filter(|&(k, b)| k != bi && block_has_atom_sites(b))
+        .map(|(_, b)| block_display_name(b.name))
+        .collect();
+    if !others.is_empty() {
+        warnings.push(format!(
+            "CIF file holds {} data blocks with atom sites; only {} was loaded (not loaded: {})",
+            others.len() + 1,
+            block_display_name(block.name),
+            others.join(", ")
+        ));
     }
+
+    let n_atoms = elements.len();
 
     // Infer periodic connectivity without changing the crystallographic atom
     // sites. Moving atoms to make a finite molecule whole is invalid for an
@@ -315,7 +439,7 @@ pub fn parse(text: &str) -> Result<ParsedStructure, String> {
     // (VESTA-style packing) is the `symmetry` pipeline node's job, so the user
     // can see and toggle the expansion instead of it being baked in at parse
     // time.
-    let symmetry_ops = symmetry_ops(text, &doc);
+    let symmetry_ops = symmetry_ops(text, block.items);
 
     Ok(ParsedStructure {
         n_atoms,
@@ -713,6 +837,262 @@ Na1 1 2 3
         assert_eq!(rest_of_line(text, &text[5..7]), "x, y, z");
         let other = String::from("abc");
         assert_eq!(rest_of_line(text, &other), "abc");
+    }
+
+    const TWO_BLOCKS: &str = "data_A
+_cell_length_a 4.0
+_cell_length_b 4.0
+_cell_length_c 4.0
+_cell_angle_alpha 90
+_cell_angle_beta 90
+_cell_angle_gamma 90
+loop_
+_symmetry_equiv_pos_as_xyz
+x,y,z
+loop_
+_atom_site_label
+_atom_site_type_symbol
+_atom_site_fract_x
+_atom_site_fract_y
+_atom_site_fract_z
+Na1 Na 0.5 0.5 0.5
+
+data_B
+_cell_length_a 10.0
+_cell_length_b 12.0
+_cell_length_c 14.0
+_cell_angle_alpha 90
+_cell_angle_beta 100
+_cell_angle_gamma 90
+loop_
+_symmetry_equiv_pos_as_xyz
+x,y,z
+-x,y+1/2,-z
+loop_
+_atom_site_label
+_atom_site_type_symbol
+_atom_site_fract_x
+_atom_site_fract_y
+_atom_site_fract_z
+Cl1 Cl 0.1 0.1 0.1
+";
+
+    /// Cell, atom sites and symmetry operations all come from the same data
+    /// block; the other structure is named in a warning, not merged in.
+    #[test]
+    fn multi_block_cif_reads_one_block_consistently() {
+        let s = parse(TWO_BLOCKS).expect("parse");
+        assert_eq!(s.n_atoms, 1);
+        assert_eq!(s.elements, vec![11]);
+        // Block A's 4 Å cubic cell, not block B's monoclinic one.
+        let bm = s.box_matrix.expect("cell");
+        assert!((bm[0] - 4.0).abs() < 1e-5 && (bm[4] - 4.0).abs() < 1e-5);
+        assert!((bm[8] - 4.0).abs() < 1e-5 && bm[6].abs() < 1e-5);
+        for k in 0..3 {
+            assert!((s.positions[k] - 2.0).abs() < 1e-5, "{:?}", s.positions);
+        }
+        // Only block A's symmetry operation.
+        assert_eq!(s.symmetry_ops, vec!["x,y,z"]);
+        assert_eq!(
+            s.warnings,
+            vec![
+                "CIF file holds 2 data blocks with atom sites; only data_A was loaded \
+                 (not loaded: data_B)"
+            ]
+        );
+    }
+
+    /// A leading block without atom sites (e.g. `data_global` publication
+    /// metadata) is passed over without a warning; its cell does not leak
+    /// into the structure block.
+    #[test]
+    fn metadata_block_before_the_structure_is_skipped() {
+        let cif = "data_global
+_publ_section_title 'A study'
+_cell_length_a 99.0
+loop_
+_symmetry_equiv_pos_as_xyz
+-x,-y,-z
+data_s1
+_cell_length_a 5.0
+_cell_length_b 5.0
+_cell_length_c 5.0
+_cell_angle_alpha 90
+_cell_angle_beta 90
+_cell_angle_gamma 90
+loop_
+_atom_site_label
+_atom_site_fract_x
+_atom_site_fract_y
+_atom_site_fract_z
+Na1 0.2 0.2 0.2
+";
+        let s = parse(cif).expect("parse");
+        assert_eq!(s.n_atoms, 1);
+        assert!((s.box_matrix.unwrap()[0] - 5.0).abs() < 1e-5);
+        assert!((s.positions[0] - 1.0).abs() < 1e-5);
+        assert!(s.symmetry_ops.is_empty());
+        assert!(s.warnings.is_empty(), "{:?}", s.warnings);
+    }
+
+    /// Atom sites before the first `data_` header (malformed but seen) form
+    /// an unnamed block, which is named as such in the warning.
+    #[test]
+    fn unnamed_leading_block_is_named_in_the_warning() {
+        let cif = "loop_
+_atom_site_label
+_atom_site_Cartn_x
+_atom_site_Cartn_y
+_atom_site_Cartn_z
+Na1 1 2 3
+data_B
+loop_
+_atom_site_label
+_atom_site_Cartn_x
+_atom_site_Cartn_y
+_atom_site_Cartn_z
+Cl1 4 5 6
+";
+        let s = parse(cif).expect("parse");
+        assert_eq!(s.positions, vec![1.0, 2.0, 3.0]);
+        assert_eq!(
+            s.warnings,
+            vec![
+                "CIF file holds 2 data blocks with atom sites; only (unnamed block) was \
+                 loaded (not loaded: data_B)"
+            ]
+        );
+    }
+
+    /// A block whose atom sites all lack coordinates yields no structure, so
+    /// the next block is loaded and the first is reported as not loaded.
+    #[test]
+    fn block_without_usable_coordinates_falls_through_to_the_next() {
+        let cif = "data_empty
+loop_
+_atom_site_label
+_atom_site_Cartn_x
+_atom_site_Cartn_y
+_atom_site_Cartn_z
+X1 ? ? ?
+data_real
+loop_
+_atom_site_label
+_atom_site_Cartn_x
+_atom_site_Cartn_y
+_atom_site_Cartn_z
+Na1 1 2 3
+";
+        let s = parse(cif).expect("parse");
+        assert_eq!(s.n_atoms, 1);
+        assert_eq!(s.elements, vec![11]);
+        assert_eq!(
+            s.warnings,
+            vec![
+                "CIF file holds 2 data blocks with atom sites; only data_real was loaded \
+                 (not loaded: data_empty)"
+            ]
+        );
+    }
+
+    /// `?` / `.` (or non-numeric) coordinates assert no position: the row is
+    /// skipped with a warning rather than placed at the origin.
+    #[test]
+    fn atom_sites_with_missing_coordinates_are_skipped_with_a_warning() {
+        let cif = "data_x
+_cell_length_a 4.0
+_cell_length_b 4.0
+_cell_length_c 4.0
+_cell_angle_alpha 90
+_cell_angle_beta 90
+_cell_angle_gamma 90
+loop_
+_atom_site_label
+_atom_site_type_symbol
+_atom_site_fract_x
+_atom_site_fract_y
+_atom_site_fract_z
+Na1 Na 0.5 0.5 0.5
+H1 H ? ? ?
+? O 0.1 . 0.1
+Cl1 Cl 0.0 0.0 abc
+";
+        let s = parse(cif).expect("parse");
+        assert_eq!(s.n_atoms, 1);
+        assert_eq!(s.elements, vec![11]);
+        assert_eq!(s.positions, vec![2.0, 2.0, 2.0]);
+        assert_eq!(s.atom_labels.as_ref().unwrap(), &vec!["Na1".to_string()]);
+        assert_eq!(
+            s.warnings,
+            vec![
+                "3 _atom_site row(s) with missing or non-numeric coordinates were skipped: \
+                 H1, row 3, Cl1"
+            ]
+        );
+    }
+
+    /// The skipped-row list is capped so a huge broken loop does not produce
+    /// a huge warning.
+    #[test]
+    fn skipped_row_warning_lists_at_most_ten_labels() {
+        let mut cif = String::from(
+            "data_x\nloop_\n_atom_site_label\n_atom_site_Cartn_x\n_atom_site_Cartn_y\n\
+             _atom_site_Cartn_z\nNa0 0 0 0\n",
+        );
+        for k in 1..=12 {
+            cif.push_str(&format!("H{k} ? ? ?\n"));
+        }
+        let s = parse(&cif).expect("parse");
+        assert_eq!(s.n_atoms, 1);
+        assert_eq!(s.warnings.len(), 1);
+        assert!(s.warnings[0].starts_with("12 _atom_site row(s)"));
+        assert!(s.warnings[0].ends_with("H9, H10, …"), "{}", s.warnings[0]);
+    }
+
+    /// A row whose fractional triple is missing still has a position when
+    /// the loop also carries Cartesian coordinates.
+    #[test]
+    fn missing_fractional_triple_falls_back_to_cartesian() {
+        let cif = "data_x
+_cell_length_a 4.0
+_cell_length_b 4.0
+_cell_length_c 4.0
+_cell_angle_alpha 90
+_cell_angle_beta 90
+_cell_angle_gamma 90
+loop_
+_atom_site_label
+_atom_site_fract_x
+_atom_site_fract_y
+_atom_site_fract_z
+_atom_site_Cartn_x
+_atom_site_Cartn_y
+_atom_site_Cartn_z
+Na1 0.5 0.5 0.5 9 9 9
+Cl1 ? ? ? 1 2 3
+";
+        let s = parse(cif).expect("parse");
+        assert_eq!(s.positions, vec![2.0, 2.0, 2.0, 1.0, 2.0, 3.0]);
+        assert!(s.warnings.is_empty());
+    }
+
+    /// When no atom site has coordinates the error says why.
+    #[test]
+    fn all_coordinates_missing_is_an_error_naming_the_cause() {
+        let cif = "data_x
+loop_
+_atom_site_label
+_atom_site_Cartn_x
+_atom_site_Cartn_y
+_atom_site_Cartn_z
+H1 ? ? ?
+";
+        let err = match parse(cif) {
+            Ok(_) => panic!("expected an error"),
+            Err(e) => e,
+        };
+        assert!(err.contains("no atom sites"), "{err}");
+        assert!(err.contains("missing or non-numeric coordinates"), "{err}");
     }
 
     /// Compact golden digest of every CIF/mmCIF fixture, dispatched the way

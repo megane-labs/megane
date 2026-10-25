@@ -1,11 +1,13 @@
 /**
- * Hybrid CPK/VESTA color scheme and van der Waals radii for elements Z=1-92.
- * Major elements use Molstar/CPK colors; others use VESTA defaults.
- * Indexed by atomic number.
+ * Element display data indexed by atomic number: symbols, masses and van der
+ * Waals radii for every element H..Og (Z 1-118, the set the Rust parsers
+ * resolve, see `crates/megane-core/src/atomic.rs`), and a hybrid CPK/VESTA/
+ * Jmol color scheme.
  */
 
 // Element colors as [r, g, b] in 0-1 range.
-// Major elements: Molstar/CPK scheme. Others: VESTA defaults.
+// Major elements: Molstar/CPK scheme. Others up to U: VESTA defaults.
+// Np..Mt: Jmol. No published scheme colors Ds..Og; they use DEFAULT_COLOR.
 export const ELEMENT_COLORS: Record<number, [number, number, number]> = {
   1: [1.0, 1.0, 1.0], // H  - white (CPK)
   2: [0.851, 1.0, 1.0], // He - light cyan (CPK)
@@ -99,12 +101,30 @@ export const ELEMENT_COLORS: Record<number, [number, number, number]> = {
   90: [0.149, 0.996, 0.471], // Th (VESTA)
   91: [0.161, 0.984, 0.209], // Pa (VESTA)
   92: [0.478, 0.634, 0.667], // U  (VESTA)
+  93: [0.0, 0.502, 1.0], // Np (Jmol)
+  94: [0.0, 0.42, 1.0], // Pu (Jmol)
+  95: [0.329, 0.361, 0.949], // Am (Jmol)
+  96: [0.471, 0.361, 0.89], // Cm (Jmol)
+  97: [0.541, 0.31, 0.89], // Bk (Jmol)
+  98: [0.631, 0.212, 0.831], // Cf (Jmol)
+  99: [0.702, 0.122, 0.831], // Es (Jmol)
+  100: [0.702, 0.122, 0.729], // Fm (Jmol)
+  101: [0.702, 0.051, 0.651], // Md (Jmol)
+  102: [0.741, 0.051, 0.529], // No (Jmol)
+  103: [0.78, 0.0, 0.4], // Lr (Jmol)
+  104: [0.8, 0.0, 0.349], // Rf (Jmol)
+  105: [0.82, 0.0, 0.31], // Db (Jmol)
+  106: [0.851, 0.0, 0.271], // Sg (Jmol)
+  107: [0.878, 0.0, 0.22], // Bh (Jmol)
+  108: [0.902, 0.0, 0.18], // Hs (Jmol)
+  109: [0.922, 0.0, 0.149], // Mt (Jmol)
 };
 
 // Default color for unknown elements
 export const DEFAULT_COLOR: [number, number, number] = [0.75, 0.4, 0.75];
 
-// Van der Waals radii in Angstroms (from VESTA elements.ini)
+// Van der Waals radii in Angstroms (from VESTA elements.ini). The heavy
+// elements share one radius from Xe on; Np..Og continue it.
 export const VDW_RADII: Record<number, number> = {
   1: 1.2,
   2: 1.4,
@@ -198,6 +218,32 @@ export const VDW_RADII: Record<number, number> = {
   90: 2.16,
   91: 2.16,
   92: 2.16,
+  93: 2.16,
+  94: 2.16,
+  95: 2.16,
+  96: 2.16,
+  97: 2.16,
+  98: 2.16,
+  99: 2.16,
+  100: 2.16,
+  101: 2.16,
+  102: 2.16,
+  103: 2.16,
+  104: 2.16,
+  105: 2.16,
+  106: 2.16,
+  107: 2.16,
+  108: 2.16,
+  109: 2.16,
+  110: 2.16,
+  111: 2.16,
+  112: 2.16,
+  113: 2.16,
+  114: 2.16,
+  115: 2.16,
+  116: 2.16,
+  117: 2.16,
+  118: 2.16,
 };
 
 export const DEFAULT_RADIUS = 1.5;
@@ -506,7 +552,8 @@ export const TRIPLE_BOND_RADIUS = 0.08;
 export const AROMATIC_BOND_RADIUS = 0.1;
 export const AROMATIC_DASH_RADIUS = 0.06;
 
-// Element symbols indexed by atomic number (Z=1-92)
+// Element symbols indexed by atomic number (Z=1-118), the same set as
+// `SYMBOLS` in crates/megane-core/src/atomic.rs.
 export const ELEMENT_SYMBOLS: Record<number, string> = {
   1: "H",
   2: "He",
@@ -600,6 +647,32 @@ export const ELEMENT_SYMBOLS: Record<number, string> = {
   90: "Th",
   91: "Pa",
   92: "U",
+  93: "Np",
+  94: "Pu",
+  95: "Am",
+  96: "Cm",
+  97: "Bk",
+  98: "Cf",
+  99: "Es",
+  100: "Fm",
+  101: "Md",
+  102: "No",
+  103: "Lr",
+  104: "Rf",
+  105: "Db",
+  106: "Sg",
+  107: "Bh",
+  108: "Hs",
+  109: "Mt",
+  110: "Ds",
+  111: "Rg",
+  112: "Cn",
+  113: "Nh",
+  114: "Fl",
+  115: "Mc",
+  116: "Lv",
+  117: "Ts",
+  118: "Og",
 };
 
 // Bond order display names
@@ -618,7 +691,9 @@ export function getRadius(atomicNum: number): number {
   return VDW_RADII[atomicNum] ?? DEFAULT_RADIUS;
 }
 
-// Atomic masses in daltons (IUPAC standard atomic weights, Z=1-92)
+// Atomic masses in daltons (IUPAC standard atomic weights, Z=1-118). Elements
+// without one take the mass number of their longest-lived isotope (Tc 98,
+// Pm 145, Po 209, ..., Np 237, Pu 244, ..., Og 294).
 export const ATOMIC_MASSES: Record<number, number> = {
   1: 1.008,
   2: 4.003,
@@ -712,6 +787,32 @@ export const ATOMIC_MASSES: Record<number, number> = {
   90: 232.038,
   91: 231.036,
   92: 238.029,
+  93: 237.0, // Np
+  94: 244.0, // Pu
+  95: 243.0, // Am
+  96: 247.0, // Cm
+  97: 247.0, // Bk
+  98: 251.0, // Cf
+  99: 252.0, // Es
+  100: 257.0, // Fm
+  101: 258.0, // Md
+  102: 259.0, // No
+  103: 262.0, // Lr
+  104: 267.0, // Rf
+  105: 268.0, // Db
+  106: 269.0, // Sg
+  107: 270.0, // Bh
+  108: 269.0, // Hs
+  109: 278.0, // Mt
+  110: 281.0, // Ds
+  111: 282.0, // Rg
+  112: 285.0, // Cn
+  113: 286.0, // Nh
+  114: 290.0, // Fl
+  115: 290.0, // Mc
+  116: 293.0, // Lv
+  117: 294.0, // Ts
+  118: 294.0, // Og
 };
 
 export function getElementSymbol(atomicNum: number): string {
