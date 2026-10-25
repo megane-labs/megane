@@ -518,6 +518,8 @@ pub struct XtcParseResult {
     frame_atom_offsets: Vec<u32>,
     frame_elements: Vec<u8>,
     frame_cells: Vec<f32>,
+    // Non-fatal parse warnings, newline-delimited (empty for a clean parse).
+    warnings: String,
 }
 
 #[wasm_bindgen]
@@ -616,6 +618,13 @@ impl XtcParseResult {
     pub fn frame_cells(&self) -> Float32Array {
         Float32Array::from(&self.frame_cells[..])
     }
+
+    /// Non-fatal parse warnings (e.g. a dropped incomplete last frame) as a
+    /// newline-delimited string. Empty for a clean parse.
+    #[wasm_bindgen(getter)]
+    pub fn warnings(&self) -> String {
+        self.warnings.clone()
+    }
 }
 
 impl XtcParseResult {
@@ -629,6 +638,7 @@ impl XtcParseResult {
         let n_atoms = data.n_atoms as u32;
         let n_frames = data.n_frames as u32;
         let timestep_ps = data.timestep_ps;
+        let warnings = data.warnings.join("\n");
         let vector_channel_count = data.vector_channels.len() as u32;
         let (vector_channel_meta, vector_channel_data) =
             serialize_vector_channels(&data.vector_channels);
@@ -683,6 +693,7 @@ impl XtcParseResult {
             frame_atom_offsets,
             frame_elements,
             frame_cells,
+            warnings,
         }
     }
 }
