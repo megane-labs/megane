@@ -200,6 +200,8 @@ describe("defaultParams", () => {
       type: "coordination_generator",
       excludedCenters: [],
       excludedLigands: [],
+      centerQuery: "",
+      neighborQuery: "",
       cutoffTolerance: 1.15,
       boundaryMode: "complete",
     });

@@ -235,10 +235,19 @@ Finds directed relationships between center atoms and their bonded neighbors.
 It consumes Drawing Boundary copies and emits both reusable coordination data
 and a renderable bond stream.
 
+Without a query, centers are the metal and metalloid elements present (B, Si,
+Ge, As, Sb, Te included) and neighbors are N, O, F, P, S, Cl, As, Se, Br, Te and
+I. A center–neighbor pair is kept when its distance is at most the sum of the
+two covalent radii times `cutoffTolerance`. `centerQuery` / `neighborQuery` take
+the [Filter DSL](./index.md#filter-dsl) and pick atoms of any element, e.g.
+`"centerQuery": "element == \"P\""` for PO₄ tetrahedra.
+
 | Field             | Type       | Description                                                                                                                                  |
 | ----------------- | ---------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
 | `excludedCenters` | `number[]` | Atomic numbers excluded from center detection (default `[]`)                                                                                 |
 | `excludedLigands` | `number[]` | Atomic numbers excluded from neighbor detection (default `[]`)                                                                               |
+| `centerQuery`     | `string`   | Atom selection query choosing the centers; when non-empty it replaces auto-detection and `excludedCenters` (default `""`)                    |
+| `neighborQuery`   | `string`   | Atom selection query choosing the neighbors; when non-empty it replaces auto-detection and `excludedLigands` (default `""`)                  |
 | `cutoffTolerance` | `number`   | Multiplier applied to the sum of covalent radii (default `1.15`)                                                                             |
 | `boundaryMode`    | `string`   | `"complete"` includes periodic neighbors outside the drawing range when needed by a visible center; `"inside"` searches only displayed atoms |
 

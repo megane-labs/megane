@@ -251,6 +251,18 @@ export const NODE_CATALOG: Record<PipelineNodeType, NodeCatalogEntry> = {
         doc: "Atomic numbers excluded from auto-detected neighbor atoms.",
       },
       {
+        jsonKey: "centerQuery",
+        tsType: "string",
+        default: '""',
+        doc: "Atom selection query choosing the centers; when set it replaces auto-detection and excludedCenters.",
+      },
+      {
+        jsonKey: "neighborQuery",
+        tsType: "string",
+        default: '""',
+        doc: "Atom selection query choosing the neighbors; when set it replaces auto-detection and excludedLigands.",
+      },
+      {
         jsonKey: "cutoffTolerance",
         tsType: "number",
         default: "1.15",
@@ -262,6 +274,10 @@ export const NODE_CATALOG: Record<PipelineNodeType, NodeCatalogEntry> = {
         default: '"complete"',
         doc: "complete includes outside periodic neighbors needed by visible centers.",
       },
+    ],
+    promptNotes: [
+      "Auto-detected centers are metals and metalloids (incl. B, Si, Ge, As, Sb, Te); auto-detected neighbors are N, O, F, P, S, Cl, As, Se, Br, Te, I",
+      'Elements outside those lists need a query, e.g. PO4 tetrahedra: `centerQuery: "element == \\"P\\""`, `neighborQuery: "element == \\"O\\""`',
     ],
     promptInputs: "`particle` (normally from Drawing Boundary)",
     promptOutputs: "`coordination` (directed center-neighbor pairs), `bond`",

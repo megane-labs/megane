@@ -6,7 +6,9 @@ import type {
   PeriodicAtomImageData,
   PipelineData,
 } from "../types";
+import type { Snapshot } from "../../types";
 import { getCovalentRadius, isDefaultLigand, isMetalLike } from "../../constants";
+import { evaluateSelection } from "../selection";
 import { invert3x3 } from "./mathUtils";
 import { collectDisplaySites, displaySiteKey, type DisplaySite } from "./displaySites";
 import {
@@ -47,6 +49,39 @@ export function coordinationToBondData(coordination: CoordinationData): BondData
 }
 
 /**
+ * Per-atom membership of one side of the search. A non-empty selection query
+ * picks the atoms it matches, whatever their element; an empty one keeps every
+ * atom of an auto-detected element that the exclusion list leaves in. A query
+ * that does not parse matches nothing (the node reports the syntax error).
+ */
+function roleMask(
+  query: string | undefined,
+  snapshot: Snapshot,
+  atomLabels: string[] | null,
+  isDefault: (z: number) => boolean,
+  excluded: number[],
+): Uint8Array {
+  const mask = new Uint8Array(snapshot.nAtoms);
+  if (query?.trim()) {
+    let selected: Set<number> | null;
+    try {
+      selected = evaluateSelection(query, snapshot, atomLabels);
+    } catch {
+      return mask;
+    }
+    if (selected === null) mask.fill(1);
+    else for (const atom of selected) mask[atom] = 1;
+    return mask;
+  }
+  const excludedSet = new Set(excluded);
+  for (let atom = 0; atom < snapshot.nAtoms; atom++) {
+    const z = snapshot.elements[atom];
+    if (isDefault(z) && !excludedSet.has(z)) mask[atom] = 1;
+  }
+  return mask;
+}
+
+/**
  * Build directed center-neighbor relationships from the shared Drawing Boundary
  * atom collection. With the `complete` policy, only neighbor images needed to
  * complete visible centers are appended outside the drawing range.
@@ -54,6 +89,7 @@ export function coordinationToBondData(coordination: CoordinationData): BondData
 export function executeCoordinationGenerator(
   params: CoordinationGeneratorParams,
   inputs: Map<string, PipelineData[]>,
+  atomLabels: string[] | null = null,
 ): Map<string, PipelineData> {
   const outputs = new Map<string, PipelineData>();
   const particle = inputs.get("particle")?.[0] as ParticleData | undefined;
@@ -61,32 +97,40 @@ export function executeCoordinationGenerator(
 
   const snapshot = particle.source;
   const { positions, elements, nAtoms } = snapshot;
-  const present = new Set<number>(elements);
-  const excludedCenters = new Set(params.excludedCenters);
-  const excludedLigands = new Set(params.excludedLigands);
-  const centerElements = new Set<number>();
-  const ligandElements = new Set<number>();
-  for (const z of present) {
-    if (isMetalLike(z) && !excludedCenters.has(z)) centerElements.add(z);
-    if (isDefaultLigand(z) && !excludedLigands.has(z)) ligandElements.add(z);
-  }
-  if (centerElements.size === 0 || ligandElements.size === 0) return outputs;
+  const isCenter = roleMask(
+    params.centerQuery,
+    snapshot,
+    atomLabels,
+    isMetalLike,
+    params.excludedCenters,
+  );
+  const isLigand = roleMask(
+    params.neighborQuery,
+    snapshot,
+    atomLabels,
+    isDefaultLigand,
+    params.excludedLigands,
+  );
 
   const ligandSourceIndices: number[] = [];
   for (let atom = 0; atom < nAtoms; atom++) {
-    if (ligandElements.has(elements[atom])) ligandSourceIndices.push(atom);
+    if (isLigand[atom]) ligandSourceIndices.push(atom);
   }
+  if (ligandSourceIndices.length === 0 || !isCenter.includes(1)) return outputs;
 
-  const cutoffSq = new Map<number, Map<number, number>>();
-  for (const centerZ of centerElements) {
-    const byLigand = new Map<number, number>();
-    for (const ligandZ of ligandElements) {
+  // Squared cutoff per (center, neighbor) element pair, filled on first use.
+  const cutoffSq = new Map<number, number>();
+  const cutoffSqFor = (centerZ: number, ligandZ: number): number => {
+    const key = centerZ * 256 + ligandZ;
+    let value = cutoffSq.get(key);
+    if (value === undefined) {
       const cutoff =
         (getCovalentRadius(centerZ) + getCovalentRadius(ligandZ)) * params.cutoffTolerance;
-      byLigand.set(ligandZ, cutoff * cutoff);
+      value = cutoff * cutoff;
+      cutoffSq.set(key, value);
     }
-    cutoffSq.set(centerZ, byLigand);
-  }
+    return value;
+  };
 
   const extendedPositions = Array.from(positions);
   const extendedElements = Array.from(elements);
@@ -101,10 +145,8 @@ export function executeCoordinationGenerator(
     extendedElements.push(elements[site.sourceIndex]);
   }
 
-  const centers = allDisplaySites.filter((site) => centerElements.has(elements[site.sourceIndex]));
-  const drawingLigands = allDisplaySites.filter((site) =>
-    ligandElements.has(elements[site.sourceIndex]),
-  );
+  const centers = allDisplaySites.filter((site) => isCenter[site.sourceIndex]);
+  const drawingLigands = allDisplaySites.filter((site) => isLigand[site.sourceIndex]);
   if (centers.length === 0 || drawingLigands.length === 0) return outputs;
 
   const box = snapshot.box;
@@ -152,12 +194,10 @@ export function executeCoordinationGenerator(
   const relationships: number[] = [];
   for (const center of centers) {
     const centerZ = elements[center.sourceIndex];
-    const centerCutoffs = cutoffSq.get(centerZ)!;
 
     if (params.boundaryMode === "inside") {
       for (const ligand of drawingLigands) {
-        const cutoff = centerCutoffs.get(elements[ligand.sourceIndex]);
-        if (cutoff === undefined) continue;
+        const cutoff = cutoffSqFor(centerZ, elements[ligand.sourceIndex]);
         const dx = ligand.x - center.x;
         const dy = ligand.y - center.y;
         const dz = ligand.z - center.z;
@@ -173,8 +213,7 @@ export function executeCoordinationGenerator(
     const centerSourceY = positions[center.sourceIndex * 3 + 1];
     const centerSourceZ = positions[center.sourceIndex * 3 + 2];
     for (const ligandSource of ligandSourceIndices) {
-      const cutoff = centerCutoffs.get(elements[ligandSource]);
-      if (cutoff === undefined) continue;
+      const cutoff = cutoffSqFor(centerZ, elements[ligandSource]);
       const dx = positions[ligandSource * 3] - centerSourceX;
       const dy = positions[ligandSource * 3 + 1] - centerSourceY;
       const dz = positions[ligandSource * 3 + 2] - centerSourceZ;

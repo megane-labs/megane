@@ -619,6 +619,8 @@ export class AddBonds extends PipelineNode {
  * Resolve directed center-neighbor coordination relationships. With
  * `boundaryMode: "complete"`, periodic neighbor images just outside Drawing
  * Boundary are included when needed to complete a visible center.
+ * `centerQuery` / `neighborQuery` pick either side by selection query instead
+ * of the auto-detected elements (e.g. `element == "P"` for PO4 tetrahedra).
  */
 export class AddCoordination extends PipelineNode {
   readonly nodeType = "coordination_generator";
@@ -629,6 +631,8 @@ export class AddCoordination extends PipelineNode {
     public options: {
       excludedCenters?: number[];
       excludedLigands?: number[];
+      centerQuery?: string;
+      neighborQuery?: string;
       cutoffTolerance?: number;
       boundaryMode?: "inside" | "complete";
     } = {},
@@ -641,6 +645,8 @@ export class AddCoordination extends PipelineNode {
       type: this.nodeType,
       excludedCenters: this.options.excludedCenters ?? [],
       excludedLigands: this.options.excludedLigands ?? [],
+      centerQuery: this.options.centerQuery ?? "",
+      neighborQuery: this.options.neighborQuery ?? "",
       cutoffTolerance: this.options.cutoffTolerance ?? 1.15,
       boundaryMode: this.options.boundaryMode ?? "complete",
     };

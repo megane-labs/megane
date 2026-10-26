@@ -227,7 +227,11 @@ export const NODE_EXECUTORS: NodeExecutorRegistry = {
   },
 
   coordination_generator: ({ params, inputs, addError }) => {
-    const outputs = executeCoordinationGenerator(params, inputs);
+    const particle = inputs.get("particle")?.[0];
+    const labels = resolveEffectiveLabels(
+      particle?.type === "particle" ? (particle as ParticleData) : undefined,
+    );
+    const outputs = executeCoordinationGenerator(params, inputs, labels);
     if (!inputs.get("particle")?.length) {
       addError(noInput());
     } else if (!outputs.has("coordination")) {

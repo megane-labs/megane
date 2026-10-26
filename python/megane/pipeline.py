@@ -609,6 +609,12 @@ class AddCoordination(PipelineNode):
     Boundary while bonded periodic images of their neighbors may be appended
     outside it to complete the visible coordination environment.
 
+    Centers default to the metal and metalloid elements present (minus
+    ``excluded_centers``) and neighbors to the anion formers N, O, F, P, S,
+    Cl, As, Se, Br, Te, I (minus ``excluded_ligands``). A non-empty
+    ``center_query`` / ``neighbor_query`` selection query replaces that side's
+    auto-detection, e.g. ``center_query='element == "P"'`` for PO4 tetrahedra.
+
     Ports:
         inp.particle — atom data, normally from :class:`DrawingBoundary`
         out.coordination — directed center-neighbor relationships
@@ -624,12 +630,16 @@ class AddCoordination(PipelineNode):
         *,
         excluded_centers: list[int] | None = None,
         excluded_ligands: list[int] | None = None,
+        center_query: str = "",
+        neighbor_query: str = "",
         cutoff_tolerance: float = 1.15,
         boundary_mode: Literal["inside", "complete"] = "complete",
     ) -> None:
         super().__init__()
         self.excluded_centers = list(excluded_centers) if excluded_centers else []
         self.excluded_ligands = list(excluded_ligands) if excluded_ligands else []
+        self.center_query = center_query
+        self.neighbor_query = neighbor_query
         self.cutoff_tolerance = cutoff_tolerance
         self.boundary_mode = boundary_mode
 
@@ -1045,6 +1055,8 @@ class Pipeline:
             return AddCoordination(
                 excluded_centers=nd.get("excludedCenters", []),
                 excluded_ligands=nd.get("excludedLigands", []),
+                center_query=nd.get("centerQuery", ""),
+                neighbor_query=nd.get("neighborQuery", ""),
                 cutoff_tolerance=nd.get("cutoffTolerance", 1.15),
                 boundary_mode=nd.get("boundaryMode", "complete"),
             )
@@ -1268,6 +1280,8 @@ class Pipeline:
         elif isinstance(node, AddCoordination):
             base["excludedCenters"] = node.excluded_centers
             base["excludedLigands"] = node.excluded_ligands
+            base["centerQuery"] = node.center_query
+            base["neighborQuery"] = node.neighbor_query
             base["cutoffTolerance"] = node.cutoff_tolerance
             base["boundaryMode"] = node.boundary_mode
         elif isinstance(node, AddPolyhedra):

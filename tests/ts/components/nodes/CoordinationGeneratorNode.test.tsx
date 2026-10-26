@@ -5,6 +5,7 @@ import { CoordinationGeneratorNode } from "@/components/nodes/CoordinationGenera
 import type { NodeSnapshotData, PipelineNodeData } from "@/pipeline/execute";
 import { usePipelineStore } from "@/pipeline/store";
 import { defaultParams, type CoordinationGeneratorParams } from "@/pipeline/types";
+import { validateQuery } from "@/pipeline/selection";
 import type { Snapshot } from "@/types";
 
 vi.mock("@xyflow/react", () => import("./_xyflowMock"));
@@ -111,5 +112,42 @@ describe("CoordinationGeneratorNode", () => {
     expect(screen.getByLabelText("Ti")).toBeInTheDocument();
     expect(screen.getByLabelText("O")).toBeInTheDocument();
     expect(screen.queryByText("None detected")).toBeNull();
+  });
+
+  it("commits a center query on blur and a neighbor query on Enter", () => {
+    const updateNodeParams = vi.fn();
+    const node = seed();
+    usePipelineStore.setState({ updateNodeParams });
+    render(<CoordinationGeneratorNode {...node} />);
+
+    const center = screen.getByLabelText("Center query");
+    fireEvent.change(center, { target: { value: 'element == "P"' } });
+    fireEvent.blur(center);
+    expect(updateNodeParams).toHaveBeenCalledWith("coord", { centerQuery: 'element == "P"' });
+
+    const neighbor = screen.getByLabelText("Neighbor query");
+    fireEvent.change(neighbor, { target: { value: 'element == "O"' } });
+    fireEvent.keyDown(neighbor, { key: "Enter", keyCode: 229 });
+    expect(updateNodeParams).not.toHaveBeenCalledWith("coord", { neighborQuery: 'element == "O"' });
+    fireEvent.keyDown(neighbor, { key: "Enter" });
+    expect(updateNodeParams).toHaveBeenCalledWith("coord", { neighborQuery: 'element == "O"' });
+  });
+
+  it("replaces the element list of a side whose query is set", () => {
+    render(<CoordinationGeneratorNode {...seed({ centerQuery: 'element == "P"' })} />);
+    expect((screen.getByLabelText("Center query") as HTMLInputElement).value).toBe(
+      'element == "P"',
+    );
+    expect(screen.queryByLabelText("Ti")).toBeNull();
+    expect(screen.getByText("The query replaces the auto-detected elements.")).toBeInTheDocument();
+    expect(screen.getByLabelText("O")).toBeInTheDocument();
+  });
+
+  it("shows the syntax error of an invalid query", () => {
+    render(<CoordinationGeneratorNode {...seed()} />);
+    const center = screen.getByLabelText("Center query");
+    fireEvent.change(center, { target: { value: "element ==" } });
+    fireEvent.blur(center);
+    expect(screen.getByText(validateQuery("element ==").error!)).toBeInTheDocument();
   });
 });
