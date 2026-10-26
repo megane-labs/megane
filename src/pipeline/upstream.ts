@@ -15,7 +15,12 @@ import type { Node, Edge } from "@xyflow/react";
 import type { PipelineNodeData } from "./execute";
 import type { NodeSnapshotData } from "./execute";
 
-/** Node types that pass the upstream particle stream through unchanged in element identity. */
+/**
+ * Node types that pass the upstream particle stream through unchanged in element
+ * identity. The crystal nodes copy, move or symmetry-expand atoms but never
+ * change which elements exist; the Solid template runs loader → symmetry → wrap
+ * → drawing boundary → coordination.
+ */
 const TRANSPARENT_NODE_TYPES: ReadonlySet<string> = new Set([
   "filter",
   "modify",
@@ -25,6 +30,9 @@ const TRANSPARENT_NODE_TYPES: ReadonlySet<string> = new Set([
   "boundary_completion",
   "add_bond",
   "label_generator",
+  "symmetry",
+  "wrap",
+  "replicate",
 ]);
 
 /**

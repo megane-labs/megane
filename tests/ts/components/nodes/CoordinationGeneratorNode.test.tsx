@@ -24,11 +24,23 @@ function snapshot(elements: number[]): Snapshot {
   };
 }
 
-function seed(params: Partial<CoordinationGeneratorParams> = {}) {
+/**
+ * Seed load → (via…) → coordination. `via` lists the node types between the
+ * loader and Coordination, e.g. the Solid template's symmetry → wrap →
+ * drawing_boundary chain.
+ */
+function seed(params: Partial<CoordinationGeneratorParams> = {}, via: string[] = []) {
   const full = {
     ...defaultParams("coordination_generator"),
     ...params,
   } as CoordinationGeneratorParams;
+  const middle: Node<PipelineNodeData>[] = via.map((type, i) => ({
+    id: `via-${i}`,
+    type,
+    position: { x: 0, y: 0 },
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    data: { params: defaultParams(type as any), enabled: true },
+  }));
   const nodes: Node<PipelineNodeData>[] = [
     {
       id: "load",
@@ -39,6 +51,7 @@ function seed(params: Partial<CoordinationGeneratorParams> = {}) {
         enabled: true,
       },
     },
+    ...middle,
     {
       id: "coord",
       type: "coordination_generator",
@@ -46,15 +59,14 @@ function seed(params: Partial<CoordinationGeneratorParams> = {}) {
       data: { params: full, enabled: true },
     },
   ];
-  const edges: Edge[] = [
-    {
-      id: "edge",
-      source: "load",
-      target: "coord",
-      sourceHandle: "particle",
-      targetHandle: "particle",
-    },
-  ];
+  const chain = nodes.map((node) => node.id);
+  const edges: Edge[] = chain.slice(1).map((target, i) => ({
+    id: `edge-${i}`,
+    source: chain[i],
+    target,
+    sourceHandle: "particle",
+    targetHandle: "particle",
+  }));
   const nodeSnapshots: Record<string, NodeSnapshotData> = {
     load: { snapshot: snapshot([22, 8, 1, 18]), frames: null, meta: null, labels: null },
   };
@@ -92,5 +104,12 @@ describe("CoordinationGeneratorNode", () => {
     expect(mode.value).toBe("complete");
     fireEvent.change(mode, { target: { value: "inside" } });
     expect(updateNodeParams).toHaveBeenCalledWith("coord", { boundaryMode: "inside" });
+  });
+
+  it("lists the elements when the structure arrives through Symmetry, Wrap and Drawing Boundary", () => {
+    render(<CoordinationGeneratorNode {...seed({}, ["symmetry", "wrap", "drawing_boundary"])} />);
+    expect(screen.getByLabelText("Ti")).toBeInTheDocument();
+    expect(screen.getByLabelText("O")).toBeInTheDocument();
+    expect(screen.queryByText("None detected")).toBeNull();
   });
 });

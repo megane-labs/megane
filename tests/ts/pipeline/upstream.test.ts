@@ -95,6 +95,32 @@ describe("getElementsPresentInUpstream", () => {
     expect([...elements!].sort((a, b) => a - b)).toEqual([6, 8, 22]);
   });
 
+  it("reaches the loader through the crystal nodes of the Solid template", () => {
+    // loader → symmetry → wrap → replicate → drawing boundary → coordination
+    const chain = ["loader", "symmetry", "wrap", "replicate", "boundary", "coord"];
+    const types = [
+      "load_structure",
+      "symmetry",
+      "wrap",
+      "replicate",
+      "drawing_boundary",
+      "coordination_generator",
+    ];
+    const nodes = chain.map((id, i) => n(id, types[i]));
+    const edges = chain.slice(1).map((id, i) => e(chain[i], id));
+    const snapshots: Record<string, NodeSnapshotData> = {
+      loader: {
+        snapshot: snapshotWithElements([38, 22, 8, 8, 8]),
+        frames: null,
+        meta: null,
+        labels: null,
+      },
+    };
+    expect(findUpstreamLoadStructureId("coord", nodes, edges)).toBe("loader");
+    const elements = getElementsPresentInUpstream("coord", nodes, edges, snapshots);
+    expect([...elements!].sort((a, b) => a - b)).toEqual([8, 22, 38]);
+  });
+
   it("returns null when no upstream loader exists", () => {
     const nodes = [n("poly", "polyhedron_generator")];
     expect(getElementsPresentInUpstream("poly", nodes, [], {})).toBeNull();
