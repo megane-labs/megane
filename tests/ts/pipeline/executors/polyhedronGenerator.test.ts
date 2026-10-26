@@ -50,6 +50,8 @@ function coordinationParams(
     type: "coordination_generator",
     excludedCenters: [],
     excludedLigands: [],
+    centerQuery: "",
+    neighborQuery: "",
     cutoffTolerance: 1.15,
     boundaryMode: "complete",
     ...extra,
@@ -223,5 +225,102 @@ describe("Coordination -> Polyhedra responsibility split", () => {
     expect(coordination.outsideBoundaryImages).toBeNull();
     expect(bonds.periodicImages).toBeNull();
     expect(coordination.nBonds).toBe(5);
+  });
+});
+
+/** Tetrahedron of four `ligand` atoms at `distance` Å around a `center` atom. */
+function tetrahedron(center: number, ligand: number, distance: number): ParticleData {
+  const d = distance / Math.sqrt(3);
+  return makeParticle(
+    [center, ligand, ligand, ligand, ligand],
+    [0, 0, 0, d, d, d, d, -d, -d, -d, d, -d, -d, -d, d],
+  );
+}
+
+describe("Coordination center/neighbor selection queries", () => {
+  it("builds PO4 tetrahedra from a center query although P is not an auto-detected center", () => {
+    expect(coordinate(tetrahedron(15, 8, 1.54)).size).toBe(0);
+    const coordination = coordinate(
+      tetrahedron(15, 8, 1.54),
+      coordinationParams({ centerQuery: 'element == "P"' }),
+    ).get("coordination") as CoordinationData;
+    expect(coordination.nBonds).toBe(4);
+    for (let pair = 0; pair < coordination.nBonds; pair++) {
+      expect(coordination.bondIndices[pair * 2]).toBe(0);
+    }
+    const mesh = polyhedra(coordination).get("mesh") as MeshData;
+    expect(mesh.indices.length).toBe(4 * 3);
+  });
+
+  it("accepts neighbors outside the auto-detected anion formers", () => {
+    expect(coordinate(tetrahedron(26, 6, 1.9)).size).toBe(0);
+    const coordination = coordinate(
+      tetrahedron(26, 6, 1.9),
+      coordinationParams({ neighborQuery: 'element == "C"' }),
+    ).get("coordination") as CoordinationData;
+    expect(coordination.nBonds).toBe(4);
+  });
+
+  it("a query replaces the exclusion list of its side", () => {
+    const excluded = coordinationParams({ excludedCenters: [22] });
+    expect(coordinate(tio6(), excluded).size).toBe(0);
+    const coordination = coordinate(tio6(), {
+      ...excluded,
+      centerQuery: 'element == "Ti"',
+    }).get("coordination") as CoordinationData;
+    expect(coordination.nBonds).toBe(6);
+  });
+
+  it("picks individual atoms, not only elements", () => {
+    const one = tio6();
+    const positions = Array.from(one.source.positions);
+    const shifted = positions.map((value, i) => (i % 3 === 0 ? value + 10 : value));
+    const two = makeParticle(
+      [...one.source.elements, ...one.source.elements],
+      [...positions, ...shifted],
+    );
+    expect((coordinate(two).get("coordination") as CoordinationData).nBonds).toBe(12);
+    const coordination = coordinate(two, coordinationParams({ centerQuery: "index == 7" })).get(
+      "coordination",
+    ) as CoordinationData;
+    expect(coordination.nBonds).toBe(6);
+    for (let pair = 0; pair < coordination.nBonds; pair++) {
+      expect(coordination.bondIndices[pair * 2]).toBe(7);
+    }
+  });
+
+  it('"all" makes every atom a candidate', () => {
+    // P keeps its four O; each O (a center now) also finds P, a default neighbor.
+    const coordination = coordinate(
+      tetrahedron(15, 8, 1.54),
+      coordinationParams({ centerQuery: "all" }),
+    ).get("coordination") as CoordinationData;
+    expect(coordination.nBonds).toBe(8);
+  });
+
+  it("an unparsable query matches nothing instead of falling back to auto-detection", () => {
+    expect(coordinate(tio6(), coordinationParams({ centerQuery: "element ==" })).size).toBe(0);
+    expect(coordinate(tio6(), coordinationParams({ neighborQuery: "element ==" })).size).toBe(0);
+  });
+
+  it("resolves residue queries through the atom labels", () => {
+    const params = coordinationParams({
+      centerQuery: 'resname == "PHO" and element == "P"',
+    });
+    const inputs = new Map<string, PipelineData[]>([["particle", [tetrahedron(15, 8, 1.54)]]]);
+    expect(executeCoordinationGenerator(params, inputs).size).toBe(0);
+    const labels = ["PHO1", "PHO1", "PHO1", "PHO1", "PHO1"];
+    const coordination = executeCoordinationGenerator(params, inputs, labels).get(
+      "coordination",
+    ) as CoordinationData;
+    expect(coordination.nBonds).toBe(4);
+  });
+
+  it("applies the queries under the inside policy too", () => {
+    const coordination = coordinate(
+      tetrahedron(15, 8, 1.54),
+      coordinationParams({ centerQuery: 'element == "P"', boundaryMode: "inside" }),
+    ).get("coordination") as CoordinationData;
+    expect(coordination.nBonds).toBe(4);
   });
 });

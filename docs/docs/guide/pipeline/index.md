@@ -211,7 +211,7 @@ Bond filters compose like atom filters: a second bond-query Filter downstream of
 1. Load a perovskite structure (`LoadStructure`)
 2. Add `Drawing Boundary`, `Coordination`, and `Polyhedra` nodes
 3. Connect `LoadStructure.particle → DrawingBoundary.particle → Coordination.particle`, and `DrawingBoundary.particle → Viewport.particle`
-4. In the Coordination node's **Center atoms**, untick Sr so only TiO₆ polyhedra are built (Ti centers and O neighbors are auto-detected)
+4. In the Coordination node's **Center atoms**, untick Sr so only TiO₆ polyhedra are built (Ti centers and O neighbors are auto-detected). Typing a selection query such as `element == "Ti"` in the box above the list does the same; a query also picks centers or neighbors the list does not offer, such as `element == "P"` for PO₄ tetrahedra
 5. Connect `Coordination.coordination → Polyhedra.coordination`, `Polyhedra.mesh → Viewport.mesh`, and `Coordination.bond → Viewport.bond`
 
 Or use the **Solid** template which sets this up automatically.

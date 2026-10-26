@@ -557,11 +557,24 @@ describe("AddCoordination", () => {
       type: "coordination_generator",
       excludedCenters: [13],
       excludedLigands: [7],
+      centerQuery: "",
+      neighborQuery: "",
       cutoffTolerance: 1.2,
       boundaryMode: "inside",
     });
     expect(node.out.coordination.handle).toBe("coordination");
     expect(node.out.bond.handle).toBe("bond");
+  });
+
+  it("serializes center and neighbor selection queries", () => {
+    const node = new AddCoordination({
+      centerQuery: 'element == "P"',
+      neighborQuery: 'element == "O"',
+    });
+    expect(node._toSerializedParams()).toMatchObject({
+      centerQuery: 'element == "P"',
+      neighborQuery: 'element == "O"',
+    });
   });
 });
 

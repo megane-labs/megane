@@ -215,8 +215,15 @@ class TestNodeClasses:
         assert n.excluded_ligands == [8, 7]
         assert n.cutoff_tolerance == 1.3
         assert n.boundary_mode == "inside"
+        assert n.center_query == ""
+        assert n.neighbor_query == ""
         assert n.out.coordination.handle == "coordination"
         assert n.out.bond.handle == "bond"
+
+    def test_add_coordination_queries(self):
+        n = AddCoordination(center_query='element == "P"', neighbor_query='element == "O"')
+        assert n.center_query == 'element == "P"'
+        assert n.neighbor_query == 'element == "O"'
 
     def test_load_vector(self):
         n = LoadVector("vectors.dat")
@@ -855,9 +862,32 @@ class TestPipelineSerialization:
         assert coordination_node["excludedLigands"] == [8]
         assert coordination_node["cutoffTolerance"] == 1.3
         assert coordination_node["boundaryMode"] == "complete"
+        assert coordination_node["centerQuery"] == ""
+        assert coordination_node["neighborQuery"] == ""
         poly_node = next(n for n in result["nodes"] if n["type"] == "polyhedron_generator")
         assert poly_node["opacity"] == 0.7
         assert "excludedCenters" not in poly_node
+
+    def test_coordination_queries_round_trip(self):
+        """Center/neighbor queries serialize and survive from_dict()."""
+        pipe = Pipeline()
+        s = pipe.add_node(LoadStructure(str(FIXTURES / "1crn.pdb")))
+        coordination = pipe.add_node(
+            AddCoordination(center_query='element == "P"', neighbor_query='element == "O"')
+        )
+        pipe.add_edge(s.out.particle, coordination.inp.particle)
+        result = pipe.to_dict()
+
+        node = next(n for n in result["nodes"] if n["type"] == "coordination_generator")
+        assert node["centerQuery"] == 'element == "P"'
+        assert node["neighborQuery"] == 'element == "O"'
+
+        rebuilt = Pipeline.from_dict(result)
+        rebuilt_node = next(
+            n for n in rebuilt.to_dict()["nodes"] if n["type"] == "coordination_generator"
+        )
+        assert rebuilt_node["centerQuery"] == 'element == "P"'
+        assert rebuilt_node["neighborQuery"] == 'element == "O"'
 
     def test_surface_mesh_round_trip(self):
         """A surface-mesh branch serializes its params and survives from_dict()."""

@@ -9,6 +9,7 @@ import type { PipelineNodeData } from "./execute";
 import type {
   PipelineNodeType,
   NodeError,
+  CoordinationGeneratorParams,
   FilterParams,
   LoadStructureParams,
   LoadTrajectoryParams,
@@ -159,6 +160,23 @@ export function validatePipeline(
           if (!result.valid) {
             addError(node.id, {
               message: `Query syntax error: ${result.error}`,
+              severity: "error",
+            });
+          }
+        }
+        break;
+      }
+      case "coordination_generator": {
+        const p = params as CoordinationGeneratorParams;
+        for (const [label, query] of [
+          ["Center", p.centerQuery],
+          ["Neighbor", p.neighborQuery],
+        ] as const) {
+          if (!query?.trim()) continue;
+          const result = validateQuery(query);
+          if (!result.valid) {
+            addError(node.id, {
+              message: `${label} query syntax error: ${result.error}`,
               severity: "error",
             });
           }

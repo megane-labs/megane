@@ -68,7 +68,9 @@ Detects or infers bonds between atoms.
 Builds directed relationships between center atoms and their bonded neighbors.
 It consumes Drawing Boundary copies and can add only the periodic neighbor images
 needed outside the drawing range to complete each visible center.
-- Parameters: `{ type: "coordination_generator", excludedCenters: number[], excludedLigands: number[], cutoffTolerance: number, boundaryMode: "inside" | "complete" }`
+- Parameters: `{ type: "coordination_generator", excludedCenters: number[], excludedLigands: number[], centerQuery: string, neighborQuery: string, cutoffTolerance: number, boundaryMode: "inside" | "complete" }`
+  - Auto-detected centers are metals and metalloids (incl. B, Si, Ge, As, Sb, Te); auto-detected neighbors are N, O, F, P, S, Cl, As, Se, Br, Te, I
+  - Elements outside those lists need a query, e.g. PO4 tetrahedra: `centerQuery: "element == \"P\""`, `neighborQuery: "element == \"O\""`
 - Inputs: `particle` (normally from Drawing Boundary)
 - Outputs: `coordination` (directed center-neighbor pairs), `bond`
 

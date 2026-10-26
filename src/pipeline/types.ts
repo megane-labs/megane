@@ -865,6 +865,16 @@ export interface CoordinationGeneratorParams {
   type: "coordination_generator";
   excludedCenters: number[];
   excludedLigands: number[];
+  /**
+   * Selection query choosing the center atoms. Empty = auto-detected metal and
+   * metalloid elements minus `excludedCenters`; non-empty replaces that list.
+   */
+  centerQuery: string;
+  /**
+   * Selection query choosing the neighbor atoms. Empty = auto-detected anion
+   * formers minus `excludedLigands`; non-empty replaces that list.
+   */
+  neighborQuery: string;
   cutoffTolerance: number;
   /** Whether to stop at visible atoms or complete each visible center's neighbors. */
   boundaryMode: "inside" | "complete";
@@ -1033,6 +1043,8 @@ export function defaultParams(type: PipelineNodeType): PipelineNodeParams {
         type,
         excludedCenters: [],
         excludedLigands: [],
+        centerQuery: "",
+        neighborQuery: "",
         cutoffTolerance: 1.15,
         boundaryMode: "complete",
       };

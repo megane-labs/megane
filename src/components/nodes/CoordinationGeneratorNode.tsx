@@ -1,13 +1,24 @@
-import { useCallback, useMemo } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import type { Node, NodeProps } from "@xyflow/react";
 import type { PipelineNodeData } from "../../pipeline/execute";
 import type { CoordinationGeneratorParams } from "../../pipeline/types";
 import { useScopedPipelineStore } from "../../stores/MeganeProvider";
 import { getElementsPresentInUpstream } from "../../pipeline/upstream";
+import { validateQuery } from "../../pipeline/selection";
 import { ELEMENT_SYMBOLS, isDefaultLigand, isMetalLike } from "../../constants";
+import { isImeComposing } from "../../utils/ime";
 import { NodeShell } from "./NodeShell";
 import { Field, FormStack, Section } from "./form";
-import { checkboxStyle, emptyFileStyle, hintStyle, inputStyle, selectStyle } from "./formStyles";
+import {
+  checkboxStyle,
+  codeInputStyle,
+  emptyFileStyle,
+  errorTextStyle,
+  hintStyle,
+  inputErrorStyle,
+  inputStyle,
+  selectStyle,
+} from "./formStyles";
 
 function ElementChoices({
   candidates,
@@ -49,6 +60,66 @@ function ElementChoices({
   );
 }
 
+/**
+ * One side of the search (centers or neighbors): a selection query that, when
+ * set, replaces the auto-detected element list shown below it.
+ */
+function RoleSection({
+  title,
+  queryLabel,
+  query,
+  placeholder,
+  candidates,
+  excluded,
+  onCommitQuery,
+  onToggle,
+}: {
+  title: string;
+  queryLabel: string;
+  query: string;
+  placeholder: string;
+  candidates: number[];
+  excluded: number[];
+  onCommitQuery: (query: string) => void;
+  onToggle: (z: number) => void;
+}) {
+  const [localQuery, setLocalQuery] = useState(query);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    setLocalQuery(query);
+  }, [query]);
+
+  const commit = useCallback(() => {
+    const result = validateQuery(localQuery);
+    setError(result.valid ? null : (result.error ?? "Invalid query"));
+    onCommitQuery(localQuery);
+  }, [localQuery, onCommitQuery]);
+
+  return (
+    <Section title={title}>
+      <input
+        className="nodrag"
+        value={localQuery}
+        onChange={(event) => setLocalQuery(event.target.value)}
+        onBlur={commit}
+        onKeyDown={(event) => {
+          if (event.key === "Enter" && !isImeComposing(event)) commit();
+        }}
+        placeholder={placeholder}
+        aria-label={queryLabel}
+        style={error ? { ...codeInputStyle, ...inputErrorStyle } : codeInputStyle}
+      />
+      {error && <div style={errorTextStyle}>{error}</div>}
+      {query.trim() ? (
+        <div style={hintStyle}>The query replaces the auto-detected elements.</div>
+      ) : (
+        <ElementChoices candidates={candidates} excluded={excluded} onToggle={onToggle} />
+      )}
+    </Section>
+  );
+}
+
 export function CoordinationGeneratorNode({ id, data }: NodeProps<Node<PipelineNodeData>>) {
   const updateNodeParams = useScopedPipelineStore((state) => state.updateNodeParams);
   const nodes = useScopedPipelineStore((state) => state.nodes);
@@ -76,24 +147,38 @@ export function CoordinationGeneratorNode({ id, data }: NodeProps<Node<PipelineN
     },
     [id, params, updateNodeParams],
   );
+  const commitCenterQuery = useCallback(
+    (centerQuery: string) => updateNodeParams(id, { centerQuery }),
+    [id, updateNodeParams],
+  );
+  const commitNeighborQuery = useCallback(
+    (neighborQuery: string) => updateNodeParams(id, { neighborQuery }),
+    [id, updateNodeParams],
+  );
 
   return (
     <NodeShell id={id} nodeType="coordination_generator" enabled={data.enabled}>
       <FormStack>
-        <Section title="Center atoms">
-          <ElementChoices
-            candidates={centers}
-            excluded={params.excludedCenters}
-            onToggle={(z) => toggle("excludedCenters", z)}
-          />
-        </Section>
-        <Section title="Neighbor atoms">
-          <ElementChoices
-            candidates={ligands}
-            excluded={params.excludedLigands}
-            onToggle={(z) => toggle("excludedLigands", z)}
-          />
-        </Section>
+        <RoleSection
+          title="Center atoms"
+          queryLabel="Center query"
+          query={params.centerQuery ?? ""}
+          placeholder='Auto · e.g. element == "P"'
+          candidates={centers}
+          excluded={params.excludedCenters}
+          onCommitQuery={commitCenterQuery}
+          onToggle={(z) => toggle("excludedCenters", z)}
+        />
+        <RoleSection
+          title="Neighbor atoms"
+          queryLabel="Neighbor query"
+          query={params.neighborQuery ?? ""}
+          placeholder='Auto · e.g. element == "O"'
+          candidates={ligands}
+          excluded={params.excludedLigands}
+          onCommitQuery={commitNeighborQuery}
+          onToggle={(z) => toggle("excludedLigands", z)}
+        />
         <Field label="Cutoff tolerance">
           <input
             className="nodrag"

@@ -13,13 +13,28 @@ import { collectSchemaErrors } from "./pipelineSchema";
 import { collectSelfCheckErrors, type SelfCheckContext } from "./selfCheck";
 
 /**
- * Validate every `filter` node's `query` / `bond_query` against the selection
- * DSL grammar. Returns a list of human-readable error strings (one per invalid
- * query), or an empty array when all queries are syntactically valid.
+ * Validate every `filter` node's `query` / `bond_query` and every
+ * `coordination_generator` node's `centerQuery` / `neighborQuery` against the
+ * selection DSL grammar. Returns a list of human-readable error strings (one
+ * per invalid query), or an empty array when all queries are syntactically valid.
  */
 export function collectQueryErrors(pipeline: SerializedPipeline): string[] {
   const errors: string[] = [];
   for (const node of pipeline.nodes) {
+    if (node.type === "coordination_generator") {
+      const c = node as { id: string; centerQuery?: unknown; neighborQuery?: unknown };
+      for (const [key, query] of [
+        ["centerQuery", c.centerQuery],
+        ["neighborQuery", c.neighborQuery],
+      ] as const) {
+        if (typeof query !== "string" || query.trim() === "") continue;
+        const r = validateQuery(query);
+        if (!r.valid) {
+          errors.push(`node "${c.id}" ${key} \`${query}\`: ${r.error ?? "invalid query"}`);
+        }
+      }
+      continue;
+    }
     if (node.type !== "filter") continue;
     const n = node as { id: string; query?: unknown; bond_query?: unknown };
 

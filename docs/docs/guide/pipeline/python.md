@@ -423,6 +423,8 @@ AddCoordination(
     *,
     excluded_centers: list[int] | None = None,
     excluded_ligands: list[int] | None = None,
+    center_query: str = "",
+    neighbor_query: str = "",
     cutoff_tolerance: float = 1.15,
     boundary_mode: Literal["inside", "complete"] = "complete",
 )
@@ -432,6 +434,16 @@ Coordination detects relationships between center atoms and their bonded
 neighbors. With `boundary_mode="complete"`, center atoms stay inside Drawing
 Boundary while missing periodic images of their neighbors may be added outside
 it to complete the visible coordination environment.
+
+Centers default to the metal and metalloid elements present and neighbors to
+N, O, F, P, S, Cl, As, Se, Br, Te and I; the `excluded_*` lists remove elements
+from those defaults. A non-empty `center_query` / `neighbor_query` (see
+[Filter DSL](./index.md#filter-dsl)) replaces that side's defaults and can pick
+any element or individual atoms:
+
+```python
+AddCoordination(center_query='element == "P"', neighbor_query='element == "O"')  # PO4
+```
 
 **Ports:** `inp.particle`, `out.coordination`, `out.bond`
 

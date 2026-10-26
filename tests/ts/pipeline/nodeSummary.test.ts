@@ -20,6 +20,18 @@ describe("summarizeNodeParams", () => {
     }
   });
 
+  it("summarizes Coordination, leading with any center / neighbor query", () => {
+    expect(summarizeNodeParams(params("coordination_generator"))).toBe("Tolerance 1.15 · complete");
+    expect(
+      summarizeNodeParams(
+        params("coordination_generator", {
+          centerQuery: 'element == "P"',
+          neighborQuery: 'element == "O"',
+        }),
+      ),
+    ).toBe('centers: element == "P" · neighbors: element == "O" · Tolerance 1.15 · complete');
+  });
+
   it("names the loaded file, or says none is loaded", () => {
     expect(summarizeNodeParams(params("load_structure"))).toBe("No file");
     expect(summarizeNodeParams(params("load_structure", { fileName: "1ubq.pdb" }))).toBe(

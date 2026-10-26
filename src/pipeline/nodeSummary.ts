@@ -56,8 +56,14 @@ export function summarizeNodeParams(params: PipelineNodeParams): string {
       }
       return label;
     }
-    case "coordination_generator":
-      return `Tolerance ${fmt(params.cutoffTolerance)} · ${params.boundaryMode}`;
+    case "coordination_generator": {
+      const parts = [`Tolerance ${fmt(params.cutoffTolerance)}`, params.boundaryMode];
+      const neighbors = params.neighborQuery?.trim();
+      if (neighbors) parts.unshift(`neighbors: ${neighbors}`);
+      const centers = params.centerQuery?.trim();
+      if (centers) parts.unshift(`centers: ${centers}`);
+      return parts.join(" · ");
+    }
     case "viewport":
       return params.perspective ? "Perspective" : "Orthographic";
     case "filter": {

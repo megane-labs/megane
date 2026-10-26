@@ -63,6 +63,24 @@ describe("collectQueryErrors", () => {
     expect(collectQueryErrors(p)).toEqual([]);
   });
 
+  it("checks Coordination center / neighbor queries", () => {
+    const coordination = (centerQuery: string, neighborQuery: string) =>
+      pipeline([
+        {
+          id: "c1",
+          type: "coordination_generator",
+          position: { x: 0, y: 0 },
+          centerQuery,
+          neighborQuery,
+        },
+      ] as SerializedPipeline["nodes"]);
+    expect(collectQueryErrors(coordination('element == "P"', ""))).toEqual([]);
+    const errors = collectQueryErrors(coordination("element P", "name O"));
+    expect(errors).toHaveLength(2);
+    expect(errors[0]).toContain('node "c1" centerQuery');
+    expect(errors[1]).toContain('node "c1" neighborQuery');
+  });
+
   it("collects multiple errors across nodes", () => {
     const p = pipeline([
       { id: "f1", type: "filter", position: { x: 0, y: 0 }, query: "protein" },

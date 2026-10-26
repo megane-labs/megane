@@ -8,7 +8,9 @@
  * (`load_volumetric`'s ephemeral data addressed by node id, and a second
  * `load_structure` node addressed by id). "Protein" fetches its PDB as an
  * emitted asset and splits it into four selection branches; "Surface Mesh"
- * wraps a nanoparticle in an alpha-shape envelope. All of them would fail
+ * wraps a nanoparticle in an alpha-shape envelope; "Solid" reaches its
+ * Coordination node through Symmetry, Wrap and Drawing Boundary, which once
+ * left the node's element lists empty. All of them would fail
  * silently — an empty or uncolored isosurface, a missing bead layer, a filter
  * that selects nothing — rather than throw, so the checks here assert the
  * scene actually arrived rather than just that the graph mounted.
@@ -40,6 +42,8 @@ const ATOM_COUNT_AU_PARTICLE = 1385;
  */
 const ATOM_COUNT_UBIQUITIN = 660;
 const BEAD_COUNT_UBIQUITIN = 76;
+/** perovskite_srtio3_3x3x3.xyz: 27 Sr, 27 Ti, 81 O. */
+const ATOM_COUNT_SRTIO3 = 135;
 
 /** Open the Templates dropdown and apply the template with this id. */
 async function applyTemplate(page: Page, templateId: string): Promise<void> {
@@ -232,5 +236,43 @@ test.describe("pipeline templates: data-heavy scenes", () => {
 
     await expectFullPageMatch(page, PLATFORM, "coarse-grained-overlay");
     await expectViewerRegionMatch(page, PLATFORM, "coarse-grained-overlay-viewer");
+  });
+
+  test("Solid lets Coordination pick its centers by element list or by query", async ({ page }) => {
+    await applyTemplate(page, "solid");
+    await expect
+      .poll(async () => (await viewportSummary(page)).snapshotAtomCounts["loader-1"], {
+        timeout: 30_000,
+      })
+      .toBe(ATOM_COUNT_SRTIO3);
+    const meshVertices = async () => (await viewportSummary(page)).meshVertexCounts[0] ?? 0;
+    await expect.poll(meshVertices, { timeout: 30_000 }).toBeGreaterThan(0);
+    const both = await viewportSummary(page);
+    expect(both.erroredNodes).toEqual([]);
+
+    // Coordination reaches the structure through Symmetry → Wrap → Drawing
+    // Boundary; its element lists used to read "None detected" here.
+    await page.locator('[data-testid="pipeline-node-coordination_generator"]').first().click();
+    const sr = page.getByRole("checkbox", { name: "Sr", exact: true });
+    await expect(sr).toBeVisible();
+    await expect(page.getByRole("checkbox", { name: "Ti", exact: true })).toBeVisible();
+    await expect(page.getByRole("checkbox", { name: "O", exact: true })).toBeVisible();
+    await expect(page.getByText("None detected")).toHaveCount(0);
+
+    // Sr–O (2.76 Å) is inside the cutoff, so Sr cuboctahedra are drawn next to
+    // the TiO6 octahedra until Sr is unticked.
+    await sr.uncheck();
+    await expect.poll(meshVertices).toBeLessThan(both.meshVertexCounts[0]);
+    const tiOnly = await viewportSummary(page);
+    await sr.check();
+    await expect.poll(meshVertices).toBe(both.meshVertexCounts[0]);
+
+    // A center query builds the same TiO6-only scene and replaces the list.
+    const centerQuery = page.getByLabel("Center query");
+    await centerQuery.fill('element == "Ti"');
+    await centerQuery.press("Enter");
+    await expect.poll(meshVertices).toBe(tiOnly.meshVertexCounts[0]);
+    expect((await viewportSummary(page)).bondCounts).toEqual(tiOnly.bondCounts);
+    await expect(sr).toHaveCount(0);
   });
 });

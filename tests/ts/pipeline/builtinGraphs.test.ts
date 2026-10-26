@@ -181,7 +181,7 @@ const PINNED: Record<string, { nodes: string[]; edges: string[] }> = {
       'symmetry-1 symmetry {"mode":"expand"}',
       'wrap-1 wrap {"mode":"none"}',
       'drawing-boundary-1 drawing_boundary {"xMin":0,"xMax":1,"yMin":0,"yMax":1,"zMin":0,"zMax":1}',
-      'coordination-1 coordination_generator {"excludedCenters":[],"excludedLigands":[],"cutoffTolerance":1.15,"boundaryMode":"complete"}',
+      'coordination-1 coordination_generator {"excludedCenters":[],"excludedLigands":[],"centerQuery":"","neighborQuery":"","cutoffTolerance":1.15,"boundaryMode":"complete"}',
       'polyhedron-1 polyhedron_generator {"opacity":0.5,"showEdges":false,"edgeColor":"#dddddd","edgeWidth":3}',
       'viewport-1 viewport {"perspective":false,"cellAxesVisible":true,"pivotMarkerVisible":true}',
     ],

@@ -158,6 +158,31 @@ describe("validatePipeline", () => {
     expect(filterErrors.some((e) => e.message.includes("Query syntax error"))).toBe(true);
   });
 
+  it("reports center / neighbor query syntax errors on Coordination", () => {
+    const coordination = (centerQuery: string, neighborQuery: string) => [
+      makeNode("ls", "load_structure", {
+        fileName: "test.pdb",
+        hasTrajectory: false,
+        hasCell: false,
+      }),
+      makeNode("coord", "coordination_generator", {
+        excludedCenters: [],
+        excludedLigands: [],
+        centerQuery,
+        neighborQuery,
+        cutoffTolerance: 1.15,
+        boundaryMode: "complete",
+      }),
+    ];
+    const edges = [makeEdge("ls", "particle", "coord", "particle")];
+    const bad = validatePipeline(coordination("element ==", 'foo == "bar"'), edges).get("coord")!;
+    const messages = bad.filter((e) => e.severity === "error").map((e) => e.message);
+    expect(messages.some((m) => m.startsWith("Center query syntax error"))).toBe(true);
+    expect(messages.some((m) => m.startsWith("Neighbor query syntax error"))).toBe(true);
+    const good = validatePipeline(coordination('element == "P"', ""), edges).get("coord") ?? [];
+    expect(good.some((e) => e.message.includes("query syntax error"))).toBe(false);
+  });
+
   it("does not raise config errors for a Coordination -> Polyhedra graph", () => {
     const nodes = [
       makeNode("ls", "load_structure", {

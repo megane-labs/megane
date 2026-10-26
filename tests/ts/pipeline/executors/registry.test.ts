@@ -337,6 +337,20 @@ describe("per-node executors", () => {
     );
   });
 
+  it("coordination_generator resolves residue queries through the input's atom labels", () => {
+    const labelled: Snapshot = {
+      ...snapshot({ nAtoms: 2 }),
+      positions: new Float32Array([0, 0, 0, 1.5, 0, 0]),
+      atomLabels: ["LIG1", "LIG1"],
+    };
+    const r = run("coordination_generator", {
+      params: { centerQuery: 'resname == "LIG" and index == 0', neighborQuery: 'resname == "LIG"' },
+      inputs: { particle: [particle(labelled)] },
+    });
+    expect(messages(r)).toEqual([]);
+    expect((r.result.outputs.get("coordination") as CoordinationData).nBonds).toBe(1);
+  });
+
   it("boundary_completion needs both particle and bond inputs", () => {
     expect(messages(run("boundary_completion"))).toEqual([
       "Particle and bond inputs are both required",
