@@ -70,7 +70,7 @@ Wire nodes to build visualization workflows — no code required.
 
 **10 typed data channels** — particle, bond, coordination, cell, label, mesh, trajectory, vector, volumetric, spectrum — flow through color-coded edges. Only matching types can connect.
 
-The `Representation` node switches a layer between atoms, licorice, line, cartoon, molecular surface, and illustrative rendering; `Color` colors by element, residue, chain, B-factor, or any per-atom property. For quick tweaks without touching the graph, the **Quick Style** panel in the Inspector tab edits style, color, atom size and opacity, bond width and opacity, labels, perspective, and cell axes, and writes them back into the pipeline.
+The `Representation` node switches a layer between atoms, licorice, line, cartoon, molecular surface, and illustrative rendering; `Color` colors by element, residue, chain, B-factor, or any per-atom property. For quick tweaks without touching the graph, the **Quick Style** panel in the Inspector tab edits style, color, atom size and opacity, bond width and opacity, coordination polyhedra, labels, perspective, and cell axes, and writes them back into the pipeline.
 
 Pipelines serialize to JSON, so you can save, share, and version-control your visualization recipes.
 

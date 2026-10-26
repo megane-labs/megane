@@ -5,18 +5,21 @@
  * opacity, labels, perspective, cell axes, …) that each map onto ordinary
  * pipeline state. There is no separate rendering path: every control either
  * edits a parameter of a node the graph already has (viewport, add_bond,
- * vector_overlay) or owns one of a few `insp-global-*` nodes spliced into the
- * graph:
+ * vector_overlay, polyhedron_generator) or owns one of a few `insp-global-*`
+ * nodes spliced into the graph:
  *
  *   <trunk> → insp-global-color → insp-global-rep → insp-global-atoms → viewport.particle
- *                                                                    ↘ insp-global-labels → viewport.label
+ *         │                                                          ↘ insp-global-labels → viewport.label
+ *         └→ insp-global-coord → insp-global-poly → viewport.mesh
  *   <bond source> → insp-global-bonds → viewport.bond
  *
  * The chain is spliced inline rather than branched beside the trunk: the
  * renderer draws only the first bond / label stream, and two parallel particle
  * branches styling the same atoms is what the AI self-check flags as a
  * conflict. Inspector selection layers branch from the chain's tail, so they
- * inherit the global style and override it for their own atoms.
+ * inherit the global style and override it for their own atoms. The
+ * polyhedra branch reads the unstyled trunk: which atoms coordinate which does
+ * not depend on how they are drawn.
  *
  * A control left at its default removes its node, so an untouched Quick Style
  * leaves the graph exactly as it was. The graph is the only state: the panel
@@ -31,11 +34,13 @@ import type {
   ColorParams,
   LabelGeneratorParams,
   ModifyParams,
+  PolyhedronGeneratorParams,
   RepresentationMode,
   RepresentationParams,
   VectorOverlayParams,
   ViewportParams,
 } from "./types";
+import { defaultParams } from "./types";
 import { QUICK_STYLE_NODE_PREFIX, isInspectorLayerId, isQuickStyleId } from "./inspectorSync";
 import { DEFAULT_VDW_BOND_FACTOR } from "../parsers/inferBondsJS";
 
@@ -59,6 +64,17 @@ export interface QuickStyle {
   cellAxesVisible: boolean;
   /** vector_overlay arrow scale; null without a vector overlay. */
   vectorScale: number | null;
+  /**
+   * Quick Style's own coordination polyhedra. Never added beside polyhedra the
+   * pipeline already draws; those are switched with `pipelinePolyhedra`.
+   */
+  polyhedra: boolean;
+  /** Whether the pipeline's own polyhedron node is enabled; null without one. */
+  pipelinePolyhedra: boolean | null;
+  /** Face opacity of the polyhedra (Quick Style's, else the pipeline's). */
+  polyhedronOpacity: number;
+  /** Whether those polyhedra draw their edges. */
+  polyhedronEdges: boolean;
 }
 
 /** Which controls the current graph can honor. */
@@ -84,7 +100,16 @@ export const QUICK_STYLE_IDS = {
   atoms: `${QUICK_STYLE_NODE_PREFIX}atoms`,
   bonds: `${QUICK_STYLE_NODE_PREFIX}bonds`,
   labels: `${QUICK_STYLE_NODE_PREFIX}labels`,
+  coordination: `${QUICK_STYLE_NODE_PREFIX}coord`,
+  polyhedra: `${QUICK_STYLE_NODE_PREFIX}poly`,
 } as const;
+
+/** Leaf nodes: dropped with their edges rather than spliced out. */
+const LEAF_NODES = new Set<string>([
+  QUICK_STYLE_IDS.labels,
+  QUICK_STYLE_IDS.coordination,
+  QUICK_STYLE_IDS.polyhedra,
+]);
 
 /** Particle-chain nodes in trunk order. */
 const PARTICLE_CHAIN = [
@@ -94,6 +119,8 @@ const PARTICLE_CHAIN = [
 ];
 
 export const DEFAULT_UNIFORM_COLOR = "#ff8800";
+
+const POLYHEDRON_DEFAULTS = defaultParams("polyhedron_generator") as PolyhedronGeneratorParams;
 
 type Graph = { nodes: Node<PipelineNodeData>[]; edges: Edge[] };
 
@@ -119,6 +146,20 @@ function vectorOverlayNode(graph: Graph, viewportId: string): Node<PipelineNodeD
   return graph.nodes.find((n) => n.type === "vector_overlay" && ids.has(n.id));
 }
 
+/**
+ * The pipeline's own polyhedron node drawing into the viewport (the first one
+ * when there are several), skipping Quick Style's.
+ */
+function pipelinePolyhedronNode(
+  graph: Graph,
+  viewportId: string,
+): Node<PipelineNodeData> | undefined {
+  const ids = new Set(intoPort(graph.edges, viewportId, "mesh").map((e) => e.source));
+  return graph.nodes.find(
+    (n) => n.type === "polyhedron_generator" && ids.has(n.id) && !isQuickStyleId(n.id),
+  );
+}
+
 function paramsOf<T>(nodes: Node<PipelineNodeData>[], id: string): T | undefined {
   return nodes.find((n) => n.id === id)?.data.params as T | undefined;
 }
@@ -134,10 +175,16 @@ export function readQuickStyle(nodes: Node<PipelineNodeData>[], edges: Edge[]): 
   const atoms = paramsOf<ModifyParams>(nodes, QUICK_STYLE_IDS.atoms);
   const bonds = paramsOf<ModifyParams>(nodes, QUICK_STYLE_IDS.bonds);
   const labels = paramsOf<LabelGeneratorParams>(nodes, QUICK_STYLE_IDS.labels);
+  const ownPolyhedra = paramsOf<PolyhedronGeneratorParams>(nodes, QUICK_STYLE_IDS.polyhedra);
 
   const bondSrc = viewport ? bondSourceNode(graph, viewport.id) : undefined;
   const addBond = bondSrc?.type === "add_bond" ? (bondSrc.data.params as AddBondParams) : undefined;
   const vectors = viewport ? vectorOverlayNode(graph, viewport.id) : undefined;
+  const pipelinePolyhedra = viewport ? pipelinePolyhedronNode(graph, viewport.id) : undefined;
+  const polyhedra =
+    ownPolyhedra ??
+    (pipelinePolyhedra?.data.params as PolyhedronGeneratorParams | undefined) ??
+    POLYHEDRON_DEFAULTS;
 
   const foreignLabels = viewport
     ? intoPort(edges, viewport.id, "label").some((e) => e.source !== QUICK_STYLE_IDS.labels)
@@ -164,6 +211,10 @@ export function readQuickStyle(nodes: Node<PipelineNodeData>[], edges: Edge[]): 
       perspective: vp?.perspective ?? false,
       cellAxesVisible: vp?.cellAxesVisible ?? true,
       vectorScale: vectors ? (vectors.data.params as VectorOverlayParams).scale : null,
+      polyhedra: !!ownPolyhedra,
+      pipelinePolyhedra: pipelinePolyhedra ? pipelinePolyhedra.data.enabled : null,
+      polyhedronOpacity: polyhedra.opacity,
+      polyhedronEdges: polyhedra.showEdges,
     },
     available: {
       viewport: !!viewport,
@@ -222,7 +273,13 @@ function dedupeEdges(edges: Edge[]): Edge[] {
 
 function qsNode(
   id: string,
-  type: "color" | "representation" | "modify" | "label_generator",
+  type:
+    | "color"
+    | "representation"
+    | "modify"
+    | "label_generator"
+    | "coordination_generator"
+    | "polyhedron_generator",
   params: PipelineNodeData["params"],
   position: { x: number; y: number },
   previous: Node<PipelineNodeData> | undefined,
@@ -255,13 +312,11 @@ export function applyQuickStyle(
   const vpPos = viewport.position;
 
   // 1. Take every Quick Style node out; consumers fall back to the trunk. The
-  // label generator is a leaf (particle in, label out), so it is dropped with
-  // its edges rather than spliced.
+  // label generator and the polyhedra branch are leaves (particle in, label /
+  // mesh out), so they are dropped with their edges rather than spliced.
   let graph: Graph = {
-    nodes: nodes.filter((n) => n.id !== QUICK_STYLE_IDS.labels),
-    edges: edges.filter(
-      (e) => e.source !== QUICK_STYLE_IDS.labels && e.target !== QUICK_STYLE_IDS.labels,
-    ),
+    nodes: nodes.filter((n) => !LEAF_NODES.has(n.id)),
+    edges: edges.filter((e) => !LEAF_NODES.has(e.source) && !LEAF_NODES.has(e.target)),
   };
   for (const id of [...PARTICLE_CHAIN, QUICK_STYLE_IDS.bonds]) graph = spliceOut(graph, id, "in");
   let outNodes = graph.nodes;
@@ -348,7 +403,48 @@ export function applyQuickStyle(
     outEdges.push(makeEdge(QUICK_STYLE_IDS.labels, "label", viewport.id, "label"));
   }
 
-  // 4. Bond modify between the bond source and viewport.bond.
+  // 4. Polyhedra from the unstyled trunk, unless the pipeline draws its own.
+  if (style.polyhedra && trunk && current.style.pipelinePolyhedra === null) {
+    const coordination = previous.get(QUICK_STYLE_IDS.coordination);
+    const polyhedra = previous.get(QUICK_STYLE_IDS.polyhedra);
+    outNodes = [
+      ...outNodes,
+      // Keep a center / neighbor choice the user made in the Editor.
+      qsNode(
+        QUICK_STYLE_IDS.coordination,
+        "coordination_generator",
+        coordination?.data.params ?? defaultParams("coordination_generator"),
+        { x: vpPos.x - 680, y: vpPos.y - 320 },
+        coordination,
+      ),
+      qsNode(
+        QUICK_STYLE_IDS.polyhedra,
+        "polyhedron_generator",
+        {
+          ...((polyhedra?.data.params as PolyhedronGeneratorParams | undefined) ??
+            POLYHEDRON_DEFAULTS),
+          opacity: style.polyhedronOpacity,
+          showEdges: style.polyhedronEdges,
+        },
+        { x: vpPos.x - 680, y: vpPos.y - 160 },
+        polyhedra,
+      ),
+    ];
+    outEdges.push(
+      makeEdge(trunk.source, trunk.sourceHandle ?? "", QUICK_STYLE_IDS.coordination, "particle"),
+    );
+    outEdges.push(
+      makeEdge(
+        QUICK_STYLE_IDS.coordination,
+        "coordination",
+        QUICK_STYLE_IDS.polyhedra,
+        "coordination",
+      ),
+    );
+    outEdges.push(makeEdge(QUICK_STYLE_IDS.polyhedra, "mesh", viewport.id, "mesh"));
+  }
+
+  // 5. Bond modify between the bond source and viewport.bond.
   const bondEdge = intoPort(outEdges, viewport.id, "bond")[0];
   if (bondEdge && (style.bondScale !== 1 || style.bondOpacity !== 1)) {
     outNodes = [
@@ -368,9 +464,13 @@ export function applyQuickStyle(
     outEdges.push(makeEdge(QUICK_STYLE_IDS.bonds, "out", viewport.id, "bond"));
   }
 
-  // 5. Parameters that live on nodes the graph already has.
+  // 6. Parameters that live on nodes the graph already has.
   const bondSrc = bondSourceNode({ nodes: outNodes, edges: outEdges }, viewport.id);
   const vectors = vectorOverlayNode({ nodes: outNodes, edges: outEdges }, viewport.id);
+  const pipelinePolyhedra = pipelinePolyhedronNode(
+    { nodes: outNodes, edges: outEdges },
+    viewport.id,
+  );
   outNodes = outNodes.map((n) => {
     if (n.id === viewport.id) {
       const p = n.data.params as ViewportParams;
@@ -395,6 +495,26 @@ export function applyQuickStyle(
       if (p.scale === style.vectorScale) return n;
       return { ...n, data: { ...n.data, params: { ...p, scale: style.vectorScale } } };
     }
+    if (pipelinePolyhedra && n.id === pipelinePolyhedra.id && style.pipelinePolyhedra !== null) {
+      const p = n.data.params as PolyhedronGeneratorParams;
+      if (
+        n.data.enabled === style.pipelinePolyhedra &&
+        p.opacity === style.polyhedronOpacity &&
+        p.showEdges === style.polyhedronEdges
+      ) {
+        return n;
+      }
+      // Off disables just this node, as the Editor's toggle does: the
+      // coordination node feeding it, and any bonds that draws, stay.
+      return {
+        ...n,
+        data: {
+          ...n.data,
+          enabled: style.pipelinePolyhedra,
+          params: { ...p, opacity: style.polyhedronOpacity, showEdges: style.polyhedronEdges },
+        },
+      };
+    }
     return n;
   });
 
@@ -412,5 +532,6 @@ export function quickStyleDefaults(): Partial<QuickStyle> {
     bondScale: 1,
     bondOpacity: 1,
     labels: "none",
+    polyhedra: false,
   };
 }

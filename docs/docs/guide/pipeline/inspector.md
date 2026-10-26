@@ -27,6 +27,7 @@ A few global controls, applied to the whole structure:
 | **Atom size**, **Atom opacity** | adds a `modify` node (`insp-global-atoms`) |
 | **Bond width**, **Bond opacity** | adds a `modify` node on the bond stream (`insp-global-bonds`) |
 | **Bond tolerance** | the `add_bond` node's distance factor — shown only when bonds are inferred by distance |
+| **Polyhedra** (Show, Edges, Poly. opacity) | adds a `coordination_generator` → `polyhedron_generator` branch (`insp-global-coord` → `insp-global-poly`) from the main particle stream into the viewport's mesh input; if the pipeline already draws polyhedra, switches and edits its own Polyhedra node instead |
 | **Labels** (None / Element / Residue / Index) | adds a `label_generator` node (`insp-global-labels`) |
 | **Arrow scale** | the `vector_overlay` node's scale — shown only when the pipeline draws vectors |
 | **Perspective**, **Cell axes** | the `viewport` node's settings |
@@ -43,6 +44,19 @@ or an AI assistant result, or re-open a saved `.megane.json`.
 If the pipeline already carries `color` / `representation` / `modify` nodes of
 its own, the panel says how many: they also affect the look, and Quick style
 does not take them over.
+
+**Polyhedra** are drawn around the auto-detected metal and metalloid centers,
+with the anion-forming neighbors (N, O, F, P, S, Cl, …) within the
+covalent-radius cutoff as corners, completed across periodic boundaries; a
+center needs at least four neighbors. When nothing is drawn the panel shows why (for example *No
+coordination pairs found* for a structure without metal centers). To choose the
+centers or neighbors yourself, set *Center atoms* / *Neighbor atoms* on the
+`insp-global-coord` node in the **Editor** — Quick style keeps that choice. A
+pipeline that already has a Polyhedra node wired to the viewport (the *Solid*
+template, or `AddPolyhedra` in Python) gets no second set: **Show** turns that
+node on and off (like the Editor's toggle, leaving its Coordination node and
+bonds alone) and the edge and opacity controls edit it. **↺ Reset** leaves it
+as it is.
 
 ## Selections
 

@@ -123,9 +123,10 @@ class MolecularViewer(anywidget.AnyWidget):
     ).tag(sync=True)
 
     #: Show the Quick Style panel (style, color, atom size / opacity, bond
-    #: width / opacity, labels, perspective) in the top-right corner. Its
-    #: edits change the viewer's pipeline and are kept in the notebook's
-    #: widget state; calling :meth:`set_pipeline` again replaces them.
+    #: width / opacity, polyhedra, labels, perspective) in the top-right
+    #: corner. Its edits change the viewer's pipeline and are kept in the
+    #: notebook's widget state; calling :meth:`set_pipeline` again replaces
+    #: them.
     quick_style = traitlets.Bool(False).tag(sync=True)
 
     # Internal (not synced)

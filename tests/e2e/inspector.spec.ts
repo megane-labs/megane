@@ -8,8 +8,13 @@
  * state rather than pixels to stay robust against font/GL drift.
  */
 
+import { join } from "path";
+import { fileURLToPath } from "url";
 import { test, expect } from "playwright/test";
 import { waitForReady } from "./lib/setup";
+import { findNodeIdByType, removeNode } from "./lib/pipeline";
+
+const REPO_ROOT = join(fileURLToPath(new URL(".", import.meta.url)), "..", "..");
 
 test.describe("inspector: webapp", () => {
   test.beforeEach(async ({ page }) => {
@@ -152,5 +157,66 @@ test.describe("inspector: webapp", () => {
     await page.locator('[data-testid="pipeline-editor-tab-inspector"]').click();
     await panel.locator('[data-testid="quick-style-reset"]').click();
     await expect.poll(async () => (await read()).owned).toEqual([]);
+  });
+
+  test("Quick style draws coordination polyhedra and Reset removes them", async ({ page }) => {
+    // The default pipeline's demo trajectory would stamp caffeine's frames onto
+    // the perovskite; drop it before opening the fixture.
+    await removeNode(page, await findNodeIdByType(page, "load_trajectory"));
+    await page
+      .locator('input[type="file"]')
+      .first()
+      .setInputFiles(join(REPO_ROOT, "tests", "fixtures", "perovskite_srtio3.xyz"));
+    await waitForReady(page, { needsData: true, timeout: 30_000 });
+
+    await page.locator('[data-testid="pipeline-editor-tab-inspector"]').click();
+    const panel = page.locator('[data-testid="quick-style"]');
+    await expect(panel.locator('[data-testid="quick-style-polyhedra-opacity"]')).toHaveCount(0);
+    await panel.locator('[data-testid="quick-style-polyhedra"]').click();
+    await panel.locator('[data-testid="quick-style-polyhedra-edges"]').click();
+    await panel.locator('[data-testid="quick-style-polyhedra-opacity"]').fill("0.7");
+
+    const read = () =>
+      page.evaluate(() => {
+        const store = (
+          window as unknown as {
+            __megane_test_pipeline_store?: {
+              getState: () => {
+                nodes: { id: string }[];
+                viewportState: { meshes: { opacity: number; showEdges: boolean }[] };
+              };
+            };
+          }
+        ).__megane_test_pipeline_store;
+        const s = store!.getState();
+        return {
+          owned: s.nodes
+            .filter((n) => n.id.startsWith("insp-global-"))
+            .map((n) => n.id)
+            .sort(),
+          meshes: s.viewportState.meshes.map((m) => ({
+            opacity: m.opacity,
+            showEdges: m.showEdges,
+          })),
+        };
+      });
+
+    // The TiO6 and SrO12 polyhedra, completed across the cell boundary, share one mesh.
+    await expect
+      .poll(async () => (await read()).meshes)
+      .toEqual([{ opacity: 0.7, showEdges: true }]);
+    expect((await read()).owned).toEqual(["insp-global-coord", "insp-global-poly"]);
+    await expect(panel.locator('[data-testid="quick-style-polyhedra-notice"]')).toHaveCount(0);
+
+    // The branch is ordinary pipeline nodes: the Editor shows them.
+    await page.locator('[data-testid="pipeline-editor-tab-editor"]').click();
+    await expect(
+      page.locator('[data-testid="pipeline-node-polyhedron_generator"]').first(),
+    ).toBeVisible();
+
+    await page.locator('[data-testid="pipeline-editor-tab-inspector"]').click();
+    await panel.locator('[data-testid="quick-style-reset"]').click();
+    await expect.poll(async () => (await read()).owned).toEqual([]);
+    expect((await read()).meshes).toEqual([]);
   });
 });

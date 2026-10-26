@@ -1,9 +1,10 @@
 /**
  * Quick Style — a few global "how does it look" controls (style, color, atom
- * size / opacity, bond width / opacity, labels, perspective, cell axes), the
- * successor of the old Appearance panel. Every control writes pipeline nodes
- * through `setQuickStyle` (see `pipeline/quickStyle.ts`) and every value is
- * read back from the graph, so the panel and the Editor never disagree.
+ * size / opacity, bond width / opacity, polyhedra, labels, perspective, cell
+ * axes), the successor of the old Appearance panel. Every control writes
+ * pipeline nodes through `setQuickStyle` (see `pipeline/quickStyle.ts`) and
+ * every value is read back from the graph, so the panel and the Editor never
+ * disagree.
  *
  * Mounted at the top of the Inspector tab, and on its own in the Jupyter
  * widget when `MolecularViewer(quick_style=True)`. The store is passed in
@@ -15,6 +16,7 @@ import { useMemo, type CSSProperties } from "react";
 import { useStore, type StoreApi } from "zustand";
 import type { PipelineStore } from "../pipeline/store";
 import {
+  QUICK_STYLE_IDS,
   quickStyleDefaults,
   readQuickStyle,
   type QuickStyle,
@@ -156,7 +158,17 @@ export function QuickStylePanel({
     (s) => (s.viewportState.particles[0]?.source.atomLabels?.length ?? 0) > 0,
   );
   const setQuickStyle = useStore(store, (s) => s.setQuickStyle);
+  // Why Quick Style's own polyhedra draw nothing (e.g. no metal centers).
+  const polyhedraNotice = useStore(store, (s) => {
+    for (const id of [QUICK_STYLE_IDS.coordination, QUICK_STYLE_IDS.polyhedra]) {
+      const message = s.nodeErrors[id]?.[0]?.message;
+      if (message) return message;
+    }
+    return null;
+  });
   const { style, available } = useMemo(() => readQuickStyle(nodes, edges), [nodes, edges]);
+  // The pipeline's own polyhedra are switched in place; otherwise Quick Style adds its own.
+  const polyhedraOn = style.pipelinePolyhedra ?? style.polyhedra;
 
   function apply(patch: Partial<QuickStyle>) {
     setQuickStyle(patch);
@@ -295,6 +307,58 @@ export function QuickStylePanel({
           format={(v) => v.toFixed(1)}
           onChange={(v) => apply({ vectorScale: v })}
         />
+      )}
+
+      <div style={rowStyle}>
+        <span style={labelStyle}>Polyhedra</span>
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
+          <button
+            type="button"
+            data-testid="quick-style-polyhedra"
+            aria-pressed={polyhedraOn}
+            style={chipStyle(polyhedraOn)}
+            onClick={() =>
+              apply(
+                style.pipelinePolyhedra === null
+                  ? { polyhedra: !style.polyhedra }
+                  : { pipelinePolyhedra: !style.pipelinePolyhedra },
+              )
+            }
+          >
+            Show
+          </button>
+          {polyhedraOn && (
+            <button
+              type="button"
+              data-testid="quick-style-polyhedra-edges"
+              aria-pressed={style.polyhedronEdges}
+              style={chipStyle(style.polyhedronEdges)}
+              onClick={() => apply({ polyhedronEdges: !style.polyhedronEdges })}
+            >
+              Edges
+            </button>
+          )}
+        </div>
+      </div>
+      {polyhedraOn && (
+        <SliderRow
+          testId="quick-style-polyhedra-opacity"
+          label="Poly. opacity"
+          value={style.polyhedronOpacity}
+          min={0}
+          max={1}
+          step={0.05}
+          format={percent}
+          onChange={(v) => apply({ polyhedronOpacity: v })}
+        />
+      )}
+      {style.polyhedra && style.pipelinePolyhedra === null && polyhedraNotice && (
+        <div
+          data-testid="quick-style-polyhedra-notice"
+          style={{ fontSize: 11, color: "var(--megane-text-muted)" }}
+        >
+          Polyhedra: {polyhedraNotice}
+        </div>
       )}
 
       <div style={rowStyle}>
