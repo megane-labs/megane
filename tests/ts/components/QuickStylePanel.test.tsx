@@ -3,12 +3,14 @@ import { render, screen, fireEvent, cleanup, act } from "@testing-library/react"
 import { createPipelineStore } from "@/pipeline/store";
 import { QuickStylePanel } from "@/components/QuickStylePanel";
 import { QUICK_STYLE_IDS } from "@/pipeline/quickStyle";
+import { PIPELINE_TEMPLATES } from "@/pipeline/templates";
 import type { Snapshot } from "@/types";
 import type {
   AddBondParams,
   ColorParams,
   LabelGeneratorParams,
   ModifyParams,
+  PolyhedronGeneratorParams,
   ViewportParams,
 } from "@/pipeline/types";
 
@@ -136,11 +138,56 @@ describe("QuickStylePanel", () => {
     expect(node<AddBondParams>(store, "addbond-1")?.vdwScale).toBe(0.8);
   });
 
+  it("adds polyhedra, edits them, and says why none are drawn", () => {
+    const store = loadedStore();
+    render(<QuickStylePanel store={store} />);
+    expect(screen.queryByTestId("quick-style-polyhedra-opacity")).toBeNull();
+    expect(screen.queryByTestId("quick-style-polyhedra-edges")).toBeNull();
+
+    fireEvent.click(screen.getByTestId("quick-style-polyhedra"));
+    expect(screen.getByTestId("quick-style-polyhedra").getAttribute("aria-pressed")).toBe("true");
+    expect(node(store, QUICK_STYLE_IDS.coordination)).toBeDefined();
+    fireEvent.click(screen.getByTestId("quick-style-polyhedra-edges"));
+    fireEvent.change(screen.getByTestId("quick-style-polyhedra-opacity"), {
+      target: { value: "0.3" },
+    });
+    expect(node<PolyhedronGeneratorParams>(store, QUICK_STYLE_IDS.polyhedra)).toMatchObject({
+      showEdges: true,
+      opacity: 0.3,
+    });
+    // A C–O pair has no metal center to coordinate.
+    expect(screen.getByTestId("quick-style-polyhedra-notice").textContent).toMatch(
+      /No coordination pairs found/,
+    );
+
+    fireEvent.click(screen.getByTestId("quick-style-polyhedra"));
+    expect(node(store, QUICK_STYLE_IDS.polyhedra)).toBeUndefined();
+    expect(screen.queryByTestId("quick-style-polyhedra-notice")).toBeNull();
+  });
+
+  it("switches the pipeline's own polyhedra", () => {
+    const store = createPipelineStore();
+    store.setState(PIPELINE_TEMPLATES.find((t) => t.id === "solid")!.create());
+    render(<QuickStylePanel store={store} />);
+    const show = screen.getByTestId("quick-style-polyhedra");
+    expect(show.getAttribute("aria-pressed")).toBe("true");
+    fireEvent.change(screen.getByTestId("quick-style-polyhedra-opacity"), {
+      target: { value: "0.8" },
+    });
+    expect(node<PolyhedronGeneratorParams>(store, "polyhedron-1")?.opacity).toBe(0.8);
+
+    fireEvent.click(show);
+    expect(store.getState().nodes.find((n) => n.id === "polyhedron-1")?.data.enabled).toBe(false);
+    expect(node(store, QUICK_STYLE_IDS.polyhedra)).toBeUndefined();
+    expect(screen.queryByTestId("quick-style-polyhedra-opacity")).toBeNull();
+  });
+
   it("resets every control", () => {
     const store = loadedStore();
     render(<QuickStylePanel store={store} />);
     fireEvent.change(screen.getByTestId("quick-style-atom-scale"), { target: { value: "0.5" } });
     fireEvent.click(screen.getByTestId("quick-style-labels-index"));
+    fireEvent.click(screen.getByTestId("quick-style-polyhedra"));
     fireEvent.click(screen.getByTestId("quick-style-reset"));
     expect(store.getState().nodes.some((n) => n.id.startsWith("insp-global-"))).toBe(false);
   });
