@@ -133,12 +133,11 @@ jobs:
     # is never the artifact the developer tested locally. Baseline-free, so it is
     # safe on hosted runners where pixel diffs are flaky.
     #
-    # Pinned to 24.04 (noble) rather than ubuntu-latest: `playwright install
-    # --with-deps` refuses OS releases newer than the pinned Playwright knows
-    # ("Playwright does not support chromium on ubuntu26.04-x64"), so the job
-    # broke the day ubuntu-latest moved to 26.04. Noble matches the
-    # mcr.microsoft.com/playwright:v<version>-noble image e2e.yml runs in; move
-    # this together with that tag when the playwright devDependency is bumped.
+    # Pinned to 24.04 because `playwright install --with-deps` only knows the
+    # OS releases its version supports: on ubuntu-latest = 26.04, Playwright
+    # 1.56 stops with "does not support chromium on ubuntu26.04-x64". Move this
+    # forward together with the `playwright` devDependency (the E2E workflow's
+    # container tag, v<version>-noble, is pinned to 24.04 for the same reason).
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
