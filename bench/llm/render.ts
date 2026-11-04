@@ -28,6 +28,28 @@ import {
 
 export const RENDER_MAX_DIFF_PERCENT = 0.005;
 
+/**
+ * Host UI drawn over the viewer that no pipeline controls, hidden for the
+ * capture so a reference image holds only what the renderer draws.
+ *
+ * The perf HUD (`Atoms · Bonds · Draws · FPS · CPU · Mem`), the Reset View and
+ * view-axis buttons, the XR buttons and the collapsed pipeline tab all sit
+ * inside `viewer-root`, so before this every reference also recorded them.
+ * When the HUD gained its CPU and Mem fields, all 16 asserted references
+ * stopped matching while the scenes they draw had not changed, and the HUD's
+ * text anti-aliasing changes between browser builds on its own. Hidden with
+ * `visibility`, so nothing behind them moves. What a pipeline draws stays in
+ * the picture: atom labels (their own canvas) and the cell-axes inset are the
+ * renderer's.
+ */
+export const HIDDEN_HOST_CHROME_CSS = `
+  [data-testid="perf-hud"],
+  [data-testid="view-controls"],
+  [data-testid="panel-pipeline"][data-collapsed="true"] {
+    visibility: hidden !important;
+  }
+`;
+
 export interface RenderScore {
   /** Percentage of pixels differing from the reference image. */
   diffPercent: number;
@@ -131,7 +153,8 @@ async function normalizeViewer(scope: Page | Frame): Promise<void> {
  *
  * The *viewer* region rather than the full page on purpose: two pipelines that
  * draw the same molecule but lay their nodes out differently must score the
- * same, and the editor pane would make them differ.
+ * same, and the editor pane would make them differ. The host UI inside that
+ * region is hidden for the same reason (see `HIDDEN_HOST_CHROME_CSS`).
  */
 export async function renderPipeline(
   scope: Page | Frame,
@@ -141,7 +164,7 @@ export async function renderPipeline(
   await applyPipeline(scope, pipeline);
   await normalizeViewer(scope);
   const target = outPath ?? join(mkdtempSync(join(tmpdir(), "megane-bench-render-")), "render.png");
-  return await captureViewerRegion(scope, target);
+  return await captureViewerRegion(scope, target, { style: HIDDEN_HOST_CHROME_CSS });
 }
 
 /**
