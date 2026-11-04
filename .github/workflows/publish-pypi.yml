@@ -43,7 +43,12 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-      - run: pip install jupyterlab
+      # Pinned to the JupyterLab line uv.lock tests with. 4.6 builds the
+      # labextension through jupyter-builder, which (with our legacy
+      # @jupyterlab/builder devDependency) resolves core-meta 4.0.x from an
+      # unauthenticated GitHub tags API call that shared runners get
+      # rate-limited on (HTTP 403), failing the build at random.
+      - run: pip install "jupyterlab>=4.5,<4.6"
 
       - run: npm ci
       - run: npm run build

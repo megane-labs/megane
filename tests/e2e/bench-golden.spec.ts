@@ -27,8 +27,10 @@
  * boots (`imageStability.asserted: false`; see `bench/llm/golden.ts` for what
  * was measured and why).
  *
- * Webapp host only; `captureViewerRegion` crops host chrome away, so the
- * references are properties of the renderer rather than of any host's window.
+ * Webapp host only; `captureViewerRegion` crops the host window away and
+ * `renderPipeline` hides the viewer's own UI overlay (perf HUD, view buttons),
+ * so the references are properties of the renderer rather than of any host's
+ * window.
  */
 
 import { mkdtempSync } from "node:fs";

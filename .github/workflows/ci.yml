@@ -294,7 +294,8 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.14"
-      - run: pip install jupyterlab maturin
+      # Same JupyterLab pin as publish-pypi.yml (see the comment there).
+      - run: pip install "jupyterlab>=4.5,<4.6" maturin
       - run: npm ci
       - run: npm run build
       - run: maturin sdist --out dist

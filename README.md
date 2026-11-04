@@ -33,7 +33,7 @@
 
 ## Features
 
-- **1M+ Atoms at 60fps** — GPU billboard impostor rendering (ray-cast spheres and cylinders) scales from small molecules to massive complexes in real time. Large XTC and LAMMPS dump trajectories are decoded frame by frame on demand.
+- **1M+ Atoms at 60fps** — GPU billboard impostor rendering (ray-cast spheres and cylinders) scales from small molecules to massive complexes in real time. Large trajectories (XTC, DCD, AMBER NetCDF, LAMMPS dump, ASE .traj) are decoded frame by frame on demand.
 - **Runs Everywhere** — Jupyter widget, JupyterLab extension, standalone web app (`megane serve`), React component (npm), and VS Code extension. Rust-based parsers for 26 formats (PDB, GRO, XYZ, MOL/SDF, MOL2, CIF, mmCIF, CML, LAMMPS data, AMBER topology, GROMACS topology, CHARMM/NAMD PSF, XTC, DCD, ASE .traj, LAMMPS dump, AMBER NetCDF, VASP, Molden, XCrySDen XSF, JCAMP-DX, Chem3D XML, Odyssey, CASTEP magres, GAMESS output, CASTEP phonon) shared between Python (PyO3) and browser (WASM) — parse once, run anywhere.
 - **Visual Pipeline Editor** — Build visualization workflows by wiring nodes or let the AI generator build them from natural language. 24 node types with 10 typed data channels flowing through color-coded edges. Load multiple structures with layer-based rendering to compare systems side by side. Draw atoms, licorice, lines, cartoon, molecular surfaces, or an illustrative style, and restyle a layer from the Quick Style panel without editing the graph.
 - **Megane Builder** — A structure editor next to the viewer (`/builder.html` in `megane serve`, the Megane panel in VS Code's activity bar and JupyterLab's left sidebar, and `megane.Builder()` in notebooks): add, delete, move and re-element atoms, draw bonds, sketch molecules in Ketcher (embedded in 3D by RDKit), and build bulk crystals, supercells and slabs. Save as XYZ / PDB / MOL / CIF / POSCAR — also available from Python as `megane.save_structure()`. Python structure generators (packmol liquid boxes, polymer chains, solvation) plug into its *Tools* menu as MCP tool servers, and its *Flow* mode wires molecules and those tools into a model as blocks, like the viewer's pipeline editor.
@@ -44,7 +44,7 @@
 
 Megane renders over **1 million atoms at 60fps** in the browser. Atoms and bonds are GPU-accelerated billboard impostors at every atom count — screen-aligned quads ray-cast into spheres and cylinders in the fragment shader. No desktop app, no plugin — just a browser tab.
 
-In the web app, JupyterLab, and VS Code, files are parsed in a Web Worker, and XTC and LAMMPS dump trajectories and multi-frame XYZ / PDB files of 8 MB or more are decoded frame by frame on demand, so you can scrub through thousands of frames without reading everything into memory (DCD and AMBER NetCDF are decoded in full). The `megane serve` backend also exposes a binary WebSocket protocol (`/ws`) for trajectory streaming, consumed by the Streaming pipeline node; the bundled page parses in the browser instead.
+In the web app, JupyterLab, and VS Code, files are parsed in a Web Worker, and trajectories (XTC, DCD, AMBER NetCDF, LAMMPS dump), multi-frame XYZ / PDB files and ASE `.traj` files of 8 MB or more stay in their file and are decoded frame by frame on demand, so you can scrub through thousands of frames without reading everything into memory. The `megane serve` backend also exposes a binary WebSocket protocol (`/ws`) for trajectory streaming, consumed by the Streaming pipeline node; the bundled page parses in the browser instead.
 
 ### Anywhere
 

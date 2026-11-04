@@ -265,8 +265,16 @@ export async function captureFullPage(
  * the capture without waiting for the host to lay out again, and VS Code's
  * notebook webview catches up asynchronously, so the same view came out up
  * to 300 px off from one run to the next.
+ *
+ * `opts.style` is a stylesheet Playwright applies for this screenshot only
+ * (and removes afterwards), for callers that need part of the viewer's own
+ * overlay left out of the picture.
  */
-export async function captureViewerRegion(scope: Page | Frame, outPath: string): Promise<Buffer> {
+export async function captureViewerRegion(
+  scope: Page | Frame,
+  outPath: string,
+  opts: { style?: string } = {},
+): Promise<Buffer> {
   if ("evaluate" in scope && typeof (scope as Page).screenshot === "function") {
     await stabilizeUi(scope as Page);
   }
@@ -288,7 +296,12 @@ export async function captureViewerRegion(scope: Page | Frame, outPath: string):
     tick();
   });
   try {
-    return await target.screenshot({ path: outPath, animations: "disabled", caret: "hide" });
+    return await target.screenshot({
+      path: outPath,
+      animations: "disabled",
+      caret: "hide",
+      style: opts.style,
+    });
   } finally {
     await scope
       .evaluate(() => {

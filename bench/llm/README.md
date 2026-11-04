@@ -206,9 +206,9 @@ this suite exists to catch.
 
 ### Making a render mean something
 
-A picture is ground truth only if the same pipeline draws it again. Two things
-had to be pinned down before that was true, and `renderPipeline` now does both
-before every capture:
+A picture is ground truth only if the same pipeline draws it again. Three things
+had to be pinned down before that was true, and `renderPipeline` now does all
+three before every capture:
 
 - **Re-fit the camera.** Applying a pipeline does not re-frame the scene, and the
   Viewport keeps its zoom when a new snapshot has the same topology as the last,
@@ -221,8 +221,16 @@ before every capture:
   pane's width is part of the projection. Collapsing takes the inset to zero and
   takes the editor out of the screenshot, which is what makes the "two pipelines
   laid out differently must score the same" rule above actually hold.
+- **Hide the viewer's own UI.** The perf HUD, the Reset View and view-axis
+  buttons, the XR buttons and the collapsed pipeline tab are drawn inside the
+  viewer region but no pipeline controls them, so the capture hides them
+  (`HIDDEN_HOST_CHROME_CSS`). Before it did, adding the HUD's CPU and Mem
+  fields broke all 16 asserted references at once while the scenes they draw
+  had not changed, and the HUD's text anti-aliasing also shifts between browser
+  builds. Atom labels and the cell-axes inset are drawn by the renderer and
+  stay in the picture.
 
-Neither is enough for every case, and the remainder is not something this
+None of these is enough for every case, and the remainder is not something this
 harness can fix. A handful of cases render one of exactly _two_ pictures
 depending on the session, differing by 2.5–13 %. Across four independent boots
 of those pipelines the store's viewport state is bit-identical (same atom count,

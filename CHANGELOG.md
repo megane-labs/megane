@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+## [0.19.0] - 2026-11-04
+
 ### Added
 
 - **Polyhedra in Quick Style.** The Inspector's *Quick style* (and the Jupyter widget's `quick_style=True` panel) has a *Polyhedra* row: **Show** draws coordination polyhedra around the structure's metal and metalloid centers, with **Edges** and an opacity slider. It adds an `insp-global-coord` → `insp-global-poly` branch (Coordination → Polyhedra) from the main particle stream into the viewport's mesh input, which *Reset* removes again; a center / neighbor choice made on those nodes in the Editor is kept. A pipeline that already draws polyhedra (the *Solid* template, an `AddPolyhedra` pipeline) gets no second set: **Show** switches its own Polyhedra node on and off and the other controls edit it. When nothing is drawn the panel shows why (e.g. *No coordination pairs found*).
