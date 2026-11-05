@@ -1289,6 +1289,14 @@ class TestPipelineJsonImport:
         node2: LoadTrajectory = next(n for n, _ in pipe2._nodes.values() if isinstance(n, LoadTrajectory))
         assert node2.dcd == "run.dcd"
 
+    def test_load_trajectory_lammps_dump_named_by_keyword_round_trip(self):
+        """A LAMMPS dump named ``dump.<name>`` comes back as a LAMMPS dump."""
+        pipe = Pipeline()
+        pipe.add_node(LoadTrajectory(lammpstrj="dump.melt"))
+        pipe2 = Pipeline.from_dict(pipe.to_dict())
+        node2: LoadTrajectory = next(n for n, _ in pipe2._nodes.values() if isinstance(n, LoadTrajectory))
+        assert node2.lammpstrj == "dump.melt"
+
     def test_load_trajectory_extxyz_round_trip(self):
         """LoadTrajectory with an extended XYZ (.extxyz) survives to_dict → from_dict."""
         pipe = Pipeline()
@@ -1614,6 +1622,14 @@ class TestViewTrajWrapper:
         node_types = [cfg["type"] for _, cfg in pipe._nodes.values()]
         assert "load_structure" in node_types
         assert "load_trajectory" in node_types
+        assert viewer.total_frames > 0
+
+    def test_auto_detects_lammps_dump_named_by_keyword(self):
+        # LAMMPS's own naming, ``dump.<name>``, is a self-contained dump too.
+        viewer = view_traj(str(FIXTURES / "dump.water"))
+        pipe = viewer._pipeline_ref
+        traj = next(cfg for _, cfg in pipe._nodes.values() if cfg["type"] == "load_trajectory")
+        assert traj["fileName"] == str(FIXTURES / "dump.water")
         assert viewer.total_frames > 0
 
     def test_returns_molecular_viewer_traj(self):

@@ -148,6 +148,10 @@ declare module "@megane/hosts/classifyStandaloneFile" {
   export function siblingTopologyName(fileName: string): string | null;
 }
 
+declare module "@megane/hosts/lammpsPrefixFiles" {
+  export function isForeignLammpsPrefixFile(fileName: string, head: Uint8Array): boolean;
+}
+
 declare module "@megane/styles/megane.css";
 
 declare module "@megane/tour/useTour" {

@@ -1,4 +1,6 @@
 import { describe, it, expect } from "vitest";
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 
 import {
   FACTORY_NAME,
@@ -10,7 +12,17 @@ import {
   STRUCTURE_FILETYPES_TEXT,
   STRUCTURE_FILETYPE_NAMES_BINARY,
   STRUCTURE_FILETYPE_NAMES_TEXT,
+  LAMMPS_PREFIX_FILETYPES,
+  MEGANE_EXTENSIONS,
+  lammpsPrefixPattern,
+  withLammpsPrefixPatterns,
 } from "../../../jupyterlab-megane/src/filetypes";
+
+const LAMMPS_CASES = (
+  JSON.parse(
+    readFileSync(resolve(__dirname, "../../fixtures/lammps_prefix_names.json"), "utf8"),
+  ) as { cases: Array<{ name: string; ext: string | null }> }
+).cases;
 
 describe("jupyterlab filetypes", () => {
   it("declares three distinct non-empty factory names", () => {
@@ -207,5 +219,53 @@ describe("jupyterlab filetypes", () => {
     expect(STRUCTURE_FILETYPE_NAMES_BINARY).toEqual(STRUCTURE_FILETYPES_BINARY.map((f) => f.name));
     expect(STRUCTURE_FILETYPE_NAMES_TEXT).toHaveLength(23);
     expect(STRUCTURE_FILETYPE_NAMES_BINARY).toHaveLength(4);
+  });
+});
+
+describe("LAMMPS data.* / dump.* patterns", () => {
+  const patterned = withLammpsPrefixPatterns(STRUCTURE_FILETYPES_TEXT);
+  const patternOf = (name: string) =>
+    new RegExp(patterned.find((ft) => ft.name === name)!.pattern!);
+  // JupyterLab matches the pattern against the basename of a "/" path.
+  const basename = (name: string) => name.split(/[\\/]/).pop()!;
+
+  it("agree with the shared case table (src/parsers/fileNames.ts lammpsPrefixExt)", () => {
+    const data = patternOf("megane-lammps-data");
+    const dump = patternOf("megane-lammps-dump");
+    for (const { name, ext } of LAMMPS_CASES) {
+      expect(data.test(basename(name)), name).toBe(ext === ".data");
+      expect(dump.test(basename(name)), name).toBe(ext === ".dump");
+    }
+  });
+
+  it("leave names ending in another file type's extension alone, in any case", () => {
+    const pattern = new RegExp(lammpsPrefixPattern("data", [".json", ".tar.gz"]));
+    expect(pattern.test("data.json")).toBe(false);
+    expect(pattern.test("data.JSON")).toBe(false);
+    expect(pattern.test("data.run.json")).toBe(false);
+    expect(pattern.test("data.tar.gz")).toBe(false);
+    expect(pattern.test("data.jsonl")).toBe(true);
+    expect(pattern.test("DATA.peptide")).toBe(true);
+  });
+
+  it("match any data.<name> when no extension is known", () => {
+    const pattern = new RegExp(lammpsPrefixPattern("dump", []));
+    expect(pattern.test("dump.melt")).toBe(true);
+    expect(pattern.test("dump.")).toBe(false);
+    expect(pattern.test("xdump.melt")).toBe(false);
+  });
+
+  it("are given to the LAMMPS file types only, leaving the shared arrays untouched", () => {
+    const withPattern = patterned.filter((ft) => ft.pattern && ft.name !== "megane-vasp");
+    expect(withPattern.map((ft) => ft.name).sort()).toEqual(
+      Object.values(LAMMPS_PREFIX_FILETYPES).sort(),
+    );
+    const lammpsData = STRUCTURE_FILETYPES_TEXT.find((ft) => ft.name === "megane-lammps-data")!;
+    expect(lammpsData.pattern).toBeUndefined();
+  });
+
+  it("lists every Megane extension, lower-cased", () => {
+    expect(MEGANE_EXTENSIONS).toEqual(expect.arrayContaining([".pdb", ".traj", ".megane.json"]));
+    for (const ext of MEGANE_EXTENSIONS) expect(ext).toBe(ext.toLowerCase());
   });
 });

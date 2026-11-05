@@ -15,7 +15,7 @@ import type { Snapshot, Frame, TrajectoryMeta, VectorChannel, ScalarChannel } fr
 import { deserializeScalarChannels, deserializeVectorChannels } from "./vectorChannels";
 import { labelsFromText } from "./labels";
 import { perfMark, perfMeasure } from "../perf";
-import type { TrajectoryKind } from "./fileNames";
+import { structureExtFromFileName, type TrajectoryKind } from "./fileNames";
 
 export interface StructureParseResult {
   snapshot: Snapshot;
@@ -1687,7 +1687,8 @@ export async function parsePdbBonds(text: string, nAtoms: number): Promise<Uint3
 /** Extract atom labels from a file (structure format or plain text). Main-thread. */
 export async function extractLabelsFromFile(file: File, nAtoms: number): Promise<string[]> {
   const text = await file.text();
-  const ext = file.name.toLowerCase().match(/\.[^.]+$/)?.[0] ?? "";
+  // `data.peptide` (LAMMPS's prefix naming) resolves to `.data`.
+  const ext = structureExtFromFileName(file.name, "");
 
   let labels: string[];
   if (ext === ".txt") {

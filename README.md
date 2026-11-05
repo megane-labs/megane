@@ -56,7 +56,7 @@ One codebase, every environment.
 | **JupyterLab extension** | Open any supported structure, trajectory, volumetric, or spectrum file — plus `.megane.json` pipelines — straight from the file browser | `pip install megane` |
 | **Standalone web app** | `megane serve` in the browser | `pip install megane` |
 | **React component (npm)** | `<MeganeViewer />` component | `npm install megane-viewer` |
-| **VS Code extension** | Custom editor for the same file types, registered by extension and by VASP basename (`POSCAR`/`CONTCAR`/`XDATCAR`) | VS Code Marketplace (`hodakamori.vscode-megane`) |
+| **VS Code extension** | Custom editor for the same file types, registered by extension, by VASP basename (`POSCAR`/`CONTCAR`/`XDATCAR`) and by LAMMPS's leading `data.` / `dump.` | VS Code Marketplace (`hodakamori.vscode-megane`) |
 
 For a per-platform breakdown of supported formats and UI features (including known gaps), see [Platform Support](https://megane-labs.github.io/megane/platform-support).
 
@@ -194,12 +194,12 @@ function App() {
 | XYZ | `.xyz`, `.jxyz`, `.extxyz` | Cartesian coordinate format, incl. multi-frame and `Lattice=` extended XYZ. `.jxyz` (Jmol) and `.extxyz` (ASE extended XYZ) are second extensions for the same format |
 | MOL/SDF | `.mol`, `.sdf` | MDL Molfile / SDfile (V2000 and V3000) |
 | MOL2 | `.mol2` | Tripos MOL2 (aromatic bonds, optional `CRYSIN` unit cell; only the first molecule of a multi-molecule file is read) |
-| LAMMPS data | `.data`, `.lammps` | LAMMPS data file |
+| LAMMPS data | `.data`, `.lammps`, `data.*` | LAMMPS data file. LAMMPS's own `data.<name>` naming is matched by filename too |
 | CIF | `.cif` | Crystallographic Information File |
 | mmCIF | `.mmcif` | Macromolecular CIF (PDBx/mmCIF) |
 | AMBER topology | `.prmtop` | AMBER parameter/topology file (atom names, elements, bonds) |
 | ASE .traj | `.traj` | ASE trajectory (ULM binary format) — self-contained with elements, bonds, and frames |
-| LAMMPS dump | `.lammpstrj`, `.dump`, `.trj` | Opens standalone as a multi-frame structure (the integer atom `type` stands in for the element); can also be attached to a topology, see Trajectory formats |
+| LAMMPS dump | `.lammpstrj`, `.dump`, `.trj`, `dump.*` | Opens standalone as a multi-frame structure (the integer atom `type` stands in for the element); can also be attached to a topology, see Trajectory formats |
 | XCrySDen | `.xsf`, `.axsf` | XCrySDen structure; `.axsf` is a multi-frame animation with optional per-frame cell and per-atom forces |
 | CML | `.cml` | Chemical Markup Language (Open Babel / Avogadro / ChemDraw), with explicit bonds and optional crystal cell |
 | VASP | `POSCAR`, `CONTCAR`, `XDATCAR`, `.vasp` | VASP crystal structure; XDATCAR is multi-frame. Matched by filename as well as extension, since the standard names carry no extension |
@@ -246,7 +246,7 @@ the terminal `SpectrumPlot` node instead of reaching the 3D renderer.
 | XTC | `.xtc` | GROMACS compressed trajectory |
 | DCD | `.dcd` | CHARMM/NAMD binary trajectory |
 | AMBER NetCDF | `.nc` | AMBER NetCDF trajectory |
-| LAMMPS dump | `.lammpstrj`, `.dump`, `.trj` | LAMMPS dump trajectory |
+| LAMMPS dump | `.lammpstrj`, `.dump`, `.trj`, `dump.*` | LAMMPS dump trajectory |
 
 ## Development
 

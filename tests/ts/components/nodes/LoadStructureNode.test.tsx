@@ -136,8 +136,8 @@ describe("LoadStructureNode", () => {
     expect(handler).toHaveBeenCalledWith("ls1", file);
   });
 
-  it.each(["POSCAR", "CONTCAR", "XDATCAR_run2"])(
-    "drag-and-drop accepts the extensionless VASP file %s",
+  it.each(["POSCAR", "CONTCAR", "XDATCAR_run2", "data.peptide", "dump.melt"])(
+    "drag-and-drop accepts the VASP / LAMMPS file named %s",
     (filename) => {
       const updateNodeParams = vi.fn();
       const handler = vi.fn();

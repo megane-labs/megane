@@ -59,16 +59,58 @@ BINARY_PARSERS: dict[str, str] = {
     ".traj": "parse_traj",
 }
 
+# Trajectory extensions (``TRAJECTORY_EXTS`` in fileNames.ts; the core
+# registry's trajectory formats). A structure-only reader has no use for them,
+# but a LAMMPS prefix name ending in one is that format, not LAMMPS.
+TRAJECTORY_EXTS: frozenset[str] = frozenset({".xtc", ".lammpstrj", ".dump", ".trj", ".dcd", ".nc"})
+
 # VASP writes POSCAR / CONTCAR / XDATCAR with no extension (often suffixed:
 # POSCAR.bak, CONTCAR_relaxed); matched on the basename, as in fileNames.ts.
 _VASP_BARE_NAME = re.compile(r"^(poscar|contcar|xdatcar)([-_.].*)?$")
 
+# LAMMPS names files by a leading keyword: data.peptide, dump.melt.
+_LAMMPS_PREFIX_NAME = re.compile(r"^(data|dump)\.(.+)$")
+
+
+def _basename(path: str) -> str:
+    # Either separator, so a Windows path names the same file on every OS.
+    return re.split(r"[\\/]", path)[-1]
+
+
+def lammps_prefix_ext(path: str) -> str | None:
+    """The extension a LAMMPS file named by its leading keyword dispatches under.
+
+    ``".data"`` for ``data.<name>`` (``read_data data.peptide``), ``".dump"``
+    for ``dump.<name>`` (``dump 1 all atom 100 dump.melt``), ``None`` for any
+    other name — including one that also ends in an extension Megane reads
+    (``dump.xyz`` is an XYZ file, ``data.lammps`` LAMMPS data by extension).
+
+    Mirrors ``megane_core::formats::lammps_prefix_extension`` and
+    ``lammpsPrefixExt`` in ``src/parsers/fileNames.ts``; all of them are tested
+    against ``tests/fixtures/lammps_prefix_names.json``.
+    """
+    name = _basename(path).lower()
+    match = _LAMMPS_PREFIX_NAME.match(name)
+    if match is None:
+        return None
+    last = name[name.rindex(".") :]
+    if last in TEXT_PARSERS or last in BINARY_PARSERS or last in TRAJECTORY_EXTS:
+        return None
+    return ".data" if match.group(1) == "data" else ".dump"
+
 
 def structure_ext(path: str) -> str:
-    """The extension ``path`` is dispatched under (``.vasp`` for bare VASP names)."""
-    name = pathlib.Path(path).name.lower()
+    """The extension ``path`` is dispatched under.
+
+    ``.vasp`` for bare VASP names, ``.data`` / ``.dump`` for LAMMPS's prefix
+    names (``data.peptide``, ``dump.melt``), else the last extension.
+    """
+    name = _basename(path).lower()
     if _VASP_BARE_NAME.match(name):
         return ".vasp"
+    lammps = lammps_prefix_ext(name)
+    if lammps is not None:
+        return lammps
     return pathlib.Path(name).suffix
 
 

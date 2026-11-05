@@ -43,10 +43,10 @@ Legend:
 | MOL2 | `.mol2` | ✓ | API | ✓ | ✓ | ✓ | ✓ |
 | CIF | `.cif` | ✓ | API | ✓ | ✓ | ✓ | ✓ |
 | mmCIF | `.mmcif` | ✓ | API | ✓ | ✓ | ✓ | API |
-| LAMMPS data | `.data`, `.lammps` | ✓ | API | ✓ | ✓ | ✓ | ✓ |
+| LAMMPS data | `.data`, `.lammps`, `data.*` | ✓ | API | ✓ | ✓ | ✓ | ✓ |
 | AMBER topology | `.prmtop` | ✓ | API | ✓ | ✓ | ✓ | API |
 | ASE trajectory | `.traj` | ✓ | API | ✓ | ✓ | ✓ | ✓ |
-| LAMMPS dump | `.lammpstrj`, `.dump`, `.trj` | ✓ | API | ✓ | ✓ | ✓ | ✓ |
+| LAMMPS dump | `.lammpstrj`, `.dump`, `.trj`, `dump.*` | ✓ | API | ✓ | ✓ | ✓ | ✓ |
 | XCrySDen | `.xsf`, `.axsf` | ✓ | API | ✓ | ✓ | ✓ | ✓ |
 | CML | `.cml` | ✓ | API | ✓ | ✓ | ✓ | ✓ |
 | VASP | `POSCAR`, `CONTCAR`, `XDATCAR`, `.vasp` | ✓ | API | ✓ | ✓ | ✓ | ✓ |
@@ -124,8 +124,32 @@ aromatic `ca` is carbon, not calcium. The per-atom partial charge column is kept
 as the `charge` scalar channel when every atom has one and they are not all
 zero.
 
-Note: **VASP** files are the one format Megane dispatches by **filename**, not
-only by extension: `POSCAR`, `CONTCAR`, and `XDATCAR` are conventionally written
+Note: **LAMMPS** names files by a **leading** keyword as often as by an
+extension — `read_data data.peptide`, `write_data data.final`,
+`dump 1 all atom 100 dump.melt` — so a name that starts with `data.` opens as
+LAMMPS data and one that starts with `dump.` as a LAMMPS dump, as if it ended in
+`.data` / `.dump`. A name that also ends in an extension Megane reads is that
+format instead (`dump.xyz`, what LAMMPS's `dump xyz` style writes, is XYZ;
+`data.lammps` is LAMMPS data by its extension). The rule is
+`megane_core::formats::lammps_prefix_extension`, mirrored by `lammpsPrefixExt`
+(`src/parsers/fileNames.ts`) and `lammps_prefix_ext`
+(`python/megane/parsers/dispatch.py`) and pinned by one case table,
+`tests/fixtures/lammps_prefix_names.json`; it covers Standalone drag-drop and the
+Load Structure / Load Trajectory nodes (`dump.*` attaches onto a topology like
+`.lammpstrj`), `.megane.json` companions, the Python API and `megane serve`, and
+the default bond source (`data.*` uses the file's Bonds section). VS Code
+(`customEditors` selectors `data.*` / `dump.*`) and JupyterLab (an
+`IFileType.pattern` on the LAMMPS data / dump file types) open these names by
+default, but a leading `data.` is common outside LAMMPS too (`data.json`,
+`data.csv`, `dump.sql`): JupyterLab's pattern skips names ending in an extension
+another file type claims, and on both hosts, when the name was all that made
+Megane the default, the first 64 KiB are checked (`src/hosts/lammpsPrefixFiles.ts`:
+a data file states `N atoms` or `xlo xhi` after its comment line, a dump opens
+with an `ITEM:` line) and anything else is handed back to the editor that would
+otherwise open it. The Standalone file dialog cannot filter by a leading name
+either, so drag these files onto the node (or switch the picker to "All Files").
+
+Note: **VASP** files are dispatched by **filename**, not only by extension: `POSCAR`, `CONTCAR`, and `XDATCAR` are conventionally written
 with no extension at all. `src/parsers/fileNames.ts` maps those bare names (and
 their common suffixed forms — `POSCAR.bak`, `CONTCAR_relaxed`, `XDATCAR-run2`)
 onto the synthetic `.vasp` extension every other dispatch point already
@@ -287,7 +311,7 @@ failure (and the Load Spectrum node does the mirror-image check).
 |---|---|:---:|:---:|:---:|:---:|:---:|:---:|
 | XTC | `.xtc` | ✓ | API | ✓¹ | ✓¹ | ✓¹ | ✓ |
 | DCD | `.dcd` | ✓ | API | ✓¹ | ✓¹ | ✓¹ | ✓ |
-| LAMMPS dump | `.lammpstrj`, `.dump`, `.trj` | ✓ | API | ✓ | ✓ | ✓ | ✓ |
+| LAMMPS dump | `.lammpstrj`, `.dump`, `.trj`, `dump.*` | ✓ | API | ✓ | ✓ | ✓ | ✓ |
 | AMBER NetCDF | `.nc` | ✓ | API | ✓¹ | ✓¹ | ✓¹ | ✓ |
 
 ¹ Trajectory-only formats need a topology already loaded. Opening a `.xtc` /

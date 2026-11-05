@@ -34,7 +34,11 @@ import { readBlobText } from "@megane/parsers/fileBytes";
 
 type ViewArgs = ConstructorParameters<typeof MeganeReactView>;
 
-function mount(path: string, contentsGet = vi.fn(async () => ({ content: "" }))) {
+function mount(
+  path: string,
+  contentsGet = vi.fn(async () => ({ content: "" })),
+  { payload = "payload", onForeignFile }: { payload?: string; onForeignFile?: () => void } = {},
+) {
   const context = {
     path,
     // The raw model holds no content; reading it would be a bug.
@@ -53,9 +57,9 @@ function mount(path: string, contentsGet = vi.fn(async () => ({ content: "" })))
   // The document's own bytes come raw from the server's /files/ endpoint.
   const request = vi.fn(async (_url: string) => ({
     ok: true,
-    arrayBuffer: async () => new TextEncoder().encode("payload").buffer,
+    arrayBuffer: async () => new TextEncoder().encode(payload).buffer,
   })) as unknown as ViewArgs[2];
-  const view = new MeganeReactView(context, contents, request) as unknown as {
+  const view = new MeganeReactView(context, contents, request, onForeignFile) as unknown as {
     render: () => JSX.Element;
   };
   render(view.render());
@@ -89,6 +93,28 @@ describe("MeganeDocWidget standalone load path", () => {
     expect(root.getAttribute("data-state")).toBe("error");
     expect(root.textContent).toContain("density.cube is a volumetric grid");
     expect(loadFile).not.toHaveBeenCalled();
+  });
+
+  it("hands a data.* file that is not LAMMPS back to the host, loading nothing", async () => {
+    const onForeignFile = vi.fn();
+    mount("tables/data.csv", undefined, { payload: "a,b\n1,2\n", onForeignFile });
+    await waitFor(() => expect(onForeignFile).toHaveBeenCalledTimes(1));
+    expect(screen.getByTestId("megane-doc-root").getAttribute("data-state")).toBe("loading");
+    expect(loadFile).not.toHaveBeenCalled();
+    expect(loadXtc).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["sims/data.peptide", "LAMMPS data\n\n3 atoms\n0 10 xlo xhi\n"],
+    ["sims/dump.melt", "ITEM: TIMESTEP\n0\n"],
+  ])("opens the LAMMPS file %s as a structure", async (path, payload) => {
+    const onForeignFile = vi.fn();
+    mount(path, undefined, { payload, onForeignFile });
+    const root = await settledState();
+    expect(root.getAttribute("data-state")).toBe("ready");
+    expect(onForeignFile).not.toHaveBeenCalled();
+    expect(loadFile).toHaveBeenCalledTimes(1);
+    expect(loadFile.mock.calls[0][0].name).toBe(path.split("/").pop());
   });
 
   it("loads applied templates through the same local loader the file opened with", async () => {

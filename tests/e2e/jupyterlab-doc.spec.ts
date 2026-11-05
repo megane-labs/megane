@@ -68,6 +68,11 @@ const CRN_PIPELINE_JSON = {
   ],
 };
 
+/** LAMMPS files named by their leading keyword (`lammpsPrefixExt`). */
+const LAMMPS_PREFIX_FILES = ["data.water", "dump.water"];
+/** A `data.*` name no JupyterLab file type claims, holding something else. */
+const FOREIGN_DATA_FILE = "data.notes";
+
 let lab: JupyterLabHandle | null = null;
 
 test.describe.configure({ timeout: 180_000 });
@@ -81,6 +86,11 @@ test.beforeAll(async () => {
     copyFileSync(join(REPO, "tests", "fixtures", f.file), join(NOTEBOOK_DIR, f.file));
   }
   writeFileSync(join(NOTEBOOK_DIR, CRN_PIPELINE), JSON.stringify(CRN_PIPELINE_JSON, null, 2));
+  for (const f of LAMMPS_PREFIX_FILES) {
+    copyFileSync(join(REPO, "tests", "fixtures", f), join(NOTEBOOK_DIR, f));
+  }
+  writeFileSync(join(NOTEBOOK_DIR, FOREIGN_DATA_FILE), "Run notes, not a LAMMPS data file.\n");
+  writeFileSync(join(NOTEBOOK_DIR, "data.json"), '{"atoms": 3}\n');
   lab = await startJupyterLab({
     port: PORT,
     token: TOKEN,
@@ -128,6 +138,56 @@ for (const f of FORMATS) {
     ).toHaveText(f.file);
   });
 }
+
+for (const file of LAMMPS_PREFIX_FILES) {
+  test(`DocWidget opens LAMMPS's ${file} by its leading keyword`, async ({ page }) => {
+    await openLabFile(page, { port: PORT, token: TOKEN, file });
+    await assertDomContract(page, [
+      ...defaultViewerContract({ expectedAtoms: 3, context: "jupyterlab-doc" }),
+    ]);
+    await expect(page.locator('[data-testid="load-structure-filename"]').first()).toHaveText(file);
+  });
+}
+
+/**
+ * The LAMMPS `data.*` pattern leaves a name another file type claims to that
+ * file type, and the DocWidget hands a `data.*` that is not LAMMPS back to
+ * the editor JupyterLab would otherwise use (`jupyterlab-megane/src/handOff.ts`).
+ */
+test("data.* files that are not LAMMPS open in JupyterLab's own editors", async ({ page }) => {
+  await page.addInitScript(() => {
+    (globalThis as { __MEGANE_TEST__?: boolean }).__MEGANE_TEST__ = true;
+  });
+  await page.goto(
+    `http://127.0.0.1:${PORT}/lab/tree/${FOREIGN_DATA_FILE}?token=${TOKEN}&test=1&reset`,
+    { waitUntil: "domcontentloaded" },
+  );
+  await page.waitForSelector("#jp-main-dock-panel", { timeout: 30_000 });
+
+  // Megane claims the name, finds it is not LAMMPS and steps aside.
+  const editor = page.locator(".jp-FileEditor");
+  await expect(editor).toBeVisible({ timeout: 60_000 });
+  await expect(editor).toContainText("Run notes, not a LAMMPS data file.");
+  await expect(page.locator('[data-testid="megane-doc-root"]')).toHaveCount(0);
+
+  const firstFileTypes = await page.evaluate(() => {
+    const app = (
+      window as unknown as {
+        jupyterapp: { docRegistry: { getFileTypesForPath(p: string): Array<{ name: string }> } };
+      }
+    ).jupyterapp;
+    return ["data.water", "dump.water", "data.json", "data.notes"].map(
+      (p) => app.docRegistry.getFileTypesForPath(p)[0]?.name,
+    );
+  });
+  expect(firstFileTypes).toEqual([
+    "megane-lammps-data",
+    "megane-lammps-dump",
+    // JupyterLab's own `.json` file type keeps `data.json`.
+    "json",
+    "megane-lammps-data",
+  ]);
+});
 
 /** Open the Templates menu and apply the template with this id. */
 async function applyTemplate(page: Page, templateId: string): Promise<void> {

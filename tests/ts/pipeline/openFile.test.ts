@@ -93,8 +93,18 @@ describe("usePipelineStore.openFile — single structure file", () => {
 
   // `.mol2` and `.prmtop` were missing from openFile's own copy of the list,
   // so a JupyterLab `.megane.json` document could not merge them in.
-  it.each(["POSCAR", "CONTCAR_relaxed", "XDATCAR", "MgO.vasp", "ligand.mol2", "complex.prmtop"])(
-    "classifies the VASP file %s as a structure open",
+  it.each([
+    "POSCAR",
+    "CONTCAR_relaxed",
+    "XDATCAR",
+    "MgO.vasp",
+    "ligand.mol2",
+    "complex.prmtop",
+    // LAMMPS's leading-keyword names (a dump opens standalone, like .lammpstrj).
+    "data.peptide",
+    "dump.melt",
+  ])(
+    "classifies the extension-less or prefix-named file %s as a structure open",
     async (filename) => {
       mockParseStructureFile.mockResolvedValueOnce({
         snapshot: makeSnapshot(8, true),
@@ -861,5 +871,13 @@ describe("defaultBondSourceForFile — canonical policy mirror", () => {
     for (const f of ["a.xyz", "b.gro", "c.cif", "d.traj", "POSCAR", "e.lammpstrj", "f.mol2"]) {
       expect(defaultBondSourceForFile(f), f).toBe("distance");
     }
+  });
+
+  // Mirrors the Rust `default_bond_source` cases for LAMMPS's prefix names.
+  it("reads a data.* name as LAMMPS data, a dump.* name as a bond-less dump", () => {
+    expect(defaultBondSourceForFile("data.peptide")).toBe("structure");
+    expect(defaultBondSourceForFile("runs/DATA.Spce")).toBe("structure");
+    expect(defaultBondSourceForFile("dump.melt")).toBe("distance");
+    expect(defaultBondSourceForFile("data.xyz")).toBe("distance");
   });
 });

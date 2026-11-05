@@ -1,0 +1,26 @@
+LAMMPS data file for water (SPC model)
+
+3 atoms
+2 atom types
+2 bonds
+1 bond types
+
+0.0 10.0 xlo xhi
+0.0 10.0 ylo yhi
+0.0 10.0 zlo zhi
+
+Masses
+
+1 15.9994
+2 1.008
+
+Atoms # full
+
+1 1 1 -0.8476 5.000 5.000 5.000
+2 1 2  0.4238 5.757 5.587 5.000
+3 1 2  0.4238 4.243 5.587 5.000
+
+Bonds
+
+1 1 1 2
+2 1 1 3

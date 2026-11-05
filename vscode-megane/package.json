@@ -1,7 +1,7 @@
 {
   "name": "vscode-megane",
   "displayName": "Megane - Molecular Viewer",
-  "description": "View and build molecular structure files (PDB, GRO, XYZ (incl. extended XYZ .extxyz and Jmol .jxyz), MOL, SDF, MOL2, CIF, mmCIF, LAMMPS data, AMBER prmtop, ASE traj, XTC, LAMMPS dump, DCD, AMBER NetCDF, VASP POSCAR/CONTCAR/XDATCAR, CML, Molden, XCrySDen XSF, Chem3D XML, Odyssey xodydata/odydata, CASTEP magres, GAMESS output, CASTEP phonon), volumetric grids (Gaussian CUBE, OpenDX), and JCAMP-DX spectra (.jdx, .jcamp) with Megane",
+  "description": "View and build molecular structure files (PDB, GRO, XYZ (incl. extended XYZ .extxyz and Jmol .jxyz), MOL, SDF, MOL2, CIF, mmCIF, LAMMPS data, AMBER prmtop, ASE traj, XTC, LAMMPS dump (also LAMMPS-style data.* / dump.* file names), DCD, AMBER NetCDF, VASP POSCAR/CONTCAR/XDATCAR, CML, Molden, XCrySDen XSF, Chem3D XML, Odyssey xodydata/odydata, CASTEP magres, GAMESS output, CASTEP phonon), volumetric grids (Gaussian CUBE, OpenDX), and JCAMP-DX spectra (.jdx, .jcamp) with Megane",
   "version": "0.19.0",
   "publisher": "hodakamori",
   "license": "MIT",
@@ -97,6 +97,12 @@
           },
           {
             "filenamePattern": "XDATCAR*"
+          },
+          {
+            "filenamePattern": "data.*"
+          },
+          {
+            "filenamePattern": "dump.*"
           },
           {
             "filenamePattern": "*.jxyz"
@@ -224,7 +230,7 @@
       "explorer/context": [
         {
           "command": "megane.builder.openFile",
-          "when": "resourceExtname =~ /^\\.(pdb|gro|xyz|extxyz|jxyz|mol|sdf|mol2|cif|mmcif|data|lammps|lammpstrj|dump|trj|traj|vasp|molden|cml|xsf|axsf|c3xml|xodydata|odydata|magres|gamess|phonon)$/i || resourceFilename =~ /^(POSCAR|CONTCAR|XDATCAR)/",
+          "when": "resourceExtname =~ /^\\.(pdb|gro|xyz|extxyz|jxyz|mol|sdf|mol2|cif|mmcif|data|lammps|lammpstrj|dump|trj|traj|vasp|molden|cml|xsf|axsf|c3xml|xodydata|odydata|magres|gamess|phonon)$/i || resourceFilename =~ /^(POSCAR|CONTCAR|XDATCAR)/ || resourceFilename =~ /^(data|dump)\\../i",
           "group": "navigation@90"
         }
       ],

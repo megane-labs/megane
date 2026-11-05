@@ -34,6 +34,11 @@ interface StructureCase {
   mime: string;
   /** Expected atom count, or undefined to skip the strict count assertion. */
   expectedAtoms?: number;
+  /**
+   * Compare against another case's baseline: the fixture holds the same bytes
+   * under another name, so it must render exactly like that case.
+   */
+  baseline?: string;
 }
 
 const STRUCTURE_CASES: StructureCase[] = [
@@ -87,6 +92,22 @@ const STRUCTURE_CASES: StructureCase[] = [
   // The `.trj` alias is exercised alongside the canonical `.lammpstrj`.
   { name: "lammpstrj-water", file: "water.lammpstrj", mime: "text/plain", expectedAtoms: 3 },
   { name: "trj-water", file: "water.trj", mime: "text/plain", expectedAtoms: 3 },
+  // LAMMPS's leading-keyword names (`lammpsPrefixExt`): the same bytes as
+  // water.lammps / water.lammpstrj, so they must draw the same picture.
+  {
+    name: "lammps-data-prefix",
+    file: "data.water",
+    mime: "text/plain",
+    expectedAtoms: 3,
+    baseline: "lammps-water",
+  },
+  {
+    name: "lammps-dump-prefix",
+    file: "dump.water",
+    mime: "text/plain",
+    expectedAtoms: 3,
+    baseline: "lammpstrj-water",
+  },
   // XCrySDen: a static CRYSTAL cell and an ANIMSTEPS animation whose extra
   // frames feed the playback timeline.
   { name: "xsf-si-diamond", file: "si_diamond.xsf", mime: "text/plain", expectedAtoms: 8 },
@@ -190,7 +211,7 @@ test.describe("format loading: webapp drag-drop", () => {
         c.file,
       );
 
-      await expectViewerRegionMatch(page, PLATFORM, `${c.name}-viewer`);
+      await expectViewerRegionMatch(page, PLATFORM, `${c.baseline ?? c.name}-viewer`);
     });
   }
 });

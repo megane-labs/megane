@@ -93,10 +93,27 @@ describe("contents helpers", () => {
 
   it("offers structure files only, matching the VS Code Explorer entry", () => {
     expect(BUILDER_EXTENSIONS).toEqual(VSCODE_EXTENSIONS);
-    for (const p of ["x/caffeine.SDF", "w.xyz", "POSCAR", "CONTCAR_relaxed", "a/b.cif"]) {
+    for (const p of [
+      "x/caffeine.SDF",
+      "w.xyz",
+      "POSCAR",
+      "CONTCAR_relaxed",
+      "a/b.cif",
+      // LAMMPS's leading-keyword names.
+      "sims/data.peptide",
+      "dump.melt",
+    ]) {
       expect(isBuilderPath(p)).toBe(true);
     }
-    for (const p of ["traj.xtc", "grid.cube", "notes.txt", "pipe.megane.json", "XYZ"]) {
+    for (const p of [
+      "traj.xtc",
+      "grid.cube",
+      "notes.txt",
+      "pipe.megane.json",
+      "XYZ",
+      "mydata.peptide",
+      "data",
+    ]) {
       expect(isBuilderPath(p)).toBe(false);
     }
   });

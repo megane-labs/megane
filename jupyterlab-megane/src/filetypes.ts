@@ -83,6 +83,9 @@ export const STRUCTURE_FILETYPES_TEXT: DocumentRegistry.IFileType[] = [
     contentType: "file",
   },
   {
+    // LAMMPS also names files by a leading keyword (`data.peptide`); the
+    // plugin gives this entry and `megane-lammps-dump` a `pattern` for those
+    // names at activation (`withLammpsPrefixPatterns`).
     name: "megane-lammps-data",
     displayName: "LAMMPS data",
     extensions: [".data", ".lammps"],
@@ -254,4 +257,66 @@ export const STRUCTURE_FILETYPES_BINARY: DocumentRegistry.IFileType[] = [
 ];
 
 export const STRUCTURE_FILETYPE_NAMES_TEXT = STRUCTURE_FILETYPES_TEXT.map((f) => f.name);
+
+/** Every extension a Megane file type claims (lower-case, with the dot). */
+export const MEGANE_EXTENSIONS: readonly string[] = [
+  ...STRUCTURE_FILETYPES_TEXT,
+  ...STRUCTURE_FILETYPES_BINARY,
+  PIPELINE_FILETYPE,
+].flatMap((ft) => (ft.extensions ?? []).map((ext) => ext.toLowerCase()));
+
+/** The file type each LAMMPS leading keyword names (`data.peptide`, `dump.melt`). */
+export const LAMMPS_PREFIX_FILETYPES: Readonly<Record<string, string>> = {
+  data: "megane-lammps-data",
+  dump: "megane-lammps-dump",
+};
+
+/** `text` as a regex source matching it in any letter case (`ab.c` → `[Aa][Bb]\.[Cc]`). */
+function anyCase(text: string): string {
+  return [...text]
+    .map((c) => {
+      const lower = c.toLowerCase();
+      const upper = c.toUpperCase();
+      if (lower !== upper) return `[${upper}${lower}]`;
+      return c.replace(/[.*+?^${}()|[\]\\/]/g, "\\$&");
+    })
+    .join("");
+}
+
+/**
+ * The `IFileType.pattern` for LAMMPS's leading-keyword names, `keyword.<name>`
+ * (see `lammpsPrefixExt` in `src/parsers/fileNames.ts`): the keyword in any
+ * case, followed by a name that does not end in any of `knownExtensions`. A
+ * name ending in an extension some file type already claims keeps opening the
+ * way that file type says — `dump.xyz` as XYZ, `data.json` and `data.csv` in
+ * JupyterLab's own viewers. JupyterLab compiles the pattern without flags and
+ * tries it before matching extensions, hence the spelled-out letter cases.
+ */
+export function lammpsPrefixPattern(keyword: string, knownExtensions: Iterable<string>): string {
+  const exts = [...new Set([...knownExtensions].map((e) => e.toLowerCase().replace(/^\./, "")))]
+    .filter((e) => e.length > 0)
+    .sort((a, b) => b.length - a.length);
+  const exclude = exts.length ? `(?!(?:.*\\.)?(?:${exts.map(anyCase).join("|")})$)` : "";
+  return `^${anyCase(keyword)}\\.${exclude}.+$`;
+}
+
+/**
+ * `fileTypes` with the LAMMPS data / dump entries given the
+ * `lammpsPrefixPattern` for their keyword. `otherExtensions` are the
+ * extensions other file types in the registry already claim; Megane's own
+ * (`MEGANE_EXTENSIONS`) are always excluded too, so the name's extension wins
+ * whenever Megane reads it.
+ */
+export function withLammpsPrefixPatterns(
+  fileTypes: readonly DocumentRegistry.IFileType[],
+  otherExtensions: Iterable<string> = [],
+): DocumentRegistry.IFileType[] {
+  const known = [...MEGANE_EXTENSIONS, ...otherExtensions];
+  return fileTypes.map((ft) => {
+    const keyword = Object.keys(LAMMPS_PREFIX_FILETYPES).find(
+      (k) => LAMMPS_PREFIX_FILETYPES[k] === ft.name,
+    );
+    return keyword ? { ...ft, pattern: lammpsPrefixPattern(keyword, known) } : ft;
+  });
+}
 export const STRUCTURE_FILETYPE_NAMES_BINARY = STRUCTURE_FILETYPES_BINARY.map((f) => f.name);

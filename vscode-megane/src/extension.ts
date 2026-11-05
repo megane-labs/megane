@@ -1,8 +1,12 @@
 import * as vscode from "vscode";
 import * as os from "os";
 import * as path from "path";
+import { promises as fsp } from "fs";
 import { webcrypto } from "crypto";
 import { createBuilderToolsHost, type BuilderToolsHost } from "./builderToolsHost";
+// Dependency-free shared modules (no DOM, no WASM), bundled in by esbuild.
+import { lammpsPrefixExt } from "../../src/parsers/fileNames";
+import { isForeignLammpsPrefixFile, LAMMPS_SNIFF_BYTES } from "../../src/hosts/lammpsPrefixFiles";
 
 interface SerializedPipelineNode {
   id: string;
@@ -153,8 +157,9 @@ interface SaveFileMessage {
  * structure formats with coordinates. Trajectory-only formats (XTC, DCD,
  * NetCDF), topologies without coordinates (prmtop), volumetric grids and
  * spectra are left out. VASP's extension-less POSCAR / CONTCAR / XDATCAR are
- * matched by name (`BUILDER_FILENAME_PREFIXES`). The `explorer/context` menu's
- * `when` clause in package.json mirrors both lists (checked by the tests).
+ * matched by name (`BUILDER_FILENAME_PREFIXES`), as are LAMMPS's `data.*` /
+ * `dump.*` (`BUILDER_LAMMPS_PREFIXES`). The `explorer/context` menu's `when`
+ * clause in package.json mirrors the three lists (checked by the tests).
  */
 export const BUILDER_EXTENSIONS = [
   "pdb",
@@ -186,6 +191,72 @@ export const BUILDER_EXTENSIONS = [
   "phonon",
 ];
 export const BUILDER_FILENAME_PREFIXES = ["POSCAR", "CONTCAR", "XDATCAR"];
+/** LAMMPS's leading-keyword names (`data.peptide`, `dump.melt`); see `lammpsPrefixExt`. */
+export const BUILDER_LAMMPS_PREFIXES = ["data", "dump"];
+
+/**
+ * The first `bytes` bytes of the file at `uri`: a ranged read for a file on
+ * disk, else the whole file through the workspace filesystem (which has no
+ * ranged read) cut down to size.
+ */
+export async function readFileHead(uri: vscode.Uri, bytes: number): Promise<Uint8Array> {
+  if (uri.scheme === "file") {
+    try {
+      const handle = await fsp.open(uri.fsPath, "r");
+      try {
+        const buffer = new Uint8Array(bytes);
+        const { bytesRead } = await handle.read(buffer, 0, bytes, 0);
+        return buffer.subarray(0, bytesRead);
+      } finally {
+        await handle.close();
+      }
+    } catch {
+      // Not reachable through Node (e.g. a virtual workspace): read it whole.
+    }
+  }
+  return (await vscode.workspace.fs.readFile(uri)).subarray(0, bytes);
+}
+
+/**
+ * Give a file back to the editor VS Code would open it in without megane:
+ * the structure viewer's `data.*` / `dump.*` selectors (LAMMPS's file naming)
+ * also catch `data.json`, `data.csv` or `dump.sql`, and a glob cannot tell
+ * those apart by name. When the name is all that made the viewer the default
+ * and the file does not start like the LAMMPS format that name claims
+ * (`isForeignLammpsPrefixFile`), the file is reopened in the default text
+ * editor — a `*.megane.json` pipeline in the pipeline viewer — and the viewer's
+ * tab is closed. Returns whether it did; nothing is read for any other name.
+ */
+export async function handOffForeignPrefixFile(
+  uri: vscode.Uri,
+  webviewPanel: vscode.WebviewPanel,
+): Promise<boolean> {
+  const filename = path.basename(uri.fsPath);
+  if (!lammpsPrefixExt(filename)) return false;
+  let head: Uint8Array;
+  try {
+    head = await readFileHead(uri, LAMMPS_SNIFF_BYTES);
+  } catch {
+    return false; // unreadable: the viewer reports the read error itself
+  }
+  if (!isForeignLammpsPrefixFile(filename, head)) return false;
+  const editor = filename.toLowerCase().endsWith(".megane.json")
+    ? "megane.pipelineViewer"
+    : "default";
+  // Not awaited: this runs inside resolveCustomEditor, and the open replaces
+  // the very editor that is still being resolved.
+  void Promise.resolve(
+    vscode.commands.executeCommand("vscode.openWith", uri, editor, webviewPanel.viewColumn),
+  ).then(
+    () => webviewPanel.dispose(),
+    (err: unknown) => {
+      void vscode.window.showErrorMessage(
+        `Could not reopen ${filename}: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    },
+  );
+  return true;
+}
 
 /**
  * The GROMACS topology to look for next to an opened `.gro` file: same stem,
@@ -544,6 +615,9 @@ export class MeganeEditorProvider implements vscode.CustomReadonlyEditorProvider
     webviewPanel: vscode.WebviewPanel,
     _token: vscode.CancellationToken,
   ): Promise<void> {
+    // `data.json` caught by the LAMMPS `data.*` selector goes back to the text editor.
+    if (await handOffForeignPrefixFile(document.uri, webviewPanel)) return;
+
     const webview = webviewPanel.webview;
     const mediaDir = vscode.Uri.joinPath(this.context.extensionUri, "media");
 

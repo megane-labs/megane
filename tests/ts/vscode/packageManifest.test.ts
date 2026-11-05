@@ -69,6 +69,11 @@ describe("vscode-megane package.json", () => {
         "POSCAR*",
         "CONTCAR*",
         "XDATCAR*",
+        // LAMMPS names data files and dumps by a leading keyword
+        // (`data.peptide`, `dump.melt`); a `data.json` the glob also catches is
+        // handed back to the text editor (`handOffForeignPrefixFile`).
+        "data.*",
+        "dump.*",
       ].sort(),
     );
   });
@@ -83,6 +88,10 @@ describe("vscode-megane package.json", () => {
   it("mentions the volumetric grids in the marketplace description", () => {
     expect(manifest.description).toContain("Gaussian CUBE");
     expect(manifest.description).toContain("OpenDX");
+  });
+
+  it("mentions LAMMPS's data.* / dump.* file names in the marketplace description", () => {
+    expect(manifest.description).toContain("data.* / dump.*");
   });
 
   it("mentions VASP in the marketplace description", () => {
