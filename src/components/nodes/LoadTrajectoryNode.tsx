@@ -15,7 +15,9 @@ import { FileDrop } from "./form";
 import { errorTextStyle } from "./formStyles";
 import { useRemoteFilePick } from "./useRemoteFilePick";
 import { useRef, useCallback } from "react";
-import { TRAJECTORY_ACCEPT, TRAJECTORY_EXTS } from "../../parsers/fileNames";
+// LAMMPS dumps named by their leading keyword (`dump.melt`) are not in the
+// accept list's extensions; drag-drop still takes them via `matchesTrajectoryName`.
+import { matchesTrajectoryName, TRAJECTORY_ACCEPT, TRAJECTORY_EXTS } from "../../parsers/fileNames";
 
 /**
  * Event bus for trajectory loading.
@@ -38,10 +40,7 @@ export function LoadTrajectoryNode({ id, data }: NodeProps<Node<PipelineNodeData
   const params = data.params as LoadTrajectoryParams;
   const inputRef = useRef<HTMLInputElement>(null);
 
-  const acceptName = useCallback(
-    (name: string) => TRAJECTORY_EXTS.some((ext) => name.toLowerCase().endsWith(ext)),
-    [],
-  );
+  const acceptName = useCallback((name: string) => matchesTrajectoryName(name), []);
 
   const handleFile = useCallback(
     (file: File) => {

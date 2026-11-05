@@ -18,13 +18,15 @@ Double-click any supported file in the JupyterLab file browser and Megane opens 
 
 | File type | Extensions |
 |-----------|-----------|
-| Structures | `.pdb`, `.gro`, `.xyz`, `.jxyz`, `.extxyz`, `.mol`, `.sdf`, `.mol2`, `.cif`, `.mmcif`, `.data`, `.lammps`, `.prmtop`, `.traj`, `.lammpstrj`, `.dump`, `.trj`, `POSCAR`, `CONTCAR`, `XDATCAR`, `.vasp`, `.molden`, `.xsf`, `.axsf`, `.cml`, `.c3xml`, `.xodydata`, `.odydata`, `.magres`, `.gamess`, `.phonon` |
+| Structures | `.pdb`, `.gro`, `.xyz`, `.jxyz`, `.extxyz`, `.mol`, `.sdf`, `.mol2`, `.cif`, `.mmcif`, `.data`, `.lammps`, `data.*`, `.prmtop`, `.traj`, `.lammpstrj`, `.dump`, `.trj`, `dump.*`, `POSCAR`, `CONTCAR`, `XDATCAR`, `.vasp`, `.molden`, `.xsf`, `.axsf`, `.cml`, `.c3xml`, `.xodydata`, `.odydata`, `.magres`, `.gamess`, `.phonon` |
 | Trajectories | `.xtc`, `.dcd`, `.nc` |
 | Volumetric grids | `.cube`, `.cub`, `.dx` |
 | Spectra | `.jdx`, `.jcamp` |
 | Pipelines | `.megane.json` |
 
 The VASP names are matched as filenames rather than extensions, so `POSCAR`, `POSCAR.orig` and friends all open.
+
+LAMMPS names files by a leading keyword as well as by extension, so `data.*` (a LAMMPS data file, e.g. `data.peptide`) and `dump.*` (a dump, e.g. `dump.melt`) open too. A name that ends in an extension another file type claims keeps opening the way it did — `dump.xyz` as XYZ, `data.json` and `data.csv` in JupyterLab's own viewers — and a `data.*` / `dump.*` file whose contents turn out not to be LAMMPS is reopened in the editor JupyterLab would otherwise use.
 
 `.dx` is shared by OpenDX grids and JCAMP-DX spectra, and a JupyterLab file type can only match on the name, so `.dx` is registered as an OpenDX grid. Load a JCAMP-DX `.dx` spectrum through the **Load Spectrum** node instead, which tells the two apart by content.
 

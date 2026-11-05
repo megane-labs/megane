@@ -13,6 +13,7 @@
  * `#pipeline=` share-link hash is stripped from the reported page URL.
  */
 
+import { lammpsPrefixExt } from "./parsers/fileNames";
 import { isE2ETestMode } from "./testMode";
 
 type Gtag = (...args: unknown[]) => void;
@@ -92,11 +93,15 @@ export function trackEvent(name: string, params: Record<string, string | number>
 
 /**
  * Lower-cased extension of a file name, e.g. `"pdb"` or `"megane.json"`.
- * Only the extension is ever reported, never the name itself.
+ * Only the extension is ever reported, never the name itself — so a LAMMPS
+ * file named by its leading keyword (`data.peptide`, `dump.melt`) reports the
+ * format it opens as (`"data"`, `"dump"`), not the system name after the dot.
  */
 export function fileFormat(fileName: string): string {
   const lower = fileName.toLowerCase();
   if (lower.endsWith(".megane.json")) return "megane.json";
+  const lammps = lammpsPrefixExt(lower);
+  if (lammps) return lammps.slice(1);
   const dot = lower.lastIndexOf(".");
   if (dot <= 0 || dot === lower.length - 1) return "unknown";
   return lower.slice(dot + 1);

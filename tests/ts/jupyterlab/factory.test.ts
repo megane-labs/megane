@@ -72,7 +72,28 @@ describe("MeganeDocFactory", () => {
     (factory as unknown as Exposed).createNewWidget(fakeContext);
 
     expect(MeganeReactView).toHaveBeenCalledTimes(1);
-    expect(MeganeReactView).toHaveBeenCalledWith(fakeContext, fakeContents, fakeRequest);
+    expect(MeganeReactView).toHaveBeenCalledWith(
+      fakeContext,
+      fakeContents,
+      fakeRequest,
+      expect.any(Function),
+    );
+  });
+
+  it("hands the widget to onForeignFile when its view reports a foreign file", () => {
+    const onForeignFile = vi.fn();
+    const factory = new MeganeDocFactory(factoryOptions, fakeContents, fakeRequest, onForeignFile);
+    const widget = (factory as unknown as Exposed).createNewWidget(fakeContext);
+    const report = vi.mocked(MeganeReactView).mock.calls[0][3] as () => void;
+    report();
+    expect(onForeignFile).toHaveBeenCalledWith(widget);
+  });
+
+  it("ignores a foreign-file report when no handler was given", () => {
+    const factory = new MeganeDocFactory(factoryOptions, fakeContents, fakeRequest);
+    (factory as unknown as Exposed).createNewWidget(fakeContext);
+    const report = vi.mocked(MeganeReactView).mock.calls[0][3] as () => void;
+    expect(() => report()).not.toThrow();
   });
 
   it("createNewWidget returns a DocumentWidget with the megane iconClass", () => {

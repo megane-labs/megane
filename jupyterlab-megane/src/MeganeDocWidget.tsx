@@ -17,6 +17,7 @@ import { prewarmParseWorker } from "@megane/parsers/structure";
 import { ensureWasmUrl } from "./wasmLoader";
 import { readServerFileBytes, type ServerRequest } from "./serverFileBytes";
 import { classifyStandaloneFile, siblingTopologyName } from "@megane/hosts/classifyStandaloneFile";
+import { isForeignLammpsPrefixFile } from "@megane/hosts/lammpsPrefixFiles";
 import { createSubscription, createFrameSubscription } from "./frameSubscription";
 import { TabStoreCache } from "./tabStoreCache";
 import type { SelectionState, Measurement } from "@megane/types";
@@ -35,6 +36,11 @@ interface DocBodyProps {
   onFrameChange?: (frame: number) => void;
   onSelectionChange?: (selection: SelectionState) => void;
   onMeasurementChange?: (measurement: Measurement | null) => void;
+  /**
+   * The file was opened only for its LAMMPS-style name (`data.*` / `dump.*`)
+   * and is not LAMMPS: the host reopens it in another editor.
+   */
+  onForeignFile?: () => void;
 }
 
 type LoadState = "loading" | "ready" | { error: string };
@@ -47,6 +53,7 @@ function DocBody({
   onFrameChange,
   onSelectionChange,
   onMeasurementChange,
+  onForeignFile,
 }: DocBodyProps): JSX.Element {
   const local = useMeganeLocal();
   const [state, setState] = useState<LoadState>("loading");
@@ -69,6 +76,15 @@ function DocBody({
         await context.ready;
         perfMark("megane:open:contextReady");
         if (token.cancelled) return;
+        const filename = context.path.split("/").pop() ?? "structure";
+        const bytes = await bytesRequest;
+        if (token.cancelled) return;
+        // A `data.json` the LAMMPS `data.*` file type pattern caught goes back
+        // to JupyterLab's own editor, before the shared store is touched.
+        if (isForeignLammpsPrefixFile(filename, bytes)) {
+          onForeignFile?.();
+          return;
+        }
         // Reset the global pipeline store before loading. The same
         // singleton store is shared across every JupyterLab document
         // tab, so a previously-opened .megane.json (or a failed open)
@@ -78,11 +94,9 @@ function DocBody({
         // had no load_structure node.
         storeCache.claim();
         usePipelineStore.getState().reset();
-        const filename = context.path.split("/").pop() ?? "structure";
         // Raw bytes for every format: the shared parser dispatches by
         // extension to text or binary (e.g. ASE .traj) decoding.
-        const file = fileFromBytes(await bytesRequest, filename);
-        if (token.cancelled) return;
+        const file = fileFromBytes(bytes, filename);
         perfMark("megane:open:decoded");
         // Spectra and volumetric grids have nothing to render standalone, and
         // trajectory-only formats (XTC, DCD, NetCDF) need a topology loaded
@@ -137,7 +151,7 @@ function DocBody({
     // object on every render, so including it would re-fire this effect
     // on every state update and re-parse the file in a loop.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [context, contents, request, storeCache],
+    [context, contents, request, storeCache, onForeignFile],
   );
 
   useEffect(() => {
@@ -217,10 +231,15 @@ export class MeganeReactView extends ReactWidget {
     this._measurementSub.emit(measurement);
   };
 
+  /**
+   * @param onForeignFile Called when the file was opened only for its
+   *   LAMMPS-style name and is not LAMMPS (see `DocBodyProps.onForeignFile`).
+   */
   constructor(
     private readonly context: DocumentRegistry.Context,
     private readonly contents: Contents.IManager,
     private readonly request: ServerRequest,
+    private readonly onForeignFile?: () => void,
   ) {
     super();
     this.addClass("megane-jupyter-doc");
@@ -249,6 +268,7 @@ export class MeganeReactView extends ReactWidget {
           onFrameChange={this._handleFrameChange}
           onSelectionChange={this._handleSelectionChange}
           onMeasurementChange={this._handleMeasurementChange}
+          onForeignFile={this.onForeignFile}
         />
       </ErrorBoundary>
     );

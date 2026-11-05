@@ -24,7 +24,14 @@
 import type { StoreApi } from "zustand";
 import type { Node, Edge } from "@xyflow/react";
 import { parseStructureFile, parseTopBonds, parsePsfBonds } from "../parsers/structure";
-import { basename, isVaspBareName, STRUCTURE_EXTS, TRAJECTORY_EXTS } from "../parsers/fileNames";
+import {
+  basename,
+  isVaspBareName,
+  LAMMPS_DATA_EXT,
+  lammpsPrefixExt,
+  STRUCTURE_EXTS,
+  TRAJECTORY_EXTS,
+} from "../parsers/fileNames";
 import { parseTrajectoryByName } from "../parsers/trajectoryDispatch";
 import { parseSpectrum } from "../parsers/spectrum";
 import { loadVectorFileData } from "../logic/vectorSourceLogic";
@@ -94,7 +101,9 @@ const FILE_BOND_EXTS = [
 
 export function defaultBondSourceForFile(filename: string): "structure" | "distance" {
   const lower = filename.toLowerCase();
-  return FILE_BOND_EXTS.some((ext) => lower.endsWith(ext)) ? "structure" : "distance";
+  if (FILE_BOND_EXTS.some((ext) => lower.endsWith(ext))) return "structure";
+  // LAMMPS data named by its leading keyword (`data.peptide`).
+  return lammpsPrefixExt(filename) === LAMMPS_DATA_EXT ? "structure" : "distance";
 }
 
 /**
@@ -177,6 +186,9 @@ function classify(filename: string): FileKind {
   for (const ext of STRUCTURE_EXTS) if (lower.endsWith(ext)) return "structure";
   for (const ext of PDB_ALIAS_EXTS) if (lower.endsWith(ext)) return "structure";
   if (isVaspBareName(lower)) return "structure";
+  // LAMMPS's `data.*` / `dump.*` names: both resolve to structure extensions
+  // (a dump opens standalone, like `.lammpstrj` above).
+  if (lammpsPrefixExt(lower)) return "structure";
   for (const ext of TRAJECTORY_EXTS) if (lower.endsWith(ext)) return "trajectory";
   return "unknown";
 }

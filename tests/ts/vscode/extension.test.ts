@@ -88,6 +88,7 @@ const { mockState } = vi.hoisted(() => ({
       provider: { getChildren(): unknown[]; getTreeItem(x: unknown): unknown };
     }>,
     showOpenDialog: vi.fn<(options?: unknown) => Promise<FakeUri[] | undefined>>(),
+    executeCommand: vi.fn<(...args: unknown[]) => Promise<unknown>>(),
     workspaceFolders: undefined as Array<{ uri: FakeUri }> | undefined,
     activeTabInput: undefined as { uri?: FakeUri } | undefined,
     activeTextEditorUri: undefined as FakeUri | undefined,
@@ -215,6 +216,7 @@ vi.mock("vscode", () => {
     },
     StatusBarAlignment: { Left: 1, Right: 2 },
     commands: {
+      executeCommand: mockState.executeCommand,
       registerCommand: vi.fn((command: string, handler: (...args: unknown[]) => unknown) => {
         mockState.registeredCommands.push({ command, handler });
         return { dispose: vi.fn() };
@@ -240,6 +242,9 @@ import {
   MeganeBuilderPanels,
   BUILDER_EXTENSIONS,
   BUILDER_FILENAME_PREFIXES,
+  BUILDER_LAMMPS_PREFIXES,
+  handOffForeignPrefixFile,
+  readFileHead,
   PIPELINE_COMPANION_FILE_PARAMS,
   readPipelineCompanions,
   toArrayBuffer,
@@ -328,6 +333,7 @@ beforeEach(() => {
   mockState.showInformationMessage.mockReset();
   mockState.showErrorMessage.mockReset();
   mockState.showOpenDialog.mockReset();
+  mockState.executeCommand.mockReset();
   mockState.createdPanels.length = 0;
   mockState.treeProviders.length = 0;
   mockState.workspaceFolders = undefined;
@@ -701,6 +707,140 @@ describe("createFrameStatusBarItem", () => {
     expect(item).toBeDefined();
     expect(mockState.statusBarItems).toHaveLength(1);
     expect(mockState.statusBarItems[0].tooltip).toBe("Current trajectory frame");
+  });
+});
+
+describe("MeganeEditorProvider — LAMMPS data.* / dump.* names", () => {
+  const FIXTURES = resolve(__dirname, "../../fixtures");
+  const encode = (text: string) => new TextEncoder().encode(text);
+
+  /** A viewer panel that can also be closed, as the hand-off does. */
+  function closablePanel() {
+    const made = makeWebviewPanel();
+    const panel = Object.assign(made.panel, { dispose: vi.fn(), viewColumn: 2 });
+    return { ...made, panel };
+  }
+
+  beforeEach(() => {
+    activate(makeContext("/ext") as unknown as Parameters<typeof activate>[0]);
+  });
+
+  it("reopens a data.* file that is not LAMMPS in the default text editor", async () => {
+    mockState.executeCommand.mockResolvedValue(undefined);
+    mockState.readFile.mockResolvedValue(encode('{"rows": [1, 2, 3]}'));
+    const uri = VscodeUri.file("/work/data.json");
+    const { panel } = closablePanel();
+
+    await getProvider("megane.structureViewer").resolveCustomEditor(
+      { uri, dispose: vi.fn() },
+      panel,
+      {},
+    );
+    await vi.waitFor(() => expect(panel.dispose).toHaveBeenCalled());
+
+    expect(mockState.executeCommand).toHaveBeenCalledWith("vscode.openWith", uri, "default", 2);
+    // The viewer itself never loads.
+    expect(panel.webview.html).toBe("");
+    expect(panel.webview.onDidReceiveMessage).not.toHaveBeenCalled();
+  });
+
+  it("reopens a non-LAMMPS dump.* the same way", async () => {
+    mockState.executeCommand.mockResolvedValue(undefined);
+    mockState.readFile.mockResolvedValue(
+      encode("-- PostgreSQL database dump\nCREATE TABLE t ();\n"),
+    );
+    const uri = VscodeUri.file("/work/dump.sql");
+    const { panel } = closablePanel();
+    await getProvider("megane.structureViewer").resolveCustomEditor(
+      { uri, dispose: vi.fn() },
+      panel,
+      {},
+    );
+    expect(mockState.executeCommand).toHaveBeenCalledWith("vscode.openWith", uri, "default", 2);
+  });
+
+  it("sends a data.*.megane.json pipeline to the pipeline viewer", async () => {
+    mockState.executeCommand.mockResolvedValue(undefined);
+    mockState.readFile.mockResolvedValue(encode('{"version": 3, "nodes": [], "edges": []}'));
+    const uri = VscodeUri.file("/work/data.megane.json");
+    const { panel } = closablePanel();
+    await getProvider("megane.structureViewer").resolveCustomEditor(
+      { uri, dispose: vi.fn() },
+      panel,
+      {},
+    );
+    expect(mockState.executeCommand).toHaveBeenCalledWith(
+      "vscode.openWith",
+      uri,
+      "megane.pipelineViewer",
+      2,
+    );
+  });
+
+  it.each(["data.water", "dump.water"])(
+    "opens the LAMMPS file %s in the viewer, reading only its head to check",
+    async (name) => {
+      const path = resolve(FIXTURES, name);
+      mockState.readFile.mockResolvedValueOnce(new Uint8Array(readFileSync(path)));
+      const { panel, fireMessage } = closablePanel();
+      await getProvider("megane.structureViewer").resolveCustomEditor(
+        { uri: VscodeUri.file(path), dispose: vi.fn() },
+        panel,
+        {},
+      );
+      expect(mockState.executeCommand).not.toHaveBeenCalled();
+      expect(panel.dispose).not.toHaveBeenCalled();
+      expect(panel.webview.html).not.toBe("");
+      // The check read the file from disk; the workspace filesystem is read
+      // once, for the document itself.
+      expect(mockState.readFile).toHaveBeenCalledTimes(1);
+      fireMessage({ type: "ready" });
+      expect(panel.webview.postMessage).toHaveBeenCalledWith(
+        expect.objectContaining({ type: "loadFile", filename: name }),
+      );
+    },
+  );
+
+  it("does not look inside a file named by its extension", async () => {
+    const { panel } = closablePanel();
+    expect(await handOffForeignPrefixFile(VscodeUri.file("/work/water.data"), panel)).toBe(false);
+    expect(await handOffForeignPrefixFile(VscodeUri.file("/work/dump.xyz"), panel)).toBe(false);
+    expect(mockState.readFile).not.toHaveBeenCalled();
+  });
+
+  it("leaves an unreadable data.* to the viewer, which reports the error", async () => {
+    mockState.readFile.mockRejectedValue(new Error("EACCES"));
+    const { panel } = closablePanel();
+    expect(await handOffForeignPrefixFile(VscodeUri.file("/work/data.locked"), panel)).toBe(false);
+    expect(mockState.executeCommand).not.toHaveBeenCalled();
+  });
+
+  it("keeps the tab and says so when the editor cannot be reopened", async () => {
+    mockState.executeCommand.mockRejectedValue(new Error("no editor"));
+    mockState.readFile.mockResolvedValue(encode("a,b\n1,2\n"));
+    const { panel } = closablePanel();
+    expect(await handOffForeignPrefixFile(VscodeUri.file("/work/data.csv"), panel)).toBe(true);
+    await vi.waitFor(() =>
+      expect(mockState.showErrorMessage).toHaveBeenCalledWith(
+        "Could not reopen data.csv: no editor",
+      ),
+    );
+    expect(panel.dispose).not.toHaveBeenCalled();
+  });
+
+  it("readFileHead reads just the head of a file on disk", async () => {
+    const path = resolve(FIXTURES, "1crn.pdb");
+    const head = await readFileHead(VscodeUri.file(path), 16);
+    expect(Array.from(head)).toEqual(Array.from(readFileSync(path).subarray(0, 16)));
+    expect(mockState.readFile).not.toHaveBeenCalled();
+  });
+
+  it("readFileHead falls back to the workspace filesystem off disk", async () => {
+    mockState.readFile.mockResolvedValue(new Uint8Array([1, 2, 3, 4, 5]));
+    const virtual = Object.assign(VscodeUri.file("/repo/data.x"), { scheme: "vscode-vfs" });
+    expect(Array.from(await readFileHead(virtual, 3))).toEqual([1, 2, 3]);
+    // …and when the disk read fails.
+    expect(Array.from(await readFileHead(VscodeUri.file("/no/such/file"), 2))).toEqual([1, 2]);
   });
 });
 
@@ -1860,6 +2000,8 @@ describe("Megane Builder manifest", () => {
     expect(ext?.[1].split("|")).toEqual(BUILDER_EXTENSIONS);
     const names = /resourceFilename =~ \/\^\(([^)]*)\)\//.exec(entry.when);
     expect(names?.[1].split("|")).toEqual(BUILDER_FILENAME_PREFIXES);
+    const lammps = /resourceFilename =~ \/\^\(([^)]*)\)\\\.\.\/i/.exec(entry.when);
+    expect(lammps?.[1].split("|")).toEqual(BUILDER_LAMMPS_PREFIXES);
   });
 });
 

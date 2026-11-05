@@ -9,16 +9,26 @@ export class MeganeDocFactory extends ABCWidgetFactory<
   IDocumentWidget<MeganeReactView>,
   DocumentRegistry.IModel
 > {
+  /**
+   * @param onForeignFile Called with a widget whose file Megane claimed only
+   *   by its LAMMPS-style name and that turned out not to be LAMMPS
+   *   (`handOffToOtherEditor`).
+   */
   constructor(
     options: DocumentRegistry.IWidgetFactoryOptions<IDocumentWidget<MeganeReactView>>,
     private readonly contents: Contents.IManager,
     private readonly request: ServerRequest,
+    private readonly onForeignFile?: (widget: IDocumentWidget<MeganeReactView>) => void,
   ) {
     super(options);
   }
 
   protected createNewWidget(context: DocumentRegistry.Context): IDocumentWidget<MeganeReactView> {
-    const content = new MeganeReactView(context, this.contents, this.request);
+    // The view calls back only after its file has downloaded, by when
+    // `widget` is set.
+    const content = new MeganeReactView(context, this.contents, this.request, () =>
+      this.onForeignFile?.(widget),
+    );
     const widget = new DocumentWidget({ content, context });
     widget.title.iconClass = "jp-MaterialIcon jp-FileIcon";
     return widget;

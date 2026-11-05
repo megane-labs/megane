@@ -997,10 +997,11 @@ class Pipeline:
                 file_url=nd.get("fileUrl"),
             )
         elif ntype == "load_trajectory":
-            import pathlib
+            from megane.parsers.dispatch import structure_ext
 
             fname = nd.get("fileName") or ""
-            ext = pathlib.Path(fname).suffix.lower()
+            # ``structure_ext`` also resolves LAMMPS's ``dump.melt`` to ``.dump``.
+            ext = structure_ext(fname)
             return LoadTrajectory(
                 xtc=fname if ext == ".xtc" else None,
                 dcd=fname if ext == ".dcd" else None,
@@ -1542,7 +1543,6 @@ def view_traj(
         viewer = megane.view_traj("multiframe.xyz")    # auto-detects .xyz
         viewer.frame_index = 50
     """
-    import pathlib
 
     bonds = _resolve_bond_source(path, bonds)
 
@@ -1550,7 +1550,9 @@ def view_traj(
         raise ValueError("Only one of 'xtc', 'traj', 'xyz', or 'lammpstrj' can be provided, not multiple.")
 
     if xtc is None and traj is None and xyz is None and lammpstrj is None:
-        ext = pathlib.Path(path).suffix.lower()
+        from megane.parsers.dispatch import structure_ext
+
+        ext = structure_ext(path)
         if ext == ".traj":
             traj = path
         elif ext in (".xyz", ".extxyz"):
@@ -1562,7 +1564,7 @@ def view_traj(
         else:
             raise ValueError(
                 "Either 'xtc', 'traj', 'xyz', or 'lammpstrj' must be provided, "
-                "or 'path' must point to a .traj, .xyz, or .lammpstrj/.dump/.trj file. "
+                "or 'path' must point to a .traj, .xyz, or LAMMPS dump (.lammpstrj/.dump/.trj, dump.*) file. "
                 "Use view() for structure-only display."
             )
 

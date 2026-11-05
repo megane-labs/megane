@@ -879,10 +879,15 @@ pub fn flatten_pairs(pairs: &[(u32, u32)]) -> Vec<u32> {
 
 /// The default AddBond source for a structure file: `"structure"` for
 /// formats that embed bonds, `"distance"` (VDW inference) otherwise.
-/// Matching is by case-insensitive filename suffix.
+/// Matching is by case-insensitive filename suffix, plus LAMMPS's leading
+/// `data.` name (`data.peptide` is LAMMPS data, see
+/// [`crate::formats::lammps_prefix_extension`]).
 pub fn default_bond_source(filename: &str) -> &'static str {
     let lower = filename.to_ascii_lowercase();
-    if FILE_BOND_EXTS.iter().any(|ext| lower.ends_with(ext)) {
+    if FILE_BOND_EXTS.iter().any(|ext| lower.ends_with(ext))
+        || crate::formats::lammps_prefix_extension(filename)
+            .is_some_and(|ext| FILE_BOND_EXTS.contains(&ext))
+    {
         "structure"
     } else {
         "distance"
@@ -1032,6 +1037,9 @@ mod tests {
             "i.c3xml",
             "j.xodydata",
             "k.odydata",
+            // LAMMPS names a data file by its leading keyword.
+            "data.peptide",
+            "runs/DATA.Spce",
         ] {
             assert_eq!(super::default_bond_source(f), "structure", "{f}");
         }
@@ -1047,6 +1055,10 @@ mod tests {
             "POSCAR",
             "e.lammpstrj",
             "f.mol2",
+            // A LAMMPS dump carries no bonds, however it is named.
+            "dump.melt",
+            // `data.xyz` is an XYZ file: its extension decides.
+            "data.xyz",
         ] {
             assert_eq!(super::default_bond_source(f), "distance", "{f}");
         }

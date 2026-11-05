@@ -7,12 +7,67 @@ import {
   TRAJECTORY_ACCEPT,
   TRAJECTORY_EXTS,
   VASP_EXT,
+  LAMMPS_DATA_EXT,
+  LAMMPS_DUMP_EXT,
   basename,
   isVaspBareName,
+  lammpsPrefixExt,
   matchesStructureName,
+  matchesTrajectoryName,
   structureExtFromFileName,
   trajectoryKindFromFileName,
 } from "@/parsers/fileNames";
+
+/** The one case table every implementation of the LAMMPS prefix rule is tested against. */
+const LAMMPS_CASES = (
+  JSON.parse(
+    readFileSync(resolve(__dirname, "../../fixtures/lammps_prefix_names.json"), "utf8"),
+  ) as { cases: Array<{ name: string; ext: string | null }> }
+).cases;
+
+describe("lammpsPrefixExt", () => {
+  it.each(LAMMPS_CASES.map((c) => [c.name, c.ext] as const))("maps %s to %s", (name, ext) => {
+    expect(lammpsPrefixExt(name)).toBe(ext);
+  });
+
+  it("resolves to extensions the structure dispatch accepts", () => {
+    expect(STRUCTURE_EXTS).toContain(LAMMPS_DATA_EXT);
+    expect(STRUCTURE_EXTS).toContain(LAMMPS_DUMP_EXT);
+  });
+});
+
+describe("LAMMPS prefix names in the dispatch helpers", () => {
+  it("structureExtFromFileName resolves data.* / dump.* to .data / .dump", () => {
+    expect(structureExtFromFileName("runs/data.peptide")).toBe(".data");
+    expect(structureExtFromFileName("DUMP.melt")).toBe(".dump");
+    expect(structureExtFromFileName("dump.1000.atom")).toBe(".dump");
+    // The extension still wins when Megane reads it.
+    expect(structureExtFromFileName("dump.xyz")).toBe(".xyz");
+    expect(structureExtFromFileName("data.pdb")).toBe(".pdb");
+  });
+
+  it("matchesStructureName accepts them only when their extension is accepted", () => {
+    expect(matchesStructureName("data.peptide", STRUCTURE_EXTS)).toBe(true);
+    expect(matchesStructureName("dump.melt", STRUCTURE_EXTS)).toBe(true);
+    expect(matchesStructureName("data.peptide", [".pdb", ".dump"])).toBe(false);
+    expect(matchesStructureName("dump.melt", [".pdb", ".dump"])).toBe(true);
+    expect(matchesStructureName("mydata.peptide", STRUCTURE_EXTS)).toBe(false);
+  });
+
+  it("trajectoryKindFromFileName reads dump.* as a LAMMPS dump, but not data.*", () => {
+    expect(trajectoryKindFromFileName("dump.melt")).toBe("lammpstrj");
+    expect(trajectoryKindFromFileName("out/Dump.NVT")).toBe("lammpstrj");
+    expect(trajectoryKindFromFileName("dump.xtc")).toBe("xtc");
+    expect(trajectoryKindFromFileName("data.peptide")).toBeNull();
+  });
+
+  it("matchesTrajectoryName is the trajectory drag-drop guard", () => {
+    expect(matchesTrajectoryName("dump.melt")).toBe(true);
+    expect(matchesTrajectoryName("run.XTC")).toBe(true);
+    expect(matchesTrajectoryName("data.peptide")).toBe(false);
+    expect(matchesTrajectoryName("1crn.pdb")).toBe(false);
+  });
+});
 
 describe("isVaspBareName", () => {
   it.each(["POSCAR", "CONTCAR", "XDATCAR", "poscar", "contcar", "xdatcar"])(

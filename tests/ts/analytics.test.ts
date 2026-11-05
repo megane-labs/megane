@@ -145,6 +145,10 @@ describe("fileFormat", () => {
     ["README", "unknown"],
     [".hidden", "unknown"],
     ["trailing.", "unknown"],
+    // LAMMPS's leading-keyword names report the format, never the system name.
+    ["data.peptide", "data"],
+    ["Dump.melt", "dump"],
+    ["dump.xyz", "xyz"],
   ])("%s → %s", (name, format) => {
     expect(fileFormat(name)).toBe(format);
   });

@@ -131,6 +131,11 @@ function progressiveXyz(): string {
   return parts.join("");
 }
 
+/** LAMMPS files named by their leading keyword (the `data.*` / `dump.*` selectors). */
+const LAMMPS_PREFIX_FILES = ["data.water", "dump.water"];
+/** Caught by the `data.*` selector but not LAMMPS: handed back to the text editor. */
+const FOREIGN_DATA_FILE = "data.json";
+
 let cs: CodeServerHandle | null = null;
 
 test.describe.configure({ timeout: 300_000 });
@@ -142,6 +147,10 @@ test.beforeAll(async () => {
   }
   writeFileSync(join(WORKSPACE, BINARY_PIPELINE), JSON.stringify(BINARY_PIPELINE_JSON, null, 2));
   writeFileSync(join(WORKSPACE, PROGRESSIVE_XYZ), progressiveXyz());
+  for (const f of LAMMPS_PREFIX_FILES) {
+    copyFileSync(join(REPO, "tests", "fixtures", f), join(WORKSPACE, f));
+  }
+  writeFileSync(join(WORKSPACE, FOREIGN_DATA_FILE), '{"atoms": 3}\n');
   cs = await startCodeServer({ port: PORT, workspace: WORKSPACE, e2eMode: true });
 });
 
@@ -188,6 +197,52 @@ for (const f of FORMATS) {
     }
   });
 }
+
+for (const file of LAMMPS_PREFIX_FILES) {
+  test(`vscode custom editor opens LAMMPS's ${file} by its leading keyword`, async ({ page }) => {
+    const wv = await openVscodeFile(page, { port: PORT, file });
+    await assertDomContract(wv, [
+      ...defaultViewerContract({ expectedAtoms: 3, context: "vscode" }),
+    ]);
+  });
+}
+
+/**
+ * The `data.*` selector also catches files such as `data.json`; the extension
+ * host checks the head of the file and reopens anything that is not LAMMPS in
+ * the default text editor (`handOffForeignPrefixFile`), closing the viewer tab.
+ */
+test("a data.* file that is not LAMMPS goes back to the text editor", async ({ page }) => {
+  await page.goto(`http://127.0.0.1:${PORT}/?folder=${encodeURIComponent(WORKSPACE)}`, {
+    waitUntil: "domcontentloaded",
+  });
+  await page.waitForSelector(".monaco-workbench", { timeout: 30_000 });
+  await page.waitForTimeout(3_000);
+  const tree = page.getByRole("treeitem", { name: FOREIGN_DATA_FILE, exact: true });
+  await tree.waitFor({ state: "visible", timeout: 30_000 });
+  await tree.click({ force: true });
+  await tree.dblclick({ force: true });
+
+  await expect(page.locator(".editor-group-container .monaco-editor .view-lines")).toContainText(
+    '"atoms"',
+    { timeout: 60_000 },
+  );
+  // One tab for the file: the text editor, the viewer's tab closed.
+  await expect(page.locator(".tabs-container .tab", { hasText: FOREIGN_DATA_FILE })).toHaveCount(1);
+  // …and no megane page was ever loaded (the hand-off runs before its HTML is set).
+  const meganeFrames = async () => {
+    let n = 0;
+    for (const frame of page.frames()) {
+      if (frame === page.mainFrame()) continue;
+      const isMegane = await frame
+        .evaluate(() => Boolean((window as { __MEGANE_CONTEXT__?: unknown }).__MEGANE_CONTEXT__))
+        .catch(() => false);
+      if (isMegane) n++;
+    }
+    return n;
+  };
+  await expect.poll(meganeFrames).toBe(0);
+});
 
 test("pipeline editor opens a .megane.json whose structure companion is binary (.traj)", async ({
   page,

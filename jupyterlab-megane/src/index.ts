@@ -11,6 +11,7 @@ import { setupFrameStatusBar } from "./frameStatusBar";
 import { createJupyterFileSource } from "./remoteFiles";
 import { MeganeRawModelFactory, RAW_MODEL_NAME } from "./rawModel";
 import { builderPlugin } from "./builder/plugin";
+import { handOffToOtherEditor } from "./handOff";
 import type { MeganeReactView } from "./MeganeDocWidget";
 import type { MeganePipelineReactView } from "./MeganePipelineDocWidget";
 import {
@@ -23,6 +24,7 @@ import {
   STRUCTURE_FILETYPES_BINARY,
   STRUCTURE_FILETYPE_NAMES_TEXT,
   STRUCTURE_FILETYPE_NAMES_BINARY,
+  withLammpsPrefixPatterns,
 } from "./filetypes";
 
 const PLUGIN_ID = "megane-jupyterlab:plugin";
@@ -56,10 +58,25 @@ const plugin: JupyterFrontEndPlugin<void> = {
     // documents load no content (see rawModel.ts).
     app.docRegistry.addModelFactory(new MeganeRawModelFactory());
 
-    for (const ft of [...STRUCTURE_FILETYPES_TEXT, ...STRUCTURE_FILETYPES_BINARY]) {
+    // LAMMPS's `data.*` / `dump.*` names are claimed by pattern, except
+    // those ending in an extension a registered file type (JupyterLab's
+    // `.json`, `.csv`, …) already claims.
+    const registeredExtensions = [...app.docRegistry.fileTypes()].flatMap(
+      (ft) => ft.extensions ?? [],
+    );
+    for (const ft of [
+      ...withLammpsPrefixPatterns(STRUCTURE_FILETYPES_TEXT, registeredExtensions),
+      ...STRUCTURE_FILETYPES_BINARY,
+    ]) {
       app.docRegistry.addFileType(ft);
     }
     app.docRegistry.addFileType(PIPELINE_FILETYPE);
+
+    // A `data.*` that is not LAMMPS after all goes to the editor it would
+    // have opened in without Megane.
+    const handOff = (widget: IDocumentWidget<MeganeReactView>): void => {
+      void handOffToOtherEditor(app, widget);
+    };
 
     const textFactory = new MeganeDocFactory(
       {
@@ -71,6 +88,7 @@ const plugin: JupyterFrontEndPlugin<void> = {
       },
       contents,
       request,
+      handOff,
     );
     app.docRegistry.addWidgetFactory(textFactory);
 

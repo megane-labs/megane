@@ -201,6 +201,28 @@ describe("LoadTrajectoryNode", () => {
     expect(handler).toHaveBeenCalledWith(file);
   });
 
+  it("drag-and-drop accepts a LAMMPS dump named dump.<name>", () => {
+    const updateNodeParams = vi.fn();
+    const handler = vi.fn();
+    const seeded = seedPipelineStore("load_trajectory", { id: "lt1" });
+    usePipelineStore.setState({ updateNodeParams });
+    setTrajectoryLoadHandler(handler);
+
+    render(
+      <LoadTrajectoryNode {...nodeProps("lt1", seeded.data.params as LoadTrajectoryParams)} />,
+    );
+
+    const file = new File(["ITEM: TIMESTEP"], "dump.peptide", { type: "text/plain" });
+    const dropZone = screen.getByTestId("load-trajectory-filename").parentElement!;
+    fireEvent.drop(dropZone, { dataTransfer: { files: [file] } });
+
+    expect(updateNodeParams).toHaveBeenCalledWith("lt1", {
+      fileName: "dump.peptide",
+      source: "file",
+    });
+    expect(handler).toHaveBeenCalledWith(file);
+  });
+
   it("drag-and-drop ignores files with unsupported extensions", () => {
     const updateNodeParams = vi.fn();
     const handler = vi.fn();

@@ -362,6 +362,8 @@ describe("parseClientSync (main-thread path with mocked wasm)", () => {
     expect(txt).toEqual(["a", "b", ""]); // padded to nAtoms
     await core.extractLabelsFromFile(fakeFile("md.extxyz"), 3);
     expect(calls).toContain("extract_labels:xyz"); // extended XYZ reads as XYZ
+    await core.extractLabelsFromFile(fakeFile("data.peptide"), 3);
+    expect(calls).toContain("extract_labels:lammps_data"); // LAMMPS's data.* naming
   });
 
   it("writeStructure forwards every channel, empty when absent", async () => {

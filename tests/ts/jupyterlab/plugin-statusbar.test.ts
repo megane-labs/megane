@@ -42,6 +42,14 @@ const mockApp = {
     addFileType: vi.fn(),
     addWidgetFactory: vi.fn(),
     addModelFactory: vi.fn(),
+    // JupyterLab's own file types, registered before any extension activates.
+    fileTypes: vi.fn(() =>
+      [
+        { name: "json", extensions: [".json"] },
+        { name: "csv", extensions: [".csv"] },
+        { name: "directory", extensions: [] },
+      ].values(),
+    ),
   },
   serviceManager: {
     contents: { getDownloadUrl: vi.fn(async (path: string) => `/files/${path}`) },
@@ -93,6 +101,23 @@ describe("megane JupyterLab plugin – IStatusBar optional integration", () => {
     plugin.activate(mockApp as never, mockRestorer as never, null as never);
     expect(mockApp.docRegistry.addFileType).toHaveBeenCalled();
     expect(mockApp.docRegistry.addWidgetFactory).toHaveBeenCalled();
+  });
+
+  it("claims LAMMPS's data.* / dump.* names except those another file type claims", () => {
+    plugin.activate(mockApp as never, mockRestorer as never, null as never);
+    const registered = vi
+      .mocked(mockApp.docRegistry.addFileType)
+      .mock.calls.map((c) => c[0] as { name: string; pattern?: string });
+    const data = registered.find((ft) => ft.name === "megane-lammps-data")!;
+    const dump = registered.find((ft) => ft.name === "megane-lammps-dump")!;
+    expect("data.peptide").toMatch(new RegExp(data.pattern!));
+    expect("dump.melt").toMatch(new RegExp(dump.pattern!));
+    // JupyterLab's own `.json` / `.csv` keep their viewers.
+    expect("data.json").not.toMatch(new RegExp(data.pattern!));
+    expect("data.csv").not.toMatch(new RegExp(data.pattern!));
+    // Only those two file types carry a LAMMPS pattern.
+    const withPattern = registered.filter((ft) => ft.pattern).map((ft) => ft.name);
+    expect(withPattern.sort()).toEqual(["megane-lammps-data", "megane-lammps-dump", "megane-vasp"]);
   });
 
   it("registers the content-less model the structure viewers open their files with", () => {

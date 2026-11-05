@@ -35,6 +35,8 @@ import type { prewarmParseWorker as realPrewarm } from "@/parsers/structure";
 import type { prewarmParseWorker as shimPrewarm } from "@megane/parsers/structure";
 import type { perfMark as realPerfMark } from "@/perf";
 import type { perfMark as shimPerfMark } from "@megane/perf";
+import type { isForeignLammpsPrefixFile as realIsForeign } from "@/hosts/lammpsPrefixFiles";
+import type { isForeignLammpsPrefixFile as shimIsForeign } from "@megane/hosts/lammpsPrefixFiles";
 
 type Assert<T extends true> = T;
 type Equal<A, B> =
@@ -80,4 +82,6 @@ export type MeganeModulesShimChecks = [
   Assert<Equal<typeof shimFileFromBytes, typeof realFileFromBytes>>,
   Assert<Equal<typeof shimPrewarm, typeof realPrewarm>>,
   Assert<Equal<typeof shimPerfMark, typeof realPerfMark>>,
+  // The LAMMPS data.* / dump.* hand-off check.
+  Assert<Equal<typeof shimIsForeign, typeof realIsForeign>>,
 ];
