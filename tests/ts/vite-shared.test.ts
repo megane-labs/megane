@@ -117,6 +117,17 @@ describe("vite.shared helpers", () => {
     expect(WORKER_FROM_FILE.test('new SharedWorker(new URL("./w.js", import.meta.url))')).toBe(
       true,
     );
+    // Vite's library mode: a path from the consuming app's site root.
+    expect(
+      WORKER_FROM_FILE.test('return new Worker(\n    "/assets/decode.worker-x.js",\n    { name })'),
+    ).toBe(true);
+    // Vite's inline worker falls back to a data: URL; a blob: literal is inline too.
+    expect(
+      WORKER_FROM_FILE.test(
+        'new Worker("data:text/javascript;charset=utf-8,"+encodeURIComponent(s))',
+      ),
+    ).toBe(false);
+    expect(WORKER_FROM_FILE.test("new Worker('blob:x/1')")).toBe(false);
     // Vite's inline worker, gif.js and ketcher-standalone's default build start from blob: URLs.
     expect(WORKER_FROM_FILE.test('const t=new Worker(e,{type:"module",name:n})')).toBe(false);
     expect(WORKER_FROM_FILE.test("E=new Worker(S.options.workerScript)")).toBe(false);
@@ -255,5 +266,15 @@ describe("Vite configs use the shared settings", () => {
 
   it("the Builder widget inlines the RDKit worker too", () => {
     expect(aliases(builderWidgetConfig)).toContainEqual(inlineEmbedWorkerAlias());
+  });
+
+  it.each([
+    ["vite.lib.config", libConfig],
+    ["vite.widget.config", widgetConfig],
+    ["vite.builder-widget.config", builderWidgetConfig],
+    ["vscode-megane/vite.webview.config", vscodeWebviewConfig],
+    ["vscode-megane/vite.builder.config", vscodeBuilderConfig],
+  ])("%s refuses to start a worker from a file beside the bundle", (_name, config) => {
+    expect(pluginNames(config.plugins!)).toContain("megane-forbid-worker-files");
   });
 });

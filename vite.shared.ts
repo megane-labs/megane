@@ -78,16 +78,22 @@ export function selfContainedKetcherAlias(): Alias {
 /**
  * A worker started from a file beside the bundle, as Vite emits a non-inline
  * worker and as dependencies write it: `new Worker(new URL(…))`, after
- * minification also `new Worker(""+new URL(…).href)`.
+ * minification also `new Worker(""+new URL(…).href)`, and in library mode
+ * `new Worker("/assets/….js")`. Not a `blob:` or `data:` URL, which is how
+ * an inline worker starts.
  */
-export const WORKER_FROM_FILE = /new\s+(?:Shared)?Worker\(\s*(?:""\s*\+\s*)?new\s+URL\(/;
+export const WORKER_FROM_FILE =
+  /new\s+(?:Shared)?Worker\(\s*(?:(?:""\s*\+\s*)?new\s+URL\(|["'`](?!blob:|data:))/;
 
 /**
- * Plugin for the VS Code webview bundles: fail the build when a chunk starts
- * a Web Worker from a file beside the bundle. In a webview that file is on
- * the extension's resource origin, which a worker reaches only while the
- * webview's service worker has not been restarted (src/utils/workerAssets.ts):
- * such a worker passes a quick test and fails for a user a minute later.
+ * Plugin for the bundles that run where a worker file beside them cannot be
+ * relied on: the VS Code webviews (a worker reaches the extension's resource
+ * origin only until the webview's service worker restarts, see
+ * src/utils/workerAssets.ts), the Jupyter widgets (one ES module loaded by
+ * anywidget, with nothing beside it) and the npm library (a file in
+ * `dist/assets/` is requested from the root of the app that installed the
+ * package). Fails the build when a chunk starts a Web Worker from such a
+ * file: such a worker passes a quick test and fails for a user.
  */
 export function forbidWorkerFiles(): Plugin {
   return {
@@ -97,8 +103,8 @@ export function forbidWorkerFiles(): Plugin {
       for (const file of Object.values(bundle)) {
         if (file.type === "chunk" && WORKER_FROM_FILE.test(file.code)) {
           this.error(
-            `${file.fileName} starts a Web Worker from a file beside the bundle, which a ` +
-              "VS Code webview's worker cannot load reliably: build the worker inline " +
+            `${file.fileName} starts a Web Worker from a file beside the bundle, which this ` +
+              "bundle's hosts cannot load reliably: build the worker inline " +
               "(`?worker&inline`) and fetch its assets on the page (src/utils/workerAssets.ts).",
           );
         }

@@ -3,7 +3,13 @@ import wasm from "vite-plugin-wasm";
 import { rdkitNoDefaultWasm } from "./vite.rdkit";
 import fs from "fs";
 import path from "path";
-import { inlineEmbedWorkerAlias, prodDefine, srcAlias, syncParseAlias } from "./vite.shared";
+import {
+  forbidWorkerFiles,
+  inlineEmbedWorkerAlias,
+  prodDefine,
+  srcAlias,
+  syncParseAlias,
+} from "./vite.shared";
 
 const RDKIT_WASM = path.resolve(__dirname, "node_modules/megane-rdkit/dist/megane-rdkit.wasm");
 const OUT_DIR = path.resolve(__dirname, "python/megane/static");
@@ -32,7 +38,7 @@ function copyRdkitWasm(): Plugin {
  * The RDKit worker itself is inlined.
  */
 export default defineConfig({
-  plugins: [wasm(), rdkitNoDefaultWasm(), copyRdkitWasm()],
+  plugins: [wasm(), rdkitNoDefaultWasm(), copyRdkitWasm(), forbidWorkerFiles()],
   resolve: {
     alias: [
       // Single-file bundle: parse on the main thread (see vite.widget.config.ts).
