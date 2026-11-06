@@ -10,6 +10,13 @@
  * request and reused, and torn down when it crashes or a call times out so
  * the next request starts clean.
  *
+ * The worker fetches the `.wasm` itself, unless the page cannot vouch for
+ * that: on another origin (a VS Code webview's resource URLs, which a worker
+ * stops reaching once the webview's service worker has restarted, see
+ * `utils/workerAssets.ts`) the page fetches it and hands the worker a
+ * `blob:` URL. Such hosts also build the worker inline (vite.shared.ts,
+ * `inlineEmbedWorkerAlias`).
+ *
  * Nothing here is a parser: the result is a V2000 mol block that goes back
  * through the same MOL parser every host uses (see `sketch.ts`).
  */
@@ -18,6 +25,7 @@ import EmbedWorker from "./embed.worker?worker";
 import wasmAssetUrl from "megane-rdkit/dist/megane-rdkit.wasm?url";
 import type { EmbedOptions, EmbedResult } from "megane-rdkit";
 import type { EmbedRequest, EmbedResponse } from "./embedMessages";
+import { fetchAsBlobUrl, isCrossOriginAsset } from "../../utils/workerAssets";
 
 /** How long one embedding may take before the worker is presumed stuck. */
 export const EMBED_TIMEOUT_MS = 120_000;
@@ -63,6 +71,19 @@ function resolveWasmUrl(): string {
   }
 }
 
+/**
+ * The bundled `.wasm` as a URL the worker can fetch: the asset itself, or,
+ * when it is on another origin than the page, a `blob:` URL of it fetched by
+ * the page.
+ */
+function bundledWasmUrl(): string | Promise<string> {
+  const url = resolveWasmUrl();
+  if (!isCrossOriginAsset(url, globalThis.location?.href)) return url;
+  return fetchAsBlobUrl(url, "application/wasm").catch((err: unknown) => {
+    throw new Error(`Could not load RDKit: ${err instanceof Error ? err.message : String(err)}`);
+  });
+}
+
 /** Reject every in-flight request and drop the worker; the next call creates a fresh one. */
 function tearDown(reason: string): void {
   for (const [, p] of pending) {
@@ -97,7 +118,10 @@ function getWorker(): Worker {
       p.reject(new Error(res.error));
     }
   };
-  w.onerror = () => tearDown("The RDKit worker crashed.");
+  w.onerror = (e: ErrorEvent) =>
+    tearDown(e.message ? `The RDKit worker crashed: ${e.message}` : "The RDKit worker crashed.");
+  // An answer that cannot be deserialized would otherwise wait for the timeout.
+  w.onmessageerror = () => tearDown("The RDKit worker sent an unreadable answer.");
   worker = w;
   return w;
 }
@@ -140,10 +164,9 @@ export function embedSketch(
     forceField: options.forceField ?? "MMFF94s",
   };
   if (options.randomSeed !== undefined) rdkitOptions.randomSeed = options.randomSeed;
-  if (wasmSource) {
-    return wasmSource().then((wasmUrl) => request(molfile, rdkitOptions, wasmUrl));
-  }
-  return request(molfile, rdkitOptions, resolveWasmUrl());
+  const wasmUrl = wasmSource ? wasmSource() : bundledWasmUrl();
+  if (typeof wasmUrl === "string") return request(molfile, rdkitOptions, wasmUrl);
+  return wasmUrl.then((url) => request(molfile, rdkitOptions, url));
 }
 
 /** Send one request to the worker and wait for its answer. */

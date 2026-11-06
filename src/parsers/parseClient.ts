@@ -31,6 +31,7 @@ import * as sync from "./parseClientSync";
 import { wasmHeapBytes } from "./parseCore";
 import { structureExtFromFileName } from "./fileNames";
 import { isResident, readBlobBuffer, readBlobText } from "./fileBytes";
+import { isCrossOriginAsset } from "../utils/workerAssets";
 import { unpackLabels, type PackedLabels } from "./labels";
 import type {
   StructureParseResult,
@@ -243,26 +244,11 @@ function resolveWasmUrl(): string | undefined {
  * module).
  *
  * In a VS Code webview the `.wasm` lives on the extension's resource origin,
- * which only answers requests that pass through the webview's service worker.
- * The page's own requests do; a Web Worker's do not, and its fetch of the
- * resource URL hangs (about 30 s) before failing. So the page fetches and
- * compiles the module, and the worker is handed the `WebAssembly.Module`.
+ * which a Web Worker cannot rely on reaching (see `utils/workerAssets.ts`).
+ * So the page fetches and compiles the module, and the worker is handed the
+ * `WebAssembly.Module`.
  */
 const compiledWasm = new Map<string, Promise<WebAssembly.Module>>();
-
-/** Whether `url` is on another origin than the page (so the worker should not fetch it). */
-export function isCrossOriginWasm(url: string, pageUrl: string | undefined): boolean {
-  if (!pageUrl) return false;
-  try {
-    const resolved = new URL(url, pageUrl);
-    if (resolved.protocol === "blob:" || resolved.protocol === "data:") return false;
-    const pageOrigin = new URL(pageUrl).origin;
-    // A custom-scheme page (`vscode-webview://…`) has an opaque origin.
-    return pageOrigin === "null" || resolved.origin !== pageOrigin;
-  } catch {
-    return false;
-  }
-}
 
 function compileWasm(url: string): Promise<WebAssembly.Module> {
   let module = compiledWasm.get(url);
@@ -301,7 +287,7 @@ function send<T>(req: ParseRequest, transfer: Transferable[]): Promise<T> {
       timer,
     });
     const url = "wasm" in req ? req.wasm : undefined;
-    if (typeof url === "string" && isCrossOriginWasm(url, globalThis.location?.href)) {
+    if (typeof url === "string" && isCrossOriginAsset(url, globalThis.location?.href)) {
       wasmGate = compileWasm(url);
     }
     if (!wasmGate) {

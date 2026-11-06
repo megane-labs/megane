@@ -3,7 +3,7 @@ import wasm from "vite-plugin-wasm";
 import { rdkitNoDefaultWasm } from "./vite.rdkit";
 import fs from "fs";
 import path from "path";
-import { prodDefine, srcAlias, syncParseAlias } from "./vite.shared";
+import { inlineEmbedWorkerAlias, prodDefine, srcAlias, syncParseAlias } from "./vite.shared";
 
 const RDKIT_WASM = path.resolve(__dirname, "node_modules/megane-rdkit/dist/megane-rdkit.wasm");
 const OUT_DIR = path.resolve(__dirname, "python/megane/static");
@@ -41,10 +41,7 @@ export default defineConfig({
         find: /^\.\/KetcherEditor$/,
         replacement: path.resolve(__dirname, "src/builder/library/KetcherUnavailable.tsx"),
       },
-      {
-        find: /^\.\/embed\.worker\?worker$/,
-        replacement: `${path.resolve(__dirname, "src/builder/library/embed.worker.ts")}?worker&inline`,
-      },
+      inlineEmbedWorkerAlias(),
       {
         find: /^megane-rdkit\/dist\/megane-rdkit\.wasm\?url$/,
         replacement: path.resolve(__dirname, "src/builder/library/rdkitWasmUnbundled.ts"),

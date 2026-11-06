@@ -169,6 +169,7 @@ The fixes below come from a bug audit of the parsers, pipeline, renderer and hos
 - **Builder tool servers that never answer time out** (10 min for stdio, 60 s for HTTP), closing the tab stops a server still starting, and Jupyter's shutdown no longer hangs on one. (#870)
 - **JupyterLab: edits in a Megane tab survive switching to another tab and back.** (#860)
 - **VS Code: an open file's bytes are released once the viewer has them**, and the frame and selection status items show only for the active tab. (#872)
+- **VS Code Builder: adding a sketch no longer fails with "The RDKit worker crashed".** RDKit's worker and Ketcher's Indigo worker loaded their scripts and `.wasm` files from the extension's resource origin, which a VS Code webview serves to a Web Worker only until its service worker is stopped for being idle (about 30 s). After a minute of drawing, *Add* waited 30 s and failed, as did *Clean up geometry* and Flow's SMILES blocks, and Ketcher stopped answering anything that needs Indigo (SMILES, *Layout*, *Clean Up*). Both workers now ship inside the Builder bundle and take their `.wasm` from the page, the Builder page admits workers only from `blob:`, and the VS Code bundles fail to build if a worker is loaded from a file again. Ketcher's self-contained build carries Indigo's `.wasm` as base64, so the VSIX grows from 10 MB to 14 MB.
 - **npm library: `WorkerPool.decode()` decodes snapshots again.** Every snapshot came back as an error. (#868)
 
 ## [0.18.0] - 2026-10-20

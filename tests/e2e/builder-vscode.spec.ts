@@ -5,9 +5,11 @@
  * welcome buttons open a Builder tab; structure files get *Open in megane
  * Builder* in the Explorer's context menu and in a megane viewer tab's title
  * bar. Checks that the webview's chunked bundle runs the Builder's heavy parts
- * from the extension's resource origin (the RDKit worker, the lazily loaded
- * Ketcher and its Indigo worker) and that Save goes through the extension
- * host (in E2E mode it skips the save dialog and writes beside the file).
+ * (the RDKit worker, the lazily loaded Ketcher and its Indigo worker) — also
+ * after the webview's service worker has been stopped, which is when a worker
+ * can no longer load anything from the extension's resource origin — and that
+ * Save goes through the extension host (in E2E mode it skips the save dialog
+ * and writes beside the file).
  * The *Tools* menu reaches the MCP tool servers of `megane.builder.mcpServers`
  * through the extension host: a stdio server replaying the reference tool
  * server's recorded responses is started after the user allows it, and its
@@ -112,6 +114,98 @@ async function builderFrame(page: Page, timeoutMs = 60_000): Promise<Frame> {
   }
   throw new Error("no Megane Builder webview appeared");
 }
+
+/**
+ * Stop the webview's service worker, as the browser does after ~30 s without
+ * an event. VS Code's service worker serves the extension's resources to a
+ * Web Worker only through a message port it keeps in memory (the webview
+ * page's own requests are routed without it), so after a restart a worker's
+ * request for such a URL hangs for 30 s and fails with HTTP 408. A user who
+ * spends a minute drawing in Ketcher always gets there.
+ */
+async function stopServiceWorkers(page: Page): Promise<void> {
+  const cdp = await page.context().newCDPSession(page);
+  try {
+    await cdp.send("ServiceWorker.enable");
+    await cdp.send("ServiceWorker.stopAllWorkers");
+  } finally {
+    await cdp.detach();
+  }
+}
+
+/** Open an empty Builder tab from the megane view and return its frame. */
+async function openEmptyBuilder(page: Page): Promise<Frame> {
+  await openWorkbench(page);
+  await page
+    .getByRole("tab", { name: /^Megane/ })
+    .first()
+    .click();
+  await page
+    .locator(".welcome-view-content")
+    .getByRole("button", { name: "New Structure" })
+    .click();
+  return await builderFrame(page);
+}
+
+/** Click the sketch dialog's Add and wait until it closes; a failed embedding fails with its message. */
+async function addSketch(wv: Frame, name: string): Promise<void> {
+  await wv.locator('[data-testid="sketch-name"]').fill(name);
+  await wv.locator('[data-testid="sketch-add"]').click();
+  const modal = wv.locator('[data-testid="sketch-modal"]');
+  const error = wv.locator('[data-testid="sketch-error"]');
+  await expect
+    .poll(
+      async () =>
+        (await error.count()) > 0
+          ? `error: ${await error.textContent()}`
+          : (await modal.count()) > 0
+            ? "open"
+            : "added",
+      { timeout: 90_000 },
+    )
+    .toBe("added");
+  const row = wv.locator('[data-testid^="builder-library-item-user:"]', { hasText: name });
+  // RDKit added the hydrogens and embedded the molecule in 3D.
+  await expect(row).toContainText("C2H6O");
+  await expect(row).not.toContainText("flat");
+}
+
+test("RDKit embeds a sketch after the webview's service worker restarted", async ({ page }) => {
+  const wv = await openEmptyBuilder(page);
+  await expect(wv.locator('[data-testid="builder-welcome"]')).toBeVisible();
+  await stopServiceWorkers(page);
+
+  await openSketch(wv);
+  await wv.locator('[data-testid="sketch-paste-toggle"]').click();
+  await wv.locator('[data-testid="sketch-molfile"]').fill("CCO");
+  await addSketch(wv, "Ethanol paste");
+});
+
+test("Ketcher's Indigo engine and RDKit run after the webview's service worker restarted", async ({
+  page,
+}) => {
+  const wv = await openEmptyBuilder(page);
+  await expect(wv.locator('[data-testid="builder-welcome"]')).toBeVisible();
+  await stopServiceWorkers(page);
+
+  await openSketch(wv);
+  await waitForKetcher(wv);
+  // Ketcher converts a SMILES in its Indigo worker before the sketch shows it.
+  const molfile = await wv.evaluate(async () => {
+    const k = (
+      window as unknown as {
+        __megane_test_ketcher: {
+          setMolecule: (s: string) => Promise<void>;
+          getMolfile: (f: string) => Promise<string>;
+        };
+      }
+    ).__megane_test_ketcher;
+    await k.setMolecule("CCO");
+    return await k.getMolfile("v2000");
+  });
+  expect(molfile).toContain("V2000");
+  await addSketch(wv, "Ethanol sketch");
+});
 
 test("the megane activity-bar view opens an empty Builder tab", async ({ page }) => {
   await openWorkbench(page);
@@ -224,7 +318,7 @@ test("Open in Megane Builder from the Explorer: RDKit, Ketcher and Save work in 
   await waitForReady(wv);
   await expect(page.locator(".tab", { hasText: "caffeine.sdf — Builder" }).first()).toBeVisible();
 
-  // The RDKit worker starts from the extension's resource origin.
+  // The RDKit worker starts inside the webview, with the .wasm the page fetched.
   await cleanUpWithRDKit(wv);
 
   // Ketcher's chunk and its Indigo worker load too.

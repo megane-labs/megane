@@ -2,14 +2,17 @@
  * The RDKit embedding client: requests go through a (fake) Web Worker, the
  * first conformer of the answer becomes an `EmbeddedSketch`, RDKit errors
  * come back as rejections, and a crashed or silent worker is torn down so
- * the next call starts a new one.
+ * the next call starts a new one. A `.wasm` on another origin than the page
+ * (a VS Code webview's resource URL) is fetched by the page and reaches the
+ * worker as a `blob:` URL.
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
 const { state, FakeWorker } = vi.hoisted(() => {
   const state = {
-    mode: "ok" as "ok" | "error" | "silent" | "crash",
+    mode: "ok" as "ok" | "error" | "silent" | "crash" | "crash-message" | "unreadable",
+    wasmAsset: "/assets/megane-rdkit.wasm",
     requests: [] as { id: number; wasmUrl: string; molfile: string; options: unknown }[],
     created: 0,
     terminated: 0,
@@ -18,6 +21,7 @@ const { state, FakeWorker } = vi.hoisted(() => {
   class FakeWorker {
     onmessage: ((e: { data: unknown }) => void) | null = null;
     onerror: ((e: unknown) => void) | null = null;
+    onmessageerror: ((e: unknown) => void) | null = null;
     constructor() {
       state.created++;
       state.last = this;
@@ -46,6 +50,10 @@ const { state, FakeWorker } = vi.hoisted(() => {
           this.onmessage?.({ data: { id: req.id, ok: false, error: "Could not sanitize" } });
         } else if (state.mode === "crash") {
           this.onerror?.(new Event("error"));
+        } else if (state.mode === "crash-message") {
+          this.onerror?.(new ErrorEvent("error", { message: "RuntimeError: unreachable" }));
+        } else if (state.mode === "unreadable") {
+          this.onmessageerror?.(new Event("messageerror"));
         }
       });
     }
@@ -58,7 +66,9 @@ const { state, FakeWorker } = vi.hoisted(() => {
 
 vi.mock("@/builder/library/embed.worker?worker", () => ({ default: FakeWorker }));
 vi.mock("megane-rdkit/dist/megane-rdkit.wasm?url", () => ({
-  default: "/assets/megane-rdkit.wasm",
+  get default() {
+    return state.wasmAsset;
+  },
 }));
 
 async function freshClient() {
@@ -69,12 +79,15 @@ async function freshClient() {
 
 beforeEach(() => {
   state.mode = "ok";
+  state.wasmAsset = "/assets/megane-rdkit.wasm";
   state.requests = [];
   state.created = 0;
   state.terminated = 0;
 });
 afterEach(() => {
   vi.useRealTimers();
+  vi.unstubAllGlobals();
+  vi.restoreAllMocks();
   delete (globalThis as Record<string, unknown>).Worker;
 });
 
@@ -139,6 +152,20 @@ describe("embedSketch", () => {
     state.mode = "ok";
     await expect(embedSketch("y")).resolves.toMatchObject({ energy: -12.5 });
     expect(state.created).toBe(2);
+  });
+
+  it("passes the worker's own error message on, and survives an unreadable answer", async () => {
+    const { embedSketch } = await freshClient();
+    state.mode = "crash-message";
+    await expect(embedSketch("x")).rejects.toThrow(
+      "The RDKit worker crashed: RuntimeError: unreachable",
+    );
+    state.mode = "unreadable";
+    await expect(embedSketch("y")).rejects.toThrow("The RDKit worker sent an unreadable answer.");
+    expect(state.terminated).toBe(2);
+    state.mode = "ok";
+    await expect(embedSketch("z")).resolves.toMatchObject({ molblock: "MOLBLOCK-3D" });
+    expect(state.created).toBe(3);
   });
 
   it("times out a silent worker", async () => {
@@ -228,5 +255,48 @@ describe("setRDKitWasmSource", () => {
     await expect(embedSketch("A")).rejects.toThrow("no kernel");
     expect(state.requests).toHaveLength(0);
     setRDKitWasmSource(null);
+  });
+});
+
+describe("a .wasm on another origin than the page", () => {
+  // A VS Code webview: the page is vscode-webview://, the bundle's assets are
+  // on the extension's resource origin, which a worker cannot rely on reaching.
+  const RESOURCE = "https://file+.vscode-resource.vscode-cdn.net/ext/media/builder/rdkit.wasm";
+
+  function stubPageFetch(fetchMock: ReturnType<typeof vi.fn>): void {
+    vi.stubGlobal("fetch", fetchMock);
+    let n = 0;
+    vi.spyOn(URL, "createObjectURL").mockImplementation(() => `blob:page/rdkit-${++n}`);
+  }
+
+  it("is fetched by the page and handed to the worker as a blob: URL, once", async () => {
+    state.wasmAsset = RESOURCE;
+    const fetchMock = vi.fn(async () => ({ ok: true, blob: async () => new Blob(["\0asm"]) }));
+    stubPageFetch(fetchMock);
+    const { embedSketch } = await freshClient();
+    await expect(embedSketch("A")).resolves.toMatchObject({ molblock: "MOLBLOCK-3D" });
+    await embedSketch("B");
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock).toHaveBeenCalledWith(RESOURCE);
+    expect(state.requests.map((r) => r.wasmUrl)).toEqual([
+      "blob:page/rdkit-1",
+      "blob:page/rdkit-1",
+    ]);
+  });
+
+  it("reports a failed page fetch as RDKit not loading, sends nothing, and tries again", async () => {
+    state.wasmAsset = RESOURCE;
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce({ ok: false, status: 408 })
+      .mockResolvedValueOnce({ ok: true, blob: async () => new Blob(["\0asm"]) });
+    stubPageFetch(fetchMock);
+    const { embedSketch } = await freshClient();
+    await expect(embedSketch("A")).rejects.toThrow(
+      `Could not load RDKit: failed to fetch ${RESOURCE}: HTTP 408`,
+    );
+    expect(state.requests).toHaveLength(0);
+    await expect(embedSketch("B")).resolves.toMatchObject({ molblock: "MOLBLOCK-3D" });
+    expect(state.requests[0].wasmUrl).toBe("blob:page/rdkit-1");
   });
 });
