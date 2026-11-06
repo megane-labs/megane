@@ -1,10 +1,10 @@
 import { defineConfig } from "vite";
 import wasm from "vite-plugin-wasm";
 import path from "path";
-import { prodDefine, srcAlias, syncParseAlias } from "./vite.shared";
+import { forbidWorkerFiles, prodDefine, srcAlias, syncParseAlias } from "./vite.shared";
 
 export default defineConfig({
-  plugins: [wasm()],
+  plugins: [wasm(), forbidWorkerFiles()],
   resolve: {
     alias: [
       // Single-file anywidget bundle: use the synchronous main-thread parse path

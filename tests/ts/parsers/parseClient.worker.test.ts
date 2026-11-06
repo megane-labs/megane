@@ -573,27 +573,3 @@ describe("parseClient worker path", () => {
     });
   });
 });
-
-describe("isCrossOriginWasm", () => {
-  it("tells the page's own URLs from another origin's", async () => {
-    const { isCrossOriginWasm } = await import("@/parsers/parseClient");
-    const page = "http://localhost:5173/index.html";
-    expect(isCrossOriginWasm("/assets/a.wasm", page)).toBe(false);
-    expect(isCrossOriginWasm("http://localhost:5173/a.wasm", page)).toBe(false);
-    expect(isCrossOriginWasm("https://cdn.example/a.wasm", page)).toBe(true);
-    expect(isCrossOriginWasm("blob:http://localhost:5173/x", page)).toBe(false);
-    expect(isCrossOriginWasm("data:application/wasm;base64,AA==", page)).toBe(false);
-  });
-
-  it("treats every http(s) URL as foreign to an opaque-origin webview page", async () => {
-    const { isCrossOriginWasm } = await import("@/parsers/parseClient");
-    const page = "vscode-webview://abc/index.html?id=1";
-    expect(isCrossOriginWasm("https://x.vscode-resource.vscode-cdn.net/m.wasm", page)).toBe(true);
-  });
-
-  it("is false without a page URL or for an unparsable URL", async () => {
-    const { isCrossOriginWasm } = await import("@/parsers/parseClient");
-    expect(isCrossOriginWasm("https://cdn.example/a.wasm", undefined)).toBe(false);
-    expect(isCrossOriginWasm("http://[bad", "http://localhost/")).toBe(false);
-  });
-});

@@ -1931,7 +1931,7 @@ describe("Megane Builder", () => {
     expect(builderSaveBase(undefined).path).toMatch(/untitled$/);
   });
 
-  it("the Builder page admits the extension's chunks and blob: workers, with a nonce", () => {
+  it("the Builder page admits the extension's chunks and only blob: workers, with a nonce", () => {
     const html = getBuilderHtml(
       {
         cspSource: "https://res",
@@ -1942,7 +1942,8 @@ describe("Megane Builder", () => {
     expect(html).toMatch(
       /script-src 'nonce-[A-Za-z0-9]{32}' https:\/\/res 'wasm-unsafe-eval' 'unsafe-eval' blob:/,
     );
-    expect(html).toContain("worker-src blob: https://res;");
+    // Workers never load from the resource origin (src/utils/workerAssets.ts).
+    expect(html).toContain("worker-src blob:;");
     expect(html).not.toContain("__MEGANE_TEST__ = true");
     process.env.MEGANE_E2E_MODE = "1";
     expect(

@@ -407,7 +407,12 @@ an asset that is fetched only when the sketch dialog or *Clean up geometry*
 first needs it. The Jupyter widget bundle leaves the `.wasm` out and asks the
 kernel for the copy shipped in the wheel (`setRDKitWasmSource`), and the
 JupyterLab labextension builds the worker with webpack
-(`embedWorker.webpack.ts`).
+(`embedWorker.webpack.ts`). The VS Code Builder builds the worker inline and
+`embed.ts` fetches the `.wasm` on the page, handing the worker a `blob:` URL:
+a worker in a webview reaches the extension's resource origin only until the
+webview's service worker is stopped for being idle (`utils/workerAssets.ts`).
+For the same reason it bundles Ketcher's self-contained `ketcher-standalone`
+build, whose Indigo worker carries its `.wasm`, instead of `dist/binaryWasm`.
 
 `src/builder/library/embed.ts` is the main-thread client: one lazily created
 Web Worker (`embed.worker.ts`) holds the module, requests carry the `.wasm`

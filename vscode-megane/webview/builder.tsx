@@ -19,16 +19,11 @@
 import { mountBuilder } from "../../src/builder/mount";
 import type { BuilderHost } from "../../src/builder/host";
 import { createMessageBridge } from "../../src/builder/tools/bridge";
-import { installCrossOriginWorker } from "../../src/utils/crossOriginWorker";
 import "../../src/styles/megane.css";
 
 declare function acquireVsCodeApi(): {
   postMessage(message: unknown): void;
 };
-
-// RDKit's and Ketcher's workers are served from the extension's resource
-// origin, which `new Worker` refuses from the webview's own origin.
-installCrossOriginWorker();
 
 const vscode = acquireVsCodeApi();
 

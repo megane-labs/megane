@@ -2,10 +2,11 @@ import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 import wasm from "vite-plugin-wasm";
 import path from "path";
-import { prodDefine, srcAlias, syncParseAlias } from "./vite.shared";
+import { forbidWorkerFiles, prodDefine, srcAlias, syncParseAlias } from "./vite.shared";
 
 export default defineConfig({
-  plugins: [react(), wasm()],
+  // A worker file in dist/assets/ would be requested from the consuming app's root.
+  plugins: [react(), wasm(), forbidWorkerFiles()],
   resolve: {
     alias: [
       // npm library bundle: use the synchronous main-thread parse path so the

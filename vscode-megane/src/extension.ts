@@ -835,13 +835,15 @@ class EmptyTree implements vscode.TreeDataProvider<never> {
 /**
  * The Builder webview's page. Its bundle is split into chunks (Ketcher loads
  * on demand), so the CSP admits scripts from the extension's resource origin
- * besides the nonce'd entry. Workers start from blob: bootstraps that import
- * their scripts from there (see `src/utils/crossOriginWorker.ts`); a module
- * worker's imports are checked against `worker-src`, which therefore lists
- * the resource origin too. RDKit (Emscripten + embind) builds its call
- * wrappers with `new Function`, and its worker inherits this page's policy, so
- * this page — unlike the viewer's — also allows `'unsafe-eval'`. It runs only
- * the extension's own bundle; opened files are parsed by WASM, never evaluated.
+ * besides the nonce'd entry. Workers are not loaded from there: a worker
+ * reaches the resource origin only until the webview's service worker
+ * restarts (see `src/utils/workerAssets.ts`), so RDKit's and Ketcher's
+ * workers are blob: scripts inside the bundle and get their `.wasm` from the
+ * page, and only blob: is admitted as a worker. RDKit and Indigo (Emscripten
+ * + embind) build their call wrappers with `new Function`, and a blob: worker
+ * inherits this page's policy, so this page — unlike the viewer's — also
+ * allows `'unsafe-eval'`. It runs only the extension's own bundle; opened
+ * files are parsed by WASM, never evaluated.
  */
 export function getBuilderHtml(webview: vscode.Webview, mediaDir: vscode.Uri): string {
   const builderDir = vscode.Uri.joinPath(mediaDir, "builder");
@@ -861,7 +863,7 @@ export function getBuilderHtml(webview: vscode.Webview, mediaDir: vscode.Uri): s
              img-src ${webview.cspSource} data: blob:;
              font-src ${webview.cspSource} data:;
              connect-src ${webview.cspSource} blob: data:;
-             worker-src blob: ${webview.cspSource};" />
+             worker-src blob:;" />
   <link rel="stylesheet" href="${cssUri}" />
 </head>
 <body>
