@@ -101,7 +101,7 @@ $VENV/bin/pip install "megane==X.Y.Z" jupyterlab
 
 # Make sure local Playwright project deps are present
 npm ci
-npx playwright install chromium   # skip in the remote sandbox: Chromium is preinstalled
+npx playwright install chromium   # run this in the remote sandbox too (see below)
 
 # The specs refuse to start without python/megane/static/widget.js and
 # builder_widget.js (guards for dev runs), but the kernel imports megane from
@@ -119,7 +119,9 @@ PATH=$VENV/bin:$PATH MEGANE_E2E_MODE=1 npm run test:e2e:widget-jupyterlab
 rm python/megane/static/widget.js python/megane/static/builder_widget.js
 ```
 
-The project's `testMatch` (`/widget-jupyterlab\.spec\.ts$/`) also picks up `builder-widget-jupyterlab.spec.ts`, so the run covers the `megane.Builder` widget as well (9 tests as of 0.18.0). Without the `builder_widget.js` link its first test fails in 0 ms with "builder_widget.js missing" and the other two do not run.
+Do not skip `npx playwright install chromium` in the remote sandbox. The Chromium preinstalled under `/opt/pw-browsers` is the build for the sandbox's global Playwright (`chromium-1243` as of 0.19.0), not for the project's pinned `playwright` 1.56 (`chromium_headless_shell-1194`). Without the install every test fails at launch with "Executable doesn't exist at /opt/pw-browsers/chromium_headless_shell-1194/…". The download goes through the sandbox proxy and adds the matching build next to the preinstalled one.
+
+The project's `testMatch` (`/widget-jupyterlab\.spec\.ts$/`) also picks up `builder-widget-jupyterlab.spec.ts`, so the run covers the `megane.Builder` widget as well (9 tests as of 0.19.0). Without the `builder_widget.js` link its first test fails in 0 ms with "builder_widget.js missing" and the other two do not run.
 
 Confirm the kernel really uses the wheel: `cd /tmp && $VENV/bin/python -c "import megane; print(megane.__version__, megane.__file__)"` must print `X.Y.Z` and a path under `$VENV`, and `$VENV/bin/jupyter labextension list` must show `megane-jupyterlab vX.Y.Z enabled OK`.
 
