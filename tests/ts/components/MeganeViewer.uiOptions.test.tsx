@@ -445,6 +445,160 @@ describe("MeganeViewer ui options", () => {
   });
 });
 
+describe("MeganeViewer initial pipeline panel state", () => {
+  const originalInnerWidth = window.innerWidth;
+  const setViewportWidth = (width: number) => {
+    Object.defineProperty(window, "innerWidth", {
+      configurable: true,
+      writable: true,
+      value: width,
+    });
+  };
+
+  afterEach(() => {
+    cleanup();
+    vi.clearAllMocks();
+    pipelineEditorProps.current = null;
+    setViewportWidth(originalInnerWidth);
+  });
+
+  const toggle = () =>
+    act(() => {
+      (pipelineEditorProps.current?.onToggleCollapse as () => void)();
+    });
+
+  const tourAnchorRight = (container: HTMLElement) =>
+    container.querySelector<HTMLElement>('[data-tour-anchor="viewport"]')!.style.right;
+
+  // The renderer reads the inset as soon as it is ready, before MeganeViewer's
+  // own effects run, so the very first call must already see the collapsed
+  // panel — otherwise the first frame is framed around a panel that is not there.
+  it("starts collapsed and reserves no inset from the first frame", () => {
+    setViewportWidth(1280);
+    const { container } = render(
+      <MeganeViewer onUploadStructure={() => {}} initialPipelineCollapsed />,
+    );
+    expect(pipelineEditorProps.current?.collapsed).toBe(true);
+    expect(rendererStub.setViewInsets.mock.calls[0]).toEqual([0, 0]);
+    expect(rendererStub.setViewInsets).toHaveBeenLastCalledWith(0, 0);
+    expect(tourAnchorRight(container)).toBe("60px");
+  });
+
+  it("starts open on a narrow viewport when told to", () => {
+    setViewportWidth(500);
+    const { container } = render(
+      <MeganeViewer onUploadStructure={() => {}} initialPipelineCollapsed={false} />,
+    );
+    expect(pipelineEditorProps.current?.collapsed).toBe(false);
+    expect(rendererStub.setViewInsets.mock.calls[0]).toEqual([0, 492]);
+    expect(tourAnchorRight(container)).toBe("504px");
+  });
+
+  it.each([
+    [500, true],
+    [1280, false],
+  ])("keeps the width heuristic when omitted (innerWidth %i → collapsed %s)", (width, expected) => {
+    setViewportWidth(width);
+    render(<MeganeViewer onUploadStructure={() => {}} />);
+    expect(pipelineEditorProps.current?.collapsed).toBe(expected);
+  });
+
+  it("treats an explicitly undefined value as not specified", () => {
+    setViewportWidth(500);
+    render(<MeganeViewer onUploadStructure={() => {}} initialPipelineCollapsed={undefined} />);
+    expect(pipelineEditorProps.current?.collapsed).toBe(true);
+  });
+
+  it("reads the prop on mount only", () => {
+    const { rerender } = render(
+      <MeganeViewer onUploadStructure={() => {}} initialPipelineCollapsed />,
+    );
+    rerender(<MeganeViewer onUploadStructure={() => {}} initialPipelineCollapsed={false} />);
+    expect(pipelineEditorProps.current?.collapsed).toBe(true);
+  });
+
+  it("lets the user open a panel that started collapsed", () => {
+    const { container } = render(
+      <MeganeViewer onUploadStructure={() => {}} initialPipelineCollapsed />,
+    );
+    rendererStub.setViewInsets.mockClear();
+    toggle();
+    expect(pipelineEditorProps.current?.collapsed).toBe(false);
+    expect(rendererStub.setViewInsets).toHaveBeenLastCalledWith(0, 492);
+    expect(tourAnchorRight(container)).toBe("504px");
+  });
+
+  it("reports each user toggle but not the initial state", () => {
+    const onPipelineCollapsedChange = vi.fn();
+    render(
+      <MeganeViewer
+        onUploadStructure={() => {}}
+        initialPipelineCollapsed
+        onPipelineCollapsedChange={onPipelineCollapsedChange}
+      />,
+    );
+    expect(onPipelineCollapsedChange).not.toHaveBeenCalled();
+
+    toggle();
+    expect(onPipelineCollapsedChange).toHaveBeenLastCalledWith(false);
+    toggle();
+    expect(onPipelineCollapsedChange).toHaveBeenLastCalledWith(true);
+    expect(onPipelineCollapsedChange).toHaveBeenCalledTimes(2);
+  });
+
+  // Two toggles inside one batch must not both read the pre-batch state, or
+  // the host would hear the same value twice while the panel ends up back
+  // where it started.
+  it("reports consecutive toggles inside one batch in order", () => {
+    const onPipelineCollapsedChange = vi.fn();
+    render(
+      <MeganeViewer
+        onUploadStructure={() => {}}
+        initialPipelineCollapsed={false}
+        onPipelineCollapsedChange={onPipelineCollapsedChange}
+      />,
+    );
+    act(() => {
+      const onToggle = pipelineEditorProps.current?.onToggleCollapse as () => void;
+      onToggle();
+      onToggle();
+    });
+    expect(onPipelineCollapsedChange.mock.calls).toEqual([[true], [false]]);
+    expect(pipelineEditorProps.current?.collapsed).toBe(false);
+  });
+
+  // An inline arrow from the host is a new function every render; it must
+  // neither churn the toggle handler handed to PipelineEditor nor leave the
+  // handler calling a stale callback.
+  it("calls the latest callback without changing the toggle handler", () => {
+    const first = vi.fn();
+    const second = vi.fn();
+    const { rerender } = render(
+      <MeganeViewer onUploadStructure={() => {}} onPipelineCollapsedChange={first} />,
+    );
+    const onToggle = pipelineEditorProps.current?.onToggleCollapse;
+
+    rerender(<MeganeViewer onUploadStructure={() => {}} onPipelineCollapsedChange={second} />);
+    expect(pipelineEditorProps.current?.onToggleCollapse).toBe(onToggle);
+
+    toggle();
+    expect(first).not.toHaveBeenCalled();
+    expect(second).toHaveBeenCalledWith(true);
+  });
+
+  it("has no effect while the pipeline editor is switched off", () => {
+    render(
+      <MeganeViewer
+        onUploadStructure={() => {}}
+        ui={{ pipelineEditor: false }}
+        initialPipelineCollapsed={false}
+      />,
+    );
+    expect(screen.queryByTestId("mock-pipeline-editor")).toBeNull();
+    expect(rendererStub.setViewInsets).toHaveBeenLastCalledWith(0, 0);
+  });
+});
+
 describe("MeganeViewer selection clearing", () => {
   afterEach(() => {
     cleanup();

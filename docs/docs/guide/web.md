@@ -68,6 +68,8 @@ function App() {
 | `onCameraStateChange` | `(state: MeganeCameraState) => void` | | Called after each camera interaction, for hosts that persist the camera in their own storage |
 | `width` / `height` | `string \| number` | | Viewer dimensions (default: `"100%"`) |
 | `ui` | `Partial<MeganeViewerUiOptions>` | | Hides individual tools — see below (default: everything visible) |
+| `initialPipelineCollapsed` | `boolean` | | Start with the pipeline editor panel collapsed (`true`) or open (`false`) — see [Opening collapsed](#opening-collapsed-initialpipelinecollapsed) (default: collapsed below 768 px viewport width, open otherwise) |
+| `onPipelineCollapsedChange` | `(collapsed: boolean) => void` | | Called each time the user collapses or opens the pipeline editor panel, for hosts that persist its state |
 
 `onBondSourceChange`, `onLabelSourceChange`, `onLoadLabelFile`,
 `onVectorSourceChange`, `onLoadVectorFile` and `onLoadDemoVectors` are
@@ -110,6 +112,38 @@ pipeline still executes and the renderer still receives every update. The type
 are exported for typed configs. With `pipelineEditor: false` you must drive
 file loading yourself (`usePipelineStore.getState().openFile(file)`), since the
 Load Structure node lives inside the editor.
+
+### Opening collapsed (`initialPipelineCollapsed`)
+
+`ui.pipelineEditor` decides whether the pipeline editor exists at all;
+`initialPipelineCollapsed` keeps it available but decides whether it starts
+open or folded down to its button, leaving the 3D view unobstructed until the
+user opens it:
+
+```tsx
+// Start collapsed on every screen size; the user can still open the editor.
+<MeganeViewer initialPipelineCollapsed onUploadStructure={() => {}} />;
+```
+
+Without the prop the panel starts collapsed on viewports narrower than 768 px
+and open otherwise. The value is read once, on mount: after that the panel's
+own toggle owns the state, and changing the prop does nothing. It has no
+effect with `ui={{ pipelineEditor: false }}`.
+
+To remember the user's choice, pair it with `onPipelineCollapsedChange`, which
+is called with the new state on every toggle (not for the initial state):
+
+```tsx
+const stored = localStorage.getItem("pipelineCollapsed");
+
+<MeganeViewer
+  initialPipelineCollapsed={stored === null ? undefined : stored === "true"}
+  onPipelineCollapsedChange={(collapsed) =>
+    localStorage.setItem("pipelineCollapsed", String(collapsed))
+  }
+  onUploadStructure={() => {}}
+/>;
+```
 
 ### Performance readout
 

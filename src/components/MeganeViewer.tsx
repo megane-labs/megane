@@ -163,6 +163,25 @@ interface MeganeViewerProps {
    * <MeganeViewer ui={{ pipelineEditor: false, resetView: false, perfHud: false }} … />
    */
   ui?: Partial<MeganeViewerUiOptions>;
+  /**
+   * Whether the pipeline editor panel starts collapsed (`true`) or open
+   * (`false`). Read once on mount: later changes are ignored, because from
+   * then on the panel's own toggle owns the state. Omitted, the panel starts
+   * collapsed on viewports narrower than 768 px and open otherwise. Has no
+   * effect while `ui.pipelineEditor` is `false`.
+   *
+   * @example
+   * // Start with the 3D view unobstructed; the user can still open the editor.
+   * <MeganeViewer initialPipelineCollapsed … />
+   */
+  initialPipelineCollapsed?: boolean;
+  /**
+   * Called with the new state each time the user collapses (`true`) or opens
+   * (`false`) the pipeline editor panel. Not called for the initial state.
+   * Pair it with `initialPipelineCollapsed` to restore the panel across
+   * sessions from the host's own storage.
+   */
+  onPipelineCollapsedChange?: (collapsed: boolean) => void;
   width?: string | number;
   height?: string | number;
   /** Host context tag for E2E tests: "webapp" | "jupyterlab-doc" | "vscode". Defaults to "webapp". */
@@ -193,6 +212,8 @@ export function MeganeViewer({
   onSelectionChange,
   onMeasurementChange,
   ui,
+  initialPipelineCollapsed,
+  onPipelineCollapsedChange,
   width = "100%",
   height = "100%",
   testContext = "webapp",
@@ -207,8 +228,12 @@ export function MeganeViewer({
   const [hoverInfo, setHoverInfo] = useState<HoverInfo>(null);
   const [bondCount, setBondCount] = useState<number>(0);
   const isNarrow = typeof window !== "undefined" && window.innerWidth < 768;
-  const [pipelineCollapsed, setPipelineCollapsed] = useState(isNarrow);
-  const pipelineCollapsedRef = useRef(isNarrow);
+  // The ref is seeded with the same value as the state, not left to the sync
+  // effect below: the Viewport's mount effect runs before this component's
+  // effects and reads it through `rightInset()` to size the first frame.
+  const initialCollapsed = initialPipelineCollapsed ?? isNarrow;
+  const [pipelineCollapsed, setPipelineCollapsed] = useState(initialCollapsed);
+  const pipelineCollapsedRef = useRef(initialCollapsed);
   const pipelineWidthRef = useRef(480);
 
   // Resolve the `ui` prop down to plain booleans so a fresh object literal
@@ -479,8 +504,21 @@ export function MeganeViewer({
     if (!showTooltip) setHoverInfo(null);
   }, [showTooltip]);
 
+  // Held in a ref so an inline callback from the host does not give the
+  // toggle handler a new identity (and re-render the PipelineEditor) each
+  // render.
+  const onPipelineCollapsedChangeRef = useRef(onPipelineCollapsedChange);
+  onPipelineCollapsedChangeRef.current = onPipelineCollapsedChange;
+
+  // The change is reported from the toggle handler, not from an effect on
+  // `pipelineCollapsed`, so the host hears exactly the user's toggles and
+  // never the initial state. The ref is advanced here too, so two toggles in
+  // one batch each see the state the previous one left.
   const handleTogglePipeline = useCallback(() => {
-    setPipelineCollapsed((prev) => !prev);
+    const next = !pipelineCollapsedRef.current;
+    pipelineCollapsedRef.current = next;
+    setPipelineCollapsed(next);
+    onPipelineCollapsedChangeRef.current?.(next);
   }, []);
 
   // Tour anchor — invisible rectangle the guide tour highlights when it
