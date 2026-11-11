@@ -82,6 +82,34 @@ describe("CollapsiblePanel", () => {
     expect(onToggle).toHaveBeenCalledTimes(1);
   });
 
+  it("draws the expand_circle_right icon on both toggles instead of arrow glyphs", () => {
+    const { rerender } = render(
+      <CollapsiblePanel title="Pipeline" collapsed={false} onToggleCollapse={() => {}}>
+        <div />
+      </CollapsiblePanel>,
+    );
+    let toggle = screen.getByTestId("panel-pipeline-toggle");
+    let icon = toggle.querySelector("svg");
+    expect(icon?.getAttribute("data-icon")).toBe("expand-circle-right");
+    expect(icon?.getAttribute("fill")).toBe("currentColor");
+    expect(icon?.getAttribute("width")).toBe("18");
+    expect(icon?.style.transform).toBe("");
+    expect(toggle.textContent).toBe("");
+
+    rerender(
+      <CollapsiblePanel title="Pipeline" collapsed={true} onToggleCollapse={() => {}}>
+        <div />
+      </CollapsiblePanel>,
+    );
+    toggle = screen.getByTestId("panel-pipeline-toggle");
+    icon = toggle.querySelector("svg");
+    // The collapsed stub points the other way: the same icon, mirrored.
+    expect(icon?.getAttribute("data-icon")).toBe("expand-circle-left");
+    expect(icon?.getAttribute("width")).toBe("16");
+    expect(icon?.style.transform).toBe("scaleX(-1)");
+    expect(toggle.textContent).toBe("Pipeline");
+  });
+
   it("renders headerExtra and containerExtra when expanded", () => {
     render(
       <CollapsiblePanel
