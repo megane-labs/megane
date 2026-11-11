@@ -54,6 +54,8 @@ declare module "@megane/components/MeganeViewer" {
     onSelectionChange?: (selection: SelectionState) => void;
     onMeasurementChange?: (measurement: Measurement | null) => void;
     ui?: Partial<MeganeViewerUiOptions>;
+    initialPipelineCollapsed?: boolean;
+    onPipelineCollapsedChange?: (collapsed: boolean) => void;
     width?: string | number;
     height?: string | number;
     testContext?: string;
