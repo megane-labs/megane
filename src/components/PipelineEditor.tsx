@@ -234,7 +234,9 @@ function PipelineEditorInner({
   totalFrames,
   currentFrame,
   onSeek,
+  showAssistant,
 }: {
+  showAssistant: boolean;
   collapsed: boolean;
   onToggleCollapse: () => void;
   onWidthChange?: (width: number) => void;
@@ -558,8 +560,9 @@ function PipelineEditorInner({
           </NodeShellModeContext.Provider>
           {/* The assistant sits between the graph it edits and the
                   selected node's properties; its conversation and settings
-                  open over the bottom of the canvas. */}
-          <PipelineChatBox />
+                  open over the bottom of the canvas. When it is switched
+                  off the canvas takes its place. */}
+          {showAssistant && <PipelineChatBox />}
           <SplitSeparator onMouseDown={handleSplitMouseDown} />
           <PropertiesPane height={`${Math.round(paneFraction * 100)}%`} />
         </div>
@@ -593,6 +596,7 @@ export function PipelineEditor({
   totalFrames = 0,
   currentFrame = 0,
   onSeek,
+  showAssistant = true,
 }: {
   collapsed: boolean;
   onToggleCollapse: () => void;
@@ -603,11 +607,18 @@ export function PipelineEditor({
   totalFrames?: number;
   currentFrame?: number;
   onSeek?: (frame: number) => void;
+  /**
+   * Show the AI assistant docked under the graph (default: `true`). `false`
+   * removes its prompt bar, conversation and provider settings; the rest of
+   * the editor is unchanged.
+   */
+  showAssistant?: boolean;
 }) {
   const noopSeek = useCallback((_f: number) => {}, []);
   return (
     <ReactFlowProvider>
       <PipelineEditorInner
+        showAssistant={showAssistant}
         collapsed={collapsed}
         onToggleCollapse={onToggleCollapse}
         onWidthChange={onWidthChange}
