@@ -580,14 +580,9 @@ GASTEIGER
         assert_eq!(result.n_atoms, 12);
         assert_eq!(result.n_file_bonds, 12);
 
-        // All ring carbons should be element 6
-        for i in 0..6 {
-            assert_eq!(result.elements[i], 6, "atom {} should be carbon", i);
-        }
-        // All ring hydrogens
-        for i in 6..12 {
-            assert_eq!(result.elements[i], 1, "atom {} should be hydrogen", i);
-        }
+        // Six ring carbons, then six hydrogens
+        assert_eq!(result.elements[..6], [6; 6], "ring atoms should be carbon");
+        assert_eq!(result.elements[6..12], [1; 6], "ring hydrogens");
         // All bonds sorted
         assert!(result.bonds.iter().all(|(a, b)| a <= b));
         // Aromatic bonds carry MDL order 4

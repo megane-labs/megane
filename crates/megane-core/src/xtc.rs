@@ -961,8 +961,9 @@ mod tests {
             assert_eq!(eager.frame(f), expected(f), "eager frame {f}");
         }
         let idx = build_index(&data).expect("build index");
-        for f in 0..3 {
-            let lazy = decode_frame_at(&data, idx.offsets[f] as usize, 2).expect("decode");
+        assert_eq!(idx.offsets.len(), 3);
+        for (f, &offset) in idx.offsets.iter().enumerate() {
+            let lazy = decode_frame_at(&data, offset as usize, 2).expect("decode");
             assert_eq!(lazy, expected(f), "lazy frame {f}");
         }
         // The box was already converted; positions now share its unit.
