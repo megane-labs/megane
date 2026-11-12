@@ -54,19 +54,29 @@ export function useFrameDistanceBonds(options: {
     const renderer = rendererRef.current;
     if (!renderer) return;
 
+    // A heterogeneous frame (atoms added or removed mid-run, e.g. an ion
+    // implanted every few hundred steps) carries its own elements, and its own
+    // cell when that varies. Frame 0's atom count would leave the added atoms
+    // out of the inference and misplace every periodic ghost endpoint.
+    const elements = frame.elements ?? snapshot.elements;
+    const nAtoms = frame.elements ? frame.nAtoms : snapshot.nAtoms;
     const result = computeFrameDistanceBonds(
       frame.positions,
-      snapshot.elements,
-      snapshot.nAtoms,
-      snapshot.box,
+      elements,
+      nAtoms,
+      frame.box ?? snapshot.box,
       vdwScale,
     );
+    // With no cell-crossing bond the result carries no atom arrays and the
+    // renderer falls back to the snapshot's, which a heterogeneous frame does
+    // not share: hand it the frame's own.
+    const frameArrays = result.positions === null && frame.elements !== undefined;
     renderer.updateBondsExt(
       result.bondIndices,
       result.bondOrders,
-      result.positions,
-      result.elements,
-      result.nAtoms,
+      frameArrays ? frame.positions : result.positions,
+      frameArrays ? elements : result.elements,
+      frameArrays ? nAtoms : result.nAtoms,
     );
     onBondCount?.(result.nBonds);
   }, [enabled, snapshot, frame, vdwScale, rendererRef, onBondCount]);
