@@ -72,6 +72,15 @@ import { ensureThemeTokens } from "../styles/themeTokens";
 export interface MeganeViewerUiOptions {
   /** Pipeline editor panel on the right, with its toolbar and node graph. */
   pipelineEditor: boolean;
+  /**
+   * AI assistant docked in the pipeline editor's Editor tab: the prompt bar,
+   * its conversation drawer, and the provider / API key settings. Hiding it
+   * leaves the rest of the editor as is and no AI request can be made. It
+   * lives inside the editor, so it has no effect while `pipelineEditor` is
+   * `false`. Switching it off while a request is running cancels the request
+   * and drops the conversation, as collapsing the panel does.
+   */
+  aiAssistant: boolean;
   /** "Reset View" button in the top-left corner. */
   resetView: boolean;
   /**
@@ -100,6 +109,7 @@ export interface MeganeViewerUiOptions {
  */
 export const DEFAULT_MEGANE_VIEWER_UI: Readonly<MeganeViewerUiOptions> = Object.freeze({
   pipelineEditor: true,
+  aiAssistant: true,
   resetView: true,
   viewAxes: true,
   perfHud: true,
@@ -245,6 +255,7 @@ export function MeganeViewer({
   // typechecks. A spread would copy that `undefined` over the `true` default
   // and hide a tool the documented contract keeps visible.
   const showPipelineEditor = ui?.pipelineEditor ?? DEFAULT_MEGANE_VIEWER_UI.pipelineEditor;
+  const showAiAssistant = ui?.aiAssistant ?? DEFAULT_MEGANE_VIEWER_UI.aiAssistant;
   const showResetView = ui?.resetView ?? DEFAULT_MEGANE_VIEWER_UI.resetView;
   const showViewAxes = ui?.viewAxes ?? DEFAULT_MEGANE_VIEWER_UI.viewAxes;
   const showPerfHud = ui?.perfHud ?? DEFAULT_MEGANE_VIEWER_UI.perfHud;
@@ -706,6 +717,7 @@ export function MeganeViewer({
       )}
       {showPipelineEditor && (
         <PipelineEditor
+          showAssistant={showAiAssistant}
           collapsed={pipelineCollapsed}
           onToggleCollapse={handleTogglePipeline}
           onWidthChange={handlePipelineWidthChange}

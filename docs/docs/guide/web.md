@@ -99,6 +99,7 @@ await usePipelineStore.getState().openFile(file);
 | Key | Default | Hides |
 |------|---------|-------|
 | `pipelineEditor` | `true` | Pipeline editor panel on the right, including the viewer's only file-open UI |
+| `aiAssistant` | `true` | AI assistant docked under the editor's graph: the prompt bar, its conversation and the provider / API key settings. The rest of the editor stays; no AI request can be made. No effect while `pipelineEditor` is `false` |
 | `resetView` | `true` | "Reset View" button in the top-left corner (re-fits the structure in the standard orientation) |
 | `viewAxes` | `true` | Axis-alignment buttons under Reset View: ±a / ±b / ±c while a cell is loaded, ±x / ±y / ±z always |
 | `perfHud` | `true` | Atoms / Bonds / Draws / FPS / CPU / Mem readout (see [Performance readout](#performance-readout)) |
@@ -112,6 +113,15 @@ pipeline still executes and the renderer still receives every update. The type
 are exported for typed configs. With `pipelineEditor: false` you must drive
 file loading yourself (`usePipelineStore.getState().openFile(file)`), since the
 Load Structure node lives inside the editor.
+
+`aiAssistant: false` keeps the pipeline editor but takes the AI assistant out of
+it — for an embed that should not offer API key entry or send requests to an
+AI provider. Switching it off while a request is running cancels the request
+and drops the conversation, just as collapsing the panel does:
+
+```tsx
+<MeganeViewer ui={{ aiAssistant: false }} onUploadStructure={() => {}} />
+```
 
 ### Opening collapsed (`initialPipelineCollapsed`)
 

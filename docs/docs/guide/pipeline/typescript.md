@@ -183,6 +183,7 @@ under the table.
 | Key | Default | Hides |
 |------|---------|-------|
 | `pipelineEditor` | `true` | Pipeline editor panel on the right (toolbar, node graph, share/render dialogs, **and the viewer's only file-open UI**) |
+| `aiAssistant` | `true` | AI assistant docked under the editor's graph (prompt bar, conversation, provider / API key settings); the rest of the editor stays. No effect while `pipelineEditor` is `false` |
 | `resetView` | `true` | "Reset View" button in the top-left corner |
 | `viewAxes` | `true` | Axis-alignment buttons (±a/±b/±c while a cell is loaded, ±x/±y/±z always) under Reset View |
 | `perfHud` | `true` | Atoms / Bonds / Draws / FPS / CPU / Mem readout (see [Performance readout](../web.md#performance-readout)) |

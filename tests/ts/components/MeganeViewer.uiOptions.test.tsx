@@ -75,10 +75,16 @@ vi.mock("@/components/MeasurementListPanel", () => ({
 vi.mock("@/components/Timeline", () => ({
   Timeline: () => <div data-testid="mock-timeline" />,
 }));
+// The assistant marker follows `showAssistant` with the real editor's default
+// (shown unless `false`), so the generic visibility tests below can see it.
 vi.mock("@/components/PipelineEditor", () => ({
   PipelineEditor: (props: Record<string, unknown>) => {
     pipelineEditorProps.current = props;
-    return <div data-testid="mock-pipeline-editor" />;
+    return (
+      <div data-testid="mock-pipeline-editor">
+        {props.showAssistant !== false && <div data-testid="mock-ai-assistant" />}
+      </div>
+    );
   },
 }));
 vi.mock("@/pipeline/apply", () => ({
@@ -97,6 +103,7 @@ import type { MeganeCameraState } from "@/renderer/MoleculeRenderer";
 const TOOL_TESTIDS: Record<keyof MeganeViewerUiOptions, string[]> = {
   pipelineEditor: ["mock-pipeline-editor"],
   // Collapsed by default, but its stub is in the DOM whenever the tool is on.
+  aiAssistant: ["mock-ai-assistant"],
   resetView: ["reset-view-btn"],
   viewAxes: ["view-axis-controls"],
   perfHud: ["perf-hud"],
@@ -106,6 +113,11 @@ const TOOL_TESTIDS: Record<keyof MeganeViewerUiOptions, string[]> = {
 };
 
 const TOOL_KEYS = Object.keys(TOOL_TESTIDS) as (keyof MeganeViewerUiOptions)[];
+
+/** Tools rendered inside another tool, which therefore disappear with it. */
+const PARENT_TOOL: Partial<Record<keyof MeganeViewerUiOptions, keyof MeganeViewerUiOptions>> = {
+  aiAssistant: "pipelineEditor",
+};
 
 // The Timeline (and therefore the overlay offsets keyed on it) only renders for
 // multi-frame data, so every suite here starts from a trajectory.
@@ -143,6 +155,7 @@ describe("MeganeViewer ui options", () => {
   it("defaults every tool to visible", () => {
     expect(DEFAULT_MEGANE_VIEWER_UI).toEqual({
       pipelineEditor: true,
+      aiAssistant: true,
       resetView: true,
       viewAxes: true,
       perfHud: true,
@@ -182,11 +195,34 @@ describe("MeganeViewer ui options", () => {
     for (const testid of TOOL_TESTIDS[key]) {
       expect(screen.queryByTestId(testid)).toBeNull();
     }
-    for (const other of TOOL_KEYS.filter((k) => k !== key)) {
+    for (const other of TOOL_KEYS.filter((k) => k !== key && PARENT_TOOL[k] !== key)) {
       for (const testid of TOOL_TESTIDS[other]) {
         expect(screen.getByTestId(testid)).toBeTruthy();
       }
     }
+  });
+
+  it("hands the editor showAssistant=true by default and false when aiAssistant is off", () => {
+    const { rerender } = render(<MeganeViewer onUploadStructure={() => {}} />);
+    expect(pipelineEditorProps.current?.showAssistant).toBe(true);
+
+    rerender(<MeganeViewer onUploadStructure={() => {}} ui={{ aiAssistant: false }} />);
+    expect(pipelineEditorProps.current?.showAssistant).toBe(false);
+  });
+
+  // The assistant is a part of the panel, not the panel: switching it off must
+  // leave the panel's slot in the frustum and the tour anchor where they were.
+  it("keeps the pipeline panel and its inset when only the assistant is hidden", () => {
+    const { container, rerender } = render(<MeganeViewer onUploadStructure={() => {}} />);
+    rendererStub.setViewInsets.mockClear();
+
+    rerender(<MeganeViewer onUploadStructure={() => {}} ui={{ aiAssistant: false }} />);
+
+    expect(screen.getByTestId("mock-pipeline-editor")).toBeTruthy();
+    expect(screen.queryByTestId("mock-ai-assistant")).toBeNull();
+    expect(rendererStub.setViewInsets).not.toHaveBeenCalledWith(0, 0);
+    const anchor = container.querySelector<HTMLElement>('[data-tour-anchor="viewport"]');
+    expect(anchor!.style.right).toBe("504px");
   });
 
   it("keeps the Viewport when every tool is switched off", () => {

@@ -19,6 +19,7 @@ declare module "@megane/components/MeganeViewer" {
   /** Mirror of `MeganeViewerUiOptions` (src/components/MeganeViewer.tsx). */
   export interface MeganeViewerUiOptions {
     pipelineEditor: boolean;
+    aiAssistant: boolean;
     resetView: boolean;
     viewAxes: boolean;
     perfHud: boolean;

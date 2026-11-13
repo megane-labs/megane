@@ -31,8 +31,10 @@ vi.mock("@xyflow/react", async () => {
   };
 });
 
+// A marker rather than `null`, so the `showAssistant` tests can tell whether
+// the assistant is mounted.
 vi.mock("@/components/PipelineChatBox", () => ({
-  PipelineChatBox: () => null,
+  PipelineChatBox: () => <div data-testid="mock-pipeline-chat" />,
 }));
 vi.mock("@/components/RenderModal", () => ({
   RenderModal: () => null,
@@ -151,6 +153,35 @@ describe("PipelineEditor — collapsed state", () => {
     render(<PipelineEditor collapsed={true} onToggleCollapse={() => {}} />);
     expect(screen.queryByTestId("pipeline-editor-theme")).toBeNull();
     expect(screen.getByTestId("panel-pipeline-toggle")).toBeTruthy();
+  });
+});
+
+describe("PipelineEditor — AI assistant", () => {
+  it("docks the assistant under the graph by default", () => {
+    render(<PipelineEditor collapsed={false} onToggleCollapse={() => {}} />);
+    expect(screen.getByTestId("mock-pipeline-chat")).toBeTruthy();
+  });
+
+  it("leaves the assistant out but keeps the graph and rail with showAssistant=false", () => {
+    render(<PipelineEditor collapsed={false} onToggleCollapse={() => {}} showAssistant={false} />);
+    expect(screen.queryByTestId("mock-pipeline-chat")).toBeNull();
+    expect(screen.getByTestId("react-flow")).toBeTruthy();
+    expect(screen.getByTestId("pipeline-editor-theme")).toBeTruthy();
+  });
+
+  // Switching it off unmounts the dock, which is what cancels a request still
+  // in flight (AssistantDock aborts on unmount).
+  it("unmounts the assistant when it is switched off at runtime", () => {
+    const { rerender } = render(<PipelineEditor collapsed={false} onToggleCollapse={() => {}} />);
+    expect(screen.getByTestId("mock-pipeline-chat")).toBeTruthy();
+
+    rerender(
+      <PipelineEditor collapsed={false} onToggleCollapse={() => {}} showAssistant={false} />,
+    );
+    expect(screen.queryByTestId("mock-pipeline-chat")).toBeNull();
+
+    rerender(<PipelineEditor collapsed={false} onToggleCollapse={() => {}} showAssistant />);
+    expect(screen.getByTestId("mock-pipeline-chat")).toBeTruthy();
   });
 });
 
