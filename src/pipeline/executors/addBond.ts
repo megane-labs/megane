@@ -274,8 +274,11 @@ export function expandPeriodicTopologyForDrawingBoundary(
  * - atom A → ghost position of B (minimum-image near A)
  * - atom B → ghost position of A (minimum-image near B)
  *
- * Ghost atoms are appended to positions/elements arrays so the existing
- * impostor bond renderer handles them without modification.
+ * Ghost atoms are appended after the first `nAtoms` atoms of the
+ * positions/elements arrays so the existing impostor bond renderer handles
+ * them without modification. Ghost indices start at `nAtoms`, so anything the
+ * buffers hold past `nAtoms` is dropped rather than left between the real
+ * atoms and the ghosts, where it would take the ghosts' indices.
  */
 export function processPbcBonds(
   bondIndices: Uint32Array,
@@ -415,14 +418,16 @@ export function processPbcBonds(
     }
   }
 
-  // Build extended positions and elements arrays
-  const extPositions = new Float32Array(positions.length + ghostPositions.length);
-  extPositions.set(positions);
-  extPositions.set(new Float32Array(ghostPositions), positions.length);
+  // Build extended positions and elements arrays: the nAtoms real atoms, then
+  // the ghosts, so ghost index nAtoms + k is the k-th ghost.
+  const nReal = nAtoms * 3;
+  const extPositions = new Float32Array(nReal + ghostPositions.length);
+  extPositions.set(positions.subarray(0, nReal));
+  extPositions.set(new Float32Array(ghostPositions), nReal);
 
-  const extElements = new Uint8Array(elements.length + ghostElements.length);
-  extElements.set(elements);
-  extElements.set(new Uint8Array(ghostElements), elements.length);
+  const extElements = new Uint8Array(nAtoms + ghostElements.length);
+  extElements.set(elements.subarray(0, nAtoms));
+  extElements.set(new Uint8Array(ghostElements), nAtoms);
 
   return {
     bondIndices: outBonds,

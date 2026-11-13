@@ -1,0 +1,21 @@
+2
+Lattice="10 0 0 0 10 0 0 0 10" Properties=species:S:1:pos:R:3 pbc="T T T" frame 0: an O-H pair bonded across the x face
+O 0.3 5.0 5.0
+H 9.3 5.0 5.0
+4
+Lattice="10 0 0 0 10 0 0 0 10" Properties=species:S:1:pos:R:3 pbc="T T T" frame 1: an O-H pair appended mid-cell
+O 0.3 5.0 5.0
+H 9.3 5.0 5.0
+O 5.0 5.0 5.0
+H 5.96 5.0 5.0
+5
+Lattice="10 0 0 0 10 0 0 0 10" Properties=species:S:1:pos:R:3 pbc="T T T" frame 2: an Ar atom implanted, bonded to nothing
+O 0.3 5.0 5.0
+H 9.3 5.0 5.0
+O 5.0 5.0 5.0
+H 5.96 5.0 5.0
+Ar 5.0 5.0 8.5
+2
+Lattice="10 0 0 0 10 0 0 0 10" Properties=species:S:1:pos:R:3 pbc="T T T" frame 3: back to the first pair
+O 0.3 5.0 5.0
+H 9.3 5.0 5.0

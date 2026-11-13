@@ -6,11 +6,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+### Fixed
+
+- **Distance bonds stay right when a trajectory adds or removes atoms.** In a periodic cell, a frame with more atoms than the first (an Ar atom implanted into a Si slab, a molecule inserted by GCMC) drew bonds that ran from the slab to the new atoms or across the whole cell, and got worse with every atom added. The per-frame bond pass used the first frame's atom count and elements, so the added atoms were never bonded and every bond crossing the cell boundary was drawn to one of them. Each frame now uses its own atoms, and its own cell when the cell changes. This affected the Jupyter widget, the web app, JupyterLab and VS Code alike.
+
 ### Added
 
 - **Choose whether `MeganeViewer`'s pipeline editor starts open or collapsed.** `initialPipelineCollapsed` starts the panel collapsed (`true`) or open (`false`) on any screen size; without it the panel keeps opening collapsed below 768 px and open otherwise. It is read once on mount, after which the panel's toggle owns the state. `onPipelineCollapsedChange(collapsed)` reports each user toggle, so an embedder can store the choice and pass it back on the next mount. The bundled hosts (web app, JupyterLab, VS Code) do not pass either prop and behave as before. See [Opening collapsed](docs/docs/guide/web.md#opening-collapsed-initialpipelinecollapsed).
 
 - **Hide the AI assistant in `MeganeViewer`'s pipeline editor.** `ui={{ aiAssistant: false }}` takes the assistant docked under the editor's graph out of the viewer — its prompt bar, conversation and provider / API key settings — and keeps the rest of the editor; the graph takes the freed space, and no AI request can be made. It has no effect while `pipelineEditor` is `false`, and switching it off while a request is running cancels the request, as collapsing the panel does. `PipelineEditor` takes the same switch as `showAssistant` (default `true`). The bundled hosts (web app, JupyterLab, VS Code) keep the assistant. `MeganeViewerUiOptions` gains the required key `aiAssistant`, so a full (non-partial) `MeganeViewerUiOptions` object written out by hand needs it added; the `ui` prop itself stays partial. See [Hiding tools](docs/docs/guide/web.md#hiding-tools-ui).
+
+### Changed
+
+- **The pipeline editor's collapse toggle is a circled-chevron icon.** The ▶ / ◀ text arrows on the panel's collapse button and on its collapsed stub are replaced by the Material Symbols `expand_circle_right` icon (mirrored on the stub, which opens the panel to the left), drawn in the theme's muted text color. The change is in the shared collapsible panel, so Megane Builder's Details and History panels and the Jupyter widget's Quick Style panel get the same icon.
 
 ## [0.19.0] - 2026-11-07
 
