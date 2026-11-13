@@ -14,6 +14,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 - **Choose whether `MeganeViewer`'s pipeline editor starts open or collapsed.** `initialPipelineCollapsed` starts the panel collapsed (`true`) or open (`false`) on any screen size; without it the panel keeps opening collapsed below 768 px and open otherwise. It is read once on mount, after which the panel's toggle owns the state. `onPipelineCollapsedChange(collapsed)` reports each user toggle, so an embedder can store the choice and pass it back on the next mount. The bundled hosts (web app, JupyterLab, VS Code) do not pass either prop and behave as before. See [Opening collapsed](docs/docs/guide/web.md#opening-collapsed-initialpipelinecollapsed).
 
+### Changed
+
+- **The pipeline editor's collapse toggle is a circled-chevron icon.** The ▶ / ◀ text arrows on the panel's collapse button and on its collapsed stub are replaced by the Material Symbols `expand_circle_right` icon (mirrored on the stub, which opens the panel to the left), drawn in the theme's muted text color. The change is in the shared collapsible panel, so Megane Builder's Details and History panels and the Jupyter widget's Quick Style panel get the same icon.
+
 ## [0.19.0] - 2026-11-07
 
 ### Added

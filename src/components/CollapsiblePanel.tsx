@@ -49,15 +49,45 @@ export const panelSubtitleStyle: CSSProperties = {
   whiteSpace: "nowrap",
 };
 
-/** Collapse/expand button (the ▶ / ◀ arrow). */
+/** Collapse button in the expanded header (an {@link ExpandCircleRightIcon}). */
 export const collapseButtonStyle: CSSProperties = {
   background: "none",
   border: "none",
   cursor: "pointer",
-  fontSize: 13,
+  display: "flex",
+  alignItems: "center",
   color: "var(--megane-text-muted)",
-  padding: "2px 4px",
+  padding: "1px 2px",
 };
+
+/**
+ * Material Symbols Outlined `expand_circle_right` (FILL 0, wght 400, GRAD 0,
+ * opsz 24; Apache-2.0, https://fonts.google.com/icons). Drawn in
+ * `currentColor` so it follows the theme. `flipped` mirrors it into a
+ * left-pointing chevron.
+ */
+export function ExpandCircleRightIcon({
+  size,
+  flipped = false,
+}: {
+  size: number;
+  flipped?: boolean;
+}) {
+  return (
+    <svg
+      width={size}
+      height={size}
+      viewBox="0 -960 960 960"
+      fill="currentColor"
+      aria-hidden="true"
+      focusable="false"
+      data-icon={flipped ? "expand-circle-left" : "expand-circle-right"}
+      style={{ display: "block", flexShrink: 0, transform: flipped ? "scaleX(-1)" : undefined }}
+    >
+      <path d="M507-480 384-357l56 57 180-180-180-180-56 57 123 123ZM480-80q-83 0-156-31.5T197-197q-54-54-85.5-127T80-480q0-83 31.5-156T197-763q54-54 127-85.5T480-880q83 0 156 31.5T763-763q54 54 85.5 127T880-480q0 83-31.5 156T763-197q-54 54-127 85.5T480-80Zm0-80q134 0 227-93t93-227q0-134-93-227t-227-93q-134 0-227 93t-93 227q0 134 93 227t227 93Zm0-320Z" />
+    </svg>
+  );
+}
 
 /** Style for the collapsed toggle button. */
 const collapsedButtonStyle: CSSProperties = {
@@ -140,8 +170,8 @@ export function CollapsiblePanel({
           aria-label={`Open ${title.toLowerCase()}`}
           aria-expanded="false"
         >
-          <span style={{ fontSize: 11, color: "var(--megane-text-muted)", fontWeight: 400 }}>
-            &#9664;
+          <span style={{ display: "flex", color: "var(--megane-text-muted)" }}>
+            <ExpandCircleRightIcon size={16} flipped />
           </span>
           {title}
         </button>
@@ -171,7 +201,7 @@ export function CollapsiblePanel({
           aria-label="Collapse panel"
           aria-expanded="true"
         >
-          &#9654;
+          <ExpandCircleRightIcon size={18} />
         </button>
       </div>
       {headerExtra && (
