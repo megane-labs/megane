@@ -77,6 +77,38 @@ test.describe("heterogeneous .traj: webapp", () => {
     expect(Number(await viewerAttr(page, "data-frame-atoms"))).toBe(9);
   });
 
+  test("variable atom count in a periodic cell: distance bonds follow each frame's atoms", async ({
+    page,
+  }) => {
+    // Regression: the per-frame distance-bond pass used frame 0's atom count,
+    // so atoms appended later (an ion implanted into a periodic slab) were
+    // never bonded and every cell-crossing half-bond was drawn to one of them.
+    const errors: string[] = [];
+    page.on("pageerror", (e) => errors.push(String(e)));
+
+    const before = await getReadyState(page);
+    await dropTraj(page, "periodic_implant.xyz");
+    await waitForReady(page, { untilEpoch: before.renderEpoch + 1 });
+    expect(await viewerAttr(page, "data-total-frames")).toBe("4");
+
+    // `data-bond-count` counts drawn bonds: the O-H pair bonded across the
+    // x face is two half-bonds.
+    const bondsAt = async (frame: number) => {
+      await seekTo(page, frame);
+      return {
+        atoms: Number(await viewerAttr(page, "data-frame-atoms")),
+        bonds: Number(await viewerAttr(page, "data-bond-count")),
+      };
+    };
+    // An O-H pair appended mid-cell adds its bond.
+    expect(await bondsAt(1)).toEqual({ atoms: 4, bonds: 3 });
+    // An implanted Ar atom bonds to nothing.
+    expect(await bondsAt(2)).toEqual({ atoms: 5, bonds: 3 });
+    // Back to the first pair alone.
+    expect(await bondsAt(3)).toEqual({ atoms: 2, bonds: 2 });
+    expect(errors).toEqual([]);
+  });
+
   test("variable cell: loads and scrubs all frames without error", async ({ page }) => {
     const errors: string[] = [];
     page.on("pageerror", (e) => errors.push(String(e)));

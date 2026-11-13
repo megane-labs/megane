@@ -13,7 +13,7 @@ import warnings
 from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING, Optional, TypedDict
 from urllib.parse import urlsplit
 
 from fastapi import FastAPI, HTTPException, Request, UploadFile, WebSocket, WebSocketDisconnect
@@ -273,9 +273,11 @@ async def upload_file(
     # Broadcast to all connected clients
     await _broadcast_snapshot()
 
+    structure = _state.structure
+    assert structure is not None  # configure() above loaded it
     return {
-        "nAtoms": _state.structure.n_atoms,
-        "nBonds": len(_state.structure.bonds),
+        "nAtoms": structure.n_atoms,
+        "nBonds": len(structure.bonds),
     }
 
 
@@ -423,6 +425,15 @@ def _resolve_under(root: Path, rel: str) -> Path:
     return target
 
 
+class _FileEntry(TypedDict):
+    """One row of the ``/api/files`` listing."""
+
+    name: str
+    path: str
+    isDir: bool
+    size: Optional[int]
+
+
 def _rel(root: Path, path: Path) -> str:
     return path.relative_to(root).as_posix() if path != root else ""
 
@@ -441,7 +452,7 @@ def list_files(request: Request, path: str = "") -> dict:
     target = _resolve_under(root, path)
     if not target.is_dir():
         raise HTTPException(status_code=404, detail=f"Not a folder: {path}")
-    entries = []
+    entries: list[_FileEntry] = []
     for child in target.iterdir():
         if child.name.startswith("."):
             continue
