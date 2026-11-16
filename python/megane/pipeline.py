@@ -351,9 +351,14 @@ class Wrap(PipelineNode):
     ``[0,1)``); ``"unwrap"`` shifts atoms by whole lattice vectors so bonded
     molecules that straddle a periodic face become spatially contiguous
     (VESTA/Mercury-style whole molecules). ``"none"`` (the default) passes
-    coordinates through untouched. Requires the upstream structure to carry a
-    unit cell; without one the input is passed through unchanged. A connected
-    trajectory is remapped per frame with the same convention.
+    coordinates through untouched. Requires a unit cell: the upstream
+    structure's, or the cells a variable-cell trajectory brings (each frame is
+    mapped in its own cell when it has one, in the structure's otherwise).
+    Without any cell the input is passed through unchanged.
+
+    A trajectory is remapped per frame only when it is routed through the
+    node (``t.out.traj → wrap.inp.traj``, ``wrap.out.traj → viewport.inp.traj``);
+    frames wired straight to the viewport are drawn as the file has them.
 
     Args:
         mode: One of ``"none"``, ``"wrap"``, ``"unwrap"``.

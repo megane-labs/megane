@@ -51,7 +51,14 @@ export function executeSymmetry(
     return passThrough();
   }
 
-  const expanded = expandSymmetry(src, src.box, src.symmetryOps);
+  // The pipeline re-executes on every node edit; the expansion of an unchanged
+  // structure is the same object each time, so the viewport does not reload
+  // (and re-fit the camera to) a structure that did not change.
+  let expanded = expansionCache.get(src);
+  if (expanded === undefined) {
+    expanded = expandSymmetry(src, src.box, src.symmetryOps);
+    expansionCache.set(src, expanded);
+  }
   if (!expanded) return passThrough();
 
   const nImages = expanded.nAtoms / src.nAtoms;
@@ -65,6 +72,9 @@ export function executeSymmetry(
   });
   return outputs;
 }
+
+/** The expansion of each input snapshot (null: its operations do not apply). */
+const expansionCache = new WeakMap<Snapshot, Snapshot | null>();
 
 /** A parsed symmetry operation: fractional 3×3 rotation + translation. */
 interface Symop {

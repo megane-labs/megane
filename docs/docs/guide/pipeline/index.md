@@ -281,7 +281,8 @@ pass-through mode (`none`) except in the Molecular Crystal template, which
 wraps (`wrap`); the Coarse-Grained template's CG-bead loader has none. The
 toggle is a single dropdown click:
 
-1. Load a periodic structure (a unit cell is required)
+1. Load a periodic structure (a unit cell is required: the structure
+   file's, or the cells a variable-cell trajectory brings)
 2. Select the `Wrap / Unwrap` node in the graph
 3. Pick a mode:
    - **Wrap** folds every atom back into the home unit cell (useful for
@@ -293,7 +294,10 @@ toggle is a single dropdown click:
    - **None** passes coordinates through untouched (the default)
 
 A connected trajectory is remapped frame by frame with the same convention,
-so playback follows the chosen mapping too. The unit cell itself never
+so playback follows the chosen mapping too — each frame in its own cell when
+the trajectory's cell varies. The trajectory has to pass through the node:
+frames wired from `LoadTrajectory` straight to the Viewport are drawn as the
+file has them. The unit cell itself never
 changes — unwrapped molecules may poke outside the cell wireframe.
 
 ### Multiple Structure Layers

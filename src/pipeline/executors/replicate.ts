@@ -7,7 +7,7 @@ import type {
   TrajectoryData,
   FrameProvider,
 } from "../types";
-import { invert3x3 } from "./mathUtils";
+import { invert3x3, isDrawableCell } from "./mathUtils";
 import { tileArray, tileIndices, tileLabels } from "./tile";
 
 /**
@@ -49,36 +49,133 @@ export function executeReplicate(
   const src = particle.source;
   const total = nx * ny * nz;
   const nAtomsOld = src.nAtoms;
-  const nAtomsNew = nAtomsOld * total;
-  const nBondsOld = src.nBonds;
 
-  // Lattice vectors a, b, c (rows of the row-major 3×3 box matrix).
-  const ax = box[0],
-    ay = box[1],
-    az = box[2];
-  const bx = box[3],
-    by = box[4],
-    bz = box[5];
-  const cx = box[6],
-    cy = box[7],
-    cz = box[8];
+  // The pipeline re-executes on every node edit; the supercell of an unchanged
+  // structure is the same object each time, so the viewport does not reload
+  // (and re-fit the camera to) a structure that did not change.
+  let cached = replicateCache.get(src);
+  if (!cached || cached.nx !== nx || cached.ny !== ny || cached.nz !== nz) {
+    cached = { nx, ny, nz, snapshot: replicateSnapshot(src, box, nx, ny, nz) };
+    replicateCache.set(src, cached);
+  }
+  const newSnapshot = cached.snapshot;
+  const newBox = newSnapshot.box!;
 
-  // Per-image translation offsets — the single source of truth for image
-  // placement, reused for both the static snapshot and trajectory frames.
-  // Image order: i (nx outer), j (ny), k (nz inner), matching the atom layout.
-  const offsets = new Float32Array(total * 3);
-  {
-    let m = 0;
-    for (let i = 0; i < nx; i++) {
-      for (let j = 0; j < ny; j++) {
-        for (let k = 0; k < nz; k++, m++) {
-          offsets[m * 3] = i * ax + j * bx + k * cx;
-          offsets[m * 3 + 1] = i * ay + j * by + k * cy;
-          offsets[m * 3 + 2] = i * az + j * bz + k * cz;
-        }
+  const newParticle: ParticleData = {
+    ...particle,
+    source: newSnapshot,
+    indices: particle.indices && tileIndices(particle.indices, nAtomsOld, total),
+    scaleOverrides: particle.scaleOverrides && tileArray(particle.scaleOverrides, total),
+    opacityOverrides: particle.opacityOverrides && tileArray(particle.opacityOverrides, total),
+    colorOverrides: particle.colorOverrides && tileArray(particle.colorOverrides, total),
+  };
+  outputs.set("particle", newParticle);
+
+  const newCell: CellData = {
+    type: "cell",
+    sourceNodeId: cellIn?.sourceNodeId ?? particle.sourceNodeId,
+    box: newBox,
+  };
+  outputs.set("cell", newCell);
+
+  // Trajectory: wrap the upstream provider so every frame is tiled across the
+  // same image grid as the static snapshot. Without this the replicated copies
+  // would freeze at their base positions while only the original cell animates.
+  if (trajIn) {
+    if (
+      cached.trajectorySource !== trajIn.provider ||
+      cached.trajectorySourceMeta !== trajIn.meta ||
+      !cached.trajectory
+    ) {
+      const newMeta: TrajectoryMeta = {
+        ...trajIn.meta,
+        nAtoms: trajIn.meta.nAtoms * total,
+      };
+      cached.trajectorySource = trajIn.provider;
+      cached.trajectorySourceMeta = trajIn.meta;
+      cached.trajectory = new ReplicatedFrameProvider(trajIn.provider, [nx, ny, nz], box, newMeta);
+    }
+    const newTrajectory: TrajectoryData = {
+      type: "trajectory",
+      provider: cached.trajectory,
+      meta: cached.trajectory.meta,
+      source: trajIn.source,
+    };
+    outputs.set("trajectory", newTrajectory);
+  } else {
+    cached.trajectorySource = undefined;
+    cached.trajectorySourceMeta = undefined;
+    cached.trajectory = undefined;
+  }
+
+  return outputs;
+}
+
+/**
+ * What the last execution produced per input snapshot (see `executeReplicate`):
+ * the supercell, and the provider replicating the connected trajectory.
+ */
+interface ReplicateCacheEntry {
+  nx: number;
+  ny: number;
+  nz: number;
+  snapshot: Snapshot;
+  trajectorySource?: FrameProvider;
+  trajectorySourceMeta?: TrajectoryMeta;
+  trajectory?: FrameProvider;
+}
+const replicateCache = new WeakMap<Snapshot, ReplicateCacheEntry>();
+
+/**
+ * Per-image translation offsets (length `nx·ny·nz·3`) — the single source of
+ * truth for image placement, used for both the static snapshot and trajectory
+ * frames. Image order: i (nx outer), j (ny), k (nz inner), matching the atom
+ * layout. Rows of the row-major 3×3 `box` are the lattice vectors a, b, c.
+ */
+function imageOffsets(box: Float32Array, nx: number, ny: number, nz: number): Float32Array {
+  const offsets = new Float32Array(nx * ny * nz * 3);
+  let m = 0;
+  for (let i = 0; i < nx; i++) {
+    for (let j = 0; j < ny; j++) {
+      for (let k = 0; k < nz; k++, m++) {
+        offsets[m * 3] = i * box[0] + j * box[3] + k * box[6];
+        offsets[m * 3 + 1] = i * box[1] + j * box[4] + k * box[7];
+        offsets[m * 3 + 2] = i * box[2] + j * box[5] + k * box[8];
       }
     }
   }
+  return offsets;
+}
+
+/** The cell spanning the full supercell: `nx·a, ny·b, nz·c`. */
+function supercellBox(box: Float32Array, nx: number, ny: number, nz: number): Float32Array {
+  return new Float32Array([
+    nx * box[0],
+    nx * box[1],
+    nx * box[2],
+    ny * box[3],
+    ny * box[4],
+    ny * box[5],
+    nz * box[6],
+    nz * box[7],
+    nz * box[8],
+  ]);
+}
+
+/** Every atom and bond of `src` copied into the `nx × ny × nz` image grid. */
+function replicateSnapshot(
+  src: Snapshot,
+  box: Float32Array,
+  nx: number,
+  ny: number,
+  nz: number,
+): Snapshot {
+  const total = nx * ny * nz;
+  const nAtomsOld = src.nAtoms;
+  const nAtomsNew = nAtomsOld * total;
+  const nBondsOld = src.nBonds;
+
+  const offsets = imageOffsets(box, nx, ny, nz);
 
   const positions = new Float32Array(nAtomsNew * 3);
   const elements = new Uint8Array(nAtomsNew);
@@ -169,17 +266,7 @@ export function executeReplicate(
   const caSsType = ca && src.caSsType && tileArray(src.caSsType, total);
 
   // Enlarge the cell to span the full supercell.
-  const newBox = new Float32Array([
-    nx * ax,
-    nx * ay,
-    nx * az,
-    ny * bx,
-    ny * by,
-    ny * bz,
-    nz * cx,
-    nz * cy,
-    nz * cz,
-  ]);
+  const newBox = supercellBox(box, nx, ny, nz);
 
   const newSnapshot: Snapshot = {
     nAtoms: nAtomsNew,
@@ -201,63 +288,39 @@ export function executeReplicate(
     caResNums,
     caSsType,
   };
-
-  const newParticle: ParticleData = {
-    ...particle,
-    source: newSnapshot,
-    indices: particle.indices && tileIndices(particle.indices, nAtomsOld, total),
-    scaleOverrides: particle.scaleOverrides && tileArray(particle.scaleOverrides, total),
-    opacityOverrides: particle.opacityOverrides && tileArray(particle.opacityOverrides, total),
-    colorOverrides: particle.colorOverrides && tileArray(particle.colorOverrides, total),
-  };
-  outputs.set("particle", newParticle);
-
-  const newCell: CellData = {
-    type: "cell",
-    sourceNodeId: cellIn?.sourceNodeId ?? particle.sourceNodeId,
-    box: newBox,
-  };
-  outputs.set("cell", newCell);
-
-  // Trajectory: wrap the upstream provider so every frame is tiled across the
-  // same image grid as the static snapshot. Without this the replicated copies
-  // would freeze at their base positions while only the original cell animates.
-  if (trajIn) {
-    const newMeta: TrajectoryMeta = {
-      ...trajIn.meta,
-      nAtoms: trajIn.meta.nAtoms * total,
-    };
-    const newTrajectory: TrajectoryData = {
-      type: "trajectory",
-      provider: new ReplicatedFrameProvider(trajIn.provider, offsets, newMeta),
-      meta: newMeta,
-      source: trajIn.source,
-    };
-    outputs.set("trajectory", newTrajectory);
-  }
-
-  return outputs;
+  return newSnapshot;
 }
 
 /**
- * Wraps a FrameProvider and replicates each frame's positions across an
- * `nx×ny×nz` image grid using the supplied per-image `offsets` (length
- * `total·3`). The number of atoms per image is derived from each frame's own
- * positions array, so the provider stays robust to frame/structure atom-count
- * differences. Streaming semantics are preserved: `getFrame` returns `null`
- * when the wrapped provider has no frame available yet.
+ * Wraps a FrameProvider and replicates each frame's positions across the
+ * `nx×ny×nz` image grid. A frame that carries its own cell (a variable-cell
+ * run) is tiled along *that* cell and keeps it, enlarged like the static one;
+ * tiling it along the structure's cell left gaps or overlaps between the
+ * images and drew the structure's supercell around atoms it no longer fitted.
+ * Other frames use the structure's cell. The number of atoms per image is
+ * derived from each frame's own positions array, so the provider stays robust
+ * to frame/structure atom-count differences. Streaming semantics are
+ * preserved: `getFrame` returns `null` when the wrapped provider has no frame
+ * available yet.
  */
 class ReplicatedFrameProvider implements FrameProvider {
   readonly kind: "memory" | "stream";
   readonly meta: TrajectoryMeta;
   private readonly source: FrameProvider;
-  private readonly offsets: Float32Array;
+  private readonly counts: [number, number, number];
+  private readonly baseOffsets: Float32Array;
   private readonly total: number;
 
-  constructor(source: FrameProvider, offsets: Float32Array, meta: TrajectoryMeta) {
+  constructor(
+    source: FrameProvider,
+    counts: [number, number, number],
+    baseBox: Float32Array,
+    meta: TrajectoryMeta,
+  ) {
     this.source = source;
-    this.offsets = offsets;
-    this.total = offsets.length / 3;
+    this.counts = counts;
+    this.baseOffsets = imageOffsets(baseBox, counts[0], counts[1], counts[2]);
+    this.total = counts[0] * counts[1] * counts[2];
     this.kind = source.kind;
     this.meta = meta;
   }
@@ -269,12 +332,15 @@ class ReplicatedFrameProvider implements FrameProvider {
   getFrame(index: number): Frame | null {
     const frame = this.source.getFrame(index);
     if (!frame) return null;
+    const [nx, ny, nz] = this.counts;
+    const cell = isDrawableCell(frame.box) ? frame.box : null;
+    const offsets = cell ? imageOffsets(cell, nx, ny, nz) : this.baseOffsets;
     const nAtomsPerImage = frame.positions.length / 3;
     const out = new Float32Array(nAtomsPerImage * this.total * 3);
     for (let img = 0; img < this.total; img++) {
-      const offX = this.offsets[img * 3];
-      const offY = this.offsets[img * 3 + 1];
-      const offZ = this.offsets[img * 3 + 2];
+      const offX = offsets[img * 3];
+      const offY = offsets[img * 3 + 1];
+      const offZ = offsets[img * 3 + 2];
       const base = img * nAtomsPerImage * 3;
       for (let a = 0; a < nAtomsPerImage; a++) {
         const s = a * 3;
@@ -284,10 +350,16 @@ class ReplicatedFrameProvider implements FrameProvider {
         out[dst + 2] = frame.positions[s + 2] + offZ;
       }
     }
-    return {
+    const replicated: Frame = {
       frameId: frame.frameId,
       nAtoms: nAtomsPerImage * this.total,
       positions: out,
     };
+    if (cell) {
+      replicated.box = supercellBox(cell, nx, ny, nz);
+      // The supercell grows from the same lower corner as the frame's cell.
+      if (frame.boxOrigin !== undefined) replicated.boxOrigin = frame.boxOrigin;
+    }
+    return replicated;
   }
 }

@@ -12,7 +12,7 @@
  * notebook's saved widget state.
  */
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useStore } from "zustand";
 import type { StoreApi } from "zustand";
 import { Viewport } from "./Viewport";
@@ -35,7 +35,8 @@ import {
 import { useViewportStateSync } from "../hooks/useViewportStateSync";
 import { useControlledPlayback } from "../hooks/useControlledPlayback";
 import { createPipelineStore, type PipelineStore } from "../pipeline/store";
-import type { AddBondParams } from "../pipeline/types";
+import type { AddBondParams, FrameProvider } from "../pipeline/types";
+import { HostFrameProvider } from "../stream/HostFrameProvider";
 import { decodeSnapshot, decodeHeader, MSG_SNAPSHOT } from "../protocol/protocol";
 import type { Snapshot, Frame, Measurement, HoverInfo } from "../types";
 import { applyThemeBackground, useRendererThemeBackground } from "../stores/useThemeStore";
@@ -90,6 +91,33 @@ function quickStylePipelineJson(state: PipelineStore): string {
     return data ? { ...node, bondFileData: Array.from(data) } : node;
   });
   return JSON.stringify({ ...pipeline, nodes });
+}
+
+/**
+ * The load_structure node the Viewport's built-in meshes draw: the one the
+ * store's `snapshot` (the lowest-id entry of `nodeSnapshots`) belongs to.
+ * `undefined` on the legacy `.load()` path, which has no per-node snapshots —
+ * the first particle stream is the structure then.
+ */
+function primaryNodeId(state: PipelineStore): string | undefined {
+  const { snapshot, nodeSnapshots } = state;
+  if (!snapshot) return undefined;
+  return Object.keys(nodeSnapshots)
+    .sort()
+    .find((id) => nodeSnapshots[id].snapshot === snapshot);
+}
+
+/**
+ * The structure to draw: the primary node's particles as they reach the
+ * viewport, i.e. after every node in between (Symmetry, Wrap, Replicate, …).
+ * The file's own snapshot is the fallback while nothing reaches the viewport.
+ */
+function primaryPipelineSnapshot(state: PipelineStore): Snapshot | null {
+  if (!state.snapshot) return null;
+  const id = primaryNodeId(state);
+  const { particles } = state.viewportState;
+  const particle = id === undefined ? particles[0] : particles.find((p) => p.sourceNodeId === id);
+  return particle?.source ?? state.snapshot;
 }
 
 /** Decode a binary DataView into a Snapshot. */
@@ -165,7 +193,7 @@ export function WidgetViewer({
   useEffect(() => {
     setExternalSelection(selectedAtoms ?? []);
   }, [selectedAtoms, setExternalSelection]);
-  const storeSnapshot = useStore(pipelineStore, (s) => s.snapshot);
+  const storeSnapshot = useStore(pipelineStore, primaryPipelineSnapshot);
   const setSnapshot = useStore(pipelineStore, (s) => s.setSnapshot);
 
   // Apply pipeline + per-node snapshots from Python.
@@ -234,6 +262,31 @@ export function WidgetViewer({
     // snapshot these updates produce.
   }, [snapshot, nodeSnapshotsData, pipelineJson, setSnapshot, pipelineStore]);
 
+  // The trajectory, as the pipeline's `load_trajectory` source. Python sends
+  // (or embeds) the frames; the pipeline here never reads the trajectory file,
+  // so without this the nodes between the trajectory and the viewport (Wrap,
+  // Replicate) had nothing to map and the raw frame was drawn over a structure
+  // they had changed. Declared after the pipeline effect on purpose:
+  // `loadPipeline` clears the store's file channels, so the provider is put
+  // back in the same commit.
+  const hostProviderRef = useRef<HostFrameProvider | null>(null);
+  useEffect(() => {
+    const state = pipelineStore.getState();
+    const nAtoms = state.snapshot?.nAtoms ?? 0;
+    let provider = hostProviderRef.current;
+    if (totalFrames <= 0) {
+      provider = null;
+    } else if (
+      !provider ||
+      provider.meta.nFrames !== totalFrames ||
+      provider.meta.nAtoms !== nAtoms
+    ) {
+      provider = new HostFrameProvider({ nFrames: totalFrames, timestepPs: 0, nAtoms });
+    }
+    hostProviderRef.current = provider;
+    if (state.fileProvider !== provider) state.setFileProvider(provider);
+  }, [snapshot, nodeSnapshotsData, pipelineJson, totalFrames, pipelineStore]);
+
   // Quick Style → Python. Debounced so dragging a slider sends one update, and
   // flushed on unmount so the last change is not lost.
   const onPipelineChangeRef = useRef(onPipelineChange);
@@ -264,35 +317,41 @@ export function WidgetViewer({
   // Subscribes without re-rendering this component, so a Quick Style edit (or
   // any other execute) no longer re-renders the Timeline and overlays.
   //
-  // Primary node: the Viewport draws `effectiveSnapshot`, which is the
-  // store's `snapshot` — the lowest-id entry of `nodeSnapshots`, not
-  // necessarily the node behind the first particle stream. Name that node
-  // explicitly, or with two structures whose viewport edges come in the
-  // other order the built-in meshes would get the other node's overrides and
-  // the Viewport's own structure would be drawn a second time as a layer.
+  // Primary node: the Viewport draws `effectiveSnapshot`, the particles of
+  // the node the store's `snapshot` belongs to — the lowest-id entry of
+  // `nodeSnapshots`, not necessarily the node behind the first particle
+  // stream. Name that node explicitly, or with two structures whose viewport
+  // edges come in the other order the built-in meshes would get the other
+  // node's overrides and the Viewport's own structure would be drawn a second
+  // time as a layer.
+  const [trajectoryProvider, setTrajectoryProvider] = useState<FrameProvider | null>(null);
   const { attachRenderer } = useViewportStateSync(rendererRef, pipelineStore, {
     snapshot: effectiveSnapshot,
-    getPrimaryNodeId: () => {
-      const { snapshot: snap, nodeSnapshots } = pipelineStore.getState();
-      if (!snap) return undefined;
-      return Object.keys(nodeSnapshots)
-        .sort()
-        .find((id) => nodeSnapshots[id].snapshot === snap);
-    },
+    getPrimaryNodeId: () => primaryNodeId(pipelineStore.getState()),
     getInitialCameraState: () => initialCameraStateRef.current,
     onBondCount: setBondCount,
+    onTrajectoryProvider: setTrajectoryProvider,
   });
 
-  // Per-frame bond recalculation for distance mode. In pipeline mode the
-  // `snapshot` prop is null (set_pipeline only populates
-  // `_node_snapshots_data`), so fall back to the store snapshot — same
-  // pattern as Viewport and MeasurementPanel below.
+  // The frame to draw: the one Python delivered, read back through the
+  // viewport's trajectory stream so every node on the way has mapped it. A
+  // pipeline that routes no trajectory to its viewport draws the frame as
+  // delivered.
+  const displayFrame = useMemo(() => {
+    const host = hostProviderRef.current;
+    if (!frame || !host || !trajectoryProvider) return frame;
+    host.setFrame(frame);
+    return trajectoryProvider.getFrame(frame.frameId) ?? frame;
+  }, [frame, trajectoryProvider]);
+
+  // Per-frame bond recalculation for distance mode, on the structure and the
+  // frame as drawn.
   const hasDistanceBond = useStore(pipelineStore, (s) => hasDistanceBondNode(s.nodes));
   const distanceBondScale = useStore(pipelineStore, (s) => distanceBondVdwScale(s.nodes));
   useFrameDistanceBonds({
     rendererRef,
-    snapshot: storeSnapshot ?? snapshot,
-    frame,
+    snapshot: effectiveSnapshot,
+    frame: displayFrame,
     enabled: hasDistanceBond,
     vdwScale: distanceBondScale,
     onBondCount: setBondCount,
@@ -346,7 +405,7 @@ export function WidgetViewer({
     >
       <Viewport
         snapshot={effectiveSnapshot}
-        frame={frame}
+        frame={displayFrame}
         onRendererReady={handleRendererReady}
         onHover={setHoverInfo}
         onAtomRightClick={handleAtomRightClick}

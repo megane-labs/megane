@@ -34,6 +34,7 @@ import { executeFilter } from "./filter";
 import { executeModify } from "./modify";
 import { executeSymmetry } from "./symmetry";
 import { executeWrap } from "./wrap";
+import { isDrawableCell } from "./mathUtils";
 import { executeReplicate } from "./replicate";
 import { executeDrawingBoundary } from "./drawingBoundary";
 import { executeBoundaryCompletion } from "./boundaryCompletion";
@@ -291,7 +292,13 @@ export const NODE_EXECUTORS: NodeExecutorRegistry = {
     const particleIn = inputs.get("particle")?.[0] as ParticleData | undefined;
     if (!particleIn) {
       addError(noInput());
-    } else if (params.mode !== "none" && !particleIn.source.box) {
+    } else if (
+      params.mode !== "none" &&
+      !isDrawableCell(particleIn.source.box) &&
+      !inputs.get("trajectory")?.length
+    ) {
+      // With a trajectory the frames may bring the cell the structure file
+      // lacks (a PSF or prmtop topology), and the node maps those.
       addError({ message: "Wrap / Unwrap requires a unit cell", severity: "warning" });
     }
     return { outputs };

@@ -226,6 +226,24 @@ describe("executeSymmetry", () => {
     expect(result.sourceNodeId).toBe("loader-1");
   });
 
+  it("hands back the same expansion while the structure is unchanged", () => {
+    // Every node edit re-executes the pipeline. A new (identical) expansion
+    // each time makes the viewport reload it and re-fit the camera.
+    const snapshot = makeSnapshot(CUBIC(), { symmetryOps: ["x,y,z", "-x,-y,-z"] });
+    const first = executeSymmetry(params("expand"), inputs(makeParticle(snapshot)));
+    const again = executeSymmetry(params("expand"), inputs(makeParticle(snapshot)));
+    const expanded = (first.get("particle") as ParticleData).source;
+    expect(expanded.nAtoms).toBe(snapshot.nAtoms * 2);
+    expect((again.get("particle") as ParticleData).source).toBe(expanded);
+
+    // Operations that do not expand anything are remembered as such.
+    const identity = makeSnapshot(CUBIC(), { symmetryOps: ["x,y,z"] });
+    for (let i = 0; i < 2; i++) {
+      const particle = makeParticle(identity);
+      expect(executeSymmetry(params("expand"), inputs(particle)).get("particle")).toBe(particle);
+    }
+  });
+
   it("passes everything through untouched when a trajectory input is present", () => {
     const particle = makeParticle(makeSnapshot(CUBIC()));
     const traj = makeTrajectory([{ frameId: 0, nAtoms: 2, positions: new Float32Array(6) }]);

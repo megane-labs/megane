@@ -8,6 +8,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ### Fixed
 
+- **Wrapped atoms stay inside the cell.** Atoms a `Wrap` node had folded into the cell could still be drawn outside it. Four causes, all fixed:
+  - **In the Jupyter widget the node did nothing.** The widget drew the structure as the file has it and each trajectory frame as Python delivered it, whatever the pipeline did in between, so `Wrap` — and `Replicate`, and the `Symmetry` expansion of a CIF — changed neither. It now draws the structure as it reaches the viewport and passes every frame through the nodes between `LoadTrajectory` and the viewport, like the web app, JupyterLab and VS Code. A trajectory has to be routed through the node for its frames to be mapped (`t.out.traj → wrap.inp.traj`, `wrap.out.traj → viewport.inp.traj`), on every host.
+  - **A structure file without a cell switched the node off, even when the trajectory brought one.** With a PSF or prmtop topology, or a PDB without `CRYST1`, under a variable-cell run, the cell of each frame was drawn but nothing was wrapped into it. Frames are now mapped in the cell they carry.
+  - **`Replicate` tiled every frame along the structure's cell.** In a variable-cell run the images of a frame overlapped or left gaps, and the supercell drawn around them was the structure's. Each frame is now tiled along its own cell, which is enlarged with it.
+  - **A frame with an all-zero cell was left unwrapped** while the structure's cell stayed on screen. It is wrapped in that cell now.
+
+  Wrapping also no longer puts an atom that sits a rounding error below a cell face onto the opposite face.
+
+- **A pipeline edit no longer reloads a wrapped, replicated or symmetry-expanded structure.** Every node edit re-runs the pipeline, and `Wrap`, `Replicate` and `Symmetry` built a new copy of an unchanged structure each time, so the viewer loaded it again — and, for a supercell or an expanded CIF, re-fitted the camera, undoing the user's zoom. They now hand back the same structure until their input or parameters change.
+
 - **Distance bonds stay right when a trajectory adds or removes atoms.** In a periodic cell, a frame with more atoms than the first (an Ar atom implanted into a Si slab, a molecule inserted by GCMC) drew bonds that ran from the slab to the new atoms or across the whole cell, and got worse with every atom added. The per-frame bond pass used the first frame's atom count and elements, so the added atoms were never bonded and every bond crossing the cell boundary was drawn to one of them. Each frame now uses its own atoms, and its own cell when the cell changes. This affected the Jupyter widget, the web app, JupyterLab and VS Code alike.
 
 ### Added
