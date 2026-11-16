@@ -57,6 +57,11 @@ describe("buildTourSteps", () => {
     expect(selectors).toContain('[data-testid="pipeline-editor-templates"]');
   });
 
+  it("names the panel step after the panel's title, Visualization settings", () => {
+    const panelStep = steps.find((s) => s.element === '[data-testid="panel-pipeline"]');
+    expect(panelStep?.popover?.title).toBe("Visualization settings");
+  });
+
   it("highlights the toolbar Tutorial button immediately after the Pipeline step", () => {
     const pipelineIdx = steps.findIndex((s) => s.element === '[data-testid="panel-pipeline"]');
     const tutorialIdx = steps.findIndex(

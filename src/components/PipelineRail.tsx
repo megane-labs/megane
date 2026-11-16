@@ -1,8 +1,9 @@
 /**
- * The Pipeline panel's rail: a column of icon buttons down the panel's left
- * edge, made like megane Builder's tool and operations rails (same 38 px
- * buttons, 20 px stroke icons, rules between groups, ▸ on a button that opens
- * a menu, menus opening to its right). Top to bottom:
+ * The rail of the Visualization settings panel (the pipeline editor): a
+ * column of icon buttons down the panel's left edge, made like megane
+ * Builder's tool and operations rails (same 38 px buttons, 20 px stroke
+ * icons, rules between groups, ▸ on a button that opens a menu, menus opening
+ * to its right). Top to bottom:
  *
  *   Editor, Inspector           — what the panel shows (its tabs; the AI
  *                                 assistant is docked inside the Editor)
@@ -216,10 +217,10 @@ export function PipelineRail({
   ];
 
   return (
-    <PanelRail testId="pipeline-rail" label="Pipeline">
+    <PanelRail testId="pipeline-rail" label="Visualization settings">
       <div
         role="tablist"
-        aria-label="Pipeline panel mode"
+        aria-label="Visualization settings panel mode"
         aria-orientation="vertical"
         style={{ display: "contents" }}
       >

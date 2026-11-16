@@ -453,7 +453,7 @@ embed it in 3D, then hand it to packmol to fill a box. **Flow** mode shows that
 recipe as blocks wired together, like the viewer's pipeline editor, and runs
 it. Pick **Flow** in the mode switch at the top of the left rails: Manual
 mode's rails make way, and the panel on the right becomes the Flow editor,
-built like the viewer's Pipeline panel — the same resizable panel, node
+built like the viewer's Visualization settings panel — the same resizable panel, node
 cards, wires, minimap and properties pane. Its own rail, down the panel's
 left edge, holds **Add**, **Templates**, **Auto Layout**, **Undo** / **Redo** (of
 changes to the graph), **Run** (**Stop**

@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach, beforeEach } from "vitest";
-import { render, screen, fireEvent, cleanup, waitFor } from "@testing-library/react";
+import { render, screen, fireEvent, cleanup, waitFor, within } from "@testing-library/react";
 
 const fitViewMock = vi.hoisted(() => vi.fn());
 // Latest props handed to the mocked <ReactFlow>, so tests can drive its
@@ -153,6 +153,20 @@ describe("PipelineEditor — collapsed state", () => {
     render(<PipelineEditor collapsed={true} onToggleCollapse={() => {}} />);
     expect(screen.queryByTestId("pipeline-editor-theme")).toBeNull();
     expect(screen.getByTestId("panel-pipeline-toggle")).toBeTruthy();
+  });
+
+  it("is titled Visualization settings but keeps the panel-pipeline test ids", () => {
+    const { rerender } = render(<PipelineEditor collapsed={true} onToggleCollapse={() => {}} />);
+    const toggle = screen.getByTestId("panel-pipeline-toggle");
+    expect(toggle.textContent).toBe("Visualization settings");
+    expect(toggle.getAttribute("aria-label")).toBe("Open visualization settings");
+
+    rerender(<PipelineEditor collapsed={false} onToggleCollapse={() => {}} />);
+    const panel = screen.getByTestId("panel-pipeline");
+    expect(within(panel).getByText("Visualization settings", { exact: true })).toBeTruthy();
+    expect(within(panel).queryByText("Pipeline", { exact: true })).toBeNull();
+    expect(screen.getByRole("toolbar", { name: "Visualization settings" })).toBeTruthy();
+    expect(screen.getByRole("tablist", { name: "Visualization settings panel mode" })).toBeTruthy();
   });
 });
 

@@ -1,6 +1,7 @@
 # Selection Inspector
 
-The **Selection Inspector** is a lightweight tab in the pipeline panel — the
+The **Selection Inspector** is a lightweight tab in the Visualization settings
+panel — the
 **Inspector** button on the panel's rail, under **Editor** — for
 the most common tasks in molecular visualization: *change how the structure
 looks*, and *select a subset of atoms and change how that looks*. The
