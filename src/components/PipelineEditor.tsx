@@ -463,7 +463,10 @@ function PipelineEditorInner({
 
   return (
     <GraphEditorPanel
-      title="Pipeline"
+      title="Visualization settings"
+      // The panel used to be titled "Pipeline": keep its test ids, which
+      // E2E specs, the tour and the bench rely on.
+      panelTestId="panel-pipeline"
       collapsed={collapsed}
       onToggleCollapse={onToggleCollapse}
       onWidthChange={onWidthChange}

@@ -7,7 +7,7 @@ import LiveViewer from '@site/src/components/LiveViewer';
 
 # Visual Pipeline Editor
 
-Megane's pipeline editor lets you build visualization workflows by wiring nodes — no code required. The editor lives in the **Pipeline** panel on the right edge of the viewer; when the panel is collapsed, click its **Pipeline** tab to open it.
+Megane's pipeline editor lets you build visualization workflows by wiring nodes — no code required. The editor lives in the **Visualization settings** panel on the right edge of the viewer; when the panel is collapsed, click its **Visualization settings** tab to open it.
 
 <Figure src="/screenshots/pipeline-editor.png" alt="Megane visual pipeline editor" caption="The visual pipeline editor: nodes on the canvas, live 3D beside it." />
 

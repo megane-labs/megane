@@ -29,6 +29,8 @@ const resizeHandleStyle: React.CSSProperties = {
 
 export interface GraphEditorPanelProps {
   title: string;
+  /** Test id of the panel itself (see `CollapsiblePanel`'s `testId`). */
+  panelTestId?: string;
   subtitle?: ReactNode;
   collapsed: boolean;
   onToggleCollapse: () => void;
@@ -47,6 +49,7 @@ export interface GraphEditorPanelProps {
 
 export function GraphEditorPanel({
   title,
+  panelTestId,
   subtitle,
   collapsed,
   onToggleCollapse,
@@ -110,6 +113,7 @@ export function GraphEditorPanel({
   return (
     <CollapsiblePanel
       title={title}
+      testId={panelTestId}
       collapsed={collapsed}
       onToggleCollapse={onToggleCollapse}
       width={panelWidth}

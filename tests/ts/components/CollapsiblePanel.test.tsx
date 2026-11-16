@@ -135,4 +135,36 @@ describe("CollapsiblePanel", () => {
     );
     expect(screen.getByTestId("panel-render-settings")).toBeTruthy();
   });
+
+  it("uses an explicit testId instead of the title slug, for the toggle and subtitle too", () => {
+    const { rerender } = render(
+      <CollapsiblePanel
+        title="Visualization settings"
+        testId="panel-pipeline"
+        subtitle="Editor"
+        collapsed={false}
+        onToggleCollapse={() => {}}
+      >
+        body
+      </CollapsiblePanel>,
+    );
+    expect(screen.getByTestId("panel-pipeline")).toBeTruthy();
+    expect(screen.getByTestId("panel-pipeline-subtitle").textContent).toBe("Editor");
+    expect(screen.getByTestId("panel-pipeline-toggle")).toBeTruthy();
+    expect(screen.queryByTestId("panel-visualization-settings")).toBeNull();
+
+    rerender(
+      <CollapsiblePanel
+        title="Visualization settings"
+        testId="panel-pipeline"
+        collapsed={true}
+        onToggleCollapse={() => {}}
+      >
+        body
+      </CollapsiblePanel>,
+    );
+    const toggle = screen.getByTestId("panel-pipeline-toggle");
+    expect(toggle.textContent).toBe("Visualization settings");
+    expect(toggle.getAttribute("aria-label")).toBe("Open visualization settings");
+  });
 });

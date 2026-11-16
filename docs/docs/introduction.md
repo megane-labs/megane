@@ -10,7 +10,7 @@
 - **Build visual pipelines** with a drag-and-drop node editor, describe them in natural language to the AI pipeline generator (docked in the pipeline editor, under the graph), or write them as Python/TypeScript code
 - **Edit structures in [Megane Builder](./guide/builder)** — add, delete, move and re-element atoms, draw bonds, build bulk crystals, supercells and slabs, and save as XYZ / PDB / MOL — or, for anything with a unit cell, CIF / VASP POSCAR. It runs at `/builder.html` in the standalone web app, from the Megane view in VS Code's activity bar and the Megane panel in JupyterLab's left sidebar, and as `megane.Builder()` in notebooks
 - **Integrate with Plotly**, MDX/Next.js, ipywidgets, and any framework via the framework-agnostic renderer
-- **Light, dark, and auto themes** — cycle through Light / Dark / Auto via the Theme button on the Pipeline panel's left rail; persisted across sessions. Auto follows the VS Code or JupyterLab theme when Megane runs inside one, and the OS preference elsewhere
+- **Light, dark, and auto themes** — cycle through Light / Dark / Auto via the Theme button on the Visualization settings panel's left rail; persisted across sessions. Auto follows the VS Code or JupyterLab theme when Megane runs inside one, and the OS preference elsewhere
 
 ## Choose your distribution
 

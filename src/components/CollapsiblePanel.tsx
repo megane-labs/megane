@@ -106,6 +106,12 @@ const collapsedButtonStyle: CSSProperties = {
 
 interface CollapsiblePanelProps {
   title: string;
+  /**
+   * Root test id (default: `panel-<title in kebab case>`); the toggle and
+   * subtitle ids derive from it. Set it to keep test ids stable when the
+   * displayed title changes.
+   */
+  testId?: string;
   /** Muted text beside the title in the expanded header (a file name, a count). */
   subtitle?: ReactNode;
   collapsed: boolean;
@@ -138,6 +144,7 @@ interface CollapsiblePanelProps {
  */
 export function CollapsiblePanel({
   title,
+  testId,
   subtitle,
   collapsed,
   onToggleCollapse,
@@ -150,7 +157,7 @@ export function CollapsiblePanel({
   containerExtra,
   children,
 }: CollapsiblePanelProps) {
-  const panelTestId = `panel-${title.replace(/\s+/g, "-").toLowerCase()}`;
+  const panelTestId = testId ?? `panel-${title.replace(/\s+/g, "-").toLowerCase()}`;
   const placement: CSSProperties =
     height !== undefined ? { top: "auto", bottom, height } : { top, bottom };
   const stubPlacement: CSSProperties = height !== undefined ? { bottom, right } : { top, right };

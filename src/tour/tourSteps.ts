@@ -16,7 +16,7 @@
  *  - [data-tour-anchor="viewport"]   — invisible region inside Viewport.tsx
  *                                      so we highlight just the canvas area,
  *                                      not the whole view (which would also
- *                                      include the Pipeline panel)
+ *                                      include the Visualization settings panel)
  *  - [data-testid="panel-pipeline"]  — CollapsiblePanel for PipelineEditor
  *  - [data-testid="pipeline-editor-templates"] — Templates button
  *  - [data-testid="pipeline-editor-tutorial"]  — Tutorial button (launches
@@ -139,7 +139,7 @@ export function buildTourSteps(): DriveStep[] {
     {
       element: '[data-testid="panel-pipeline"]',
       popover: {
-        title: "Pipeline",
+        title: "Visualization settings",
         description:
           "Build a rendering pipeline by connecting nodes: load files, apply bonds, attach trajectories, and choose a visual style.",
         side: "left",
