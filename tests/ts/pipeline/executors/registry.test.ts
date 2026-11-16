@@ -409,6 +409,22 @@ describe("per-node executors", () => {
     expect(
       messages(run("wrap", { params: { mode: "wrap" }, inputs: { particle: [particle()] } })),
     ).toEqual(["Wrap / Unwrap requires a unit cell"]);
+    // An all-zero box is no cell either.
+    const zeroBox = { ...snapshot(), box: new Float32Array(9) };
+    expect(
+      messages(
+        run("wrap", { params: { mode: "wrap" }, inputs: { particle: [particle(zeroBox)] } }),
+      ),
+    ).toEqual(["Wrap / Unwrap requires a unit cell"]);
+    // With a trajectory the frames may bring the cell the structure file lacks.
+    expect(
+      messages(
+        run("wrap", {
+          params: { mode: "wrap" },
+          inputs: { particle: [particle()], trajectory: [trajectory] },
+        }),
+      ),
+    ).toEqual([]);
   });
 
   it("replicate needs a cell only when a count exceeds one", () => {

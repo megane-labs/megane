@@ -4,10 +4,46 @@ import type {
   ParticleData,
   TrajectoryData,
   WrapParams,
+  WrapMode,
   FrameProvider,
 } from "../types";
-import { invert3x3 } from "./mathUtils";
+import { invert3x3, isDrawableCell } from "./mathUtils";
+import { inverse3, wrapFrac } from "../../crystal/cell";
 import { inferBondsVdwJS } from "../../parsers/inferBondsJS";
+
+/** Maps one coordinate set into its periodic-image convention for a given cell. */
+type FrameMapper = (
+  positions: Float32Array,
+  box: Float32Array,
+  origin: Float32Array | null,
+) => Float32Array;
+
+/**
+ * Fractional tolerance of the fold. Coordinates are 32-bit floats, so an atom
+ * a rounding error below a cell face (fractional -1e-8) used to be folded to
+ * 1 - 1e-8, which rounds to the *opposite face itself* when it is stored — a
+ * fractional coordinate of exactly 1, outside `[0, 1)`. With the tolerance an
+ * atom within it of a face counts as on that face (ASE's `wrap(eps=…)`): it
+ * lands on the lower face, never on the upper one.
+ */
+const WRAP_TOL = 1e-6;
+
+/**
+ * What the last execution produced per input snapshot. The pipeline
+ * re-executes on every node edit; without this the node handed the viewport a
+ * new (but identical) snapshot and trajectory provider each time, which
+ * reloads the atom meshes and re-applies the frame — and the unwrap
+ * connectivity was inferred again.
+ */
+interface WrapCacheEntry {
+  mode: WrapMode;
+  snapshot: Snapshot;
+  mapFrame: FrameMapper;
+  /** The upstream provider `trajectory` maps, when a trajectory was connected. */
+  trajectorySource?: FrameProvider;
+  trajectory?: FrameProvider;
+}
+const wrapCache = new WeakMap<Snapshot, WrapCacheEntry>();
 
 /**
  * Wrap / Unwrap node — periodic-image coordinate mapping.
@@ -24,11 +60,14 @@ import { inferBondsVdwJS } from "../../parsers/inferBondsJS";
  * criterion the add_bond node uses, so exactly the bonds the user would see
  * are used to knit each molecule together.
  *
- * "none" (the default), a missing unit cell, or a singular cell matrix are
- * pass-throughs, which keeps the node safe to wire into default pipelines as
- * an on-demand toggle. A connected trajectory is remapped per frame through a
- * wrapping FrameProvider so playback follows the same convention as the
- * static snapshot.
+ * "none" (the default) is a pass-through, which keeps the node safe to wire
+ * into default pipelines as an on-demand toggle; so is a structure with no
+ * usable cell and no trajectory. A connected trajectory is remapped per frame
+ * through a wrapping FrameProvider so playback follows the same convention as
+ * the static snapshot, each frame in the cell the renderer draws for it: the
+ * frame's own cell when it carries one, the structure's otherwise. A topology
+ * file without a cell (PSF, prmtop, a PDB without CRYST1) therefore still has
+ * its trajectory folded into the cells the trajectory brings.
  */
 export function executeWrap(
   params: WrapParams,
@@ -40,49 +79,62 @@ export function executeWrap(
   if (!particle) return outputs;
 
   const src = particle.source;
-  const box = src.box;
-  const boxInv = box ? invert3x3(box) : null;
+  const box = isDrawableCell(src.box) && invert3x3(src.box) ? src.box : null;
 
-  // Pass-through: nothing to do, or no usable cell to map against.
-  if (params.mode === "none" || !box || !boxInv) {
+  // Pass-through: nothing to do, or no cell anywhere to map against (frames
+  // may carry their own, so a trajectory keeps the node active).
+  if (params.mode === "none" || (!box && !trajIn)) {
     outputs.set("particle", particle);
     if (trajIn) outputs.set("trajectory", trajIn);
     return outputs;
   }
 
-  let mapFrame: (
-    positions: Float32Array,
-    box: Float32Array,
-    origin: Float32Array | null,
-  ) => Float32Array;
-  if (params.mode === "wrap") {
-    mapFrame = wrapPositions;
-  } else {
-    // Unwrap connectivity is fixed by the topology: file bonds when present,
-    // otherwise the same PBC-aware VDW inference add_bond's distance mode uses.
-    const bondPairs =
-      src.nBonds > 0
-        ? src.bonds
-        : inferBondsVdwJS(src.positions, src.elements, src.nAtoms, undefined, box);
-    const adjacency = buildAdjacency(bondPairs, src.nAtoms);
-    mapFrame = (positions, frameBox, origin) =>
-      unwrapPositions(positions, frameBox, origin, adjacency);
+  let cached = wrapCache.get(src);
+  if (!cached || cached.mode !== params.mode) {
+    let mapFrame: FrameMapper;
+    if (params.mode === "wrap") {
+      mapFrame = wrapPositions;
+    } else {
+      // Unwrap connectivity is fixed by the topology: file bonds when present,
+      // otherwise the same PBC-aware VDW inference add_bond's distance mode uses.
+      const bondPairs =
+        src.nBonds > 0
+          ? src.bonds
+          : inferBondsVdwJS(src.positions, src.elements, src.nAtoms, undefined, box);
+      const adjacency = buildAdjacency(bondPairs, src.nAtoms);
+      mapFrame = (positions, frameBox, origin) =>
+        unwrapPositions(positions, frameBox, origin, adjacency);
+    }
+    const snapshot = box ? { ...src, positions: mapFrame(src.positions, box, src.boxOrigin) } : src;
+    cached = { mode: params.mode, snapshot, mapFrame };
+    wrapCache.set(src, cached);
   }
 
-  const newSnapshot: Snapshot = {
-    ...src,
-    positions: mapFrame(src.positions, box, src.boxOrigin),
-  };
-  outputs.set("particle", { ...particle, source: newSnapshot });
+  outputs.set(
+    "particle",
+    cached.snapshot === src ? particle : { ...particle, source: cached.snapshot },
+  );
 
   if (trajIn) {
+    if (cached.trajectorySource !== trajIn.provider || !cached.trajectory) {
+      cached.trajectorySource = trajIn.provider;
+      cached.trajectory = new MappedFrameProvider(
+        trajIn.provider,
+        cached.mapFrame,
+        box,
+        src.boxOrigin,
+      );
+    }
     const newTrajectory: TrajectoryData = {
       type: "trajectory",
-      provider: new MappedFrameProvider(trajIn.provider, mapFrame, box, src.boxOrigin),
+      provider: cached.trajectory,
       meta: trajIn.meta,
       source: trajIn.source,
     };
     outputs.set("trajectory", newTrajectory);
+  } else {
+    cached.trajectorySource = undefined;
+    cached.trajectory = undefined;
   }
 
   return outputs;
@@ -117,14 +169,16 @@ function buildAdjacency(bondPairs: Uint32Array, nAtoms: number): Adjacency {
 
 /**
  * Fold every atom into the home unit cell: fractional coordinates in [0,1)
- * relative to the box anchored at `origin`.
+ * relative to the box anchored at `origin` (to within `WRAP_TOL`, see there).
+ * The inverse is taken in double precision: a single-precision one put an atom
+ * exactly on a face a rounding error to either side of it.
  */
 function wrapPositions(
   positions: Float32Array,
   box: Float32Array,
   origin: Float32Array | null,
 ): Float32Array {
-  const boxInv = invert3x3(box);
+  const boxInv = inverse3(box);
   if (!boxInv) return positions;
   const nAtoms = positions.length / 3;
   const out = new Float32Array(positions.length);
@@ -136,12 +190,9 @@ function wrapPositions(
     const py = positions[i * 3 + 1] - oy;
     const pz = positions[i * 3 + 2] - oz;
     // Row-vector convention: position = frac · box (rows are lattice vectors).
-    let fx = boxInv[0] * px + boxInv[3] * py + boxInv[6] * pz;
-    let fy = boxInv[1] * px + boxInv[4] * py + boxInv[7] * pz;
-    let fz = boxInv[2] * px + boxInv[5] * py + boxInv[8] * pz;
-    fx -= Math.floor(fx);
-    fy -= Math.floor(fy);
-    fz -= Math.floor(fz);
+    const fx = wrapFrac(boxInv[0] * px + boxInv[3] * py + boxInv[6] * pz, WRAP_TOL);
+    const fy = wrapFrac(boxInv[1] * px + boxInv[4] * py + boxInv[7] * pz, WRAP_TOL);
+    const fz = wrapFrac(boxInv[2] * px + boxInv[5] * py + boxInv[8] * pz, WRAP_TOL);
     out[i * 3] = box[0] * fx + box[3] * fy + box[6] * fz + ox;
     out[i * 3 + 1] = box[1] * fx + box[4] * fy + box[7] * fz + oy;
     out[i * 3 + 2] = box[2] * fx + box[5] * fy + box[8] * fz + oz;
@@ -219,31 +270,24 @@ function unwrapPositions(
 
 /**
  * Wraps a FrameProvider and remaps each frame's positions with the node's
- * mapping function. Per-frame cells (variable-cell trajectories) take
- * precedence over the base snapshot's cell. Streaming semantics are
- * preserved: `getFrame` returns `null` when the wrapped provider has no
- * frame available yet.
+ * mapping function, in the cell the renderer draws for that frame: the
+ * frame's own when it carries a drawable one (variable-cell trajectories),
+ * else the base snapshot's. A frame with no cell to map against is returned
+ * as it is. Streaming semantics are preserved: `getFrame` returns `null` when
+ * the wrapped provider has no frame available yet.
  */
 class MappedFrameProvider implements FrameProvider {
   readonly kind: "memory" | "stream";
   readonly meta: TrajectoryMeta;
   private readonly source: FrameProvider;
-  private readonly mapFrame: (
-    positions: Float32Array,
-    box: Float32Array,
-    origin: Float32Array | null,
-  ) => Float32Array;
-  private readonly baseBox: Float32Array;
+  private readonly mapFrame: FrameMapper;
+  private readonly baseBox: Float32Array | null;
   private readonly baseOrigin: Float32Array | null;
 
   constructor(
     source: FrameProvider,
-    mapFrame: (
-      positions: Float32Array,
-      box: Float32Array,
-      origin: Float32Array | null,
-    ) => Float32Array,
-    baseBox: Float32Array,
+    mapFrame: FrameMapper,
+    baseBox: Float32Array | null,
     baseOrigin: Float32Array | null,
   ) {
     this.source = source;
@@ -261,11 +305,10 @@ class MappedFrameProvider implements FrameProvider {
   getFrame(index: number): Frame | null {
     const frame = this.source.getFrame(index);
     if (!frame) return null;
-    const box = frame.box ?? this.baseBox;
+    const box = isDrawableCell(frame.box) ? frame.box : this.baseBox;
+    if (!box) return frame;
     const origin = frame.boxOrigin ?? this.baseOrigin;
-    return {
-      ...frame,
-      positions: this.mapFrame(frame.positions, box, origin),
-    };
+    const positions = this.mapFrame(frame.positions, box, origin);
+    return positions === frame.positions ? frame : { ...frame, positions };
   }
 }

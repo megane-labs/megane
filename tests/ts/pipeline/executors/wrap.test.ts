@@ -262,6 +262,167 @@ describe("executeWrap", () => {
     expect(result.provider.getFrame(5)).toBeNull();
   });
 
+  it("never puts an atom on the upper cell face (single-precision rounding)", () => {
+    // -1e-7 Å is a rounding error below the lower face. Folding it to
+    // 10 - 1e-7 stores exactly 10 in a Float32Array: fractional 1, outside
+    // [0, 1). An atom on the upper face itself belongs to the lower one.
+    const snapshot = makeSnapshot(CUBIC(), {
+      positions: new Float32Array([-1e-7, 5, 5, 10, 5, 5]),
+    });
+    const out = executeWrap(params("wrap"), inputs(makeParticle(snapshot)));
+    const positions = (out.get("particle") as ParticleData).source.positions;
+    expect(positions[0]).toBeLessThan(1e-5);
+    expect(Math.abs(positions[0])).toBeLessThan(1e-5);
+    expect(positions[3]).toBe(0);
+  });
+
+  it("keeps every atom of a triclinic cell inside it, however far away it starts", () => {
+    const box = new Float32Array([31.7, 0, 0, 9.3, 28.1, 0, -7.7, 11.2, 25.4]);
+    const nAtoms = 5000;
+    const positions = new Float32Array(nAtoms * 3);
+    let seed = 1;
+    for (let i = 0; i < positions.length; i++) {
+      seed = (seed * 16807) % 2147483647;
+      positions[i] = (seed / 2147483647 - 0.5) * 2000;
+    }
+    const snapshot = makeSnapshot(box, {
+      nAtoms,
+      nBonds: 0,
+      bonds: new Uint32Array(0),
+      positions,
+      elements: new Uint8Array(nAtoms).fill(18),
+    });
+    const out = (
+      executeWrap(params("wrap"), inputs(makeParticle(snapshot))).get("particle") as ParticleData
+    ).source.positions;
+    // Fractional coordinates by back-substitution through the triangular cell.
+    for (let i = 0; i < nAtoms; i++) {
+      const fz = out[i * 3 + 2] / box[8];
+      const fy = (out[i * 3 + 1] - fz * box[7]) / box[4];
+      const fx = (out[i * 3] - fy * box[3] - fz * box[6]) / box[0];
+      for (const f of [fx, fy, fz]) {
+        expect(f).toBeGreaterThan(-1e-4);
+        expect(f).toBeLessThan(1);
+      }
+    }
+  });
+
+  it("maps a frame whose own cell is all zeros in the structure's cell", () => {
+    // A trajectory writes a zero box for "no cell in this frame"; the renderer
+    // keeps drawing the structure's cell, so the fold has to use it too.
+    const particle = makeParticle(makeSnapshot(CUBIC()));
+    const traj = makeTrajectory([
+      {
+        frameId: 0,
+        nAtoms: 2,
+        positions: new Float32Array([15, 1, 1, 2, 2, 2]),
+        box: new Float32Array(9),
+      },
+    ]);
+    const out = executeWrap(params("wrap"), inputs(particle, traj));
+    const frame = (out.get("trajectory") as TrajectoryData).provider.getFrame(0)!;
+    expectClose(frame.positions.slice(0, 3), [5, 1, 1]);
+  });
+
+  it("returns a frame untouched when its own cell cannot be inverted", () => {
+    const particle = makeParticle(makeSnapshot(CUBIC()));
+    const flat: Frame = {
+      frameId: 0,
+      nAtoms: 2,
+      positions: new Float32Array([15, 1, 1, 2, 2, 2]),
+      box: new Float32Array([10, 0, 0, 0, 10, 0, 0, 0, 0]),
+    };
+    for (const mode of ["wrap", "unwrap"] as const) {
+      const out = executeWrap(params(mode), inputs(particle, makeTrajectory([flat])));
+      expect((out.get("trajectory") as TrajectoryData).provider.getFrame(0)).toBe(flat);
+    }
+  });
+
+  it("wraps frames in the cells they bring when the structure file has none", () => {
+    // A PSF / prmtop topology (or a PDB without CRYST1) under an NPT run: the
+    // renderer draws each frame's cell, so the node maps into it.
+    const snapshot = makeSnapshot(null);
+    const particle = makeParticle(snapshot);
+    const plain: Frame = {
+      frameId: 1,
+      nAtoms: 2,
+      positions: new Float32Array([15, 1, 1, 2, 2, 2]),
+    };
+    const traj = makeTrajectory([
+      { frameId: 0, nAtoms: 2, positions: new Float32Array([15, 1, 1, 2, 2, 2]), box: CUBIC() },
+      plain,
+    ]);
+    const out = executeWrap(params("wrap"), inputs(particle, traj));
+    // The static structure has no cell to map against: it is passed on as it is.
+    expect(out.get("particle")).toBe(particle);
+    const provider = (out.get("trajectory") as TrajectoryData).provider;
+    expectClose(provider.getFrame(0)!.positions.slice(0, 3), [5, 1, 1]);
+    // A frame without a cell of its own has nothing to be mapped against either.
+    expect(provider.getFrame(1)).toBe(plain);
+  });
+
+  it("unwraps frames in the cells they bring when the structure file has none", () => {
+    const particle = makeParticle(makeSnapshot(null));
+    const traj = makeTrajectory([
+      { frameId: 0, nAtoms: 2, positions: new Float32Array([0.5, 1, 1, 9.9, 1, 1]), box: CUBIC() },
+    ]);
+    const out = executeWrap(params("unwrap"), inputs(particle, traj));
+    const frame = (out.get("trajectory") as TrajectoryData).provider.getFrame(0)!;
+    expect(frame.positions[3]).toBeCloseTo(-0.1, 5);
+    expect(frame.box).toBeDefined();
+  });
+
+  it("keeps a frame's cell, elements and bonds on the mapped frame", () => {
+    const particle = makeParticle(makeSnapshot(CUBIC()));
+    const box = new Float32Array([20, 0, 0, 0, 20, 0, 0, 0, 20]);
+    const elements = new Uint8Array([1, 1]);
+    const traj = makeTrajectory([
+      { frameId: 3, nAtoms: 2, positions: new Float32Array([25, 1, 1, 2, 2, 2]), box, elements },
+    ]);
+    const out = executeWrap(params("wrap"), inputs(particle, traj));
+    const frame = (out.get("trajectory") as TrajectoryData).provider.getFrame(0)!;
+    expect(frame.frameId).toBe(3);
+    expect(frame.box).toBe(box);
+    expect(frame.elements).toBe(elements);
+    expectClose(frame.positions.slice(0, 3), [5, 1, 1]);
+  });
+
+  it("hands back the same snapshot and provider while its inputs are unchanged", () => {
+    // Every node edit re-executes the pipeline. A new (identical) snapshot
+    // each time makes the viewport reload the structure.
+    const snapshot = makeSnapshot(CUBIC());
+    const traj = makeTrajectory([{ frameId: 0, nAtoms: 2, positions: new Float32Array(6) }]);
+    const first = executeWrap(params("wrap"), inputs(makeParticle(snapshot), traj));
+    const again = executeWrap(params("wrap"), inputs(makeParticle(snapshot), traj));
+    expect((again.get("particle") as ParticleData).source).toBe(
+      (first.get("particle") as ParticleData).source,
+    );
+    expect((again.get("trajectory") as TrajectoryData).provider).toBe(
+      (first.get("trajectory") as TrajectoryData).provider,
+    );
+
+    // A different mode, or another trajectory, is new output.
+    const unwrapped = executeWrap(params("unwrap"), inputs(makeParticle(snapshot), traj));
+    expect((unwrapped.get("particle") as ParticleData).source).not.toBe(
+      (first.get("particle") as ParticleData).source,
+    );
+    const other = makeTrajectory([{ frameId: 0, nAtoms: 2, positions: new Float32Array(6) }]);
+    const rewired = executeWrap(params("unwrap"), inputs(makeParticle(snapshot), other));
+    expect((rewired.get("trajectory") as TrajectoryData).provider).not.toBe(
+      (unwrapped.get("trajectory") as TrajectoryData).provider,
+    );
+    expect((rewired.get("particle") as ParticleData).source).toBe(
+      (unwrapped.get("particle") as ParticleData).source,
+    );
+    // …and so is a trajectory connected again after it was disconnected.
+    const alone = executeWrap(params("unwrap"), inputs(makeParticle(snapshot)));
+    expect(alone.has("trajectory")).toBe(false);
+    const back = executeWrap(params("unwrap"), inputs(makeParticle(snapshot), other));
+    expect((back.get("trajectory") as TrajectoryData).provider).not.toBe(
+      (rewired.get("trajectory") as TrajectoryData).provider,
+    );
+  });
+
   it("preserves stream overrides and metadata on the particle output", () => {
     const indices = new Uint32Array([1]);
     const scaleOverrides = new Float32Array([1, 2]);

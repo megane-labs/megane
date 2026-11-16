@@ -18,3 +18,15 @@ export function invert3x3(m: Float32Array): Float32Array | null {
     (a * e - b * d) * invDet,
   ]);
 }
+
+/**
+ * A cell the renderer draws: nine numbers, not all zero. Trajectory formats
+ * write an all-zero box for "no cell in this frame"; the renderer keeps the
+ * structure's cell on screen then, so nodes that map coordinates through a
+ * frame's cell (wrap, replicate) fall back to the structure's as well.
+ */
+export function isDrawableCell(box: Float32Array | null | undefined): box is Float32Array {
+  if (!box || box.length !== 9) return false;
+  for (let i = 0; i < 9; i++) if (box[i] !== 0) return true;
+  return false;
+}

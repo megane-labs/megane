@@ -261,6 +261,90 @@ describe("executeReplicate", () => {
     expect(traj.provider.getFrame(99)).toBeNull();
   });
 
+  it("tiles a frame along its own cell and enlarges that cell (variable-cell run)", () => {
+    // The structure's cell is 10 Å; this frame's is 12 Å. Tiling it along the
+    // structure's cell overlapped the images and drew a 20 Å supercell around
+    // a 24 Å one.
+    const meta: TrajectoryMeta = { nFrames: 2, timestepPs: 1, nAtoms: 2 };
+    const origin = new Float32Array([1, 2, 3]);
+    const frames: Frame[] = [
+      {
+        frameId: 0,
+        nAtoms: 2,
+        positions: new Float32Array([1, 1, 1, 11, 2, 2]),
+        box: new Float32Array([12, 0, 0, 0, 12, 0, 0, 0, 12]),
+        boxOrigin: origin,
+      },
+      // No cell of its own (or an all-zero one): the structure's cell applies.
+      {
+        frameId: 1,
+        nAtoms: 2,
+        positions: new Float32Array([1, 1, 1, 2, 2, 2]),
+        box: new Float32Array(9),
+      },
+    ];
+    const trajectory: TrajectoryData = {
+      type: "trajectory",
+      provider: new MemoryFrameProvider(frames, meta),
+      meta,
+      source: "file",
+    };
+    const out = executeReplicate(
+      params(2, 1, 1),
+      inputs(makeParticle(CUBIC()), makeCell(CUBIC()), trajectory),
+    );
+    const provider = (out.get("trajectory") as TrajectoryData).provider;
+
+    const f0 = provider.getFrame(0)!;
+    expect(Array.from(f0.positions)).toEqual([1, 1, 1, 11, 2, 2, 13, 1, 1, 23, 2, 2]);
+    expect(Array.from(f0.box!)).toEqual([24, 0, 0, 0, 12, 0, 0, 0, 12]);
+    expect(f0.boxOrigin).toBe(origin);
+
+    const f1 = provider.getFrame(1)!;
+    expect(Array.from(f1.positions)).toEqual([1, 1, 1, 2, 2, 2, 11, 1, 1, 12, 2, 2]);
+    expect(f1.box).toBeUndefined();
+    expect(f1.boxOrigin).toBeUndefined();
+  });
+
+  it("hands back the same supercell and provider while its inputs are unchanged", () => {
+    // Every node edit re-executes the pipeline. A new (identical) supercell
+    // each time makes the viewport reload it and re-fit the camera.
+    const particle = makeParticle(CUBIC());
+    const trajectory = makeTrajectory();
+    const run = (nx: number, traj: TrajectoryData | undefined = trajectory) =>
+      executeReplicate(params(nx, 1, 1), inputs({ ...particle }, makeCell(CUBIC()), traj));
+    const first = run(2);
+    const again = run(2);
+    expect((again.get("particle") as ParticleData).source).toBe(
+      (first.get("particle") as ParticleData).source,
+    );
+    expect((again.get("trajectory") as TrajectoryData).provider).toBe(
+      (first.get("trajectory") as TrajectoryData).provider,
+    );
+    expect((again.get("trajectory") as TrajectoryData).meta.nAtoms).toBe(4);
+
+    const larger = run(3);
+    expect((larger.get("particle") as ParticleData).source.nAtoms).toBe(6);
+    expect((larger.get("trajectory") as TrajectoryData).provider).not.toBe(
+      (first.get("trajectory") as TrajectoryData).provider,
+    );
+
+    // Another trajectory on the same supercell is a new provider, and so is
+    // one connected again after it was disconnected.
+    const rewired = run(3, makeTrajectory());
+    expect((rewired.get("particle") as ParticleData).source).toBe(
+      (larger.get("particle") as ParticleData).source,
+    );
+    expect((rewired.get("trajectory") as TrajectoryData).provider).not.toBe(
+      (larger.get("trajectory") as TrajectoryData).provider,
+    );
+    const alone = executeReplicate(params(3, 1, 1), inputs({ ...particle }, makeCell(CUBIC())));
+    expect(alone.has("trajectory")).toBe(false);
+    expect((run(3).get("trajectory") as TrajectoryData).provider).not.toBe(
+      (larger.get("trajectory") as TrajectoryData).provider,
+    );
+  });
+
   it("passes the trajectory through unchanged for 1×1×1 (identity)", () => {
     const particle = makeParticle(CUBIC());
     const trajectory = makeTrajectory();

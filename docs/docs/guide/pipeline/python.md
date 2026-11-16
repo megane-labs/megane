@@ -286,7 +286,20 @@ Wrap(*, mode: Literal["none", "wrap", "unwrap"] = "none")
 | --------- | ----- | -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `mode`    | `str` | `"none"` | `"wrap"` folds every atom into the home cell; `"unwrap"` makes bonded molecules that straddle a periodic face whole; `"none"` passes coordinates through. Requires a unit cell. |
 
-A connected trajectory is remapped per frame. **Ports:** `inp.particle`, `inp.traj`, `out.particle`, `out.traj`
+A connected trajectory is remapped per frame, each frame in its own cell when
+the trajectory's cell varies and in the structure's otherwise — so a topology
+without a cell (PSF, prmtop) can still be wrapped into the cells its frames
+bring. Only a trajectory routed through the node is remapped:
+
+```python
+w = pipe.add_node(Wrap(mode="wrap"))
+pipe.add_edge(s.out.particle, w.inp.particle)
+pipe.add_edge(t.out.traj, w.inp.traj)
+pipe.add_edge(w.out.particle, v.inp.particle)
+pipe.add_edge(w.out.traj, v.inp.traj)  # not t.out.traj: that plays the frames unwrapped
+```
+
+**Ports:** `inp.particle`, `inp.traj`, `out.particle`, `out.traj`
 
 ### Replicate
 
@@ -301,7 +314,9 @@ Replicate(*, nx: int = 1, ny: int = 1, nz: int = 1)
 | ---------------- | ----- | ------- | -------------------------------------------- |
 | `nx`, `ny`, `nz` | `int` | `1`     | Number of cell images along a / b / c (≥ 1) |
 
-A connected trajectory is replicated per frame. **Ports:** `inp.particle`, `inp.cell`, `inp.traj`, `out.particle`, `out.cell`, `out.traj`
+A connected trajectory is replicated per frame, along the frame's own cell when
+the trajectory's cell varies. As with `Wrap`, route the trajectory through the
+node (`inp.traj` / `out.traj`). **Ports:** `inp.particle`, `inp.cell`, `inp.traj`, `out.particle`, `out.cell`, `out.traj`
 
 ### Color
 

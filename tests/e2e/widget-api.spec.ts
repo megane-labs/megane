@@ -198,6 +198,87 @@ async function framesApplied(page: Page): Promise<number> {
   );
 }
 
+// ─── Wrap node: the widget draws what the pipeline produces ──────────────
+
+/**
+ * Three argon atoms in a 10 Å cell, written to a temporary directory: two
+ * reference atoms at x = 2 and x = 8, and a third the structure file has one
+ * cell out (x = 15) and frame 1 two cells out (x = 25). A `Wrap` node, with the
+ * trajectory routed through it, folds the third atom to x = 5 in both.
+ */
+const wrapPipelineLines = [
+  "import os, tempfile\n",
+  "from megane import Pipeline, LoadStructure, LoadTrajectory, Wrap, Viewport\n",
+  "_d = tempfile.mkdtemp()\n",
+  "_nl = chr(10)\n",
+  "_row = 'HETATM%5d AR    AR A%4d    %8.3f%8.3f%8.3f  1.00  0.00          AR'\n",
+  "with open(os.path.join(_d, 'ar.pdb'), 'w') as f:\n",
+  "    f.write('CRYST1   10.000   10.000   10.000  90.00  90.00  90.00 P 1           1' + _nl)\n",
+  "    for i, x in enumerate([2.0, 8.0, 15.0]):\n",
+  "        f.write(_row % (i + 1, i + 1, x, 5.0, 5.0) + _nl)\n",
+  "    f.write('END' + _nl)\n",
+  "def _frame(xs):\n",
+  "    return _nl.join(['3', 'frame'] + ['Ar %.3f 5.0 5.0' % x for x in xs]) + _nl\n",
+  "with open(os.path.join(_d, 'ar.xyz'), 'w') as f:\n",
+  "    f.write(_frame([2.0, 8.0, 15.0]) + _frame([2.0, 8.0, 25.0]))\n",
+  "pipe = Pipeline()\n",
+  "s = pipe.add_node(LoadStructure(os.path.join(_d, 'ar.pdb')))\n",
+  "t = pipe.add_node(LoadTrajectory(xyz=os.path.join(_d, 'ar.xyz')))\n",
+  "w = pipe.add_node(Wrap(mode='wrap'))\n",
+  "v = pipe.add_node(Viewport())\n",
+  "pipe.add_edge(s.out.particle, t.inp.particle)\n",
+  "pipe.add_edge(s.out.particle, w.inp.particle)\n",
+  "pipe.add_edge(t.out.traj, w.inp.traj)\n",
+  "pipe.add_edge(w.out.particle, v.inp.particle)\n",
+  "pipe.add_edge(w.out.traj, v.inp.traj)\n",
+  "viewer.set_pipeline(pipe)\n",
+];
+
+/**
+ * Where the third atom is drawn along the line from the first to the second:
+ * 0.5 when it sits at x = 5 (wrapped), 2.2 at x = 15 and 3.8 at x = 25 (as the
+ * file has it). Independent of the camera's zoom and orientation.
+ */
+async function thirdAtomAlongReference(page: Page): Promise<number> {
+  return page.evaluate(() => {
+    type Atom = { sx: number; sy: number };
+    const api = (
+      window as unknown as { __megane_test?: { getProjectedAtomPositions: () => Atom[] } }
+    ).__megane_test;
+    const atoms = api?.getProjectedAtomPositions() ?? [];
+    if (atoms.length !== 3) return Number.NaN;
+    const [a, b, c] = atoms;
+    const ux = b.sx - a.sx;
+    const uy = b.sy - a.sy;
+    return ((c.sx - a.sx) * ux + (c.sy - a.sy) * uy) / (ux * ux + uy * uy);
+  });
+}
+
+test("Wrap node folds the structure and every frame into the cell", async ({ page }) => {
+  // Regression: the widget drew the structure as the file has it and each
+  // frame as Python delivered it, so a Wrap node changed nothing and wrapped
+  // atoms were drawn outside the cell.
+  await reopenWithCells(page, [wrapPipelineLines]);
+  await waitForReady(page, { needsData: true, timeout: 60_000 });
+
+  // The structure (no frame delivered yet at frame 0 of a kernel-side run).
+  await expect.poll(() => thirdAtomAlongReference(page), { timeout: 30_000 }).toBeCloseTo(0.5, 2);
+
+  // A frame the kernel delivers.
+  const before = await framesApplied(page);
+  await page.locator('[data-testid="step-forward"]').first().click();
+  await page.waitForFunction(
+    () =>
+      document
+        .querySelector('[data-testid="megane-viewer"]')
+        ?.getAttribute("data-current-frame") === "1",
+    null,
+    { timeout: 30_000 },
+  );
+  await expect.poll(() => framesApplied(page), { timeout: 30_000 }).toBeGreaterThan(before);
+  expect(await thirdAtomAlongReference(page)).toBeCloseTo(0.5, 2);
+});
+
 /** Shut down every kernel of the test server. */
 async function shutDownKernels(page: Page): Promise<void> {
   const api = `http://127.0.0.1:${PORT}/api/kernels`;
