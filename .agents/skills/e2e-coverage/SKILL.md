@@ -273,6 +273,9 @@ When a comparison fails, `<name>.diff.png` and `<name>.new.png` land next to the
 | widget-jupyterlab `widget.js missing` | `npm run build:widget` not run | run it before the project |
 | log line `openLabNotebook: first boot of X failed (Run All finished no cell within 15000 ms); reloading` | JupyterLab marked the cells `[*]` but never sent them to the kernel (a known intermittent stall; the server log shows no execute request) | nothing — the reload recovers it. Only a failure after the reload is a real one |
 | jupyterlab-doc `labextension not built` | `npm run build:lab` not run + copy step skipped | rerun setup commands above |
+| every `jupyterlab-doc` test times out with the file open in JupyterLab's text editor; `jupyter labextension list` no longer shows `megane-jupyterlab` | a plain `uv run` after `maturin develop` reinstalled Megane from uv's cached build, whose labextension was empty or stale (`.venv/share/jupyter/labextensions/megane-jupyterlab`, which takes precedence over the `jupyter --data-dir` copy) | `maturin develop --release` again, then use `uv run --no-sync` or `.venv/bin` directly |
+| every test fails in milliseconds with `Executable doesn't exist at /opt/pw-browsers/chromium_headless_shell-…` | the sandbox's preinstalled Chromium is not the build the pinned `playwright` looks for | `npx playwright install chromium` |
+| later runs: `code-server did not start in 90000ms`, or JupyterLab tests answer from an old server | a `jupyter-lab` / `code-server` left over from an interrupted run still holds the port | `pkill -f code-server; pkill -f jupyter-lab` before re-running |
 
 ## Cross-References
 
