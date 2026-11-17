@@ -29,6 +29,13 @@ npm run build:wasm           # required before any other build/test
 uv sync --extra dev          # installs Playwright-host jupyterlab into .venv
 ```
 
+In the remote sandbox, also install the Chromium build the pinned Playwright
+looks for (the one preinstalled under `/opt/pw-browsers` belongs to the
+sandbox's global Playwright, and every test fails at launch without this):
+```bash
+npx playwright install chromium
+```
+
 `uv run` puts `.venv/bin` on PATH so subprocesses see the project `jupyter`.
 When invoking Playwright directly (e.g. `npx playwright test ...` for a
 re-baseline), prefix the command with `PATH="$(pwd)/.venv/bin:$PATH"` or the
@@ -127,10 +134,21 @@ PATH="$(pwd)/.venv/bin:$PATH" jupyter labextension list | grep megane
 ```
 The listed `megane-jupyterlab` must show the new version.
 
+**From here on, use `uv run --no-sync` (or call `.venv/bin` directly), never a
+plain `uv run`.** A plain `uv run` syncs the environment first: it uninstalls
+what `maturin develop` installed and reinstalls Megane from uv's own cached
+build, labextension included. That build is only as new as the last change
+to `pyproject.toml`. After a version bump it is rebuilt and happens to be
+current, but when the labextension was rebuilt since (or `uv sync` ran before
+the first `npm run build`), `.venv/share/jupyter/labextensions/megane-jupyterlab`
+is replaced by a stale or empty copy and every `jupyterlab-doc` test times
+out with the file open in the text editor. If that happens, run
+`maturin develop --release` again and re-check `jupyter labextension list`.
+
 ## Phase 3: Tests
 
 ```bash
-uv run make test-all
+uv run --no-sync make test-all
 ```
 All of Python, TypeScript, Rust, E2E, notebook, and integration tests must
 pass.

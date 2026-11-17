@@ -94,6 +94,50 @@ async function waitForFrame(scope: Page | Frame, frame: number): Promise<void> {
   );
 }
 
+/**
+ * Seek to `frame` and wait until that frame's data is on screen and counted.
+ *
+ * `data-current-frame` is the frame that was *asked for*. On the widget hosts
+ * the positions come back from the kernel afterwards, and `data-bond-count`
+ * follows one React commit behind them, so the count read right after the
+ * frame attribute flips is the previous frame's. A render is no proof either:
+ * the widget hosts draw continuously, so `renderEpoch` moves on by itself.
+ * `framesApplied` only moves when the renderer is handed a frame.
+ */
+async function seekAndSettle(scope: Page | Frame, frame: number): Promise<void> {
+  const before = await getReadyState(scope);
+  const viewer = scope.locator('[data-testid="megane-viewer"]').first();
+  const moving = (await viewer.getAttribute("data-current-frame")) !== String(frame);
+  const appliedBefore = await scope.evaluate(
+    () =>
+      (window as unknown as { __megane_test_ready?: { framesApplied?: number } })
+        .__megane_test_ready?.framesApplied ?? 0,
+  );
+  await seekTo(scope, frame);
+  await waitForReady(scope, {
+    untilEpoch: before.renderEpoch + 1,
+    timeout: 10_000,
+  });
+  await waitForFrame(scope, frame);
+  if (moving) {
+    await scope.waitForFunction(
+      (applied) =>
+        ((window as unknown as { __megane_test_ready?: { framesApplied?: number } })
+          .__megane_test_ready?.framesApplied ?? 0) > applied,
+      appliedBefore,
+      { timeout: 10_000 },
+    );
+  }
+  // The bond count is state set by the effect that follows the frame into
+  // the renderer; two animation frames cover that commit.
+  await scope.evaluate(
+    () =>
+      new Promise<void>((resolve) =>
+        requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
+      ),
+  );
+}
+
 test.beforeAll(async ({ browser }, info) => {
   const seed = info.workerIndex + 1;
   const ctx = await browser.newContext();
@@ -162,13 +206,7 @@ test("trajectory-bonds: frame 4 H-H bond absent at 3.0 Å", async () => {
   if (!boot) test.skip(true, "boot not initialised");
   const scope = boot!.scope;
 
-  const before = await getReadyState(scope);
-  await seekTo(scope, EXPECTED_FRAMES - 1);
-  await waitForReady(scope, {
-    untilEpoch: before.renderEpoch + 1,
-    timeout: 10_000,
-  });
-  await waitForFrame(scope, EXPECTED_FRAMES - 1);
+  await seekAndSettle(scope, EXPECTED_FRAMES - 1);
 
   const bondCount = await readBondCount(scope);
   expect(
@@ -186,13 +224,7 @@ test("trajectory-bonds: bond count is non-increasing across the playback range",
 
   const counts: number[] = [];
   for (let i = 0; i < EXPECTED_FRAMES; i++) {
-    const before = await getReadyState(scope);
-    await seekTo(scope, i);
-    await waitForReady(scope, {
-      untilEpoch: before.renderEpoch + 1,
-      timeout: 10_000,
-    });
-    await waitForFrame(scope, i);
+    await seekAndSettle(scope, i);
     counts.push(await readBondCount(scope));
   }
 
@@ -211,15 +243,7 @@ test("trajectory-bonds: play through the trajectory leaves bond broken at the en
   const scope = boot!.scope;
 
   // Reset to frame 0 first so the playback covers a full range.
-  {
-    const reset = await getReadyState(scope);
-    await seekTo(scope, 0);
-    await waitForReady(scope, {
-      untilEpoch: reset.renderEpoch + 1,
-      timeout: 10_000,
-    });
-    await waitForFrame(scope, 0);
-  }
+  await seekAndSettle(scope, 0);
 
   // Drive play/pause via the playback store directly so this works on
   // hosts (DocWidget, custom editor) where the Timeline UI is absent.
@@ -255,14 +279,16 @@ test("trajectory-bonds: play through the trajectory leaves bond broken at the en
   const finalFrame = Number(
     await scope.locator('[data-testid="megane-viewer"]').first().getAttribute("data-current-frame"),
   );
-  const finalBondCount = await readBondCount(scope);
+  // The count trails the frame attribute on the widget hosts (see
+  // seekAndSettle), so wait for it rather than read it once.
   if (finalFrame === EXPECTED_FRAMES - 1) {
-    expect(finalBondCount).toBe(0);
+    await expect.poll(() => readBondCount(scope), { timeout: 10_000 }).toBe(0);
   } else if (finalFrame === 0) {
-    expect(finalBondCount).toBeGreaterThanOrEqual(1);
+    await expect.poll(() => readBondCount(scope), { timeout: 10_000 }).toBeGreaterThanOrEqual(1);
   } else {
     // Any intermediate frame: bond must be 0 or 1 (monotonic break) — we
     // verified this in the previous test, so just assert it is in range.
+    const finalBondCount = await readBondCount(scope);
     expect(finalBondCount).toBeGreaterThanOrEqual(0);
     expect(finalBondCount).toBeLessThanOrEqual(1);
   }

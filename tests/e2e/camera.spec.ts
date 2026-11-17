@@ -33,6 +33,7 @@ import {
   defaultViewerContract,
   expectFullPageMatch,
   pinFrame,
+  scrollIntoViewSettled,
   stabilizeUi,
   waitForReady,
   getReadyState,
@@ -306,7 +307,7 @@ test("camera: left-drag rotates continuously across the pole", async () => {
   const canvas = scope.locator('[data-testid="viewer-root"] canvas').first();
   // In a notebook the widget output can extend below the fold; bring the
   // canvas on screen and drag only within its visible band.
-  await canvas.scrollIntoViewIfNeeded();
+  await scrollIntoViewSettled(canvas);
   const box = await canvas.boundingBox();
   expect(box).not.toBeNull();
   // On the VSCode hosts the viewer lives in a webview iframe: the mouse
@@ -390,7 +391,7 @@ test("camera: left-drag rotates continuously across the pole", async () => {
 async function canvasGeometry(scope: HostBoot["scope"]) {
   const page = "page" in scope ? scope.page() : scope;
   const canvas = scope.locator('[data-testid="viewer-root"] canvas').first();
-  await canvas.scrollIntoViewIfNeeded();
+  await scrollIntoViewSettled(canvas);
   const box = (await canvas.boundingBox())!;
   // VSCode hosts: page (mouse) coordinates vs. frame-local (elementFromPoint).
   const local = await canvas.evaluate((el) => {

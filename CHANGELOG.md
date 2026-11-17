@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+## [0.20.0] - 2026-11-17
+
 ### Fixed
 
 - **Wrapped atoms stay inside the cell.** Atoms a `Wrap` node had folded into the cell could still be drawn outside it. Four causes, all fixed:
@@ -27,6 +29,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 - **Hide the AI assistant in `MeganeViewer`'s pipeline editor.** `ui={{ aiAssistant: false }}` takes the assistant docked under the editor's graph out of the viewer — its prompt bar, conversation and provider / API key settings — and keeps the rest of the editor; the graph takes the freed space, and no AI request can be made. It has no effect while `pipelineEditor` is `false`, and switching it off while a request is running cancels the request, as collapsing the panel does. `PipelineEditor` takes the same switch as `showAssistant` (default `true`). The bundled hosts (web app, JupyterLab, VS Code) keep the assistant. `MeganeViewerUiOptions` gains the required key `aiAssistant`, so a full (non-partial) `MeganeViewerUiOptions` object written out by hand needs it added; the `ui` prop itself stays partial. See [Hiding tools](docs/docs/guide/web.md#hiding-tools-ui).
 
 ### Changed
+
+- **The panel beside the viewer is titled "Visualization settings".** The panel on the right of the web app, the JupyterLab document view and the VS Code custom editor was headed "Pipeline". It now reads "Visualization settings" in its header, on its collapsed stub ("Open visualization settings"), in the rail's accessible name and in the guided tour. Only the panel's name changes: the node graph inside it is still a pipeline (*Import* / *Export pipeline*, templates, the tutorial, the AI assistant), and so are the `.megane.json` format and the Python and TypeScript APIs.
 
 - **The pipeline editor's collapse toggle is a circled-chevron icon.** The ▶ / ◀ text arrows on the panel's collapse button and on its collapsed stub are replaced by the Material Symbols `expand_circle_right` icon (mirrored on the stub, which opens the panel to the left), drawn in the theme's muted text color. The change is in the shared collapsible panel, so Megane Builder's Details and History panels and the Jupyter widget's Quick Style panel get the same icon.
 
