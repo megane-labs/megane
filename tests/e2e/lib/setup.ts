@@ -279,7 +279,7 @@ export async function captureViewerRegion(
     await stabilizeUi(scope as Page);
   }
   const target = scope.locator('[data-testid="viewer-root"]').first();
-  await target.scrollIntoViewIfNeeded();
+  await scrollIntoViewSettled(target);
   const restoreViewport = await growViewportToFit(target);
   // The viewer draws on demand; keep it presenting frames for the duration
   // of the capture, as it did before it drew on demand, so the capture never
@@ -312,6 +312,24 @@ export async function captureViewerRegion(
       .catch(() => {});
     await restoreViewport();
   }
+}
+
+/**
+ * Scroll `target` into view, then wait until the host has stopped moving it.
+ *
+ * A VS Code notebook lays its outputs out in one tall webview and scrolls its
+ * own list, not the page: the native scroll that `scrollIntoViewIfNeeded`
+ * performs moves the output, and the notebook puts it back a frame or two
+ * later. A box read (or a click aimed) in between is up to 300 px off from
+ * what is on screen — the viewer-region capture then came out clipped at the
+ * wrong offset and never grew the viewport, and a click meant for an atom
+ * landed on empty canvas. Which side of the reset the read fell on depended
+ * on the machine, so the same test passed on one and failed on every run on
+ * another.
+ */
+export async function scrollIntoViewSettled(target: Locator): Promise<void> {
+  await target.scrollIntoViewIfNeeded();
+  await waitForSettledBox(target);
 }
 
 type Box = { x: number; y: number; width: number; height: number };
