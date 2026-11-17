@@ -52,6 +52,20 @@ function viewerAttr(page: import("playwright/test").Page, attr: string): Promise
   return page.locator('[data-testid="megane-viewer"]').getAttribute(attr);
 }
 
+/**
+ * Wait until the dropped file is the one on screen. A render after the drop
+ * is not proof of that: the demo the page boots with is still decoding its
+ * own trajectory, so `renderEpoch` can move before the drop is parsed, and
+ * `data-total-frames` then still reads the demo's 100.
+ */
+async function expectLoaded(page: import("playwright/test").Page, frames: number): Promise<void> {
+  await expect(page.locator('[data-testid="megane-viewer"]')).toHaveAttribute(
+    "data-total-frames",
+    String(frames),
+    { timeout: 15_000 },
+  );
+}
+
 test.describe("heterogeneous .traj: webapp", () => {
   test.beforeEach(async ({ page }) => {
     await page.goto("/?test=1", { waitUntil: "domcontentloaded" });
@@ -64,9 +78,12 @@ test.describe("heterogeneous .traj: webapp", () => {
     await waitForReady(page, { untilEpoch: before.renderEpoch + 1 });
 
     // 5 frames: 3, 6, 9, 12, 15 atoms.
-    expect(await viewerAttr(page, "data-total-frames")).toBe("5");
+    await expectLoaded(page, 5);
     // Frame 0 (the snapshot) has 3 atoms.
-    expect(Number(await viewerAttr(page, "data-frame-atoms"))).toBe(3);
+    await expect(page.locator('[data-testid="megane-viewer"]')).toHaveAttribute(
+      "data-frame-atoms",
+      "3",
+    );
 
     // Scrub to the last frame — the renderer must re-topologise to 15 atoms.
     await seekTo(page, 4);
@@ -89,7 +106,7 @@ test.describe("heterogeneous .traj: webapp", () => {
     const before = await getReadyState(page);
     await dropTraj(page, "periodic_implant.xyz");
     await waitForReady(page, { untilEpoch: before.renderEpoch + 1 });
-    expect(await viewerAttr(page, "data-total-frames")).toBe("4");
+    await expectLoaded(page, 4);
 
     // `data-bond-count` counts drawn bonds: the O-H pair bonded across the
     // x face is two half-bonds.
@@ -117,7 +134,7 @@ test.describe("heterogeneous .traj: webapp", () => {
     await dropTraj(page, "water_var_cell.traj");
     await waitForReady(page, { untilEpoch: before.renderEpoch + 1 });
 
-    expect(await viewerAttr(page, "data-total-frames")).toBe("5");
+    await expectLoaded(page, 5);
     // Constant 3 atoms across frames (only the cell changes).
     await seekTo(page, 4);
     expect(Number(await viewerAttr(page, "data-frame-atoms"))).toBe(3);
@@ -132,7 +149,7 @@ test.describe("heterogeneous .traj: webapp", () => {
     await dropTraj(page, "water_var_topology.traj");
     await waitForReady(page, { untilEpoch: before.renderEpoch + 1 });
 
-    expect(await viewerAttr(page, "data-total-frames")).toBe("5");
+    await expectLoaded(page, 5);
     await seekTo(page, 3);
     expect(Number(await viewerAttr(page, "data-frame-atoms"))).toBe(3);
     expect(errors).toEqual([]);
