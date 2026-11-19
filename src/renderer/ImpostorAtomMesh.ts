@@ -128,6 +128,8 @@ export class ImpostorAtomMesh {
         uOutlineWidth: { value: ILLUSTRATIVE_OUTLINE_WIDTH },
         uOutlineColor: { value: new THREE.Vector3(...ILLUSTRATIVE_OUTLINE_COLOR) },
         uAmbientDarkening: { value: ILLUSTRATIVE_AMBIENT_DARKENING },
+        // Publication-render pass (see STUDIO_PASS_GLSL in shaders.ts).
+        uPass: { value: 0 },
         // Set by the WebXR session (see xr/XRSessionController.ts).
         uExactImpostor: { value: 0 },
         uXRPixel: { value: 0 },

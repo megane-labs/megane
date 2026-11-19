@@ -165,6 +165,8 @@ export class ImpostorBondMesh {
         uPositionTex: { value: this.positionTex },
         uPositionTexWidth: { value: 1 },
         uUsePerBondOverrides: { value: 0 },
+        // Publication-render pass (see STUDIO_PASS_GLSL in shaders.ts).
+        uPass: { value: 0 },
         // Set by the WebXR session (see xr/XRSessionController.ts).
         uExactImpostor: { value: 0 },
         uXRPixel: { value: 0 },

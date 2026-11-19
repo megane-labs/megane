@@ -13,11 +13,21 @@ import {
   captureGltf,
   captureObj,
   downloadBlob,
+  DEFAULT_STUDIO_SAMPLES,
+  type SnapshotQuality,
 } from "../renderer/RenderCapture";
+import { STUDIO_STYLES, STUDIO_STYLE_LABELS, type StudioStyle } from "../renderer/studio/presets";
 
 type Mode = "snapshot" | "animation";
 type SnapshotFormat = "png" | "eps" | "svg" | "gltf" | "obj";
 type AnimationFormat = "gif" | "mp4";
+
+/** Sample counts offered for a publication snapshot. */
+export const STUDIO_SAMPLE_OPTIONS: ReadonlyArray<{ label: string; samples: number }> = [
+  { label: "Draft", samples: 64 },
+  { label: "Final", samples: DEFAULT_STUDIO_SAMPLES },
+  { label: "Best", samples: 1024 },
+];
 
 const ANIMATION_UNAVAILABLE_HINT =
   "Animation is unavailable: the current structure has only 1 frame. " +
@@ -205,6 +215,9 @@ export function RenderModal({
   const [scaleFactor, setScaleFactor] = useState(1);
   const [lockAspect, setLockAspect] = useState(true);
   const [transparent, setTransparent] = useState(false);
+  const [quality, setQuality] = useState<SnapshotQuality>("standard");
+  const [studioStyle, setStudioStyle] = useState<StudioStyle>("studio");
+  const [studioSamples, setStudioSamples] = useState(DEFAULT_STUDIO_SAMPLES);
   const [startFrame, setStartFrame] = useState(0);
   const [endFrame, setEndFrame] = useState(Math.max(0, totalFrames - 1));
   const [animFps, setAnimFps] = useState(30);
@@ -301,6 +314,9 @@ export function RenderModal({
             height: finalH,
             transparent: transparent && snapshotFormat === "png",
             format: snapshotFormat as "png" | "eps" | "svg",
+            quality,
+            studio: { samples: studioSamples, style: studioStyle },
+            onProgress: setProgress,
           });
           const ext = snapshotFormat === "eps" ? "eps" : snapshotFormat === "svg" ? "svg" : "png";
           downloadBlob(blob, `megane-render.${ext}`);
@@ -350,6 +366,9 @@ export function RenderModal({
     height,
     scaleFactor,
     transparent,
+    quality,
+    studioStyle,
+    studioSamples,
     startFrame,
     endFrame,
     animFps,
@@ -483,6 +502,63 @@ export function RenderModal({
             </>
           )}
         </div>
+
+        {/* Quality: the live view, or the accumulated publication render */}
+        {mode === "snapshot" && !is3DFormat && (
+          <>
+            <div style={labelStyle}>Quality</div>
+            <div style={tabContainerStyle}>
+              <TabButton
+                label="Standard"
+                testid="render-modal-quality-standard"
+                active={quality === "standard"}
+                onClick={() => setQuality("standard")}
+              />
+              <TabButton
+                label="Publication"
+                testid="render-modal-quality-publication"
+                active={quality === "publication"}
+                onClick={() => setQuality("publication")}
+              />
+            </div>
+            {quality === "publication" && (
+              <div style={{ display: "flex", gap: 8, marginBottom: 8 }}>
+                <label style={{ flex: 1 }}>
+                  <div style={{ ...labelStyle, marginTop: 0, marginBottom: 4 }}>Lighting</div>
+                  <select
+                    value={studioStyle}
+                    onChange={(e) => setStudioStyle(e.target.value as StudioStyle)}
+                    style={selectStyle}
+                    disabled={exporting}
+                    data-testid="render-modal-studio-style"
+                  >
+                    {STUDIO_STYLES.map((s) => (
+                      <option key={s} value={s}>
+                        {STUDIO_STYLE_LABELS[s]}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label style={{ flex: 1 }}>
+                  <div style={{ ...labelStyle, marginTop: 0, marginBottom: 4 }}>Samples</div>
+                  <select
+                    value={studioSamples}
+                    onChange={(e) => setStudioSamples(parseInt(e.target.value))}
+                    style={selectStyle}
+                    disabled={exporting}
+                    data-testid="render-modal-studio-samples"
+                  >
+                    {STUDIO_SAMPLE_OPTIONS.map((o) => (
+                      <option key={o.samples} value={o.samples}>
+                        {o.label} ({o.samples})
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              </div>
+            )}
+          </>
+        )}
 
         {/* Resolution (not applicable for 3D exports) */}
         {!is3DFormat && (

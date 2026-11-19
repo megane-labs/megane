@@ -37,6 +37,7 @@ import { positionsWithPeriodicImages } from "../logic/periodicImages";
 import type { MeshData } from "../pipeline/types";
 import type { ClientRect } from "./Picking";
 import { FpsCounter } from "./FpsCounter";
+import { renderStudio, type StudioRenderOptions } from "./studio/StudioRenderer";
 import { sceneBufferBytes } from "./sceneMemory";
 import { skipFrameForBackgroundLoad } from "./backgroundLoad";
 import { perfMark, perfMeasure, perfPushFrame, perfRendererReady } from "../perf";
@@ -1556,6 +1557,46 @@ export class MoleculeRenderer {
   /** Get the label overlay canvas. */
   getLabelOverlay(): LabelOverlay | null {
     return this.labelOverlay;
+  }
+
+  /**
+   * Render the publication-quality picture (soft shadows, ambient occlusion,
+   * anti-aliasing; see `studio/StudioRenderer.ts`) at the current size, then
+   * the cell-axes inset and labels on top, like `renderSingleFrame`. The
+   * canvas holds the result when the promise resolves.
+   */
+  async renderStudio(
+    options: Omit<StudioRenderOptions, "overlayRoots" | "transparent"> & { transparent?: boolean },
+  ): Promise<void> {
+    this.controls.update();
+    const size = this.renderer.getSize(new THREE.Vector2());
+    this.polyhedronRenderer?.updateResolution(size.x, size.y);
+    const pivotVisible = this.pivotMarker?.group.visible ?? false;
+    if (this.pivotMarker) this.pivotMarker.group.visible = false;
+    try {
+      await renderStudio(this.renderer, this.scene, this.camera, {
+        ...options,
+        transparent: options.transparent ?? this.scene.background == null,
+        overlayRoots: [
+          this.selection.selectionGroup,
+          this.selection.previewSelectionGroup,
+          this.selection.hoverGroup,
+          this.selection.warningGroup,
+        ],
+      });
+    } finally {
+      if (this.pivotMarker) this.pivotMarker.group.visible = pivotVisible;
+    }
+    if (this.cellAxesRenderer) {
+      try {
+        this.cellAxesRenderer.render(this.renderer, this.camera, size.x, size.y);
+      } catch (e) {
+        console.warn("CellAxesRenderer render error:", e);
+      }
+    }
+    this.labelOverlay?.render(this.camera, size.x, size.y, this.renderer.getPixelRatio());
+    // The live view is drawn again once the export is done.
+    this.requestRender();
   }
 
   /**

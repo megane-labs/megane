@@ -29,8 +29,14 @@ vi.mock("@/renderer/RenderCapture", async (importOriginal) => {
   return { ...actual, captureSnapshot: vi.fn(actual.captureSnapshot), downloadBlob: vi.fn() };
 });
 
-import { RenderModal, RESOLUTION_PRESETS, defaultResolutionFor } from "@/components/RenderModal";
-import { captureSnapshot } from "@/renderer/RenderCapture";
+import {
+  RenderModal,
+  RESOLUTION_PRESETS,
+  STUDIO_SAMPLE_OPTIONS,
+  defaultResolutionFor,
+} from "@/components/RenderModal";
+import { captureSnapshot, DEFAULT_STUDIO_SAMPLES } from "@/renderer/RenderCapture";
+import { STUDIO_STYLES } from "@/renderer/studio/presets";
 import type { MoleculeRenderer } from "@/renderer/MoleculeRenderer";
 
 function makeCanvas(w = 800, h = 600): HTMLCanvasElement {
@@ -525,6 +531,74 @@ describe("RenderModal: animation tab availability", () => {
       fireEvent.change(screen.getByTestId("render-modal-preset"), { target: { value: "custom" } });
       expect((screen.getByTestId("render-modal-width") as HTMLInputElement).value).toBe("1024");
       expect((screen.getByTestId("render-modal-height") as HTMLInputElement).value).toBe("768");
+    });
+  });
+
+  describe("publication quality", () => {
+    function open() {
+      render(
+        <RenderModal
+          open
+          onClose={() => {}}
+          rendererRef={makeRendererRef()}
+          totalFrames={1}
+          currentFrame={0}
+          onSeek={() => {}}
+        />,
+      );
+    }
+
+    it("offers Standard and Publication for raster snapshots, and only there", () => {
+      open();
+      expect(screen.getByTestId("render-modal-quality-standard")).toBeTruthy();
+      expect(screen.getByTestId("render-modal-quality-publication")).toBeTruthy();
+      // The studio controls appear once Publication is picked.
+      expect(screen.queryByTestId("render-modal-studio-style")).toBeNull();
+      fireEvent.click(screen.getByTestId("render-modal-quality-publication"));
+      expect(screen.getByTestId("render-modal-studio-style")).toBeTruthy();
+      expect(screen.getByTestId("render-modal-studio-samples")).toBeTruthy();
+      // A 3D export has no quality.
+      fireEvent.click(screen.getByTestId("render-modal-format-gltf"));
+      expect(screen.queryByTestId("render-modal-quality-standard")).toBeNull();
+    });
+
+    it("lists every lighting style and sample count", () => {
+      open();
+      fireEvent.click(screen.getByTestId("render-modal-quality-publication"));
+      const style = screen.getByTestId("render-modal-studio-style") as HTMLSelectElement;
+      expect([...style.options].map((o) => o.value)).toEqual([...STUDIO_STYLES]);
+      const samples = screen.getByTestId("render-modal-studio-samples") as HTMLSelectElement;
+      expect([...samples.options].map((o) => Number(o.value))).toEqual(
+        STUDIO_SAMPLE_OPTIONS.map((o) => o.samples),
+      );
+      expect(samples.value).toBe(String(DEFAULT_STUDIO_SAMPLES));
+    });
+
+    it("passes the quality, style and samples to the snapshot export", async () => {
+      vi.mocked(captureSnapshot).mockResolvedValueOnce(new Blob(["x"], { type: "image/png" }));
+      open();
+      fireEvent.click(screen.getByTestId("render-modal-quality-publication"));
+      fireEvent.change(screen.getByTestId("render-modal-studio-style"), {
+        target: { value: "dramatic" },
+      });
+      fireEvent.change(screen.getByTestId("render-modal-studio-samples"), {
+        target: { value: "1024" },
+      });
+      fireEvent.click(screen.getByTestId("render-modal-export"));
+      await waitFor(() => expect(captureSnapshot).toHaveBeenCalled());
+      expect(vi.mocked(captureSnapshot).mock.lastCall![1]).toMatchObject({
+        quality: "publication",
+        studio: { samples: 1024, style: "dramatic" },
+        onProgress: expect.any(Function),
+      });
+    });
+
+    it("exports standard quality by default", async () => {
+      vi.mocked(captureSnapshot).mockResolvedValueOnce(new Blob(["x"], { type: "image/png" }));
+      open();
+      fireEvent.click(screen.getByTestId("render-modal-export"));
+      await waitFor(() => expect(captureSnapshot).toHaveBeenCalled());
+      expect(vi.mocked(captureSnapshot).mock.lastCall![1]).toMatchObject({ quality: "standard" });
     });
   });
 });
