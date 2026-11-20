@@ -1,9 +1,16 @@
 import { describe, it, expect } from "vitest";
 import { atomFragmentShader, bondFragmentShader } from "@/renderer/shaders";
 import {
+  accumulateFragmentShader,
   compositeFragmentShader,
   fullscreenVertexShader,
   resolveFragmentShader,
+  shadowCasterVertexShader,
+  stochasticShadowFragmentShader,
+  surfaceAlbedoFragmentShader,
+  surfaceAlbedoVertexShader,
+  translucentFragmentShader,
+  translucentVertexShader,
 } from "@/renderer/studio/studioShaders";
 
 describe("impostor shaders: studio passes", () => {
@@ -39,6 +46,31 @@ describe("studio full-screen shaders", () => {
       expect(src).toContain("uniform sampler2D tShadowSky;");
       expect(src).toContain("uniform sampler2D tShadowKey;");
     }
+  });
+
+  it("writes the sample alone; accumulate adds it to the sum", () => {
+    expect(compositeFragmentShader(false)).toContain("fragColor = sampleColor;");
+    expect(accumulateFragmentShader).toContain("texture(tPrev, vUv) + texture(tSample, vUv)");
+  });
+
+  it("lights translucent meshes like the composite, behind-the-atoms fragments dropped", () => {
+    expect(translucentFragmentShader).toContain("vec3 studioShade(");
+    expect(translucentFragmentShader).toContain("studioShade(albedo, vViewPos, n, v)");
+    expect(translucentFragmentShader).toMatch(/gl_FragCoord\.z > texture\(tDepth/);
+    expect(translucentFragmentShader).toContain("cross(dFdx(vViewPos), dFdy(vViewPos))");
+    expect(translucentVertexShader).toContain("vViewNormal = normalMatrix * normal;");
+  });
+
+  it("decodes sRGB palette colours on meshes, as on the impostors", () => {
+    expect(translucentFragmentShader).toContain("srgbToLinear(vColor)");
+    expect(surfaceAlbedoFragmentShader).toContain("srgbToLinear(vColor)");
+    expect(surfaceAlbedoVertexShader).toContain("vColor = color;");
+  });
+
+  it("casts translucent shadows with probability equal to the opacity", () => {
+    expect(stochasticShadowFragmentShader).toMatch(/if \(h >= uOpacity\) discard;/);
+    expect(stochasticShadowFragmentShader).toContain("uSeed");
+    expect(shadowCasterVertexShader).toContain("gl_Position");
   });
 
   it("turns normals toward the viewer before lighting", () => {

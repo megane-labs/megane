@@ -42,9 +42,16 @@ import {
   type StudioScene,
 } from "./sceneSetup";
 import {
+  accumulateFragmentShader,
   compositeFragmentShader,
   fullscreenVertexShader,
   resolveFragmentShader,
+  shadowCasterVertexShader,
+  stochasticShadowFragmentShader,
+  surfaceAlbedoFragmentShader,
+  surfaceAlbedoVertexShader,
+  translucentFragmentShader,
+  translucentVertexShader,
 } from "./studioShaders";
 
 export interface StudioRenderOptions {
@@ -91,11 +98,22 @@ type ImpostorState = {
 class PassState {
   private impostors: ImpostorState[];
   private surfaceOriginals = new Map<THREE.Mesh, THREE.Material>();
-  private albedoMats = new Map<THREE.Mesh, THREE.MeshBasicMaterial>();
+  private albedoMats = new Map<THREE.Mesh, THREE.RawShaderMaterial>();
   private normalMats = new Map<THREE.Mesh, THREE.MeshNormalMaterial>();
   private overlayVisible = new Map<THREE.Object3D, boolean>();
+  private translucentOriginals = new Map<THREE.Mesh, THREE.Material>();
+  private translucentMats = new Map<THREE.Mesh, THREE.RawShaderMaterial>();
+  private shadowMats = new Map<THREE.Mesh, THREE.RawShaderMaterial>();
 
-  constructor(private readonly studio: StudioScene) {
+  /**
+   * `lighting` holds the uniforms the composite updates every sample; each
+   * translucent mesh's studio material shares those objects, so it is lit by
+   * the same sample.
+   */
+  constructor(
+    private readonly studio: StudioScene,
+    lighting: Record<string, THREE.IUniform> = {},
+  ) {
     this.impostors = studio.impostors.map((mesh) => {
       const material = mesh.material as THREE.ShaderMaterial;
       return {
@@ -109,11 +127,19 @@ class PassState {
     for (const mesh of studio.surfaces) {
       const original = mesh.material as THREE.MeshStandardMaterial;
       this.surfaceOriginals.set(mesh, original);
+      const color = original.color ?? new THREE.Color(0xffffff);
       this.albedoMats.set(
         mesh,
-        new THREE.MeshBasicMaterial({
-          color: original.color ?? new THREE.Color(0xffffff),
-          vertexColors: original.vertexColors,
+        new THREE.RawShaderMaterial({
+          glslVersion: THREE.GLSL3,
+          vertexShader: surfaceAlbedoVertexShader,
+          fragmentShader: surfaceAlbedoFragmentShader,
+          uniforms: {
+            uColor: { value: new THREE.Vector3(color.r, color.g, color.b) },
+            uVertexColors: {
+              value: original.vertexColors && mesh.geometry.getAttribute("color") ? 1 : 0,
+            },
+          },
           side: original.side,
         }),
       );
@@ -122,12 +148,73 @@ class PassState {
         new THREE.MeshNormalMaterial({ side: original.side, flatShading: original.flatShading }),
       );
     }
+    for (const mesh of studio.translucent) {
+      const original = mesh.material as THREE.MeshPhongMaterial;
+      this.translucentOriginals.set(mesh, original);
+      const color = original.color ?? new THREE.Color(0xffffff);
+      const geo = mesh.geometry;
+      this.translucentMats.set(
+        mesh,
+        new THREE.RawShaderMaterial({
+          glslVersion: THREE.GLSL3,
+          vertexShader: translucentVertexShader,
+          fragmentShader: translucentFragmentShader,
+          uniforms: {
+            ...lighting,
+            uColor: { value: new THREE.Vector3(color.r, color.g, color.b) },
+            uOpacity: { value: original.opacity },
+            uVertexColors: { value: original.vertexColors && geo.getAttribute("color") ? 1 : 0 },
+            uHasNormals: { value: geo.getAttribute("normal") && !original.flatShading ? 1 : 0 },
+          },
+          side: original.side,
+          transparent: true,
+          depthTest: false,
+          depthWrite: false,
+          blending: THREE.NormalBlending,
+        }),
+      );
+      this.shadowMats.set(
+        mesh,
+        new THREE.RawShaderMaterial({
+          glslVersion: THREE.GLSL3,
+          vertexShader: shadowCasterVertexShader,
+          fragmentShader: stochasticShadowFragmentShader,
+          uniforms: { uOpacity: { value: original.opacity }, uSeed: { value: 0 } },
+          side: THREE.DoubleSide,
+        }),
+      );
+    }
     for (const obj of studio.overlay) this.overlayVisible.set(obj, obj.visible);
+  }
+
+  /**
+   * Shadow pass: the G-buffer's opaque geometry plus the translucent meshes as
+   * stochastic casters, drawn with a fresh pattern per map (`seed`).
+   */
+  enterShadow(seed: number): void {
+    this.enterGBuffer(PASS_ALBEDO);
+    for (const [mesh, mat] of this.shadowMats) {
+      mat.uniforms.uSeed.value = seed;
+      mesh.material = mat;
+      mesh.visible = true;
+    }
+  }
+
+  /** Translucent pass: only the translucent meshes, with their studio materials. */
+  enterTranslucent(): void {
+    for (const s of this.impostors) s.mesh.visible = false;
+    for (const mesh of this.studio.surfaces) mesh.visible = false;
+    for (const obj of this.studio.overlay) obj.visible = false;
+    for (const [mesh, mat] of this.translucentMats) {
+      mesh.material = mat;
+      mesh.visible = true;
+    }
   }
 
   /** G-buffer / shadow pass: only lit geometry, opaque, with pass materials. */
   enterGBuffer(pass: typeof PASS_ALBEDO | typeof PASS_NORMAL): void {
     for (const s of this.impostors) {
+      s.mesh.visible = true;
       s.material.uniforms.uPass.value = pass;
       s.material.transparent = false;
       s.material.depthWrite = true;
@@ -136,7 +223,9 @@ class PassState {
     for (const mesh of this.studio.surfaces) {
       mesh.material =
         pass === PASS_ALBEDO ? this.albedoMats.get(mesh)! : this.normalMats.get(mesh)!;
+      mesh.visible = true;
     }
+    for (const mesh of this.studio.translucent) mesh.visible = false;
     for (const obj of this.studio.overlay) obj.visible = false;
   }
 
@@ -151,6 +240,7 @@ class PassState {
       s.mesh.visible = s.transparent;
     }
     for (const mesh of this.studio.surfaces) mesh.visible = false;
+    for (const mesh of this.studio.translucent) mesh.visible = false;
     for (const [obj, visible] of this.overlayVisible) obj.visible = visible;
   }
 
@@ -166,12 +256,18 @@ class PassState {
       mesh.material = original;
       mesh.visible = true;
     }
+    for (const [mesh, original] of this.translucentOriginals) {
+      mesh.material = original;
+      mesh.visible = true;
+    }
     for (const [obj, visible] of this.overlayVisible) obj.visible = visible;
   }
 
   dispose(): void {
     for (const m of this.albedoMats.values()) m.dispose();
     for (const m of this.normalMats.values()) m.dispose();
+    for (const m of this.translucentMats.values()) m.dispose();
+    for (const m of this.shadowMats.values()) m.dispose();
   }
 }
 
@@ -291,11 +387,31 @@ export async function renderStudio(
   const gNormal = depthTarget(width, height, THREE.HalfFloatType);
   const shadowSky = depthTarget(shadowSize, shadowSize, THREE.UnsignedByteType);
   const shadowKey = depthTarget(shadowSize, shadowSize, THREE.UnsignedByteType);
+  // With translucent meshes each light gets a second map that includes them
+  // as stochastic casters. Atoms and opaque surfaces read only the opaque map:
+  // a see-through envelope or polyhedron is drawn to be seen through, not to
+  // darken what it contains. The translucent meshes themselves and the ground
+  // read the second one, so faces shade each other and the ground gets their
+  // shadow.
+  const hasTranslucent = studio.translucent.length > 0;
+  const shadowSkyAll = hasTranslucent
+    ? depthTarget(shadowSize, shadowSize, THREE.UnsignedByteType)
+    : shadowSky;
+  const shadowKeyAll = hasTranslucent
+    ? depthTarget(shadowSize, shadowSize, THREE.UnsignedByteType)
+    : shadowKey;
+  const withTranslucentShadows = (uniforms: Record<string, THREE.IUniform>) => ({
+    ...uniforms,
+    tShadowSky: { value: shadowSkyAll.depthTexture },
+    tShadowKey: { value: shadowKeyAll.depthTexture },
+  });
   // Running sums, ping-ponged: radiance + coverage, and the ground shadow.
   let accRead = colorTarget(width, height, floatType);
   let accWrite = colorTarget(width, height, floatType);
   let floorRead = colorTarget(width, height, floatType);
   let floorWrite = colorTarget(width, height, floatType);
+  // One sample before it is added: the lit opaque scene, translucent over it.
+  const sampleTarget = colorTarget(width, height, floatType);
   const floor = options.floorShadow === false ? null : lighting.floor;
   // A ground shadow lands beside the structure, so the shadow maps look wider.
   const lightFrame = floor ? 1.6 : 1;
@@ -356,9 +472,18 @@ export async function renderStudio(
         fragmentShader: compositeFragmentShader(true),
         depthTest: false,
         depthWrite: false,
-        uniforms: composite.uniforms,
+        uniforms: withTranslucentShadows(composite.uniforms),
       })
     : null;
+
+  const accumulate = new THREE.RawShaderMaterial({
+    glslVersion: THREE.GLSL3,
+    vertexShader: fullscreenVertexShader,
+    fragmentShader: accumulateFragmentShader,
+    depthTest: false,
+    depthWrite: false,
+    uniforms: { tPrev: { value: null }, tSample: { value: sampleTarget.texture } },
+  });
 
   const background = new THREE.Color(0xffffff);
   let backgroundAlpha = options.transparent ? 0 : 1;
@@ -387,7 +512,13 @@ export async function renderStudio(
   });
 
   const rand = seededRandom(options.seed ?? 1);
-  const skyDirs = sphereDirections(samples, rand);
+  // Each direction jittered inside its own patch of the lattice (radius about
+  // 2/sqrt(n) rad): the sky's separate shadows turn into noise that averages
+  // out, instead of copies of the structure's shadow.
+  const skyCell = 2 / Math.sqrt(samples);
+  const skyDirs = sphereDirections(samples, rand).map((d) =>
+    coneDirection(d, skyCell, rand(), rand()),
+  );
   const jitter = pixelJitter(samples);
   const rim = lighting.rim;
   const rimRadiance = rim
@@ -401,7 +532,7 @@ export async function renderStudio(
   const depthRange = 2 * Math.max(sphere.radius, 1e-3) * 1.02 + 1;
   const bias = new THREE.Vector2(1.5 * texelWorld, (0.75 * texelWorld) / depthRange);
 
-  const passes = new PassState(studio);
+  const passes = new PassState(studio, withTranslucentShadows(composite.uniforms));
   const savedBackground = scene.background;
   const savedTarget = renderer.getRenderTarget();
   const savedClear = renderer.getClearColor(new THREE.Color());
@@ -423,13 +554,24 @@ export async function renderStudio(
     renderer.render(scene, cam);
   };
 
-  const drawShadow = (target: THREE.WebGLRenderTarget, toLightView: THREE.Vector3) => {
+  let shadowSeed = 0;
+  const drawShadow = (
+    target: THREE.WebGLRenderTarget,
+    targetAll: THREE.WebGLRenderTarget,
+    toLightView: THREE.Vector3,
+  ) => {
     tmpDir.copy(toLightView).transformDirection(camWorld);
     lightCamera(sphere, tmpDir, lightCam, lightFrame);
     passes.enterGBuffer(PASS_ALBEDO);
     renderer.setRenderTarget(target);
     renderer.clear(true, true, false);
     renderer.render(scene, lightCam);
+    if (targetAll !== target) {
+      passes.enterShadow((shadowSeed = (shadowSeed + 1) % 4096) * 7.31);
+      renderer.setRenderTarget(targetAll);
+      renderer.clear(true, true, false);
+      renderer.render(scene, lightCam);
+    }
     // view -> world -> light view -> light clip
     return new THREE.Matrix4()
       .multiplyMatrices(lightCam.projectionMatrix, lightCam.matrixWorldInverse)
@@ -495,8 +637,9 @@ export async function renderStudio(
       const keyView = new THREE.Vector3(
         ...coneDirection(lighting.key.direction, keyHalfAngle, rand(), rand()),
       );
-      const viewToSky = drawShadow(shadowSky, skyView);
-      const viewToKey = lighting.key.intensity > 0 ? drawShadow(shadowKey, keyView) : viewToSky;
+      const viewToSky = drawShadow(shadowSky, shadowSkyAll, skyView);
+      const viewToKey =
+        lighting.key.intensity > 0 ? drawShadow(shadowKey, shadowKeyAll, keyView) : viewToSky;
 
       const u = composite.uniforms;
       u.tPrev.value = accRead.texture;
@@ -512,6 +655,14 @@ export async function renderStudio(
       u.uRimDir.value.copy(rim ? toVector3(rim.direction) : new THREE.Vector3());
       u.uRimRadiance.value.copy(rimRadiance);
       quad.material = composite;
+      renderer.setRenderTarget(sampleTarget);
+      renderer.render(quadScene, quadCamera);
+      if (studio.translucent.length > 0) {
+        passes.enterTranslucent();
+        renderer.render(scene, camera);
+      }
+      accumulate.uniforms.tPrev.value = accRead.texture;
+      quad.material = accumulate;
       renderer.setRenderTarget(accWrite);
       renderer.render(quadScene, quadCamera);
       [accRead, accWrite] = [accWrite, accRead];
@@ -592,16 +743,19 @@ export async function renderStudio(
       gNormal,
       shadowSky,
       shadowKey,
+      ...(hasTranslucent ? [shadowSkyAll, shadowKeyAll] : []),
       accRead,
       accWrite,
       floorRead,
       floorWrite,
+      sampleTarget,
     ]) {
       t.depthTexture?.dispose();
       t.dispose();
     }
     composite.dispose();
     floorComposite?.dispose();
+    accumulate.dispose();
     resolve.dispose();
     quad.geometry.dispose();
   }

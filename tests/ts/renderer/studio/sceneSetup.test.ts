@@ -4,6 +4,7 @@ import {
   classifyScene,
   isImpostorMesh,
   isOpaqueSurface,
+  isTranslucentSurface,
   lightCamera,
   litBoundingSphere,
   litMinAlong,
@@ -63,6 +64,19 @@ describe("isImpostorMesh / isOpaqueSurface", () => {
     expect(isOpaqueSurface(box(new THREE.MeshNormalMaterial()))).toBe(false);
     expect(isOpaqueSurface(box(new THREE.ShaderMaterial()))).toBe(false);
     expect(isOpaqueSurface(new THREE.Line())).toBe(false);
+
+    expect(
+      isTranslucentSurface(box(new THREE.MeshPhongMaterial({ transparent: true, opacity: 0.5 }))),
+    ).toBe(true);
+    expect(isTranslucentSurface(box(new THREE.MeshStandardMaterial()))).toBe(false);
+    // Nearly invisible: left to the overlay pass as drawn.
+    expect(
+      isTranslucentSurface(box(new THREE.MeshPhongMaterial({ transparent: true, opacity: 0.005 }))),
+    ).toBe(false);
+    expect(
+      isTranslucentSurface(box(new THREE.MeshPhongMaterial({ opacity: 0.5, visible: false }))),
+    ).toBe(false);
+    expect(isTranslucentSurface(new THREE.Line())).toBe(false);
     expect(
       isOpaqueSurface(new THREE.Mesh(new THREE.BoxGeometry(), [new THREE.MeshBasicMaterial()])),
     ).toBe(false);
@@ -89,7 +103,8 @@ describe("classifyScene", () => {
     const s = classifyScene(scene, [selection]);
     expect(s.impostors).toEqual([a, b]);
     expect(s.surfaces).toEqual([cartoon]);
-    expect(s.overlay).toEqual([glass, cell, sprite, highlight]);
+    expect(s.translucent).toEqual([glass]);
+    expect(s.overlay).toEqual([cell, sprite, highlight]);
   });
 
   it("treats everything as candidates when no overlay roots are given", () => {
@@ -162,6 +177,14 @@ describe("litMinAlong", () => {
 
     scene.add(box(new THREE.MeshBasicMaterial(), new THREE.Vector3(0, -10, 0)));
     expect(litMinAlong(classifyScene(scene), up)).toBeCloseTo(-11);
+    // Translucent meshes count too: a polyhedron sits on the ground as well.
+    scene.add(
+      box(
+        new THREE.MeshPhongMaterial({ transparent: true, opacity: 0.5 }),
+        new THREE.Vector3(0, -20, 0),
+      ),
+    );
+    expect(litMinAlong(classifyScene(scene), up)).toBeCloseTo(-21);
   });
 
   it("is null when nothing is lit, and skips empty surfaces", () => {

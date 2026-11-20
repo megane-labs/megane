@@ -54,7 +54,9 @@ To delete a connection, hover (or select) the edge and click the **×** at its m
 | **Dramatic** | One hard light from the side and a back light on the silhouettes. | Dark |
 | **Illustrative** | Flat colour shaped by occlusion, with ink outlines that hug the silhouettes (Goodsell-style); no ground. | Any |
 
-**Samples** sets how many frames are averaged: *Draft* (64) to check the look, *Final* (256), *Best* (1024) for the smoothest shadows. The render runs on the GPU and takes from a second to a minute depending on the structure, the size and the GPU; the dialog shows its progress and the viewer stays usable. Transparent background works in Publication quality too: the ground shadow is kept as a semi-transparent black. Translucent surfaces, lines and labels are drawn over the lit picture as they appear in the viewer.
+**Samples** sets how many frames are averaged: *Draft* (64) to check the look, *Final* (256), *Best* (1024) for the smoothest shadows. The render runs on the GPU and takes from a second to a minute depending on the structure, the size and the GPU; the dialog shows its progress and the viewer stays usable. Transparent background works in Publication quality too: the ground shadow is kept as a semi-transparent black.
+
+Translucent surfaces — coordination polyhedra, a see-through molecular surface — are lit the same way and blended over each frame, and they cast a shadow as strong as they are opaque (a polyhedron at 50 % opacity casts a half shadow onto the atoms inside it and onto the ground). Lines (the cell, polyhedron edges), labels and atoms given a per-atom opacity are drawn over the lit picture as they appear in the viewer.
 
 For a figure at print size, set the resolution to the column width times the journal's resolution — e.g. 85 mm at 600 dpi is about 2000 px wide.
 

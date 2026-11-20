@@ -34,11 +34,26 @@ function isLitSurfaceMaterial(m: THREE.Material): m is LitMaterial {
 
 /** Opaque enough to take part in the G-buffer: it hides what is behind it. */
 export function isOpaqueSurface(obj: THREE.Object3D): obj is THREE.Mesh {
+  const mat = litSurfaceMaterial(obj);
+  return mat !== null && mat.opacity >= 0.999;
+}
+
+/**
+ * A see-through lit mesh (coordination polyhedra, a translucent surface): the
+ * studio lights it too, blended over each sample. Nearly invisible ones are
+ * left alone.
+ */
+export function isTranslucentSurface(obj: THREE.Object3D): obj is THREE.Mesh {
+  const mat = litSurfaceMaterial(obj);
+  return mat !== null && mat.opacity < 0.999 && mat.opacity > 0.01;
+}
+
+function litSurfaceMaterial(obj: THREE.Object3D): LitMaterial | null {
   const mesh = obj as THREE.Mesh;
-  if (!mesh.isMesh || Array.isArray(mesh.material)) return false;
+  if (!mesh.isMesh || Array.isArray(mesh.material)) return null;
   const mat = mesh.material as THREE.Material;
-  if (!isLitSurfaceMaterial(mat)) return false;
-  return mat.opacity >= 0.999 && mat.visible !== false;
+  if (!isLitSurfaceMaterial(mat) || mat.visible === false) return null;
+  return mat;
 }
 
 export interface StudioScene {
@@ -46,8 +61,10 @@ export interface StudioScene {
   impostors: THREE.Mesh[];
   /** Opaque meshes (cartoon, opaque surfaces and polyhedra): lit by the studio. */
   surfaces: THREE.Mesh[];
+  /** Translucent meshes (polyhedra, see-through surfaces): lit and blended per sample. */
+  translucent: THREE.Mesh[];
   /**
-   * Everything else that draws (lines, translucent meshes, sprites, the
+   * Everything else that draws (lines, sprites, nearly invisible meshes, the
    * selection overlay): hidden while the studio renders, then drawn over the
    * finished picture with its own material.
    */
@@ -76,7 +93,7 @@ export function classifyScene(
   overlayRoots: Iterable<THREE.Object3D> = [],
 ): StudioScene {
   const roots = new Set(overlayRoots);
-  const result: StudioScene = { impostors: [], surfaces: [], overlay: [] };
+  const result: StudioScene = { impostors: [], surfaces: [], translucent: [], overlay: [] };
   scene.traverseVisible((obj) => {
     if (!isDrawable(obj)) return;
     if (roots.size > 0 && hasAncestorIn(obj, roots)) {
@@ -85,6 +102,8 @@ export function classifyScene(
       result.impostors.push(obj);
     } else if (isOpaqueSurface(obj)) {
       result.surfaces.push(obj);
+    } else if (isTranslucentSurface(obj)) {
+      result.translucent.push(obj);
     } else {
       result.overlay.push(obj);
     }
@@ -121,7 +140,7 @@ export function litBoundingSphere(studio: StudioScene): THREE.Sphere | null {
     local.expandByScalar(margin);
     box.union(local.applyMatrix4(mesh.matrixWorld));
   }
-  for (const mesh of studio.surfaces) {
+  for (const mesh of [...studio.surfaces, ...studio.translucent]) {
     box.union(new THREE.Box3().setFromObject(mesh));
   }
   if (box.isEmpty()) return null;
@@ -151,7 +170,7 @@ export function litMinAlong(studio: StudioScene, axis: THREE.Vector3): number | 
       min = Math.min(min, p.dot(axis) - r);
     }
   }
-  for (const mesh of studio.surfaces) {
+  for (const mesh of [...studio.surfaces, ...studio.translucent]) {
     const box = new THREE.Box3().setFromObject(mesh);
     if (box.isEmpty()) continue;
     for (let k = 0; k < 8; k++) {

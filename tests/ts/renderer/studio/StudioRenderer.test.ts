@@ -19,7 +19,10 @@ import { STUDIO_PRESETS } from "@/renderer/studio/presets";
 interface Draw {
   target: THREE.WebGLRenderTarget | null;
   camera: THREE.Camera;
-  kind: "scene" | "composite" | "floor" | "resolve";
+  kind: "scene" | "composite" | "accumulate" | "floor" | "resolve";
+  atomVisible: boolean;
+  plateMaterial: string;
+  plateVisible: boolean;
   atomPass: number;
   glassPass: number;
   glassVisible: boolean;
@@ -49,7 +52,15 @@ function impostor(transparent: boolean): THREE.Mesh {
   return new THREE.Mesh(geo, mat);
 }
 
-function setup(opts: { floatExt?: boolean; withGl?: boolean } = {}) {
+/** What a translucent mesh is drawn with: its own material, or one of the studio's. */
+function materialKind(m: THREE.Material): string {
+  const src = (m as THREE.RawShaderMaterial).fragmentShader ?? "";
+  if (src.includes("uSeed")) return "stochastic-shadow";
+  if (src.includes("studioShade")) return "studio-translucent";
+  return m.type;
+}
+
+function setup(opts: { floatExt?: boolean; withGl?: boolean; plate?: boolean } = {}) {
   const scene = new THREE.Scene();
   scene.background = new THREE.Color(0x336699);
   const atoms = impostor(false);
@@ -61,7 +72,17 @@ function setup(opts: { floatExt?: boolean; withGl?: boolean } = {}) {
   const selection = new THREE.Group();
   const highlight = new THREE.Mesh(new THREE.BoxGeometry(), new THREE.MeshBasicMaterial());
   selection.add(highlight);
+  // A translucent polyhedron-like plate: lit per sample, casts a partial shadow.
+  const plateMat = new THREE.MeshPhongMaterial({
+    color: 0x00ff00,
+    transparent: true,
+    opacity: 0.5,
+    side: THREE.DoubleSide,
+  });
+  const plate = new THREE.Mesh(new THREE.BoxGeometry(3, 3, 0.2), plateMat);
+  plate.position.set(0, -5, 0);
   scene.add(atoms, glass, surface, line, selection);
+  if (opts.plate !== false) scene.add(plate);
 
   const camera = new THREE.PerspectiveCamera(40, 4 / 3, 0.1, 1000);
   camera.position.set(0, 0, 30);
@@ -102,15 +123,20 @@ function setup(opts: { floatExt?: boolean; withGl?: boolean } = {}) {
       if (cam instanceof THREE.OrthographicCamera && src?.includes("vUv")) {
         kind = src.includes("tAccum")
           ? "resolve"
-          : src.includes("FLOOR_PASS 1")
-            ? "floor"
-            : "composite";
+          : src.includes("tSample")
+            ? "accumulate"
+            : src.includes("FLOOR_PASS 1")
+              ? "floor"
+              : "composite";
       }
       const am = atoms.material as THREE.RawShaderMaterial;
       draws.push({
         target,
         camera: cam,
         kind,
+        atomVisible: atoms.visible,
+        plateMaterial: materialKind(plate.material as THREE.Material),
+        plateVisible: plate.visible,
         atomPass: am.uniforms.uPass.value,
         glassPass: (glass.material as THREE.RawShaderMaterial).uniforms.uPass.value,
         glassVisible: glass.visible,
@@ -130,6 +156,8 @@ function setup(opts: { floatExt?: boolean; withGl?: boolean } = {}) {
     glass,
     surface,
     surfaceMat,
+    plate,
+    plateMat,
     line,
     selection,
     highlight,
@@ -151,20 +179,52 @@ describe("renderStudio", () => {
       overlayRoots: [t.selection],
     });
     const kinds = t.draws.map((d) => d.kind);
-    // per sample: albedo, normal, sky shadow, key shadow, composite, floor
-    const perSample = ["scene", "scene", "scene", "scene", "composite", "floor"];
+    // per sample: albedo, normal, sky shadow (opaque, then with the
+    // translucent plate), key shadow (likewise), composite, the translucent
+    // meshes over it, accumulate, floor
+    const perSample = [
+      "scene",
+      "scene",
+      "scene",
+      "scene",
+      "scene",
+      "scene",
+      "composite",
+      "scene",
+      "accumulate",
+      "floor",
+    ];
     expect(kinds).toEqual([...perSample, ...perSample, ...perSample, "scene", "resolve", "scene"]);
 
-    const [albedo, normal, sky, key] = t.draws;
+    const [albedo, normal, sky, skyAll, key, keyAll, composite, translucent, accumulate] = t.draws;
     expect(albedo.atomPass).toBe(1);
-    expect(albedo.surfaceMaterial).toBe("MeshBasicMaterial");
+    expect(albedo.surfaceMaterial).toBe("RawShaderMaterial");
     expect(albedo.lineVisible).toBe(false);
     expect(albedo.atomDepthWrite).toBe(true);
+    expect(albedo.plateVisible).toBe(false);
     expect(normal.atomPass).toBe(2);
     expect(normal.surfaceMaterial).toBe("MeshNormalMaterial");
     expect(sky.camera).toBeInstanceOf(THREE.OrthographicCamera);
     expect(key.camera).toBeInstanceOf(THREE.OrthographicCamera);
     expect(sky.atomPass).toBe(1);
+    // The opaque maps leave the plate out; the second map of each light has it
+    // as a stochastic caster, from the same light camera.
+    expect(sky.plateVisible || key.plateVisible).toBe(false);
+    expect([skyAll.plateMaterial, keyAll.plateMaterial]).toEqual([
+      "stochastic-shadow",
+      "stochastic-shadow",
+    ]);
+    expect(skyAll.plateVisible && keyAll.plateVisible).toBe(true);
+    expect(skyAll.camera).toBe(sky.camera);
+    expect(skyAll.target).not.toBe(sky.target);
+    // It is then lit by the studio and blended over this sample alone.
+    expect(translucent.plateMaterial).toBe("studio-translucent");
+    expect(translucent.plateVisible).toBe(true);
+    expect(translucent.atomVisible || translucent.surfaceVisible || translucent.lineVisible).toBe(
+      false,
+    );
+    expect(translucent.target).toBe(composite.target);
+    expect(accumulate.target).not.toBe(composite.target);
 
     // The overlay: translucent impostor fragments and lines over the picture.
     const overlay = t.draws[t.draws.length - 1];
@@ -173,6 +233,7 @@ describe("renderStudio", () => {
     expect(overlay.glassPass).toBe(3);
     expect(overlay.glassVisible).toBe(true);
     expect(overlay.surfaceVisible).toBe(false);
+    expect(overlay.plateVisible).toBe(false);
     expect(overlay.lineVisible).toBe(true);
     expect(t.draws[t.draws.length - 2].target).toBeNull();
   });
@@ -184,7 +245,7 @@ describe("renderStudio", () => {
       style: "studio",
       transparent: false,
     });
-    const albedos = t.draws.filter((_, i) => i % 6 === 0).slice(0, 4);
+    const albedos = t.draws.filter((_, i) => i % 10 === 0).slice(0, 4);
     expect(albedos[0].view).toEqual({ offsetX: 0, offsetY: 0 });
     const offsets = new Set(albedos.map((d) => `${d.view!.offsetX},${d.view!.offsetY}`));
     expect(offsets.size).toBe(4);
@@ -204,7 +265,10 @@ describe("renderStudio", () => {
     expect((t.glass.material as THREE.RawShaderMaterial).transparent).toBe(true);
     expect((t.glass.material as THREE.RawShaderMaterial).depthWrite).toBe(false);
     expect(t.surface.material).toBe(t.surfaceMat);
-    expect(t.surface.visible && t.glass.visible && t.atoms.visible && t.line.visible).toBe(true);
+    expect(t.plate.material).toBe(t.plateMat);
+    expect(
+      t.surface.visible && t.glass.visible && t.atoms.visible && t.line.visible && t.plate.visible,
+    ).toBe(true);
     expect(t.scene.background).toBe(background);
     expect(t.renderer.autoClear).toBe(true);
     expect(t.renderer.setClearColor).toHaveBeenLastCalledWith(expect.any(THREE.Color), 0.5);
@@ -237,14 +301,34 @@ describe("renderStudio", () => {
       style: "illustrative",
       transparent: false,
     });
-    // albedo, normal, sky shadow, composite — no key shadow, no floor pass
-    expect(t.draws.slice(0, 4).map((d) => d.kind)).toEqual([
+    // albedo, normal, the two sky shadow maps, composite — no key shadow, no
+    // floor pass
+    expect(t.draws.slice(0, 5).map((d) => d.kind)).toEqual([
+      "scene",
       "scene",
       "scene",
       "scene",
       "composite",
     ]);
     expect(t.draws.filter((d) => d.kind === "floor")).toHaveLength(0);
+  });
+
+  it("skips the translucent pass when nothing is translucent", async () => {
+    const t = setup({ plate: false });
+    await renderStudio(t.renderer, t.scene, t.camera, {
+      samples: 1,
+      style: "studio",
+      transparent: false,
+    });
+    expect(t.draws.slice(0, 7).map((d) => d.kind)).toEqual([
+      "scene",
+      "scene",
+      "scene",
+      "scene",
+      "composite",
+      "accumulate",
+      "floor",
+    ]);
   });
 
   it("drops the ground when floorShadow is false", async () => {
