@@ -699,12 +699,17 @@ export function AssistantDock({
             setShowHistory(false);
           }}
           style={showConfig ? activeIconBtnStyle : iconBtnStyle}
-          title="AI Settings"
+          // A chip, for the model (and the provider / API key it runs on).
+          // It used to be a sun-like gear, read as the light/dark switch.
+          title="Select AI model"
+          aria-label="Select AI model"
           aria-expanded={showConfig}
+          data-testid={`${testId}-model`}
         >
           <DockIcon>
-            <circle cx="12" cy="12" r="3" />
-            <path d="M12 3v2.5M12 18.5V21M3 12h2.5M18.5 12H21M5.6 5.6l1.8 1.8M16.6 16.6l1.8 1.8M5.6 18.4l1.8-1.8M16.6 7.4l1.8-1.8" />
+            <rect x="6" y="6" width="12" height="12" rx="2" />
+            <rect x="9.5" y="9.5" width="5" height="5" rx="0.8" />
+            <path d="M9.5 2.5V6M14.5 2.5V6M9.5 18v3.5M14.5 18v3.5M2.5 9.5H6M2.5 14.5H6M18 9.5h3.5M18 14.5h3.5" />
           </DockIcon>
         </button>
         {isStreaming ? (

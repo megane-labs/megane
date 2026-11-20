@@ -459,7 +459,7 @@ test.describe("builder-tools: webapp", () => {
     expect(inputBox!.y + inputBox!.height).toBeLessThanOrEqual(splitBox!.y + 1);
 
     // This build has no free-demo proxy, so enter a key in the settings.
-    await page.getByTestId("builder-flow-chat").locator('button[title="AI Settings"]').click();
+    await page.getByTestId("builder-flow-chat").locator('button[title="Select AI model"]').click();
     await page
       .locator('[data-testid="builder-flow-chat-settings"] input[type="password"]')
       .fill("sk-ant-test");
