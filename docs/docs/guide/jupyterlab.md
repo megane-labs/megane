@@ -26,7 +26,7 @@ Double-click any supported file in the JupyterLab file browser and Megane opens 
 
 The VASP names are matched as filenames rather than extensions, so `POSCAR`, `POSCAR.orig` and friends all open.
 
-LAMMPS names files by a leading keyword as well as by extension, so `data.*` (a LAMMPS data file, e.g. `data.peptide`) and `dump.*` (a dump, e.g. `dump.melt`) open too. A name that ends in an extension another file type claims keeps opening the way it did — `dump.xyz` as XYZ, `data.json` and `data.csv` in JupyterLab's own viewers — and a `data.*` / `dump.*` file whose contents turn out not to be LAMMPS is reopened in the editor JupyterLab would otherwise use.
+LAMMPS names files by a leading keyword as well as by extension, so `data.*` (a LAMMPS data file, e.g. `data.peptide`) and `dump.*` (a dump, e.g. `dump.melt`) open too. A name that ends in an extension another file type claims keeps opening the way it did — `dump.xyz` as XYZ, `data.json` and `data.csv` in JupyterLab's own viewers — and a `data.*` / `dump.*` file whose contents turn out not to be LAMMPS is reopened in the editor JupyterLab would otherwise use. A `.lammps` file gets the same check, so LAMMPS's log (`log.lammps`) and input scripts such as `in.lammps` open in the text editor.
 
 `.dx` is shared by OpenDX grids and JCAMP-DX spectra, and a JupyterLab file type can only match on the name, so `.dx` is registered as an OpenDX grid. Load a JCAMP-DX `.dx` spectrum through the **Load Spectrum** node instead, which tells the two apart by content.
 

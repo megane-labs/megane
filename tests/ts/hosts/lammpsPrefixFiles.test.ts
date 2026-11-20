@@ -4,6 +4,7 @@ import { resolve } from "node:path";
 
 import {
   isForeignLammpsPrefixFile,
+  lammpsNameClaim,
   LAMMPS_SNIFF_BYTES,
   looksLikeLammpsData,
   looksLikeLammpsDump,
@@ -12,6 +13,26 @@ import {
 const fixture = (name: string) =>
   new Uint8Array(readFileSync(resolve(__dirname, "../../fixtures", name)));
 const bytes = (text: string) => new TextEncoder().encode(text);
+
+/** The start of a LAMMPS log (`log.lammps`), up to the atom count it reports. */
+const LAMMPS_LOG = [
+  "LAMMPS (2 Aug 2023 - Update 3)",
+  "OMP_NUM_THREADS environment is not set. Defaulting to 1 thread.",
+  "  using 1 OpenMP thread(s) per MPI task",
+  "units           real",
+  "atom_style      full",
+  "read_data       data.peptide",
+  "Reading data file ...",
+  "  orthogonal box = (36.840194 41.013691 29.768095) to (64.21156 68.385058 57.139462)",
+  "  1 by 1 by 1 MPI processor grid",
+  "  reading atoms ...",
+  "  2004 atoms",
+  "",
+].join("\n");
+
+/** A LAMMPS input script (`in.lammps`). */
+const LAMMPS_INPUT =
+  "# 3d Lennard-Jones melt\n\nunits lj\natom_style atomic\nread_data data.melt\n";
 
 describe("looksLikeLammpsData", () => {
   it.each(["water.lammps", "confined_offset.data", "data.water"])(
@@ -28,6 +49,15 @@ describe("looksLikeLammpsData", () => {
 
   it("ignores the free-form first line", () => {
     expect(looksLikeLammpsData("3 atoms\nsomething else\n")).toBe(false);
+  });
+
+  it("reads the header only up to its first line that is not a number", () => {
+    // A LAMMPS log reports the atom count it read, after its own commands.
+    expect(looksLikeLammpsData(LAMMPS_LOG)).toBe(false);
+    expect(looksLikeLammpsData("comment\nunits real\n  2004 atoms\n")).toBe(false);
+    // Comments and blank lines are not the end of the header.
+    expect(looksLikeLammpsData("comment\n# generated\n\n.5 10 xlo xhi\n")).toBe(true);
+    expect(looksLikeLammpsData("comment\n-4 3.2 xlo xhi\n")).toBe(true);
   });
 
   it.each([['{"atoms": 3}'], ["id,x,y,z\n1,0,0,0\n"], ["header\n3 atom types\n"], [""]])(
@@ -84,10 +114,36 @@ describe("isForeignLammpsPrefixFile", () => {
     expect(isForeignLammpsPrefixFile("1crn.pdb", bytes("not lammps"))).toBe(false);
   });
 
+  it("checks *.lammps files too: LAMMPS logs and input scripts share the extension", () => {
+    expect(isForeignLammpsPrefixFile("log.lammps", bytes(LAMMPS_LOG))).toBe(true);
+    expect(isForeignLammpsPrefixFile("runs/in.LAMMPS", bytes(LAMMPS_INPUT))).toBe(true);
+    expect(isForeignLammpsPrefixFile("water.lammps", fixture("water.lammps"))).toBe(false);
+    expect(isForeignLammpsPrefixFile("data.lammps", fixture("water.lammps"))).toBe(false);
+  });
+
   it("looks no further than the sniff window", () => {
     const head = new Uint8Array(LAMMPS_SNIFF_BYTES + 32).fill(0x20);
     head.set(bytes("ITEM: TIMESTEP"), LAMMPS_SNIFF_BYTES + 4);
     // Only blanks within the window: there is no ITEM: line to see.
     expect(isForeignLammpsPrefixFile("dump.big", head)).toBe(true);
   });
+});
+
+describe("lammpsNameClaim", () => {
+  it.each([
+    ["data.peptide", ".data"],
+    ["dump.melt", ".dump"],
+    ["log.lammps", ".data"],
+    ["structure.LAMMPS", ".data"],
+    ["data.lammps", ".data"],
+  ])("claims %s as %s by name", (name, ext) => {
+    expect(lammpsNameClaim(name)).toBe(ext);
+  });
+
+  it.each(["water.data", "dump.xyz", "1crn.pdb", "log.lammps.1", "lammps"])(
+    "leaves %s to its extension",
+    (name) => {
+      expect(lammpsNameClaim(name)).toBeNull();
+    },
+  );
 });

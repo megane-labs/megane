@@ -25,7 +25,7 @@ Once installed, the extension registers a custom editor for the supported file t
 
 The VASP entries are registered as filename globs rather than extensions, so `POSCAR`, `CONTCAR.bak` and similar all open.
 
-LAMMPS names files by a leading keyword as well as by extension, so `data.*` (a LAMMPS data file, e.g. `data.peptide`) and `dump.*` (a dump, e.g. `dump.melt`) open too. A name that also ends in a Megane extension is that format (`dump.xyz` opens as XYZ). Since the glob also catches files such as `data.json` or `data.csv`, Megane checks the start of a `data.*` / `dump.*` file and, if it is not LAMMPS, reopens it in the default text editor.
+LAMMPS names files by a leading keyword as well as by extension, so `data.*` (a LAMMPS data file, e.g. `data.peptide`) and `dump.*` (a dump, e.g. `dump.melt`) open too. A name that also ends in a Megane extension is that format (`dump.xyz` opens as XYZ). Since the glob also catches files such as `data.json` or `data.csv`, Megane checks the start of a `data.*` / `dump.*` file and, if it is not LAMMPS, reopens it in the default text editor. A `.lammps` file gets the same check, so LAMMPS's log (`log.lammps`) and input scripts such as `in.lammps` open as text.
 
 `.dx` is shared by OpenDX grids and JCAMP-DX spectra, and the editor selector can only match on the name, so opening a `.dx` file always takes the volumetric-grid path. Load a JCAMP-DX `.dx` spectrum through the **Load Spectrum** node instead, which tells the two apart by content.
 

@@ -79,8 +79,9 @@ function DocBody({
         const filename = context.path.split("/").pop() ?? "structure";
         const bytes = await bytesRequest;
         if (token.cancelled) return;
-        // A `data.json` the LAMMPS `data.*` file type pattern caught goes back
-        // to JupyterLab's own editor, before the shared store is touched.
+        // A `data.json` the LAMMPS `data.*` file type pattern caught, or a
+        // `log.lammps` the `.lammps` extension did, goes back to JupyterLab's
+        // own editor, before the shared store is touched.
         if (isForeignLammpsPrefixFile(filename, bytes)) {
           onForeignFile?.();
           return;
