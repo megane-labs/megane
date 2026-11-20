@@ -19,6 +19,7 @@ vi.mock("@xyflow/react", async () => {
       React.createElement("div", null, children),
     MiniMap: () => null,
     Controls: () => null,
+    ControlButton: () => null,
     Background: () => null,
     BackgroundVariant: { Dots: "dots" },
     useReactFlow: () => ({

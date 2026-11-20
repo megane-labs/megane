@@ -149,9 +149,22 @@ describe("AssistantDock", () => {
     expect(screen.getByTestId("dock-send").getAttribute("title")).toBe("Busy");
   });
 
+  it("names the model button for what it opens, apart from the theme switch", () => {
+    dock();
+    const button = screen.getByTestId("dock-model");
+    expect(button.getAttribute("title")).toBe("Select AI model");
+    expect(button.getAttribute("aria-label")).toBe("Select AI model");
+    expect(button.getAttribute("aria-expanded")).toBe("false");
+    // A chip, not the sun-like gear that read as the light/dark switch.
+    expect(button.querySelectorAll("svg rect")).toHaveLength(2);
+    expect(button.querySelector("svg circle")).toBeNull();
+    fireEvent.click(button);
+    expect(button.getAttribute("aria-expanded")).toBe("true");
+  });
+
   it("edits the provider, model and key in the settings popover", () => {
     dock();
-    fireEvent.click(screen.getByTitle("AI Settings"));
+    fireEvent.click(screen.getByTitle("Select AI model"));
     const [providerSelect, modelSelect] = screen.getAllByRole("combobox");
     fireEvent.change(modelSelect, { target: { value: "claude-haiku-4-5" } });
     expect(useAIConfigStore.getState().model).toBe("claude-haiku-4-5");

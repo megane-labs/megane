@@ -104,9 +104,18 @@ describe("MeganeDocWidget standalone load path", () => {
     expect(loadXtc).not.toHaveBeenCalled();
   });
 
+  it("hands LAMMPS's own log, log.lammps, back to the host (#958)", async () => {
+    const onForeignFile = vi.fn();
+    const log = "LAMMPS (2 Aug 2023)\nunits real\nread_data data.peptide\n  2004 atoms\n";
+    mount("sims/log.lammps", undefined, { payload: log, onForeignFile });
+    await waitFor(() => expect(onForeignFile).toHaveBeenCalledTimes(1));
+    expect(loadFile).not.toHaveBeenCalled();
+  });
+
   it.each([
     ["sims/data.peptide", "LAMMPS data\n\n3 atoms\n0 10 xlo xhi\n"],
     ["sims/dump.melt", "ITEM: TIMESTEP\n0\n"],
+    ["sims/structure.lammps", "LAMMPS data\n\n3 atoms\n0 10 xlo xhi\n"],
   ])("opens the LAMMPS file %s as a structure", async (path, payload) => {
     const onForeignFile = vi.fn();
     mount(path, undefined, { payload, onForeignFile });

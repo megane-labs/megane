@@ -9,7 +9,11 @@ vi.mock("@xyflow/react", async () => {
     ReactFlowProvider: ({ children }: { children?: React.ReactNode }) =>
       React.createElement("div", null, children),
     MiniMap: () => null,
-    Controls: () => null,
+    // The zoom controls render their extra buttons (the graph's toolbar).
+    Controls: ({ children }: { children?: React.ReactNode }) =>
+      React.createElement("div", { "data-testid": "graph-controls" }, children),
+    ControlButton: ({ children, ...props }: React.ButtonHTMLAttributes<HTMLButtonElement>) =>
+      React.createElement("button", { type: "button", ...props }, children),
     Background: () => null,
     BackgroundVariant: { Dots: "dots" },
     useReactFlow: () => ({
@@ -38,6 +42,7 @@ vi.mock("@/renderer/RenderCapture", () => ({
 
 import { PipelineEditor } from "@/components/PipelineEditor";
 import { usePipelineUIStore } from "@/stores/usePipelineUIStore";
+import { usePipelineStore } from "@/pipeline/store";
 
 afterEach(() => {
   cleanup();
@@ -104,7 +109,6 @@ describe("PipelineEditor — tab switching", () => {
     const ids = [
       "pipeline-editor-add",
       "pipeline-editor-templates",
-      "pipeline-editor-layout",
       "pipeline-editor-file",
       "pipeline-editor-render",
       "pipeline-editor-guide",
@@ -157,16 +161,36 @@ describe("PipelineEditor — tab switching", () => {
     );
   });
 
-  it("shows the Editor tab when a node is added or the graph laid out from another tab", () => {
+  it("shows the Editor tab when a node is added from another tab", () => {
     render(<PipelineEditor collapsed={false} onToggleCollapse={() => {}} />);
 
     fireEvent.click(screen.getByTestId("pipeline-editor-tab-inspector"));
     fireEvent.click(screen.getByTestId("pipeline-editor-add"));
     fireEvent.click(screen.getByTestId("pipeline-add-filter"));
     expect(usePipelineUIStore.getState().mode).toBe("editor");
+  });
 
-    fireEvent.click(screen.getByTestId("pipeline-editor-tab-inspector"));
-    fireEvent.click(screen.getByTestId("pipeline-editor-layout"));
-    expect(usePipelineUIStore.getState().mode).toBe("editor");
+  it("puts Auto Layout in the Editor's graph toolbar, not on the rail", () => {
+    const original = usePipelineStore.getState().autoLayout;
+    const autoLayout = vi.fn();
+    usePipelineStore.setState({ autoLayout });
+    try {
+      render(<PipelineEditor collapsed={false} onToggleCollapse={() => {}} />);
+
+      const button = screen.getByTestId("pipeline-editor-layout");
+      expect(button.getAttribute("title")).toBe("Auto Layout");
+      expect(button.getAttribute("aria-label")).toBe("Auto Layout");
+      // It is an action on the graph: it sits with the zoom controls inside
+      // the Editor tab, and the rail (the panel's navigation) no longer has it.
+      expect(screen.getByTestId("graph-controls").contains(button)).toBe(true);
+      expect(document.getElementById("pipeline-tabpanel-editor")!.contains(button)).toBe(true);
+      expect(screen.getByTestId("pipeline-rail").contains(button)).toBe(false);
+
+      fireEvent.click(button);
+      expect(autoLayout).toHaveBeenCalledTimes(1);
+      expect(usePipelineUIStore.getState().mode).toBe("editor");
+    } finally {
+      usePipelineStore.setState({ autoLayout: original });
+    }
   });
 });

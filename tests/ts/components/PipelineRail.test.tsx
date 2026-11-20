@@ -10,7 +10,6 @@ function renderRail(overrides: Partial<PipelineRailProps> = {}) {
     onModeChange: vi.fn(),
     onAddNode: vi.fn(),
     onApplyTemplate: vi.fn(),
-    onAutoLayout: vi.fn(),
     onImport: vi.fn(),
     onExport: vi.fn(),
     onShare: vi.fn(),
@@ -103,13 +102,27 @@ describe("PipelineRail", () => {
 
   it("wires the plain buttons to their actions", () => {
     const props = renderRail();
-    fireEvent.click(screen.getByTestId("pipeline-editor-layout"));
     fireEvent.click(screen.getByTestId("pipeline-editor-render"));
     fireEvent.click(screen.getByTestId("pipeline-editor-guide"));
     fireEvent.click(screen.getByTestId("pipeline-editor-tutorial"));
-    expect(props.onAutoLayout).toHaveBeenCalledTimes(1);
     expect(props.onRender).toHaveBeenCalledTimes(1);
     expect(props.onGuide).toHaveBeenCalledTimes(1);
     expect(props.onTutorial).toHaveBeenCalledTimes(1);
+  });
+
+  it("leaves Auto Layout to the Editor's graph toolbar", () => {
+    renderRail();
+    expect(screen.queryByTestId("pipeline-editor-layout")).toBeNull();
+    expect(screen.queryByTitle("Auto Layout")).toBeNull();
+  });
+
+  it("marks the user guide with a circled i, apart from the Tutorial", () => {
+    renderRail();
+    const guide = screen.getByTestId("pipeline-editor-guide");
+    expect(guide.getAttribute("title")).toBe("Show user guide");
+    // A circle with an upright stroke and a dot: no question-mark curve.
+    expect(guide.querySelector("svg circle")).not.toBeNull();
+    expect(guide.querySelector("svg path")!.getAttribute("d")).toBe("M12 11v5.5M12 7.6h.01");
+    expect(screen.getByTestId("pipeline-editor-tutorial").querySelector("svg circle")).toBeNull();
   });
 });
