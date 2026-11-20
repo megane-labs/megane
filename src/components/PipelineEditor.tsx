@@ -30,7 +30,13 @@ import {
 import { NODE_CATEGORY } from "../pipeline/types";
 import { summarizeNodeParams } from "../pipeline/nodeSummary";
 import { allNodesMeasured } from "../pipeline/layout";
-import { DEFAULT_EDGE_COLOR, FIT_VIEW_OPTIONS, GraphCanvas, styleEdges } from "./graph/GraphCanvas";
+import {
+  DEFAULT_EDGE_COLOR,
+  FIT_VIEW_OPTIONS,
+  GraphCanvas,
+  styleEdges,
+  type GraphAction,
+} from "./graph/GraphCanvas";
 import { GraphEditorPanel, SplitSeparator, useSplitFraction } from "./graph/GraphEditorPanel";
 import {
   NodeMessages,
@@ -72,6 +78,28 @@ import { startTour, startPipelineTutorial } from "../tour/lazyTour";
 import type { MoleculeRenderer } from "../renderer/MoleculeRenderer";
 import { PipelineRail } from "./PipelineRail";
 import type { PipelinePanelMode } from "../stores/usePipelineUIStore";
+
+/**
+ * Auto Layout's icon at the size of the zoom controls' own (12 px). React
+ * Flow fills control icons with `currentColor`, so a stroked icon has to opt
+ * out of the fill inline.
+ */
+const AUTO_LAYOUT_ICON = (
+  <svg
+    viewBox="0 0 24 24"
+    stroke="currentColor"
+    strokeWidth={2.4}
+    strokeLinecap="round"
+    strokeLinejoin="round"
+    style={{ fill: "none" }}
+    aria-hidden="true"
+  >
+    <rect x="9" y="3" width="6" height="4.5" rx="1" />
+    <rect x="3" y="16.5" width="6" height="4.5" rx="1" />
+    <rect x="15" y="16.5" width="6" height="4.5" rx="1" />
+    <path d="M12 7.5V12M6 16.5V12h12v4.5" />
+  </svg>
+);
 
 const nodeTypes = {
   load_structure: LoadStructureNode,
@@ -401,13 +429,24 @@ function PipelineEditorInner({
     [applyTemplate, setMode],
   );
 
-  const handleAutoLayout = useCallback(() => {
-    autoLayout();
-    setMode("editor");
-    window.requestAnimationFrame(() => {
-      fitView({ ...FIT_VIEW_OPTIONS, duration: 300 });
-    });
-  }, [autoLayout, fitView, setMode]);
+  // Auto Layout acts on the graph, so it sits in the graph's own toolbar
+  // (with the zoom controls), which is on screen only in the Editor.
+  const graphActions = useMemo<GraphAction[]>(
+    () => [
+      {
+        testId: "pipeline-editor-layout",
+        title: "Auto Layout",
+        icon: AUTO_LAYOUT_ICON,
+        onClick: () => {
+          autoLayout();
+          window.requestAnimationFrame(() => {
+            fitView({ ...FIT_VIEW_OPTIONS, duration: 300 });
+          });
+        },
+      },
+    ],
+    [autoLayout, fitView],
+  );
 
   const handleExport = useCallback(() => {
     const serialized = pipelineApi.getState().serialize();
@@ -478,7 +517,6 @@ function PipelineEditorInner({
           onModeChange={setMode}
           onAddNode={handleAddNode}
           onApplyTemplate={handleApplyTemplate}
-          onAutoLayout={handleAutoLayout}
           onImport={handleImportClick}
           onExport={handleExport}
           onShare={() => void handleShare()}
@@ -554,6 +592,7 @@ function PipelineEditorInner({
               isValidConnection={isValidConnection}
               nodeTypes={memoizedNodeTypes}
               edgeActions={edgeActions}
+              graphActions={graphActions}
               miniMapNodeColor={(n) =>
                 n.type
                   ? NODE_CATEGORY_COLORS[NODE_CATEGORY[n.type as PipelineNodeType]]

@@ -546,8 +546,8 @@ next Run only builds what changed.
 The speech-bubble button at the left of the bar opens the conversation over
 the bottom of the graph; a reply that changed the flow offers **Undo** while
 it is the latest change, and Ctrl/⌘+Z undoes it too (the whole request is one
-Undo step). A request waits while a run is in progress. The ⚙ button opens
-the same **AI Settings** as the viewer's assistant — provider, model and API
+Undo step). A request waits while a run is in progress. The chip button
+(**Select AI model**) opens the same settings as the viewer's assistant — provider, model and API
 key, or the free demo where the build offers it — and the choice is shared
 with it.
 

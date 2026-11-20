@@ -7,7 +7,7 @@
  *
  *   Editor, Inspector           — what the panel shows (its tabs; the AI
  *                                 assistant is docked inside the Editor)
- *   Add node, Templates, Layout — build the graph (they show the Editor)
+ *   Add node, Templates         — build the graph (they show the Editor)
  *   File, Render                — import / export / share, and render
  *   Guide, Tutorial, Theme      — help and appearance, at the foot
  */
@@ -108,15 +108,6 @@ const IconTemplates = (
   </RailIcon>
 );
 
-const IconLayout = (
-  <RailIcon>
-    <rect x="9" y="3" width="6" height="4.5" rx="1" />
-    <rect x="3" y="16.5" width="6" height="4.5" rx="1" />
-    <rect x="15" y="16.5" width="6" height="4.5" rx="1" />
-    <path d="M12 7.5V12M6 16.5V12h12v4.5" />
-  </RailIcon>
-);
-
 const IconFile = (
   <RailIcon>
     <path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z" />
@@ -131,10 +122,12 @@ const IconRender = (
   </RailIcon>
 );
 
+// A circled "i": the guide explains the viewer; the Tutorial (an open book)
+// is the separate walkthrough.
 const IconGuide = (
   <RailIcon>
     <circle cx="12" cy="12" r="9" />
-    <path d="M9.3 9.2a2.8 2.8 0 0 1 5.4 1c0 1.9-2.7 2.5-2.7 2.5M12 16.8h.01" />
+    <path d="M12 11v5.5M12 7.6h.01" />
   </RailIcon>
 );
 
@@ -162,7 +155,6 @@ export interface PipelineRailProps {
   onModeChange: (mode: PipelinePanelMode) => void;
   onAddNode: (type: PipelineNodeType) => void;
   onApplyTemplate: (templateId: string) => void;
-  onAutoLayout: () => void;
   onImport: () => void;
   onExport: () => void;
   onShare: () => void;
@@ -176,7 +168,6 @@ export function PipelineRail({
   onModeChange,
   onAddNode,
   onApplyTemplate,
-  onAutoLayout,
   onImport,
   onExport,
   onShare,
@@ -259,13 +250,6 @@ export function PipelineRail({
         title="Templates: replace the pipeline with a ready-made one"
         icon={IconTemplates}
         items={templateItems}
-      />
-      <RailButton
-        testId="pipeline-editor-layout"
-        label="Auto Layout"
-        title="Auto Layout"
-        icon={IconLayout}
-        onClick={onAutoLayout}
       />
       <RailDivider />
       <RailMenu

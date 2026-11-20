@@ -96,7 +96,7 @@ function setUndoStack(stack: { id: number }[]) {
 }
 
 function openConfigPanel() {
-  fireEvent.click(screen.getByTitle("AI Settings"));
+  fireEvent.click(screen.getByTitle("Select AI model"));
 }
 
 // jsdom does not implement scrollIntoView; the component calls it on every

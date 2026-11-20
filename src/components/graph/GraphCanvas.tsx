@@ -7,10 +7,11 @@
  * each passes its own nodes, edges, node types and callbacks.
  */
 
-import type { Ref } from "react";
+import type { ReactNode, Ref } from "react";
 import {
   Background,
   BackgroundVariant,
+  ControlButton,
   Controls,
   MiniMap,
   ReactFlow,
@@ -79,13 +80,28 @@ export type GraphCanvasProps<N extends Node> = Omit<ReactFlowProps<N, Edge>, Fix
   miniMapNodeColor: (node: N) => string;
   containerRef?: Ref<HTMLDivElement>;
   testId?: string;
+  /**
+   * Graph actions shown with the zoom controls, below Fit View: the editor's
+   * toolbar, so actions on the graph sit on the graph.
+   */
+  graphActions?: readonly GraphAction[];
 };
+
+/** A button in the canvas's toolbar (the zoom controls' column). */
+export interface GraphAction {
+  testId: string;
+  /** Tooltip and accessible name. */
+  title: string;
+  icon: ReactNode;
+  onClick: () => void;
+}
 
 export function GraphCanvas<N extends Node>({
   edgeActions,
   miniMapNodeColor,
   containerRef,
   testId,
+  graphActions,
   ...flowProps
 }: GraphCanvasProps<N>) {
   const resolvedTheme = useThemeStore((s) => s.resolvedTheme);
@@ -143,7 +159,19 @@ export function GraphCanvas<N extends Node>({
               borderRadius: 6,
               boxShadow: "none",
             }}
-          />
+          >
+            {graphActions?.map((action) => (
+              <ControlButton
+                key={action.testId}
+                data-testid={action.testId}
+                title={action.title}
+                aria-label={action.title}
+                onClick={action.onClick}
+              >
+                {action.icon}
+              </ControlButton>
+            ))}
+          </Controls>
         </ReactFlow>
       </EdgeActionsContext.Provider>
     </div>

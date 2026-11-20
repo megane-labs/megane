@@ -408,7 +408,7 @@ test.describe("pipeline-editor: webapp default graph", () => {
     await expect(replicate).toContainText("1 × 1 × 1");
 
     // This build has no free-demo proxy, so enter a key in the settings.
-    await page.locator('button[title="AI Settings"]').click();
+    await page.locator('button[title="Select AI model"]').click();
     await page
       .locator('[data-testid="pipeline-chat-settings"] input[type="password"]')
       .fill("sk-ant-test");

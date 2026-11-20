@@ -6,7 +6,11 @@ import { webcrypto } from "crypto";
 import { createBuilderToolsHost, type BuilderToolsHost } from "./builderToolsHost";
 // Dependency-free shared modules (no DOM, no WASM), bundled in by esbuild.
 import { lammpsPrefixExt } from "../../src/parsers/fileNames";
-import { isForeignLammpsPrefixFile, LAMMPS_SNIFF_BYTES } from "../../src/hosts/lammpsPrefixFiles";
+import {
+  isForeignLammpsPrefixFile,
+  lammpsNameClaim,
+  LAMMPS_SNIFF_BYTES,
+} from "../../src/hosts/lammpsPrefixFiles";
 
 interface SerializedPipelineNode {
   id: string;
@@ -220,8 +224,8 @@ export async function readFileHead(uri: vscode.Uri, bytes: number): Promise<Uint
 /**
  * Give a file back to the editor VS Code would open it in without megane:
  * the structure viewer's `data.*` / `dump.*` selectors (LAMMPS's file naming)
- * also catch `data.json`, `data.csv` or `dump.sql`, and a glob cannot tell
- * those apart by name. When the name is all that made the viewer the default
+ * also catch `data.json`, `data.csv` or `dump.sql`, its `*.lammps` selector
+ * LAMMPS's own log (`log.lammps`), and a glob cannot tell those apart by name. When the name is all that made the viewer the default
  * and the file does not start like the LAMMPS format that name claims
  * (`isForeignLammpsPrefixFile`), the file is reopened in the default text
  * editor — a `*.megane.json` pipeline in the pipeline viewer — and the viewer's
@@ -232,7 +236,7 @@ export async function handOffForeignPrefixFile(
   webviewPanel: vscode.WebviewPanel,
 ): Promise<boolean> {
   const filename = path.basename(uri.fsPath);
-  if (!lammpsPrefixExt(filename)) return false;
+  if (!lammpsNameClaim(filename)) return false;
   let head: Uint8Array;
   try {
     head = await readFileHead(uri, LAMMPS_SNIFF_BYTES);
@@ -615,7 +619,8 @@ export class MeganeEditorProvider implements vscode.CustomReadonlyEditorProvider
     webviewPanel: vscode.WebviewPanel,
     _token: vscode.CancellationToken,
   ): Promise<void> {
-    // `data.json` caught by the LAMMPS `data.*` selector goes back to the text editor.
+    // `data.json` caught by the LAMMPS `data.*` selector, or `log.lammps` by
+    // `*.lammps`, goes back to the text editor.
     if (await handOffForeignPrefixFile(document.uri, webviewPanel)) return;
 
     const webview = webviewPanel.webview;

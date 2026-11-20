@@ -146,8 +146,13 @@ another file type claims, and on both hosts, when the name was all that made
 Megane the default, the first 64 KiB are checked (`src/hosts/lammpsPrefixFiles.ts`:
 a data file states `N atoms` or `xlo xhi` after its comment line, a dump opens
 with an `ITEM:` line) and anything else is handed back to the editor that would
-otherwise open it. The Standalone file dialog cannot filter by a leading name
-either, so drag these files onto the node (or switch the picker to "All Files").
+otherwise open it. The `.lammps` extension gets the same check on both hosts:
+LAMMPS writes its log to `log.lammps` by default and input scripts are often
+`in.lammps`, so a `.lammps` file that does not open with a data-file header goes
+to the text editor. The header is read only as far as its lines open with a
+number, since a log also prints `N atoms` once it has read a data file. The
+Standalone file dialog cannot filter by a leading name either, so drag these
+files onto the node (or switch the picker to "All Files").
 
 Note: **VASP** files are dispatched by **filename**, not only by extension: `POSCAR`, `CONTCAR`, and `XDATCAR` are conventionally written
 with no extension at all. `src/parsers/fileNames.ts` maps those bare names (and

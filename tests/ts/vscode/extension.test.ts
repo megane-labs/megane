@@ -759,6 +759,22 @@ describe("MeganeEditorProvider — LAMMPS data.* / dump.* names", () => {
     expect(mockState.executeCommand).toHaveBeenCalledWith("vscode.openWith", uri, "default", 2);
   });
 
+  it("reopens LAMMPS's own log, log.lammps, in the text editor (#958)", async () => {
+    mockState.executeCommand.mockResolvedValue(undefined);
+    mockState.readFile.mockResolvedValue(
+      encode("LAMMPS (2 Aug 2023)\nunits real\nread_data data.peptide\n  2004 atoms\n"),
+    );
+    const uri = VscodeUri.file("/work/log.lammps");
+    const { panel } = closablePanel();
+    await getProvider("megane.structureViewer").resolveCustomEditor(
+      { uri, dispose: vi.fn() },
+      panel,
+      {},
+    );
+    expect(mockState.executeCommand).toHaveBeenCalledWith("vscode.openWith", uri, "default", 2);
+    expect(panel.webview.html).toBe("");
+  });
+
   it("sends a data.*.megane.json pipeline to the pipeline viewer", async () => {
     mockState.executeCommand.mockResolvedValue(undefined);
     mockState.readFile.mockResolvedValue(encode('{"version": 3, "nodes": [], "edges": []}'));
@@ -777,7 +793,7 @@ describe("MeganeEditorProvider — LAMMPS data.* / dump.* names", () => {
     );
   });
 
-  it.each(["data.water", "dump.water"])(
+  it.each(["data.water", "dump.water", "water.lammps"])(
     "opens the LAMMPS file %s in the viewer, reading only its head to check",
     async (name) => {
       const path = resolve(FIXTURES, name);

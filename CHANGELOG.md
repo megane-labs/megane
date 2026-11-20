@@ -15,6 +15,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
   - Palette colours reaching a mesh as vertex colours (cartoon chains, polyhedra) are decoded as sRGB like the atoms' colours, so a polyhedron and its centre atom keep the same hue. PNG transparency keeps the ground shadow as a semi-transparent black. The page stays responsive during the render: work is submitted in batches sized to ~30 ms of GPU time.
   - `MoleculeRenderer.renderStudio({ samples, style })` draws it onto the viewer's canvas from code, and `captureSnapshot` takes `quality: "publication"` and `studio: { samples, style }`.
 
+### Changed
+
+- **Auto Layout moved into the pipeline Editor.** It is an action on the graph, so it now sits in the graph's toolbar with the zoom and fit-view buttons, instead of on the panel's rail next to Editor and Inspector ([#962](https://github.com/megane-labs/megane/issues/962)). It still arranges the nodes and fits them in view.
+- **The user guide button shows a circled "i"** instead of a question mark, so it reads apart from the Tutorial button ([#963](https://github.com/megane-labs/megane/issues/963)).
+- **The AI assistant's model button shows a chip** instead of a sun-like gear that looked like the light/dark switch, and is named "Select AI model" ([#961](https://github.com/megane-labs/megane/issues/961)). It opens the same provider, model and API key settings.
+
+### Fixed
+
+- **`log.lammps` opens as text in JupyterLab and VS Code.** The `.lammps` extension made Megane the default for LAMMPS's own log, and for input scripts such as `in.lammps`. Both hosts now check the start of a `.lammps` file, as they already did for `data.*` / `dump.*` names, and hand anything that is not a LAMMPS data file back to the text editor ([#958](https://github.com/megane-labs/megane/issues/958)). The data-file check now reads the header only as far as its lines open with a number, since a log also prints `N atoms` after reading a data file.
+
 ## [0.20.0] - 2026-11-17
 
 ### Fixed
