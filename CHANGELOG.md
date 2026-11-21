@@ -6,6 +6,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+### Added
+
+- **Publication-quality snapshots.** The Render dialog's snapshot export has a **Quality** switch: *Standard* captures the live view as before, *Publication* renders the picture again with soft shadows, true ambient occlusion, a soft shadow on an invisible ground under the structure, and anti-aliasing — the look of a figure lit in a 3D package, without leaving Megane. See [Rendering figures](docs/docs/guide/pipeline/index.md#rendering-figures).
+  - It averages *Draft* (64), *Final* (256) or *Best* (1024) frames. Each moves the camera by a fraction of a pixel, takes one direction of the sky dome and one point of the key light's area, draws shadow maps from both and lights the scene's G-buffer against them, so occlusion comes from the real geometry rather than the screen: a pocket inside a protein darkens however deep it is.
+  - Four lighting styles: **Studio** (soft box and bright sky), **Soft clay** (an even sky; shape from occlusion alone), **Dramatic** (a hard side light and a back light, for dark backgrounds) and **Illustrative** (flat colour, occlusion and depth-aware ink outlines that hug silhouettes but leave touching atoms at the same depth unseamed — what the `illustrative` representation could only approximate in its shader).
+  - It works for atoms, bonds, cartoons and surfaces, on the web app, JupyterLab, VS Code and `MeganeViewer`. Translucent meshes (coordination polyhedra, see-through surfaces) are lit the same way and blended over each frame, and cast shadows in proportion to their opacity — each shadow map draws a translucent fragment with probability equal to its opacity — so a polyhedron darkens the atom inside it and shades the ground. Lines, the cell, labels and atoms with a per-atom opacity are drawn over the lit picture as in the viewer.
+  - Palette colours reaching a mesh as vertex colours (cartoon chains, polyhedra) are decoded as sRGB like the atoms' colours, so a polyhedron and its centre atom keep the same hue. PNG transparency keeps the ground shadow as a semi-transparent black. The page stays responsive during the render: work is submitted in batches sized to ~30 ms of GPU time.
+  - `MoleculeRenderer.renderStudio({ samples, style })` draws it onto the viewer's canvas from code, and `captureSnapshot` takes `quality: "publication"` and `studio: { samples, style }`.
+
 ### Changed
 
 - **Auto Layout moved into the pipeline Editor.** It is an action on the graph, so it now sits in the graph's toolbar with the zoom and fit-view buttons, instead of on the panel's rail next to Editor and Inspector ([#962](https://github.com/megane-labs/megane/issues/962)). It still arranges the nodes and fits them in view.

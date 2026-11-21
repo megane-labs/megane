@@ -9,6 +9,13 @@ import { OBJExporter } from "three/examples/jsm/exporters/OBJExporter.js";
 // The gif.js worker is inlined as source text rather than resolved as a URL at
 // runtime — see resolveGifWorkerScript below for why.
 import gifWorkerSource from "gif.js/dist/gif.worker.js?raw";
+import type { StudioStyle } from "./studio/presets";
+
+/** Snapshot rendering quality: the live view, or the accumulated studio render. */
+export type SnapshotQuality = "standard" | "publication";
+
+/** Samples a publication snapshot accumulates unless told otherwise. */
+export const DEFAULT_STUDIO_SAMPLES = 256;
 
 /** Composite WebGL canvas and label overlay onto an offscreen canvas. */
 export function compositeCanvases(
@@ -199,10 +206,34 @@ export async function captureSnapshot(
     height: number;
     transparent: boolean;
     format: "png" | "eps" | "svg";
+    /**
+     * `"standard"` (default) captures what the viewer draws. `"publication"`
+     * renders with soft shadows, ambient occlusion and anti-aliasing
+     * accumulated over `studio.samples` frames (see `studio/StudioRenderer.ts`).
+     */
+    quality?: SnapshotQuality;
+    studio?: { samples: number; style: StudioStyle };
+    onProgress?: (fraction: number) => void;
+    signal?: AbortSignal;
   },
 ): Promise<Blob> {
   const { width, height, format } = options;
   const composited = await withCaptureState(renderer, options, async () => {
+    if (options.quality === "publication") {
+      await renderer.renderStudio({
+        samples: options.studio?.samples ?? DEFAULT_STUDIO_SAMPLES,
+        style: options.studio?.style ?? "studio",
+        transparent: options.transparent,
+        onProgress: options.onProgress,
+        signal: options.signal,
+      });
+      return compositeCanvases(
+        renderer.getCanvas()!,
+        renderer.getLabelOverlay()?.getCanvas() ?? null,
+        width,
+        height,
+      );
+    }
     const { webglCanvas, labelCanvas } = renderLayers(renderer);
     return compositeCanvases(webglCanvas, labelCanvas, width, height);
   });

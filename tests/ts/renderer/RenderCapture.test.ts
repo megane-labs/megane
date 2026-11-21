@@ -53,6 +53,7 @@ import {
   captureObj,
   wrapInSVG,
   captureSnapshot,
+  DEFAULT_STUDIO_SAMPLES,
   captureGif,
   resolveGifWorkerScript,
 } from "@/renderer/RenderCapture";
@@ -587,5 +588,91 @@ describe("capture state restore", () => {
     expect(scene.background).toBe(dark);
     expect(clear().alpha).toBe(1);
     expect(unresize).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("captureSnapshot (publication quality)", () => {
+  beforeEach(() => {
+    vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue({
+      drawImage: vi.fn(),
+    } as unknown as CanvasRenderingContext2D);
+    vi.spyOn(HTMLCanvasElement.prototype, "toBlob").mockImplementation(function (
+      this: HTMLCanvasElement,
+      callback: BlobCallback,
+    ) {
+      callback(new Blob([new Uint8Array([137, 80, 78, 71])], { type: "image/png" }));
+    });
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  function studioRenderer() {
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color(0xffffff);
+    const canvas = document.createElement("canvas");
+    const renderer = {
+      getScene: () => scene,
+      getRenderer: () => ({
+        getClearAlpha: () => 1,
+        getClearColor: (c: THREE.Color) => c.set(0xffffff),
+        setClearColor: vi.fn(),
+      }),
+      getCanvas: () => canvas,
+      getLabelOverlay: () => null,
+      resizeForCapture: vi.fn(() => () => undefined),
+      renderSingleFrame: vi.fn(),
+      renderStudio: vi.fn(async () => {}),
+    };
+    return renderer;
+  }
+
+  it("renders through the studio with the chosen samples and style", async () => {
+    const r = studioRenderer();
+    const onProgress = vi.fn();
+    const blob = await captureSnapshot(r as unknown as MoleculeRenderer, {
+      width: 16,
+      height: 8,
+      transparent: true,
+      format: "png",
+      quality: "publication",
+      studio: { samples: 32, style: "dramatic" },
+      onProgress,
+    });
+    expect(blob.type).toBe("image/png");
+    expect(r.renderStudio).toHaveBeenCalledWith(
+      expect.objectContaining({ samples: 32, style: "dramatic", transparent: true, onProgress }),
+    );
+    expect(r.resizeForCapture).toHaveBeenCalledWith(16, 8);
+    // Only the restore draws the live view again.
+    expect(r.renderSingleFrame).toHaveBeenCalledTimes(1);
+  });
+
+  it("defaults to the studio style and DEFAULT_STUDIO_SAMPLES", async () => {
+    const r = studioRenderer();
+    await captureSnapshot(r as unknown as MoleculeRenderer, {
+      width: 4,
+      height: 4,
+      transparent: false,
+      format: "png",
+      quality: "publication",
+    });
+    expect(r.renderStudio).toHaveBeenCalledWith(
+      expect.objectContaining({ samples: DEFAULT_STUDIO_SAMPLES, style: "studio" }),
+    );
+  });
+
+  it("keeps standard quality on the live renderer", async () => {
+    const r = studioRenderer();
+    await captureSnapshot(r as unknown as MoleculeRenderer, {
+      width: 4,
+      height: 4,
+      transparent: false,
+      format: "png",
+      quality: "standard",
+    });
+    expect(r.renderStudio).not.toHaveBeenCalled();
+    expect(r.renderSingleFrame).toHaveBeenCalledTimes(2);
   });
 });

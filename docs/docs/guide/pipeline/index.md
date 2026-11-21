@@ -29,7 +29,7 @@ The panel has an icon rail down its left edge. From top to bottom:
 
 - **Editor** and **Inspector** — the panel's two tabs: the node graph (with the [AI assistant](#ai-pipeline-generator) docked under it) and the [Selection Inspector](./inspector.md).
 - **Add Node** and **Templates** menus — these switch to the Editor tab.
-- **File** menu — *Import pipeline…*, *Export pipeline* (downloads `pipeline.megane.json`; see [JSON](./json.md)), and *Copy share link…*. Then **Render**, which opens the image/video render dialog.
+- **File** menu — *Import pipeline…*, *Export pipeline* (downloads `pipeline.megane.json`; see [JSON](./json.md)), and *Copy share link…*. Then **Render**, which opens the image/video render dialog (see [Rendering figures](#rendering-figures)).
 - **Guide** (ⓘ), **Tutorial**, and the theme toggle at the foot.
 
 In the Editor tab the graph's toolbar (bottom left, with the zoom and fit-view buttons) holds **Auto Layout**, which arranges the nodes and fits them in view. Every node is a compact card showing its category icon, title, and a one-line summary of its parameters; port names appear when you hover or select a card. Under the graph sits the AI assistant's prompt bar, and under that the **properties pane**: selecting a node opens its form there, whose header holds an On/Off switch (a disabled node is bypassed and drawn with a dashed outline) and a remove button. The divider between graph and pane can be dragged.
@@ -39,6 +39,28 @@ To delete a connection, hover (or select) the edge and click the **×** at its m
 ### Share Links
 
 *Copy share link…* encodes the current pipeline (compressed) into the URL fragment as `#pipeline=…`; opening that URL in the standalone web app restores the pipeline. Only the graph is encoded — node parameters and file names, not file contents — so loaders show the file names but the recipient has to load the files. Very large pipelines produce a URL that is too long to share, and the dialog warns about it.
+
+## Rendering figures
+
+**Render** exports what the viewport shows: a PNG, EPS or SVG snapshot, a glTF / OBJ model, or a GIF / MP4 of the trajectory. For a raster snapshot, **Quality** picks how it is drawn:
+
+- **Standard** captures the live view as it is on screen, at the chosen resolution.
+- **Publication** renders the picture again with the lighting of a photo studio: soft shadows, ambient occlusion (every pocket and crevice darkens with how much of the sky it sees), a soft shadow on an invisible ground under the structure, and smooth edges. It averages many frames, each with the camera moved by a fraction of a pixel, the sky lit from a different direction, and the key light sampled across its area, so shadows are computed from the real geometry rather than guessed from the screen.
+
+| Lighting | Look | Background |
+| --- | --- | --- |
+| **Studio** | A soft box up and to the left, a bright sky, a contact shadow on the ground. | Light |
+| **Soft clay** | Almost all light from an even sky: shape comes from occlusion, like a clay model. | Light |
+| **Dramatic** | One hard light from the side and a back light on the silhouettes. | Dark |
+| **Illustrative** | Flat colour shaped by occlusion, with ink outlines that hug the silhouettes (Goodsell-style); no ground. | Any |
+
+**Samples** sets how many frames are averaged: *Draft* (64) to check the look, *Final* (256), *Best* (1024) for the smoothest shadows. The render runs on the GPU and takes from a second to a minute depending on the structure, the size and the GPU; the dialog shows its progress and the viewer stays usable. Transparent background works in Publication quality too: the ground shadow is kept as a semi-transparent black.
+
+Translucent surfaces — coordination polyhedra, a see-through molecular surface — are lit the same way and blended over each frame, and they cast a shadow as strong as they are opaque (a polyhedron at 50 % opacity casts a half shadow onto the atoms inside it and onto the ground). Lines (the cell, polyhedron edges), labels and atoms given a per-atom opacity are drawn over the lit picture as they appear in the viewer.
+
+For a figure at print size, set the resolution to the column width times the journal's resolution — e.g. 85 mm at 600 dpi is about 2000 px wide.
+
+From code, `MoleculeRenderer.renderStudio({ samples, style })` draws the same picture onto the viewer's canvas at its current size (`captureSnapshot(renderer, { …, quality: "publication", studio: { samples, style } })` does it at an export size and returns the image).
 
 ## AI Pipeline Generator
 

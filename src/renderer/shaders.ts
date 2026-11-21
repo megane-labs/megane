@@ -35,6 +35,37 @@ const XR_FINISH_GLSL = /* glsl */ `
   }
 `;
 
+/**
+ * Publication-render passes shared by both impostor fragment shaders (see
+ * `src/renderer/studio/`). `uPass` 0 is the normal lit shading. 1 and 2 write
+ * the G-buffer the studio renderer lights itself — linear albedo, and the
+ * view-space normal packed as `n * 0.5 + 0.5` — for opaque fragments only, so
+ * a translucent atom neither appears in it nor casts a shadow. 3 draws only
+ * the translucent fragments, with the normal shading, over the finished
+ * picture.
+ */
+const STUDIO_PASS_GLSL = /* glsl */ `
+  uniform int uPass;
+
+  vec3 studioSrgbToLinear(vec3 c) {
+    return mix(c / 12.92, pow((c + 0.055) / 1.055, vec3(2.4)), step(0.04045, c));
+  }
+
+  // True when the fragment was written as a G-buffer texel (caller returns).
+  bool studioPass(vec3 albedo, vec3 normal, float opacity, out vec4 color) {
+    color = vec4(0.0);
+    if (uPass == 1 || uPass == 2) {
+      if (opacity < 0.999) discard;
+      color = uPass == 1
+        ? vec4(studioSrgbToLinear(albedo), 1.0)
+        : vec4(normalize(normal) * 0.5 + 0.5, 1.0);
+      return true;
+    }
+    if (uPass == 3 && opacity >= 0.999) discard;
+    return false;
+  }
+`;
+
 export const atomVertexShader = /* glsl */ `precision highp float;
   precision highp int;
 
@@ -134,6 +165,7 @@ export const atomFragmentShader = /* glsl */ `precision highp float;
 
   out vec4 fragColor;
 ${XR_FINISH_GLSL}
+${STUDIO_PASS_GLSL}
   void main() {
     // Desktop: the billboard's |uv|^2 (an orthographic view along -z). An
     // immersive view casts the real ray from the eye through this fragment
@@ -189,6 +221,12 @@ ${XR_FINISH_GLSL}
     float finalOpacity = uOpacity;
     if (uUsePerAtomOverrides == 1) {
       finalOpacity *= vOpacityOverride;
+    }
+
+    vec4 studioColor;
+    if (studioPass(vColor, normal, finalOpacity, studioColor)) {
+      fragColor = studioColor;
+      return;
     }
 
     if (uIllustrative == 1) {
@@ -412,6 +450,7 @@ export const bondFragmentShader = /* glsl */ `precision highp float;
 
   out vec4 fragColor;
 ${XR_FINISH_GLSL}
+${STUDIO_PASS_GLSL}
   void main() {
     // Analytic ray-cylinder intersection in view space. A flat billboard
     // parameterization mis-places the surface (and thus gl_FragDepth) for bonds
@@ -482,6 +521,16 @@ ${XR_FINISH_GLSL}
     vec4 clipPos = projectionMatrix * vec4(hit, 1.0);
     gl_FragDepth = (clipPos.z / clipPos.w) * 0.5 + 0.5;
 
+    float finalOpacity = uOpacity;
+    if (uUsePerBondOverrides == 1) {
+      finalOpacity *= vBondOpacity;
+    }
+    vec4 studioColor;
+    if (studioPass(baseColor, normal, finalOpacity, studioColor)) {
+      fragColor = studioColor;
+      return;
+    }
+
     // Hemisphere ambient: sky blue on top, warm brown on bottom
     vec3 skyColor = vec3(0.87, 0.92, 1.0);
     vec3 groundColor = vec3(0.6, 0.47, 0.27);
@@ -511,10 +560,6 @@ ${XR_FINISH_GLSL}
     vec3 color = baseColor * (ambient + diffuse) * edgeFactor
                + vec3(1.0) * spec * 0.3
                + vec3(0.15) * fresnel;
-    float finalOpacity = uOpacity;
-    if (uUsePerBondOverrides == 1) {
-      finalOpacity *= vBondOpacity;
-    }
     fragColor = xrFinish(vec4(color, finalOpacity), hit, coverage);
   }
 `;

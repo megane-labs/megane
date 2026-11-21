@@ -85,7 +85,11 @@ describe("atom shader — illustrative branch", () => {
     // outline flickers along the very edge it traces.
     const fwidthAt = atomFragmentShader.indexOf("fwidth(");
     // The statement, not the word — the comment above it also says "discard".
-    const discardAt = atomFragmentShader.indexOf("discard;");
+    // Searched from main(): helpers above it (the studio passes) discard too,
+    // but main() only calls them after the derivative.
+    const mainAt = atomFragmentShader.indexOf("void main()");
+    const discardAt = atomFragmentShader.indexOf("discard;", mainAt);
+    expect(atomFragmentShader.indexOf("studioPass(", mainAt)).toBeGreaterThan(fwidthAt);
     expect(fwidthAt).toBeGreaterThan(-1);
     expect(discardAt).toBeGreaterThan(-1);
     expect(fwidthAt).toBeLessThan(discardAt);
