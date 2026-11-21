@@ -2,7 +2,8 @@
  * The AI assistant's dock: a one-line prompt bar that sits under a node
  * graph, so a request and the graph it changes are on screen together. The
  * conversation opens as a drawer over the bottom of the canvas, and the
- * provider / API key settings as a popover from the bar's gear button.
+ * provider / model / API key settings as a popover from the bar's model
+ * button.
  *
  * The dock knows nothing about what the assistant edits. Its host hands it a
  * `run` function that sends one request and applies what comes back — the
