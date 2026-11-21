@@ -347,10 +347,10 @@ async function setupApiKey(page) {
   try {
     await page.locator(SEL.chatTab).first().click();
     await page.waitForTimeout(300);
-    await page.locator('button[title="AI Settings"]').first().click();
+    await page.locator('[data-testid="pipeline-chat-model"]').first().click();
     await page.waitForTimeout(300);
     await page.locator('input[type="password"]').first().fill(API_KEY);
-    await page.locator('button[title="AI Settings"]').first().click();
+    await page.locator('[data-testid="pipeline-chat-model"]').first().click();
     await page.waitForTimeout(300);
     console.log("  API key injected via Chat config panel");
   } catch (e) {
