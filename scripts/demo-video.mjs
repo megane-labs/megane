@@ -288,13 +288,13 @@ async function setupApiKey(page) {
   try {
     await page.locator(SEL.chatTab).first().click();
     await page.waitForTimeout(300);
-    await page.locator('button[title="AI Settings"]').first().click();
+    await page.locator('[data-testid="pipeline-chat-model"]').first().click();
     await page.waitForTimeout(300);
     const keyInput = page.locator('input[type="password"]').first();
     await keyInput.fill(API_KEY);
     // Close the config popover, leaving the panel on the Editor tab (its
     // default) so the chat scene finds the prompt box without a tab switch.
-    await page.locator('button[title="AI Settings"]').first().click();
+    await page.locator('[data-testid="pipeline-chat-model"]').first().click();
     await page.waitForTimeout(300);
     console.log("  API key injected via Chat config panel");
   } catch (e) {
