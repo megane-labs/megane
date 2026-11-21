@@ -33,6 +33,7 @@ import {
   stopCodeServer,
   openVscodeFile,
   openVscodeNotebook,
+  VSCODE_WORKSPACE,
   type CodeServerHandle,
 } from "./hosts/code-server";
 
@@ -253,10 +254,9 @@ export async function bootHost(page: Page, opts: BootOpts = {}): Promise<HostBoo
 
     case "vscode": {
       const port = 18991 + seed;
-      // openVscodeFile() in lib/hosts/code-server.ts hard-codes
-      // /workspace as the folder URL — keep parity so the explorer
-      // tree finds the fixture.
-      const workspace = "/workspace";
+      // openVscodeFile() opens VSCODE_WORKSPACE as the folder — copy the
+      // fixture there so the explorer tree finds it.
+      const workspace = VSCODE_WORKSPACE;
       mkdirSync(workspace, { recursive: true });
       copyFileSync(join(repo, "tests", "fixtures", fixture), join(workspace, fixture));
       const cs = await startCodeServer({ port, workspace, e2eMode: true });
@@ -300,7 +300,8 @@ export async function bootHost(page: Page, opts: BootOpts = {}): Promise<HostBoo
         // seekbar would be stuck at one frame.
         const trajCells = fixture.endsWith(".xyz")
           ? [
-              `_t = _pipe.add_node(LoadTrajectory(xyz=\"${repo}/tests/fixtures/${fixture}\"))\n`,
+              // JSON.stringify: a Python string literal even if the path has quotes.
+              `_t = _pipe.add_node(LoadTrajectory(xyz=${JSON.stringify(join(repo, "tests", "fixtures", fixture))}))\n`,
               "_pipe.add_edge(_s.out.particle, _t.inp.particle)\n",
               "_pipe.add_edge(_t.out.traj, _v.inp.traj)\n",
             ]
@@ -314,7 +315,7 @@ export async function bootHost(page: Page, opts: BootOpts = {}): Promise<HostBoo
                 "from megane import Pipeline, LoadStructure, LoadTrajectory, AddBonds, Viewport\n",
                 "viewer = megane.MolecularViewer()\n",
                 "_pipe = Pipeline()\n",
-                `_s = _pipe.add_node(LoadStructure(\"${repo}/tests/fixtures/${fixture}\"))\n`,
+                `_s = _pipe.add_node(LoadStructure(${JSON.stringify(join(repo, "tests", "fixtures", fixture))}))\n`,
                 '_b = _pipe.add_node(AddBonds(source="distance"))\n',
                 "_v = _pipe.add_node(Viewport())\n",
                 "_pipe.add_edge(_s.out.particle, _b.inp.particle)\n",
@@ -345,9 +346,9 @@ export async function bootHost(page: Page, opts: BootOpts = {}): Promise<HostBoo
 
     case "widget-vscode": {
       const port = 18992 + seed;
-      // Same /workspace pin as the "vscode" case — openVscodeNotebook
+      // Same VSCODE_WORKSPACE as the "vscode" case — openVscodeNotebook
       // navigates through code-server's explorer, which is rooted there.
-      const workspace = "/workspace";
+      const workspace = VSCODE_WORKSPACE;
       mkdirSync(workspace, { recursive: true });
       const slug = `phase2_widget_${fixture.replace(/[^a-z0-9]/gi, "_")}`;
       const notebookPath = join(workspace, `${slug}.ipynb`);
@@ -367,7 +368,7 @@ export async function bootHost(page: Page, opts: BootOpts = {}): Promise<HostBoo
               'display(HTML(\'<script>window.parent.postMessage({type: "megane-test-mode"}, "*")</script>\'))\n',
               "viewer = megane.MolecularViewer()\n",
               "_pipe = Pipeline()\n",
-              `_s = _pipe.add_node(LoadStructure(\"${workspace}/${fixture}\"))\n`,
+              `_s = _pipe.add_node(LoadStructure(${JSON.stringify(join(workspace, fixture))}))\n`,
               '_b = _pipe.add_node(AddBonds(source="distance"))\n',
               "_v = _pipe.add_node(Viewport())\n",
               "_pipe.add_edge(_s.out.particle, _b.inp.particle)\n",
@@ -376,7 +377,7 @@ export async function bootHost(page: Page, opts: BootOpts = {}): Promise<HostBoo
               "_pipe.add_edge(_b.out.bond, _v.inp.bond)\n",
               ...(fixture.endsWith(".xyz")
                 ? [
-                    `_t = _pipe.add_node(LoadTrajectory(xyz=\"${workspace}/${fixture}\"))\n`,
+                    `_t = _pipe.add_node(LoadTrajectory(xyz=${JSON.stringify(join(workspace, fixture))}))\n`,
                     "_pipe.add_edge(_s.out.particle, _t.inp.particle)\n",
                     "_pipe.add_edge(_t.out.traj, _v.inp.traj)\n",
                   ]

@@ -30,6 +30,7 @@ import {
   startCodeServer,
   stopCodeServer,
   openVscodeFile,
+  VSCODE_WORKSPACE,
   type CodeServerHandle,
 } from "./lib/hosts/code-server";
 import { expectTooltipNearCursor } from "./lib/tooltip";
@@ -37,7 +38,7 @@ import { expectTooltipNearCursor } from "./lib/tooltip";
 const PLATFORM = "vscode";
 
 const REPO = join(fileURLToPath(import.meta.url), "..", "..", "..");
-const WORKSPACE = "/workspace";
+const WORKSPACE = VSCODE_WORKSPACE;
 const PORT = Number(process.env.MEGANE_VSCODE_PORT ?? 18991);
 
 interface FormatFixture {
@@ -291,8 +292,11 @@ test("Load Structure opens a workspace file through VS Code's open dialog", asyn
   const input = page.locator(".quick-input-widget input").first();
   await expect(input).toBeVisible({ timeout: 30_000 });
   // The simple file dialog writes its starting folder into the input after
-  // it opens; a path filled in before that is overwritten with "/workspace/".
-  await expect(input).toHaveValue(/\/$/, { timeout: 30_000 });
+  // it opens; a path filled in before that is overwritten with the workspace
+  // folder. Wait for that exact folder, not just a trailing "/": with a
+  // nested workspace an earlier value also ends in "/", and a fill made then
+  // is overwritten.
+  await expect(input).toHaveValue(`${WORKSPACE}/`, { timeout: 30_000 });
   await input.fill(join(WORKSPACE, "water.gro"));
   await expect(input).toHaveValue(join(WORKSPACE, "water.gro"));
   await input.press("Enter");

@@ -19,6 +19,7 @@
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "fs";
 import { dirname, isAbsolute, join } from "path";
+import { fileURLToPath } from "url";
 import type { Frame, Locator, Page } from "playwright/test";
 import { expect } from "playwright/test";
 
@@ -239,7 +240,7 @@ export async function captureFullPage(
   // iframe contents.
   const ownerPage =
     "screenshot" in scope && "mouse" in scope ? (scope as Page) : (scope as Frame).page();
-  // code-server's Explorer lists whatever the shared /workspace accumulated
+  // code-server's Explorer lists whatever the shared workspace accumulated
   // from earlier specs, so it changes with how much of the suite ran first
   // (the counterpart of the .jp-DirListing-content rule in stabilizeUi).
   // Masked rather than hidden, because specs still click its tree items.
@@ -547,9 +548,11 @@ export function baselinePath(platform: string, name: string): string {
   return join(root, platform, `${name}.png`);
 }
 
-function repoRoot(): string {
-  // tests/e2e/lib/setup.ts → repo root is three levels up.
-  return join(dirname(new URL(import.meta.url).pathname), "..", "..", "..");
+export function repoRoot(): string {
+  // tests/e2e/lib/setup.ts → repo root is three levels up. fileURLToPath,
+  // not URL.pathname: the pathname keeps a space or non-ASCII character in
+  // the checkout path percent-encoded.
+  return join(dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
 }
 
 /* ─── Stabilization ────────────────────────────────────────────── */
