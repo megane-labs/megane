@@ -17,10 +17,19 @@
 
 import { spawn, ChildProcess } from "child_process";
 import { mkdirSync, writeFileSync } from "fs";
+import { tmpdir } from "os";
 import { join } from "path";
 import type { Frame, Page } from "playwright/test";
 
-import { waitForReady } from "../setup";
+import { repoRoot, waitForReady } from "../setup";
+
+/**
+ * The folder code-server opens and the specs copy their fixtures into. It is
+ * under the OS temp dir so a local run needs no root to create it; its name
+ * stays "workspace" because code-server shows it in the window title, which
+ * the full-page baselines capture.
+ */
+export const VSCODE_WORKSPACE = join(tmpdir(), "megane-e2e", "workspace");
 
 /**
  * Write a code-server User/settings.json under `userDataDir` that disables
@@ -34,8 +43,9 @@ function writeUserSettings(userDataDir: string): void {
   mkdirSync(settingsDir, { recursive: true });
   // Resolve a Python interpreter for ms-toolsai.jupyter so that
   // `Notebook: Run All` can dispatch to a kernel without prompting.
-  // Prefer the project venv if it exists.
-  const venvPython = process.env.MEGANE_E2E_PYTHON ?? "/home/user/megane/.venv/bin/python";
+  // Prefer the project venv, unless MEGANE_E2E_PYTHON names another
+  // interpreter.
+  const venvPython = process.env.MEGANE_E2E_PYTHON ?? join(repoRoot(), ".venv", "bin", "python");
   const settings = {
     "workbench.startupEditor": "none",
     "workbench.editorAssociations": {
@@ -226,7 +236,7 @@ export interface OpenVscodeFileOpts {
 const MEGANE_CUSTOM_EDITOR_VIEW_TYPE = "megane.structureViewer";
 
 export async function openVscodeFile(page: Page, opts: OpenVscodeFileOpts): Promise<Frame> {
-  const url = `http://127.0.0.1:${opts.port}/?folder=${encodeURIComponent("/workspace")}`;
+  const url = `http://127.0.0.1:${opts.port}/?folder=${encodeURIComponent(VSCODE_WORKSPACE)}`;
   await page.goto(url, { waitUntil: "domcontentloaded" });
   await page.waitForSelector(".monaco-workbench", { timeout: 30_000 });
   // Allow the workbench to settle (file watcher + extensions) before we
@@ -251,7 +261,7 @@ export async function openVscodeFile(page: Page, opts: OpenVscodeFileOpts): Prom
 export interface OpenVscodeNotebookOpts extends OpenVscodeFileOpts {
   /** Notebook filename (relative to workspace). */
   notebook: string;
-  /** Workspace folder to open (default `/workspace`). */
+  /** Workspace folder to open (default `VSCODE_WORKSPACE`). */
   folder?: string;
 }
 
@@ -261,7 +271,7 @@ export interface OpenVscodeNotebookOpts extends OpenVscodeFileOpts {
  * widget. Used by widget-vscode.spec.ts.
  */
 export async function openVscodeNotebook(page: Page, opts: OpenVscodeNotebookOpts): Promise<Frame> {
-  const url = `http://127.0.0.1:${opts.port}/?folder=${encodeURIComponent(opts.folder ?? "/workspace")}`;
+  const url = `http://127.0.0.1:${opts.port}/?folder=${encodeURIComponent(opts.folder ?? VSCODE_WORKSPACE)}`;
   await page.goto(url, { waitUntil: "domcontentloaded" });
   await page.waitForSelector(".monaco-workbench", { timeout: 30_000 });
   await page.waitForTimeout(3_000);
