@@ -29,6 +29,7 @@ import {
   startCodeServer,
   stopCodeServer,
   openVscodeNotebook,
+  VSCODE_WORKSPACE,
   type CodeServerHandle,
 } from "./lib/hosts/code-server";
 import { expectTooltipNearCursor } from "./lib/tooltip";
@@ -36,7 +37,7 @@ import { expectTooltipNearCursor } from "./lib/tooltip";
 const PLATFORM = "widget-vscode";
 
 const REPO = join(fileURLToPath(import.meta.url), "..", "..", "..");
-const WORKSPACE = "/workspace";
+const WORKSPACE = VSCODE_WORKSPACE;
 const PORT = Number(process.env.MEGANE_WIDGET_VSCODE_PORT ?? 18992);
 
 interface WidgetVscodeFixture {
@@ -72,7 +73,8 @@ function widgetNotebook(fileName: string): object {
           "from IPython.display import display, HTML\n",
           'display(HTML(\'<script>window.parent.postMessage({type: "megane-test-mode"}, "*")</script>\'))\n',
           "viewer = megane.MolecularViewer()\n",
-          `viewer.load(\"${WORKSPACE}/${fileName}\")\n`,
+          // JSON.stringify: a Python string literal even if the path has quotes.
+          `viewer.load(${JSON.stringify(join(WORKSPACE, fileName))})\n`,
           "viewer\n",
         ],
         metadata: {},
