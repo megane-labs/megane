@@ -21,7 +21,7 @@ import { tmpdir } from "os";
 import { join } from "path";
 import type { Frame, Page } from "playwright/test";
 
-import { waitForReady } from "../setup";
+import { repoRoot, waitForReady } from "../setup";
 
 /**
  * The folder code-server opens and the specs copy their fixtures into. It is
@@ -43,8 +43,9 @@ function writeUserSettings(userDataDir: string): void {
   mkdirSync(settingsDir, { recursive: true });
   // Resolve a Python interpreter for ms-toolsai.jupyter so that
   // `Notebook: Run All` can dispatch to a kernel without prompting.
-  // Prefer the project venv if it exists.
-  const venvPython = process.env.MEGANE_E2E_PYTHON ?? "/home/user/megane/.venv/bin/python";
+  // Prefer the project venv, unless MEGANE_E2E_PYTHON names another
+  // interpreter.
+  const venvPython = process.env.MEGANE_E2E_PYTHON ?? join(repoRoot(), ".venv", "bin", "python");
   const settings = {
     "workbench.startupEditor": "none",
     "workbench.editorAssociations": {
