@@ -49,7 +49,8 @@ const plugin: JupyterFrontEndPlugin<void> = {
     // The Load nodes' "Open from server..." dialog browses the Jupyter
     // server's files, starting in the file browser's folder.
     const { contents, serverSettings } = app.serviceManager;
-    const request = (url: string) => ServerConnection.makeRequest(url, {}, serverSettings);
+    const request = (url: string, init?: RequestInit) =>
+      ServerConnection.makeRequest(url, init ?? {}, serverSettings);
     setRemoteFileSource(
       createJupyterFileSource(contents, request, () => browser?.model.path ?? ""),
     );

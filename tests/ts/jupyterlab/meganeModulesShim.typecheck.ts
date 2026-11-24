@@ -28,6 +28,8 @@ import type {
   Measurement as ShimMeasurement,
 } from "@megane/types";
 import type { decodeBase64 as realDecodeBase64 } from "@/utils/base64";
+import type * as realProgressive from "@/hosts/progressiveFile";
+import type * as shimProgressive from "@megane/hosts/progressiveFile";
 import type { decodeBase64 as shimDecodeBase64 } from "@megane/utils/base64";
 import type { fileFromBytes as realFileFromBytes } from "@/parsers/fileBytes";
 import type { fileFromBytes as shimFileFromBytes } from "@megane/parsers/fileBytes";
@@ -79,6 +81,19 @@ export type MeganeModulesShimChecks = [
   Assert<Equal<ReturnType<typeof shimUseTemplateData>, ReturnType<typeof realUseTemplateData>>>,
   // Helpers the DocWidgets call to read and parse a document fast.
   Assert<Equal<typeof shimDecodeBase64, typeof realDecodeBase64>>,
+  Assert<Equal<shimProgressive.ProgressiveFile, realProgressive.ProgressiveFile>>,
+  Assert<
+    Equal<
+      typeof shimProgressive.receiveProgressiveFile,
+      typeof realProgressive.receiveProgressiveFile
+    >
+  >,
+  Assert<
+    Equal<
+      typeof shimProgressive.shouldDeliverProgressively,
+      typeof realProgressive.shouldDeliverProgressively
+    >
+  >,
   Assert<Equal<typeof shimFileFromBytes, typeof realFileFromBytes>>,
   Assert<Equal<typeof shimPrewarm, typeof realPrewarm>>,
   Assert<Equal<typeof shimPerfMark, typeof realPerfMark>>,

@@ -8,7 +8,18 @@ import { render, screen, waitFor } from "@testing-library/react";
 
 const loadFile = vi.fn(async (_file: File, _top?: File) => {});
 const loadXtc = vi.fn(async (_file: File) => {});
-const local = { loadFile, loadXtc };
+const loadFileProgressive = vi.fn(async (_file: unknown, _top?: File) => {});
+const local = { loadFile, loadXtc, loadFileProgressive };
+
+// Byte-sized progressive pieces: a payload over 96 bytes comes in pieces.
+vi.mock("@megane/hosts/progressiveFile", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/hosts/progressiveFile")>();
+  return {
+    ...actual,
+    PROGRESSIVE_HEAD_BYTES: 64,
+    PROGRESSIVE_TAIL_BYTES: 32,
+  };
+});
 
 vi.mock("@megane/components/MeganeViewer", () => ({ MeganeViewer: vi.fn(() => null) }));
 vi.mock("@megane/hooks/useMeganeLocal", () => ({ useMeganeLocal: () => local }));
@@ -54,11 +65,27 @@ function mount(
     get: contentsGet,
     getDownloadUrl: vi.fn(async (p: string) => `/files/${p}`),
   } as unknown as ViewArgs[1];
-  // The document's own bytes come raw from the server's /files/ endpoint.
-  const request = vi.fn(async (_url: string) => ({
-    ok: true,
-    arrayBuffer: async () => new TextEncoder().encode(payload).buffer,
-  })) as unknown as ViewArgs[2];
+  // The document's own bytes come raw from the server's /files/ endpoint,
+  // which answers byte ranges like Jupyter's (206 + Content-Range; 200 when a
+  // range covers the whole file).
+  const data = new TextEncoder().encode(payload);
+  const request = vi.fn(async (_url: string, init?: RequestInit) => {
+    const range = (init?.headers as Record<string, string> | undefined)?.Range;
+    const [first, lastReq] = range
+      ? range.replace("bytes=", "").split("-").map(Number)
+      : [0, Infinity];
+    const last = Math.min(lastReq, data.length - 1);
+    const whole = first === 0 && last === data.length - 1;
+    const body = data.slice(first, last + 1);
+    return {
+      ok: true,
+      status: whole ? 200 : 206,
+      headers: new Headers(
+        whole ? {} : { "Content-Range": `bytes ${first}-${last}/${data.length}` },
+      ),
+      arrayBuffer: async () => body.buffer,
+    };
+  }) as unknown as ViewArgs[2];
   const view = new MeganeReactView(context, contents, request, onForeignFile) as unknown as {
     render: () => JSX.Element;
   };
@@ -76,6 +103,7 @@ describe("MeganeDocWidget standalone load path", () => {
   beforeEach(() => {
     loadFile.mockReset().mockResolvedValue(undefined);
     loadXtc.mockReset().mockResolvedValue(undefined);
+    loadFileProgressive.mockReset().mockResolvedValue(undefined);
   });
 
   it("refuses a JCAMP-DX spectrum with the shared message and loads nothing", async () => {
@@ -194,7 +222,7 @@ describe("MeganeDocWidget standalone load path", () => {
     const { request } = mount("sims/1crn.pdb");
     const root = await settledState();
     expect(root.getAttribute("data-state")).toBe("ready");
-    expect(request).toHaveBeenCalledWith("/files/sims/1crn.pdb");
+    expect(request.mock.calls[0][0]).toBe("/files/sims/1crn.pdb");
     const [file] = loadFile.mock.calls[0];
     expect(file.name).toBe("1crn.pdb");
     expect(await readBlobText(file)).toBe("payload");
@@ -207,5 +235,39 @@ describe("MeganeDocWidget standalone load path", () => {
     expect(root.getAttribute("data-state")).toBe("ready");
     expect(contentsGet).not.toHaveBeenCalled();
     expect(loadFile.mock.calls[0][1]).toBeUndefined();
+  });
+
+  it("hands a large file to the viewer head and tail first, then whole", async () => {
+    const big = "A".repeat(80) + "B".repeat(40) + "C".repeat(40);
+    // A multi-frame XYZ takes the shared (here byte-sized) pieces.
+    mount("runs/movie.xyz", undefined, { payload: big });
+    const root = await settledState();
+    expect(root.getAttribute("data-state")).toBe("ready");
+    expect(loadFile).not.toHaveBeenCalled();
+    expect(loadFileProgressive).toHaveBeenCalledTimes(1);
+    const [pf] = loadFileProgressive.mock.calls[0] as unknown as [
+      { name: string; size: number; head: Uint8Array; tail: Uint8Array; file: Promise<File> },
+    ];
+    expect(pf.name).toBe("movie.xyz");
+    expect(pf.size).toBe(big.length);
+    expect(new TextDecoder().decode(pf.head)).toBe("A".repeat(64));
+    expect(new TextDecoder().decode(pf.tail)).toBe("C".repeat(32));
+    expect(await readBlobText(await pf.file)).toBe(big);
+  });
+
+  it("waits for the whole of a large trajectory-only file before loadXtc", async () => {
+    const big = "x".repeat(200);
+    mount("long.xtc", undefined, { payload: big });
+    const root = await settledState();
+    expect(root.getAttribute("data-state")).toBe("ready");
+    expect(loadFileProgressive).not.toHaveBeenCalled();
+    expect(await readBlobText(loadXtc.mock.calls[0][0])).toBe(big);
+  });
+
+  it("checks a large file's head for a foreign LAMMPS-prefixed name", async () => {
+    const onForeignFile = vi.fn();
+    mount("data.big.json", undefined, { payload: '{"a": ' + "1".repeat(200) + "}", onForeignFile });
+    await waitFor(() => expect(onForeignFile).toHaveBeenCalledTimes(1));
+    expect(loadFileProgressive).not.toHaveBeenCalled();
   });
 });
