@@ -15,7 +15,7 @@ import { fileFromBytes } from "@megane/parsers/fileBytes";
 import { perfMark } from "@megane/perf";
 import { prewarmParseWorker } from "@megane/parsers/structure";
 import { ensureWasmUrl } from "./wasmLoader";
-import { readServerFileBytes, type ServerRequest } from "./serverFileBytes";
+import { readServerFile, type ServerRequest } from "./serverFileBytes";
 import { classifyStandaloneFile, siblingTopologyName } from "@megane/hosts/classifyStandaloneFile";
 import { isForeignLammpsPrefixFile } from "@megane/hosts/lammpsPrefixFiles";
 import { createSubscription, createFrameSubscription } from "./frameSubscription";
@@ -71,18 +71,22 @@ function DocBody({
         prewarmParseWorker();
         // The document model holds no content (rawModel.ts): download the
         // file's raw bytes ourselves, alongside the context's metadata fetch.
-        const bytesRequest = readServerFileBytes(contents, request, context.path);
-        bytesRequest.catch(() => {}); // surfaced by the await below
+        // A large file comes head and tail first (readServerFile), so frame 0
+        // is drawn before the rest has crossed the network.
+        const filename = context.path.split("/").pop() ?? "structure";
+        const served = readServerFile(contents, request, context.path, filename, fileFromBytes);
+        served.catch(() => {}); // surfaced by the await below
         await context.ready;
         perfMark("megane:open:contextReady");
         if (token.cancelled) return;
-        const filename = context.path.split("/").pop() ?? "structure";
-        const bytes = await bytesRequest;
+        const serverFile = await served;
         if (token.cancelled) return;
         // A `data.json` the LAMMPS `data.*` file type pattern caught, or a
         // `log.lammps` the `.lammps` extension did, goes back to JupyterLab's
-        // own editor, before the shared store is touched.
-        if (isForeignLammpsPrefixFile(filename, bytes)) {
+        // own editor, before the shared store is touched. Its first bytes
+        // decide, and the head holds them.
+        const head = serverFile.kind === "whole" ? serverFile.bytes : serverFile.file.head;
+        if (isForeignLammpsPrefixFile(filename, head)) {
           onForeignFile?.();
           return;
         }
@@ -96,8 +100,12 @@ function DocBody({
         storeCache.claim();
         usePipelineStore.getState().reset();
         // Raw bytes for every format: the shared parser dispatches by
-        // extension to text or binary (e.g. ASE .traj) decoding.
-        const file = fileFromBytes(bytes, filename);
+        // extension to text or binary (e.g. ASE .traj) decoding. A file that
+        // came in pieces becomes whole only once its middle has arrived.
+        const wholeFile = (): Promise<File> =>
+          serverFile.kind === "whole"
+            ? Promise.resolve(fileFromBytes(serverFile.bytes, filename))
+            : serverFile.file.file;
         perfMark("megane:open:decoded");
         // Spectra and volumetric grids have nothing to render standalone, and
         // trajectory-only formats (XTC, DCD, NetCDF) need a topology loaded
@@ -110,7 +118,7 @@ function DocBody({
         }
         if (classification.kind === "trajectory-only") {
           try {
-            await local.loadXtc(file);
+            await local.loadXtc(await wholeFile());
           } catch (err) {
             const base = err instanceof Error ? err.message : String(err);
             throw new Error(`${base} ${classification.loadFailureHint}`);
@@ -136,7 +144,11 @@ function DocBody({
               // .top file not present — proceed without topology bonds
             }
           }
-          await local.loadFile(file, topFile);
+          if (serverFile.kind === "pieces") {
+            await local.loadFileProgressive(serverFile.file, topFile);
+          } else {
+            await local.loadFile(await wholeFile(), topFile);
+          }
         }
         perfMark("megane:open:loaded");
         if (token.cancelled) return;

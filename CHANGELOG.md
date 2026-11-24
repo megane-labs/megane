@@ -17,11 +17,24 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ### Changed
 
+- **JupyterLab draws a large file's first frame before the whole file has downloaded.** The viewer downloaded the entire file from the Jupyter server before drawing anything, so over a remote server (JupyterHub, a cluster, an SSH tunnel) a 40 MB ASE `.traj` showed nothing for 12 s at 30 Mbps. It now fetches the file in pieces with HTTP range requests, head and tail first — 2 MB and 64 kB for an ASE `.traj`, 8 MB and 4 MB for other formats, as the VS Code extension sends them — draws frame 0 from those, and brings in the rest behind it. Time to the first frame, measured in JupyterLab for ASE optimization trajectories of 1,000–4,000 atoms:
+
+  | File | Local | 100 Mbps | 30 Mbps |
+  | --- | --- | --- | --- |
+  | 5.3 MB, 68 frames | 0.65 → 0.64 s | 0.95 → 0.75 s | 2.10 → 1.16 s |
+  | 8.6 MB, 111 frames | 0.61 → 0.55 s | 1.18 → 0.81 s | 3.06 → 1.19 s |
+  | 42 MB, 4,060 atoms | 0.65 → 0.65 s | 4.55 → 0.85 s | 12.3 → 1.20 s |
+  | 43 MB, 500 frames | 0.61 → 0.61 s | 4.45 → 0.74 s | 12.6 → 1.18 s |
+
+  A server that ignores range requests sends the file whole, as before.
+
 - **Auto Layout moved into the pipeline Editor.** It is an action on the graph, so it now sits in the graph's toolbar with the zoom and fit-view buttons, instead of on the panel's rail next to Editor and Inspector ([#962](https://github.com/megane-labs/megane/issues/962)). It still arranges the nodes and fits them in view.
 - **The user guide button shows a circled "i"** instead of a question mark, so it reads apart from the Tutorial button ([#963](https://github.com/megane-labs/megane/issues/963)).
 - **The AI assistant's model button shows a chip** instead of a sun-like gear that looked like the light/dark switch, and is named "Select AI model" ([#961](https://github.com/megane-labs/megane/issues/961)). It opens the same provider, model and API key settings.
 
 ### Fixed
+
+- **Frame 0 of a long ASE `.traj` with large frames is drawn before the rest of the file arrives.** JupyterLab and VS Code draw frame 0 of a `.traj` from the start and end of the file while the rest arrives, but that needs frame 0's offset, which ASE keeps in an offset table it moves as the file grows: once a trajectory passes 42 frames the table sits right after frame 42, outside both pieces when frames are large (a few thousand atoms with forces), so the viewer waited for the whole file. Frame 0's offset is now also read from the slot ASE writes it to when it creates the file, which never moves.
 
 - **`log.lammps` opens as text in JupyterLab and VS Code.** The `.lammps` extension made Megane the default for LAMMPS's own log, and for input scripts such as `in.lammps`. Both hosts now check the start of a `.lammps` file, as they already did for `data.*` / `dump.*` names, and hand anything that is not a LAMMPS data file back to the text editor ([#958](https://github.com/megane-labs/megane/issues/958)). The data-file check now reads the header only as far as its lines open with a number, since a log also prints `N atoms` after reading a data file.
 

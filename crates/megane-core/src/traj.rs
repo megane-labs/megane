@@ -795,15 +795,27 @@ pub fn parse_traj(data: &[u8]) -> Result<ParsedStructure, String> {
     })
 }
 
+/// Where a ULM file's first offset table starts: right after the 48-byte
+/// header. Its single entry is frame 0's offset, and ASE never moves it.
+const ULM_FIRST_TABLE_POS: u64 = 48;
+
 /// Parse frame 0 of an ASE .traj from the start and the end of the file
 /// alone, for a first paint before the rest of the file has arrived.
 ///
 /// Frame 0 is written right after the 48-byte header, but the offset table
-/// that locates it sits at `pos0`, which ASE rewrites near the end of the file
-/// as frames are appended. `head` is the file's first bytes and `tail` its
-/// last `tail.len()` bytes of `total_len`; the table's first entry is read
-/// from whichever holds it, everything else from `head`. Any read that falls
-/// outside them fails (as an EOF) rather than reading a gap, so the caller
+/// that locates it sits at `pos0`. ASE grows that table 42-fold at a time
+/// (`ase.io.ulm.N1`), writing each larger copy at the end of the file as it is
+/// then, so with 43 to 1764 frames it sits right after frame 42 — about 42/N
+/// of the way into the file, past an 8 MB head once frames exceed ~200 kB
+/// (a few thousand atoms with forces). `head` is the file's first bytes and
+/// `tail` its last `tail.len()` bytes of `total_len`; the table's first entry
+/// is read from whichever holds it. When neither does, frame 0's offset is
+/// read from the file's first table instead: ASE creates the file with a
+/// one-entry table at byte [`ULM_FIRST_TABLE_POS`] and stores frame 0's offset
+/// there before the table first grows, and a grown table is written elsewhere,
+/// so that slot keeps it. Everything else is read from `head`. Any read that
+/// falls outside them fails (as an EOF) rather than reading a gap — and a
+/// slot that does not lead to frame 0's JSON fails to parse — so the caller
 /// falls back to the full [`parse_traj`].
 ///
 /// The result is exactly [`parse_traj`]'s frame-0 snapshot (positions,
@@ -829,6 +841,8 @@ pub fn parse_traj_frame0(
         read_i64(head, header.pos0, header.little_endian)?
     } else if header.pos0 >= tail_start {
         read_i64(tail, header.pos0, header.little_endian)?
+    } else if head.get(ULM_FIRST_TABLE_POS, 8).is_some() {
+        read_i64(head, ULM_FIRST_TABLE_POS, header.little_endian)?
     } else {
         return Err("the frame offset table is in neither the head nor the tail".into());
     };
@@ -1229,16 +1243,50 @@ mod tests {
     }
 
     #[test]
+    fn test_parse_traj_frame0_finds_frame0_when_the_table_has_moved() {
+        // ASE moves the offset table to the end of the file when it grows: in
+        // these fixtures it follows frame 1. A head holding frame 0 but not
+        // the table, and a tail too short to reach it, still give frame 0 —
+        // through the first table's slot at byte 48.
+        for name in ["water.traj", "bond_change.traj"] {
+            let Some(data) = read_fixture(name) else {
+                continue;
+            };
+            let header = read_ulm_header(&data).unwrap();
+            assert_ne!(
+                header.pos0, ULM_FIRST_TABLE_POS,
+                "{name}: table never moved"
+            );
+            let head_len = header.pos0 as usize; // stops right before the table
+            assert_frame0_matches(&data, head_len, 1);
+            let slot = read_i64(
+                FileView::whole(&data),
+                ULM_FIRST_TABLE_POS,
+                header.little_endian,
+            );
+            let current = read_i64(FileView::whole(&data), header.pos0, header.little_endian);
+            assert_eq!(
+                slot.unwrap(),
+                current.unwrap(),
+                "{name}: slot 48 holds frame 0's offset"
+            );
+        }
+    }
+
+    #[test]
     fn test_parse_traj_frame0_rejects_what_it_cannot_see() {
         let Some(data) = read_fixture("water.traj") else {
             return;
         };
         let header = read_ulm_header(&data).unwrap();
-        // The offset table falls in the gap between head and tail.
-        let err = parse_traj_frame0(&data[..64], &data[data.len() - 1..], data.len())
+        // A head too short for even the first table's slot, with the current
+        // table in the gap.
+        let err = parse_traj_frame0(&data[..52], &data[data.len() - 1..], data.len())
             .err()
             .expect("table in the gap must fail");
         assert!(err.contains("neither the head nor the tail"), "{err}");
+        // The first table's slot is in the head but frame 0's JSON is not.
+        assert!(parse_traj_frame0(&data[..64], &data[data.len() - 1..], data.len()).is_err());
         // Frame 0's JSON is past the head: reported as EOF, not read from a gap.
         let tail = &data[header.pos0 as usize..];
         assert!(parse_traj_frame0(&data[..64], tail, data.len()).is_err());

@@ -76,11 +76,39 @@ declare module "@megane/hooks/useMeganeLocal" {
   /** The part of `MeganeLocalState` (src/hooks/useMeganeLocal.ts) this host uses. */
   export interface MeganeLocalState {
     loadFile: (pdb: File, topFile?: File) => Promise<void>;
+    loadFileProgressive: (
+      file: import("@megane/hosts/progressiveFile").ProgressiveFile,
+      topFile?: File,
+    ) => Promise<void>;
     loadXtc: (xtc: File) => Promise<void>;
     /** Resolves to a `StructureParseResult`, opaque here. */
     loadText: (text: string, fileName?: string) => Promise<unknown>;
   }
   export function useMeganeLocal(): MeganeLocalState;
+}
+
+declare module "@megane/hosts/progressiveFile" {
+  export const PROGRESSIVE_HEAD_BYTES: number;
+  export const PROGRESSIVE_TAIL_BYTES: number;
+  export interface ProgressiveFile {
+    name: string;
+    size: number;
+    head: Uint8Array;
+    tail: Uint8Array;
+    file: Promise<File>;
+  }
+  export function shouldDeliverProgressively(size: number): boolean;
+  export function receiveProgressiveFile(
+    name: string,
+    size: number,
+    head: Uint8Array,
+    tail: Uint8Array,
+    toFile: (bytes: Uint8Array<ArrayBuffer>, name: string) => File,
+  ): {
+    file: ProgressiveFile;
+    deliverMiddle: (middle: Uint8Array) => void;
+    fail: (reason: unknown) => void;
+  };
 }
 
 declare module "@megane/hooks/useTemplateData" {
