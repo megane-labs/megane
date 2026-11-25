@@ -775,6 +775,20 @@ describe("MeganeEditorProvider — LAMMPS data.* / dump.* names", () => {
     expect(panel.webview.html).toBe("");
   });
 
+  it("reopens a numbered *.data.<n> that is not LAMMPS in the text editor (#957)", async () => {
+    mockState.executeCommand.mockResolvedValue(undefined);
+    mockState.readFile.mockResolvedValue(encode("step,energy\n1,-10.5\n"));
+    const uri = VscodeUri.file("/work/results.data.1");
+    const { panel } = closablePanel();
+    await getProvider("megane.structureViewer").resolveCustomEditor(
+      { uri, dispose: vi.fn() },
+      panel,
+      {},
+    );
+    expect(mockState.executeCommand).toHaveBeenCalledWith("vscode.openWith", uri, "default", 2);
+    expect(panel.webview.html).toBe("");
+  });
+
   it("sends a data.*.megane.json pipeline to the pipeline viewer", async () => {
     mockState.executeCommand.mockResolvedValue(undefined);
     mockState.readFile.mockResolvedValue(encode('{"version": 3, "nodes": [], "edges": []}'));
@@ -793,7 +807,7 @@ describe("MeganeEditorProvider — LAMMPS data.* / dump.* names", () => {
     );
   });
 
-  it.each(["data.water", "dump.water", "water.lammps"])(
+  it.each(["data.water", "dump.water", "water.lammps", "water.data.001"])(
     "opens the LAMMPS file %s in the viewer, reading only its head to check",
     async (name) => {
       const path = resolve(FIXTURES, name);
@@ -2019,6 +2033,22 @@ describe("Megane Builder manifest", () => {
     expect(names?.[1].split("|")).toEqual(BUILDER_FILENAME_PREFIXES);
     const lammps = /resourceFilename =~ \/\^\(([^)]*)\)\\\.\.\/i/.exec(entry.when);
     expect(lammps?.[1].split("|")).toEqual(BUILDER_LAMMPS_PREFIXES);
+  });
+
+  it("the Explorer entry offers numbered *.data.<n> files, not seed.data.ts (#957)", () => {
+    const entry = manifest.contributes.menus["explorer/context"].find(
+      (m) => m.command === "megane.builder.openFile",
+    )!;
+    // Every `resourceFilename =~ /…/flags` term, as VS Code evaluates it.
+    const byName = [...entry.when.matchAll(/resourceFilename =~ \/(.+?)\/(i?)(?= \|\||$)/g)].map(
+      (m) => new RegExp(m[1], m[2]),
+    );
+    const offered = (name: string) => byName.some((re) => re.test(name));
+    expect(offered("sample.data.001")).toBe(true);
+    expect(offered("Water.DATA.7")).toBe(true);
+    expect(offered("data.peptide")).toBe(true);
+    expect(offered("seed.data.ts")).toBe(false);
+    expect(offered("sample.data.")).toBe(false);
   });
 });
 

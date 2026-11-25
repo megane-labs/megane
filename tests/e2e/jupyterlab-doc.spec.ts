@@ -68,10 +68,10 @@ const CRN_PIPELINE_JSON = {
   ],
 };
 
-/** LAMMPS files named by their leading keyword (`lammpsPrefixExt`). */
-const LAMMPS_PREFIX_FILES = ["data.water", "dump.water"];
-/** A `data.*` name no JupyterLab file type claims, holding something else. */
-const FOREIGN_DATA_FILE = "data.notes";
+/** LAMMPS files named LAMMPS-style (`lammpsPrefixExt`): by a leading keyword, or numbered. */
+const LAMMPS_PREFIX_FILES = ["data.water", "dump.water", "water.data.001"];
+/** `data.*` / `*.data.<n>` names no JupyterLab file type claims, holding something else. */
+const FOREIGN_DATA_FILES = ["data.notes", "results.data.1"];
 
 let lab: JupyterLabHandle | null = null;
 
@@ -89,7 +89,9 @@ test.beforeAll(async () => {
   for (const f of LAMMPS_PREFIX_FILES) {
     copyFileSync(join(REPO, "tests", "fixtures", f), join(NOTEBOOK_DIR, f));
   }
-  writeFileSync(join(NOTEBOOK_DIR, FOREIGN_DATA_FILE), "Run notes, not a LAMMPS data file.\n");
+  for (const f of FOREIGN_DATA_FILES) {
+    writeFileSync(join(NOTEBOOK_DIR, f), "Run notes, not a LAMMPS data file.\n");
+  }
   writeFileSync(join(NOTEBOOK_DIR, "data.json"), '{"atoms": 3}\n');
   lab = await startJupyterLab({
     port: PORT,
@@ -140,7 +142,7 @@ for (const f of FORMATS) {
 }
 
 for (const file of LAMMPS_PREFIX_FILES) {
-  test(`DocWidget opens LAMMPS's ${file} by its leading keyword`, async ({ page }) => {
+  test(`DocWidget opens LAMMPS's ${file} by its LAMMPS-style name`, async ({ page }) => {
     await openLabFile(page, { port: PORT, token: TOKEN, file });
     await assertDomContract(page, [
       ...defaultViewerContract({ expectedAtoms: 3, context: "jupyterlab-doc" }),
@@ -158,17 +160,18 @@ test("data.* files that are not LAMMPS open in JupyterLab's own editors", async 
   await page.addInitScript(() => {
     (globalThis as { __MEGANE_TEST__?: boolean }).__MEGANE_TEST__ = true;
   });
-  await page.goto(
-    `http://127.0.0.1:${PORT}/lab/tree/${FOREIGN_DATA_FILE}?token=${TOKEN}&test=1&reset`,
-    { waitUntil: "domcontentloaded" },
-  );
-  await page.waitForSelector("#jp-main-dock-panel", { timeout: 30_000 });
+  for (const file of FOREIGN_DATA_FILES) {
+    await page.goto(`http://127.0.0.1:${PORT}/lab/tree/${file}?token=${TOKEN}&test=1&reset`, {
+      waitUntil: "domcontentloaded",
+    });
+    await page.waitForSelector("#jp-main-dock-panel", { timeout: 30_000 });
 
-  // Megane claims the name, finds it is not LAMMPS and steps aside.
-  const editor = page.locator(".jp-FileEditor");
-  await expect(editor).toBeVisible({ timeout: 60_000 });
-  await expect(editor).toContainText("Run notes, not a LAMMPS data file.");
-  await expect(page.locator('[data-testid="megane-doc-root"]')).toHaveCount(0);
+    // Megane claims the name, finds it is not LAMMPS and steps aside.
+    const editor = page.locator(".jp-FileEditor");
+    await expect(editor, file).toBeVisible({ timeout: 60_000 });
+    await expect(editor, file).toContainText("Run notes, not a LAMMPS data file.");
+    await expect(page.locator('[data-testid="megane-doc-root"]'), file).toHaveCount(0);
+  }
 
   const firstFileTypes = await page.evaluate(() => {
     const app = (
@@ -176,9 +179,16 @@ test("data.* files that are not LAMMPS open in JupyterLab's own editors", async 
         jupyterapp: { docRegistry: { getFileTypesForPath(p: string): Array<{ name: string }> } };
       }
     ).jupyterapp;
-    return ["data.water", "dump.water", "data.json", "data.notes"].map(
-      (p) => app.docRegistry.getFileTypesForPath(p)[0]?.name,
-    );
+    return [
+      "data.water",
+      "dump.water",
+      "data.json",
+      "data.notes",
+      "water.data.001",
+      "sample.data.json",
+      "sample.data.1.json",
+      "sample.data.xyz",
+    ].map((p) => app.docRegistry.getFileTypesForPath(p)[0]?.name);
   });
   expect(firstFileTypes).toEqual([
     "megane-lammps-data",
@@ -186,6 +196,11 @@ test("data.* files that are not LAMMPS open in JupyterLab's own editors", async 
     // JupyterLab's own `.json` file type keeps `data.json`.
     "json",
     "megane-lammps-data",
+    // Numbered data files (#957); a name's own extension still wins.
+    "megane-lammps-data",
+    "json",
+    "json",
+    "megane-xyz",
   ]);
 });
 

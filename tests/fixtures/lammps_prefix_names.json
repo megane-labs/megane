@@ -1,5 +1,5 @@
 {
-  "description": "File names LAMMPS writes with a leading keyword instead of an extension (data.<name>, dump.<name>) and the extension each one dispatches under, or null when the name is not a LAMMPS prefix name. The one case table for the canonical rule (megane_core::formats::lammps_prefix_extension) and its mirrors (lammpsPrefixExt in src/parsers/fileNames.ts, lammps_prefix_ext in python/megane/parsers/dispatch.py, and the VS Code extension host's copy); every implementation's tests read this file.",
+  "description": "File names LAMMPS-style naming gives a LAMMPS file instead of an extension (a leading keyword: data.<name>, dump.<name>; or a numbered data file with .data. in the middle: <name>.data.<number>) and the extension each one dispatches under, or null when the name is not such a name. The one case table for the canonical rule (megane_core::formats::lammps_prefix_extension) and its mirrors (lammpsPrefixExt in src/parsers/fileNames.ts, lammps_prefix_ext in python/megane/parsers/dispatch.py, and the JupyterLab file type pattern); every implementation's tests read this file.",
   "cases": [
     { "name": "data.peptide", "ext": ".data" },
     { "name": "data.rhodo", "ext": ".data" },
@@ -13,6 +13,12 @@
     { "name": "dump.1000.atom", "ext": ".dump" },
     { "name": "out/dump.peptide", "ext": ".dump" },
     { "name": "dump.melt.2000", "ext": ".dump" },
+    { "name": "sample.data.001", "ext": ".data" },
+    { "name": "Sample.DATA.7", "ext": ".data" },
+    { "name": "npt.equil.data.0", "ext": ".data" },
+    { "name": "runs/eq/water.data.1000", "ext": ".data" },
+    { "name": "C:\\runs\\water.data.42", "ext": ".data" },
+    { "name": "water.data.2.bak", "ext": ".data" },
     { "name": "data.lammps", "ext": null },
     { "name": "data.pdb", "ext": null },
     { "name": "data.TRAJ", "ext": null },
@@ -32,6 +38,18 @@
     { "name": "restart.equil", "ext": null },
     { "name": "water.data", "ext": null },
     { "name": "data.dir/water.gro", "ext": null },
-    { "name": "POSCAR", "ext": null }
+    { "name": "POSCAR", "ext": null },
+    { "name": "sample.data.xyz", "ext": null },
+    { "name": "sample.data.1.xyz", "ext": null },
+    { "name": "sample.data.1.lammpstrj", "ext": null },
+    { "name": "sample.data.json", "ext": null },
+    { "name": "sample.data.final", "ext": null },
+    { "name": "seed.data.ts", "ext": null },
+    { "name": "sample.data.", "ext": null },
+    { "name": ".data.001", "ext": null },
+    { "name": "sample.dump.001", "ext": null },
+    { "name": "sample_data.001", "ext": null },
+    { "name": "sampledata.001", "ext": null },
+    { "name": "sample.database.1", "ext": null }
   ]
 }

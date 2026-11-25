@@ -12,6 +12,7 @@ import {
   STRUCTURE_FILETYPES_TEXT,
   STRUCTURE_FILETYPE_NAMES_BINARY,
   STRUCTURE_FILETYPE_NAMES_TEXT,
+  LAMMPS_INFIX_KEYWORDS,
   LAMMPS_PREFIX_FILETYPES,
   MEGANE_EXTENSIONS,
   lammpsPrefixPattern,
@@ -246,6 +247,21 @@ describe("LAMMPS data.* / dump.* patterns", () => {
     expect(pattern.test("data.tar.gz")).toBe(false);
     expect(pattern.test("data.jsonl")).toBe(true);
     expect(pattern.test("DATA.peptide")).toBe(true);
+  });
+
+  it("match a numbered <name>.data.<n> too, but only for data (#957)", () => {
+    const data = new RegExp(lammpsPrefixPattern("data", [".json", ".csv"]));
+    expect(LAMMPS_INFIX_KEYWORDS).toEqual(["data"]);
+    expect(data.test("sample.data.001")).toBe(true);
+    expect(data.test("Sample.DATA.7")).toBe(true);
+    expect(data.test("npt.equil.data.0")).toBe(true);
+    // A word after `.data.`, or another file type's extension at the end.
+    expect(data.test("seed.data.ts")).toBe(false);
+    expect(data.test("sample.data.1.csv")).toBe(false);
+    expect(data.test("sample.data.1.JSON")).toBe(false);
+    expect(data.test("sample.data.")).toBe(false);
+    expect(data.test(".data.001")).toBe(false);
+    expect(new RegExp(lammpsPrefixPattern("dump", [])).test("sample.dump.001")).toBe(false);
   });
 
   it("match any data.<name> when no extension is known", () => {

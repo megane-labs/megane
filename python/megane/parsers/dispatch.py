@@ -68,8 +68,10 @@ TRAJECTORY_EXTS: frozenset[str] = frozenset({".xtc", ".lammpstrj", ".dump", ".tr
 # POSCAR.bak, CONTCAR_relaxed); matched on the basename, as in fileNames.ts.
 _VASP_BARE_NAME = re.compile(r"^(poscar|contcar|xdatcar)([-_.].*)?$")
 
-# LAMMPS names files by a leading keyword: data.peptide, dump.melt.
+# LAMMPS names files by a leading keyword: data.peptide, dump.melt; and
+# numbered data files by the keyword in the middle: sample.data.001.
 _LAMMPS_PREFIX_NAME = re.compile(r"^(data|dump)\.(.+)$")
+_LAMMPS_DATA_INFIX_NAME = re.compile(r"^.+\.data\.[0-9]")
 
 
 def _basename(path: str) -> str:
@@ -78,12 +80,15 @@ def _basename(path: str) -> str:
 
 
 def lammps_prefix_ext(path: str) -> str | None:
-    """The extension a LAMMPS file named by its leading keyword dispatches under.
+    """The extension a LAMMPS file named LAMMPS-style dispatches under.
 
-    ``".data"`` for ``data.<name>`` (``read_data data.peptide``), ``".dump"``
-    for ``dump.<name>`` (``dump 1 all atom 100 dump.melt``), ``None`` for any
+    ``".data"`` for ``data.<name>`` (``read_data data.peptide``) and for a
+    numbered ``<name>.data.<number>`` (``sample.data.001``; a word after the
+    ``.data.``, as in ``seed.data.ts``, is not LAMMPS), ``".dump"`` for
+    ``dump.<name>`` (``dump 1 all atom 100 dump.melt``), ``None`` for any
     other name — including one that also ends in an extension Megane reads
-    (``dump.xyz`` is an XYZ file, ``data.lammps`` LAMMPS data by extension).
+    (``dump.xyz`` is an XYZ file, ``data.lammps`` LAMMPS data by extension,
+    ``sample.data.1.xyz`` XYZ).
 
     Mirrors ``megane_core::formats::lammps_prefix_extension`` and
     ``lammpsPrefixExt`` in ``src/parsers/fileNames.ts``; all of them are tested
@@ -91,19 +96,24 @@ def lammps_prefix_ext(path: str) -> str | None:
     """
     name = _basename(path).lower()
     match = _LAMMPS_PREFIX_NAME.match(name)
-    if match is None:
+    if match is not None:
+        ext = ".data" if match.group(1) == "data" else ".dump"
+    elif _LAMMPS_DATA_INFIX_NAME.match(name):
+        ext = ".data"
+    else:
         return None
     last = name[name.rindex(".") :]
     if last in TEXT_PARSERS or last in BINARY_PARSERS or last in TRAJECTORY_EXTS:
         return None
-    return ".data" if match.group(1) == "data" else ".dump"
+    return ext
 
 
 def structure_ext(path: str) -> str:
     """The extension ``path`` is dispatched under.
 
-    ``.vasp`` for bare VASP names, ``.data`` / ``.dump`` for LAMMPS's prefix
-    names (``data.peptide``, ``dump.melt``), else the last extension.
+    ``.vasp`` for bare VASP names, ``.data`` / ``.dump`` for LAMMPS-style
+    names (``data.peptide``, ``dump.melt``, ``sample.data.001``), else the
+    last extension.
     """
     name = _basename(path).lower()
     if _VASP_BARE_NAME.match(name):

@@ -91,6 +91,15 @@ describe("isForeignLammpsPrefixFile", () => {
   it("keeps prefix-named files whose content is the LAMMPS format the name claims", () => {
     expect(isForeignLammpsPrefixFile("data.water", fixture("data.water"))).toBe(false);
     expect(isForeignLammpsPrefixFile("runs/dump.water", fixture("dump.water"))).toBe(false);
+    expect(isForeignLammpsPrefixFile("water.data.001", fixture("water.data.001"))).toBe(false);
+  });
+
+  it("checks numbered *.data.<n> files the same way (#957)", () => {
+    expect(isForeignLammpsPrefixFile("results.data.1", bytes("a,b\n1,2\n"))).toBe(true);
+    expect(isForeignLammpsPrefixFile("sample.data.2", fixture("water.lammpstrj"))).toBe(true);
+    // A word after `.data.` is not a LAMMPS name: nothing is claimed, so
+    // nothing is flagged.
+    expect(isForeignLammpsPrefixFile("seed.data.ts", bytes("export {};\n"))).toBe(false);
   });
 
   it("flags prefix-named files that are something else", () => {
@@ -136,14 +145,20 @@ describe("lammpsNameClaim", () => {
     ["log.lammps", ".data"],
     ["structure.LAMMPS", ".data"],
     ["data.lammps", ".data"],
+    ["sample.data.001", ".data"],
   ])("claims %s as %s by name", (name, ext) => {
     expect(lammpsNameClaim(name)).toBe(ext);
   });
 
-  it.each(["water.data", "dump.xyz", "1crn.pdb", "log.lammps.1", "lammps"])(
-    "leaves %s to its extension",
-    (name) => {
-      expect(lammpsNameClaim(name)).toBeNull();
-    },
-  );
+  it.each([
+    "water.data",
+    "dump.xyz",
+    "1crn.pdb",
+    "log.lammps.1",
+    "lammps",
+    "sample.data.1.xyz",
+    "seed.data.ts",
+  ])("leaves %s to its extension", (name) => {
+    expect(lammpsNameClaim(name)).toBeNull();
+  });
 });

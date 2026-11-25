@@ -1,9 +1,9 @@
 /**
  * Step aside for a file Megane should not have opened.
  *
- * The LAMMPS file types claim `data.*` / `dump.*` names by `pattern`
- * (`withLammpsPrefixPatterns` in `filetypes.ts`), and a leading `data.` is
- * common outside LAMMPS. When the DocWidget finds such a file is not LAMMPS
+ * The LAMMPS file types claim `data.*` / `dump.*` and numbered
+ * `*.data.<n>` names by `pattern` (`withLammpsPrefixPatterns` in
+ * `filetypes.ts`), and such names are common outside LAMMPS. When the DocWidget finds such a file is not LAMMPS
  * (`isForeignLammpsPrefixFile`), it hands the file back to the editor
  * JupyterLab would have opened it in without Megane — the same rule the VS Code
  * extension applies.

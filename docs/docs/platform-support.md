@@ -43,7 +43,7 @@ Legend:
 | MOL2 | `.mol2` | ✓ | API | ✓ | ✓ | ✓ | ✓ |
 | CIF | `.cif` | ✓ | API | ✓ | ✓ | ✓ | ✓ |
 | mmCIF | `.mmcif` | ✓ | API | ✓ | ✓ | ✓ | API |
-| LAMMPS data | `.data`, `.lammps`, `data.*` | ✓ | API | ✓ | ✓ | ✓ | ✓ |
+| LAMMPS data | `.data`, `.lammps`, `data.*`, `*.data.<n>` | ✓ | API | ✓ | ✓ | ✓ | ✓ |
 | AMBER topology | `.prmtop` | ✓ | API | ✓ | ✓ | ✓ | API |
 | ASE trajectory | `.traj` | ✓ | API | ✓ | ✓ | ✓ | ✓ |
 | LAMMPS dump | `.lammpstrj`, `.dump`, `.trj`, `dump.*` | ✓ | API | ✓ | ✓ | ✓ | ✓ |
@@ -128,9 +128,14 @@ Note: **LAMMPS** names files by a **leading** keyword as often as by an
 extension — `read_data data.peptide`, `write_data data.final`,
 `dump 1 all atom 100 dump.melt` — so a name that starts with `data.` opens as
 LAMMPS data and one that starts with `dump.` as a LAMMPS dump, as if it ended in
-`.data` / `.dump`. A name that also ends in an extension Megane reads is that
-format instead (`dump.xyz`, what LAMMPS's `dump xyz` style writes, is XYZ;
-`data.lammps` is LAMMPS data by its extension). The rule is
+`.data` / `.dump`. Numbered data files carry the keyword in the middle
+(`write_data sample.data.${i}` → `sample.data.001`), so a name with `.data.`
+after its first character and followed by a digit opens as LAMMPS data too; a
+word there (`seed.data.ts`, `user.data.json`) is another program's file and is
+left alone ([#957](https://github.com/megane-labs/megane/issues/957)). A name
+that also ends in an extension Megane reads is that format instead (`dump.xyz`,
+what LAMMPS's `dump xyz` style writes, is XYZ; `data.lammps` is LAMMPS data by
+its extension; `sample.data.1.xyz` is XYZ). The rule is
 `megane_core::formats::lammps_prefix_extension`, mirrored by `lammpsPrefixExt`
 (`src/parsers/fileNames.ts`) and `lammps_prefix_ext`
 (`python/megane/parsers/dispatch.py`) and pinned by one case table,
@@ -138,10 +143,10 @@ format instead (`dump.xyz`, what LAMMPS's `dump xyz` style writes, is XYZ;
 Load Structure / Load Trajectory nodes (`dump.*` attaches onto a topology like
 `.lammpstrj`), `.megane.json` companions, the Python API and `megane serve`, and
 the default bond source (`data.*` uses the file's Bonds section). VS Code
-(`customEditors` selectors `data.*` / `dump.*`) and JupyterLab (an
-`IFileType.pattern` on the LAMMPS data / dump file types) open these names by
-default, but a leading `data.` is common outside LAMMPS too (`data.json`,
-`data.csv`, `dump.sql`): JupyterLab's pattern skips names ending in an extension
+(`customEditors` selectors `data.*` / `dump.*` / `?*.data.[0-9]*`) and
+JupyterLab (an `IFileType.pattern` on the LAMMPS data / dump file types) open
+these names by default, but they are common outside LAMMPS too (`data.json`,
+`data.csv`, `dump.sql`, `results.data.1`): JupyterLab's pattern skips names ending in an extension
 another file type claims, and on both hosts, when the name was all that made
 Megane the default, the first 64 KiB are checked (`src/hosts/lammpsPrefixFiles.ts`:
 a data file states `N atoms` or `xlo xhi` after its comment line, a dump opens
@@ -152,7 +157,8 @@ LAMMPS writes its log to `log.lammps` by default and input scripts are often
 to the text editor. The header is read only as far as its lines open with a
 number, since a log also prints `N atoms` once it has read a data file. The
 Standalone file dialog cannot filter by a leading name either, so drag these
-files onto the node (or switch the picker to "All Files").
+files onto the node (or switch the picker to "All Files"). Megane Builder offers
+the same names from the JupyterLab file browser and the VS Code Explorer.
 
 Note: **VASP** files are dispatched by **filename**, not only by extension: `POSCAR`, `CONTCAR`, and `XDATCAR` are conventionally written
 with no extension at all. `src/parsers/fileNames.ts` maps those bare names (and
