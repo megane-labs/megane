@@ -27,6 +27,7 @@ import {
 } from "./lib/hosts/jupyterlab";
 import { expectGifFile, openRenderModal, useSmallGifExport } from "./lib/render-modal";
 import { expectTooltipNearCursor } from "./lib/tooltip";
+import { expectCalloutOnTarget, readCallout, tourStepTo } from "./lib/tour";
 
 const PLATFORM = "jupyterlab-doc";
 
@@ -202,6 +203,38 @@ test("data.* files that are not LAMMPS open in JupyterLab's own editors", async 
     "json",
     "megane-xyz",
   ]);
+});
+
+/**
+ * The guided tour auto-starts in JupyterLab, where the viewer's panel moves
+ * whenever a sidebar opens or a splitter is dragged: the window keeps its
+ * size, so driver.js never re-placed the callout (#964).
+ */
+test("the guided tour's callout follows its control when a sidebar opens", async ({ page }) => {
+  await page.setViewportSize({ width: 1400, height: 900 });
+  await openLabFile(page, { port: PORT, token: TOKEN, file: "1crn.pdb" });
+  // The pipeline panel hangs on the right edge of the main area, so the
+  // right sidebar is the one that moves its rail.
+  const toggleRightArea = () =>
+    page.evaluate(() =>
+      (
+        window as unknown as { jupyterapp: { commands: { execute(id: string): Promise<unknown> } } }
+      ).jupyterapp.commands.execute("application:toggle-right-area"),
+    );
+  // Start with the right sidebar closed, then open it mid-tour.
+  if (await page.locator("#jp-right-stack").isVisible()) await toggleRightArea();
+  await page.locator('[data-testid="pipeline-editor-guide"]').click();
+  await tourStepTo(page, "Templates");
+  const before = await readCallout(page);
+  expectCalloutOnTarget(before);
+
+  await toggleRightArea();
+  await expect(page.locator("#jp-right-stack")).toBeVisible();
+  await expect
+    .poll(async () => (await readCallout(page)).target!.left)
+    .toBeLessThan(before.target!.left - 100);
+  await page.waitForTimeout(400);
+  expectCalloutOnTarget(await readCallout(page));
 });
 
 /** Open the Templates menu and apply the template with this id. */
