@@ -12,7 +12,7 @@ import { decodeBase64 } from "@megane/utils/base64";
  * File extensions the file browser offers to open in the Builder: the
  * structure formats with coordinates (the list the VS Code extension's
  * Explorer entry uses). VASP's POSCAR / CONTCAR / XDATCAR go by name, as do
- * LAMMPS's `data.*` / `dump.*`.
+ * LAMMPS's `data.*` / `dump.*` and numbered `*.data.<number>`.
  */
 export const BUILDER_EXTENSIONS = [
   "pdb",
@@ -44,7 +44,7 @@ export const BUILDER_EXTENSIONS = [
   "phonon",
 ];
 const BUILDER_NAME = new RegExp(
-  `(\\.(${BUILDER_EXTENSIONS.join("|")})$)|^(POSCAR|CONTCAR|XDATCAR)|^(data|dump)\\..`,
+  `(\\.(${BUILDER_EXTENSIONS.join("|")})$)|^(POSCAR|CONTCAR|XDATCAR)|^(data|dump)\\..|.\\.data\\.[0-9]`,
   "i",
 );
 

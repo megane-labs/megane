@@ -194,7 +194,7 @@ function App() {
 | XYZ | `.xyz`, `.jxyz`, `.extxyz` | Cartesian coordinate format, incl. multi-frame and `Lattice=` extended XYZ. `.jxyz` (Jmol) and `.extxyz` (ASE extended XYZ) are second extensions for the same format |
 | MOL/SDF | `.mol`, `.sdf` | MDL Molfile / SDfile (V2000 and V3000) |
 | MOL2 | `.mol2` | Tripos MOL2 (aromatic bonds, optional `CRYSIN` unit cell; only the first molecule of a multi-molecule file is read) |
-| LAMMPS data | `.data`, `.lammps`, `data.*` | LAMMPS data file. LAMMPS's own `data.<name>` naming is matched by filename too |
+| LAMMPS data | `.data`, `.lammps`, `data.*`, `*.data.<n>` | LAMMPS data file. LAMMPS's own `data.<name>` naming, and numbered `<name>.data.<n>` files, are matched by filename too |
 | CIF | `.cif` | Crystallographic Information File |
 | mmCIF | `.mmcif` | Macromolecular CIF (PDBx/mmCIF) |
 | AMBER topology | `.prmtop` | AMBER parameter/topology file (atom names, elements, bonds) |

@@ -74,8 +74,45 @@ describe("vscode-megane package.json", () => {
         // handed back to the text editor (`handOffForeignPrefixFile`).
         "data.*",
         "dump.*",
+        // Numbered data files (`sample.data.001`). Only a digit after the
+        // `.data.`, so source files such as `seed.data.ts` keep their editor.
+        "?*.data.[0-9]*",
       ].sort(),
     );
+  });
+
+  it("its LAMMPS name selectors catch every LAMMPS-style name in the shared table", () => {
+    const editor = manifest.contributes.customEditors.find(
+      (e) => e.viewType === "megane.structureViewer",
+    )!;
+    // VS Code matches a selector without a "/" against the lower-cased
+    // basename; these selectors use only `?`, `*` and `[0-9]`.
+    const globToRegExp = (glob: string) =>
+      new RegExp(
+        `^${glob
+          .toLowerCase()
+          .replace(/[.+^${}()|\\]/g, "\\$&")
+          .replace(/\?/g, "[^/]")
+          .replace(/\*/g, "[^/]*")}$`,
+      );
+    const lammpsSelectors = ["data.*", "dump.*", "?*.data.[0-9]*"];
+    for (const s of lammpsSelectors) {
+      expect(editor.selector.map((sel) => sel.filenamePattern)).toContain(s);
+    }
+    const claimed = (name: string) =>
+      lammpsSelectors.some((s) => globToRegExp(s).test(name.split(/[\\/]/).pop()!.toLowerCase()));
+    const cases = (
+      JSON.parse(
+        readFileSync(resolve(__dirname, "../../fixtures/lammps_prefix_names.json"), "utf8"),
+      ) as { cases: Array<{ name: string; ext: string | null }> }
+    ).cases;
+    for (const { name, ext } of cases) {
+      if (ext !== null) expect(claimed(name), name).toBe(true);
+    }
+    // Other programs' files with `.data.` in the name keep their editor.
+    for (const name of ["seed.data.ts", "user.data.json", "sample.data.final", ".data.001"]) {
+      expect(claimed(name), name).toBe(false);
+    }
   });
 
   it("mentions XCrySDen XSF in the marketplace description", () => {
@@ -92,6 +129,7 @@ describe("vscode-megane package.json", () => {
 
   it("mentions LAMMPS's data.* / dump.* file names in the marketplace description", () => {
     expect(manifest.description).toContain("data.* / dump.*");
+    expect(manifest.description).toContain("*.data.<n>");
   });
 
   it("mentions VASP in the marketplace description", () => {

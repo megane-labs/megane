@@ -59,7 +59,7 @@ const plugin: JupyterFrontEndPlugin<void> = {
     // documents load no content (see rawModel.ts).
     app.docRegistry.addModelFactory(new MeganeRawModelFactory());
 
-    // LAMMPS's `data.*` / `dump.*` names are claimed by pattern, except
+    // LAMMPS's `data.*` / `dump.*` / `*.data.<n>` names are claimed by pattern, except
     // those ending in an extension a registered file type (JupyterLab's
     // `.json`, `.csv`, …) already claims.
     const registeredExtensions = [...app.docRegistry.fileTypes()].flatMap(

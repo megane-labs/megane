@@ -113,6 +113,9 @@ def test_lammps_prefix_ext_follows_the_shared_case_table(case):
         ("dump.xyz", ".xyz"),
         ("data.lammps", ".lammps"),
         ("C:\\runs\\data.npt", ".data"),
+        ("runs/sample.data.001", ".data"),
+        ("sample.data.1.xyz", ".xyz"),
+        ("seed.data.ts", ".ts"),
     ],
 )
 def test_structure_ext_resolves_lammps_prefix_names(path, ext):
@@ -132,6 +135,9 @@ def test_lammps_prefix_names_read_like_their_extension():
     reference = load_structure_file(str(FIXTURES / "water.lammps"))
     np.testing.assert_array_equal(data.positions, reference.positions)
     np.testing.assert_array_equal(data.bonds, reference.bonds)
+    numbered = load_structure_file(str(FIXTURES / "water.data.001"))
+    np.testing.assert_array_equal(numbered.positions, reference.positions)
+    np.testing.assert_array_equal(numbered.bonds, reference.bonds)
     dump = load_structure_file(str(FIXTURES / "dump.water"))
     np.testing.assert_array_equal(dump.positions, load_structure_file(str(FIXTURES / "water.lammpstrj")).positions)
 
@@ -140,6 +146,7 @@ def test_default_bond_source_reads_lammps_prefix_names():
     from megane import megane_parser
 
     assert megane_parser.default_bond_source("data.peptide") == "structure"
+    assert megane_parser.default_bond_source("sample.data.001") == "structure"
     assert megane_parser.default_bond_source("dump.melt") == "distance"
 
 

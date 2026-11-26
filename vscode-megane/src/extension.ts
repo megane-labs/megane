@@ -162,7 +162,8 @@ interface SaveFileMessage {
  * NetCDF), topologies without coordinates (prmtop), volumetric grids and
  * spectra are left out. VASP's extension-less POSCAR / CONTCAR / XDATCAR are
  * matched by name (`BUILDER_FILENAME_PREFIXES`), as are LAMMPS's `data.*` /
- * `dump.*` (`BUILDER_LAMMPS_PREFIXES`). The `explorer/context` menu's `when`
+ * `dump.*` (`BUILDER_LAMMPS_PREFIXES`) and numbered `*.data.<number>`
+ * (`sample.data.001`). The `explorer/context` menu's `when`
  * clause in package.json mirrors the three lists (checked by the tests).
  */
 export const BUILDER_EXTENSIONS = [
@@ -223,8 +224,9 @@ export async function readFileHead(uri: vscode.Uri, bytes: number): Promise<Uint
 
 /**
  * Give a file back to the editor VS Code would open it in without megane:
- * the structure viewer's `data.*` / `dump.*` selectors (LAMMPS's file naming)
- * also catch `data.json`, `data.csv` or `dump.sql`, its `*.lammps` selector
+ * the structure viewer's `data.*` / `dump.*` / `?*.data.[0-9]*` selectors
+ * (LAMMPS's file naming) also catch `data.json`, `data.csv`, `dump.sql` or
+ * another program's `results.data.1`, its `*.lammps` selector
  * LAMMPS's own log (`log.lammps`), and a glob cannot tell those apart by name. When the name is all that made the viewer the default
  * and the file does not start like the LAMMPS format that name claims
  * (`isForeignLammpsPrefixFile`), the file is reopened in the default text

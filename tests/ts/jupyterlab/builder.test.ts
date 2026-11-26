@@ -99,9 +99,11 @@ describe("contents helpers", () => {
       "POSCAR",
       "CONTCAR_relaxed",
       "a/b.cif",
-      // LAMMPS's leading-keyword names.
+      // LAMMPS's leading-keyword names, and numbered data files.
       "sims/data.peptide",
       "dump.melt",
+      "sims/sample.data.001",
+      "Water.DATA.7",
     ]) {
       expect(isBuilderPath(p)).toBe(true);
     }
@@ -113,6 +115,8 @@ describe("contents helpers", () => {
       "XYZ",
       "mydata.peptide",
       "data",
+      "seed.data.ts",
+      "sample.data.",
     ]) {
       expect(isBuilderPath(p)).toBe(false);
     }

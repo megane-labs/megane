@@ -41,6 +41,9 @@ describe("LAMMPS prefix names in the dispatch helpers", () => {
     expect(structureExtFromFileName("runs/data.peptide")).toBe(".data");
     expect(structureExtFromFileName("DUMP.melt")).toBe(".dump");
     expect(structureExtFromFileName("dump.1000.atom")).toBe(".dump");
+    // Numbered data files, `.data.` in the middle (#957).
+    expect(structureExtFromFileName("runs/sample.data.001")).toBe(".data");
+    expect(structureExtFromFileName("sample.data.1.xyz")).toBe(".xyz");
     // The extension still wins when Megane reads it.
     expect(structureExtFromFileName("dump.xyz")).toBe(".xyz");
     expect(structureExtFromFileName("data.pdb")).toBe(".pdb");
@@ -52,6 +55,8 @@ describe("LAMMPS prefix names in the dispatch helpers", () => {
     expect(matchesStructureName("data.peptide", [".pdb", ".dump"])).toBe(false);
     expect(matchesStructureName("dump.melt", [".pdb", ".dump"])).toBe(true);
     expect(matchesStructureName("mydata.peptide", STRUCTURE_EXTS)).toBe(false);
+    expect(matchesStructureName("sample.data.001", STRUCTURE_EXTS)).toBe(true);
+    expect(matchesStructureName("seed.data.ts", STRUCTURE_EXTS)).toBe(false);
   });
 
   it("trajectoryKindFromFileName reads dump.* as a LAMMPS dump, but not data.*", () => {
@@ -59,6 +64,7 @@ describe("LAMMPS prefix names in the dispatch helpers", () => {
     expect(trajectoryKindFromFileName("out/Dump.NVT")).toBe("lammpstrj");
     expect(trajectoryKindFromFileName("dump.xtc")).toBe("xtc");
     expect(trajectoryKindFromFileName("data.peptide")).toBeNull();
+    expect(trajectoryKindFromFileName("sample.data.001")).toBeNull();
   });
 
   it("matchesTrajectoryName is the trajectory drag-drop guard", () => {

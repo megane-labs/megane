@@ -289,16 +289,21 @@ macro_rules! define_trajectory_formats {
 
 for_each_trajectory_format!(define_trajectory_formats);
 
-/// The extension a LAMMPS file named by its leading keyword dispatches under:
-/// `".data"` for `data.<name>`, `".dump"` for `dump.<name>`, `None` otherwise.
+/// The extension a LAMMPS file named LAMMPS-style dispatches under: `".data"`
+/// for `data.<name>` and for a numbered `<name>.data.<number>`, `".dump"` for
+/// `dump.<name>`, `None` otherwise.
 ///
 /// LAMMPS names files by what they are rather than by an extension —
 /// `read_data data.peptide`, `write_data data.final`,
 /// `dump 1 all atom 100 dump.melt` — so the file name's *first* word, not its
-/// last, says which parser reads it. A name that also ends in a registered
-/// extension is that format instead: LAMMPS's `dump xyz` style writes an XYZ
-/// file, conventionally `dump.xyz`, and `data.lammps` is already LAMMPS data by
-/// its extension.
+/// last, says which parser reads it. Sequential data files are also numbered
+/// after the word (`write_data sample.data.${i}` → `sample.data.001`): a
+/// `.data.` in the middle followed by a digit names LAMMPS data too. Only a
+/// digit: a word there (`seed.data.ts`, `user.data.json`) is another
+/// program's file. A name that also ends in a registered extension is that
+/// format instead: LAMMPS's `dump xyz` style writes an XYZ file,
+/// conventionally `dump.xyz`, `data.lammps` is already LAMMPS data by its
+/// extension, and `sample.data.1.xyz` is XYZ.
 ///
 /// Matching is case-insensitive on the basename (either path separator). This
 /// is the canonical rule; `lammpsPrefixExt` in `src/parsers/fileNames.ts` and
@@ -311,13 +316,12 @@ pub fn lammps_prefix_extension(file_name: &str) -> Option<&'static str> {
         .next()
         .unwrap_or(file_name)
         .to_ascii_lowercase();
-    let (rest, ext) = match base.strip_prefix("data.") {
-        Some(rest) => (rest, ".data"),
-        None => (base.strip_prefix("dump.")?, ".dump"),
+    let ext = match (base.strip_prefix("data."), base.strip_prefix("dump.")) {
+        (Some(rest), _) if !rest.is_empty() => ".data",
+        (_, Some(rest)) if !rest.is_empty() => ".dump",
+        _ if has_numbered_data_infix(&base) => ".data",
+        _ => return None,
     };
-    if rest.is_empty() {
-        return None;
-    }
     let last = &base[base.rfind('.').unwrap_or(0)..];
     if StructureFormat::from_extension(last).is_some()
         || TrajectoryFormat::from_extension(last).is_some()
@@ -325,6 +329,15 @@ pub fn lammps_prefix_extension(file_name: &str) -> Option<&'static str> {
         return None;
     }
     Some(ext)
+}
+
+/// Whether the lower-cased basename `base` has a `.data.` after at least one
+/// character and followed by a digit (`sample.data.001`).
+fn has_numbered_data_infix(base: &str) -> bool {
+    base.as_bytes()
+        .windows(7)
+        .skip(1)
+        .any(|w| w.starts_with(b".data.") && w[6].is_ascii_digit())
 }
 
 /// Parse a `.cif` file, auto-detecting mmCIF (PDBx/macromolecular) vs

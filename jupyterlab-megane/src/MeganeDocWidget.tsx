@@ -81,8 +81,8 @@ function DocBody({
         if (token.cancelled) return;
         const serverFile = await served;
         if (token.cancelled) return;
-        // A `data.json` the LAMMPS `data.*` file type pattern caught, or a
-        // `log.lammps` the `.lammps` extension did, goes back to JupyterLab's
+        // A `data.notes` or `results.data.1` the LAMMPS file type pattern
+        // caught, or a `log.lammps` the `.lammps` extension did, goes back to JupyterLab's
         // own editor, before the shared store is touched. Its first bytes
         // decide, and the head holds them.
         const head = serverFile.kind === "whole" ? serverFile.bytes : serverFile.file.head;

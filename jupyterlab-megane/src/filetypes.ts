@@ -83,9 +83,10 @@ export const STRUCTURE_FILETYPES_TEXT: DocumentRegistry.IFileType[] = [
     contentType: "file",
   },
   {
-    // LAMMPS also names files by a leading keyword (`data.peptide`); the
-    // plugin gives this entry and `megane-lammps-dump` a `pattern` for those
-    // names at activation (`withLammpsPrefixPatterns`).
+    // LAMMPS also names files by a leading keyword (`data.peptide`), and
+    // numbered data files by the keyword in the middle (`sample.data.001`);
+    // the plugin gives this entry and `megane-lammps-dump` a `pattern` for
+    // those names at activation (`withLammpsPrefixPatterns`).
     name: "megane-lammps-data",
     displayName: "LAMMPS data",
     extensions: [".data", ".lammps"],
@@ -271,6 +272,12 @@ export const LAMMPS_PREFIX_FILETYPES: Readonly<Record<string, string>> = {
   dump: "megane-lammps-dump",
 };
 
+/**
+ * The LAMMPS keywords that also name a numbered file from the middle of its
+ * name, `<name>.data.<number>` (`sample.data.001`; see `lammpsPrefixExt`).
+ */
+export const LAMMPS_INFIX_KEYWORDS: readonly string[] = ["data"];
+
 /** `text` as a regex source matching it in any letter case (`ab.c` → `[Aa][Bb]\.[Cc]`). */
 function anyCase(text: string): string {
   return [...text]
@@ -284,20 +291,25 @@ function anyCase(text: string): string {
 }
 
 /**
- * The `IFileType.pattern` for LAMMPS's leading-keyword names, `keyword.<name>`
- * (see `lammpsPrefixExt` in `src/parsers/fileNames.ts`): the keyword in any
- * case, followed by a name that does not end in any of `knownExtensions`. A
- * name ending in an extension some file type already claims keeps opening the
- * way that file type says — `dump.xyz` as XYZ, `data.json` and `data.csv` in
- * JupyterLab's own viewers. JupyterLab compiles the pattern without flags and
- * tries it before matching extensions, hence the spelled-out letter cases.
+ * The `IFileType.pattern` for LAMMPS's names (see `lammpsPrefixExt` in
+ * `src/parsers/fileNames.ts`): the keyword in any case at the start,
+ * `keyword.<name>`, or — for the `LAMMPS_INFIX_KEYWORDS` — in the middle
+ * followed by a digit, `<name>.keyword.<number>`; either way followed by a
+ * name that does not end in any of `knownExtensions`. A name ending in an
+ * extension some file type already claims keeps opening the way that file
+ * type says — `dump.xyz` as XYZ, `data.json`, `data.csv` and
+ * `sample.data.1.csv` in JupyterLab's own viewers. JupyterLab compiles the
+ * pattern without flags and tries it before matching extensions, hence the
+ * spelled-out letter cases.
  */
 export function lammpsPrefixPattern(keyword: string, knownExtensions: Iterable<string>): string {
   const exts = [...new Set([...knownExtensions].map((e) => e.toLowerCase().replace(/^\./, "")))]
     .filter((e) => e.length > 0)
     .sort((a, b) => b.length - a.length);
   const exclude = exts.length ? `(?!(?:.*\\.)?(?:${exts.map(anyCase).join("|")})$)` : "";
-  return `^${anyCase(keyword)}\\.${exclude}.+$`;
+  const word = anyCase(keyword);
+  const infix = LAMMPS_INFIX_KEYWORDS.includes(keyword) ? `|.+\\.${word}\\.(?=[0-9])` : "";
+  return `^(?:${word}\\.${infix})${exclude}.+$`;
 }
 
 /**

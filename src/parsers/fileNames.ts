@@ -8,7 +8,8 @@
  * - VASP writes `POSCAR`, `CONTCAR`, and `XDATCAR` with **no extension at
  *   all**; they map onto the synthetic `.vasp` extension.
  * - LAMMPS names files by a **leading** keyword (`data.peptide`,
- *   `dump.melt`); they map onto `.data` / `.dump` (`lammpsPrefixExt`).
+ *   `dump.melt`), and numbered data files by a keyword in the middle
+ *   (`sample.data.001`); they map onto `.data` / `.dump` (`lammpsPrefixExt`).
  *
  * This module is the single place that maps such filenames onto the extension
  * the rest of the pipeline already understands, so the worker, the
@@ -53,16 +54,24 @@ export const LAMMPS_DUMP_EXT = ".dump";
 /** `data.<name>` / `dump.<name>`, matched against the lower-cased basename. */
 const LAMMPS_PREFIX_RE = /^(data|dump)\.(.+)$/;
 
+/** `<name>.data.<number>`, matched against the lower-cased basename. */
+const LAMMPS_DATA_INFIX_RE = /^.+\.data\.[0-9]/;
+
 /**
- * The extension a LAMMPS file named by its leading keyword dispatches under:
- * `.data` for `data.<name>`, `.dump` for `dump.<name>`, `null` otherwise.
+ * The extension a LAMMPS file named LAMMPS-style dispatches under: `.data`
+ * for `data.<name>` and for a numbered `<name>.data.<number>`, `.dump` for
+ * `dump.<name>`, `null` otherwise.
  *
  * LAMMPS names files by what they are rather than by an extension —
  * `read_data data.peptide`, `write_data data.final`,
  * `dump 1 all atom 100 dump.melt` — so the name's *first* word says which
- * parser reads it. A name that also ends in an extension Megane reads is that
- * format instead: LAMMPS's `dump xyz` style writes an XYZ file, conventionally
- * `dump.xyz`, and `data.lammps` is LAMMPS data by its extension already.
+ * parser reads it. Sequential data files are also numbered after the word
+ * (`write_data sample.data.${i}` → `sample.data.001`): a `.data.` in the
+ * middle followed by a digit names LAMMPS data too. Only a digit: a word
+ * there (`seed.data.ts`, `user.data.json`) is another program's file. A name
+ * that also ends in an extension Megane reads is that format instead: LAMMPS's
+ * `dump xyz` style writes an XYZ file, conventionally `dump.xyz`, `data.lammps`
+ * is LAMMPS data by its extension already, and `sample.data.1.xyz` is XYZ.
  *
  * Mirrors `megane_core::formats::lammps_prefix_extension` (the canonical rule)
  * and `lammps_prefix_ext` in `python/megane/parsers/dispatch.py`; all of them
@@ -71,10 +80,13 @@ const LAMMPS_PREFIX_RE = /^(data|dump)\.(.+)$/;
 export function lammpsPrefixExt(name: string): string | null {
   const lower = basename(name).toLowerCase();
   const match = LAMMPS_PREFIX_RE.exec(lower);
-  if (!match) return null;
+  let ext: string;
+  if (match) ext = match[1] === "data" ? LAMMPS_DATA_EXT : LAMMPS_DUMP_EXT;
+  else if (LAMMPS_DATA_INFIX_RE.test(lower)) ext = LAMMPS_DATA_EXT;
+  else return null;
   const last = lower.slice(lower.lastIndexOf("."));
   if (STRUCTURE_EXTS.includes(last) || TRAJECTORY_KIND_BY_EXT.has(last)) return null;
-  return match[1] === "data" ? LAMMPS_DATA_EXT : LAMMPS_DUMP_EXT;
+  return ext;
 }
 
 /**

@@ -108,6 +108,14 @@ const STRUCTURE_CASES: StructureCase[] = [
     expectedAtoms: 3,
     baseline: "lammpstrj-water",
   },
+  // A numbered data file, `.data.` in the middle (#957): the same bytes again.
+  {
+    name: "lammps-data-numbered",
+    file: "water.data.001",
+    mime: "text/plain",
+    expectedAtoms: 3,
+    baseline: "lammps-water",
+  },
   // XCrySDen: a static CRYSTAL cell and an ANIMSTEPS animation whose extra
   // frames feed the playback timeline.
   { name: "xsf-si-diamond", file: "si_diamond.xsf", mime: "text/plain", expectedAtoms: 8 },
