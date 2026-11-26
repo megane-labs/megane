@@ -73,6 +73,8 @@ const CRN_PIPELINE_JSON = {
 const LAMMPS_PREFIX_FILES = ["data.water", "dump.water", "water.data.001"];
 /** `data.*` / `*.data.<n>` names no JupyterLab file type claims, holding something else. */
 const FOREIGN_DATA_FILES = ["data.notes", "results.data.1"];
+/** An ASE geometry optimization as BFGS writes it (#960). */
+const OPTIMIZATION_TRAJ = "cu_slab_opt.traj";
 
 let lab: JupyterLabHandle | null = null;
 
@@ -90,6 +92,10 @@ test.beforeAll(async () => {
   for (const f of LAMMPS_PREFIX_FILES) {
     copyFileSync(join(REPO, "tests", "fixtures", f), join(NOTEBOOK_DIR, f));
   }
+  copyFileSync(
+    join(REPO, "tests", "fixtures", OPTIMIZATION_TRAJ),
+    join(NOTEBOOK_DIR, OPTIMIZATION_TRAJ),
+  );
   for (const f of FOREIGN_DATA_FILES) {
     writeFileSync(join(NOTEBOOK_DIR, f), "Run notes, not a LAMMPS data file.\n");
   }
@@ -203,6 +209,26 @@ test("data.* files that are not LAMMPS open in JupyterLab's own editors", async 
     "json",
     "megane-xyz",
   ]);
+});
+
+/**
+ * #960: opening an ASE optimization trajectory made the viewer unresponsive.
+ * Its frames carry a FixAtoms constraint, tags and the calculator's results
+ * besides the positions; every frame must load and stay reachable.
+ */
+test("DocWidget opens an ASE optimization .traj and steps through it", async ({ page }) => {
+  await openLabFile(page, { port: PORT, token: TOKEN, file: OPTIMIZATION_TRAJ });
+  await assertDomContract(page, [
+    ...defaultViewerContract({ expectedAtoms: 38, context: "jupyterlab-doc" }),
+  ]);
+  const viewer = page.locator('[data-testid="megane-viewer"]');
+  await expect(viewer).toHaveAttribute("data-total-frames", "9");
+  const seek = page.locator('[data-testid="playback-seekbar"]');
+  await seek.focus();
+  await page.keyboard.press("End");
+  await expect(viewer).toHaveAttribute("data-current-frame", "8");
+  await page.keyboard.press("Home");
+  await expect(viewer).toHaveAttribute("data-current-frame", "0");
 });
 
 /**
