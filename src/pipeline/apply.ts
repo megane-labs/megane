@@ -121,6 +121,7 @@ export function applyViewportState(
         bond.positions,
         bond.elements,
         bond.nAtoms,
+        bond.ghostSourceIndices ?? bond.imageMap?.sourceIndices ?? null,
       );
       layer.setBondScale(bond.scale);
       if (bond.bondOpacityOverrides) {
@@ -379,6 +380,7 @@ function applyBondSettings(
       bond.elements,
       bond.nAtoms,
       bond.imageMap ?? null,
+      bond.ghostSourceIndices ?? null,
     );
   }
 

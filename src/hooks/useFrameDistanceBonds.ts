@@ -14,6 +14,8 @@ export interface FrameBondRenderer {
     positions: Float32Array | null,
     elements: Uint8Array | null,
     nAtoms: number,
+    imageMap?: null,
+    ghostSources?: Uint32Array | null,
   ): void;
 }
 
@@ -77,6 +79,9 @@ export function useFrameDistanceBonds(options: {
       frameArrays ? frame.positions : result.positions,
       frameArrays ? elements : result.elements,
       frameArrays ? nAtoms : result.nAtoms,
+      null,
+      // Which atom each ghost copies, so a recolored atom recolors its stubs.
+      result.ghostSourceIndices ?? null,
     );
     onBondCount?.(result.nBonds);
   }, [enabled, snapshot, frame, vdwScale, rendererRef, onBondCount]);

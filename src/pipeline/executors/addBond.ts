@@ -353,9 +353,10 @@ export function processPbcBonds(
   const outBonds = new Uint32Array(totalBonds * 2);
   const outOrders = bondOrders ? new Uint8Array(totalBonds) : null;
 
-  // Ghost atoms: 2 per PBC bond
+  // Ghost atoms: 2 per PBC bond, each a copy of the atom at the bond's other end
   const ghostPositions: number[] = [];
   const ghostElements: number[] = [];
+  const ghostSources: number[] = [];
   let ghostIdx = nAtoms;
   let outIdx = 0;
 
@@ -397,6 +398,7 @@ export function processPbcBonds(
         positions[i * 3 + 2] + dzMin,
       );
       ghostElements.push(elements[j]);
+      ghostSources.push(j);
       outBonds[outIdx * 2] = i;
       outBonds[outIdx * 2 + 1] = ghostIdx;
       if (outOrders && bondOrders) outOrders[outIdx] = bondOrders[b];
@@ -410,6 +412,7 @@ export function processPbcBonds(
         positions[j * 3 + 2] - dzMin,
       );
       ghostElements.push(elements[i]);
+      ghostSources.push(i);
       outBonds[outIdx * 2] = j;
       outBonds[outIdx * 2 + 1] = ghostIdx;
       if (outOrders && bondOrders) outOrders[outIdx] = bondOrders[b];
@@ -436,6 +439,7 @@ export function processPbcBonds(
     positions: extPositions,
     elements: extElements,
     nAtoms: ghostIdx,
+    ghostSourceIndices: new Uint32Array(ghostSources),
   };
 }
 

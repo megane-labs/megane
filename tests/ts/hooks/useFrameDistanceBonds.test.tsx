@@ -142,10 +142,14 @@ describe("useFrameDistanceBonds with a heterogeneous frame", () => {
       elements: new Uint8Array([14, 14, 18]),
     };
 
-    const { bonds, positions, elements, nAtoms } = bondCall(run(siPair, grown));
+    const renderer = run(siPair, grown);
+    const { bonds, positions, elements, nAtoms } = bondCall(renderer);
 
     // Ghosts are numbered after all three real atoms…
     expect(bonds).toEqual([0, 3, 1, 4]);
+    // …each naming the atom it copies, so a recolor reaches the stubs…
+    const ghostSources = vi.mocked(renderer.updateBondsExt).mock.calls[0][6];
+    expect(Array.from(ghostSources!)).toEqual([1, 0]);
     expect(nAtoms).toBe(5);
     expect(Array.from(elements!)).toEqual([14, 14, 18, 14, 14]);
     // …and every half-bond is as long as the 2.3 Å bond, none reaches the Ar.

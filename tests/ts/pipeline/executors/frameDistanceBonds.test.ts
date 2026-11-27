@@ -33,6 +33,8 @@ describe("computeFrameDistanceBonds", () => {
     // Ghost of atom 0 sits at its minimum image next to atom 1.
     expect(result.positions![3 * 3]).toBeCloseTo(10.2, 5);
     expect(result.elements![3]).toBe(8);
+    // Each ghost names the atom it copies, so it can take that atom's color.
+    expect(Array.from(result.ghostSourceIndices!)).toEqual([1, 0]);
   });
 
   it("keeps ghost indices on their ghosts when the buffers hold more than nAtoms", () => {

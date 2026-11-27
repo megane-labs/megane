@@ -128,6 +128,50 @@ describe("ImpostorBondMesh.recomputeColorsFromAtomBuffer", () => {
     // B half = ghost (Z=6) element color, not black.
     expectRgb(b(0), getColor(6));
   });
+
+  it("colors a ghost endpoint as the atom it copies when the source is known", () => {
+    // Real atoms: 0 (Ga, recolored pink), 1 (N, blue). Ghosts 2 and 3 are the
+    // periodic copies of atoms 0 and 1 that two half-bonds reach.
+    const extSnap = {
+      nAtoms: 4,
+      nBonds: 2,
+      positions: rgba8([0, 0, 0, 1, 0, 0, 2, 0, 0, -1, 0, 0]),
+      elements: new Uint8Array([31, 7, 31, 7]),
+      bonds: new Uint32Array([1, 2, 0, 3]),
+      bondOrders: null,
+    } as Snapshot;
+    const mesh = new ImpostorBondMesh(16);
+    mesh.loadSnapshot(extSnap);
+
+    const pink = [1, 0.4, 0.7];
+    const blue = [0, 0, 1];
+    mesh.recomputeColorsFromAtomBuffer(rgba8([...pink, ...blue]), extSnap, new Uint32Array([0, 1]));
+
+    const { a, b } = buffers(mesh);
+    expectRgb(a(0), blue);
+    // The stub's far half is Ga's pink, not Ga's default (VESTA green).
+    expectRgb(b(0), pink);
+    expectRgb(a(1), pink);
+    expectRgb(b(1), blue);
+  });
+
+  it("falls back to the element color for a ghost whose source is out of range", () => {
+    const extSnap = {
+      nAtoms: 3,
+      nBonds: 1,
+      positions: rgba8([0, 0, 0, 1, 0, 0, 2, 0, 0]),
+      elements: new Uint8Array([6, 8, 31]),
+      bonds: new Uint32Array([1, 2]),
+      bondOrders: null,
+    } as Snapshot;
+    const mesh = new ImpostorBondMesh(16);
+    mesh.loadSnapshot(extSnap);
+    // Source 7 is no real atom; an empty map names nothing at all.
+    mesh.recomputeColorsFromAtomBuffer(rgba8([1, 0, 0, 0, 1, 0]), extSnap, new Uint32Array([7]));
+    expectRgb(buffers(mesh).b(0), getColor(31));
+    mesh.recomputeColorsFromAtomBuffer(rgba8([1, 0, 0, 0, 1, 0]), extSnap, new Uint32Array());
+    expectRgb(buffers(mesh).b(0), getColor(31));
+  });
 });
 
 describe("ImpostorBondMesh.loadSnapshot split coloring", () => {

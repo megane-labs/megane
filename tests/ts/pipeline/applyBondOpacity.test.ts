@@ -139,3 +139,42 @@ describe("applyViewportState — bond opacity", () => {
     expect(layer.drawn()).toEqual([0.6, 0.6]);
   });
 });
+
+describe("applyViewportState — bonds across the cell", () => {
+  it("forwards each PBC ghost's source atom to the renderer and to layers", () => {
+    const calls: unknown[][] = [];
+    const layerCalls: unknown[][] = [];
+    const renderer = new Proxy(
+      {},
+      {
+        get: (_t, key) => {
+          if (key === "updateBondsExt") return (...args: unknown[]) => calls.push(args);
+          if (key === "getOrCreateLayer") {
+            return () =>
+              new Proxy(
+                {},
+                {
+                  get: (_l, k) =>
+                    k === "updateBondsExt"
+                      ? (...args: unknown[]) => layerCalls.push(args)
+                      : () => undefined,
+                },
+              );
+          }
+          return () => undefined;
+        },
+      },
+    ) as unknown as MoleculeRenderer;
+    const sources = new Uint32Array([1, 0]);
+    const ghosted = (id: string): BondData => ({
+      ...bond(id, 1, null),
+      positions: new Float32Array(18),
+      elements: new Uint8Array(6),
+      nAtoms: 6,
+      ghostSourceIndices: sources,
+    });
+    applyViewportState(renderer, state(ghosted("load"), ghosted("other")), null, "load");
+    expect(calls[0][6]).toBe(sources);
+    expect(layerCalls[0][5]).toBe(sources);
+  });
+});
