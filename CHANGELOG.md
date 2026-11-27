@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+## [0.21.0] - 2026-11-27
+
 ### Added
 
 - **First steps in JupyterLab**, an illustrated walkthrough of the viewer with two sample files to download: open a structure, turn and zoom it, change its style from the Inspector, measure a distance, and open and play an ASE optimization trajectory, without writing a notebook cell ([#959](https://github.com/megane-labs/megane/issues/959)). The JupyterLab guide links to it, and `scripts/capture-jupyterlab-walkthrough.mjs` re-takes its screenshots.
