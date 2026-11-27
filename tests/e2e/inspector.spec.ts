@@ -8,6 +8,7 @@
  * state rather than pixels to stay robust against font/GL drift.
  */
 
+import { readFileSync } from "fs";
 import { join } from "path";
 import { fileURLToPath } from "url";
 import { test, expect } from "playwright/test";
@@ -218,5 +219,66 @@ test.describe("inspector: webapp", () => {
     await panel.locator('[data-testid="quick-style-reset"]').click();
     await expect.poll(async () => (await read()).owned).toEqual([]);
     expect((await read()).meshes).toEqual([]);
+  });
+});
+
+/**
+ * A recolored atom must recolor the far half of every bond that reaches one of
+ * its periodic copies. In GaN every Ga–N bond leaving the cell is drawn as a
+ * stub to a copy of the atom across the boundary; those stubs kept Ga's
+ * default green after Ga was colored pink in the Inspector, because a copy's
+ * half took its element color, not its atom's.
+ */
+test.describe("inspector: recolor reaches bonds across the cell", () => {
+  test("a Ga layer color recolors the bond stubs to Ga's periodic copies", async ({ page }) => {
+    await page.setViewportSize({ width: 1280, height: 800 });
+    await page.addInitScript(() => {
+      (globalThis as { __MEGANE_TEST__?: boolean }).__MEGANE_TEST__ = true;
+    });
+    await page.goto("/?test=1", { waitUntil: "domcontentloaded" });
+    await waitForReady(page);
+    const epoch = await page.evaluate(
+      () =>
+        (window as unknown as { __megane_test_ready: { renderEpoch: number } }).__megane_test_ready
+          .renderEpoch,
+    );
+    await page
+      .locator('[data-testid="load-structure-input"]')
+      .first()
+      .setInputFiles({
+        name: "gan_wurtzite.vasp",
+        mimeType: "text/plain",
+        buffer: readFileSync(join(REPO_ROOT, "tests", "fixtures", "gan_wurtzite.vasp")),
+      });
+    await waitForReady(page, { untilEpoch: epoch + 1 });
+
+    // Pixels in Ga's default color (VESTA green, 0.623 / 0.893 / 0.455), any shade.
+    const { PNG } = await import("pngjs");
+    const view = page.locator('[data-tour-anchor="viewport"]');
+    const gaGreenPixels = async (): Promise<number> => {
+      await page.mouse.move(1, 1);
+      const png = PNG.sync.read(await view.screenshot());
+      let n = 0;
+      for (let i = 0; i < png.data.length; i += 4) {
+        const r = png.data[i];
+        const g = png.data[i + 1];
+        const b = png.data[i + 2];
+        if (g - r > 40 && g - b > 70) n++;
+      }
+      return n;
+    };
+    const before = await gaGreenPixels();
+    expect(before, "Ga atoms and their bond halves start out green").toBeGreaterThan(5000);
+
+    await page.locator('[data-testid="pipeline-editor-tab-inspector"]').click();
+    await page.locator('[data-testid="inspector-add-layer"]').click();
+    await page.locator('[data-testid="inspector-chip-element-Ga"]').click();
+    const colorEnabled = page.locator('[data-testid="inspector-color-enabled"]');
+    if (!(await colorEnabled.isChecked())) await colorEnabled.check();
+    await page.locator('[data-testid="inspector-color-value"]').fill("#ff69b4");
+
+    // Only the pivot marker and axis inset stay green (~60 px here); the
+    // stubs alone left ~2,600 before the fix.
+    await expect.poll(gaGreenPixels, { timeout: 15_000 }).toBeLessThan(before * 0.02);
   });
 });

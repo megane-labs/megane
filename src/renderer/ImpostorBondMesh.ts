@@ -332,23 +332,35 @@ export class ImpostorBondMesh {
    * — this propagates the updated palette to bonds without re-uploading the
    * topology buffers.
    */
-  recomputeColorsFromAtomBuffer(atomColors: Uint8ClampedArray, snapshot: Snapshot): void {
+  recomputeColorsFromAtomBuffer(
+    atomColors: Uint8ClampedArray,
+    snapshot: Snapshot,
+    ghostSources: ArrayLike<number> | null = null,
+  ): void {
     const { nBonds, bonds, bondOrders, elements } = snapshot;
     // The atom color buffer only covers real atoms. PBC half-bonds reference
     // ghost atoms appended past that range (index >= nRealAtoms); reading them
-    // from `atomColors` yields undefined → black. Fall back to the ghost
-    // atom's element color, which `processPbcBonds` set on the extended
-    // `elements` array, so boundary stubs keep their proper CPK color.
+    // from `atomColors` yields undefined → black. A ghost is a periodic copy of
+    // a real atom, so it takes that atom's current color when `ghostSources`
+    // names it (entry k is the source of ghost nRealAtoms + k): a recolored
+    // atom recolors the far half of every bond stub that reaches its copy.
+    // Without a source, the ghost's element color (set by `processPbcBonds`
+    // on the extended `elements` array) keeps the stub from going black.
     const nRealAtoms = atomColors.length / COLOR_STRIDE;
     const ghost = new Uint8ClampedArray(COLOR_STRIDE);
     const writeEndpoint = (out: Uint8ClampedArray, idx: number, atom: number): void => {
       let src = atomColors;
       let from = atom * COLOR_STRIDE;
       if (atom >= nRealAtoms) {
-        const [r, g, b] = getColor(elements[atom]);
-        writeColor(ghost, 0, r, g, b);
-        src = ghost;
-        from = 0;
+        const source = ghostSources?.[atom - nRealAtoms];
+        if (source !== undefined && source < nRealAtoms) {
+          from = source * COLOR_STRIDE;
+        } else {
+          const [r, g, b] = getColor(elements[atom]);
+          writeColor(ghost, 0, r, g, b);
+          src = ghost;
+          from = 0;
+        }
       }
       const o = idx * COLOR_STRIDE;
       out[o] = src[from];

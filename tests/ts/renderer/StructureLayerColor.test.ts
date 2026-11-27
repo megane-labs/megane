@@ -123,6 +123,27 @@ describe("StructureLayer.applyAtomColorOverrides", () => {
     expect(recomputeSpy).toHaveBeenCalledTimes(1);
   });
 
+  it("hands each PBC ghost's source atom to the bond color sync", () => {
+    const scene = new THREE.Scene();
+    const layer = new StructureLayer("layer-1", scene);
+    loadLayer(layer, makeSnapshot());
+    const bond = (layer as unknown as { bondRenderer: ImpostorBondMesh }).bondRenderer;
+    const recomputeSpy = vi.spyOn(bond, "recomputeColorsFromAtomBuffer");
+    const bonds = new Uint32Array([0, 2, 1, 3]);
+    const positions = new Float32Array([0, 0, 0, 1, 0, 0, -1, 0, 0, 2, 0, 0]);
+    const elements = new Uint8Array([6, 8, 8, 6]);
+    const sources = new Uint32Array([1, 0]);
+
+    layer.updateBondsExt(bonds, null, positions, elements, 4, sources);
+    expect(recomputeSpy).toHaveBeenLastCalledWith(expect.anything(), expect.anything(), sources);
+    // A recolor afterwards still reaches the stubs.
+    layer.applyAtomColorOverrides(new Float32Array([1, 0, 0, 0, 0, 1]));
+    expect(recomputeSpy).toHaveBeenLastCalledWith(expect.anything(), expect.anything(), sources);
+    // A list that does not match the ghost count names nothing.
+    layer.updateBondsExt(bonds, null, positions, elements, 4, new Uint32Array([1]));
+    expect(recomputeSpy).toHaveBeenLastCalledWith(expect.anything(), expect.anything(), null);
+  });
+
   it("skips bond color sync when the snapshot has no bonds", () => {
     const scene = new THREE.Scene();
     const layer = new StructureLayer("layer-1", scene);

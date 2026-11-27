@@ -32,6 +32,8 @@ export class StructureLayer {
   private bondScale = 1.0;
   private bondOpacity = 1.0;
   private currentColorOverrides: Float32Array | null = null;
+  /** Source atom of each PBC ghost the bonds reach (see `MoleculeRenderer`). */
+  private bondGhostSources: Uint32Array | null = null;
   private currentScaleOverrides: Float32Array | null = null;
   private currentOpacityOverrides: Float32Array | null = null;
 
@@ -135,7 +137,7 @@ export class StructureLayer {
     if (!snap || !this.atomRenderer || !this.bondRenderer || snap.nBonds === 0) return;
     const atom = this.atomRenderer as ImpostorAtomMesh;
     const bond = this.bondRenderer as ImpostorBondMesh;
-    bond.recomputeColorsFromAtomBuffer(atom.getColorBuffer(), snap);
+    bond.recomputeColorsFromAtomBuffer(atom.getColorBuffer(), snap, this.bondGhostSources);
   }
 
   updateFrame(frame: Frame): void {
@@ -170,11 +172,17 @@ export class StructureLayer {
     positions: Float32Array | null,
     elements: Uint8Array | null,
     nAtoms: number,
+    ghostSources: Uint32Array | null = null,
   ): void {
     if (!this.snapshot || !this.bondRenderer) return;
     const pos = positions ?? this.currentPositions ?? this.snapshot.positions;
     const elems = elements ?? this.snapshot.elements;
     const atomCount = nAtoms || this.snapshot.nAtoms;
+    // A PBC ghost's bond half takes its source atom's current color.
+    this.bondGhostSources =
+      positions && ghostSources && ghostSources.length === atomCount - this.snapshot.nAtoms
+        ? ghostSources
+        : null;
     const extSnap = {
       ...this.snapshot,
       nAtoms: atomCount,

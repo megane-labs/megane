@@ -169,6 +169,7 @@ export class MoleculeRenderer {
     elements: Uint8Array | null;
     nAtoms: number;
     imageMap: PeriodicImageMap | null;
+    ghostSources: Uint32Array | null;
   } | null = null;
   /**
    * Periodic ghost endpoints the bond mesh draws after the real atoms (the
@@ -177,6 +178,13 @@ export class MoleculeRenderer {
    * bond mesh has no ghosts or they cannot be re-derived.
    */
   private bondImageMap: PeriodicImageMap | null = null;
+  /**
+   * The real atom each PBC ghost of the current bonds copies (entry k: ghost
+   * `snapshot.nAtoms + k`), so a bond stub reaching a copy takes the copied
+   * atom's current color. Null when the bonds reference no ghost or nothing
+   * says which atom each one copies.
+   */
+  private bondGhostSources: Uint32Array | null = null;
   /** Reused per-frame buffer: frame positions followed by the moved ghosts. */
   private bondFramePositions: Float32Array | null = null;
   /** Axes-inset drag state */
@@ -690,6 +698,7 @@ export class MoleculeRenderer {
     this.requestRender();
     if (!this.snapshot || !this.bondRenderer) return;
     this.bondImageMap = null;
+    this.bondGhostSources = null;
     const positions = this.currentPositions ?? this.snapshot.positions;
     const updated: Snapshot = {
       ...this.snapshot,
@@ -711,6 +720,9 @@ export class MoleculeRenderer {
    * the original arrays, and bond indices may reference those ghost atoms.
    * `imageMap` says which atom and lattice shift each ghost copies, so
    * trajectory frames move the ghosts too (see `BondData.imageMap`).
+   * `ghostSources` names the atom each ghost copies when there is no image
+   * map (`BondData.ghostSourceIndices`, `processPbcBonds`); either one lets
+   * a bond stub take the copied atom's current color.
    */
   updateBondsExt(
     bonds: Uint32Array,
@@ -719,6 +731,7 @@ export class MoleculeRenderer {
     elements: Uint8Array | null,
     nAtoms: number,
     imageMap: PeriodicImageMap | null = null,
+    ghostSources: Uint32Array | null = null,
   ): void {
     this.requestRender();
     if (!this.snapshot || !this.bondRenderer) {
@@ -726,7 +739,15 @@ export class MoleculeRenderer {
       // parent-before-child effect ordering). Stash the args and replay them
       // in loadSnapshot, since applyViewportState may never call us again
       // (its bondIndices memo guard skips identical references).
-      this.pendingBonds = { bonds, bondOrders, positions, elements, nAtoms, imageMap };
+      this.pendingBonds = {
+        bonds,
+        bondOrders,
+        positions,
+        elements,
+        nAtoms,
+        imageMap,
+        ghostSources,
+      };
       return;
     }
     // Reached the live path — any earlier stash is now superseded.
@@ -735,10 +756,15 @@ export class MoleculeRenderer {
     const elems = elements ?? this.snapshot.elements;
     const atomCount = nAtoms || this.snapshot.nAtoms;
     // Keep the map only when it describes exactly the ghosts appended here.
+    const nGhosts = atomCount - this.snapshot.nAtoms;
     this.bondImageMap =
-      positions && imageMap && imageMap.sourceIndices.length === atomCount - this.snapshot.nAtoms
-        ? imageMap
-        : null;
+      positions && imageMap && imageMap.sourceIndices.length === nGhosts ? imageMap : null;
+    // Ghost sources follow the atoms as drawn: a heterogeneous frame's own
+    // atoms (its distance bonds' ghosts come after them), else the snapshot's.
+    const sources = ghostSources ?? this.bondImageMap?.sourceIndices ?? null;
+    const nDrawn = this.drawnSnapshot()?.nAtoms ?? this.snapshot.nAtoms;
+    this.bondGhostSources =
+      positions && sources && sources.length === atomCount - nDrawn ? sources : null;
     const extSnap = {
       ...this.snapshot,
       nAtoms: atomCount,
@@ -764,7 +790,15 @@ export class MoleculeRenderer {
     if (!this.pendingBonds) return;
     const p = this.pendingBonds;
     this.pendingBonds = null;
-    this.updateBondsExt(p.bonds, p.bondOrders, p.positions, p.elements, p.nAtoms, p.imageMap);
+    this.updateBondsExt(
+      p.bonds,
+      p.bondOrders,
+      p.positions,
+      p.elements,
+      p.nAtoms,
+      p.imageMap,
+      p.ghostSources,
+    );
   }
 
   /** Set per-atom labels for overlay display. */
@@ -1072,7 +1106,11 @@ export class MoleculeRenderer {
     const snap = snapshotOverride ?? this.snapshot;
     if (!snap || !this.atomRenderer || !this.bondRenderer) return;
     if (snap.nBonds === 0) return;
-    this.bondRenderer.recomputeColorsFromAtomBuffer(this.atomRenderer.getColorBuffer(), snap);
+    this.bondRenderer.recomputeColorsFromAtomBuffer(
+      this.atomRenderer.getColorBuffer(),
+      snap,
+      this.bondGhostSources,
+    );
   }
 
   /** Apply per-bond opacity overrides (one value per logical bond). */
