@@ -1318,6 +1318,37 @@ mod tests {
     }
 
     #[test]
+    fn test_parse_traj_optimizer_output() {
+        // An ASE geometry optimization as BFGS writes it (#960): besides the
+        // positions, every frame carries a FixAtoms constraint, the atoms'
+        // tags and the calculator's energy, forces, stress and per-atom
+        // energies, which the MD fixtures do not.
+        let Some(data) = read_fixture("cu_slab_opt.traj") else {
+            return;
+        };
+        let result = parse_traj(&data).expect("parse optimizer traj");
+        assert_eq!(result.n_atoms, 38); // 36 Cu + CO
+        assert_eq!(result.extra_frame_count(), 8);
+        assert!(result.hetero.is_none(), "an optimization keeps its atoms");
+        assert_eq!(result.elements.iter().filter(|&&z| z == 29).count(), 36);
+        assert!(result.warnings.is_empty(), "{:?}", result.warnings);
+        let force = result
+            .vector_channels
+            .iter()
+            .find(|c| c.name == "force")
+            .expect("calculator forces");
+        assert_eq!(force.frames.len(), 9);
+
+        // Frames line up with their atoms: the 18 atoms FixAtoms holds stay
+        // put, the relaxed ones move.
+        let last = &result.frame_positions_flat[7 * 38 * 3..8 * 38 * 3];
+        assert_eq!(&last[..18 * 3], &result.positions[..18 * 3]);
+        assert_ne!(&last[18 * 3..], &result.positions[18 * 3..]);
+
+        assert_frame0_matches(&data, data.len(), 0);
+    }
+
+    #[test]
     fn test_parse_traj_variable_cell() {
         let Some(data) = read_fixture("water_var_cell.traj") else {
             return;

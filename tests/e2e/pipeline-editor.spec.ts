@@ -11,6 +11,7 @@
 import { test, expect, type Page } from "playwright/test";
 import { defaultViewerContract, assertDomContract, waitForReady, getReadyState } from "./lib/setup";
 import { getCameraState } from "./lib/render-utils";
+import { expectCalloutOnTarget, readCallout, tourStepTo, walkTour } from "./lib/tour";
 
 const ATOM_COUNT_CAFFEINE = 3024;
 
@@ -554,5 +555,73 @@ test.describe("pipeline-editor: layout and properties pane", () => {
     await page.locator('[data-testid="pipeline-properties-header"] [role="switch"]').click();
     await expect(card).toHaveAttribute("data-enabled", "false");
     await expect(card).toContainText("Off");
+  });
+});
+
+/**
+ * The guided tour (Guide button on the panel's rail) must keep each callout's
+ * arrow on the control it describes (#964): driver.js put the Tutorial step's
+ * arrow ~60 px below the button, and left callouts behind when the layout
+ * moved without a window resize (a JupyterLab sidebar or splitter).
+ */
+test.describe("pipeline-editor: guided tour callouts", () => {
+  for (const viewport of [
+    { width: 1400, height: 900 },
+    { width: 1000, height: 480 },
+  ]) {
+    test(`every callout points at its control (${viewport.width}x${viewport.height})`, async ({
+      page,
+    }) => {
+      await page.setViewportSize(viewport);
+      await page.addInitScript(() => {
+        (globalThis as { __MEGANE_TEST__?: boolean }).__MEGANE_TEST__ = true;
+      });
+      await page.goto("/?test=1", { waitUntil: "domcontentloaded" });
+      await waitForReady(page);
+      await page.locator('[data-testid="pipeline-editor-guide"]').click();
+      await expect(page.locator(".driver-popover")).toBeVisible();
+      expect(await walkTour(page)).toContain("Want a deeper walk-through?");
+    });
+  }
+
+  test("a callout follows its control when the layout moves without a window resize", async ({
+    page,
+  }) => {
+    await page.setViewportSize({ width: 1400, height: 900 });
+    await page.addInitScript(() => {
+      (globalThis as { __MEGANE_TEST__?: boolean }).__MEGANE_TEST__ = true;
+    });
+    await page.goto("/?test=1", { waitUntil: "domcontentloaded" });
+    await waitForReady(page);
+    await page.locator('[data-testid="pipeline-editor-guide"]').click();
+    await tourStepTo(page, "Templates");
+    const before = await readCallout(page);
+    expectCalloutOnTarget(before);
+
+    // Narrow the page's content the way a JupyterLab sidebar opening does:
+    // the window keeps its size, so driver.js hears no resize.
+    await page.evaluate(() => {
+      document.body.style.width = "calc(100% - 300px)";
+    });
+    await expect
+      .poll(async () => (await readCallout(page)).target!.left)
+      .toBeLessThan(before.target!.left - 100);
+    await page.waitForTimeout(400);
+    const after = await readCallout(page);
+    expectCalloutOnTarget(after);
+    expect(after.popover.right).toBeLessThanOrEqual(after.target!.left);
+  });
+
+  test("a collapsed panel's controls are left out of the tour", async ({ page }) => {
+    // The panel starts collapsed when the viewer is this narrow, and only a
+    // first visit starts the tour by itself (there is no Guide button).
+    await page.setViewportSize({ width: 760, height: 600 });
+    await page.goto("/", { waitUntil: "domcontentloaded" });
+    await expect(page.locator(".driver-popover")).toBeVisible({ timeout: 60_000 });
+    await expect(page.locator('[data-testid="pipeline-editor-guide"]')).toHaveCount(0);
+    const seen = await walkTour(page);
+    expect(seen).not.toContain("Want a deeper walk-through?");
+    expect(seen).not.toContain("Templates");
+    expect(seen).toContain("Visualization settings");
   });
 });

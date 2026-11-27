@@ -12,6 +12,8 @@ pip install megane
 
 Restart JupyterLab after installing. The extension registers automatically — no `jupyter labextension install` step is needed.
 
+New to the viewer? [First steps in JupyterLab](./jupyterlab-walkthrough.md) walks through opening a structure, turning and restyling it, measuring a distance and playing a trajectory, with sample files to follow along.
+
 ## Opening files
 
 Double-click any supported file in the JupyterLab file browser and Megane opens it in a document tab:

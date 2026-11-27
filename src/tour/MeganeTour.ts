@@ -8,10 +8,13 @@ import "driver.js/dist/driver.css";
 import "./tour.css";
 import { useTourStore } from "./tourStore";
 import { buildTourSteps, buildPipelineTutorialSteps } from "./tourSteps";
+import { followActiveElement, presentSteps } from "./followTarget";
 
 const CHECKBOX_ID = "megane-tour-dont-show";
 
 let activeDriver: Driver | null = null;
+/** Stops keeping the active tour's callout on its target (`followActiveElement`). */
+let stopFollowing: (() => void) | null = null;
 
 function injectDontShowCheckbox(footer: HTMLElement): void {
   if (footer.querySelector(`#${CHECKBOX_ID}`)) return;
@@ -51,6 +54,10 @@ function runTour({ steps, showProgress }: RunTourOptions): void {
     activeDriver.destroy();
     activeDriver = null;
   }
+  // A step whose target is not on screen (the pipeline panel's rail while
+  // the panel is collapsed) would be drawn mid-page under text about a
+  // highlighted control.
+  const shown = presentSteps(steps);
 
   const tour = driver({
     showProgress,
@@ -64,11 +71,13 @@ function runTour({ steps, showProgress }: RunTourOptions): void {
     stagePadding: 6,
     stageRadius: 10,
     popoverClass: "megane-tour",
-    steps,
+    steps: shown,
     onPopoverRender: (popover) => {
       injectDontShowCheckbox(popover.footer);
     },
     onDestroyed: () => {
+      stopFollowing?.();
+      stopFollowing = null;
       useTourStore.getState().setActive(false);
       activeDriver = null;
     },
@@ -77,6 +86,9 @@ function runTour({ steps, showProgress }: RunTourOptions): void {
   activeDriver = tour;
   useTourStore.getState().setActive(true);
   tour.drive();
+  // driver.js re-places a callout only on a window resize or scroll; keep it
+  // on its target through every other layout change.
+  stopFollowing = followActiveElement(tour);
 }
 
 export function startTour(): void {
