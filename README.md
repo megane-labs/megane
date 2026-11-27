@@ -56,7 +56,7 @@ One codebase, every environment.
 | **JupyterLab extension** | Open any supported structure, trajectory, volumetric, or spectrum file — plus `.megane.json` pipelines — straight from the file browser | `pip install megane` |
 | **Standalone web app** | `megane serve` in the browser | `pip install megane` |
 | **React component (npm)** | `<MeganeViewer />` component | `npm install megane-viewer` |
-| **VS Code extension** | Custom editor for the same file types, registered by extension, by VASP basename (`POSCAR`/`CONTCAR`/`XDATCAR`) and by LAMMPS's leading `data.` / `dump.` | VS Code Marketplace (`hodakamori.vscode-megane`) |
+| **VS Code extension** | Custom editor for the same file types, registered by extension, by VASP basename (`POSCAR`/`CONTCAR`/`XDATCAR`), by LAMMPS's leading `data.` / `dump.` and by numbered `<name>.data.<n>` names | VS Code Marketplace (`hodakamori.vscode-megane`) |
 
 For a per-platform breakdown of supported formats and UI features (including known gaps), see [Platform Support](https://megane-labs.github.io/megane/platform-support).
 
