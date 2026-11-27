@@ -179,19 +179,171 @@ export interface OpenLabNotebookOpts {
 }
 
 /**
- * How long Run All may go without finishing a code cell before the first boot
- * is abandoned. A healthy boot finishes its first cell within a few seconds.
+ * How long Run All may go without finishing a code cell before a boot is
+ * abandoned. A healthy boot finishes its first cell within a few seconds.
  */
 const RUN_ALL_STALL_MS = 15_000;
+
+/** How long the notebook's kernel session may take to appear and connect. */
+const KERNEL_CONNECT_MS = 30_000;
+
+/**
+ * How long the kernel may take to answer the page's own kernel_info_request
+ * once the page has connected to it. A healthy kernel answers in under a
+ * second; JupyterLab itself stops waiting after a few seconds and goes on.
+ */
+const KERNEL_INFO_REPLY_MS = 10_000;
+
+/** How long no new connection to the kernel may open before its answers are trusted. */
+const KERNEL_SETTLE_MS = 1_000;
+
+/** Boots tried before the notebook is reported as failed. */
+const MAX_BOOTS = 3;
+
+/** One kernel-channel websocket the page opened. */
+interface KernelSocket {
+  kernelId: string;
+  openedAt: number;
+  closed: boolean;
+  /** A kernel_info_reply came back on this socket. */
+  answered: boolean;
+}
+
+/**
+ * Record the page's kernel websockets and whether the kernel has answered
+ * on each.
+ *
+ * JupyterLab sends a kernel_info_request on the shell channel as soon as it
+ * connects to a kernel, so a kernel_info_reply on the same socket proves that
+ * the page's shell channel reaches the kernel and back. Every Run All stall
+ * logged here (cells left `[*]:`, kernel idle, no execute request run) came
+ * from a connection whose very first shell request was never answered, while
+ * its control channel and iopub still worked. The page cannot tell: it stops
+ * waiting for the reply after a few seconds and queues the cells anyway.
+ */
+function trackKernelSockets(page: Page): KernelSocket[] {
+  const sockets: KernelSocket[] = [];
+  page.on("websocket", (ws) => {
+    const match = ws.url().match(/\/api\/kernels\/([^/?]+)\/channels/);
+    if (!match) return;
+    const socket: KernelSocket = {
+      kernelId: match[1],
+      openedAt: Date.now(),
+      closed: false,
+      answered: false,
+    };
+    sockets.push(socket);
+    const onFrame = ({ payload }: { payload: string | Buffer }) => {
+      const text = typeof payload === "string" ? payload : payload.toString("latin1");
+      if (/"msg_type":\s*"kernel_info_reply"/.test(text)) {
+        socket.answered = true;
+        // Widget comms send large frames; stop inspecting once answered.
+        ws.off("framereceived", onFrame);
+      }
+    };
+    ws.on("framereceived", onFrame);
+    ws.on("close", () => {
+      socket.closed = true;
+    });
+  });
+  return sockets;
+}
+
+interface LabSession {
+  id: string;
+  path: string;
+  kernel?: { id: string } | null;
+}
+
+async function labApi(opts: OpenLabNotebookOpts, path: string, method = "GET"): Promise<Response> {
+  return fetch(`http://127.0.0.1:${opts.port}${path}`, {
+    method,
+    headers: { Authorization: `token ${opts.token}` },
+  });
+}
+
+async function findNotebookSession(opts: OpenLabNotebookOpts): Promise<LabSession | undefined> {
+  try {
+    const res = await labApi(opts, "/api/sessions");
+    if (!res.ok) return undefined;
+    const sessions = (await res.json()) as LabSession[];
+    return sessions.find((s) => s.path === opts.notebook);
+  } catch {
+    return undefined;
+  }
+}
+
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+/**
+ * Resolve once the notebook's kernel has answered the page on its shell
+ * channel (see trackKernelSockets). Throws when no session or connection
+ * appears within KERNEL_CONNECT_MS, or the kernel does not answer within
+ * KERNEL_INFO_REPLY_MS of the page connecting.
+ */
+async function waitForKernelChannel(
+  sockets: KernelSocket[],
+  opts: OpenLabNotebookOpts,
+): Promise<void> {
+  const connectDeadline = Date.now() + KERNEL_CONNECT_MS;
+  let kernelId: string | undefined;
+  while (!kernelId) {
+    kernelId = (await findNotebookSession(opts))?.kernel?.id;
+    if (kernelId) break;
+    if (Date.now() > connectDeadline) {
+      throw new Error(`no kernel session for ${opts.notebook} within ${KERNEL_CONNECT_MS} ms`);
+    }
+    await sleep(250);
+  }
+  // JupyterLab opens a few short-lived connections to a new kernel next to
+  // the notebook's own, and nothing on the wire says which one the notebook
+  // keeps. So every open connection must have been answered: a dead notebook
+  // connection holds the gate shut once the short-lived ones close.
+  for (;;) {
+    const mine = sockets.filter((s) => s.kernelId === kernelId);
+    const live = mine.filter((s) => !s.closed);
+    const waiting = live.filter((s) => !s.answered);
+    // The connections open within about half a second of each other; let
+    // KERNEL_SETTLE_MS pass after the last one so none is still to come.
+    const settled = Date.now() - Math.max(...mine.map((s) => s.openedAt)) >= KERNEL_SETTLE_MS;
+    if (live.length > 0 && waiting.length === 0 && settled) return;
+    if (waiting.some((s) => Date.now() - s.openedAt > KERNEL_INFO_REPLY_MS)) {
+      throw new Error(
+        `kernel ${kernelId} did not answer kernel_info on the page's connection within ${KERNEL_INFO_REPLY_MS} ms`,
+      );
+    }
+    if (live.length === 0 && Date.now() > connectDeadline) {
+      throw new Error(
+        `the page did not connect to kernel ${kernelId} within ${KERNEL_CONNECT_MS} ms`,
+      );
+    }
+    await sleep(100);
+  }
+}
+
+/**
+ * Shut down the notebook's kernel session, so that the next page load starts
+ * a fresh kernel that has run nothing. A retry that only reconnected to the
+ * old kernel left the server holding the dead connection's buffered channels,
+ * and once drew a cell output 209 px taller than its baseline.
+ */
+async function shutDownNotebookSession(opts: OpenLabNotebookOpts): Promise<void> {
+  const session = await findNotebookSession(opts);
+  if (!session) return;
+  try {
+    await labApi(opts, `/api/sessions/${session.id}`, "DELETE");
+  } catch {
+    // The next boot fails on its own if the server is gone.
+  }
+}
 
 /**
  * Resolve once Run All has made progress: a code cell finished (its prompt
  * changed to `[n]:`) or the viewer reported ready. Throws after `timeout`.
  *
- * JupyterLab sometimes marks every cell `[*]:` but never sends the execute
- * requests: the server log shows no request and the kernel stays idle until
- * the page reconnects. That hit about every second CI run. Failing here lets
- * the caller reload after `timeout` instead of waiting out the ready timeout.
+ * A safety net behind waitForKernelChannel: if a connection that answered
+ * kernel_info still drops the execute requests, the boot is abandoned after
+ * `timeout` instead of waiting out the ready timeout.
  */
 async function waitForRunAllProgress(
   page: Page,
@@ -221,10 +373,11 @@ async function waitForRunAllProgress(
  * megane renderer's testMode ready signal. Sets `__MEGANE_TEST__=true` via
  * page.addInitScript.
  *
- * The boot is retried once after a page reload, which reconnects to the
- * kernel. The first attempt gives up early when Run All stalls (see
- * waitForRunAllProgress) or the widget never mounts (`__megane_test_ready`
- * stays null); the retry waits the full timeout.
+ * Before Run All, the boot waits until the notebook's kernel has answered the
+ * page on its shell channel (waitForKernelChannel). A boot that fails there,
+ * stalls in Run All (waitForRunAllProgress), or whose widget never mounts is
+ * retried on a fresh kernel: the session is shut down and the page reloaded.
+ * Up to MAX_BOOTS boots are tried; all but the last give up early.
  */
 export async function openLabNotebook(page: Page, opts: OpenLabNotebookOpts): Promise<void> {
   await page.addInitScript(() => {
@@ -232,27 +385,14 @@ export async function openLabNotebook(page: Page, opts: OpenLabNotebookOpts): Pr
   });
   // `reset` query forces JupyterLab to discard saved layout from a previous run.
   const url = `http://127.0.0.1:${opts.port}/lab/tree/${opts.notebook}?token=${opts.token}&test=1&reset`;
+  const runAll = opts.runAll ?? true;
+  const sockets = trackKernelSockets(page);
 
   const bootOnce = async (waitTimeoutMs: number, stallMs?: number): Promise<void> => {
     await page.waitForSelector("#jp-main-dock-panel", { timeout: 30_000 });
 
-    // Coarse, best-effort gates before Run All: the toolbar shows the kernel
-    // name while the kernel is still starting, and the execution indicator
-    // starts out "idle" before any kernel status arrives. Neither proves the
-    // kernel will run the cells; waitForRunAllProgress checks that.
-    await page
-      .locator(".jp-Toolbar")
-      .filter({ hasText: "Python 3" })
-      .first()
-      .waitFor({ timeout: 30_000 })
-      .catch(() => {});
-    await page
-      .locator('.jp-Notebook-ExecutionIndicator[data-status="idle"]')
-      .first()
-      .waitFor({ timeout: 15_000 })
-      .catch(() => {});
-
-    if (opts.runAll ?? true) {
+    if (runAll) {
+      await waitForKernelChannel(sockets, opts);
       const promptsBefore = await page
         .locator(".jp-CodeCell .jp-InputPrompt")
         .evaluateAll((els) => els.map((el) => el.textContent ?? ""));
@@ -273,16 +413,23 @@ export async function openLabNotebook(page: Page, opts: OpenLabNotebookOpts): Pr
 
   const totalTimeout = opts.waitTimeoutMs ?? 90_000;
   await page.goto(url, { waitUntil: "domcontentloaded" });
-  try {
-    await bootOnce(Math.max(30_000, Math.floor(totalTimeout / 2)), RUN_ALL_STALL_MS);
-  } catch (e) {
-    // One retry from a clean page: the reload reconnects to the kernel, and
-    // Run All then reaches it.
-    console.warn(
-      `openLabNotebook: first boot of ${opts.notebook} failed (${(e as Error).message.split("\n")[0]}); reloading`,
-    );
-    await page.reload({ waitUntil: "domcontentloaded" });
-    await bootOnce(totalTimeout);
+  for (let boot = 1; ; boot++) {
+    const last = boot === MAX_BOOTS;
+    try {
+      await bootOnce(
+        last ? totalTimeout : Math.max(30_000, Math.floor(totalTimeout / 2)),
+        last ? undefined : RUN_ALL_STALL_MS,
+      );
+      return;
+    } catch (e) {
+      if (last) throw e;
+      console.warn(
+        `openLabNotebook: boot ${boot} of ${opts.notebook} failed (${(e as Error).message.split("\n")[0]}); retrying on a fresh kernel`,
+      );
+      await page.goto("about:blank");
+      await shutDownNotebookSession(opts);
+      await page.goto(url, { waitUntil: "domcontentloaded" });
+    }
   }
 }
 
